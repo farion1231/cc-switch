@@ -12,7 +12,7 @@ use super::reasoning_bridge::{encode_openai_reasoning_item, reasoning_summary_te
 use super::transform_responses::{
     build_anthropic_usage_from_responses, map_responses_stop_reason,
     merge_web_search_result_metadata, responses_to_anthropic_with_web_search_options,
-    sanitize_anthropic_tool_use_input_json, web_search_action_input,
+    sanitize_anthropic_tool_use_input_json, text_with_url_citations, web_search_action_input,
     web_search_max_uses_exceeded_error, web_search_results_from_action,
     web_search_results_from_output_item, web_search_tool_result_error,
 };
@@ -279,35 +279,230 @@ fn content_part_key(data: &Value) -> Option<String> {
 }
 
 #[derive(Default)]
+struct StreamedTextPart {
+    text: String,
+    output_keys: Vec<(u64, u64)>,
+    item_keys: Vec<(String, u64)>,
+    discarded: bool,
+}
+
+#[derive(Default)]
 struct StreamedTextState {
-    by_output_part: HashMap<(u64, u64), String>,
-    by_item_part: HashMap<(String, u64), String>,
+    parts: Vec<StreamedTextPart>,
+    by_output_part: HashMap<(u64, u64), usize>,
+    by_item_part: HashMap<(String, u64), usize>,
+    active_keyed_part: Option<usize>,
     unkeyed: String,
+    unkeyed_follows_keyed: bool,
 }
 
 impl StreamedTextState {
+    fn output_part_index(&self, key: (u64, u64)) -> Option<usize> {
+        self.by_output_part
+            .get(&key)
+            .copied()
+            .filter(|index| self.parts.get(*index).is_some_and(|part| !part.discarded))
+    }
+
+    fn item_part_index(&self, key: &(String, u64)) -> Option<usize> {
+        self.by_item_part
+            .get(key)
+            .copied()
+            .filter(|index| self.parts.get(*index).is_some_and(|part| !part.discarded))
+    }
+
+    fn key_pair_conflicts(
+        &self,
+        output_key: Option<(u64, u64)>,
+        item_key: Option<&(String, u64)>,
+    ) -> bool {
+        let output_index = output_key.and_then(|key| self.output_part_index(key));
+        let item_index = item_key.and_then(|key| self.item_part_index(key));
+        if let (Some(output_index), Some(item_key)) = (output_index, item_key) {
+            let part = &self.parts[output_index];
+            if !part.item_keys.is_empty() && !part.item_keys.contains(item_key) {
+                return true;
+            }
+        }
+        if let (Some(item_index), Some(output_key)) = (item_index, output_key) {
+            let part = &self.parts[item_index];
+            if !part.output_keys.is_empty() && !part.output_keys.contains(&output_key) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn push_part(
+        &mut self,
+        output_key: Option<(u64, u64)>,
+        item_key: Option<(String, u64)>,
+    ) -> usize {
+        let index = self.parts.len();
+        let mut part = StreamedTextPart::default();
+        if let Some(key) = output_key {
+            part.output_keys.push(key);
+            self.by_output_part.insert(key, index);
+        }
+        if let Some(key) = item_key {
+            part.item_keys.push(key.clone());
+            self.by_item_part.insert(key, index);
+        }
+        self.parts.push(part);
+        index
+    }
+
+    fn bind_keys(
+        &mut self,
+        index: usize,
+        output_key: Option<(u64, u64)>,
+        item_key: Option<(String, u64)>,
+    ) {
+        let Some(part) = self.parts.get_mut(index).filter(|part| !part.discarded) else {
+            return;
+        };
+        if let Some(key) = output_key {
+            if !part.output_keys.contains(&key) {
+                part.output_keys.push(key);
+            }
+            self.by_output_part.insert(key, index);
+        }
+        if let Some(key) = item_key {
+            if !part.item_keys.contains(&key) {
+                part.item_keys.push(key.clone());
+            }
+            self.by_item_part.insert(key, index);
+        }
+    }
+
+    fn merge_part_indices(&mut self, first: usize, second: usize) -> usize {
+        if first == second {
+            return first;
+        }
+        // Parts are created by their first delta, so index order is also delta
+        // arrival order. Distinct pre-alias delta streams are additive even when
+        // their payload text happens to be identical.
+        let (keep, discard) = if first < second {
+            (first, second)
+        } else {
+            (second, first)
+        };
+        let discarded = std::mem::take(&mut self.parts[discard]);
+        self.parts[discard].discarded = true;
+        self.parts[keep].text.push_str(&discarded.text);
+        for key in discarded.output_keys {
+            if !self.parts[keep].output_keys.contains(&key) {
+                self.parts[keep].output_keys.push(key);
+            }
+            self.by_output_part.insert(key, keep);
+        }
+        for key in discarded.item_keys {
+            if !self.parts[keep].item_keys.contains(&key) {
+                self.parts[keep].item_keys.push(key.clone());
+            }
+            self.by_item_part.insert(key, keep);
+        }
+        if self.active_keyed_part == Some(discard) {
+            self.active_keyed_part = Some(keep);
+        }
+        keep
+    }
+
+    fn existing_keyed_part_index(
+        &mut self,
+        output_key: Option<(u64, u64)>,
+        item_key: Option<&(String, u64)>,
+    ) -> Option<usize> {
+        if self.key_pair_conflicts(output_key, item_key) {
+            return None;
+        }
+        let output_index = output_key.and_then(|key| self.output_part_index(key));
+        let item_index = item_key.and_then(|key| self.item_part_index(key));
+        match (output_index, item_index) {
+            (Some(output), Some(item)) => Some(self.merge_part_indices(output, item)),
+            (Some(index), None) | (None, Some(index)) => Some(index),
+            (None, None) => None,
+        }
+    }
+
+    fn resolve_keyed_part(
+        &mut self,
+        output_key: Option<(u64, u64)>,
+        item_key: Option<(String, u64)>,
+    ) -> Option<usize> {
+        if self.key_pair_conflicts(output_key, item_key.as_ref()) {
+            return None;
+        }
+        let index = self
+            .existing_keyed_part_index(output_key, item_key.as_ref())
+            .unwrap_or_else(|| self.push_part(output_key, item_key.clone()));
+        self.bind_keys(index, output_key, item_key);
+        Some(index)
+    }
+
+    fn has_part_matching_terminal(
+        &self,
+        full_text: &str,
+        output_index: Option<u64>,
+        item_id: Option<&str>,
+        content_index: u64,
+    ) -> bool {
+        output_index.is_some_and(|index| self.output_part_index((index, content_index)).is_some())
+            || item_id.is_some_and(|id| {
+                self.item_part_index(&(id.to_string(), content_index))
+                    .is_some()
+            })
+            || (!self.unkeyed.is_empty()
+                && (self.unkeyed.starts_with(full_text) || full_text.starts_with(&self.unkeyed)))
+    }
+
     fn record_delta(&mut self, data: &Value, delta: &str) {
-        let content_index = data.get("content_index").and_then(Value::as_u64);
-        if let (Some(output_index), Some(content_index)) = (
-            data.get("output_index").and_then(Value::as_u64),
-            content_index,
-        ) {
-            self.by_output_part
-                .entry((output_index, content_index))
-                .or_default()
-                .push_str(delta);
+        if delta.is_empty() {
             return;
         }
-        if let (Some(item_id), Some(content_index)) =
-            (data.get("item_id").and_then(Value::as_str), content_index)
-        {
-            self.by_item_part
-                .entry((item_id.to_string(), content_index))
-                .or_default()
-                .push_str(delta);
+        let content_index = data.get("content_index").and_then(Value::as_u64);
+        let output_key = data
+            .get("output_index")
+            .and_then(Value::as_u64)
+            .zip(content_index);
+        let item_key = data
+            .get("item_id")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .zip(content_index);
+        if output_key.is_some() || item_key.is_some() {
+            let Some(index) = self.resolve_keyed_part(output_key, item_key) else {
+                return;
+            };
+            self.parts[index].text.push_str(delta);
+            self.active_keyed_part = Some(index);
             return;
+        }
+        if self.unkeyed.is_empty() {
+            self.unkeyed_follows_keyed = self.active_keyed_part.is_some();
         }
         self.unkeyed.push_str(delta);
+    }
+
+    fn finish_part(&mut self, data: &Value) {
+        let content_index = data.get("content_index").and_then(Value::as_u64);
+        let output_key = data
+            .get("output_index")
+            .and_then(Value::as_u64)
+            .zip(content_index);
+        let item_key = data
+            .get("item_id")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .zip(content_index);
+        if output_key.is_none() && item_key.is_none() {
+            self.active_keyed_part = None;
+            return;
+        }
+        let finished = self.existing_keyed_part_index(output_key, item_key.as_ref());
+        if finished.is_some() && finished == self.active_keyed_part {
+            self.active_keyed_part = None;
+        }
     }
 
     fn missing_suffix(
@@ -317,18 +512,80 @@ impl StreamedTextState {
         item_id: Option<&str>,
         content_index: u64,
     ) -> String {
-        let by_output =
-            output_index.and_then(|index| self.by_output_part.get(&(index, content_index)));
-        let by_item =
-            item_id.and_then(|id| self.by_item_part.get(&(id.to_string(), content_index)));
-        let emitted = match (by_output, by_item) {
-            (Some(output), Some(item)) if item.len() > output.len() => Some(item.as_str()),
-            (Some(output), _) => Some(output.as_str()),
-            (None, Some(item)) => Some(item.as_str()),
-            (None, None) => None,
-        };
+        let output_key = output_index.map(|index| (index, content_index));
+        let item_key = item_id.map(|id| (id.to_string(), content_index));
+        if self.key_pair_conflicts(output_key, item_key.as_ref()) {
+            return String::new();
+        }
+        let keyed_index = self.existing_keyed_part_index(output_key, item_key.as_ref());
+        let emitted = keyed_index.map(|index| self.parts[index].text.clone());
 
-        let missing = if let Some(emitted) = emitted {
+        let missing = if !self.unkeyed.is_empty() {
+            let unkeyed = self.unkeyed.clone();
+            let combined = emitted.as_deref().map(|keyed| {
+                if self.unkeyed_follows_keyed {
+                    format!("{keyed}{unkeyed}")
+                } else {
+                    format!("{unkeyed}{keyed}")
+                }
+            });
+            if let Some(suffix) = combined
+                .as_deref()
+                .and_then(|candidate| full_text.strip_prefix(candidate))
+            {
+                self.unkeyed.clear();
+                self.unkeyed_follows_keyed = false;
+                suffix.to_string()
+            } else if self.unkeyed_follows_keyed
+                && emitted.as_deref().is_some_and(|keyed| {
+                    keyed.starts_with(full_text) || full_text.starts_with(keyed)
+                })
+            {
+                emitted
+                    .as_deref()
+                    .and_then(|keyed| full_text.strip_prefix(keyed))
+                    .unwrap_or_default()
+                    .to_string()
+            } else if combined
+                .as_deref()
+                .is_some_and(|candidate| candidate.starts_with(full_text))
+            {
+                if let Some(remaining) = unkeyed.strip_prefix(full_text) {
+                    self.unkeyed = remaining.to_string();
+                } else {
+                    self.unkeyed.clear();
+                    self.unkeyed_follows_keyed = false;
+                }
+                String::new()
+            } else if let Some(remaining) = unkeyed.strip_prefix(full_text) {
+                self.unkeyed = remaining.to_string();
+                String::new()
+            } else if let Some(suffix) = full_text.strip_prefix(&unkeyed) {
+                self.unkeyed.clear();
+                self.unkeyed_follows_keyed = false;
+                if emitted.as_deref().is_some_and(|keyed| suffix == keyed) {
+                    String::new()
+                } else {
+                    suffix.to_string()
+                }
+            } else if let Some(emitted) = emitted.as_deref() {
+                if let Some(suffix) = full_text.strip_prefix(emitted) {
+                    suffix.to_string()
+                } else if emitted.starts_with(full_text) {
+                    String::new()
+                } else {
+                    log::warn!(
+                        "[Claude/Responses] Terminal text did not extend the streamed text; avoiding duplicate replay"
+                    );
+                    String::new()
+                }
+            } else {
+                log::warn!(
+                    "[Claude/Responses] Could not correlate terminal text with an unkeyed streamed delta; avoiding duplicate replay"
+                );
+                String::new()
+            }
+        } else if let Some(emitted) = emitted.as_deref() {
             if let Some(suffix) = full_text.strip_prefix(emitted) {
                 suffix.to_string()
             } else if emitted.starts_with(full_text) {
@@ -339,33 +596,1149 @@ impl StreamedTextState {
                 );
                 String::new()
             }
-        } else if self.unkeyed.is_empty() {
-            full_text.to_string()
         } else {
-            let unkeyed = self.unkeyed.clone();
-            if let Some(remaining) = unkeyed.strip_prefix(full_text) {
-                self.unkeyed = remaining.to_string();
-                String::new()
-            } else if let Some(suffix) = full_text.strip_prefix(&unkeyed) {
-                self.unkeyed.clear();
-                suffix.to_string()
-            } else {
-                log::warn!(
-                    "[Claude/Responses] Could not correlate terminal text with an unkeyed streamed delta; avoiding duplicate replay"
-                );
-                String::new()
-            }
+            full_text.to_string()
         };
 
-        if let Some(output_index) = output_index {
-            self.by_output_part
-                .insert((output_index, content_index), full_text.to_string());
-        }
-        if let Some(item_id) = item_id {
-            self.by_item_part
-                .insert((item_id.to_string(), content_index), full_text.to_string());
+        if output_key.is_some() || item_key.is_some() {
+            let index = keyed_index.unwrap_or_else(|| self.push_part(output_key, item_key.clone()));
+            self.bind_keys(index, output_key, item_key);
+            self.parts[index].text = full_text.to_string();
+            if self.active_keyed_part == Some(index) {
+                self.active_keyed_part = None;
+            }
         }
         missing
+    }
+}
+
+#[derive(Clone)]
+struct BufferedCitationAnnotation {
+    value: Value,
+    observed_text_end: usize,
+    emitted: bool,
+}
+
+#[derive(Clone, Default)]
+struct BufferedCitationPart {
+    text: String,
+    annotations: Vec<BufferedCitationAnnotation>,
+    output_keys: Vec<(u64, u64)>,
+    item_keys: Vec<(String, u64)>,
+    emitted_bytes: usize,
+    discarded: bool,
+    originated_unkeyed: bool,
+    received_delta: bool,
+}
+
+type BufferedCitationKeys = (Option<(u64, u64)>, Option<(String, u64)>);
+
+enum EmittedUnkeyedTerminalMatch {
+    NoMatch,
+    FullyEmitted(Vec<Value>),
+    MissingSuffix {
+        suffix: String,
+        emitted_annotations: Vec<Value>,
+    },
+}
+
+#[derive(Default)]
+struct BufferedCitationTextState {
+    parts: Vec<BufferedCitationPart>,
+    open_part: Option<usize>,
+    last_unkeyed_part: Option<usize>,
+    emitted_unkeyed_history: String,
+    emitted_unkeyed_annotations: Vec<BufferedCitationAnnotation>,
+    emitted_output_parts: HashSet<(u64, u64)>,
+    emitted_item_parts: HashSet<(String, u64)>,
+}
+
+impl BufferedCitationTextState {
+    fn keys(data: &Value) -> BufferedCitationKeys {
+        let content_index = data.get("content_index").and_then(Value::as_u64);
+        let output_key = data
+            .get("output_index")
+            .and_then(Value::as_u64)
+            .zip(content_index);
+        let item_key = data
+            .get("item_id")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .zip(content_index);
+        (output_key, item_key)
+    }
+
+    fn append_annotation(part: &mut BufferedCitationPart, annotation: &Value) {
+        let observed_text_end = part.text.chars().count();
+        if !part.annotations.iter().any(|buffered| {
+            buffered.value == *annotation && buffered.observed_text_end == observed_text_end
+        }) {
+            part.annotations.push(BufferedCitationAnnotation {
+                value: annotation.clone(),
+                observed_text_end,
+                emitted: false,
+            });
+        }
+    }
+
+    fn pending_annotation_values(part: &BufferedCitationPart) -> Vec<Value> {
+        let mut values = Vec::new();
+        for annotation in part
+            .annotations
+            .iter()
+            .filter(|annotation| !annotation.emitted)
+        {
+            if !values.contains(&annotation.value) {
+                values.push(annotation.value.clone());
+            }
+        }
+        values
+    }
+
+    fn has_pending_output(part: &BufferedCitationPart) -> bool {
+        part.emitted_bytes < part.text.len()
+            || part
+                .annotations
+                .iter()
+                .any(|annotation| !annotation.emitted)
+    }
+
+    fn push_part(
+        &mut self,
+        output_key: Option<(u64, u64)>,
+        item_key: Option<(String, u64)>,
+        originated_unkeyed: bool,
+    ) -> usize {
+        let mut part = BufferedCitationPart {
+            originated_unkeyed,
+            ..BufferedCitationPart::default()
+        };
+        if let Some(key) = output_key {
+            part.output_keys.push(key);
+        }
+        if let Some(key) = item_key {
+            part.item_keys.push(key);
+        }
+        self.parts.push(part);
+        self.parts.len() - 1
+    }
+
+    fn output_part_index(&self, key: (u64, u64)) -> Option<usize> {
+        self.parts
+            .iter()
+            .rposition(|part| !part.discarded && part.output_keys.contains(&key))
+    }
+
+    fn item_part_index(&self, key: &(String, u64)) -> Option<usize> {
+        self.parts
+            .iter()
+            .rposition(|part| !part.discarded && part.item_keys.contains(key))
+    }
+
+    fn key_pair_conflicts(
+        &self,
+        output_key: Option<(u64, u64)>,
+        item_key: Option<&(String, u64)>,
+    ) -> bool {
+        let output_index = output_key.and_then(|key| self.output_part_index(key));
+        let item_index = item_key.and_then(|key| self.item_part_index(key));
+        if let (Some(output_index), Some(item_key)) = (output_index, item_key) {
+            let part = &self.parts[output_index];
+            if !part.item_keys.is_empty() && !part.item_keys.contains(item_key) {
+                return true;
+            }
+        }
+        if let (Some(item_index), Some(output_key)) = (item_index, output_key) {
+            let part = &self.parts[item_index];
+            if !part.output_keys.is_empty() && !part.output_keys.contains(&output_key) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn mark_part_emitted(&mut self, index: usize) {
+        if self.parts.get(index).is_none_or(|part| part.discarded) {
+            return;
+        }
+        let output_keys = self.parts[index].output_keys.clone();
+        let item_keys = self.parts[index].item_keys.clone();
+        self.parts[index].emitted_bytes = self.parts[index].text.len();
+        for annotation in &mut self.parts[index].annotations {
+            annotation.emitted = true;
+        }
+        self.emitted_output_parts.extend(output_keys);
+        self.emitted_item_parts.extend(item_keys);
+        if self.open_part == Some(index) {
+            self.open_part = None;
+            if self.parts[index].originated_unkeyed {
+                self.last_unkeyed_part = Some(index);
+            }
+        }
+    }
+
+    fn bind_keys(
+        &mut self,
+        index: usize,
+        output_key: Option<(u64, u64)>,
+        item_key: Option<(String, u64)>,
+    ) {
+        let Some(part) = self.parts.get_mut(index).filter(|part| !part.discarded) else {
+            return;
+        };
+        if let Some(key) = output_key {
+            if !part.output_keys.contains(&key) {
+                part.output_keys.push(key);
+            }
+            if part.emitted_bytes > 0
+                || part.annotations.iter().any(|annotation| annotation.emitted)
+            {
+                self.emitted_output_parts.insert(key);
+            }
+        }
+        if let Some(key) = item_key {
+            if !part.item_keys.contains(&key) {
+                part.item_keys.push(key.clone());
+            }
+            if part.emitted_bytes > 0
+                || part.annotations.iter().any(|annotation| annotation.emitted)
+            {
+                self.emitted_item_parts.insert(key);
+            }
+        }
+    }
+
+    fn merge_part_indices(&mut self, first: usize, second: usize) -> usize {
+        if first == second {
+            return first;
+        }
+        let (keep, discard) = if first < second {
+            (first, second)
+        } else {
+            (second, first)
+        };
+        let discarded = self.parts[discard].clone();
+        let kept_text = self.parts[keep].text.clone();
+        let discarded_text = discarded.text.clone();
+        let kept_emitted =
+            kept_text[..self.parts[keep].emitted_bytes.min(kept_text.len())].to_string();
+        let discarded_emitted =
+            discarded_text[..discarded.emitted_bytes.min(discarded_text.len())].to_string();
+        let additive_histories = self.parts[keep].received_delta && discarded.received_delta;
+        let concatenated = !kept_text.is_empty()
+            && !discarded_text.is_empty()
+            && (additive_histories
+                || (!discarded_text.contains(kept_text.as_str())
+                    && !kept_text.contains(discarded_text.as_str())));
+        let merged_text = if additive_histories {
+            format!("{kept_text}{discarded_text}")
+        } else if kept_text.is_empty() || discarded_text.contains(kept_text.as_str()) {
+            discarded_text.clone()
+        } else if discarded_text.is_empty() || kept_text.contains(discarded_text.as_str()) {
+            kept_text.clone()
+        } else {
+            format!("{kept_text}{discarded_text}")
+        };
+        let mut emitted_bytes = [kept_emitted.as_str(), discarded_emitted.as_str()]
+            .into_iter()
+            .filter(|prefix| merged_text.starts_with(prefix))
+            .map(str::len)
+            .max()
+            .unwrap_or_default();
+        if concatenated && self.parts[keep].emitted_bytes == kept_text.len() {
+            let concatenated_emitted = format!("{kept_text}{discarded_emitted}");
+            if merged_text.starts_with(&concatenated_emitted) {
+                emitted_bytes = emitted_bytes.max(concatenated_emitted.len());
+            }
+        }
+        let merged_text_end = merged_text.chars().count();
+
+        {
+            let kept = &mut self.parts[keep];
+            kept.text = merged_text;
+            kept.emitted_bytes = emitted_bytes;
+            for annotation in discarded.annotations {
+                if let Some(existing) = kept
+                    .annotations
+                    .iter_mut()
+                    .find(|candidate| candidate.value == annotation.value)
+                {
+                    existing.emitted |= annotation.emitted;
+                } else {
+                    kept.annotations.push(BufferedCitationAnnotation {
+                        value: annotation.value,
+                        observed_text_end: merged_text_end,
+                        emitted: annotation.emitted,
+                    });
+                }
+            }
+            for key in discarded.output_keys {
+                if !kept.output_keys.contains(&key) {
+                    kept.output_keys.push(key);
+                }
+            }
+            for key in discarded.item_keys {
+                if !kept.item_keys.contains(&key) {
+                    kept.item_keys.push(key);
+                }
+            }
+            kept.originated_unkeyed |= discarded.originated_unkeyed;
+            kept.received_delta |= discarded.received_delta;
+        }
+        self.parts[discard].discarded = true;
+        self.parts[discard].emitted_bytes = self.parts[discard].text.len();
+        if self.open_part == Some(discard) {
+            self.open_part = Some(keep);
+        }
+        if self.last_unkeyed_part == Some(discard) {
+            self.last_unkeyed_part = Some(keep);
+        }
+        if self.parts[keep].emitted_bytes > 0 {
+            self.emitted_output_parts
+                .extend(self.parts[keep].output_keys.iter().copied());
+            self.emitted_item_parts
+                .extend(self.parts[keep].item_keys.iter().cloned());
+        }
+        keep
+    }
+
+    fn existing_keyed_part_index(
+        &mut self,
+        output_key: Option<(u64, u64)>,
+        item_key: Option<&(String, u64)>,
+    ) -> Option<usize> {
+        if self.key_pair_conflicts(output_key, item_key) {
+            return None;
+        }
+        let output_index = output_key.and_then(|key| self.output_part_index(key));
+        let item_index = item_key.and_then(|key| self.item_part_index(key));
+        match (output_index, item_index) {
+            (Some(output), Some(item)) => Some(self.merge_part_indices(output, item)),
+            (Some(index), None) | (None, Some(index)) => Some(index),
+            (None, None) => None,
+        }
+    }
+
+    fn snapshot_matches(part: &BufferedCitationPart, text: &str) -> bool {
+        part.text.is_empty() || part.text.starts_with(text) || text.starts_with(&part.text)
+    }
+
+    fn keys_allow_open_part_adoption(
+        part: &BufferedCitationPart,
+        output_key: Option<(u64, u64)>,
+        item_key: Option<&(String, u64)>,
+    ) -> bool {
+        let has_keys = !part.output_keys.is_empty() || !part.item_keys.is_empty();
+        if !has_keys {
+            return part.originated_unkeyed;
+        }
+        let shares_key = output_key.is_some_and(|key| part.output_keys.contains(&key))
+            || item_key.is_some_and(|key| part.item_keys.contains(key));
+        let output_conflicts = output_key
+            .is_some_and(|key| !part.output_keys.is_empty() && !part.output_keys.contains(&key));
+        let item_conflicts =
+            item_key.is_some_and(|key| !part.item_keys.is_empty() && !part.item_keys.contains(key));
+        shares_key && !output_conflicts && !item_conflicts
+    }
+
+    fn resolve_keyed_part(
+        &mut self,
+        output_key: Option<(u64, u64)>,
+        item_key: Option<(String, u64)>,
+        adopt_open_part: bool,
+        snapshot: Option<&str>,
+    ) -> Option<usize> {
+        if self.key_pair_conflicts(output_key, item_key.as_ref()) {
+            return None;
+        }
+        let existing = self.existing_keyed_part_index(output_key, item_key.as_ref());
+        let index = existing
+            .or_else(|| {
+                adopt_open_part
+                    .then_some(self.open_part)
+                    .flatten()
+                    .filter(|index| {
+                        self.parts.get(*index).is_some_and(|part| {
+                            !part.discarded
+                                && Self::keys_allow_open_part_adoption(
+                                    part,
+                                    output_key,
+                                    item_key.as_ref(),
+                                )
+                        })
+                    })
+            })
+            .or_else(|| {
+                snapshot.and_then(|text| {
+                    self.last_unkeyed_part.filter(|index| {
+                        self.parts.get(*index).is_some_and(|part| {
+                            !part.discarded
+                                && Self::has_pending_output(part)
+                                && part.originated_unkeyed
+                                && Self::keys_allow_open_part_adoption(
+                                    part,
+                                    output_key,
+                                    item_key.as_ref(),
+                                )
+                                && Self::snapshot_matches(part, text)
+                        })
+                    })
+                })
+            })
+            .unwrap_or_else(|| self.push_part(output_key, item_key.clone(), false));
+        self.bind_keys(index, output_key, item_key);
+        Some(index)
+    }
+
+    fn close_open_part(&mut self) {
+        let Some(index) = self.open_part.take() else {
+            return;
+        };
+        if self
+            .parts
+            .get(index)
+            .is_some_and(|part| !part.discarded && part.originated_unkeyed)
+        {
+            self.last_unkeyed_part = Some(index);
+        }
+    }
+
+    fn finish_event_part(&mut self, data: &Value) {
+        let (output_key, item_key) = Self::keys(data);
+        if self.key_pair_conflicts(output_key, item_key.as_ref()) {
+            return;
+        }
+        if output_key.is_none() && item_key.is_none() {
+            self.close_open_part();
+            return;
+        }
+        let finished = self.existing_keyed_part_index(output_key, item_key.as_ref());
+        if finished.is_some() && finished == self.open_part {
+            self.close_open_part();
+        }
+    }
+
+    fn start_unkeyed_part(&mut self, value: &Value) {
+        self.close_open_part();
+        let index = self.push_part(None, None, true);
+        self.open_part = Some(index);
+        if let Some(text) = value
+            .get("text")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+        {
+            Self::merge_snapshot(&mut self.parts[index], text);
+        }
+        if let Some(annotations) = value.get("annotations").and_then(Value::as_array) {
+            for annotation in annotations {
+                Self::append_annotation(&mut self.parts[index], annotation);
+            }
+        }
+    }
+
+    fn merge_snapshot(part: &mut BufferedCitationPart, text: &str) {
+        if text.starts_with(&part.text) {
+            part.text = text.to_string();
+            return;
+        }
+        if part.text.starts_with(text) {
+            return;
+        }
+        if part.emitted_bytes == 0 {
+            part.text = text.to_string();
+            return;
+        }
+        let emitted_prefix = &part.text[..part.emitted_bytes.min(part.text.len())];
+        if text.starts_with(emitted_prefix) && text.len() > part.text.len() {
+            part.text = text.to_string();
+        }
+    }
+
+    fn finish_unkeyed_text(&mut self, text: &str) -> bool {
+        if let Some(index) = self.open_part {
+            if self.parts.get(index).is_some_and(|part| part.text == text) {
+                self.close_open_part();
+                return true;
+            }
+            if self.emitted_unkeyed_history == text {
+                return false;
+            }
+            let cumulative_continuation = if self.emitted_unkeyed_history.is_empty() {
+                None
+            } else {
+                text.strip_prefix(&self.emitted_unkeyed_history)
+                    .filter(|continuation| !continuation.is_empty())
+            };
+            if let Some(continuation) = cumulative_continuation {
+                let continuation_matches = self
+                    .parts
+                    .get(index)
+                    .is_some_and(|part| Self::snapshot_matches(part, continuation));
+                if continuation_matches {
+                    Self::merge_snapshot(&mut self.parts[index], continuation);
+                    self.close_open_part();
+                    return true;
+                }
+                return false;
+            }
+            let previous_matches = self.last_unkeyed_part.is_some_and(|previous| {
+                previous != index
+                    && self.parts.get(previous).is_some_and(|part| {
+                        !part.discarded && part.originated_unkeyed && part.text == text
+                    })
+            });
+            let active_matches = self
+                .parts
+                .get(index)
+                .is_some_and(|part| Self::snapshot_matches(part, text));
+            if previous_matches && (!active_matches || self.parts[index].text.is_empty()) {
+                return false;
+            }
+            if !active_matches && !self.emitted_unkeyed_history.is_empty() {
+                return false;
+            }
+            Self::merge_snapshot(&mut self.parts[index], text);
+            self.close_open_part();
+            return true;
+        }
+
+        if let Some(index) = self.last_unkeyed_part.filter(|index| {
+            self.parts
+                .get(*index)
+                .is_some_and(|part| !part.discarded && part.originated_unkeyed)
+        }) {
+            if self.parts[index].text.contains(text) {
+                return true;
+            }
+            if text.starts_with(&self.parts[index].text) {
+                Self::merge_snapshot(&mut self.parts[index], text);
+                return true;
+            }
+        }
+
+        let index = self.push_part(None, None, true);
+        self.parts[index].text = text.to_string();
+        self.last_unkeyed_part = Some(index);
+        true
+    }
+
+    fn finish_unkeyed_part(&mut self, value: &Value) -> bool {
+        if let Some(text) = value
+            .get("text")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+        {
+            if !self.finish_unkeyed_text(text) {
+                return false;
+            }
+        } else {
+            self.close_open_part();
+        }
+        if let Some(annotations) = value.get("annotations").and_then(Value::as_array) {
+            if let Some(index) = self.last_unkeyed_part {
+                for annotation in annotations {
+                    Self::append_annotation(&mut self.parts[index], annotation);
+                }
+            }
+        }
+        true
+    }
+
+    fn record_text(&mut self, data: &Value, text: &str) -> bool {
+        let (output_key, item_key) = Self::keys(data);
+        let unkeyed = output_key.is_none() && item_key.is_none();
+        if unkeyed {
+            return self.finish_unkeyed_text(text);
+        }
+        let Some(index) = self.resolve_keyed_part(output_key, item_key, true, Some(text)) else {
+            return false;
+        };
+        Self::merge_snapshot(&mut self.parts[index], text);
+        if self.open_part == Some(index) {
+            self.close_open_part();
+        }
+        true
+    }
+
+    fn merge_part_value(part: &mut BufferedCitationPart, value: &Value) {
+        if let Some(text) = value
+            .get("text")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+        {
+            Self::merge_snapshot(part, text);
+        }
+        if let Some(annotations) = value.get("annotations").and_then(Value::as_array) {
+            for annotation in annotations {
+                Self::append_annotation(part, annotation);
+            }
+        }
+    }
+
+    fn record_part(&mut self, data: &Value, part: &Value, finalize_unkeyed: bool) -> bool {
+        let (output_key, item_key) = Self::keys(data);
+        let unkeyed = output_key.is_none() && item_key.is_none();
+        if unkeyed {
+            if finalize_unkeyed {
+                return self.finish_unkeyed_part(part);
+            } else {
+                self.start_unkeyed_part(part);
+            }
+            return true;
+        }
+
+        let snapshot = part
+            .get("text")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty());
+        let adopt_open_part = finalize_unkeyed
+            || self.open_part.is_some_and(|index| {
+                self.parts
+                    .get(index)
+                    .is_some_and(|candidate| candidate.text.is_empty())
+            });
+        if !finalize_unkeyed && !adopt_open_part {
+            self.close_open_part();
+        }
+        let Some(index) = self.resolve_keyed_part(output_key, item_key, adopt_open_part, snapshot)
+        else {
+            return false;
+        };
+        Self::merge_part_value(&mut self.parts[index], part);
+        if finalize_unkeyed {
+            if self.open_part == Some(index) {
+                self.close_open_part();
+            }
+        } else {
+            self.open_part = Some(index);
+        }
+        true
+    }
+
+    fn record_delta(&mut self, data: &Value, delta: &str) {
+        if delta.is_empty() {
+            return;
+        }
+        let (output_key, item_key) = Self::keys(data);
+        let unkeyed = output_key.is_none() && item_key.is_none();
+        if unkeyed {
+            let index = self.open_part.unwrap_or_else(|| {
+                let index = self.push_part(None, None, true);
+                self.open_part = Some(index);
+                index
+            });
+            self.parts[index].text.push_str(delta);
+            self.parts[index].received_delta = true;
+            return;
+        }
+        let Some(index) = self.resolve_keyed_part(output_key, item_key, true, None) else {
+            return;
+        };
+        self.parts[index].text.push_str(delta);
+        self.parts[index].received_delta = true;
+        if self.open_part != Some(index) {
+            self.close_open_part();
+            self.open_part = Some(index);
+        }
+    }
+
+    fn record_annotation(&mut self, data: &Value, annotation: &Value) {
+        let (output_key, item_key) = Self::keys(data);
+        let unkeyed = output_key.is_none() && item_key.is_none();
+        if unkeyed {
+            let index = self
+                .open_part
+                .or(self.last_unkeyed_part)
+                .unwrap_or_else(|| {
+                    let index = self.push_part(None, None, true);
+                    self.open_part = Some(index);
+                    index
+                });
+            Self::append_annotation(&mut self.parts[index], annotation);
+            return;
+        }
+        let Some(index) = self.resolve_keyed_part(output_key, item_key, true, None) else {
+            return;
+        };
+        Self::append_annotation(&mut self.parts[index], annotation);
+    }
+
+    fn was_emitted(
+        &self,
+        output_key: Option<(u64, u64)>,
+        item_key: Option<&(String, u64)>,
+    ) -> bool {
+        output_key.is_some_and(|key| self.emitted_output_parts.contains(&key))
+            || item_key.is_some_and(|key| self.emitted_item_parts.contains(key))
+    }
+
+    fn mark_emitted(&mut self, output_key: Option<(u64, u64)>, item_key: Option<(String, u64)>) {
+        if self.key_pair_conflicts(output_key, item_key.as_ref()) {
+            return;
+        }
+        if let Some(key) = output_key {
+            self.emitted_output_parts.insert(key);
+        }
+        if let Some(key) = item_key.as_ref() {
+            self.emitted_item_parts.insert(key.clone());
+        }
+        if let Some(index) = self.existing_keyed_part_index(output_key, item_key.as_ref()) {
+            self.bind_keys(index, output_key, item_key);
+            self.mark_part_emitted(index);
+        }
+    }
+
+    fn collect_annotations(
+        &self,
+        output_key: Option<(u64, u64)>,
+        item_key: Option<&(String, u64)>,
+        part: Option<&Value>,
+    ) -> Vec<Value> {
+        let matching_parts = self
+            .parts
+            .iter()
+            .filter(|buffered| {
+                !buffered.discarded
+                    && (output_key.is_some_and(|key| buffered.output_keys.contains(&key))
+                        || item_key.is_some_and(|key| buffered.item_keys.contains(key)))
+            })
+            .collect::<Vec<_>>();
+        let emitted_annotations = matching_parts
+            .iter()
+            .flat_map(|buffered| &buffered.annotations)
+            .filter(|annotation| annotation.emitted)
+            .map(|annotation| &annotation.value)
+            .collect::<Vec<_>>();
+        let mut annotations = Vec::new();
+        let mut append = |candidate: &Value| {
+            if !annotations.contains(candidate) {
+                annotations.push(candidate.clone());
+            }
+        };
+        if let Some(part_annotations) = part
+            .and_then(|part| part.get("annotations"))
+            .and_then(Value::as_array)
+        {
+            for annotation in part_annotations {
+                if !emitted_annotations.contains(&annotation) {
+                    append(annotation);
+                }
+            }
+        }
+        for buffered in matching_parts {
+            for annotation in buffered
+                .annotations
+                .iter()
+                .filter(|annotation| !annotation.emitted)
+            {
+                append(&annotation.value);
+            }
+        }
+        annotations
+    }
+
+    fn consume_part_annotations(
+        part: &mut BufferedCitationPart,
+        consumed_chars: usize,
+        consume_all: bool,
+    ) -> Vec<Value> {
+        let mut consumed = Vec::new();
+        let mut remaining = Vec::new();
+        for mut annotation in std::mem::take(&mut part.annotations) {
+            if consume_all || annotation.observed_text_end <= consumed_chars {
+                if !consumed.contains(&annotation.value) {
+                    consumed.push(annotation.value);
+                }
+            } else {
+                annotation.observed_text_end -= consumed_chars;
+                remaining.push(annotation);
+            }
+        }
+        part.annotations = remaining;
+        consumed
+    }
+
+    fn consume_emitted_unkeyed_annotations(
+        &mut self,
+        consumed_chars: usize,
+        consume_all: bool,
+    ) -> Vec<Value> {
+        let mut consumed = Vec::new();
+        let mut remaining = Vec::new();
+        for mut annotation in std::mem::take(&mut self.emitted_unkeyed_annotations) {
+            if consume_all || annotation.observed_text_end <= consumed_chars {
+                if !consumed.contains(&annotation.value) {
+                    consumed.push(annotation.value);
+                }
+            } else {
+                annotation.observed_text_end -= consumed_chars;
+                remaining.push(annotation);
+            }
+        }
+        self.emitted_unkeyed_annotations = remaining;
+        consumed
+    }
+
+    fn reconcile_unkeyed_terminal_text(
+        &mut self,
+        terminal_text: &str,
+        has_terminal_key: bool,
+    ) -> Vec<Value> {
+        if !has_terminal_key {
+            return Vec::new();
+        }
+
+        let Some(index) = self.parts.iter().position(|part| {
+            !part.discarded
+                && Self::has_pending_output(part)
+                && part.originated_unkeyed
+                && part.output_keys.is_empty()
+                && part.item_keys.is_empty()
+                && !part.text.is_empty()
+        }) else {
+            return Vec::new();
+        };
+        let unkeyed_text = self.parts[index].text.clone();
+        if let Some(remaining) = unkeyed_text.strip_prefix(terminal_text) {
+            let consumed_chars = terminal_text.chars().count();
+            let consume_all = remaining.is_empty();
+            let annotations =
+                Self::consume_part_annotations(&mut self.parts[index], consumed_chars, consume_all);
+            self.parts[index].text = remaining.to_string();
+            if consume_all {
+                self.mark_part_emitted(index);
+            }
+            return annotations;
+        }
+        if terminal_text.starts_with(&unkeyed_text) {
+            let annotations = Self::consume_part_annotations(
+                &mut self.parts[index],
+                unkeyed_text.chars().count(),
+                true,
+            );
+            self.parts[index].text.clear();
+            self.mark_part_emitted(index);
+            return annotations;
+        }
+
+        log::warn!(
+            "[Claude/Responses] Terminal text did not match the next unkeyed buffered part; preferring the terminal snapshot"
+        );
+        self.mark_part_emitted(index);
+        Vec::new()
+    }
+
+    fn reconcile_emitted_unkeyed_terminal_text(
+        &mut self,
+        terminal_text: &str,
+    ) -> EmittedUnkeyedTerminalMatch {
+        if self.emitted_unkeyed_history.is_empty() {
+            return EmittedUnkeyedTerminalMatch::NoMatch;
+        }
+
+        let emitted = self.emitted_unkeyed_history.clone();
+        if let Some(remaining) = emitted.strip_prefix(terminal_text) {
+            let consumed_chars = terminal_text.chars().count();
+            let consume_all = remaining.is_empty();
+            let emitted_annotations =
+                self.consume_emitted_unkeyed_annotations(consumed_chars, consume_all);
+            self.emitted_unkeyed_history = remaining.to_string();
+            return EmittedUnkeyedTerminalMatch::FullyEmitted(emitted_annotations);
+        }
+        if let Some(suffix) = terminal_text.strip_prefix(&emitted) {
+            let emitted_annotations =
+                self.consume_emitted_unkeyed_annotations(emitted.chars().count(), true);
+            self.emitted_unkeyed_history.clear();
+            return if suffix.is_empty() {
+                EmittedUnkeyedTerminalMatch::FullyEmitted(emitted_annotations)
+            } else {
+                EmittedUnkeyedTerminalMatch::MissingSuffix {
+                    suffix: suffix.to_string(),
+                    emitted_annotations,
+                }
+            };
+        }
+
+        EmittedUnkeyedTerminalMatch::NoMatch
+    }
+
+    fn record_done_event(&mut self, data: &Value) {
+        let mut accept_annotations = true;
+        if let Some(part) = data.get("part") {
+            accept_annotations = self.record_part(data, part, true);
+        }
+        if let Some(text) = data
+            .get("text")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+        {
+            if accept_annotations {
+                accept_annotations = self.record_text(data, text);
+            }
+        }
+        if !accept_annotations {
+            return;
+        }
+        if let Some(annotation) = data.get("annotation") {
+            self.record_annotation(data, annotation);
+        }
+        if let Some(annotations) = data.get("annotations").and_then(Value::as_array) {
+            for annotation in annotations {
+                self.record_annotation(data, annotation);
+            }
+        }
+        self.finish_event_part(data);
+    }
+
+    fn render_pending_parts(&mut self) -> Vec<String> {
+        let mut rendered = Vec::new();
+        for index in 0..self.parts.len() {
+            if let Some(text) = self.render_part_pending(index) {
+                rendered.push(text);
+            }
+        }
+        rendered
+    }
+
+    fn render_part_pending(&mut self, index: usize) -> Option<String> {
+        let part = self
+            .parts
+            .get(index)
+            .filter(|part| !part.discarded && Self::has_pending_output(part))?;
+        let emitted_bytes = part.emitted_bytes.min(part.text.len());
+        let missing = part.text[emitted_bytes..].to_string();
+        let annotations = Self::pending_annotation_values(part);
+        let unkeyed = part.output_keys.is_empty() && part.item_keys.is_empty();
+        let emitted_unkeyed_annotations = if unkeyed {
+            let emitted_chars = part.text[..emitted_bytes].chars().count();
+            let missing_chars = missing.chars().count();
+            part.annotations
+                .iter()
+                .filter(|annotation| !annotation.emitted)
+                .map(|annotation| {
+                    (
+                        annotation.value.clone(),
+                        annotation
+                            .observed_text_end
+                            .saturating_sub(emitted_chars)
+                            .min(missing_chars),
+                    )
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        if unkeyed {
+            let history_chars = self.emitted_unkeyed_history.chars().count();
+            self.emitted_unkeyed_history.push_str(&missing);
+            for (value, relative_end) in emitted_unkeyed_annotations {
+                let observed_text_end = history_chars + relative_end;
+                if !self.emitted_unkeyed_annotations.iter().any(|annotation| {
+                    annotation.value == value && annotation.observed_text_end == observed_text_end
+                }) {
+                    self.emitted_unkeyed_annotations
+                        .push(BufferedCitationAnnotation {
+                            value,
+                            observed_text_end,
+                            emitted: true,
+                        });
+                }
+            }
+        }
+        self.mark_part_emitted(index);
+
+        if emitted_bytes == 0 && !missing.is_empty() {
+            return Some(text_with_url_citations(&missing, &annotations));
+        }
+        let sources = text_with_url_citations("", &annotations);
+        match (missing.is_empty(), sources.is_empty()) {
+            (false, false) => Some(format!("{missing}\n\n{sources}")),
+            (false, true) => Some(missing),
+            (true, false) => Some(sources),
+            (true, true) => None,
+        }
+    }
+
+    fn append_part_annotations(&mut self, index: usize, value: &Value) {
+        if let Some(annotations) = value.get("annotations").and_then(Value::as_array) {
+            for annotation in annotations {
+                Self::append_annotation(&mut self.parts[index], annotation);
+            }
+        }
+    }
+
+    fn remember_rendered_terminal_part(
+        &mut self,
+        text: &str,
+        annotations: &[Value],
+        output_key: Option<(u64, u64)>,
+        item_key: Option<(String, u64)>,
+    ) {
+        if output_key.is_none() && item_key.is_none() {
+            return;
+        }
+        if self.key_pair_conflicts(output_key, item_key.as_ref()) {
+            return;
+        }
+        let index = self
+            .existing_keyed_part_index(output_key, item_key.as_ref())
+            .unwrap_or_else(|| self.push_part(output_key, item_key.clone(), false));
+        self.bind_keys(index, output_key, item_key);
+        Self::merge_snapshot(&mut self.parts[index], text);
+        for annotation in annotations {
+            Self::append_annotation(&mut self.parts[index], annotation);
+        }
+        self.mark_part_emitted(index);
+    }
+
+    fn render_message_part(
+        &mut self,
+        part: &Value,
+        output_index: Option<u64>,
+        item_id: Option<&str>,
+        content_index: u64,
+    ) -> Option<String> {
+        let output_key = output_index.map(|index| (index, content_index));
+        let item_key = item_id.map(|id| (id.to_string(), content_index));
+        if self.key_pair_conflicts(output_key, item_key.as_ref()) {
+            return None;
+        }
+        let keyed_index = self.existing_keyed_part_index(output_key, item_key.as_ref());
+        let text = part
+            .get("text")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())?;
+        if let Some(index) = keyed_index.filter(|index| {
+            Self::has_pending_output(&self.parts[*index])
+                && Self::snapshot_matches(&self.parts[*index], text)
+        }) {
+            self.bind_keys(index, output_key, item_key.clone());
+            Self::merge_snapshot(&mut self.parts[index], text);
+            self.append_part_annotations(index, part);
+            return self.render_part_pending(index);
+        }
+        match self.reconcile_emitted_unkeyed_terminal_text(text) {
+            EmittedUnkeyedTerminalMatch::FullyEmitted(emitted_annotations) => {
+                let annotations = part
+                    .get("annotations")
+                    .and_then(Value::as_array)
+                    .map(|annotations| {
+                        annotations
+                            .iter()
+                            .filter(|annotation| !emitted_annotations.contains(annotation))
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if let Some(index) =
+                    keyed_index.filter(|index| Self::has_pending_output(&self.parts[*index]))
+                {
+                    self.bind_keys(index, output_key, item_key.clone());
+                    if let Some(terminal_annotations) =
+                        part.get("annotations").and_then(Value::as_array)
+                    {
+                        for annotation in terminal_annotations {
+                            Self::append_annotation(&mut self.parts[index], annotation);
+                        }
+                    }
+                    return self.render_part_pending(index);
+                }
+                let terminal_annotations = part
+                    .get("annotations")
+                    .and_then(Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
+                self.remember_rendered_terminal_part(
+                    text,
+                    terminal_annotations,
+                    output_key,
+                    item_key,
+                );
+                let sources = text_with_url_citations("", &annotations);
+                return (!sources.is_empty()).then_some(sources);
+            }
+            EmittedUnkeyedTerminalMatch::MissingSuffix {
+                suffix,
+                emitted_annotations,
+            } => {
+                if let Some(index) = keyed_index {
+                    self.bind_keys(index, output_key, item_key.clone());
+                    Self::merge_snapshot(&mut self.parts[index], &suffix);
+                    if let Some(annotations) = part.get("annotations").and_then(Value::as_array) {
+                        for annotation in annotations
+                            .iter()
+                            .filter(|annotation| !emitted_annotations.contains(annotation))
+                        {
+                            Self::append_annotation(&mut self.parts[index], annotation);
+                        }
+                    }
+                    return self.render_part_pending(index);
+                }
+                let mut annotations: Vec<Value> = part
+                    .get("annotations")
+                    .and_then(Value::as_array)
+                    .map(|annotations| {
+                        annotations
+                            .iter()
+                            .filter(|annotation| !emitted_annotations.contains(annotation))
+                            .cloned()
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for annotation in self.reconcile_unkeyed_terminal_text(
+                    &suffix,
+                    output_key.is_some() || item_key.is_some(),
+                ) {
+                    if !annotations.contains(&annotation) {
+                        annotations.push(annotation);
+                    }
+                }
+                let mut remembered_annotations = part
+                    .get("annotations")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                for annotation in &annotations {
+                    if !remembered_annotations.contains(annotation) {
+                        remembered_annotations.push(annotation.clone());
+                    }
+                }
+                self.remember_rendered_terminal_part(
+                    text,
+                    &remembered_annotations,
+                    output_key,
+                    item_key,
+                );
+                let sources = text_with_url_citations("", &annotations);
+                return match (suffix.is_empty(), sources.is_empty()) {
+                    (false, false) => Some(format!("{suffix}\n\n{sources}")),
+                    (false, true) => Some(suffix),
+                    (true, false) => Some(sources),
+                    (true, true) => None,
+                };
+            }
+            EmittedUnkeyedTerminalMatch::NoMatch => {}
+        }
+        if keyed_index.is_none() && self.was_emitted(output_key, item_key.as_ref()) {
+            return None;
+        }
+        if let Some(index) = keyed_index {
+            self.bind_keys(index, output_key, item_key.clone());
+            Self::merge_snapshot(&mut self.parts[index], text);
+            self.append_part_annotations(index, part);
+            return self.render_part_pending(index);
+        }
+        let mut annotations = self.collect_annotations(output_key, item_key.as_ref(), Some(part));
+        for annotation in
+            self.reconcile_unkeyed_terminal_text(text, output_key.is_some() || item_key.is_some())
+        {
+            if !annotations.contains(&annotation) {
+                annotations.push(annotation);
+            }
+        }
+        let rendered = text_with_url_citations(text, &annotations);
+        self.remember_rendered_terminal_part(text, &annotations, output_key, item_key);
+        Some(rendered)
     }
 }
 
@@ -373,32 +1746,101 @@ fn missing_message_text_parts(
     item: &Value,
     output_index: Option<u64>,
     streamed_text: &mut StreamedTextState,
+    mut buffered_citations: Option<&mut BufferedCitationTextState>,
 ) -> Vec<String> {
     if item.get("type").and_then(Value::as_str) != Some("message") {
         return Vec::new();
     }
     let item_id = item.get("id").and_then(Value::as_str);
-    item.get("content")
+    let mut missing_parts = Vec::new();
+    for (content_index, part) in item
+        .get("content")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .enumerate()
-        .filter_map(|(content_index, part)| {
-            let full_text = match part.get("type").and_then(Value::as_str) {
-                Some("output_text") => part.get("text").and_then(Value::as_str),
-                Some("refusal") => part.get("refusal").and_then(Value::as_str),
-                _ => None,
+    {
+        match part.get("type").and_then(Value::as_str) {
+            Some("output_text") => {
+                if let Some(buffered) = buffered_citations.as_deref_mut() {
+                    let content_index = content_index as u64;
+                    if let Some(full_text) = part
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .filter(|text| !text.is_empty())
+                    {
+                        if streamed_text.has_part_matching_terminal(
+                            full_text,
+                            output_index,
+                            item_id,
+                            content_index,
+                        ) {
+                            let missing = streamed_text.missing_suffix(
+                                full_text,
+                                output_index,
+                                item_id,
+                                content_index,
+                            );
+                            let output_key = output_index.map(|index| (index, content_index));
+                            let item_key = item_id.map(|id| (id.to_string(), content_index));
+                            let annotations = buffered.collect_annotations(
+                                output_key,
+                                item_key.as_ref(),
+                                Some(part),
+                            );
+                            buffered.mark_emitted(output_key, item_key);
+                            let sources = text_with_url_citations("", &annotations);
+                            match (missing.is_empty(), sources.is_empty()) {
+                                (false, false) => {
+                                    missing_parts.push(format!("{missing}\n\n{sources}"));
+                                }
+                                (false, true) => missing_parts.push(missing),
+                                (true, false) => missing_parts.push(sources),
+                                (true, true) => {}
+                            }
+                        } else if let Some(text) =
+                            buffered.render_message_part(part, output_index, item_id, content_index)
+                        {
+                            missing_parts.push(text);
+                        }
+                    }
+                } else if let Some(full_text) = part
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.is_empty())
+                {
+                    let missing = streamed_text.missing_suffix(
+                        full_text,
+                        output_index,
+                        item_id,
+                        content_index as u64,
+                    );
+                    if !missing.is_empty() {
+                        missing_parts.push(missing);
+                    }
+                }
             }
-            .filter(|text| !text.is_empty())?;
-            let missing = streamed_text.missing_suffix(
-                full_text,
-                output_index,
-                item_id,
-                content_index as u64,
-            );
-            (!missing.is_empty()).then_some(missing)
-        })
-        .collect()
+            Some("refusal") => {
+                if let Some(full_text) = part
+                    .get("refusal")
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.is_empty())
+                {
+                    let missing = streamed_text.missing_suffix(
+                        full_text,
+                        output_index,
+                        item_id,
+                        content_index as u64,
+                    );
+                    if !missing.is_empty() {
+                        missing_parts.push(missing);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    missing_parts
 }
 
 fn text_block_events(index: u32, text: &str) -> [Bytes; 3] {
@@ -880,6 +2322,9 @@ pub(crate) fn create_anthropic_sse_stream_from_responses_with_web_search_options
     hosted_web_search_name: Option<String>,
     max_web_search_uses: Option<u64>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    let can_preserve_web_search_citations = hosted_web_search_name
+        .as_deref()
+        .is_some_and(|name| !name.is_empty());
     let hosted_web_search_name = hosted_web_search_name
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| "web_search".to_string());
@@ -887,6 +2332,7 @@ pub(crate) fn create_anthropic_sse_stream_from_responses_with_web_search_options
         stream,
         hosted_web_search_name.clone(),
         max_web_search_uses,
+        can_preserve_web_search_citations,
     );
     order_anthropic_web_search_result_stream(raw_stream, hosted_web_search_name)
 }
@@ -895,6 +2341,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
     hosted_web_search_name: String,
     max_web_search_uses: Option<u64>,
+    can_preserve_web_search_citations: bool,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
@@ -909,6 +2356,8 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
         let mut fallback_open_index: Option<u32> = None;
         let mut current_text_index: Option<u32> = None;
         let mut streamed_text = StreamedTextState::default();
+        let mut buffered_citation_text = BufferedCitationTextState::default();
+        let mut preserve_web_search_citations = false;
         let mut tool_index_by_item_id: HashMap<String, u32> = HashMap::new();
         let mut tool_name_by_index: HashMap<u32, String> = HashMap::new();
         let mut tool_args_by_index: HashMap<u32, String> = HashMap::new();
@@ -1131,6 +2580,27 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                 if let Some(part) = data.get("part") {
                                     let part_type = part.get("type").and_then(|t| t.as_str());
                                     if matches!(part_type, Some("output_text") | Some("refusal")) {
+                                        if preserve_web_search_citations
+                                            && part_type == Some("output_text")
+                                        {
+                                            buffered_citation_text.record_part(&data, part, false);
+                                            if current_text_index.is_none()
+                                                && part
+                                                    .get("text")
+                                                    .and_then(Value::as_str)
+                                                    .is_some_and(|text| !text.is_empty())
+                                            {
+                                                current_text_index =
+                                                    Some(resolve_content_index(
+                                                        &data,
+                                                        &mut next_content_index,
+                                                        &mut index_by_key,
+                                                        &mut fallback_open_index,
+                                                    ));
+                                            }
+                                            continue;
+                                        }
+
                                         let index = if let Some(index) = current_text_index {
                                             index
                                         } else {
@@ -1169,6 +2639,19 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                             // ================================================
                             "response.output_text.delta" => {
                                 if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
+                                    if preserve_web_search_citations {
+                                        buffered_citation_text.record_delta(&data, delta);
+                                        if current_text_index.is_none() {
+                                            current_text_index = Some(resolve_content_index(
+                                                &data,
+                                                &mut next_content_index,
+                                                &mut index_by_key,
+                                                &mut fallback_open_index,
+                                            ));
+                                        }
+                                        yield Ok(anthropic_ping_sse());
+                                        continue;
+                                    }
                                     streamed_text.record_delta(&data, delta);
                                     let index = if let Some(index) = current_text_index {
                                         index
@@ -1210,6 +2693,15 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                     yield Ok(Bytes::from(sse));
                                 }
                             }
+
+                            "response.output_text.annotation.added"
+                                if preserve_web_search_citations =>
+                            {
+                                if let Some(annotation) = data.get("annotation") {
+                                    buffered_citation_text.record_annotation(&data, annotation);
+                                }
+                            }
+                            "response.output_text.annotation.added" => {}
 
                             // ================================================
                             // response.refusal.delta → content_block_delta (text_delta)
@@ -1262,7 +2754,25 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                             // ================================================
                             // response.content_part.done → content_block_stop
                             // ================================================
-                            "response.content_part.done" => {}
+                            "response.content_part.done" if preserve_web_search_citations => {
+                                let accepted = if let Some(part) = data
+                                    .get("part")
+                                    .filter(|part| {
+                                        part.get("type").and_then(Value::as_str)
+                                            == Some("output_text")
+                                    })
+                                {
+                                    buffered_citation_text.record_part(&data, part, true)
+                                } else {
+                                    true
+                                };
+                                if accepted {
+                                    buffered_citation_text.finish_event_part(&data);
+                                }
+                            }
+                            "response.content_part.done" => {
+                                streamed_text.finish_part(&data);
+                            }
 
                             // ================================================
                             // response.output_item.added (function_call) → content_block_start (tool_use)
@@ -1270,6 +2780,43 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                             "response.output_item.added" => {
                                 if let Some(item) = data.get("item") {
                                     let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                                    if can_preserve_web_search_citations
+                                        && item_type == "web_search_call"
+                                    {
+                                        preserve_web_search_citations = true;
+                                    }
+                                    if preserve_web_search_citations && item_type != "message" {
+                                        let pending_text =
+                                            buffered_citation_text.render_pending_parts();
+                                        let mut reusable_text_index = None;
+                                        if !pending_text.is_empty() {
+                                            if let Some(index) = current_text_index.take() {
+                                                let was_open = open_indices.remove(&index);
+                                                if was_open {
+                                                    yield Ok(anthropic_sse(
+                                                        "content_block_stop",
+                                                        &json!({"type":"content_block_stop","index":index}),
+                                                    ));
+                                                } else {
+                                                    reusable_text_index = Some(index);
+                                                }
+                                                if fallback_open_index == Some(index) {
+                                                    fallback_open_index = None;
+                                                }
+                                            }
+                                        }
+                                        for text in pending_text {
+                                            let index =
+                                                reusable_text_index.take().unwrap_or_else(|| {
+                                                    let index = next_content_index;
+                                                    next_content_index += 1;
+                                                    index
+                                                });
+                                            for event in text_block_events(index, &text) {
+                                                yield Ok(event);
+                                            }
+                                        }
+                                    }
                                     if item_type == "function_call" {
                                         has_tool_use = true;
                                         has_substantive_output = true;
@@ -1716,6 +3263,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                             // response.refusal.done → content_block_stop
                             // ================================================
                             "response.refusal.done" => {
+                                streamed_text.finish_part(&data);
                                 let index = current_text_index.take().or_else(|| {
                                     let key = content_part_key(&data);
                                     if let Some(k) = key {
@@ -1969,6 +3517,7 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                     std::mem::take(&mut pending_web_search_results);
                                 let mut terminal_message_items = Vec::new();
                                 let mut terminal_web_search_limit_exceeded = false;
+                                let mut terminal_reusable_text_index = None;
                                 if let Some(output) =
                                     response_obj.get("output").and_then(Value::as_array)
                                 {
@@ -1977,12 +3526,21 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                             == Some("web_search_call")
                                     });
                                     if has_web_search_output {
+                                        if can_preserve_web_search_citations {
+                                            preserve_web_search_citations = true;
+                                        }
                                         if let Some(text_index) = current_text_index.take() {
-                                            if open_indices.remove(&text_index) {
+                                            let was_open = open_indices.remove(&text_index);
+                                            if was_open {
                                                 yield Ok(anthropic_sse(
                                                     "content_block_stop",
                                                     &json!({"type":"content_block_stop","index":text_index}),
                                                 ));
+                                            } else if preserve_web_search_citations {
+                                                terminal_reusable_text_index = Some(text_index);
+                                            }
+                                            if fallback_open_index == Some(text_index) {
+                                                fallback_open_index = None;
                                             }
                                         }
                                     }
@@ -2181,11 +3739,19 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
 
                                 if !web_search_id_order.is_empty() {
                                     if let Some(text_index) = current_text_index.take() {
-                                        if open_indices.remove(&text_index) {
+                                        let was_open = open_indices.remove(&text_index);
+                                        if was_open {
                                             yield Ok(anthropic_sse(
                                                 "content_block_stop",
                                                 &json!({"type":"content_block_stop","index":text_index}),
                                             ));
+                                        } else if preserve_web_search_citations
+                                            && terminal_reusable_text_index.is_none()
+                                        {
+                                            terminal_reusable_text_index = Some(text_index);
+                                        }
+                                        if fallback_open_index == Some(text_index) {
+                                            fallback_open_index = None;
                                         }
                                     }
                                     // An incomplete terminal response can arrive before
@@ -2245,29 +3811,73 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                 }
 
                                 for (output_index, item) in terminal_message_items {
+                                    let buffered_citations =
+                                        preserve_web_search_citations
+                                            .then_some(&mut buffered_citation_text);
                                     let missing_text = missing_message_text_parts(
                                         &item,
                                         Some(output_index),
                                         &mut streamed_text,
+                                        buffered_citations,
                                     );
                                     if missing_text.is_empty() {
                                         continue;
                                     }
                                     has_substantive_output = true;
+                                    let mut reusable_text_index =
+                                        terminal_reusable_text_index.take();
                                     if let Some(text_index) = current_text_index.take() {
-                                        if open_indices.remove(&text_index) {
+                                        let was_open = open_indices.remove(&text_index);
+                                        if was_open {
                                             yield Ok(anthropic_sse(
                                                 "content_block_stop",
                                                 &json!({"type":"content_block_stop","index":text_index}),
                                             ));
+                                        } else if preserve_web_search_citations {
+                                            reusable_text_index.get_or_insert(text_index);
                                         }
                                         if fallback_open_index == Some(text_index) {
                                             fallback_open_index = None;
                                         }
                                     }
                                     for text in missing_text {
-                                        let index = next_content_index;
-                                        next_content_index += 1;
+                                        let index =
+                                            reusable_text_index.take().unwrap_or_else(|| {
+                                                let index = next_content_index;
+                                                next_content_index += 1;
+                                                index
+                                            });
+                                        for event in text_block_events(index, &text) {
+                                            yield Ok(event);
+                                        }
+                                    }
+                                }
+                                if preserve_web_search_citations {
+                                    let pending_text =
+                                        buffered_citation_text.render_pending_parts();
+                                    let mut reusable_text_index =
+                                        terminal_reusable_text_index.take();
+                                    if !pending_text.is_empty() {
+                                        has_substantive_output = true;
+                                        if let Some(text_index) = current_text_index.take() {
+                                            let was_open = open_indices.remove(&text_index);
+                                            if was_open {
+                                                yield Ok(anthropic_sse(
+                                                    "content_block_stop",
+                                                    &json!({"type":"content_block_stop","index":text_index}),
+                                                ));
+                                            } else {
+                                                reusable_text_index.get_or_insert(text_index);
+                                            }
+                                        }
+                                    }
+                                    for text in pending_text {
+                                        let index =
+                                            reusable_text_index.take().unwrap_or_else(|| {
+                                                let index = next_content_index;
+                                                next_content_index += 1;
+                                                index
+                                            });
                                         for event in text_block_events(index, &text) {
                                             yield Ok(event);
                                         }
@@ -2362,6 +3972,11 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                             // Lifecycle events that don't need Anthropic counterparts.
                             // Listed explicitly so new events trigger a match-completeness review.
                             "response.output_text.done" => {
+                                if preserve_web_search_citations {
+                                    buffered_citation_text.record_done_event(&data);
+                                    continue;
+                                }
+                                streamed_text.finish_part(&data);
                                 if let Some(index) = current_text_index.take() {
                                     if open_indices.remove(&index) {
                                         let stop_event = json!({
@@ -2381,7 +3996,13 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                 let Some(item) = data.get("item") else {
                                     continue;
                                 };
-                                match item.get("type").and_then(Value::as_str) {
+                                let item_type = item.get("type").and_then(Value::as_str);
+                                if can_preserve_web_search_citations
+                                    && item_type == Some("web_search_call")
+                                {
+                                    preserve_web_search_citations = true;
+                                }
+                                match item_type {
                                     Some("function_call") => {
                                         has_tool_use = true;
                                         let item_id = item
@@ -2446,6 +4067,45 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                     }
                                     Some("web_search_call") => {
                                         has_substantive_output = true;
+                                        if preserve_web_search_citations {
+                                            let pending_text =
+                                                buffered_citation_text.render_pending_parts();
+                                            let mut reusable_text_index = None;
+                                            if !pending_text.is_empty() {
+                                                if let Some(text_index) =
+                                                    current_text_index.take()
+                                                {
+                                                    let was_open =
+                                                        open_indices.remove(&text_index);
+                                                    if was_open {
+                                                        yield Ok(anthropic_sse(
+                                                            "content_block_stop",
+                                                            &json!({"type":"content_block_stop","index":text_index}),
+                                                        ));
+                                                    } else {
+                                                        reusable_text_index =
+                                                            Some(text_index);
+                                                    }
+                                                    if fallback_open_index
+                                                        == Some(text_index)
+                                                    {
+                                                        fallback_open_index = None;
+                                                    }
+                                                }
+                                            }
+                                            for text in pending_text {
+                                                let index = reusable_text_index
+                                                    .take()
+                                                    .unwrap_or_else(|| {
+                                                        let index = next_content_index;
+                                                        next_content_index += 1;
+                                                        index
+                                                    });
+                                                for event in text_block_events(index, &text) {
+                                                    yield Ok(event);
+                                                }
+                                            }
+                                        }
                                         if !has_sent_message_start {
                                             yield Ok(anthropic_sse(
                                                 "message_start",
@@ -2709,10 +4369,14 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                         reasoning_text_by_index.remove(&index);
                                     }
                                     Some("message") => {
+                                        let buffered_citations =
+                                            preserve_web_search_citations
+                                                .then_some(&mut buffered_citation_text);
                                         let missing_text = missing_message_text_parts(
                                             item,
                                             data.get("output_index").and_then(Value::as_u64),
                                             &mut streamed_text,
+                                            buffered_citations,
                                         );
                                         if !missing_text.is_empty() {
                                             has_substantive_output = true;
@@ -2732,20 +4396,28 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                             ));
                                             has_sent_message_start = true;
                                         }
+                                        let mut reusable_text_index = None;
                                         if let Some(index) = current_text_index.take() {
-                                            if open_indices.remove(&index) {
+                                            let was_open = open_indices.remove(&index);
+                                            if was_open {
                                                 yield Ok(anthropic_sse(
                                                     "content_block_stop",
                                                     &json!({"type":"content_block_stop","index":index}),
                                                 ));
+                                            } else if preserve_web_search_citations {
+                                                reusable_text_index = Some(index);
                                             }
                                             if fallback_open_index == Some(index) {
                                                 fallback_open_index = None;
                                             }
                                         }
                                         for text in missing_text {
-                                            let index = next_content_index;
-                                            next_content_index += 1;
+                                            let index =
+                                                reusable_text_index.take().unwrap_or_else(|| {
+                                                    let index = next_content_index;
+                                                    next_content_index += 1;
+                                                    index
+                                                });
                                             for event in text_block_events(index, &text) {
                                                 yield Ok(event);
                                             }
@@ -2821,6 +4493,33 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                 && !has_unpaired_server_tool
                 && !has_open_reasoning
             {
+                if preserve_web_search_citations {
+                    let pending_text = buffered_citation_text.render_pending_parts();
+                    let mut reusable_text_index = None;
+                    if !pending_text.is_empty() {
+                        if let Some(index) = current_text_index.take() {
+                            let was_open = open_indices.remove(&index);
+                            if was_open {
+                                yield Ok(anthropic_sse(
+                                    "content_block_stop",
+                                    &json!({"type":"content_block_stop","index":index}),
+                                ));
+                            } else {
+                                reusable_text_index = Some(index);
+                            }
+                        }
+                    }
+                    for text in pending_text {
+                        let index = reusable_text_index.take().unwrap_or_else(|| {
+                            let index = next_content_index;
+                            next_content_index += 1;
+                            index
+                        });
+                        for event in text_block_events(index, &text) {
+                            yield Ok(event);
+                        }
+                    }
+                }
                 // Text-only partial output is safe to expose as a max-token style
                 // incomplete turn. Close blocks before the terminal events.
                 let mut remaining: Vec<u32> = open_indices.iter().copied().collect();
@@ -2927,6 +4626,21 @@ mod tests {
             .collect()
     }
 
+    async fn convert_raw_stream_text_with_web_search(input: impl Into<Bytes>) -> String {
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(input.into())]);
+        create_anthropic_sse_stream_from_responses_raw(
+            upstream,
+            "web_search".to_string(),
+            None,
+            true,
+        )
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
+        .collect()
+    }
+
     #[test]
     fn test_streamed_text_state_returns_only_the_missing_terminal_suffix() {
         let mut state = StreamedTextState::default();
@@ -2954,6 +4668,865 @@ mod tests {
                 Some("msg_partial"),
                 0
             ),
+            ""
+        );
+    }
+
+    #[test]
+    fn test_unkeyed_streamed_text_reconciles_with_later_terminal_keys() {
+        let mut streamed = StreamedTextState::default();
+        streamed.record_delta(&json!({}), "Before search.");
+        assert!(streamed.has_part_matching_terminal(
+            "Before search.",
+            Some(0),
+            Some("msg_before"),
+            0
+        ));
+
+        let item = json!({
+            "id": "msg_before",
+            "type": "message",
+            "content": [{
+                "type": "output_text",
+                "text": "Before search.",
+                "annotations": []
+            }]
+        });
+        let mut buffered = BufferedCitationTextState::default();
+        assert!(
+            missing_message_text_parts(&item, Some(0), &mut streamed, Some(&mut buffered))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn test_streamed_text_preserves_keyed_then_unkeyed_delta_order() {
+        let mut state = StreamedTextState::default();
+        let keyed = json!({
+            "item_id": "msg_transition",
+            "output_index": 0,
+            "content_index": 0
+        });
+        state.record_delta(&keyed, "Hello ");
+        state.record_delta(&json!({}), "world");
+
+        assert_eq!(
+            state.missing_suffix("Hello world!", Some(0), Some("msg_transition"), 0),
+            "!"
+        );
+    }
+
+    #[test]
+    fn test_streamed_text_scopes_unkeyed_order_after_prior_part_finishes() {
+        let mut state = StreamedTextState::default();
+        let old = json!({
+            "item_id": "msg_old",
+            "output_index": 0,
+            "content_index": 0
+        });
+        state.record_delta(&old, "Old.");
+        state.finish_part(&old);
+
+        state.record_delta(&json!({}), "Hello ");
+        let current = json!({
+            "item_id": "msg_current",
+            "output_index": 1,
+            "content_index": 0
+        });
+        state.record_delta(&current, "world");
+
+        assert_eq!(
+            state.missing_suffix("Hello world!", Some(1), Some("msg_current"), 0),
+            "!"
+        );
+    }
+
+    #[test]
+    fn test_streamed_text_binds_output_and_item_aliases_to_one_aggregate() {
+        let mut state = StreamedTextState::default();
+        state.record_delta(
+            &json!({"item_id": "msg_alias", "content_index": 0}),
+            "Item ",
+        );
+        state.record_delta(&json!({"output_index": 3, "content_index": 0}), "output ");
+        state.record_delta(
+            &json!({
+                "item_id": "msg_alias",
+                "output_index": 3,
+                "content_index": 0
+            }),
+            "joined",
+        );
+
+        assert_eq!(
+            state.missing_suffix("Item output joined!", Some(3), Some("msg_alias"), 0),
+            "!"
+        );
+        assert_eq!(
+            state.missing_suffix("Item output joined!", None, Some("msg_alias"), 0),
+            ""
+        );
+    }
+
+    #[test]
+    fn test_streamed_text_preserves_repeated_deltas_when_aliases_merge() {
+        let mut state = StreamedTextState::default();
+        state.record_delta(&json!({"output_index": 3, "content_index": 0}), "abc");
+        state.record_delta(&json!({"item_id": "msg_repeat", "content_index": 0}), "abc");
+        state.record_delta(
+            &json!({
+                "item_id": "msg_repeat",
+                "output_index": 3,
+                "content_index": 0
+            }),
+            "!",
+        );
+
+        assert_eq!(
+            state.missing_suffix("abcabc! tail", Some(3), Some("msg_repeat"), 0),
+            " tail"
+        );
+    }
+
+    #[test]
+    fn test_streamed_text_rejects_crossed_established_aliases() {
+        let mut state = StreamedTextState::default();
+        let first = json!({
+            "item_id": "msg_first",
+            "output_index": 0,
+            "content_index": 0
+        });
+        let second = json!({
+            "item_id": "msg_second",
+            "output_index": 1,
+            "content_index": 0
+        });
+        state.record_delta(&first, "First");
+        state.record_delta(&second, "Second");
+        state.record_delta(
+            &json!({
+                "item_id": "msg_second",
+                "output_index": 0,
+                "content_index": 0
+            }),
+            " crossed",
+        );
+
+        assert_eq!(
+            state.missing_suffix("First!", Some(0), Some("msg_first"), 0),
+            "!"
+        );
+    }
+
+    #[test]
+    fn test_streamed_text_keeps_distinct_unkeyed_tail_after_keyed_terminal_part() {
+        let mut state = StreamedTextState::default();
+        state.record_delta(
+            &json!({
+                "item_id": "msg_first",
+                "output_index": 0,
+                "content_index": 0
+            }),
+            "First.",
+        );
+        state.record_delta(&json!({}), "Second.");
+
+        assert_eq!(
+            state.missing_suffix("First.", Some(0), Some("msg_first"), 0),
+            ""
+        );
+        assert_eq!(
+            state.missing_suffix("Second.", Some(1), Some("msg_second"), 0),
+            ""
+        );
+    }
+
+    #[test]
+    fn test_buffered_citations_reject_stale_done_before_next_unkeyed_delta() {
+        let mut state = BufferedCitationTextState::default();
+        let unkeyed = json!({});
+
+        state.record_part(&unkeyed, &json!({"type": "output_text", "text": ""}), false);
+        state.record_delta(&unkeyed, "First.");
+        state.record_done_event(&json!({"text": "First."}));
+        state.record_part(
+            &unkeyed,
+            &json!({"type": "output_text", "text": "First.", "annotations": []}),
+            true,
+        );
+
+        state.record_part(&unkeyed, &json!({"type": "output_text", "text": ""}), false);
+        assert!(!state.record_part(
+            &unkeyed,
+            &json!({"type": "output_text", "text": "First.", "annotations": []}),
+            true,
+        ));
+        state.record_delta(&unkeyed, "Second.");
+        state.record_done_event(&json!({"text": "Second."}));
+
+        assert_eq!(state.render_pending_parts(), vec!["First.", "Second."]);
+    }
+
+    #[test]
+    fn test_buffered_citations_preserve_new_unkeyed_substring_after_part_boundary() {
+        let mut state = BufferedCitationTextState::default();
+        let unkeyed = json!({});
+
+        state.record_delta(&unkeyed, "foobar");
+        state.record_done_event(&json!({"text": "foobar"}));
+        assert_eq!(state.render_pending_parts(), vec!["foobar"]);
+
+        state.record_part(&unkeyed, &json!({"type": "output_text", "text": ""}), false);
+        assert!(state.record_part(
+            &unkeyed,
+            &json!({
+                "type": "output_text",
+                "text": "bar",
+                "annotations": [{
+                    "type": "url_citation",
+                    "start_index": 0,
+                    "end_index": 3,
+                    "url": "https://example.com/bar",
+                    "title": "Bar"
+                }]
+            }),
+            true,
+        ));
+
+        assert_eq!(
+            state.render_pending_parts(),
+            vec!["[bar](https://example.com/bar)"]
+        );
+    }
+
+    #[test]
+    fn test_buffered_citations_merge_unkeyed_prefix_when_keys_appear() {
+        let mut state = BufferedCitationTextState::default();
+        state.record_delta(&json!({}), "Prefix ");
+        state.record_delta(&json!({"output_index": 2, "content_index": 0}), "suffix.");
+
+        assert_eq!(state.render_pending_parts(), vec!["Prefix suffix."]);
+    }
+
+    #[test]
+    fn test_buffered_citations_preserve_unkeyed_then_keyed_part_order() {
+        let mut state = BufferedCitationTextState::default();
+        let unkeyed = json!({});
+        state.record_delta(&unkeyed, "First.");
+        state.record_done_event(&json!({"text": "First."}));
+        state.record_delta(&json!({"output_index": 2, "content_index": 0}), "Second.");
+
+        assert_eq!(state.render_pending_parts(), vec!["First.", "Second."]);
+    }
+
+    #[test]
+    fn test_buffered_citations_do_not_alias_empty_keyed_part_to_prior_unkeyed_part() {
+        let mut state = BufferedCitationTextState::default();
+        let unkeyed = json!({});
+        state.record_delta(&unkeyed, "First.");
+        state.record_done_event(&json!({"text": "First."}));
+
+        let keyed = json!({"output_index": 2, "content_index": 0});
+        state.record_part(&keyed, &json!({"type": "output_text", "text": ""}), false);
+        state.record_delta(&keyed, "Second.");
+
+        assert_eq!(state.render_pending_parts(), vec!["First.", "Second."]);
+    }
+
+    #[test]
+    fn test_buffered_citations_merge_item_only_part_when_output_key_appears() {
+        let mut state = BufferedCitationTextState::default();
+        state.record_delta(
+            &json!({"item_id": "msg_transition", "content_index": 0}),
+            "Full ",
+        );
+        state.record_delta(
+            &json!({
+                "item_id": "msg_transition",
+                "output_index": 3,
+                "content_index": 0
+            }),
+            "text.",
+        );
+
+        assert_eq!(state.render_pending_parts(), vec!["Full text."]);
+    }
+
+    #[test]
+    fn test_buffered_citations_keep_item_only_parts_in_arrival_order() {
+        let mut state = BufferedCitationTextState::default();
+        state.record_delta(&json!({"item_id": "z_item", "content_index": 0}), "First.");
+        state
+            .record_done_event(&json!({"item_id": "z_item", "content_index": 0, "text": "First."}));
+        state.record_delta(&json!({"item_id": "a_item", "content_index": 0}), "Second.");
+
+        assert_eq!(state.render_pending_parts(), vec!["First.", "Second."]);
+    }
+
+    #[test]
+    fn test_buffered_citations_render_fuller_aggregate_than_stale_terminal_snapshot() {
+        let mut state = BufferedCitationTextState::default();
+        let keyed = json!({
+            "item_id": "msg_fuller",
+            "output_index": 0,
+            "content_index": 0
+        });
+        state.record_delta(&keyed, "Full text.");
+
+        let terminal = json!({"text": "Full", "annotations": []});
+        assert_eq!(
+            state.render_message_part(&terminal, Some(0), Some("msg_fuller"), 0),
+            Some("Full text.".to_string())
+        );
+        assert!(state.render_pending_parts().is_empty());
+    }
+
+    #[test]
+    fn test_buffered_citations_preserve_keyed_delta_after_part_was_flushed() {
+        let mut state = BufferedCitationTextState::default();
+        let keyed = json!({
+            "item_id": "msg_delayed",
+            "output_index": 0,
+            "content_index": 0
+        });
+        state.record_delta(&keyed, "Before");
+        assert_eq!(state.render_pending_parts(), vec!["Before"]);
+
+        state.record_delta(&keyed, " after");
+        state.record_done_event(&json!({
+            "item_id": "msg_delayed",
+            "output_index": 0,
+            "content_index": 0,
+            "text": "Before after"
+        }));
+        let terminal = json!({"text": "Before", "annotations": []});
+        assert_eq!(
+            state.render_message_part(&terminal, Some(0), Some("msg_delayed"), 0),
+            Some(" after".to_string())
+        );
+        assert!(state.render_pending_parts().is_empty());
+    }
+
+    #[test]
+    fn test_buffered_citations_merge_emitted_and_pending_aliases_without_dropping_tail() {
+        let mut state = BufferedCitationTextState::default();
+        let output_only = json!({"output_index": 0, "content_index": 0});
+        state.record_delta(&output_only, "Before");
+        assert_eq!(state.render_pending_parts(), vec!["Before"]);
+
+        let item_only = json!({"item_id": "msg_alias", "content_index": 0});
+        state.record_delta(&item_only, " after");
+        state.record_delta(
+            &json!({
+                "item_id": "msg_alias",
+                "output_index": 0,
+                "content_index": 0
+            }),
+            "!",
+        );
+
+        assert_eq!(state.render_pending_parts(), vec![" after!"]);
+    }
+
+    #[test]
+    fn test_buffered_citations_keep_post_flush_delta_across_stale_done_snapshot() {
+        let mut state = BufferedCitationTextState::default();
+        let keyed = json!({
+            "item_id": "msg_stale",
+            "output_index": 0,
+            "content_index": 0
+        });
+        state.record_delta(&keyed, "Before");
+        assert_eq!(state.render_pending_parts(), vec!["Before"]);
+        state.record_delta(&keyed, " after");
+        state.record_done_event(&json!({
+            "item_id": "msg_stale",
+            "output_index": 0,
+            "content_index": 0,
+            "text": "Before"
+        }));
+
+        assert_eq!(state.render_pending_parts(), vec![" after"]);
+    }
+
+    #[test]
+    fn test_buffered_citations_reject_stale_unkeyed_done_after_flush() {
+        let mut state = BufferedCitationTextState::default();
+        let unkeyed = json!({});
+        state.record_delta(&unkeyed, "Before");
+        assert_eq!(state.render_pending_parts(), vec!["Before"]);
+
+        state.record_delta(&unkeyed, " after");
+        state.record_done_event(&json!({"text": "Before"}));
+
+        assert_eq!(state.render_pending_parts(), vec![" after"]);
+    }
+
+    #[test]
+    fn test_buffered_citations_reconcile_cumulative_unkeyed_done_after_flush() {
+        let mut state = BufferedCitationTextState::default();
+        let unkeyed = json!({});
+        state.record_delta(&unkeyed, "Before");
+        assert_eq!(state.render_pending_parts(), vec!["Before"]);
+
+        state.record_delta(&unkeyed, " after");
+        state.record_done_event(&json!({"text": "Before after"}));
+
+        assert_eq!(state.render_pending_parts(), vec![" after"]);
+    }
+
+    #[test]
+    fn test_buffered_citations_ignore_partial_stale_unkeyed_done_after_flush() {
+        let mut state = BufferedCitationTextState::default();
+        let unkeyed = json!({});
+        state.record_delta(&unkeyed, "Before");
+        assert_eq!(state.render_pending_parts(), vec!["Before"]);
+
+        state.record_delta(&unkeyed, " after");
+        state.record_done_event(&json!({"text": "Bef"}));
+
+        assert_eq!(state.render_pending_parts(), vec![" after"]);
+    }
+
+    #[test]
+    fn test_buffered_citations_reject_incompatible_cumulative_unkeyed_done() {
+        let mut state = BufferedCitationTextState::default();
+        state.record_delta(&json!({}), "Before");
+        assert_eq!(state.render_pending_parts(), vec!["Before"]);
+
+        state.record_delta(&json!({}), " after");
+        state.record_done_event(&json!({"text": "Before stale"}));
+
+        assert_eq!(state.render_pending_parts(), vec![" after"]);
+    }
+
+    #[test]
+    fn test_buffered_citations_merge_fuller_duplicate_unkeyed_done() {
+        let mut state = BufferedCitationTextState::default();
+        state.record_delta(&json!({}), "Before");
+        state.record_done_event(&json!({"text": "Before"}));
+        state.record_done_event(&json!({"text": "Before after"}));
+
+        assert_eq!(state.render_pending_parts(), vec!["Before after"]);
+    }
+
+    #[test]
+    fn test_buffered_citations_metadata_only_done_closes_keyed_part() {
+        let mut state = BufferedCitationTextState::default();
+        let keyed = json!({
+            "item_id": "msg_first",
+            "output_index": 0,
+            "content_index": 0
+        });
+        state.record_delta(&keyed, "First.");
+        state.record_done_event(&keyed);
+        state.record_delta(&json!({}), "Second.");
+
+        assert_eq!(state.render_pending_parts(), vec!["First.", "Second."]);
+    }
+
+    #[test]
+    fn test_buffered_citations_do_not_adopt_open_part_with_conflicting_keys() {
+        let mut state = BufferedCitationTextState::default();
+        state.record_delta(
+            &json!({
+                "item_id": "msg_first",
+                "output_index": 0,
+                "content_index": 0
+            }),
+            "First.",
+        );
+        state.record_delta(
+            &json!({
+                "item_id": "msg_second",
+                "output_index": 1,
+                "content_index": 0
+            }),
+            "Second.",
+        );
+
+        assert_eq!(state.render_pending_parts(), vec!["First.", "Second."]);
+    }
+
+    #[test]
+    fn test_buffered_citations_preserve_repeated_post_flush_delta() {
+        let mut state = BufferedCitationTextState::default();
+        let keyed = json!({"output_index": 0, "content_index": 0});
+        state.record_delta(&keyed, "abc");
+        assert_eq!(state.render_pending_parts(), vec!["abc"]);
+
+        state.record_delta(&keyed, "abc");
+        assert_eq!(state.render_pending_parts(), vec!["abc"]);
+    }
+
+    #[test]
+    fn test_buffered_citations_preserve_repeated_alias_deltas() {
+        let mut state = BufferedCitationTextState::default();
+        let output_only = json!({"output_index": 0, "content_index": 0});
+        state.record_delta(&output_only, "abc");
+        assert_eq!(state.render_pending_parts(), vec!["abc"]);
+
+        state.record_delta(&json!({"item_id": "msg_repeat", "content_index": 0}), "abc");
+        state.record_delta(
+            &json!({
+                "item_id": "msg_repeat",
+                "output_index": 0,
+                "content_index": 0
+            }),
+            "!",
+        );
+
+        assert_eq!(state.render_pending_parts(), vec!["abc!"]);
+    }
+
+    #[test]
+    fn test_buffered_citations_empty_delta_does_not_make_snapshots_additive() {
+        let mut state = BufferedCitationTextState::default();
+        let output_only = json!({"output_index": 0, "content_index": 0});
+        assert!(state.record_text(&output_only, "abc"));
+        state.record_delta(&output_only, "");
+
+        let item_only = json!({"item_id": "msg_snapshot", "content_index": 0});
+        state.record_delta(&item_only, "abc");
+        let both = json!({
+            "item_id": "msg_snapshot",
+            "output_index": 0,
+            "content_index": 0
+        });
+        assert!(state.record_text(&both, "abc"));
+
+        assert_eq!(state.render_pending_parts(), vec!["abc"]);
+    }
+
+    #[test]
+    fn test_buffered_citations_do_not_reuse_last_unkeyed_part_for_conflicting_snapshot_key() {
+        let mut state = BufferedCitationTextState::default();
+        state.record_delta(&json!({}), "Same.");
+        assert!(state.record_text(
+            &json!({
+                "item_id": "msg_first",
+                "output_index": 0,
+                "content_index": 0
+            }),
+            "Same."
+        ));
+        assert!(state.record_text(
+            &json!({
+                "item_id": "msg_second",
+                "output_index": 1,
+                "content_index": 0
+            }),
+            "Same."
+        ));
+
+        assert_eq!(state.render_pending_parts(), vec!["Same.", "Same."]);
+    }
+
+    #[test]
+    fn test_buffered_citations_reject_crossed_established_aliases() {
+        let mut state = BufferedCitationTextState::default();
+        state.record_delta(
+            &json!({
+                "item_id": "msg_first",
+                "output_index": 0,
+                "content_index": 0
+            }),
+            "First.",
+        );
+        state.record_done_event(&json!({
+            "item_id": "msg_first",
+            "output_index": 0,
+            "content_index": 0,
+            "text": "First."
+        }));
+        state.record_delta(
+            &json!({
+                "item_id": "msg_second",
+                "output_index": 1,
+                "content_index": 0
+            }),
+            "Second.",
+        );
+        state.record_delta(
+            &json!({
+                "item_id": "msg_second",
+                "output_index": 0,
+                "content_index": 0
+            }),
+            "Crossed.",
+        );
+
+        assert_eq!(state.render_pending_parts(), vec!["First.", "Second."]);
+    }
+
+    #[test]
+    fn test_buffered_citations_reconcile_fuller_terminal_after_keyed_flush() {
+        let mut state = BufferedCitationTextState::default();
+        let keyed = json!({
+            "item_id": "msg_terminal",
+            "output_index": 0,
+            "content_index": 0
+        });
+        state.record_delta(&keyed, "Before");
+        assert_eq!(state.render_pending_parts(), vec!["Before"]);
+
+        let terminal = json!({
+            "text": "Before after",
+            "annotations": [{
+                "type": "url_citation",
+                "start_index": 7,
+                "end_index": 12,
+                "url": "https://example.com/after",
+                "title": "After"
+            }]
+        });
+        let rendered = state
+            .render_message_part(&terminal, Some(0), Some("msg_terminal"), 0)
+            .expect("fuller terminal suffix and citation should be emitted");
+        assert!(rendered.starts_with(" after"));
+        assert!(rendered.contains("https://example.com/after"));
+    }
+
+    #[test]
+    fn test_buffered_citations_consume_pending_unkeyed_suffix_after_emitted_history() {
+        let mut state = BufferedCitationTextState::default();
+        let unkeyed = json!({});
+        state.record_delta(&unkeyed, "First");
+        assert_eq!(state.render_pending_parts(), vec!["First"]);
+        state.record_delta(&unkeyed, "Second");
+
+        let terminal = json!({"text": "FirstSecond", "annotations": []});
+        assert_eq!(
+            state.render_message_part(&terminal, Some(0), Some("msg_combined"), 0),
+            Some("Second".to_string())
+        );
+        assert!(state.render_pending_parts().is_empty());
+    }
+
+    #[test]
+    fn test_buffered_citations_do_not_discard_keyed_tail_for_stale_unkeyed_snapshot() {
+        let mut state = BufferedCitationTextState::default();
+        state.record_delta(&json!({}), "Before");
+        assert_eq!(state.render_pending_parts(), vec!["Before"]);
+
+        let keyed = json!({
+            "item_id": "msg_tail",
+            "output_index": 0,
+            "content_index": 0
+        });
+        state.record_delta(&keyed, " after");
+        let stale = json!({"text": "Before", "annotations": []});
+        assert_eq!(
+            state.render_message_part(&stale, Some(0), Some("msg_tail"), 0),
+            Some(" after".to_string())
+        );
+
+        let complete = json!({"text": "Before after", "annotations": []});
+        assert_eq!(
+            state.render_message_part(&complete, Some(0), Some("msg_tail"), 0),
+            None
+        );
+    }
+
+    #[test]
+    fn test_buffered_citations_render_later_unkeyed_text_after_keyed_part() {
+        let mut state = BufferedCitationTextState::default();
+        let keyed = json!({"output_index": 0, "content_index": 0});
+        state.record_delta(&keyed, "Keyed.");
+        assert_eq!(state.render_pending_parts(), vec!["Keyed."]);
+
+        let unkeyed = json!({});
+        state.record_delta(&unkeyed, "Rust docs.");
+        state.record_annotation(
+            &unkeyed,
+            &json!({
+                "type": "url_citation",
+                "start_index": 0,
+                "end_index": 4,
+                "url": "https://www.rust-lang.org/",
+                "title": "Rust"
+            }),
+        );
+
+        assert_eq!(
+            state.render_pending_parts(),
+            vec!["[Rust](https://www.rust-lang.org/) docs."]
+        );
+    }
+
+    #[test]
+    fn test_buffered_citations_do_not_replay_emitted_unkeyed_history() {
+        let mut state = BufferedCitationTextState::default();
+        let unkeyed = json!({});
+        state.record_delta(&unkeyed, "First.");
+        assert_eq!(state.render_pending_parts(), vec!["First."]);
+
+        state.record_delta(&unkeyed, "Second.");
+        let first = json!({"text": "First.", "annotations": []});
+        assert_eq!(
+            state.render_message_part(&first, Some(0), Some("msg_first"), 0),
+            None
+        );
+        let second = json!({"text": "Second.", "annotations": []});
+        assert_eq!(
+            state.render_message_part(&second, Some(1), Some("msg_second"), 0),
+            Some("Second.".to_string())
+        );
+        assert!(state.render_pending_parts().is_empty());
+    }
+
+    #[test]
+    fn test_buffered_citations_filter_citations_emitted_with_unkeyed_history() {
+        let mut state = BufferedCitationTextState::default();
+        let already_emitted = json!({
+            "type": "url_citation",
+            "start_index": 0,
+            "end_index": 4,
+            "url": "https://www.rust-lang.org/",
+            "title": "Rust"
+        });
+        state.record_delta(&json!({}), "Rust");
+        state.record_annotation(&json!({}), &already_emitted);
+        assert_eq!(
+            state.render_pending_parts(),
+            vec!["[Rust](https://www.rust-lang.org/)"]
+        );
+
+        let terminal_only = json!({
+            "type": "url_citation",
+            "start_index": 0,
+            "end_index": 4,
+            "url": "https://doc.rust-lang.org/",
+            "title": "Rust docs"
+        });
+        let terminal = json!({
+            "text": "Rust",
+            "annotations": [already_emitted, terminal_only]
+        });
+        let rendered = state
+            .render_message_part(&terminal, Some(0), Some("msg_rust"), 0)
+            .expect("the terminal-only citation should still be emitted");
+        assert!(!rendered.contains("https://www.rust-lang.org/"));
+        assert!(rendered.contains("https://doc.rust-lang.org/"));
+    }
+
+    #[test]
+    fn test_buffered_citations_keep_same_citation_on_distinct_keyed_tail() {
+        let mut state = BufferedCitationTextState::default();
+        let citation = json!({
+            "type": "url_citation",
+            "start_index": 0,
+            "end_index": 4,
+            "url": "https://www.rust-lang.org/",
+            "title": "Rust"
+        });
+        state.record_delta(&json!({}), "Rust");
+        state.record_annotation(&json!({}), &citation);
+        assert_eq!(
+            state.render_pending_parts(),
+            vec!["[Rust](https://www.rust-lang.org/)"]
+        );
+
+        let keyed = json!({
+            "item_id": "msg_tail",
+            "output_index": 0,
+            "content_index": 0
+        });
+        state.record_delta(&keyed, "Rust");
+        let terminal = json!({"text": "Rust", "annotations": [citation]});
+        assert_eq!(
+            state.render_message_part(&terminal, Some(0), Some("msg_tail"), 0),
+            Some("[Rust](https://www.rust-lang.org/)".to_string())
+        );
+    }
+
+    #[test]
+    fn test_buffered_citations_collects_only_pending_keyed_annotations() {
+        let mut state = BufferedCitationTextState::default();
+        let keyed = json!({
+            "item_id": "msg_annotation",
+            "output_index": 0,
+            "content_index": 0
+        });
+        let citation = json!({
+            "type": "url_citation",
+            "start_index": 0,
+            "end_index": 4,
+            "url": "https://www.rust-lang.org/",
+            "title": "Rust"
+        });
+        state.record_annotation(&keyed, &citation);
+        assert_eq!(
+            state.render_pending_parts(),
+            vec!["Sources: [Rust](https://www.rust-lang.org/)"]
+        );
+
+        let terminal = json!({"text": "Rust", "annotations": [citation]});
+        assert!(state
+            .collect_annotations(
+                Some((0, 0)),
+                Some(&("msg_annotation".to_string(), 0)),
+                Some(&terminal)
+            )
+            .is_empty());
+    }
+
+    #[test]
+    fn test_buffered_citations_retain_terminal_only_part_for_late_enrichment() {
+        let mut state = BufferedCitationTextState::default();
+        let first = json!({"text": "Before", "annotations": []});
+        assert_eq!(
+            state.render_message_part(&first, Some(0), Some("msg_terminal_only"), 0),
+            Some("Before".to_string())
+        );
+
+        let enriched = json!({
+            "text": "Before after",
+            "annotations": [{
+                "type": "url_citation",
+                "start_index": 7,
+                "end_index": 12,
+                "url": "https://example.com/after",
+                "title": "After"
+            }]
+        });
+        let rendered = state
+            .render_message_part(&enriched, Some(0), Some("msg_terminal_only"), 0)
+            .expect("late suffix and citation should be emitted");
+        assert!(rendered.starts_with(" after"));
+        assert!(rendered.contains("https://example.com/after"));
+    }
+
+    #[test]
+    fn test_buffered_citations_win_over_unrelated_pre_search_unkeyed_text() {
+        let mut streamed = StreamedTextState::default();
+        streamed.record_delta(&json!({}), "Before search.");
+
+        let mut buffered = BufferedCitationTextState::default();
+        buffered.record_delta(
+            &json!({
+                "item_id": "msg_after",
+                "output_index": 2,
+                "content_index": 0
+            }),
+            "After search.",
+        );
+        let item = json!({
+            "id": "msg_after",
+            "type": "message",
+            "content": [{
+                "type": "output_text",
+                "text": "After search.",
+                "annotations": []
+            }]
+        });
+
+        assert_eq!(
+            missing_message_text_parts(&item, Some(2), &mut streamed, Some(&mut buffered)),
+            vec!["After search."]
+        );
+        assert_eq!(
+            streamed.missing_suffix("Before search.", Some(0), Some("msg_before"), 0),
             ""
         );
     }
@@ -3075,10 +5648,12 @@ mod tests {
             "data: {\"type\":\"response.content_part.added\",\"output_index\":1,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
             "event: response.output_text.delta\n",
             "data: {\"type\":\"response.output_text.delta\",\"output_index\":1,\"content_index\":0,\"delta\":\"Rust docs are online.\"}\n\n",
+            "event: response.output_text.annotation.added\n",
+            "data: {\"type\":\"response.output_text.annotation.added\",\"output_index\":1,\"content_index\":0,\"annotation_index\":0,\"annotation\":{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":9,\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}}\n\n",
             "event: response.output_text.done\n",
             "data: {\"type\":\"response.output_text.done\",\"output_index\":1,\"content_index\":0,\"text\":\"Rust docs are online.\"}\n\n",
             "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_123\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Rust docs are online.\",\"annotations\":[{\"type\":\"url_citation\",\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}]}]}}\n\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_123\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Rust docs are online.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":9,\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}]}]}}\n\n",
             "event: response.completed\n",
             "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_search\",\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":12}}}\n\n"
         );
@@ -3107,10 +5682,237 @@ mod tests {
             .contains("\"partial_json\":\"{\\\"query\\\":\\\"Rust official documentation\\\"}\""));
         assert!(merged.contains("https://doc.rust-lang.org/"));
         assert!(merged.contains("\"title\":\"Rust Documentation\""));
+        let text_deltas: Vec<&str> = events
+            .iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| event.pointer("/delta/text").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            text_deltas,
+            vec!["[Rust docs](https://doc.rust-lang.org/) are online."]
+        );
         assert!(merged.contains("\"stop_reason\":\"end_turn\""));
         assert!(!merged.contains("\"stop_reason\":\"tool_use\""));
         assert!(merged.contains("\"web_search_requests\":1"));
         assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_buffered_hosted_web_search_text_emits_keepalive_ping() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_keepalive\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_keepalive\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_keepalive\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\"}}}\n\n",
+            "event: response.content_part.added\n",
+            "data: {\"type\":\"response.content_part.added\",\"output_index\":1,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"output_index\":1,\"content_index\":0,\"delta\":\"Still synthesizing the answer.\"}\n\n"
+        );
+
+        let merged = convert_raw_stream_text_with_web_search(input).await;
+
+        assert_eq!(merged.matches("event: ping").count(), 1);
+        assert!(!merged.contains("\"type\":\"text_delta\""));
+    }
+
+    #[tokio::test]
+    async fn test_terminal_search_recovery_reuses_reserved_text_index() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_recovery\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_recovery\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_recovery\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\",\"sources\":[{\"type\":\"url\",\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}]}}}\n\n",
+            "event: response.content_part.added\n",
+            "data: {\"type\":\"response.content_part.added\",\"item_id\":\"msg_recovery\",\"output_index\":1,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_recovery\",\"output_index\":1,\"content_index\":0,\"delta\":\"Rust docs are online.\"}\n\n",
+            "event: response.output_text.annotation.added\n",
+            "data: {\"type\":\"response.output_text.annotation.added\",\"item_id\":\"msg_recovery\",\"output_index\":1,\"content_index\":0,\"annotation_index\":0,\"annotation\":{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":9,\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}}\n\n",
+            "event: response.output_text.done\n",
+            "data: {\"type\":\"response.output_text.done\",\"item_id\":\"msg_recovery\",\"output_index\":1,\"content_index\":0,\"text\":\"Rust docs are online.\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_recovery\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"ws_recovery\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\",\"sources\":[{\"type\":\"url\",\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}]}},{\"id\":\"msg_recovery\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Rust docs are online.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":9,\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}]}]}],\"usage\":{\"input_tokens\":8,\"output_tokens\":5}}}\n\n"
+        );
+
+        let merged = convert_stream_text_with_web_search_name(input, "web_search").await;
+        let events = sse_data_values(&merged);
+        let started_indices: Vec<u64> = events
+            .iter()
+            .filter(|event| {
+                event.get("type").and_then(Value::as_str) == Some("content_block_start")
+            })
+            .filter_map(|event| event.get("index").and_then(Value::as_u64))
+            .collect();
+        let text_deltas: Vec<&str> = events
+            .iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| event.pointer("/delta/text").and_then(Value::as_str))
+            .collect();
+
+        assert_eq!(started_indices, vec![0, 1, 2]);
+        assert_eq!(
+            text_deltas,
+            vec!["[Rust docs](https://doc.rust-lang.org/) are online."]
+        );
+        assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_terminal_search_reconciles_unkeyed_buffered_text() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_unkeyed\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_unkeyed\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_unkeyed\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\"}}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Rust docs are online.\"}\n\n",
+            "event: response.output_text.annotation.added\n",
+            "data: {\"type\":\"response.output_text.annotation.added\",\"annotation\":{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":9,\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_unkeyed\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"ws_unkeyed\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\"}},{\"id\":\"msg_unkeyed\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Rust docs are online.\",\"annotations\":[]}]}],\"usage\":{\"input_tokens\":8,\"output_tokens\":5}}}\n\n"
+        );
+
+        let merged = convert_stream_text_with_web_search_name(input, "web_search").await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(
+            text_deltas,
+            vec!["[Rust docs](https://doc.rust-lang.org/) are online."]
+        );
+        assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_terminal_search_partitions_unkeyed_citations_across_text_parts() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_unkeyed_parts\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_unkeyed_parts\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_unkeyed_parts\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust and Cargo docs\"}}}\n\n",
+            "event: response.content_part.added\n",
+            "data: {\"type\":\"response.content_part.added\",\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Rust docs.\"}\n\n",
+            "event: response.output_text.annotation.added\n",
+            "data: {\"type\":\"response.output_text.annotation.added\",\"annotation\":{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":4,\"url\":\"https://www.rust-lang.org/\",\"title\":\"Rust\"}}\n\n",
+            "event: response.output_text.done\n",
+            "data: {\"type\":\"response.output_text.done\",\"text\":\"Rust docs.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":4,\"url\":\"https://www.rust-lang.org/\",\"title\":\"Rust\"}]}\n\n",
+            "event: response.content_part.done\n",
+            "data: {\"type\":\"response.content_part.done\",\"part\":{\"type\":\"output_text\",\"text\":\"Rust docs.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":4,\"url\":\"https://www.rust-lang.org/\",\"title\":\"Rust\"}]}}\n\n",
+            "event: response.content_part.added\n",
+            "data: {\"type\":\"response.content_part.added\",\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Cargo docs.\"}\n\n",
+            "event: response.content_part.done\n",
+            "data: {\"type\":\"response.content_part.done\",\"part\":{\"type\":\"output_text\",\"text\":\"Rust docs.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":4,\"url\":\"https://www.rust-lang.org/\",\"title\":\"Rust\"}]}}\n\n",
+            "event: response.output_text.annotation.added\n",
+            "data: {\"type\":\"response.output_text.annotation.added\",\"annotation\":{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":5,\"url\":\"https://doc.rust-lang.org/cargo/\",\"title\":\"Cargo\"}}\n\n",
+            "event: response.output_text.done\n",
+            "data: {\"type\":\"response.output_text.done\",\"text\":\"Cargo docs.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":5,\"url\":\"https://doc.rust-lang.org/cargo/\",\"title\":\"Cargo\"}]}\n\n",
+            "event: response.content_part.done\n",
+            "data: {\"type\":\"response.content_part.done\",\"part\":{\"type\":\"output_text\",\"text\":\"Cargo docs.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":5,\"url\":\"https://doc.rust-lang.org/cargo/\",\"title\":\"Cargo\"}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_unkeyed_parts\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"ws_unkeyed_parts\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust and Cargo docs\"}},{\"id\":\"msg_unkeyed_parts\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Rust docs.\",\"annotations\":[]},{\"type\":\"output_text\",\"text\":\"Cargo docs.\",\"annotations\":[]}]}],\"usage\":{\"input_tokens\":8,\"output_tokens\":5}}}\n\n"
+        );
+
+        let merged = convert_stream_text_with_web_search_name(input, "web_search").await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(
+            text_deltas,
+            vec![
+                "[Rust](https://www.rust-lang.org/) docs.",
+                "[Cargo](https://doc.rust-lang.org/cargo/) docs."
+            ]
+        );
+        assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_text_streamed_before_search_is_not_replayed_after_buffering_starts() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_transition\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.content_part.added\n",
+            "data: {\"type\":\"response.content_part.added\",\"item_id\":\"msg_before\",\"output_index\":0,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_before\",\"output_index\":0,\"content_index\":0,\"delta\":\"Before search.\"}\n\n",
+            "event: response.output_text.done\n",
+            "data: {\"type\":\"response.output_text.done\",\"item_id\":\"msg_before\",\"output_index\":0,\"content_index\":0,\"text\":\"Before search.\"}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"ws_transition\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"ws_transition\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\",\"sources\":[{\"type\":\"url\",\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}]}}}\n\n",
+            "event: response.content_part.added\n",
+            "data: {\"type\":\"response.content_part.added\",\"item_id\":\"msg_after\",\"output_index\":2,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_after\",\"output_index\":2,\"content_index\":0,\"delta\":\"Rust docs are online.\"}\n\n",
+            "event: response.output_text.annotation.added\n",
+            "data: {\"type\":\"response.output_text.annotation.added\",\"item_id\":\"msg_after\",\"output_index\":2,\"content_index\":0,\"annotation_index\":0,\"annotation\":{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":9,\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}}\n\n",
+            "event: response.output_text.done\n",
+            "data: {\"type\":\"response.output_text.done\",\"item_id\":\"msg_after\",\"output_index\":2,\"content_index\":0,\"text\":\"Rust docs are online.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":2,\"item\":{\"id\":\"msg_after\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Rust docs are online.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":9,\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}]}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_transition\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"msg_before\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Before search.\",\"annotations\":[]}]},{\"id\":\"ws_transition\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\",\"sources\":[{\"type\":\"url\",\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}]}},{\"id\":\"msg_after\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Rust docs are online.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":9,\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}]}]}],\"usage\":{\"input_tokens\":8,\"output_tokens\":8}}}\n\n"
+        );
+
+        let merged = convert_stream_text_with_web_search_name(input, "web_search").await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(
+            text_deltas,
+            vec![
+                "Before search.",
+                "[Rust docs](https://doc.rust-lang.org/) are online."
+            ]
+        );
     }
 
     #[tokio::test]
@@ -3591,7 +6393,7 @@ mod tests {
     async fn test_streaming_hosted_web_search_pairs_calls_without_sources() {
         let input = concat!(
             "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_multi_fallback\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"ws_first\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"first query\"}},{\"id\":\"ws_second\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"second query\"}},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Combined answer.\",\"annotations\":[{\"type\":\"url_citation\",\"url\":\"https://example.com/result\",\"title\":\"Combined result\"}]}]}],\"usage\":{\"input_tokens\":8,\"output_tokens\":5}}}\n\n"
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_multi_fallback\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"ws_first\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"first query\"}},{\"id\":\"ws_second\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"second query\"}},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Combined answer.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":9,\"end_index\":15,\"url\":\"https://example.com/result\",\"title\":\"Combined result\"}]}]}],\"usage\":{\"input_tokens\":8,\"output_tokens\":5}}}\n\n"
         );
 
         let merged = convert_stream_text_with_web_search_name(input, "web_search_next").await;
@@ -3620,7 +6422,10 @@ mod tests {
             })
             .filter_map(|event| event.pointer("/delta/text").and_then(Value::as_str))
             .collect();
-        assert_eq!(text_deltas, vec!["Combined answer."]);
+        assert_eq!(
+            text_deltas,
+            vec!["Combined [answer](https://example.com/result)."]
+        );
         assert!(merged.contains("\"web_search_requests\":2"));
         assert!(merged.contains("event: message_stop"));
     }
@@ -3716,6 +6521,37 @@ mod tests {
         let merged = convert_stream_text(input).await;
         assert!(merged.contains("\"stop_reason\":\"max_tokens\""));
         assert!(merged.contains("event: content_block_stop"));
+        assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_hosted_web_search_option_does_not_buffer_without_search() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.content_part.added\n",
+            "data: {\"type\":\"response.content_part.added\",\"output_index\":0,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"content_index\":0,\"delta\":\"partial\"}\n\n"
+        );
+
+        let merged = convert_stream_text_with_web_search_name(input, "web_search").await;
+        let text_deltas: Vec<String> = sse_data_values(&merged)
+            .into_iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .filter_map(|event| {
+                event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+
+        assert_eq!(text_deltas, vec!["partial"]);
+        assert!(!merged.contains("event: ping"));
+        assert!(merged.contains("\"stop_reason\":\"max_tokens\""));
         assert!(merged.contains("event: message_stop"));
     }
 
