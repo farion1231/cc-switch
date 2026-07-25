@@ -1628,5 +1628,4 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     ]),
     icon: "daoxe",
   },
-
 ];

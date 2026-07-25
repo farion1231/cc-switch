@@ -1444,5 +1444,4 @@ export const providerPresets: ProviderPreset[] = [
     category: "aggregator",
     icon: "daoxe",
   },
-
 ];
