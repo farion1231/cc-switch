@@ -1814,51 +1814,29 @@ fn scan_rollout_thread_metadata(codex_dir: &Path) -> Result<Vec<RolloutThreadMet
         }
     }
 
-    // "Continue in a new task" currently copies session_meta.id into every forked
-    // rollout. The files are nevertheless independent snapshots, identified by the
-    // UUID in their rollout filename. Treating session_meta.id as globally unique
-    // would silently overwrite all but one branch in the reconstructed thread store.
-    let declared_id_counts = metadata_rows
-        .iter()
-        .fold(BTreeMap::new(), |mut counts, row| {
-            *counts.entry(row.id.clone()).or_insert(0usize) += 1;
-            counts
-        });
-    for metadata in &mut metadata_rows {
-        if declared_id_counts
-            .get(&metadata.id)
-            .copied()
-            .unwrap_or_default()
-            > 1
-        {
-            if let Some(rollout_id) = rollout_filename_thread_id(&metadata.rollout_path) {
-                metadata.id = rollout_id;
+    // Desktop assigns every "Continue in a new task" branch a fresh session_meta.id
+    // and records its ancestry in event_msg.payload.forked_from_id.  The copied first
+    // user message, title, and filename timestamp are therefore not identities. Keep
+    // session_meta.id as the only thread-store key. If a damaged export contains two
+    // physical files declaring one ID, retain the most complete/latest copy instead
+    // of inventing synthetic filename-based tasks in the sidebar.
+    let mut by_id = BTreeMap::new();
+    for metadata in metadata_rows {
+        match by_id.entry(metadata.id.clone()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(metadata);
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                let current = entry.get();
+                let replacement_is_better = (metadata.has_user_event as u8, metadata.updated_at_ms)
+                    > (current.has_user_event as u8, current.updated_at_ms);
+                if replacement_is_better {
+                    entry.insert(metadata);
+                }
             }
         }
     }
-
-    // A malformed duplicate filename must not overwrite a valid row either. Real
-    // rollout filenames carry UUIDs, so this only preserves the existing behavior
-    // for legacy fixtures that do not expose a physical thread identifier.
-    let mut by_id = BTreeMap::new();
-    for metadata in metadata_rows {
-        by_id.entry(metadata.id.clone()).or_insert(metadata);
-    }
     Ok(by_id.into_values().collect())
-}
-
-/// Return the UUID Codex stores at the end of `rollout-<timestamp>-<uuid>.jsonl`.
-/// The UUID is the only stable physical identity when cloned rollouts retain their
-/// parent's session_meta.id.
-fn rollout_filename_thread_id(path: &Path) -> Option<String> {
-    let stem = path.file_stem()?.to_str()?;
-    // rsplit_once only returns the last UUID segment, so take the complete trailing
-    // UUID from the stem instead of relying on its hyphen-separated pieces.
-    let candidate_start = stem.len().checked_sub(36)?;
-    let candidate = stem.get(candidate_start..)?;
-    uuid::Uuid::parse_str(candidate)
-        .ok()
-        .map(|id| id.to_string())
 }
 
 fn collect_rollout_jsonl_files(
@@ -4516,6 +4494,40 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_declared_ids_keep_the_latest_complete_snapshot_without_creating_filename_threads()
+    {
+        let dir = tempdir().expect("tempdir");
+        let sessions = dir.path().join("sessions");
+        fs::create_dir_all(&sessions).expect("sessions dir");
+        let session_id = "019f8ce8-81b0-7741-a4d3-eca05e030fc8";
+        for (name, timestamp, message) in [
+            (
+                "rollout-2026-07-25T02-00-00-019f8ce8-81b0-7741-a4d3-eca05e030fc8.jsonl",
+                "2026-07-25T02:01:00Z",
+                "older snapshot",
+            ),
+            (
+                "rollout-2026-07-25T03-00-00-019f8cf3-3050-7153-b6f3-8a0757cfbaf4.jsonl",
+                "2026-07-25T03:01:00Z",
+                "latest snapshot",
+            ),
+        ] {
+            fs::write(
+                sessions.join(name),
+                format!(
+                    "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{session_id}\"}}}}\n{{\"timestamp\":\"{timestamp}\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"{message}\"}}}}\n"
+                ),
+            )
+            .expect("rollout");
+        }
+
+        let rows = scan_rollout_thread_metadata(dir.path()).expect("scan rollouts");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, session_id);
+        assert_eq!(rows[0].preview.as_deref(), Some("latest snapshot"));
+    }
+
+    #[test]
     fn rebuilds_each_continue_in_new_task_rollout_as_its_own_thread() {
         let dir = tempdir().expect("tempdir");
         let codex_dir = dir.path().join(".codex");
@@ -4535,7 +4547,7 @@ mod tests {
         fs::write(
             &fork,
             format!(
-                "{{\"timestamp\":\"2026-07-25T03:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{parent_id}\",\"model_provider\":\"openai\",\"cwd\":\"C:\\\\work\",\"source\":\"vscode\"}}}}\n{{\"timestamp\":\"2026-07-25T03:01:00Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"shared starting request\"}}}}\n{{\"timestamp\":\"2026-07-25T03:02:00Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"fork-only progress\"}}}}\n"
+                "{{\"timestamp\":\"2026-07-25T03:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{fork_id}\",\"model_provider\":\"openai\",\"cwd\":\"C:\\\\work\",\"source\":\"vscode\"}}}}\n{{\"timestamp\":\"2026-07-25T03:00:01Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"thread_settings_applied\",\"forked_from_id\":\"{parent_id}\"}}}}\n{{\"timestamp\":\"2026-07-25T03:01:00Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"shared starting request\"}}}}\n{{\"timestamp\":\"2026-07-25T03:02:00Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"fork-only progress\"}}}}\n"
             ),
         )
         .expect("fork rollout");

@@ -15,7 +15,8 @@
 - 修复入口必须在 Codex/ChatGPT 完全退出时，以 `sessions` 与 `archived_sessions` 的 rollout 为事实来源重建/插入 `threads` 元数据，并在同一 SQLite 事务更新 `backfill_state`；`session_index`、workspace hint 和项目映射只能作为辅助，绝不能写 `local_thread_catalog`。
 - 当前 rollout 的真实用户输入结构是 `type='event_msg'` 且 `payload.type='user_message'`，不能继续用旧的字符串或顶层 `type='user_message'` 判断。preview 与 first_user_message 仅从此真实事件或目标事件 preview 提取，避免编造可见历史。
 - 写入前继续拒绝运行中的 `ChatGPT.exe` / `OpenAI.Codex` / `codex.exe app-server`，并备份 state DB（含 WAL/SHM）和受影响 rollout；修复后需重启 Desktop 验证历史不再闪现后消失。
-- `Continue in a new task` 会把父会话的 `session_meta.id` 原样复制到多个独立 rollout；这些文件的 `rollout-<timestamp>-<uuid>.jsonl` UUID 才是分支物理身份。历史重建必须只在声明 ID 冲突时改用该 filename UUID，分别写入每个 `threads.id -> rollout_path`，不能再用 `BTreeMap<session_meta.id, ...>` 覆盖不同进度的分支，也不能改写原始 JSONL 的 parent ID。
+- `Continue in a new task` 的真实身份是新的 `session_meta.id`；其 rollout event payload 中的 `forked_from_id` 才指向父 task。派生任务会复制首条用户消息，因此不能用标题、首条消息、文件名 UUID 或全文引用判断身份。在 2026-07-25 的“孙同学”现场，36 条相同标题均为不同 session id，且可由 `forked_from_id` 形成分支树。历史重建必须按 `session_meta.id -> rollout_path` 一对一保留这些任务。
+- 若损坏导出真的有多个文件声明同一个 `session_meta.id`，它们不是可证明的派生任务：只保留含用户事件且 `updated_at_ms` 最新的完整快照，不能改写为 filename UUID 并插入多个侧边栏条目。
 - 官方多模态 catalog 投影必须让同 slug 官方 cache 的 `input_modalities`、`supports_image_detail_original` 与 `web_search_tool_type` 胜过 NativeResponses 的 text-only 模板；否则模型目录与路由虽声明图像能力，最终 `cc-switch-model-catalog.json` 仍会被覆盖成 text-only。
 
 ## 2026-07-20 本机构建缓存与旧发布输出清理
