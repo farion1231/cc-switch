@@ -18,25 +18,6 @@ const TEMPLATE_TYPE_BALANCE: &str = "balance";
 const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
 const COPILOT_UNIT_PREMIUM: &str = "requests";
 
-fn with_codex_target<T, F>(
-    app_type: &AppType,
-    codex_config_target: Option<String>,
-    f: F,
-) -> Result<T, AppError>
-where
-    F: FnOnce() -> Result<T, AppError>,
-{
-    if !matches!(app_type, AppType::Codex) {
-        return f();
-    }
-
-    let target = codex_config_target
-        .as_deref()
-        .unwrap_or("windows")
-        .parse::<crate::settings::CodexConfigTarget>()?;
-    crate::settings::with_codex_config_target(target, f)
-}
-
 /// 获取所有供应商
 #[tauri::command]
 pub fn get_providers(
@@ -54,38 +35,15 @@ pub fn get_current_provider(state: State<'_, AppState>, app: String) -> Result<S
 }
 
 #[tauri::command]
-pub fn get_current_provider_for_target(
-    state: State<'_, AppState>,
-    app: String,
-    #[allow(non_snake_case)] codexConfigTarget: Option<String>,
-) -> Result<String, String> {
-    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    let scoped_app_type = app_type.clone();
-    with_codex_target(&app_type, codexConfigTarget, || {
-        ProviderService::current(state.inner(), scoped_app_type)
-    })
-    .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub fn add_provider(
     state: State<'_, AppState>,
     app: String,
     provider: Provider,
     #[allow(non_snake_case)] addToLive: Option<bool>,
-    #[allow(non_snake_case)] codexConfigTarget: Option<String>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    let scoped_app_type = app_type.clone();
-    with_codex_target(&app_type, codexConfigTarget, || {
-        ProviderService::add(
-            state.inner(),
-            scoped_app_type,
-            provider,
-            addToLive.unwrap_or(true),
-        )
-    })
-    .map_err(|e| e.to_string())
+    ProviderService::add(state.inner(), app_type, provider, addToLive.unwrap_or(true))
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -94,14 +52,10 @@ pub fn update_provider(
     app: String,
     provider: Provider,
     #[allow(non_snake_case)] originalId: Option<String>,
-    #[allow(non_snake_case)] codexConfigTarget: Option<String>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    let scoped_app_type = app_type.clone();
-    with_codex_target(&app_type, codexConfigTarget, || {
-        ProviderService::update(state.inner(), scoped_app_type, originalId.as_deref(), provider)
-    })
-    .map_err(|e| e.to_string())
+    ProviderService::update(state.inner(), app_type, originalId.as_deref(), provider)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -109,14 +63,11 @@ pub fn delete_provider(
     state: State<'_, AppState>,
     app: String,
     id: String,
-    #[allow(non_snake_case)] codexConfigTarget: Option<String>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    let scoped_app_type = app_type.clone();
-    with_codex_target(&app_type, codexConfigTarget, || {
-        ProviderService::delete(state.inner(), scoped_app_type, &id).map(|_| true)
-    })
-    .map_err(|e| e.to_string())
+    ProviderService::delete(state.inner(), app_type, &id)
+        .map(|_| true)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -153,14 +104,9 @@ pub fn switch_provider(
     state: State<'_, AppState>,
     app: String,
     id: String,
-    #[allow(non_snake_case)] codexConfigTarget: Option<String>,
 ) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    let scoped_app_type = app_type.clone();
-    with_codex_target(&app_type, codexConfigTarget, || {
-        switch_provider_internal(&state, scoped_app_type, &id)
-    })
-    .map_err(|e| e.to_string())
+    switch_provider_internal(&state, app_type, &id).map_err(|e| e.to_string())
 }
 
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
@@ -200,17 +146,9 @@ pub fn import_default_config_test_hook(
 }
 
 #[tauri::command]
-pub fn import_default_config(
-    state: State<'_, AppState>,
-    app: String,
-    #[allow(non_snake_case)] codexConfigTarget: Option<String>,
-) -> Result<bool, String> {
+pub fn import_default_config(state: State<'_, AppState>, app: String) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    let scoped_app_type = app_type.clone();
-    with_codex_target(&app_type, codexConfigTarget, || {
-        import_default_config_internal(&state, scoped_app_type)
-    })
-    .map_err(Into::into)
+    import_default_config_internal(&state, app_type).map_err(Into::into)
 }
 
 #[tauri::command]

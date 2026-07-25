@@ -89,7 +89,6 @@ describe("useDirectorySettings", () => {
       appConfig: "/override/app",
       claude: "/remote/claude",
       codex: "/remote/codex",
-      codexWsl: "",
       gemini: "/remote/gemini",
       opencode: "/remote/opencode",
       openclaw: "/remote/openclaw",

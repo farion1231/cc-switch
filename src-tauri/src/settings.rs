@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
-use std::{cell::Cell, str::FromStr};
 
 use crate::app_config::AppType;
 use crate::error::AppError;
@@ -74,52 +74,6 @@ impl VisibleApps {
             AppType::Hermes => self.hermes,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum CodexConfigTarget {
-    #[default]
-    Windows,
-    Wsl,
-}
-
-impl FromStr for CodexConfigTarget {
-    type Err = AppError;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "windows" => Ok(Self::Windows),
-            "wsl" => Ok(Self::Wsl),
-            other => Err(AppError::Message(format!(
-                "Invalid Codex config target: {other}"
-            ))),
-        }
-    }
-}
-
-thread_local! {
-    static CODEX_CONFIG_TARGET: Cell<CodexConfigTarget> = const { Cell::new(CodexConfigTarget::Windows) };
-}
-
-pub fn with_codex_config_target<T, F>(target: CodexConfigTarget, f: F) -> T
-where
-    F: FnOnce() -> T,
-{
-    CODEX_CONFIG_TARGET.with(|cell| {
-        let previous = cell.replace(target);
-        let result = f();
-        cell.set(previous);
-        result
-    })
-}
-
-pub fn is_codex_wsl_config_target() -> bool {
-    current_codex_config_target() == CodexConfigTarget::Wsl
-}
-
-fn current_codex_config_target() -> CodexConfigTarget {
-    CODEX_CONFIG_TARGET.with(Cell::get)
 }
 
 /// WebDAV 同步状态（持久化同步进度信息）
@@ -454,8 +408,6 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub codex_wsl_config_dir: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gemini_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opencode_config_dir: Option<String>,
@@ -474,9 +426,6 @@ pub struct AppSettings {
     /// 当前 Codex 供应商 ID（本地存储，优先于数据库 is_current）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_codex: Option<String>,
-    /// 当前 Codex WSL 供应商 ID（本地存储，优先于数据库 is_current）
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub current_provider_codex_wsl: Option<String>,
     /// 当前 Gemini 供应商 ID（本地存储，优先于数据库 is_current）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_gemini: Option<String>,
@@ -564,7 +513,6 @@ impl Default for AppSettings {
             visible_apps: None,
             claude_config_dir: None,
             codex_config_dir: None,
-            codex_wsl_config_dir: None,
             gemini_config_dir: None,
             opencode_config_dir: None,
             openclaw_config_dir: None,
@@ -572,7 +520,6 @@ impl Default for AppSettings {
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
-            current_provider_codex_wsl: None,
             current_provider_gemini: None,
             current_provider_opencode: None,
             current_provider_openclaw: None,
@@ -610,13 +557,6 @@ impl AppSettings {
 
         self.codex_config_dir = self
             .codex_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.codex_wsl_config_dir = self
-            .codex_wsl_config_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -713,7 +653,6 @@ fn save_settings_file(settings: &AppSettings) -> Result<(), AppError> {
     #[cfg(unix)]
     {
         use std::fs::OpenOptions;
-        use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
 
         let mut file = OpenOptions::new()
@@ -923,11 +862,10 @@ pub fn get_claude_override_dir() -> Option<PathBuf> {
 
 pub fn get_codex_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
-    let raw = match current_codex_config_target() {
-        CodexConfigTarget::Windows => settings.codex_config_dir.as_ref(),
-        CodexConfigTarget::Wsl => settings.codex_wsl_config_dir.as_ref(),
-    };
-    raw.map(|p| resolve_override_path(p))
+    settings
+        .codex_config_dir
+        .as_ref()
+        .map(|p| resolve_override_path(p))
 }
 
 pub fn get_gemini_override_dir() -> Option<PathBuf> {
@@ -993,10 +931,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
     match app_type {
         AppType::Claude => settings.current_provider_claude.clone(),
         AppType::ClaudeDesktop => settings.current_provider_claude_desktop.clone(),
-        AppType::Codex => match current_codex_config_target() {
-            CodexConfigTarget::Windows => settings.current_provider_codex.clone(),
-            CodexConfigTarget::Wsl => settings.current_provider_codex_wsl.clone(),
-        },
+        AppType::Codex => settings.current_provider_codex.clone(),
         AppType::Gemini => settings.current_provider_gemini.clone(),
         AppType::OpenCode => settings.current_provider_opencode.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
@@ -1013,10 +948,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
     mutate_settings(|settings| match app_type {
         AppType::Claude => settings.current_provider_claude = id_owned.clone(),
         AppType::ClaudeDesktop => settings.current_provider_claude_desktop = id_owned.clone(),
-        AppType::Codex => match current_codex_config_target() {
-            CodexConfigTarget::Windows => settings.current_provider_codex = id_owned.clone(),
-            CodexConfigTarget::Wsl => settings.current_provider_codex_wsl = id_owned.clone(),
-        },
+        AppType::Codex => settings.current_provider_codex = id_owned.clone(),
         AppType::Gemini => settings.current_provider_gemini = id_owned.clone(),
         AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),

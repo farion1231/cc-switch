@@ -15,7 +15,7 @@ export { workspaceApi } from "./workspace";
 export * as configApi from "./config";
 export * as authApi from "./auth";
 export * as copilotApi from "./copilot";
-export type { CodexConfigTarget, ProviderSwitchEvent } from "./providers";
+export type { ProviderSwitchEvent } from "./providers";
 export type { Prompt } from "./prompts";
 export type {
   CopilotDeviceCodeResponse,

@@ -19,7 +19,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
-import { providersApi, type CodexConfigTarget } from "@/lib/api/providers";
+import { providersApi } from "@/lib/api/providers";
 import { useDragSort } from "@/hooks/useDragSort";
 import {
   useOpenClawLiveProviderIds,
@@ -32,7 +32,6 @@ import {
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
-import { cn } from "@/lib/utils";
 import {
   useAutoFailoverEnabled,
   useFailoverQueue,
@@ -63,8 +62,6 @@ interface ProviderListProps {
   onOpenWebsite: (url: string) => void;
   onOpenTerminal?: (provider: Provider) => void;
   onCreate?: () => void;
-  codexConfigTarget?: CodexConfigTarget;
-  onCodexConfigTargetChange?: (target: CodexConfigTarget) => void;
   isLoading?: boolean;
   isProxyRunning?: boolean; // 代理服务运行状态
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管）
@@ -87,8 +84,6 @@ export function ProviderList({
   onOpenWebsite,
   onOpenTerminal,
   onCreate,
-  codexConfigTarget = "windows",
-  onCodexConfigTargetChange,
   isLoading = false,
   isProxyRunning = false,
   isProxyTakeover = false,
@@ -293,13 +288,6 @@ export function ProviderList({
     });
   }, [searchTerm, sortedProviders]);
 
-  const handleCodexConfigTargetChange = useCallback(
-    (target: CodexConfigTarget) => {
-      onCodexConfigTargetChange?.(target);
-    },
-    [onCodexConfigTargetChange],
-  );
-
   const claudeDesktopStatusMessages = useMemo(() => {
     if (appId !== "claude-desktop" || !claudeDesktopStatus) return [];
 
@@ -456,43 +444,6 @@ export function ProviderList({
 
   return (
     <div className="mt-4 space-y-4">
-      {appId === "codex" && (
-        <div className="flex flex-col gap-2 rounded-lg border border-border-default bg-muted/30 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <p className="text-xs font-medium text-foreground">
-              {t("codex.configTargetTitle", {
-                defaultValue: "Codex 設定ターゲット",
-              })}
-            </p>
-            <p className="truncate text-[11px] text-muted-foreground">
-              {t("codex.configTargetHint", {
-                defaultValue:
-                  "編集・切替する Codex 設定ディレクトリを選択します。",
-              })}
-            </p>
-          </div>
-          <div className="inline-flex h-8 gap-1 rounded-xl bg-muted p-1 sm:w-44">
-            {(["windows", "wsl"] as const).map((target) => {
-              const selected = codexConfigTarget === target;
-              return (
-                <button
-                  key={target}
-                  type="button"
-                  className={cn(
-                    "inline-flex h-6 flex-1 items-center justify-center rounded-md px-2 text-xs font-medium transition-all duration-200",
-                    selected
-                      ? "bg-background text-foreground shadow-sm hover:bg-background"
-                      : "text-muted-foreground hover:bg-background/50 hover:text-foreground",
-                  )}
-                  onClick={() => handleCodexConfigTargetChange(target)}
-                >
-                  {target === "windows" ? "Windows" : "WSL"}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
       {claudeDesktopStatusMessages.length > 0 && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
           <div className="flex items-center gap-2 font-medium">

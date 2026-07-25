@@ -2237,11 +2237,7 @@ impl ProviderService {
             crate::settings::set_current_provider(&app_type, Some(id))?;
 
             // Update database is_current (as default for new devices)
-            if !(matches!(app_type, AppType::Codex)
-                && crate::settings::is_codex_wsl_config_target())
-            {
-                state.db.set_current_provider(app_type.as_str(), id)?;
-            }
+            state.db.set_current_provider(app_type.as_str(), id)?;
         }
 
         // Sync to live (write_gemini_live handles security flag internally for Gemini)

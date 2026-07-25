@@ -22,7 +22,6 @@ export const settingsSchema = z.object({
   // 设备级目录覆盖
   claudeConfigDir: directorySchema.nullable().optional(),
   codexConfigDir: directorySchema.nullable().optional(),
-  codexWslConfigDir: directorySchema.nullable().optional(),
   geminiConfigDir: directorySchema.nullable().optional(),
   opencodeConfigDir: directorySchema.nullable().optional(),
   openclawConfigDir: directorySchema.nullable().optional(),
@@ -31,7 +30,6 @@ export const settingsSchema = z.object({
   currentProviderClaude: z.string().optional(),
   currentProviderClaudeDesktop: z.string().optional(),
   currentProviderCodex: z.string().optional(),
-  currentProviderCodexWsl: z.string().optional(),
   currentProviderGemini: z.string().optional(),
 
   // Skill 同步设置

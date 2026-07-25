@@ -34,7 +34,6 @@ import {
   providersApi,
   settingsApi,
   type AppId,
-  type CodexConfigTarget,
   type ProviderSwitchEvent,
 } from "@/lib/api";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
@@ -122,7 +121,6 @@ const DEFAULT_DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px
 const HEADER_HEIGHT = 64; // px
 
 const STORAGE_KEY = "cc-switch-last-app";
-const CODEX_CONFIG_TARGET_STORAGE_KEY = "cc-switch:codex-config-target";
 const VALID_APPS: AppId[] = [
   "claude",
   "claude-desktop",
@@ -139,13 +137,6 @@ const getInitialApp = (): AppId => {
     return saved;
   }
   return "claude";
-};
-
-const getInitialCodexConfigTarget = (): CodexConfigTarget => {
-  const saved = localStorage.getItem(
-    CODEX_CONFIG_TARGET_STORAGE_KEY,
-  ) as CodexConfigTarget | null;
-  return saved === "wsl" ? "wsl" : "windows";
 };
 
 const VIEW_STORAGE_KEY = "cc-switch-last-view";
@@ -179,8 +170,6 @@ function App() {
   const queryClient = useQueryClient();
 
   const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
-  const [codexConfigTarget, setCodexConfigTarget] =
-    useState<CodexConfigTarget>(getInitialCodexConfigTarget);
   const sharedFeatureApp: AppId =
     activeApp === "claude-desktop" ? "claude" : activeApp;
   const [currentView, setCurrentView] = useState<View>(getInitialView);
@@ -193,10 +182,6 @@ function App() {
   useEffect(() => {
     localStorage.setItem(VIEW_STORAGE_KEY, currentView);
   }, [currentView]);
-
-  useEffect(() => {
-    localStorage.setItem(CODEX_CONFIG_TARGET_STORAGE_KEY, codexConfigTarget);
-  }, [codexConfigTarget]);
 
   const { data: settingsData } = useSettingsQuery();
   const useAppWindowControls =
@@ -288,7 +273,6 @@ function App() {
 
   const { data, isLoading, refetch } = useProvidersQuery(activeApp, {
     isProxyRunning,
-    codexConfigTarget: activeApp === "codex" ? codexConfigTarget : undefined,
   });
   const providers = useMemo(() => data?.providers ?? {}, [data]);
   const currentProviderId = data?.currentProviderId ?? "";
@@ -322,7 +306,6 @@ function App() {
     activeApp,
     isProxyRunning,
     isProxyRunning && isCurrentAppTakeoverActive,
-    activeApp === "codex" ? codexConfigTarget : undefined,
   );
 
   const disableOmoMutation = useDisableCurrentOmo();
@@ -982,8 +965,6 @@ function App() {
                       providers={providers}
                       currentProviderId={currentProviderId}
                       appId={activeApp}
-                      codexConfigTarget={codexConfigTarget}
-                      onCodexConfigTargetChange={setCodexConfigTarget}
                       isLoading={isLoading}
                       isProxyRunning={isProxyRunning}
                       isProxyTakeover={

@@ -7,8 +7,6 @@ import type {
 } from "@/types";
 import type { AppId } from "./types";
 
-export type CodexConfigTarget = "windows" | "wsl";
-
 export interface ProviderSortUpdate {
   id: string;
   sortIndex: number;
@@ -53,16 +51,7 @@ export const providersApi = {
     return await invoke("get_providers", { app: appId });
   },
 
-  async getCurrent(
-    appId: AppId,
-    codexConfigTarget?: CodexConfigTarget,
-  ): Promise<string> {
-    if (appId === "codex" && codexConfigTarget) {
-      return await invoke("get_current_provider_for_target", {
-        app: appId,
-        codexConfigTarget,
-      });
-    }
+  async getCurrent(appId: AppId): Promise<string> {
     return await invoke("get_current_provider", { app: appId });
   },
 
@@ -70,36 +59,24 @@ export const providersApi = {
     provider: Provider,
     appId: AppId,
     addToLive?: boolean,
-    codexConfigTarget?: CodexConfigTarget,
   ): Promise<boolean> {
-    return await invoke("add_provider", {
-      provider,
-      app: appId,
-      addToLive,
-      codexConfigTarget,
-    });
+    return await invoke("add_provider", { provider, app: appId, addToLive });
   },
 
   async update(
     provider: Provider,
     appId: AppId,
     originalId?: string,
-    codexConfigTarget?: CodexConfigTarget,
   ): Promise<boolean> {
     return await invoke("update_provider", {
       provider,
       app: appId,
       originalId,
-      codexConfigTarget,
     });
   },
 
-  async delete(
-    id: string,
-    appId: AppId,
-    codexConfigTarget?: CodexConfigTarget,
-  ): Promise<boolean> {
-    return await invoke("delete_provider", { id, app: appId, codexConfigTarget });
+  async delete(id: string, appId: AppId): Promise<boolean> {
+    return await invoke("delete_provider", { id, app: appId });
   },
 
   /**
@@ -110,26 +87,12 @@ export const providersApi = {
     return await invoke("remove_provider_from_live_config", { id, app: appId });
   },
 
-  async switch(
-    id: string,
-    appId: AppId,
-    codexConfigTarget?: CodexConfigTarget,
-  ): Promise<SwitchResult> {
-    return await invoke("switch_provider", {
-      id,
-      app: appId,
-      codexConfigTarget,
-    });
+  async switch(id: string, appId: AppId): Promise<SwitchResult> {
+    return await invoke("switch_provider", { id, app: appId });
   },
 
-  async importDefault(
-    appId: AppId,
-    codexConfigTarget?: CodexConfigTarget,
-  ): Promise<boolean> {
-    return await invoke("import_default_config", {
-      app: appId,
-      codexConfigTarget,
-    });
+  async importDefault(appId: AppId): Promise<boolean> {
+    return await invoke("import_default_config", { app: appId });
   },
 
   async importClaudeDesktopFromClaude(): Promise<number> {

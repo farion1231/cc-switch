@@ -391,8 +391,6 @@ export interface Settings {
   claudeConfigDir?: string;
   // 覆盖 Codex 配置目录（可选）
   codexConfigDir?: string;
-  // 覆盖 Codex WSL 配置目录（可选）
-  codexWslConfigDir?: string;
   // 覆盖 Gemini 配置目录（可选）
   geminiConfigDir?: string;
   // 覆盖 OpenCode 配置目录（可选）
@@ -409,8 +407,6 @@ export interface Settings {
   currentProviderClaudeDesktop?: string;
   // 当前 Codex 供应商 ID（优先于数据库 is_current）
   currentProviderCodex?: string;
-  // 当前 Codex WSL 供应商 ID（优先于数据库 is_current）
-  currentProviderCodexWsl?: string;
   // 当前 Gemini 供应商 ID（优先于数据库 is_current）
   currentProviderGemini?: string;
 

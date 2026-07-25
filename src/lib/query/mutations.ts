@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { providersApi, sessionsApi, settingsApi, type AppId } from "@/lib/api";
 import type { DeleteSessionOptions } from "@/lib/api/sessions";
-import type { CodexConfigTarget, SwitchResult } from "@/lib/api/providers";
+import type { SwitchResult } from "@/lib/api/providers";
 import type { Provider, SessionMeta, Settings } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
@@ -11,15 +11,7 @@ import { openclawKeys } from "@/hooks/useOpenClaw";
 import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 import { usageKeys } from "@/lib/query/usage";
 
-const providersQueryKey = (
-  appId: AppId,
-  codexConfigTarget?: CodexConfigTarget,
-) => ["providers", appId, appId === "codex" ? codexConfigTarget : null];
-
-export const useAddProviderMutation = (
-  appId: AppId,
-  codexConfigTarget?: CodexConfigTarget,
-) => {
+export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
 
@@ -74,13 +66,11 @@ export const useAddProviderMutation = (
       };
       delete (newProvider as any).providerKey;
 
-      await providersApi.add(newProvider, appId, addToLive, codexConfigTarget);
+      await providersApi.add(newProvider, appId, addToLive);
       return newProvider;
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: providersQueryKey(appId, codexConfigTarget),
-      });
+      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
 
       if (appId === "opencode") {
         await queryClient.invalidateQueries({
@@ -137,10 +127,7 @@ export const useAddProviderMutation = (
   });
 };
 
-export const useUpdateProviderMutation = (
-  appId: AppId,
-  codexConfigTarget?: CodexConfigTarget,
-) => {
+export const useUpdateProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
 
@@ -152,13 +139,11 @@ export const useUpdateProviderMutation = (
       provider: Provider;
       originalId?: string;
     }) => {
-      await providersApi.update(provider, appId, originalId, codexConfigTarget);
+      await providersApi.update(provider, appId, originalId);
       return provider;
     },
     onSuccess: async (provider, variables) => {
-      await queryClient.invalidateQueries({
-        queryKey: providersQueryKey(appId, codexConfigTarget),
-      });
+      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
       await queryClient.invalidateQueries({
         queryKey: usageKeys.script(provider.id, appId),
       });
@@ -196,21 +181,16 @@ export const useUpdateProviderMutation = (
   });
 };
 
-export const useDeleteProviderMutation = (
-  appId: AppId,
-  codexConfigTarget?: CodexConfigTarget,
-) => {
+export const useDeleteProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
 
   return useMutation({
     mutationFn: async (providerId: string) => {
-      await providersApi.delete(providerId, appId, codexConfigTarget);
+      await providersApi.delete(providerId, appId);
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: providersQueryKey(appId, codexConfigTarget),
-      });
+      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
 
       if (appId === "opencode") {
         await queryClient.invalidateQueries({
@@ -267,21 +247,16 @@ export const useDeleteProviderMutation = (
   });
 };
 
-export const useSwitchProviderMutation = (
-  appId: AppId,
-  codexConfigTarget?: CodexConfigTarget,
-) => {
+export const useSwitchProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
 
   return useMutation({
     mutationFn: async (providerId: string): Promise<SwitchResult> => {
-      return await providersApi.switch(providerId, appId, codexConfigTarget);
+      return await providersApi.switch(providerId, appId);
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: providersQueryKey(appId, codexConfigTarget),
-      });
+      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
       if (appId === "claude-desktop") {
         await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
         await queryClient.invalidateQueries({

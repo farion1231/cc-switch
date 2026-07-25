@@ -2,13 +2,7 @@ import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
-import {
-  providersApi,
-  settingsApi,
-  openclawApi,
-  type AppId,
-  type CodexConfigTarget,
-} from "@/lib/api";
+import { providersApi, settingsApi, openclawApi, type AppId } from "@/lib/api";
 import type {
   Provider,
   UsageScript,
@@ -39,27 +33,14 @@ export function useProviderActions(
   activeApp: AppId,
   isProxyRunning?: boolean,
   isProxyTakeover?: boolean,
-  codexConfigTarget?: CodexConfigTarget,
 ) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
-  const addProviderMutation = useAddProviderMutation(
-    activeApp,
-    codexConfigTarget,
-  );
-  const updateProviderMutation = useUpdateProviderMutation(
-    activeApp,
-    codexConfigTarget,
-  );
-  const deleteProviderMutation = useDeleteProviderMutation(
-    activeApp,
-    codexConfigTarget,
-  );
-  const switchProviderMutation = useSwitchProviderMutation(
-    activeApp,
-    codexConfigTarget,
-  );
+  const addProviderMutation = useAddProviderMutation(activeApp);
+  const updateProviderMutation = useUpdateProviderMutation(activeApp);
+  const deleteProviderMutation = useDeleteProviderMutation(activeApp);
+  const switchProviderMutation = useSwitchProviderMutation(activeApp);
 
   // Claude 插件同步逻辑
   const syncClaudePlugin = useCallback(
