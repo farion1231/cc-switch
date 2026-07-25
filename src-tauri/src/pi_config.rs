@@ -205,27 +205,16 @@ fn get_pi_agent_dir() -> PathBuf {
     get_pi_dir().join("agent")
 }
 
-/// Whether this Pi root should use Oh-my-pi file names (`models.yml` / `config.yml`).
+/// Whether this Pi root should default to Oh-my-pi file names when creating new files.
 ///
-/// True when the directory is named `.omp`/`omp`, or YAML layout files already exist.
+/// Only the directory name (`.omp` / `omp`) decides greenfield defaults.
+/// Existing on-disk files always win via `get_pi_config_path` / `get_pi_settings_path`.
 fn prefers_omp_layout(pi_dir: &Path) -> bool {
     let dir_name = pi_dir
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("");
-    if dir_name.eq_ignore_ascii_case(".omp") || dir_name.eq_ignore_ascii_case("omp") {
-        return true;
-    }
-
-    let agent = pi_dir.join("agent");
-    [
-        "config.yml",
-        "config.yaml",
-        "models.yml",
-        "models.yaml",
-    ]
-    .iter()
-    .any(|name| agent.join(name).exists())
+    dir_name.eq_ignore_ascii_case(".omp") || dir_name.eq_ignore_ascii_case("omp")
 }
 
 /// 解析实际使用的 models 配置文件路径。
@@ -707,7 +696,15 @@ pub fn set_provider_raw(name: &str, config: Value) -> Result<PiWriteOutcome, App
 
     if let Some(existing) = providers_map.get(name) {
         if let (Some(existing_obj), Some(new_obj)) = (existing.as_object(), config.as_object()) {
+            // Same clear semantics as set_provider: known optional fields omitted
+            // from the new object must be removed so apiKey/baseUrl/api can be cleared.
+            const KNOWN_FIELDS: &[&str] = &["baseUrl", "apiKey", "api", "models"];
             let mut merged = existing_obj.clone();
+            for key in KNOWN_FIELDS {
+                if !new_obj.contains_key(*key) {
+                    merged.remove(*key);
+                }
+            }
             for (k, v) in new_obj {
                 merged.insert(k.clone(), v.clone());
             }
@@ -746,11 +743,14 @@ pub fn remove_provider(name: &str) -> Result<PiWriteOutcome, AppError> {
 ///
 /// - 原版 Pi：写入 `settings.json` 的 `defaultProvider`
 /// - Oh-my-pi：写入 `config.yml` 的 `modelRoles.default`（`provider/model`）
+///
+/// Activation format follows the **resolved settings file** (YAML `config.y{a}ml`
+/// ⇒ OMP roles; otherwise `defaultProvider`), not a directory heuristic.
 pub fn set_active_provider(name: &str) -> Result<PiWriteOutcome, AppError> {
     let _guard = pi_write_lock().lock()?;
     let settings_path = get_pi_settings_path();
     let mut settings = read_pi_settings()?;
-    let use_omp = uses_omp_settings_layout(&settings_path) || prefers_omp_layout(&get_pi_dir());
+    let use_omp = uses_omp_settings_layout(&settings_path);
 
     if use_omp {
         let existing_role = settings
@@ -775,12 +775,12 @@ pub fn set_active_provider(name: &str) -> Result<PiWriteOutcome, AppError> {
 
 /// 读取当前激活的供应商。
 ///
-/// - Oh-my-pi：从 `modelRoles.default` 解析 `provider/...`
+/// - Oh-my-pi（`config.y{a}ml`）：从 `modelRoles.default` 解析 `provider/...`
 /// - 原版 Pi：读取 `defaultProvider`
 pub fn get_active_provider() -> Result<Option<String>, AppError> {
     let settings_path = get_pi_settings_path();
     let settings = read_pi_settings()?;
-    let use_omp = uses_omp_settings_layout(&settings_path) || prefers_omp_layout(&get_pi_dir());
+    let use_omp = uses_omp_settings_layout(&settings_path);
 
     if use_omp {
         if let Some(provider) = settings
@@ -797,6 +797,33 @@ pub fn get_active_provider() -> Result<Option<String>, AppError> {
         .and_then(|v| v.as_str())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty()))
+}
+
+/// Validate that a Pi provider config has at least one model with a non-empty id.
+pub fn ensure_provider_has_models(config: &PiProviderConfig) -> Result<(), AppError> {
+    let has_model = config
+        .models
+        .iter()
+        .any(|m| !m.id.trim().is_empty());
+    if has_model {
+        Ok(())
+    } else {
+        Err(AppError::localized(
+            "provider.pi.models.required",
+            "Pi 供应商至少需要配置一个带 id 的模型",
+            "Pi provider requires at least one model with an id",
+        ))
+    }
+}
+
+/// Refuse removing the currently active Pi provider. Propagates read errors.
+pub fn ensure_provider_not_active(provider_id: &str) -> Result<(), AppError> {
+    match get_active_provider()? {
+        Some(active) if active == provider_id => Err(AppError::Message(
+            "无法删除当前正在使用的供应商".to_string(),
+        )),
+        _ => Ok(()),
+    }
 }
 
 // ============================================================================
@@ -1002,6 +1029,51 @@ mod tests {
                 entry.get("apiKey").is_none(),
                 "cleared apiKey must be removed from disk"
             );
+        });
+    }
+
+    #[test]
+    fn set_provider_raw_clears_omitted_api_key() {
+        with_test_home(|| {
+            set_provider(
+                "raw-clear",
+                PiProviderConfig {
+                    base_url: Some("https://example.com/v1".to_string()),
+                    api: Some("openai-completions".to_string()),
+                    api_key: Some("sk-keep".to_string()),
+                    models: vec![PiModelEntry {
+                        id: "m1".to_string(),
+                        name: None,
+                        reasoning: false,
+                        context_window: None,
+                        max_tokens: None,
+                        input: vec![],
+                        extra: HashMap::new(),
+                    }],
+                    extra: HashMap::new(),
+                },
+            )
+            .unwrap();
+
+            set_provider_raw(
+                "raw-clear",
+                serde_json::json!({
+                    "baseUrl": "https://example.com/v2",
+                    "api": "openai-completions",
+                    "models": [{ "id": "m1" }]
+                }),
+            )
+            .unwrap();
+
+            let path = get_pi_config_path();
+            let value: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            let entry = &value["providers"]["raw-clear"];
+            assert_eq!(entry["baseUrl"], "https://example.com/v2");
+            assert!(
+                entry.get("apiKey").is_none(),
+                "raw merge must clear omitted apiKey"
+            );
+            assert!(entry.get("headers").is_none() || entry["headers"].is_null() || entry["headers"].is_object());
         });
     }
 

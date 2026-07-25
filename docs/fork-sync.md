@@ -1,9 +1,18 @@
-# Fork：同步官方 + 自己的应用内更新
+# Fork：同步官方（不含劫持官方更新通道）
 
-本 fork（`xjwm5685-ui/cc-switch-pro`）与官方（`farion1231/cc-switch`）分离：
+本仓库可同时服务：
 
-- **官方更新**：只合进你的分支，不推回官方
-- **应用内更新**：只装你自己的 Release，不会被官方包盖掉
+1. **上游贡献**（PR → `farion1231/cc-switch`）：必须保留官方 updater
+2. **个人 fork 发版**（`xjwm5685-ui/cc-switch-pro`）：仅在 **fork 默认分支 / release 分支** 上改 updater
+
+## 硬性规则（合并到官方前必查）
+
+- `src-tauri/tauri.conf.json` 的 `plugins.updater.endpoints` **必须** 指向：
+  `https://github.com/farion1231/cc-switch/releases/latest/download/latest.json`
+- `plugins.updater.pubkey` **必须** 保持官方公钥
+- **禁止**把 fork 的 endpoint / pubkey 放进针对上游 `main` 的 PR
+
+fork 自有更新通道只在 fork 仓库本地改，且不要回提上游。
 
 本地 remote 约定：
 
@@ -45,17 +54,15 @@ git push fork HEAD
 - 默认：往本 fork 的 `main` **开 PR**（审完再合，最安全）
 - 可选：`create_pr_only=false` → 无冲突时直接合入目标分支
 
-产品线在 `feat/pi-support` 时：手动跑 workflow，把 `target_branch` 填成 `feat/pi-support`。
-
 受保护分支推送失败时，在 fork 仓库 Secrets 增加：
 
 - `SYNC_UPSTREAM_TOKEN`：PAT，权限 `contents:write` + `pull_requests:write`
 
 ---
 
-## 3) 应用内更新 → 只指向本 fork
+## 3) Fork 专用应用内更新（仅 fork 仓库，勿提上游）
 
-`src-tauri/tauri.conf.json`：
+仅在 **fork 自己的 release 线** 上覆盖 `tauri.conf.json`：
 
 ```json
 "endpoints": [
@@ -63,23 +70,17 @@ git push fork HEAD
 ]
 ```
 
-官方公钥**验不过**你自己打的包（你没有官方私钥）。需使用本机已生成的密钥对：
+并换成你自己的 `pubkey`。官方公钥验不过你签名的包。
 
 | 文件 | 作用 |
 |------|------|
 | `%USERPROFILE%\.tauri\cc-switch-pro.key` | **私钥**，绝不能进 git |
-| `%USERPROFILE%\.tauri\cc-switch-pro.key.pub` | 公钥 → 已写入 `plugins.updater.pubkey` |
+| `%USERPROFILE%\.tauri\cc-switch-pro.key.pub` | 公钥 → 只写进 **fork** 的 `plugins.updater.pubkey` |
 
-### 你还差这一步（只做一次）
+在 GitHub **本 fork** → Settings → Secrets → Actions：
 
-在 GitHub **本 fork** → Settings → Secrets and variables → Actions 添加：
-
-1. `TAURI_SIGNING_PRIVATE_KEY` = `cc-switch-pro.key` 的**完整文件内容**（含 `untrusted comment:` 那两行）
-2. `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` = 空（生成时用了空密码；若你后来改过密码再填）
-
-然后打 tag 触发 `Release` 工作流，会发布带签名的安装包 + `latest.json`。之后应用内「检查更新」只会升你自己的版本。
-
-重新生成密钥（会作废旧签名，慎用）：
+1. `TAURI_SIGNING_PRIVATE_KEY` = `cc-switch-pro.key` 完整内容
+2. `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` = 空（若生成时用了空密码）
 
 ```powershell
 pnpm tauri:signer:generate -- -Force
@@ -92,6 +93,6 @@ pnpm tauri:signer:generate -- -Force
 ```text
 pnpm sync:upstream:push     # 或等 GitHub Action 开 PR
 # 解决冲突 / 审 PR
-# 开发你的功能 → push fork
-# 发版：打 tag → Release CI → 用户从你的渠道更新
+# 功能 PR → 推 origin（官方 updater 不变）
+# fork 发版：在 fork 分支改 updater → 打 tag → Release CI
 ```

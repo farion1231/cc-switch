@@ -43,6 +43,12 @@ use live::{
 };
 use usage::validate_usage_script;
 
+/// Refuse mutating/removing the currently active Pi provider.
+/// Propagates read errors instead of treating them as "not active".
+fn ensure_pi_provider_not_active(id: &str) -> Result<(), AppError> {
+    crate::pi_config::ensure_provider_not_active(id)
+}
+
 /// The built-in Codex official provider is safe to select during takeover:
 /// Codex keeps ownership of its ChatGPT login and the proxy only forwards the
 /// authenticated request. Other official providers retain the existing block.
@@ -2374,13 +2380,7 @@ impl ProviderService {
             let existing = state.db.get_provider_by_id(id, app_type.as_str())?;
 
             if matches!(app_type, AppType::Pi) {
-                if let Ok(Some(active)) = crate::pi_config::get_active_provider() {
-                    if active == id {
-                        return Err(AppError::Message(
-                            "无法删除当前正在使用的供应商".to_string(),
-                        ));
-                    }
-                }
+                ensure_pi_provider_not_active(id)?;
             }
 
             if matches!(app_type, AppType::OpenCode) {
@@ -2486,13 +2486,7 @@ impl ProviderService {
                 remove_hermes_provider_from_live(id)?;
             }
             AppType::Pi => {
-                if let Ok(Some(active)) = crate::pi_config::get_active_provider() {
-                    if active == id {
-                        return Err(AppError::Message(
-                            "无法删除当前正在使用的供应商".to_string(),
-                        ));
-                    }
-                }
+                ensure_pi_provider_not_active(id)?;
                 remove_pi_provider_from_live(id)?;
             }
             _ => {
@@ -2722,15 +2716,17 @@ impl ProviderService {
         }
 
         if matches!(app_type, AppType::Pi) {
-            if let Err(e) = crate::pi_config::set_active_provider(&provider.id) {
-                log::warn!(
-                    "Failed to update Pi defaultProvider after switching to '{}': {e}",
-                    provider.id
-                );
-                result
-                    .warnings
-                    .push(format!("pi_default_provider_failed:{}", provider.id));
-            }
+            // Hard-fail: additive live upsert is fine to keep, but switch must not
+            // report success when defaultProvider / modelRoles.default did not update.
+            crate::pi_config::set_active_provider(&provider.id).map_err(|e| {
+                AppError::localized(
+                    "provider.pi.active_set_failed",
+                    format!("写入 Pi 配置成功，但更新默认供应商失败: {e}"),
+                    format!(
+                        "Pi provider config was written, but updating the active provider failed: {e}"
+                    ),
+                )
+            })?;
         }
 
         // For additive-mode providers that were DB-only (live_config_managed == Some(false)),

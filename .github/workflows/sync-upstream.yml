@@ -134,7 +134,7 @@ jobs:
           ## Notes
           - Only pulls **official** commits into **this fork**.
           - Your custom commits on \`${TARGET_BRANCH}\` stay; resolve conflicts if needed.
-          - In-app updater must use **this fork's** \`latest.json\`, not \`farion1231/cc-switch\`.
+          - **Do not** change upstream \`tauri.conf.json\` updater endpoints/pubkey in PRs to \`farion1231/cc-switch\`.
 
           ## If conflict = true
           \`\`\`bash

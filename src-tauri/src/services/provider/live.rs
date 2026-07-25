@@ -1984,7 +1984,6 @@ pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError
     }
 
     let mut imported = 0;
-    let mut updated = 0;
     let existing_ids = state.db.get_provider_ids("pi")?;
 
     for (id, config) in providers {
@@ -2006,24 +2005,10 @@ pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError
         };
 
         if existing_ids.contains(&id) {
-            match state.db.get_provider_by_id(&id, "pi") {
-                Ok(Some(existing)) => {
-                    if existing.settings_config != settings_config {
-                        let mut provider = existing;
-                        provider.settings_config = settings_config;
-                        if let Err(e) = state.db.save_provider("pi", &provider) {
-                            log::warn!("Failed to update Pi provider '{id}' from live config: {e}");
-                        } else {
-                            updated += 1;
-                            log::info!("Updated Pi provider '{id}' from live config");
-                        }
-                    }
-                }
-                Ok(None) => {
-                    log::warn!("Pi provider '{id}' disappeared while importing live config")
-                }
-                Err(e) => log::warn!("Failed to look up Pi provider '{id}': {e}"),
-            }
+            // Do not clobber DB-only edits: import only creates missing providers.
+            log::debug!(
+                "Skipping Pi provider '{id}' already present in database (import does not overwrite)"
+            );
             continue;
         }
 
@@ -2048,7 +2033,7 @@ pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError
         log::info!("Imported Pi provider '{id}' from live config");
     }
 
-    Ok(imported + updated)
+    Ok(imported)
 }
 
 /// Remove a Hermes provider from live config

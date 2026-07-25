@@ -591,6 +591,85 @@ fn deny_unsafe_destination(url: &Url, allow_private_network: bool) -> Result<(),
         ));
     }
 
+    // Resolve hostnames and re-check resolved IPs (DNS rebinding / private A records).
+    deny_unsafe_resolved_ips(url, allow_private_network)?;
+
+    Ok(())
+}
+
+fn deny_unsafe_resolved_ips(url: &Url, allow_private_network: bool) -> Result<(), AppError> {
+    use std::net::ToSocketAddrs;
+
+    let Some(Host::Domain(host)) = url.host() else {
+        // Literal IPs were already checked above.
+        return Ok(());
+    };
+
+    // Skip resolution for hostnames that are already IP literals (handled above)
+    // or obvious loopback names.
+    if host.eq_ignore_ascii_case("localhost")
+        || host.parse::<Ipv4Addr>().is_ok()
+        || host.parse::<Ipv6Addr>().is_ok()
+    {
+        return Ok(());
+    }
+
+    let port = url.port_or_known_default().unwrap_or(0);
+    let addrs = match (host, port).to_socket_addrs() {
+        Ok(addrs) => addrs,
+        // Fail open on DNS errors: the subsequent HTTP call will fail anyway,
+        // and offline / synthetic hostnames (e.g. example.com in unit tests)
+        // must not be blocked as "private".
+        Err(e) => {
+            log::debug!("usage_script DNS resolve skipped for '{host}': {e}");
+            return Ok(());
+        }
+    };
+
+    for addr in addrs {
+        let ip = addr.ip();
+        match ip {
+            std::net::IpAddr::V4(v4) => {
+                if v4.is_loopback() {
+                    continue;
+                }
+                if is_link_local_v4(v4) || v4 == Ipv4Addr::new(169, 254, 169, 254) {
+                    return Err(AppError::localized(
+                        "usage_script.destination_blocked",
+                        "禁止访问链路本地地址或云元数据服务（SSRF 防护）",
+                        "Link-local addresses and cloud metadata endpoints are blocked (SSRF protection)",
+                    ));
+                }
+                if !allow_private_network && is_private_v4(v4) {
+                    return Err(AppError::localized(
+                        "usage_script.private_network_blocked",
+                        "禁止访问私有网络地址；自定义脚本请开启「允许私有网络」",
+                        "Private network addresses are blocked; enable allowPrivateNetwork for custom scripts",
+                    ));
+                }
+            }
+            std::net::IpAddr::V6(v6) => {
+                if v6.is_loopback() {
+                    continue;
+                }
+                if is_link_local_v6(v6) {
+                    return Err(AppError::localized(
+                        "usage_script.destination_blocked",
+                        "禁止访问链路本地地址或云元数据服务（SSRF 防护）",
+                        "Link-local addresses and cloud metadata endpoints are blocked (SSRF protection)",
+                    ));
+                }
+                if !allow_private_network && is_private_v6(v6) {
+                    return Err(AppError::localized(
+                        "usage_script.private_network_blocked",
+                        "禁止访问私有网络地址；自定义脚本请开启「允许私有网络」",
+                        "Private network addresses are blocked; enable allowPrivateNetwork for custom scripts",
+                    ));
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 

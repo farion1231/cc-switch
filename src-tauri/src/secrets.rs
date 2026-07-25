@@ -70,7 +70,42 @@ fn load_or_create_key() -> Result<[u8; KEY_LEN], AppError> {
             .map_err(|e| AppError::io(&path, e))?;
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use std::io::Write;
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&path)
+            .map_err(|e| AppError::io(&path, e))?;
+        file.write_all(&key)
+            .map_err(|e| AppError::io(&path, e))?;
+        // Restrict ACL to the current user (strip inheritance). Best-effort:
+        // encryption still works if icacls is unavailable.
+        if let Ok(username) = std::env::var("USERNAME") {
+            if !username.is_empty() {
+                let grant = format!("{username}:(R,W)");
+                match std::process::Command::new("icacls")
+                    .arg(&path)
+                    .args(["/inheritance:r", "/grant:r", &grant])
+                    .output()
+                {
+                    Ok(out) if out.status.success() => {}
+                    Ok(out) => log::warn!(
+                        "Failed to restrict ACL on {}: {}",
+                        path.display(),
+                        String::from_utf8_lossy(&out.stderr)
+                    ),
+                    Err(e) => log::warn!(
+                        "Failed to run icacls for {}: {e}",
+                        path.display()
+                    ),
+                }
+            }
+        }
+    }
+
+    #[cfg(all(not(unix), not(windows)))]
     {
         fs::write(&path, key).map_err(|e| AppError::io(&path, e))?;
     }
@@ -331,20 +366,26 @@ pub fn encrypt_provider_settings_in_conn(conn: &rusqlite::Connection) -> Result<
         .map_err(|e| AppError::Database(e.to_string()))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| AppError::Database(e.to_string()))?;
+    drop(stmt);
 
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| AppError::Database(e.to_string()))?;
     let mut updated = 0usize;
     for (rowid, value) in rows {
         let encrypted = encrypt_blob(&value)?;
         if encrypted == value {
             continue;
         }
-        conn.execute(
+        tx.execute(
             "UPDATE providers SET settings_config = ?1 WHERE rowid = ?2",
             rusqlite::params![encrypted, rowid],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         updated += 1;
     }
+    tx.commit()
+        .map_err(|e| AppError::Database(e.to_string()))?;
     Ok(updated)
 }
 
@@ -392,6 +433,10 @@ mod tests {
             let dir = TempDir::new().unwrap();
             let original = env::var("CC_SWITCH_TEST_HOME").ok();
             env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            // Reset process-global cipher so each test uses this home's key file.
+            // OnceLock cannot be cleared; tests that need a fresh cipher must run
+            // before CIPHER is initialized, or use encrypt_with_current helpers via
+            // a dedicated key below.
             Self {
                 _dir: dir,
                 original,
@@ -408,6 +453,28 @@ mod tests {
         }
     }
 
+    fn roundtrip_with_ephemeral_key(plain: &str) -> String {
+        let mut key = [0u8; KEY_LEN];
+        rand::thread_rng().fill_bytes(&mut key);
+        let aes = Aes256Gcm::new_from_slice(&key).unwrap();
+        let mut nonce_bytes = [0u8; NONCE_LEN];
+        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        let ciphertext = aes
+            .encrypt(Nonce::from_slice(&nonce_bytes), plain.as_bytes())
+            .unwrap();
+        let mut packed = Vec::with_capacity(NONCE_LEN + ciphertext.len());
+        packed.extend_from_slice(&nonce_bytes);
+        packed.extend_from_slice(&ciphertext);
+        let enc = format!("{PREFIX}{}", B64.encode(packed));
+
+        let packed = B64.decode(enc.strip_prefix(PREFIX).unwrap()).unwrap();
+        let (nonce_bytes, ciphertext) = packed.split_at(NONCE_LEN);
+        let plain_out = aes
+            .decrypt(Nonce::from_slice(nonce_bytes), ciphertext)
+            .unwrap();
+        String::from_utf8(plain_out).unwrap()
+    }
+
     #[test]
     #[serial]
     fn roundtrip_and_plaintext_passthrough() {
@@ -416,6 +483,10 @@ mod tests {
         let passthrough = decrypt_blob(plain).unwrap();
         assert_eq!(passthrough, plain);
 
+        // Always exercise AES roundtrip with an ephemeral key (independent of OnceLock).
+        assert_eq!(roundtrip_with_ephemeral_key(plain), plain);
+
+        // Also exercise the module API when the process cipher is still unset.
         if CIPHER.get().is_none() {
             let enc = encrypt_blob(plain).unwrap();
             assert!(enc.starts_with(PREFIX));

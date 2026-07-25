@@ -34,20 +34,22 @@ pub fn get_pi_provider(
     pi_config::get_provider(&providerName).map_err(|e| e.to_string())
 }
 
-/// Upsert a Pi provider.
+/// Upsert a Pi provider (requires at least one model with id).
 #[tauri::command]
 pub fn set_pi_provider(
     #[allow(non_snake_case)] providerName: String,
     #[allow(non_snake_case)] providerConfig: pi_config::PiProviderConfig,
 ) -> Result<pi_config::PiWriteOutcome, String> {
+    pi_config::ensure_provider_has_models(&providerConfig).map_err(|e| e.to_string())?;
     pi_config::set_provider(&providerName, providerConfig).map_err(|e| e.to_string())
 }
 
-/// Remove a Pi provider.
+/// Remove a Pi provider (refuses when it is the active default).
 #[tauri::command]
 pub fn remove_pi_provider(
     #[allow(non_snake_case)] providerName: String,
 ) -> Result<pi_config::PiWriteOutcome, String> {
+    pi_config::ensure_provider_not_active(&providerName).map_err(|e| e.to_string())?;
     pi_config::remove_provider(&providerName).map_err(|e| e.to_string())
 }
 
@@ -62,7 +64,20 @@ pub fn get_pi_active_provider() -> Result<Option<String>, String> {
 pub fn set_pi_active_provider(
     #[allow(non_snake_case)] providerName: String,
 ) -> Result<pi_config::PiWriteOutcome, String> {
-    pi_config::set_active_provider(&providerName).map_err(|e| e.to_string())
+    let trimmed = providerName.trim();
+    if trimmed.is_empty() {
+        return Err("Pi provider name must not be empty".to_string());
+    }
+    // Ensure the provider exists in live config before pinning it as default.
+    match pi_config::get_provider(trimmed).map_err(|e| e.to_string())? {
+        Some(_) => {}
+        None => {
+            return Err(format!(
+                "Pi provider '{trimmed}' does not exist in live config"
+            ));
+        }
+    }
+    pi_config::set_active_provider(trimmed).map_err(|e| e.to_string())
 }
 
 /// Scan Pi config for known configuration hazards.
@@ -74,7 +89,8 @@ pub fn scan_pi_config_health() -> Result<Vec<pi_config::PiHealthWarning>, String
 /// Import providers from Pi live config to database.
 #[tauri::command]
 pub fn import_pi_providers_from_live(state: State<'_, AppState>) -> Result<usize, String> {
-    crate::services::provider::import_pi_providers_from_live(state.inner()).map_err(|e| e.to_string())
+    crate::services::provider::import_pi_providers_from_live(state.inner())
+        .map_err(|e| e.to_string())
 }
 
 /// Get provider IDs in the Pi live config.
