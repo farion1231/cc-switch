@@ -1687,4 +1687,18 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     endpointCandidates: ["https://api.therouter.ai/v1"],
     category: "aggregator",
   },
+  {
+    name: "Abliteration",
+    websiteUrl: "https://abliteration.ai",
+    apiKeyUrl: "https://abliteration.ai/console",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "abliteration",
+      "https://api.abliteration.ai/v1",
+      "abliterated-model",
+    ),
+    endpointCandidates: ["https://api.abliteration.ai/v1"],
+    category: "third_party",
+    icon: "abliteration",
+  },
 ];
