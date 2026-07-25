@@ -2109,8 +2109,7 @@ fn codex_official_picker_metadata_field(
     let official_has_any =
         |fields: &[&str]| fields.iter().any(|field| official.contains_key(*field));
     match field {
-        // CCSM 路由目录拥有这些字段：模型别名、显式窗口、路由可见性及用户声明的
-        // 输入/工具能力仍需覆盖模板或官方默认值。
+        // CCSM 路由目录拥有这些字段：模型别名、显式窗口与路由可见性。
         "slug"
         | "model"
         | "id"
@@ -2123,16 +2122,24 @@ fn codex_official_picker_metadata_field(
         | "show_in_picker"
         | "showInPicker"
         | "hidden"
-        | "input_modalities"
-        | "inputModalities"
-        | "supports_image_detail_original"
-        | "supportsImageDetailOriginal"
-        | "web_search_tool_type"
-        | "webSearchToolType"
         | "supports_parallel_tool_calls"
         | "supportsParallelToolCalls"
         | "base_instructions"
         | "baseInstructions" => false,
+        // 对同 slug 的官方 GPT，图片能力必须来自接管前官方 catalog。路由
+        // catalog 往往是 NativeResponses text-only 模板的产物；允许它覆盖会把
+        // 官方模型错误降级，令 Desktop 在请求送达代理前就拒绝图片输入。
+        "input_modalities"
+        | "inputModalities"
+        | "supports_image_detail_original"
+        | "supportsImageDetailOriginal"
+        | "web_search_tool_type"
+        | "webSearchToolType" => official_has_any(&[
+            "input_modalities",
+            "inputModalities",
+            "supports_image_detail_original",
+            "supportsImageDetailOriginal",
+        ]),
         "display_name" | "displayName" | "description" => {
             official_has_any(&["display_name", "displayName"])
         }
@@ -5136,6 +5143,32 @@ openai_base_url = "http://127.0.0.1:15721/v1"
         assert_eq!(model["multi_agent_version"], "v2");
         assert_eq!(model["tool_mode"], "direct");
         assert_eq!(model["apply_patch_tool_type"], "freeform");
+    }
+
+    #[test]
+    fn catalog_enrichment_keeps_official_image_capability_over_text_only_template() {
+        let official_models = json!([{
+            "slug": "gpt-5.6-terra",
+            "input_modalities": ["text", "image"],
+            "supports_image_detail_original": true,
+            "web_search_tool_type": "text_and_image"
+        }]);
+        let routed_models = json!([{
+            "slug": "gpt-5.6-terra",
+            "input_modalities": ["text"],
+            "supports_image_detail_original": false,
+            "web_search_tool_type": "text"
+        }]);
+
+        let merged = merge_codex_models(
+            official_models.as_array().expect("official models"),
+            routed_models.as_array().expect("routed models"),
+        );
+        let model = merged.first().expect("merged model");
+
+        assert_eq!(model["input_modalities"], json!(["text", "image"]));
+        assert_eq!(model["supports_image_detail_original"], true);
+        assert_eq!(model["web_search_tool_type"], "text_and_image");
     }
 
     #[test]

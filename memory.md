@@ -16,6 +16,7 @@
 - 当前 rollout 的真实用户输入结构是 `type='event_msg'` 且 `payload.type='user_message'`，不能继续用旧的字符串或顶层 `type='user_message'` 判断。preview 与 first_user_message 仅从此真实事件或目标事件 preview 提取，避免编造可见历史。
 - 写入前继续拒绝运行中的 `ChatGPT.exe` / `OpenAI.Codex` / `codex.exe app-server`，并备份 state DB（含 WAL/SHM）和受影响 rollout；修复后需重启 Desktop 验证历史不再闪现后消失。
 - `Continue in a new task` 会把父会话的 `session_meta.id` 原样复制到多个独立 rollout；这些文件的 `rollout-<timestamp>-<uuid>.jsonl` UUID 才是分支物理身份。历史重建必须只在声明 ID 冲突时改用该 filename UUID，分别写入每个 `threads.id -> rollout_path`，不能再用 `BTreeMap<session_meta.id, ...>` 覆盖不同进度的分支，也不能改写原始 JSONL 的 parent ID。
+- 官方多模态 catalog 投影必须让同 slug 官方 cache 的 `input_modalities`、`supports_image_detail_original` 与 `web_search_tool_type` 胜过 NativeResponses 的 text-only 模板；否则模型目录与路由虽声明图像能力，最终 `cc-switch-model-catalog.json` 仍会被覆盖成 text-only。
 
 ## 2026-07-20 本机构建缓存与旧发布输出清理
 
