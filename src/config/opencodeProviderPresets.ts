@@ -2029,7 +2029,16 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "abliterated-model": { name: "Abliterated Model" },
+        "abliterated-model-large": {
+          name: "Abliterated Large",
+          limit: { context: 1000000 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "abliterated-model": {
+          name: "Abliterated Model",
+          limit: { context: 262144 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
       },
     },
     category: "third_party",

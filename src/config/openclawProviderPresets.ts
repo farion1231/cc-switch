@@ -2528,9 +2528,14 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
+          id: "abliterated-model-large",
+          name: "Abliterated Large",
+          contextWindow: 1000000,
+        },
+        {
           id: "abliterated-model",
           name: "Abliterated Model",
-          contextWindow: 150000,
+          contextWindow: 262144,
         },
       ],
     },
@@ -2545,9 +2550,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "abliteration/abliterated-model",
+        primary: "abliteration/abliterated-model-large",
       },
       modelCatalog: {
+        "abliteration/abliterated-model-large": { alias: "Abliterated Large" },
         "abliteration/abliterated-model": { alias: "Abliterated Model" },
       },
     },

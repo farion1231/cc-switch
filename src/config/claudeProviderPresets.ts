@@ -1483,10 +1483,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.abliteration.ai",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "abliterated-model",
+        ANTHROPIC_MODEL: "abliterated-model-large",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "abliterated-model",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "abliterated-model",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "abliterated-model",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "abliterated-model-large",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "abliterated-model-large",
       },
     },
     category: "third_party",
