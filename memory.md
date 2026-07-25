@@ -17,6 +17,7 @@
 - 写入前继续拒绝运行中的 `ChatGPT.exe` / `OpenAI.Codex` / `codex.exe app-server`，并备份 state DB（含 WAL/SHM）和受影响 rollout；修复后需重启 Desktop 验证历史不再闪现后消失。
 - `Continue in a new task` 的真实身份是新的 `session_meta.id`；其 rollout event payload 中的 `forked_from_id` 才指向父 task。派生任务会复制首条用户消息，因此不能用标题、首条消息、文件名 UUID 或全文引用判断身份。在 2026-07-25 的“孙同学”现场，36 条相同标题均为不同 session id，且可由 `forked_from_id` 形成分支树。历史重建必须按 `session_meta.id -> rollout_path` 一对一保留这些任务。
 - 若损坏导出真的有多个文件声明同一个 `session_meta.id`，它们不是可证明的派生任务：只保留含用户事件且 `updated_at_ms` 最新的完整快照，不能改写为 filename UUID 并插入多个侧边栏条目。
+- 纠正：rollout 中即使存在不同 `session_meta.id` / `forked_from_id`，也不等于用户期望在 Desktop 侧边栏显示的独立历史。历史修复只能更新已有 `threads`，或恢复 Codex 原生 `session_index.jsonl` 已列出的 ID；绝不能扫描所有 rollout 后插入 threads，更不能把缺失的可见行追加回 session_index。此前这两步会把内部续接/恢复记录扩散为大量重复 sidebar 条目。
 - 官方多模态 catalog 投影必须让同 slug 官方 cache 的 `input_modalities`、`supports_image_detail_original` 与 `web_search_tool_type` 胜过 NativeResponses 的 text-only 模板；否则模型目录与路由虽声明图像能力，最终 `cc-switch-model-catalog.json` 仍会被覆盖成 text-only。
 
 ## 2026-07-20 本机构建缓存与旧发布输出清理

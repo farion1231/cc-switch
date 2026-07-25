@@ -1164,8 +1164,19 @@ fn repair_codex_history_visibility_at(
     }
 
     let mut rows = load_codex_thread_history_rows(&conn)?;
-    let rollout_metadata = scan_rollout_thread_metadata(codex_dir)?;
     let existing_ids: HashSet<String> = rows.iter().map(|row| row.id.clone()).collect();
+    let index_path = codex_dir.join("session_index.jsonl");
+    let session_index_lines = read_jsonl_lines(&index_path)?;
+    let session_index_ids = session_index_thread_ids(&session_index_lines);
+    // Rollouts are an event archive, not a sidebar catalog. Only restore a missing
+    // thread when Codex itself had already indexed it; otherwise internal continuations
+    // and recovery snapshots become synthetic visible tasks.
+    let rollout_metadata: Vec<_> = scan_rollout_thread_metadata(codex_dir)?
+        .into_iter()
+        .filter(|metadata| {
+            existing_ids.contains(&metadata.id) || session_index_ids.contains(&metadata.id)
+        })
+        .collect();
     let thread_rows_to_insert = rollout_metadata
         .iter()
         .filter(|metadata| !existing_ids.contains(&metadata.id))
@@ -1250,15 +1261,8 @@ fn repair_codex_history_visibility_at(
         }
     }
 
-    let index_path = codex_dir.join("session_index.jsonl");
     let global_state_path = codex_dir.join(".codex-global-state.json");
-    let session_index_lines = read_jsonl_lines(&index_path)?;
-    let session_index_ids = session_index_thread_ids(&session_index_lines);
-    let missing_index_rows: Vec<ThreadHistoryRow> = visible_rows
-        .iter()
-        .filter(|row| !session_index_ids.contains(&row.id))
-        .cloned()
-        .collect();
+    let missing_index_rows: Vec<ThreadHistoryRow> = Vec::new();
 
     let mut project_rows = Vec::new();
     if let Some(project_path) = normalized_project_path.as_deref() {
@@ -1445,8 +1449,7 @@ fn repair_codex_history_visibility_at(
         .map_err(|e| AppError::Database(format!("提交 Codex 历史修复事务失败: {e}")))?;
 
     outcome.rollout_first_lines_updated = apply_rollout_provider_updates(rollout_provider_updates)?;
-    outcome.session_index_appended =
-        append_missing_session_index_rows(&index_path, &missing_index_rows)?;
+    outcome.session_index_appended = 0;
     let session_index_counts = move_focus_session_index_rows(&index_path, &selected_focus_rows)?;
     outcome.session_index_rows_moved = session_index_counts.rows_moved;
     outcome.session_index_titles_updated = session_index_counts.titles_updated;
@@ -2339,35 +2342,6 @@ fn count_session_index_title_updates(lines: &[String], selected: &[FocusThreadRo
                 != selected_title
         })
         .count()
-}
-
-/// 把缺失的可见历史追加到 session_index.jsonl，避免前端只看索引时漏掉会话。
-fn append_missing_session_index_rows(
-    index_path: &Path,
-    rows: &[ThreadHistoryRow],
-) -> Result<usize, AppError> {
-    if rows.is_empty() {
-        return Ok(0);
-    }
-    let mut lines = read_jsonl_lines(index_path)?;
-    let mut existing = session_index_thread_ids(&lines);
-    let mut appended = 0;
-    for row in rows {
-        if !existing.insert(row.id.clone()) {
-            continue;
-        }
-        let value = serde_json::json!({
-            "id": row.id,
-            "thread_name": row_title(row),
-            "updated_at": iso_from_epoch_millis(row_updated_ms(row)),
-        });
-        lines.push(
-            serde_json::to_string(&value).map_err(|e| AppError::JsonSerialize { source: e })?,
-        );
-        appended += 1;
-    }
-    write_jsonl_lines(index_path, &lines)?;
-    Ok(appended)
 }
 
 /// 把聚焦项目的 session_index 行移动到文件尾部，并同步 updated_at。
@@ -4551,6 +4525,11 @@ mod tests {
             ),
         )
         .expect("fork rollout");
+        fs::write(
+            codex_dir.join("session_index.jsonl"),
+            format!("{{\"id\":\"{parent_id}\"}}\n{{\"id\":\"{fork_id}\"}}\n"),
+        )
+        .expect("native session index");
         let db_path = codex_dir.join(CODEX_STATE_DB_FILENAME);
         let conn = Connection::open(&db_path).expect("state db");
         create_history_test_threads_table(&conn);
