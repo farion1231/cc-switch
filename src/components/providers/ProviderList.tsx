@@ -231,20 +231,11 @@ export function ProviderList({
         const count = await providersApi.importClaudeDesktopFromClaude();
         return count > 0;
       }
-      return providersApi.importDefault(
-        appId,
-        appId === "codex" ? codexConfigTarget : undefined,
-      );
+      return providersApi.importDefault(appId);
     },
     onSuccess: (imported) => {
       if (imported) {
-        queryClient.invalidateQueries({
-          queryKey: [
-            "providers",
-            appId,
-            appId === "codex" ? codexConfigTarget : null,
-          ],
-        });
+        queryClient.invalidateQueries({ queryKey: ["providers", appId] });
         if (appId === "claude-desktop") {
           queryClient.invalidateQueries({ queryKey: ["claudeDesktopStatus"] });
         }

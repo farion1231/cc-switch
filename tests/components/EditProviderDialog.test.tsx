@@ -150,12 +150,6 @@ describe("EditProviderDialog", () => {
       });
     });
 
-    expect(apiMocks.getCurrent).toHaveBeenCalledWith("codex", undefined);
-    expect(apiMocks.getLiveProviderSettings).toHaveBeenCalledWith(
-      "codex",
-      undefined,
-    );
-
     fireEvent.click(screen.getByRole("button", { name: "common.save" }));
 
     await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
@@ -207,51 +201,5 @@ describe("EditProviderDialog", () => {
     expect(
       JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
     ).toEqual(provider.settingsConfig);
-  });
-
-  it("Codex WSL 編集時は WSL target で current 判定と live 設定を読む", async () => {
-    const provider: Provider = {
-      id: "deepseek",
-      name: "DeepSeek",
-      category: "custom",
-      settingsConfig: {
-        auth: {
-          OPENAI_API_KEY: "db-key",
-        },
-        config: 'model_provider = "custom"\nmodel = "db-model"\n',
-      },
-    };
-    const liveSettings = {
-      auth: {
-        OPENAI_API_KEY: "wsl-live-key",
-      },
-      config: 'model_provider = "custom"\nmodel = "wsl-live-model"\n',
-    };
-
-    apiMocks.getCurrent.mockResolvedValue(provider.id);
-    apiMocks.getLiveProviderSettings.mockResolvedValue(liveSettings);
-
-    render(
-      <EditProviderDialog
-        open
-        provider={provider}
-        onOpenChange={vi.fn()}
-        onSubmit={vi.fn()}
-        appId="codex"
-        codexConfigTarget="wsl"
-      />,
-    );
-
-    await waitFor(() => {
-      expect(
-        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
-      ).toEqual(liveSettings);
-    });
-
-    expect(apiMocks.getCurrent).toHaveBeenCalledWith("codex", "wsl");
-    expect(apiMocks.getLiveProviderSettings).toHaveBeenCalledWith(
-      "codex",
-      "wsl",
-    );
   });
 });

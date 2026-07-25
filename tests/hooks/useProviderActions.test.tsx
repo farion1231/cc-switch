@@ -412,50 +412,11 @@ describe("useProviderActions", () => {
         },
       },
       "claude",
-      undefined,
-      undefined,
     );
     expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: ["providers", "claude", null],
+      queryKey: ["providers", "claude"],
     });
     expect(toastSuccessMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("passes Codex WSL target when saving usage script", async () => {
-    providersApiUpdateMock.mockResolvedValueOnce(true);
-    const { wrapper, queryClient } = createWrapper();
-    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
-    const provider = createProvider({ category: "custom" });
-    const script: UsageScript = {
-      enabled: true,
-      language: "javascript",
-      code: "return {};",
-    };
-
-    const { result } = renderHook(
-      () => useProviderActions("codex", false, false, "wsl"),
-      { wrapper },
-    );
-
-    await act(async () => {
-      await result.current.saveUsageScript(provider, script);
-    });
-
-    expect(providersApiUpdateMock).toHaveBeenCalledWith(
-      {
-        ...provider,
-        meta: {
-          ...provider.meta,
-          usage_script: script,
-        },
-      },
-      "codex",
-      undefined,
-      "wsl",
-    );
-    expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: ["providers", "codex", "wsl"],
-    });
   });
 
   it("should show error toast when saveUsageScript fails with error message", async () => {

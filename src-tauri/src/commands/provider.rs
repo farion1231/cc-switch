@@ -752,16 +752,9 @@ pub async fn testUsageScript(
 }
 
 #[tauri::command]
-pub fn read_live_provider_settings(
-    app: String,
-    #[allow(non_snake_case)] codexConfigTarget: Option<String>,
-) -> Result<serde_json::Value, String> {
+pub fn read_live_provider_settings(app: String) -> Result<serde_json::Value, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    let scoped_app_type = app_type.clone();
-    with_codex_target(&app_type, codexConfigTarget, || {
-        ProviderService::read_live_settings(scoped_app_type)
-    })
-    .map_err(|e| e.to_string())
+    ProviderService::read_live_settings(app_type).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
