@@ -23,6 +23,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::hash::{Hash, Hasher};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use toml_edit::DocumentMut;
@@ -250,6 +251,9 @@ pub struct CodexHistoryVisibilityRepairOutcome {
     pub rollout_threads_discovered: usize,
     pub thread_rows_to_insert: usize,
     pub thread_rows_inserted: usize,
+    /// 被更长且内容一致的 rollout 完整覆盖的误索引线程数。
+    pub prefix_duplicate_rows_to_remove: usize,
+    pub prefix_duplicate_rows_removed: usize,
     /// 线程索引字段（preview/first_user_message/has_user_event/recency 等）与 rollout
     /// 事实不一致的行数。新版 Desktop 的 thread/list 直接依赖这些字段。
     pub thread_metadata_rows_to_rebuild: usize,
@@ -265,6 +269,8 @@ pub struct CodexHistoryVisibilityRepairOutcome {
     pub visible_candidate_rows: usize,
     pub session_index_missing_to_append: usize,
     pub session_index_appended: usize,
+    pub session_index_duplicate_rows_to_remove: usize,
+    pub session_index_duplicate_rows_removed: usize,
     pub project_rows: usize,
     pub focus_selected_count: usize,
     pub balanced_recent_window_enabled: bool,
@@ -1171,16 +1177,12 @@ fn repair_codex_history_visibility_at(
     // Rollouts are an event archive, not a sidebar catalog. Only restore a missing
     // thread when Codex itself had already indexed it; otherwise internal continuations
     // and recovery snapshots become synthetic visible tasks.
-    let rollout_metadata: Vec<_> = scan_rollout_thread_metadata(codex_dir)?
+    let mut rollout_metadata: Vec<_> = scan_rollout_thread_metadata(codex_dir)?
         .into_iter()
         .filter(|metadata| {
             existing_ids.contains(&metadata.id) || session_index_ids.contains(&metadata.id)
         })
         .collect();
-    let thread_rows_to_insert = rollout_metadata
-        .iter()
-        .filter(|metadata| !existing_ids.contains(&metadata.id))
-        .count();
     let mut metadata_repairs = Vec::new();
     for metadata in &rollout_metadata {
         if let Some(row) = rows.iter_mut().find(|row| row.id == metadata.id) {
@@ -1191,6 +1193,14 @@ fn repair_codex_history_visibility_at(
             rows.push(thread_history_row_from_rollout(metadata));
         }
     }
+    let prefix_duplicate_ids = plan_prefix_duplicate_thread_removals(&rows);
+    rows.retain(|row| !prefix_duplicate_ids.contains(&row.id));
+    rollout_metadata.retain(|metadata| !prefix_duplicate_ids.contains(&metadata.id));
+    metadata_repairs.retain(|metadata| !prefix_duplicate_ids.contains(&metadata.id));
+    let thread_rows_to_insert = rollout_metadata
+        .iter()
+        .filter(|metadata| !existing_ids.contains(&metadata.id))
+        .count();
     let mut effective_source_provider_ids = source_provider_ids;
     // 页面修复的目标是“当前 Codex 历史页能看到全部会话”。历史库里可能存在
     // 手写 provider、远端转发 provider 或未来 Codex 版本产生的新桶名；这些桶
@@ -1366,6 +1376,7 @@ fn repair_codex_history_visibility_at(
         sqlite_threads: rows.len(),
         rollout_threads_discovered: rollout_metadata.len(),
         thread_rows_to_insert,
+        prefix_duplicate_rows_to_remove: prefix_duplicate_ids.len(),
         thread_metadata_rows_to_rebuild: metadata_repairs.len(),
         backfill_state_to_update: Database::table_exists(&conn, "backfill_state")?,
         provider_rows_to_update: provider_update_ids.len(),
@@ -1373,6 +1384,16 @@ fn repair_codex_history_visibility_at(
         user_event_rows_to_update: user_event_update_ids.len(),
         visible_candidate_rows: visible_rows.len(),
         session_index_missing_to_append: missing_index_rows.len(),
+        session_index_duplicate_rows_to_remove: session_index_lines
+            .iter()
+            .filter(|line| {
+                serde_json::from_str::<Value>(line)
+                    .ok()
+                    .and_then(|value| json_string(&value, "id"))
+                    .map(|id| prefix_duplicate_ids.contains(&id))
+                    .unwrap_or(false)
+            })
+            .count(),
         project_rows: project_rows.len(),
         focus_selected_count: selected_focus_rows.len(),
         balanced_recent_window_enabled: runtime.balance_recent_window
@@ -1404,6 +1425,7 @@ fn repair_codex_history_visibility_at(
     }
 
     let has_changes = outcome.thread_rows_to_insert > 0
+        || outcome.prefix_duplicate_rows_to_remove > 0
         || outcome.thread_metadata_rows_to_rebuild > 0
         || outcome.provider_rows_to_update > 0
         || outcome.rollout_first_lines_to_update > 0
@@ -1436,6 +1458,7 @@ fn repair_codex_history_visibility_at(
     let tx = conn
         .transaction()
         .map_err(|e| AppError::Database(format!("开启 Codex 历史修复事务失败: {e}")))?;
+    outcome.prefix_duplicate_rows_removed = delete_thread_rows(&tx, &prefix_duplicate_ids)?;
     outcome.thread_rows_inserted =
         insert_missing_thread_rows(&tx, &rollout_metadata, target_provider)?;
     outcome.thread_metadata_rows_rebuilt =
@@ -1450,6 +1473,8 @@ fn repair_codex_history_visibility_at(
 
     outcome.rollout_first_lines_updated = apply_rollout_provider_updates(rollout_provider_updates)?;
     outcome.session_index_appended = 0;
+    outcome.session_index_duplicate_rows_removed =
+        remove_session_index_rows(&index_path, &prefix_duplicate_ids)?;
     let session_index_counts = move_focus_session_index_rows(&index_path, &selected_focus_rows)?;
     outcome.session_index_rows_moved = session_index_counts.rows_moved;
     outcome.session_index_titles_updated = session_index_counts.titles_updated;
@@ -1801,6 +1826,91 @@ fn row_has_visible_text(row: &ThreadHistoryRow) -> bool {
         .into_iter()
         .flatten()
         .any(|value| !value.trim().is_empty())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VisibleConversationMessage {
+    role: &'static str,
+    content: String,
+}
+
+fn normalize_visible_message(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Read the user path that defines a conversation branch. Assistant retries,
+/// compaction summaries and tool events may differ between recovery snapshots even
+/// when the user never branched, so they are intentionally excluded from identity.
+fn rollout_visible_conversation(path: &Path) -> Vec<VisibleConversationMessage> {
+    let Ok(file) = fs::File::open(path) else {
+        return Vec::new();
+    };
+    let mut messages = Vec::new();
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) != Some("event_msg") {
+            continue;
+        }
+        let payload = value.get("payload").unwrap_or(&Value::Null);
+        let (role, content) = match payload.get("type").and_then(Value::as_str) {
+            Some("user_message") => (
+                "user",
+                json_string(payload, "message").or_else(|| json_string(payload, "text")),
+            ),
+            _ => continue,
+        };
+        let Some(content) = content.map(|text| normalize_visible_message(&text)) else {
+            continue;
+        };
+        if !content.is_empty() {
+            messages.push(VisibleConversationMessage { role, content });
+        }
+    }
+    messages
+}
+
+fn conversation_is_prefix(
+    shorter: &[VisibleConversationMessage],
+    longer: &[VisibleConversationMessage],
+) -> bool {
+    !shorter.is_empty() && shorter.len() <= longer.len() && longer.starts_with(shorter)
+}
+
+/// Return thread IDs that are fully represented by a longer rollout. Rows are only
+/// compared when cwd and first visible message match; diverged suffixes are retained.
+fn plan_prefix_duplicate_thread_removals(rows: &[ThreadHistoryRow]) -> BTreeSet<String> {
+    let candidates: Vec<_> = rows
+        .iter()
+        .filter_map(|row| {
+            let path = resolve_history_path(row.rollout_path.as_deref())?;
+            let messages = rollout_visible_conversation(&path);
+            let first = messages.first()?.clone();
+            Some((row, messages, first))
+        })
+        .collect();
+    let mut removals = BTreeSet::new();
+    for (index, (row, messages, first)) in candidates.iter().enumerate() {
+        for (other_index, (other, other_messages, other_first)) in candidates.iter().enumerate() {
+            if index == other_index
+                || first != other_first
+                || row.cwd.as_deref().and_then(normalize_history_path)
+                    != other.cwd.as_deref().and_then(normalize_history_path)
+                || !conversation_is_prefix(messages, other_messages)
+            {
+                continue;
+            }
+            let strictly_better = other_messages.len() > messages.len()
+                || (other_messages.len() == messages.len()
+                    && (row_updated_ms(other), &other.id) > (row_updated_ms(row), &row.id));
+            if strictly_better {
+                removals.insert(row.id.clone());
+                break;
+            }
+        }
+    }
+    removals
 }
 
 /// 递归读取当前 Codex home 下的 rollout；只接受含 session_meta 且有可发现 preview 的
@@ -2786,6 +2896,42 @@ fn insert_missing_thread_rows(
             .map_err(|e| AppError::Database(format!("插入缺失 thread-store 行失败: {e}")))?;
     }
     Ok(inserted)
+}
+
+fn delete_thread_rows(
+    tx: &rusqlite::Transaction<'_>,
+    ids: &BTreeSet<String>,
+) -> Result<usize, AppError> {
+    let mut removed = 0;
+    for id in ids {
+        removed += tx
+            .execute("DELETE FROM threads WHERE id = ?1", [id])
+            .map_err(|e| AppError::Database(format!("删除被前缀覆盖的 Codex thread 失败: {e}")))?;
+    }
+    Ok(removed)
+}
+
+fn remove_session_index_rows(index_path: &Path, ids: &BTreeSet<String>) -> Result<usize, AppError> {
+    if ids.is_empty() || !index_path.exists() {
+        return Ok(0);
+    }
+    let lines = read_jsonl_lines(index_path)?;
+    let before = lines.len();
+    let kept: Vec<_> = lines
+        .into_iter()
+        .filter(|line| {
+            serde_json::from_str::<Value>(line)
+                .ok()
+                .and_then(|value| json_string(&value, "id"))
+                .map(|id| !ids.contains(&id))
+                .unwrap_or(true)
+        })
+        .collect();
+    let removed = before.saturating_sub(kept.len());
+    if removed > 0 {
+        write_jsonl_lines(index_path, &kept)?;
+    }
+    Ok(removed)
 }
 
 fn update_backfill_state_after_rebuild(
@@ -4465,6 +4611,36 @@ mod tests {
             .expect("status"),
             "complete"
         );
+    }
+
+    #[test]
+    fn prefix_cleanup_keeps_longest_conversation_and_preserves_real_divergence() {
+        let dir = tempdir().expect("tempdir");
+        let sessions = dir.path().join("sessions");
+        fs::create_dir_all(&sessions).expect("sessions dir");
+        let cases = [
+            ("short", "second", None),
+            ("long", "second", Some("third")),
+            ("branch", "different second", None),
+        ];
+        for (id, second, third) in cases {
+            let mut content = format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"cwd\":\"C:\\\\work\"}}}}\n{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"first\"}}}}\n{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"{second}\"}}}}\n"
+            );
+            if let Some(third) = third {
+                content.push_str(&format!(
+                    "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"{third}\"}}}}\n"
+                ));
+            }
+            fs::write(sessions.join(format!("{id}.jsonl")), content).expect("rollout");
+        }
+        let rows: Vec<_> = scan_rollout_thread_metadata(dir.path())
+            .expect("scan")
+            .iter()
+            .map(thread_history_row_from_rollout)
+            .collect();
+        let removals = plan_prefix_duplicate_thread_removals(&rows);
+        assert_eq!(removals, BTreeSet::from(["short".to_string()]));
     }
 
     #[test]

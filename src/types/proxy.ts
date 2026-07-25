@@ -235,6 +235,8 @@ export interface CodexHistoryVisibilityRepairOutcome {
   rolloutThreadsDiscovered: number;
   threadRowsToInsert: number;
   threadRowsInserted: number;
+  prefixDuplicateRowsToRemove: number;
+  prefixDuplicateRowsRemoved: number;
   threadMetadataRowsToRebuild: number;
   threadMetadataRowsRebuilt: number;
   backfillStateToUpdate: boolean;
@@ -248,6 +250,8 @@ export interface CodexHistoryVisibilityRepairOutcome {
   visibleCandidateRows: number;
   sessionIndexMissingToAppend: number;
   sessionIndexAppended: number;
+  sessionIndexDuplicateRowsToRemove: number;
+  sessionIndexDuplicateRowsRemoved: number;
   projectRows: number;
   focusSelectedCount: number;
   balancedRecentWindowEnabled: boolean;

@@ -291,10 +291,12 @@ export function CodexHistoryRepairPanel({
         `已选 session: ${selectedSessionIds.length}`,
         `rollout 发现: ${preview.rolloutThreadsDiscovered}`,
         `新增 thread-store 行: ${preview.threadRowsToInsert}`,
+        `回收被最长对话覆盖的 thread: ${preview.prefixDuplicateRowsToRemove}`,
         `重建索引元数据: ${preview.threadMetadataRowsToRebuild}`,
         `backfill 状态: ${preview.backfillStateToUpdate ? "将更新为 complete" : "当前 DB 无此表"}`,
         `provider rows: ${preview.providerRowsToUpdate}`,
         `session_index append: ${preview.sessionIndexMissingToAppend}`,
+        `session_index 回收: ${preview.sessionIndexDuplicateRowsToRemove}`,
         `recent rows: ${preview.balancedRecentWindowRows}`,
         `rollout mtimes: ${preview.rolloutMtimesToTouch}`,
         "",
@@ -1062,6 +1064,10 @@ function RepairResultPanel({
                 <RepairMetric
                   label="index append"
                   value={result.sessionIndexMissingToAppend}
+                />
+                <RepairMetric
+                  label="prefix cleanup"
+                  value={result.prefixDuplicateRowsToRemove}
                 />
                 <RepairMetric label="focus" value={result.focusSelectedCount} />
                 <RepairMetric
