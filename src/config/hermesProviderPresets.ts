@@ -1605,16 +1605,21 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         {
+          id: "abliterated-model-large",
+          name: "Abliterated Large",
+          context_length: 1000000,
+        },
+        {
           id: "abliterated-model",
           name: "Abliterated Model",
-          context_length: 150000,
+          context_length: 262144,
         },
       ],
     },
     category: "third_party",
     icon: "abliteration",
     suggestedDefaults: {
-      model: { default: "abliterated-model", provider: "abliteration" },
+      model: { default: "abliterated-model-large", provider: "abliteration" },
     },
   },
 ];

@@ -1695,9 +1695,21 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     config: generateThirdPartyConfig(
       "abliteration",
       "https://api.abliteration.ai/v1",
-      "abliterated-model",
+      "abliterated-model-large",
     ),
     endpointCandidates: ["https://api.abliteration.ai/v1"],
+    modelCatalog: modelCatalog([
+      {
+        model: "abliterated-model-large",
+        displayName: "Abliterated Large",
+        contextWindow: 1000000,
+      },
+      {
+        model: "abliterated-model",
+        displayName: "Abliterated Model",
+        contextWindow: 262144,
+      },
+    ]),
     category: "third_party",
     icon: "abliteration",
   },
