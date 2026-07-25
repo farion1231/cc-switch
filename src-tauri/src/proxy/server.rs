@@ -11,6 +11,8 @@
 use super::{
     failover_switch::FailoverSwitchManager,
     handlers,
+    health::HealthChecker,
+    http_client,
     log_codes::srv as log_srv,
     provider_router::ProviderRouter,
     providers::{codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore},
@@ -57,6 +59,10 @@ pub struct ProxyServer {
     shutdown_tx: Arc<RwLock<Option<oneshot::Sender<()>>>>,
     /// 服务器任务句柄，用于等待服务器实际关闭
     server_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
+    /// 健康检查器关闭信号，与 proxy 生命周期绑定
+    health_shutdown_tx: Arc<RwLock<Option<oneshot::Sender<()>>>>,
+    /// 健康检查器任务句柄
+    health_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
 }
 
 impl ProxyServer {
@@ -88,6 +94,8 @@ impl ProxyServer {
             state,
             shutdown_tx: Arc::new(RwLock::new(None)),
             server_handle: Arc::new(RwLock::new(None)),
+            health_shutdown_tx: Arc::new(RwLock::new(None)),
+            health_handle: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -215,6 +223,20 @@ impl ProxyServer {
         // 保存服务器任务句柄
         *self.server_handle.write().await = Some(handle);
 
+        // 启动主动健康检查器，与代理生命周期绑定
+        // 复用全局 http_client（继承用户配置的代理）作为探测客户端
+        let (health_tx, health_rx) = oneshot::channel::<()>();
+        let checker = HealthChecker::new(
+            self.state.provider_router.clone(),
+            self.state.db.clone(),
+            http_client::get(),
+        );
+        let health_handle = tokio::spawn(async move {
+            checker.run_loop(health_rx).await;
+        });
+        *self.health_shutdown_tx.write().await = Some(health_tx);
+        *self.health_handle.write().await = Some(health_handle);
+
         Ok(ProxyServerInfo {
             address: self.config.listen_address.clone(),
             port: actual_port,
@@ -235,23 +257,37 @@ impl ProxyServer {
             match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
                 Ok(Ok(())) => {
                     log::info!("[{}] 代理服务器已完全停止", log_srv::STOPPED);
-                    Ok(())
                 }
                 Ok(Err(e)) => {
                     log::warn!("[{}] 代理服务器任务异常终止: {e}", log_srv::TASK_ERROR);
-                    Err(ProxyError::StopFailed(e.to_string()))
+                    return Err(ProxyError::StopFailed(e.to_string()));
                 }
                 Err(_) => {
                     log::warn!(
                         "[{}] 代理服务器停止超时（5秒），强制继续",
                         log_srv::STOP_TIMEOUT
                     );
-                    Err(ProxyError::StopTimeout)
+                    return Err(ProxyError::StopTimeout);
                 }
             }
-        } else {
-            Ok(())
         }
+
+        // 3. 关闭健康检查器（带 2 秒超时保护，避免 shutdown 通道阻塞影响主流程）
+        if let Some(tx) = self.health_shutdown_tx.write().await.take() {
+            let _ = tx.send(());
+        }
+        if let Some(handle) = self.health_handle.write().await.take() {
+            match tokio::time::timeout(std::time::Duration::from_secs(2), handle).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => log::warn!("[{}] 健康检查器任务异常终止: {e}", log_srv::TASK_ERROR),
+                Err(_) => log::warn!(
+                    "[{}] 健康检查器停止超时（2秒），强制继续",
+                    log_srv::STOP_TIMEOUT
+                ),
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn get_status(&self) -> ProxyStatus {

@@ -6,7 +6,9 @@ use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
+use crate::proxy::circuit_breaker::{
+    AllowResult, CircuitBreaker, CircuitBreakerConfig, CircuitState,
+};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -227,6 +229,47 @@ impl ProviderRouter {
         } else {
             None
         }
+    }
+
+    /// 取出已创建的熔断器（不创建新的）
+    ///
+    /// 与 [`get_or_create_circuit_breaker`] 不同，若该 provider 从未发生过请求（未创建熔断器），
+    /// 返回 `None`；调用方据此把状态视为 Closed（未熔断）。供 [`crate::proxy::health::HealthChecker`] 使用。
+    pub async fn get_breaker(&self, circuit_key: &str) -> Option<Arc<CircuitBreaker>> {
+        let breakers = self.circuit_breakers.read().await;
+        breakers.get(circuit_key).cloned()
+    }
+
+    /// 列出指定应用故障转移队列中所有 provider 及其当前熔断状态
+    ///
+    /// 按 failover_queue 顺序返回 `(Provider, CircuitState)`。
+    /// 未创建熔断器的 provider 默认视为 Closed（未熔断）。
+    /// 仅供主动健康检查使用；不要用于路由选择（路由选择请走 [`select_providers`]）。
+    pub async fn list_providers_with_state(
+        &self,
+        app_type: &str,
+    ) -> Result<Vec<(Provider, CircuitState)>, AppError> {
+        let all_providers = self.db.get_all_providers(app_type)?;
+        let ordered_ids: Vec<String> = self
+            .db
+            .get_failover_queue(app_type)?
+            .into_iter()
+            .map(|item| item.provider_id)
+            .collect();
+
+        let mut result = Vec::with_capacity(ordered_ids.len());
+        for provider_id in ordered_ids {
+            let Some(provider) = all_providers.get(&provider_id).cloned() else {
+                continue;
+            };
+            let circuit_key = format!("{app_type}:{}", provider.id);
+            let state = match self.get_breaker(&circuit_key).await {
+                Some(breaker) => breaker.get_state().await,
+                None => CircuitState::Closed,
+            };
+            result.push((provider, state));
+        }
+        Ok(result)
     }
 
     /// 获取或创建熔断器
@@ -519,5 +562,77 @@ mod tests {
         let third = router.allow_provider_request("a", "claude").await;
         assert!(third.allowed);
         assert!(third.used_half_open_permit);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn get_breaker_returns_none_before_creation() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let router = ProviderRouter::new(db);
+
+        // 从未创建过 breaker
+        assert!(router.get_breaker("claude:unknown").await.is_none());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn get_breaker_returns_some_after_creation() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let router = ProviderRouter::new(db);
+
+        // 通过任意触发 get_or_create 的路径创建后即可取出
+        let _ = router.get_or_create_circuit_breaker("claude:p1").await;
+        let breaker = router.get_breaker("claude:p1").await;
+        assert!(breaker.is_some());
+        // 与 select_providers 用的是同一个 Arc 实例
+        assert_eq!(breaker.unwrap().get_state().await, CircuitState::Closed);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn list_providers_with_state_returns_state_for_each() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        // 先配置熔断器：1 次失败即熔断（必须在 record_result 之前生效）
+        db.update_circuit_breaker_config(&CircuitBreakerConfig {
+            failure_threshold: 1,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        let provider_b =
+            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("claude", &provider_b).unwrap();
+        db.add_to_failover_queue("claude", "a").unwrap();
+        db.add_to_failover_queue("claude", "b").unwrap();
+
+        // 启用自动故障转移（list_providers_with_state 用于健康检查场景）
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db);
+
+        // 让 a 进入 Open：1 次失败即熔断
+        router
+            .record_result("a", "claude", false, false, Some("boom".to_string()))
+            .await
+            .unwrap();
+
+        let list = router.list_providers_with_state("claude").await.unwrap();
+        assert_eq!(list.len(), 2);
+        // 队列顺序：a 在前
+        assert_eq!(list[0].0.id, "a");
+        assert_eq!(list[0].1, CircuitState::Open);
+        assert_eq!(list[1].0.id, "b");
+        // b 从未发生过请求，未创建熔断器，默认 Closed
+        assert_eq!(list[1].1, CircuitState::Closed);
     }
 }
