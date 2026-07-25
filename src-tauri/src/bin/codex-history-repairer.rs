@@ -374,6 +374,15 @@ mod windows_gui {
                 result.session_index_appended, result.session_index_missing_to_append
             ),
             format!(
+                "prefix thread cleanup: {} / {}",
+                result.prefix_duplicate_rows_removed, result.prefix_duplicate_rows_to_remove
+            ),
+            format!(
+                "prefix index cleanup: {} / {}",
+                result.session_index_duplicate_rows_removed,
+                result.session_index_duplicate_rows_to_remove
+            ),
+            format!(
                 "focus rows: {} / {}",
                 result.sqlite_focus_rows_updated, result.sqlite_focus_rows_to_update
             ),
