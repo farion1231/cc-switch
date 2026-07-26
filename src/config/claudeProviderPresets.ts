@@ -135,19 +135,16 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "PackyCode",
-    websiteUrl: "https://www.packyapi.com",
-    apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
+    websiteUrl: "https://www.packyapi.ai",
+    apiKeyUrl: "https://www.packyapi.ai/register?aff=cc-switch",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://www.packyapi.com",
+        ANTHROPIC_BASE_URL: "https://www.packyapi.ai",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
     // 请求地址候选（用于地址管理/测速）
-    endpointCandidates: [
-      "https://www.packyapi.com",
-      "https://api-slb.packyapi.com",
-    ],
+    endpointCandidates: ["https://www.packyapi.ai"],
     category: "third_party",
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "packycode", // 促销信息 i18n key
@@ -170,16 +167,16 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "APINebula",
-    websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/VjM74M",
+    websiteUrl: "https://apinebula.ai",
+    apiKeyUrl: "https://apinebula.ai/VjM74M",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://apinebula.com",
+        ANTHROPIC_BASE_URL: "https://apinebula.ai",
         ANTHROPIC_AUTH_TOKEN: "",
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
       },
     },
-    endpointCandidates: ["https://apinebula.com"],
+    endpointCandidates: ["https://apinebula.ai"],
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "apinebula",
@@ -356,11 +353,11 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "ClaudeAPI",
-    websiteUrl: "https://claudeapi.com",
-    apiKeyUrl: "https://console.claudeapi.com/register?aff=pCLD",
+    websiteUrl: "https://www.apito.ai",
+    apiKeyUrl: "https://console.apito.ai/agent/register/pQBql2buaqiX3dDS",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://gw.claudeapi.com",
+        ANTHROPIC_BASE_URL: "https://gw.apito.ai",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
@@ -652,11 +649,11 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "RightCode",
-    websiteUrl: "https://www.right.codes",
-    apiKeyUrl: "https://www.right.codes/register?aff=CCSWITCH",
+    websiteUrl: "https://www.rightapi.ai",
+    apiKeyUrl: "https://www.rightapi.ai/register?aff=CCSWITCH",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://www.right.codes/claude",
+        ANTHROPIC_BASE_URL: "https://www.rightapi.ai/claude",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
@@ -758,7 +755,7 @@ export const providerPresets: ProviderPreset[] = [
     name: "SudoCode.chat",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
-      "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://api.sudocode.chat",

@@ -187,10 +187,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
 
   {
     name: "PackyCode",
-    websiteUrl: "https://www.packyapi.com",
-    apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
+    websiteUrl: "https://www.packyapi.ai",
+    apiKeyUrl: "https://www.packyapi.ai/register?aff=cc-switch",
     settingsConfig: {
-      baseUrl: "https://www.packyapi.com",
+      baseUrl: "https://www.packyapi.ai",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -268,10 +268,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "APINebula",
-    websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/VjM74M",
+    websiteUrl: "https://apinebula.ai",
+    apiKeyUrl: "https://apinebula.ai/VjM74M",
     settingsConfig: {
-      baseUrl: "https://apinebula.com/v1",
+      baseUrl: "https://apinebula.ai/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
@@ -1265,10 +1265,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "RightCode",
-    websiteUrl: "https://www.right.codes",
-    apiKeyUrl: "https://www.right.codes/register?aff=CCSWITCH",
+    websiteUrl: "https://www.rightapi.ai",
+    apiKeyUrl: "https://www.rightapi.ai/register?aff=CCSWITCH",
     settingsConfig: {
-      baseUrl: "https://www.right.codes/claude",
+      baseUrl: "https://www.rightapi.ai/claude",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -1524,7 +1524,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     name: "SudoCode.chat",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
-      "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
     settingsConfig: {
       baseUrl: "https://api.sudocode.chat/v1",
       apiKey: "",

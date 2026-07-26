@@ -171,11 +171,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "PackyCode",
-    websiteUrl: "https://www.packyapi.com",
-    apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
+    websiteUrl: "https://www.packyapi.ai",
+    apiKeyUrl: "https://www.packyapi.ai/register?aff=cc-switch",
     settingsConfig: {
       name: "packycode",
-      base_url: "https://www.packyapi.com",
+      base_url: "https://www.packyapi.ai",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -213,11 +213,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "APINebula",
-    websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/VjM74M",
+    websiteUrl: "https://apinebula.ai",
+    apiKeyUrl: "https://apinebula.ai/VjM74M",
     settingsConfig: {
       name: "apinebula",
-      base_url: "https://apinebula.com/v1",
+      base_url: "https://apinebula.ai/v1",
       api_key: "",
       api_mode: "chat_completions",
       models: [
@@ -834,11 +834,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "RightCode",
-    websiteUrl: "https://www.right.codes",
-    apiKeyUrl: "https://www.right.codes/register?aff=CCSWITCH",
+    websiteUrl: "https://www.rightapi.ai",
+    apiKeyUrl: "https://www.rightapi.ai/register?aff=CCSWITCH",
     settingsConfig: {
       name: "rightcode",
-      base_url: "https://www.right.codes/claude",
+      base_url: "https://www.rightapi.ai/claude",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -970,7 +970,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     name: "SudoCode.chat",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
-      "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
     settingsConfig: {
       name: "sudocode",
       base_url: "https://api.sudocode.chat/v1",
