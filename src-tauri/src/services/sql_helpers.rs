@@ -54,8 +54,7 @@ pub fn fresh_input_sql(alias: &str) -> String {
     format!(
         "CASE \
               WHEN {prefix}input_token_semantics = {INPUT_TOKEN_SEMANTICS_FRESH} THEN {prefix}input_tokens \
-              WHEN {prefix}app_type IN ({app_type_list}) \
-                   AND {prefix}input_token_semantics = {INPUT_TOKEN_SEMANTICS_TOTAL} \
+              WHEN {prefix}input_token_semantics = {INPUT_TOKEN_SEMANTICS_TOTAL} \
                    AND {prefix}input_tokens >= ({prefix}cache_read_tokens + {prefix}cache_creation_tokens) \
               THEN ({prefix}input_tokens - {prefix}cache_read_tokens - {prefix}cache_creation_tokens) \
               WHEN {prefix}app_type IN ({app_type_list}) \
@@ -176,6 +175,41 @@ mod tests {
         let sql = format!("SELECT {expr} FROM proxy_request_logs l");
         let value: i64 = conn.query_row(&sql, [], |row| row.get(0)).unwrap();
         assert_eq!(value, 500);
+    }
+
+    #[test]
+    fn fresh_input_uses_event_semantics_for_mixed_protocol_app() {
+        let conn = setup_conn();
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, app_type, input_tokens, cache_read_tokens,
+                cache_creation_tokens, input_token_semantics
+             ) VALUES
+                ('cursor-openai', 'cursor', 1000, 300, 200, ?1),
+                ('cursor-anthropic', 'cursor', 400, 300, 200, ?2)",
+            [INPUT_TOKEN_SEMANTICS_TOTAL, INPUT_TOKEN_SEMANTICS_FRESH],
+        )
+        .unwrap();
+        let expr = fresh_input_sql("l");
+        let sql =
+            format!("SELECT request_id, {expr} FROM proxy_request_logs l ORDER BY request_id");
+        let values = conn
+            .prepare(&sql)
+            .unwrap()
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(
+            values,
+            vec![
+                ("cursor-anthropic".to_string(), 400),
+                ("cursor-openai".to_string(), 500),
+            ]
+        );
     }
 
     #[test]

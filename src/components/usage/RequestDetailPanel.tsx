@@ -93,7 +93,9 @@ export function RequestDetailPanel({
                 </dt>
                 <dd className="text-sm">
                   <span className="font-medium">
-                    {request.providerName || t("usage.unknownProvider", "未知")}
+                    {request.providerName ||
+                      request.providerId ||
+                      t("usage.unknownProvider", "未知")}
                   </span>
                   <span className="ml-2 font-mono text-xs text-muted-foreground">
                     {request.providerId}
@@ -108,31 +110,21 @@ export function RequestDetailPanel({
               </div>
               <div>
                 <dt className="text-muted-foreground">
-                  {t("usage.model", "模型")}
+                  {t("usage.requestModel", "请求模型")}
                 </dt>
-                <dd className="font-mono">{request.model}</dd>
-                {request.requestModel &&
-                  request.requestModel !== request.model && (
-                    <>
-                      <dt className="mt-1 text-muted-foreground">
-                        {t("usage.requestModel", "请求模型")}
-                      </dt>
-                      <dd className="font-mono text-xs">
-                        {request.requestModel}
-                      </dd>
-                    </>
-                  )}
-                {request.pricingModel &&
-                  request.pricingModel !== request.model && (
-                    <>
-                      <dt className="mt-1 text-muted-foreground">
-                        {t("usage.pricingModel", "计价模型")}
-                      </dt>
-                      <dd className="font-mono text-xs">
-                        {request.pricingModel}
-                      </dd>
-                    </>
-                  )}
+                <dd className="font-mono text-xs">
+                  {request.requestModel || request.model}
+                </dd>
+                <dt className="mt-1 text-muted-foreground">
+                  {t("usage.upstreamModel", "上游模型")}
+                </dt>
+                <dd className="font-mono text-xs">{request.model}</dd>
+                <dt className="mt-1 text-muted-foreground">
+                  {t("usage.pricingModel", "计价模型")}
+                </dt>
+                <dd className="font-mono text-xs">
+                  {request.pricingModel || request.model}
+                </dd>
               </div>
               <div>
                 <dt className="text-muted-foreground">

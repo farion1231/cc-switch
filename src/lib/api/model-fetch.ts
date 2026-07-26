@@ -5,6 +5,7 @@ import { toast } from "sonner";
 export interface FetchedModel {
   id: string;
   ownedBy: string | null;
+  contextWindowTokens?: number | null;
 }
 
 /**
@@ -19,6 +20,7 @@ export async function fetchModelsForConfig(
   isFullUrl?: boolean,
   modelsUrl?: string,
   customUserAgent?: string,
+  providerType?: "openai" | "anthropic",
 ): Promise<FetchedModel[]> {
   return invoke("fetch_models_for_config", {
     baseUrl,
@@ -26,6 +28,7 @@ export async function fetchModelsForConfig(
     isFullUrl,
     modelsUrl,
     customUserAgent,
+    providerType,
   });
 }
 

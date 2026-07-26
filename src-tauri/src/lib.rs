@@ -9,6 +9,7 @@ mod codex_history_migration;
 mod codex_state_db;
 mod commands;
 mod config;
+mod cursor;
 mod database;
 mod deeplink;
 mod error;
@@ -403,6 +404,7 @@ pub fn run() {
             }
         })
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
@@ -1378,6 +1380,20 @@ pub fn run() {
             commands::get_xai_oauth_quota,
             commands::get_coding_plan_quota,
             commands::get_balance,
+            // Cursor model catalog and runtime
+            commands::get_cursor_providers,
+            commands::get_cursor_endpoints,
+            commands::save_cursor_provider,
+            commands::save_cursor_providers,
+            commands::delete_cursor_provider,
+            commands::set_cursor_provider_enabled,
+            commands::get_cursor_runtime_state,
+            commands::start_cursor_runtime,
+            commands::stop_cursor_runtime,
+            commands::install_cursor_ca,
+            commands::remove_cursor_ca,
+            commands::sync_cursor_usage,
+            commands::test_cursor_model,
             // New MCP via config.json (SSOT)
             commands::get_mcp_config,
             commands::upsert_mcp_server_in_config,
@@ -1800,6 +1816,20 @@ pub fn run() {
 /// 使用 stop_with_restore_keep_state 保留 settings 表中的代理状态，下次启动时自动恢复。
 pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
     if let Some(state) = app_handle.try_state::<store::AppState>() {
+        if state.cursor_runtime.is_running().await {
+            log::info!("检测到 Cursor 运行时正在运行，开始同步 usage 并恢复宿主状态...");
+            if let Err(error) =
+                crate::cursor::usage::sync_usage(&state.cursor_runtime, &state.db).await
+            {
+                log::warn!("退出前同步 Cursor usage 失败: {error}");
+            }
+            if let Err(error) = state.cursor_runtime.stop().await {
+                log::error!("退出时停止 Cursor 运行时或恢复宿主状态失败: {error}");
+            } else {
+                log::info!("Cursor 运行时已停止，宿主状态已恢复");
+            }
+        }
+
         let proxy_service = &state.proxy_service;
 
         // 退出时也需要兜底：代理可能已崩溃/未运行，但 Live 接管残留仍在（占位符/备份）。

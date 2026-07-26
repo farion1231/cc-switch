@@ -1,4 +1,9 @@
-import { Suspense, type ComponentType } from "react";
+import {
+  forwardRef,
+  Suspense,
+  useImperativeHandle,
+  type ComponentType,
+} from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -124,6 +129,7 @@ vi.mock("@/components/AppSwitcher", () => ({
       <button onClick={() => onSwitch("claude")}>switch-claude</button>
       <button onClick={() => onSwitch("codex")}>switch-codex</button>
       <button onClick={() => onSwitch("openclaw")}>switch-openclaw</button>
+      <button onClick={() => onSwitch("cursor")}>switch-cursor</button>
     </div>
   ),
 }));
@@ -131,6 +137,31 @@ vi.mock("@/components/AppSwitcher", () => ({
 vi.mock("@/components/UpdateBadge", () => ({
   UpdateBadge: ({ onClick }: any) => (
     <button onClick={onClick}>update-badge</button>
+  ),
+}));
+
+vi.mock("@/components/cursor/CursorModelPanel", () => ({
+  CursorModelPanel: forwardRef((_props, ref) => {
+    useImperativeHandle(ref, () => ({ openCreate: vi.fn() }));
+    return <div data-testid="cursor-model-panel">cursor-panel</div>;
+  }),
+}));
+
+vi.mock("@/components/cursor/CursorRuntimeToggle", () => ({
+  CursorRuntimeToggle: () => <div data-testid="cursor-runtime-toggle" />,
+}));
+
+vi.mock("@/components/proxy/ProxyToggle", () => ({
+  ProxyToggle: () => <div data-testid="generic-proxy-toggle" />,
+}));
+
+vi.mock("@/components/profiles/ProfileSwitcher", () => ({
+  ProfileSwitcher: () => <div data-testid="profile-switcher" />,
+}));
+
+vi.mock("@/components/settings/SettingsPage", () => ({
+  SettingsPage: ({ defaultTab }: any) => (
+    <div data-testid="settings-page" data-default-tab={defaultTab} />
   ),
 }));
 
@@ -159,6 +190,8 @@ const renderApp = (AppComponent: ComponentType) => {
 describe("App integration with MSW", () => {
   beforeEach(() => {
     resetProviderState();
+    window.localStorage.removeItem("cc-switch-last-app");
+    window.localStorage.removeItem("cc-switch-last-view");
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
   });
@@ -218,6 +251,74 @@ describe("App integration with MSW", () => {
 
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
+  });
+
+  it("isolates Cursor from managed providers and shared feature entries", async () => {
+    window.localStorage.setItem("cc-switch-last-app", "cursor");
+    const getAllSpy = vi.spyOn(providersApi, "getAll");
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("cursor-model-panel")).toBeInTheDocument(),
+    );
+
+    expect(getAllSpy).not.toHaveBeenCalled();
+    expect(screen.getByTestId("cursor-runtime-toggle")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("generic-proxy-toggle"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("profile-switcher")).not.toBeInTheDocument();
+    expect(screen.getByTestId("provider-toolbar-placeholder")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(screen.queryByTitle("Skills")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("提示词")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("MCP 服务器")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("会话管理")).not.toBeInTheDocument();
+
+    getAllSpy.mockRestore();
+  });
+
+  it("falls back from a persisted unsupported Cursor view", async () => {
+    window.localStorage.setItem("cc-switch-last-app", "cursor");
+    window.localStorage.setItem("cc-switch-last-view", "skills");
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("cursor-model-panel")).toBeInTheDocument(),
+    );
+    expect(window.localStorage.getItem("cc-switch-last-view")).toBe(
+      "providers",
+    );
+  });
+
+  it("keeps Cursor usage in the shared statistics entry", async () => {
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list")).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByText("switch-cursor"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("cursor-model-panel")).toBeInTheDocument(),
+    );
+
+    const usageButton = screen.getByTitle("使用统计");
+    expect(usageButton).toBeInTheDocument();
+    fireEvent.click(usageButton);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("settings-page")).toHaveAttribute(
+        "data-default-tab",
+        "usage",
+      ),
+    );
   });
 
   it("shows toast when auto sync fails in background", async () => {

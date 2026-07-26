@@ -5,10 +5,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import MarkdownEditor from "@/components/MarkdownEditor";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
-import type { Prompt, AppId } from "@/lib/api";
+import type { Prompt, ManagedAppId } from "@/lib/api";
 
 interface PromptFormPanelProps {
-  appId: AppId;
+  appId: ManagedAppId;
   editingId?: string;
   initialData?: Prompt;
   onSave: (id: string, prompt: Prompt) => Promise<void>;
@@ -24,7 +24,7 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
 }) => {
   const { t } = useTranslation();
   const appName = t(`apps.${appId}`);
-  const filenameMap: Record<AppId, string> = {
+  const filenameMap: Record<ManagedAppId, string> = {
     claude: "CLAUDE.md",
     "claude-desktop": "CLAUDE.md",
     codex: "AGENTS.md",

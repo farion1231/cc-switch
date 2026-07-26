@@ -13,11 +13,11 @@ import {
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
-import type { AppId } from "@/lib/api";
+import type { ManagedAppId } from "@/lib/api";
 
 interface FailoverToggleProps {
   className?: string;
-  activeApp: AppId;
+  activeApp: ManagedAppId;
 }
 
 export function FailoverToggle({ className, activeApp }: FailoverToggleProps) {

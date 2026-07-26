@@ -17,6 +17,16 @@ describe("resolveProviderIcon", () => {
     expect(resolveProviderIcon("codex", "grok", "")).toBe("grok");
   });
 
+  it("clears legacy automatic Cursor protocol icons", () => {
+    expect(resolveProviderIcon("cursor", "openai", "")).toBeUndefined();
+    expect(resolveProviderIcon("cursor", "anthropic")).toBeUndefined();
+  });
+
+  it("preserves Cursor icons explicitly selected by the user", () => {
+    expect(resolveProviderIcon("cursor", "openai", "#000000")).toBe("openai");
+    expect(resolveProviderIcon("cursor", "deepseek", "")).toBe("deepseek");
+  });
+
   it("normalizes an empty icon to the initials fallback", () => {
     expect(resolveProviderIcon("grokbuild", "  ", "")).toBeUndefined();
   });

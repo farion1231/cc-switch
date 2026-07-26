@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FileText } from "lucide-react";
-import { type AppId } from "@/lib/api";
+import { type ManagedAppId } from "@/lib/api";
 import { usePromptActions } from "@/hooks/usePromptActions";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import PromptListItem from "./PromptListItem";
@@ -11,7 +11,7 @@ import { ConfirmDialog } from "../ConfirmDialog";
 interface PromptPanelProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  appId: AppId;
+  appId: ManagedAppId;
 }
 
 export interface PromptPanelHandle {

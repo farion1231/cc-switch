@@ -21,16 +21,23 @@ jobs:
       matrix:
         include:
           - os: windows-2022
+            sidecar_target: x86_64-pc-windows-msvc
           - os: windows-11-arm
             arch: arm64
+            sidecar_target: aarch64-pc-windows-msvc
           - os: ubuntu-22.04
+            sidecar_target: x86_64-unknown-linux-gnu
           - os: ubuntu-22.04-arm
             arch: arm64
+            sidecar_target: aarch64-unknown-linux-gnu
           - os: macos-14
+            sidecar_target: universal-apple-darwin
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -39,6 +46,37 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: sidecars/cursor-byok/go.mod
+          cache-dependency-path: sidecars/cursor-byok/go.sum
+
+      - name: Setup protobuf compiler
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "35.1"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install protobuf Go plugins
+        shell: bash
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.19.1
+
+      - name: Build and test Cursor sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.sidecar_target }}" = "universal-apple-darwin" ]; then
+            # Tauri invokes Cargo once per architecture for a universal build and
+            # resolves externalBin using each concrete target triple.
+            node scripts/build-cursor-sidecar.mjs aarch64-apple-darwin --test
+            node scripts/build-cursor-sidecar.mjs x86_64-apple-darwin --test
+          else
+            node scripts/build-cursor-sidecar.mjs ${{ matrix.sidecar_target }} --test
+          fi
 
       - name: Add Windows ARM64 target
         if: runner.os == 'Windows' && matrix.arch == 'arm64'
@@ -166,21 +204,9 @@ jobs:
               fi
             fi
           fi
-          # 将“完整两行内容”作为环境变量注入（Tauri 支持传入完整私钥文本或文件路径）
-          # 使用多行写入语法，保持换行以便解析
-          # 将完整两行私钥内容进行 base64 编码，作为单行内容注入环境变量
-          if command -v base64 >/dev/null 2>&1; then
-            KEY_B64=$(base64 < "$KEY_PATH" | tr -d '\r\n')
-          elif command -v openssl >/dev/null 2>&1; then
-            KEY_B64=$(openssl base64 -A -in "$KEY_PATH")
-          else
-            KEY_B64=$(KEY_PATH="$KEY_PATH" node -e "process.stdout.write(require('fs').readFileSync(process.env.KEY_PATH).toString('base64'))")
-          fi
-          if [ -z "$KEY_B64" ]; then
-            echo "❌ 无法生成私钥 base64 内容" >&2
-            exit 1
-          fi
-          echo "TAURI_SIGNING_PRIVATE_KEY=$KEY_B64" >> "$GITHUB_ENV"
+          # Tauri accepts either raw key content or a file path. Pass the path to
+          # preserve the key's two-line minisign format without re-encoding it.
+          echo "TAURI_SIGNING_PRIVATE_KEY=$KEY_PATH" >> "$GITHUB_ENV"
           if [ -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" ]; then
             echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" >> $GITHUB_ENV
           fi
@@ -274,6 +300,31 @@ jobs:
         if: runner.os == 'Linux'
         run: pnpm tauri build --bundles appimage,deb,rpm
 
+      - name: Verify macOS sidecar output
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIDECAR="src-tauri/target/universal-apple-darwin/release/cursor-sidecar"
+          test -x "$SIDECAR"
+          lipo "$SIDECAR" -verify_arch arm64 x86_64
+
+      - name: Verify Windows sidecar output
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_RELEASE_ARCH: ${{ matrix.arch || 'x86_64' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $targetRoot = if ($env:WINDOWS_RELEASE_ARCH -eq 'arm64') { 'src-tauri/target/aarch64-pc-windows-msvc/release' } else { 'src-tauri/target/release' }
+          $sidecar = Join-Path $targetRoot 'cursor-sidecar.exe'
+          if (-not (Test-Path $sidecar)) { throw "Missing bundled sidecar output: $sidecar" }
+
+      - name: Verify Linux sidecar output
+        if: runner.os == 'Linux'
+        shell: bash
+        run: test -x src-tauri/target/release/cursor-sidecar
+
       - name: Prepare macOS Assets
         if: runner.os == 'macOS'
         shell: bash
@@ -303,6 +354,8 @@ jobs:
             echo "❌ No .app found" >&2
             exit 1
           fi
+          test -x "$APP_PATH/Contents/MacOS/cursor-sidecar"
+          lipo "$APP_PATH/Contents/MacOS/cursor-sidecar" -verify_arch arm64 x86_64
 
           # Staple notarization ticket to .app (Tauri already notarized it)
           xcrun stapler staple "$APP_PATH"
@@ -456,6 +509,21 @@ jobs:
             $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle') -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
           }
           if ($null -ne $msi) {
+            $installer = New-Object -ComObject WindowsInstaller.Installer
+            $database = $installer.OpenDatabase($msi.FullName, 0)
+            $view = $database.OpenView('SELECT `FileName` FROM `File`')
+            $view.Execute()
+            $containsSidecar = $false
+            while ($record = $view.Fetch()) {
+              if ($record.StringData(1) -match 'cursor-sidecar\.exe') {
+                $containsSidecar = $true
+                break
+              }
+            }
+            $view.Close()
+            if (-not $containsSidecar) {
+              throw "MSI does not contain cursor-sidecar.exe: $($msi.FullName)"
+            }
             $dest = "CC-Switch-$VERSION-Windows$assetSuffix.msi"
             Copy-Item $msi.FullName (Join-Path release-assets $dest)
             Write-Host "Installer copied: $dest"
@@ -474,7 +542,7 @@ jobs:
             Write-Warning 'No Windows MSI installer found'
           }
 
-          # 绿色版（portable）：仅可执行文件打 zip（不参与 Updater）
+          # 绿色版（portable）：主程序、sidecar 与 portable 标记同目录打 zip。
           $exeCandidates = if ($isArm64) {
             @('src-tauri/target/aarch64-pc-windows-msvc/release/cc-switch.exe')
           } else {
@@ -488,6 +556,11 @@ jobs:
             $portableDir = 'release-assets/CC-Switch-Portable'
             New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
             Copy-Item $exePath $portableDir
+            $sidecarPath = Join-Path $targetRoot 'cursor-sidecar.exe'
+            if (-not (Test-Path $sidecarPath)) {
+              throw "Cursor sidecar not found beside portable executable: $sidecarPath"
+            }
+            Copy-Item $sidecarPath $portableDir
             $portableIniPath = Join-Path $portableDir 'portable.ini'
             $portableContent = if ($isArm64) {
               @(
@@ -523,6 +596,14 @@ jobs:
           # Updater artifact: AppImage（含对应 .sig）
           APPIMAGE=$(find src-tauri/target/release/bundle -name "*.AppImage" | head -1 || true)
           if [ -n "$APPIMAGE" ]; then
+            APPIMAGE_ABS="$GITHUB_WORKSPACE/$APPIMAGE"
+            APPIMAGE_EXTRACT="$RUNNER_TEMP/cc-switch-appimage"
+            rm -rf "$APPIMAGE_EXTRACT"
+            mkdir -p "$APPIMAGE_EXTRACT"
+            chmod +x "$APPIMAGE_ABS"
+            (cd "$APPIMAGE_EXTRACT" && "$APPIMAGE_ABS" --appimage-extract >/dev/null)
+            test -x "$APPIMAGE_EXTRACT/squashfs-root/usr/bin/cursor-sidecar"
+            rm -rf "$APPIMAGE_EXTRACT"
             NEW_APPIMAGE="CC-Switch-${VERSION}-Linux-${ARCH}.AppImage"
             cp "$APPIMAGE" "release-assets/$NEW_APPIMAGE"
             [ -f "$APPIMAGE.sig" ] && cp "$APPIMAGE.sig" "release-assets/$NEW_APPIMAGE.sig" || echo ".sig for AppImage not found"
@@ -533,6 +614,7 @@ jobs:
           # 额外上传 .deb（用于手动安装，不参与 Updater）
           DEB=$(find src-tauri/target/release/bundle -name "*.deb" | head -1 || true)
           if [ -n "$DEB" ]; then
+            dpkg-deb -c "$DEB" | grep -Eq '/usr/bin/cursor-sidecar$'
             cp "$DEB" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.deb"
             echo "Deb package copied: CC-Switch-${VERSION}-Linux-${ARCH}.deb"
           else
@@ -541,6 +623,7 @@ jobs:
           # 额外上传 .rpm（用于 Fedora/RHEL/openSUSE 等，不参与 Updater）
           RPM=$(find src-tauri/target/release/bundle -name "*.rpm" | head -1 || true)
           if [ -n "$RPM" ]; then
+            rpm -qlp "$RPM" | grep -Eq '/usr/bin/cursor-sidecar$'
             cp "$RPM" "release-assets/CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
             echo "RPM package copied: CC-Switch-${VERSION}-Linux-${ARCH}.rpm"
           else
