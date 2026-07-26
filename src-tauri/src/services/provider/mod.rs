@@ -2922,7 +2922,7 @@ impl ProviderService {
     ///
     /// Scope, opt-in, `_cleared` guard, and "skip when unchanged" semantics
     /// are identical to the switch path — see the doc on the wrapper.
-    fn sync_common_config_snippet_from_live_core(
+    pub(crate) fn sync_common_config_snippet_from_live_core(
         state: &AppState,
         app_type: &AppType,
         provider: &Provider,
