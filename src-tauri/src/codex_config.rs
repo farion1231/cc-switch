@@ -719,6 +719,17 @@ fn codex_desktop_leveldb_candidates_for_root(codex_root: &Path) -> Vec<PathBuf> 
     ]
 }
 
+fn codex_desktop_linux_config_root(
+    xdg_config_home: Option<&std::ffi::OsStr>,
+    home: &Path,
+) -> PathBuf {
+    xdg_config_home
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"))
+        .join("Codex")
+}
+
 #[cfg(target_os = "windows")]
 fn codex_desktop_windows_leveldb_candidates(appdata: &Path, local_appdata: &Path) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
@@ -750,6 +761,13 @@ fn codex_desktop_windows_leveldb_candidates(appdata: &Path, local_appdata: &Path
 }
 
 fn codex_desktop_local_storage_leveldb_candidates() -> Vec<PathBuf> {
+    #[cfg(test)]
+    if let Some(test_home) = std::env::var_os("CC_SWITCH_TEST_HOME") {
+        return codex_desktop_leveldb_candidates_for_root(
+            &PathBuf::from(test_home).join("Codex Desktop"),
+        );
+    }
+
     let mut candidates = Vec::new();
 
     #[cfg(target_os = "windows")]
@@ -774,7 +792,9 @@ fn codex_desktop_local_storage_leveldb_candidates() -> Vec<PathBuf> {
 
     #[cfg(target_os = "linux")]
     {
-        let codex_root = get_home_dir().join(".config").join("Codex");
+        let xdg_config_home = std::env::var_os("XDG_CONFIG_HOME");
+        let codex_root =
+            codex_desktop_linux_config_root(xdg_config_home.as_deref(), &get_home_dir());
         candidates.extend(codex_desktop_leveldb_candidates_for_root(&codex_root));
     }
 
@@ -1912,6 +1932,28 @@ pub fn sync_codex_desktop_available_models_cache_from_settings(settings: &Value)
         Err(err) => log::warn!(
             "Codex provider switched, but the Desktop model whitelist cache was not synced: {err}"
         ),
+    }
+}
+
+/// Reconcile the Desktop whitelist cache after restoring a raw Live backup.
+/// Snapshot backups with an existing catalog pointer keep their current pin;
+/// official snapshots without a catalog clear any stale custom future pin.
+pub fn sync_codex_desktop_available_models_cache_after_live_restore(settings: &Value) {
+    let has_inline_catalog = settings.get("modelCatalog").is_some();
+    let has_catalog_pointer = settings
+        .get("config")
+        .and_then(Value::as_str)
+        .and_then(|config_text| config_text.parse::<DocumentMut>().ok())
+        .is_some_and(|doc| {
+            doc.get("model_catalog_json")
+                .and_then(|item| item.as_str())
+                .map(str::trim)
+                .filter(|path| !path.is_empty())
+                .is_some()
+        });
+
+    if has_inline_catalog || !has_catalog_pointer {
+        sync_codex_desktop_available_models_cache_from_settings(settings);
     }
 }
 pub fn write_codex_provider_live_with_catalog(
@@ -3926,6 +3968,26 @@ base_url = "https://production.api/v1"
                 .join("Local Storage")
                 .join("leveldb")
         ));
+    }
+
+    #[test]
+    fn codex_desktop_linux_config_root_prefers_xdg_config_home() {
+        let home = PathBuf::from("home");
+        let xdg_config_home = std::ffi::OsString::from("xdg-config");
+        let empty_xdg_config_home = std::ffi::OsString::new();
+
+        assert_eq!(
+            codex_desktop_linux_config_root(Some(xdg_config_home.as_os_str()), &home),
+            PathBuf::from("xdg-config").join("Codex")
+        );
+        assert_eq!(
+            codex_desktop_linux_config_root(Some(empty_xdg_config_home.as_os_str()), &home),
+            home.join(".config").join("Codex")
+        );
+        assert_eq!(
+            codex_desktop_linux_config_root(None, &home),
+            home.join(".config").join("Codex")
+        );
     }
 
     #[cfg(target_os = "windows")]

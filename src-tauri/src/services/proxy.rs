@@ -3008,6 +3008,8 @@ impl ProxyService {
             (None, None) => {}
         }
 
+        crate::codex_config::sync_codex_desktop_available_models_cache_after_live_restore(config);
+
         Ok(())
     }
 
@@ -6758,6 +6760,88 @@ requires_openai_auth = true
             restored.contains(pointer.as_str()),
             "restored pointer must still reference the cc-switch generated catalog file"
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_restore_official_backup_unpins_desktop_statsig_cache() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let leveldb_path = home
+            .dir
+            .path()
+            .join("Codex Desktop")
+            .join("Local Storage")
+            .join("leveldb");
+        std::fs::create_dir_all(&leveldb_path).expect("create test leveldb path");
+        let options = rusty_leveldb::Options {
+            create_if_missing: true,
+            ..Default::default()
+        };
+        let mut leveldb = rusty_leveldb::DB::open(&leveldb_path, options)
+            .expect("open test Codex Desktop leveldb");
+        let cache_key = b"_https://codex\x00statsig.cached.evaluations.active";
+        let last_modified_key = b"_https://codex\x00statsig.last_modified_time.evaluations";
+        let data = json!({
+            "dynamic_configs": {
+                "107580212": {
+                    "value": { "available_models": ["gpt-5.5", "custom-model"] }
+                }
+            }
+        });
+        leveldb
+            .put(
+                cache_key,
+                &serde_json::to_vec(&json!({ "source": "Network", "data": data.to_string() }))
+                    .expect("encode cache wrapper"),
+            )
+            .expect("seed cached evaluations");
+        let future_pin = 9_999_999_999_999_i64;
+        leveldb
+            .put(
+                last_modified_key,
+                &serde_json::to_vec(&json!({ "statsig.cached.evaluations.active": future_pin }))
+                    .expect("encode last modified wrapper"),
+            )
+            .expect("seed future cache pin");
+        leveldb.close().expect("close seeded leveldb");
+
+        let backup_json = serde_json::to_string(&json!({
+            "auth": { "tokens": { "access_token": "official-session" } },
+            "config": "model = \"gpt-5.5\"\n",
+        }))
+        .expect("serialize official backup");
+        db.save_live_backup("codex", &backup_json)
+            .await
+            .expect("seed official live backup");
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Codex)
+            .await
+            .expect("restore official codex backup");
+
+        let options = rusty_leveldb::Options {
+            create_if_missing: false,
+            ..Default::default()
+        };
+        let mut leveldb = rusty_leveldb::DB::open(&leveldb_path, options)
+            .expect("reopen test Codex Desktop leveldb");
+        let value = leveldb
+            .get(last_modified_key)
+            .expect("read updated last modified wrapper");
+        let last_modified: Value =
+            serde_json::from_slice(&value).expect("decode last modified wrapper");
+        assert!(
+            last_modified["statsig.cached.evaluations.active"]
+                .as_i64()
+                .unwrap()
+                < future_pin,
+            "restoring an official backup must clear the custom future cache pin"
+        );
+        leveldb.close().expect("close leveldb");
     }
 
     /// Regression: a hot-switch during takeover rebuilds the backup from the DB
