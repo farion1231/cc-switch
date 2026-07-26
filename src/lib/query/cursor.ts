@@ -1,11 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { cursorApi, type CursorProvider } from "@/lib/api/cursor";
+import {
+  cursorApi,
+  type CursorProvider,
+  type CursorProviderChanges,
+} from "@/lib/api/cursor";
 
 export const cursorKeys = {
   all: ["cursor"] as const,
+  endpoints: ["cursor", "endpoints"] as const,
   providers: ["cursor", "providers"] as const,
   runtime: ["cursor", "runtime"] as const,
 };
+
+export const useCursorEndpoints = () =>
+  useQuery({
+    queryKey: cursorKeys.endpoints,
+    queryFn: cursorApi.getEndpoints,
+  });
 
 export const useCursorProviders = () =>
   useQuery({
@@ -35,6 +46,7 @@ const useCursorMutation = <TVariables, TResult>(
     mutationFn,
     onSuccess: async () => {
       await Promise.all([
+        queryClient.invalidateQueries({ queryKey: cursorKeys.endpoints }),
         queryClient.invalidateQueries({ queryKey: cursorKeys.providers }),
         queryClient.invalidateQueries({ queryKey: cursorKeys.runtime }),
       ]);
@@ -48,8 +60,8 @@ export const useSaveCursorProvider = () =>
   );
 
 export const useSaveCursorProviders = () =>
-  useCursorMutation((providers: CursorProvider[]) =>
-    cursorApi.saveProviders(providers),
+  useCursorMutation((changes: CursorProviderChanges) =>
+    cursorApi.saveProviders(changes),
   );
 
 export const useDeleteCursorProvider = () =>

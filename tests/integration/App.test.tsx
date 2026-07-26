@@ -142,9 +142,21 @@ vi.mock("@/components/UpdateBadge", () => ({
 
 vi.mock("@/components/cursor/CursorModelPanel", () => ({
   CursorModelPanel: forwardRef((_props, ref) => {
-    useImperativeHandle(ref, () => ({ openAddModel: vi.fn() }));
+    useImperativeHandle(ref, () => ({ openCreate: vi.fn() }));
     return <div data-testid="cursor-model-panel">cursor-panel</div>;
   }),
+}));
+
+vi.mock("@/components/cursor/CursorRuntimeToggle", () => ({
+  CursorRuntimeToggle: () => <div data-testid="cursor-runtime-toggle" />,
+}));
+
+vi.mock("@/components/proxy/ProxyToggle", () => ({
+  ProxyToggle: () => <div data-testid="generic-proxy-toggle" />,
+}));
+
+vi.mock("@/components/profiles/ProfileSwitcher", () => ({
+  ProfileSwitcher: () => <div data-testid="profile-switcher" />,
 }));
 
 vi.mock("@/components/settings/SettingsPage", () => ({
@@ -239,6 +251,48 @@ describe("App integration with MSW", () => {
 
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
+  });
+
+  it("isolates Cursor from managed providers and shared feature entries", async () => {
+    window.localStorage.setItem("cc-switch-last-app", "cursor");
+    const getAllSpy = vi.spyOn(providersApi, "getAll");
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("cursor-model-panel")).toBeInTheDocument(),
+    );
+
+    expect(getAllSpy).not.toHaveBeenCalled();
+    expect(screen.getByTestId("cursor-runtime-toggle")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("generic-proxy-toggle"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("profile-switcher")).not.toBeInTheDocument();
+    expect(screen.getByTestId("provider-toolbar-placeholder")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(screen.queryByTitle("Skills")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("提示词")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("MCP 服务器")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("会话管理")).not.toBeInTheDocument();
+
+    getAllSpy.mockRestore();
+  });
+
+  it("falls back from a persisted unsupported Cursor view", async () => {
+    window.localStorage.setItem("cc-switch-last-app", "cursor");
+    window.localStorage.setItem("cc-switch-last-view", "skills");
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("cursor-model-panel")).toBeInTheDocument(),
+    );
+    expect(window.localStorage.getItem("cc-switch-last-view")).toBe(
+      "providers",
+    );
   });
 
   it("keeps Cursor usage in the shared statistics entry", async () => {

@@ -1382,6 +1382,7 @@ pub fn run() {
             commands::get_balance,
             // Cursor model catalog and runtime
             commands::get_cursor_providers,
+            commands::get_cursor_endpoints,
             commands::save_cursor_provider,
             commands::save_cursor_providers,
             commands::delete_cursor_provider,

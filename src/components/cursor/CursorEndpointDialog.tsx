@@ -15,7 +15,10 @@ import {
 import { fetchModelsForConfig, type FetchedModel } from "@/lib/api/model-fetch";
 import {
   createCursorModelConfig,
+  createCursorProviderChanges,
+  type CursorEndpoint,
   type CursorProvider,
+  type CursorProviderChanges,
   type CursorProviderType,
 } from "@/lib/api/cursor";
 import { resolveCursorModelMetadata } from "@/lib/cursorModelMetadata";
@@ -23,9 +26,10 @@ import { generateUUID } from "@/utils/uuid";
 
 interface CursorEndpointDialogProps {
   open: boolean;
+  endpoint: CursorEndpoint | null;
   providers: CursorProvider[];
   onOpenChange: (open: boolean) => void;
-  onSave: (providers: CursorProvider[]) => Promise<void>;
+  onSave: (changes: CursorProviderChanges) => Promise<void>;
 }
 
 interface EndpointForm {
@@ -42,13 +46,16 @@ interface ModelDraft {
   modelID: string;
 }
 
-const createEndpointForm = (providers: CursorProvider[]): EndpointForm => {
+const createEndpointForm = (
+  endpoint: CursorEndpoint | null,
+  providers: CursorProvider[],
+): EndpointForm => {
   const config = providers[0]?.settingsConfig;
   return {
-    providerGroup: config?.providerGroup ?? "",
-    type: config?.type ?? "openai",
-    baseURL: config?.baseURL ?? "https://api.openai.com",
-    apiKey: config?.apiKey ?? "",
+    providerGroup: endpoint?.name ?? config?.providerGroup ?? "",
+    type: endpoint?.type ?? config?.type ?? "openai",
+    baseURL: endpoint?.baseURL ?? config?.baseURL ?? "https://api.openai.com",
+    apiKey: endpoint?.apiKey ?? config?.apiKey ?? "",
   };
 };
 
@@ -68,12 +75,13 @@ const createEmptyModelDraft = (): ModelDraft => ({
 
 export function CursorEndpointDialog({
   open,
+  endpoint,
   providers,
   onOpenChange,
   onSave,
 }: CursorEndpointDialogProps) {
   const [form, setForm] = useState<EndpointForm>(() =>
-    createEndpointForm(providers),
+    createEndpointForm(endpoint, providers),
   );
   const [models, setModels] = useState<ModelDraft[]>(() =>
     createModelDrafts(providers),
@@ -88,12 +96,12 @@ export function CursorEndpointDialog({
 
   useEffect(() => {
     if (!open) return;
-    setForm(createEndpointForm(providers));
+    setForm(createEndpointForm(endpoint, providers));
     setModels(createModelDrafts(providers));
     setFetchedModels([]);
     setSelectedModelIds(new Set());
     setError("");
-  }, [open, providers]);
+  }, [endpoint, open, providers]);
 
   const existingModelIds = useMemo(
     () => new Set(models.map((model) => model.modelID.trim()).filter(Boolean)),
@@ -199,7 +207,7 @@ export function CursorEndpointDialog({
       if (!providerGroup || !baseURL || !apiKey) {
         throw new Error("提供商名称、API 端点和 API Key 不能为空");
       }
-      if (validModels.length === 0) {
+      if (!endpoint && validModels.length === 0) {
         throw new Error("请至少添加一个模型");
       }
       if (validModels.some((model) => !model.name || !model.modelID)) {
@@ -212,6 +220,15 @@ export function CursorEndpointDialog({
         throw new Error("同一 Endpoint 下不能添加重复的模型 ID");
       }
 
+      const endpointId = endpoint?.id ?? generateUUID();
+      const nextEndpoint: CursorEndpoint = {
+        id: endpointId,
+        name: providerGroup,
+        type: form.type,
+        baseURL,
+        apiKey,
+        createdAt: endpoint?.createdAt ?? Date.now(),
+      };
       const nextProviders = validModels.map((model) => {
         const metadata = resolveCursorModelMetadata(
           { id: model.modelID, ownedBy: null },
@@ -221,6 +238,7 @@ export function CursorEndpointDialog({
         const settingsConfig = createCursorModelConfig({
           ...(model.provider?.settingsConfig ?? {}),
           providerGroup,
+          endpointId,
           type: form.type,
           baseURL,
           apiKey,
@@ -235,14 +253,17 @@ export function CursorEndpointDialog({
             createdAt: Date.now(),
           }),
           name: model.name,
-          icon: form.type === "anthropic" ? "anthropic" : "openai",
+          icon: model.provider?.icon,
+          iconColor: model.provider?.iconColor,
           settingsConfig,
         } satisfies CursorProvider;
       });
 
       setSaving(true);
       setError("");
-      await onSave(nextProviders);
+      await onSave(
+        createCursorProviderChanges(nextEndpoint, providers, nextProviders),
+      );
       onOpenChange(false);
     } catch (saveError) {
       setError(
@@ -267,7 +288,7 @@ export function CursorEndpointDialog({
       </Button>
       <Button onClick={() => void handleSave()} disabled={saving}>
         {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-        {providers.length > 0 ? "保存 Endpoint" : "添加 Endpoint"}
+        {endpoint ? "保存 Endpoint" : "添加 Endpoint"}
       </Button>
     </>
   );
@@ -275,9 +296,7 @@ export function CursorEndpointDialog({
   return (
     <FullScreenPanel
       isOpen={open}
-      title={
-        providers.length > 0 ? "编辑 Cursor Endpoint" : "添加 Cursor Endpoint"
-      }
+      title={endpoint ? "编辑 Cursor Endpoint" : "添加 Cursor Endpoint"}
       onClose={() => onOpenChange(false)}
       footer={footer}
       contentClassName="pt-3"
@@ -448,12 +467,7 @@ export function CursorEndpointDialog({
                     type="button"
                     variant="ghost"
                     size="icon"
-                    title={
-                      model.provider
-                        ? "已有模型请在列表中单独删除"
-                        : "移除新模型"
-                    }
-                    disabled={Boolean(model.provider)}
+                    title="移除模型"
                     onClick={() =>
                       setModels((current) =>
                         current.filter((item) => item.key !== model.key),

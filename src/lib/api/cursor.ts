@@ -7,6 +7,7 @@ export interface CursorModelConfig {
   enabled: boolean;
   type: CursorProviderType;
   providerGroup: string;
+  endpointId: string;
   baseURL: string;
   apiKey: string;
   modelID: string;
@@ -30,6 +31,47 @@ export interface CursorModelConfig {
 export interface CursorProvider extends Provider {
   settingsConfig: CursorModelConfig;
 }
+
+export interface CursorEndpoint {
+  id: string;
+  name: string;
+  type: CursorProviderType;
+  baseURL: string;
+  apiKey: string;
+  createdAt: number;
+}
+
+export interface CursorProviderChanges {
+  endpoint: CursorEndpoint;
+  upserts: CursorProvider[];
+  deletedProviderIds: string[];
+}
+
+export const createCursorProviderChanges = (
+  endpoint: CursorEndpoint,
+  originalProviders: CursorProvider[],
+  upserts: CursorProvider[],
+): CursorProviderChanges => {
+  const retainedProviderIds = new Set(upserts.map(({ id }) => id));
+  return {
+    endpoint,
+    upserts,
+    deletedProviderIds: originalProviders
+      .map(({ id }) => id)
+      .filter((id) => !retainedProviderIds.has(id)),
+  };
+};
+
+export const groupCursorProvidersByEndpoint = (
+  endpoints: CursorEndpoint[],
+  providers: CursorProvider[],
+) =>
+  endpoints.map((endpoint) => ({
+    endpoint,
+    providers: providers.filter(
+      (provider) => provider.settingsConfig.endpointId === endpoint.id,
+    ),
+  }));
 
 export type CursorRuntimePhase =
   | "stopped"
@@ -70,6 +112,7 @@ export const createCursorModelConfig = (
   enabled: true,
   type: "openai",
   providerGroup: "",
+  endpointId: "",
   baseURL: "https://api.openai.com",
   apiKey: "",
   modelID: "",
@@ -105,14 +148,15 @@ export const normalizeCursorProviders = (
   );
 
 export const cursorApi = {
+  getEndpoints: () => invoke<CursorEndpoint[]>("get_cursor_endpoints"),
   getProviders: async (): Promise<Record<string, CursorProvider>> =>
     normalizeCursorProviders(
       await invoke<Record<string, Provider>>("get_cursor_providers"),
     ),
   saveProvider: (provider: CursorProvider) =>
     invoke<boolean>("save_cursor_provider", { provider }),
-  saveProviders: (providers: CursorProvider[]) =>
-    invoke<boolean>("save_cursor_providers", { providers }),
+  saveProviders: (changes: CursorProviderChanges) =>
+    invoke<boolean>("save_cursor_providers", { changes }),
   deleteProvider: (id: string) =>
     invoke<boolean>("delete_cursor_provider", { id }),
   setProviderEnabled: (id: string, enabled: boolean) =>

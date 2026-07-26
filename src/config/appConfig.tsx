@@ -15,6 +15,22 @@ export interface AppConfig {
   badgeClass: string;
 }
 
+export interface AppCapabilities {
+  providerCatalog: boolean;
+  providerFlow: "managed" | "cursor-runtime";
+  routingControl: "generic-proxy" | "claude-desktop" | "local-runtime" | "none";
+  managedAppId: ManagedAppId | null;
+  sharedFeatureAppId: ManagedAppId | null;
+  usageDashboard: boolean;
+  prompts: boolean;
+  skills: boolean;
+  mcp: boolean;
+  sessions: boolean;
+  profiles: boolean;
+  environmentConflictCheck: boolean;
+  failover: boolean;
+}
+
 export const APP_IDS: AppId[] = [
   "claude",
   "claude-desktop",
@@ -27,18 +43,94 @@ export const APP_IDS: AppId[] = [
   "cursor",
 ];
 
-/** App IDs shown in Skills panels (excludes OpenClaw — it doesn't support Skills) */
-export const SKILLS_APP_IDS: ManagedAppId[] = [
-  "claude",
-  "codex",
-  "gemini",
-  "grokbuild",
-  "opencode",
-  "hermes",
-];
+const managedCapabilities = (
+  appId: ManagedAppId,
+  overrides: Partial<AppCapabilities> = {},
+): AppCapabilities => ({
+  providerCatalog: true,
+  providerFlow: "managed",
+  routingControl: "none",
+  managedAppId: appId,
+  sharedFeatureAppId: appId === "claude-desktop" ? "claude" : appId,
+  usageDashboard: true,
+  prompts: true,
+  skills: appId !== "openclaw",
+  mcp: true,
+  sessions: true,
+  profiles: ["claude", "claude-desktop", "codex"].includes(appId),
+  environmentConflictCheck: true,
+  failover: false,
+  ...overrides,
+});
 
-/** App IDs shown in MCP panels (excludes OpenClaw) */
-export const MCP_APP_IDS: ManagedAppId[] = [...SKILLS_APP_IDS];
+export const APP_CAPABILITIES: Record<AppId, AppCapabilities> = {
+  claude: managedCapabilities("claude", {
+    routingControl: "generic-proxy",
+    usageDashboard: true,
+    failover: true,
+  }),
+  "claude-desktop": managedCapabilities("claude-desktop", {
+    routingControl: "claude-desktop",
+  }),
+  codex: managedCapabilities("codex", {
+    routingControl: "generic-proxy",
+    usageDashboard: true,
+    failover: true,
+  }),
+  gemini: managedCapabilities("gemini", {
+    routingControl: "generic-proxy",
+    usageDashboard: true,
+    failover: true,
+  }),
+  grokbuild: managedCapabilities("grokbuild", {
+    routingControl: "generic-proxy",
+    usageDashboard: true,
+    failover: true,
+  }),
+  opencode: managedCapabilities("opencode"),
+  openclaw: managedCapabilities("openclaw", {
+    prompts: false,
+    mcp: false,
+  }),
+  hermes: managedCapabilities("hermes"),
+  cursor: {
+    providerCatalog: true,
+    providerFlow: "cursor-runtime",
+    routingControl: "local-runtime",
+    managedAppId: null,
+    sharedFeatureAppId: null,
+    usageDashboard: true,
+    prompts: false,
+    skills: false,
+    mcp: false,
+    sessions: false,
+    profiles: false,
+    environmentConflictCheck: false,
+    failover: false,
+  },
+};
+
+export const canShowUsageDashboard = (
+  capabilities: AppCapabilities,
+  isTakeoverActive: boolean,
+): boolean =>
+  capabilities.usageDashboard &&
+  (capabilities.providerFlow === "cursor-runtime" || isTakeoverActive);
+
+const sharedFeatureApps = (capability: "skills" | "mcp"): ManagedAppId[] =>
+  Array.from(
+    new Set(
+      APP_IDS.flatMap((appId) => {
+        const capabilities = APP_CAPABILITIES[appId];
+        return capabilities[capability] && capabilities.sharedFeatureAppId
+          ? [capabilities.sharedFeatureAppId]
+          : [];
+      }),
+    ),
+  );
+
+export const SKILLS_APP_IDS = sharedFeatureApps("skills");
+export const MCP_APP_IDS = sharedFeatureApps("mcp");
 
 export const APP_ICON_MAP: Record<AppId, AppConfig> = {
   claude: {

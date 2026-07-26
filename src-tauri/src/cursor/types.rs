@@ -2,6 +2,20 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CursorEndpoint {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub provider_type: String,
+    #[serde(rename = "baseURL")]
+    pub base_url: String,
+    #[serde(rename = "apiKey")]
+    pub api_key: String,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CursorModelConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -9,6 +23,8 @@ pub struct CursorModelConfig {
     pub provider_type: String,
     #[serde(default)]
     pub provider_group: String,
+    #[serde(default)]
+    pub endpoint_id: String,
     #[serde(rename = "baseURL")]
     pub base_url: String,
     #[serde(rename = "apiKey")]
@@ -53,6 +69,7 @@ impl Default for CursorModelConfig {
             enabled: true,
             provider_type: "openai".to_string(),
             provider_group: String::new(),
+            endpoint_id: String::new(),
             base_url: String::new(),
             api_key: String::new(),
             model_id: String::new(),

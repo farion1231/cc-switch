@@ -1,12 +1,24 @@
 use indexmap::IndexMap;
+use serde::Deserialize;
+use std::collections::HashSet;
 use tauri::{AppHandle, State};
 
 use crate::cursor::projector;
-use crate::cursor::types::{CursorModelConfig, CursorModelTestResult, CursorRuntimeState};
+use crate::cursor::types::{
+    CursorEndpoint, CursorModelConfig, CursorModelTestResult, CursorRuntimeState,
+};
 use crate::provider::Provider;
 use crate::store::AppState;
 
 const CURSOR_APP_TYPE: &str = "cursor";
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CursorProviderChanges {
+    endpoint: CursorEndpoint,
+    upserts: Vec<Provider>,
+    deleted_provider_ids: Vec<String>,
+}
 
 #[tauri::command]
 pub fn get_cursor_providers(
@@ -19,12 +31,29 @@ pub fn get_cursor_providers(
 }
 
 #[tauri::command]
+pub fn get_cursor_endpoints(state: State<'_, AppState>) -> Result<Vec<CursorEndpoint>, String> {
+    state
+        .db
+        .get_cursor_endpoints()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn save_cursor_provider(
     state: State<'_, AppState>,
     provider: Provider,
 ) -> Result<bool, String> {
     let config: CursorModelConfig = serde_json::from_value(provider.settings_config.clone())
         .map_err(|error| format!("Cursor Provider 配置无效: {error}"))?;
+    if config.endpoint_id.trim().is_empty()
+        || state
+            .db
+            .get_cursor_endpoint(&config.endpoint_id)
+            .map_err(|error| error.to_string())?
+            .is_none()
+    {
+        return Err("Cursor Provider 必须属于一个已存在的 Endpoint".to_string());
+    }
     projector::project_single_model(&provider.id, &provider.name, config)
         .map_err(|error| error.to_string())?;
     state
@@ -42,25 +71,62 @@ pub async fn save_cursor_provider(
 #[tauri::command]
 pub async fn save_cursor_providers(
     state: State<'_, AppState>,
-    providers: Vec<Provider>,
+    changes: CursorProviderChanges,
 ) -> Result<bool, String> {
-    if providers.is_empty() {
-        return Err("至少需要一个 Cursor 模型".to_string());
+    if changes.endpoint.id.trim().is_empty()
+        || changes.endpoint.name.trim().is_empty()
+        || changes.endpoint.base_url.trim().is_empty()
+        || changes.endpoint.api_key.trim().is_empty()
+        || !matches!(
+            changes.endpoint.provider_type.as_str(),
+            "openai" | "anthropic"
+        )
+    {
+        return Err("Cursor Endpoint 配置无效".to_string());
     }
 
-    for provider in &providers {
+    let upsert_ids: HashSet<_> = changes
+        .upserts
+        .iter()
+        .map(|provider| provider.id.as_str())
+        .collect();
+    if upsert_ids.len() != changes.upserts.len() {
+        return Err("Cursor Endpoint 中存在重复的 Provider ID".to_string());
+    }
+
+    let deleted_ids: HashSet<_> = changes
+        .deleted_provider_ids
+        .iter()
+        .map(String::as_str)
+        .collect();
+    if deleted_ids.len() != changes.deleted_provider_ids.len() {
+        return Err("Cursor Endpoint 中存在重复的待删除 Provider ID".to_string());
+    }
+    if let Some(id) = upsert_ids.intersection(&deleted_ids).next() {
+        return Err(format!("Cursor Provider '{id}' 不能同时保存和删除"));
+    }
+
+    for provider in &changes.upserts {
         let config: CursorModelConfig = serde_json::from_value(provider.settings_config.clone())
             .map_err(|error| format!("Cursor Provider '{}' 配置无效: {error}", provider.name))?;
+        if config.endpoint_id != changes.endpoint.id {
+            return Err(format!(
+                "Cursor Provider '{}' 不属于当前 Endpoint",
+                provider.name
+            ));
+        }
         projector::project_single_model(&provider.id, &provider.name, config)
             .map_err(|error| error.to_string())?;
     }
 
-    for provider in &providers {
-        state
-            .db
-            .save_provider(CURSOR_APP_TYPE, provider)
-            .map_err(|error| error.to_string())?;
-    }
+    state
+        .db
+        .save_cursor_endpoint_with_provider_changes(
+            &changes.endpoint,
+            &changes.upserts,
+            &changes.deleted_provider_ids,
+        )
+        .map_err(|error| error.to_string())?;
 
     state
         .cursor_runtime

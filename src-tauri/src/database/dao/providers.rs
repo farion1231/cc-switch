@@ -2,7 +2,7 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::provider::{Provider, ProviderMeta};
 use indexmap::IndexMap;
-use rusqlite::params;
+use rusqlite::{params, Transaction};
 use std::collections::{HashMap, HashSet};
 
 type OmoProviderRow = (
@@ -177,12 +177,11 @@ impl Database {
         }
     }
 
-    pub fn save_provider(&self, app_type: &str, provider: &Provider) -> Result<(), AppError> {
-        let mut conn = lock_conn!(self.conn);
-        let tx = conn
-            .transaction()
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
+    pub(crate) fn save_provider_in_transaction(
+        tx: &Transaction<'_>,
+        app_type: &str,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
         let mut meta_clone = provider.meta.clone().unwrap_or_default();
         let endpoints = std::mem::take(&mut meta_clone.custom_endpoints);
 
@@ -271,6 +270,47 @@ impl Database {
                 )
                 .map_err(|e| AppError::Database(e.to_string()))?;
             }
+        }
+
+        Ok(())
+    }
+
+    pub fn save_provider(&self, app_type: &str, provider: &Provider) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Self::save_provider_in_transaction(&tx, app_type, provider)?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn apply_provider_changes(
+        &self,
+        app_type: &str,
+        upserts: &[Provider],
+        deleted_provider_ids: &[String],
+    ) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        for id in deleted_provider_ids {
+            let deleted = tx
+                .execute(
+                    "DELETE FROM providers WHERE id = ?1 AND app_type = ?2",
+                    params![id, app_type],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            if deleted == 0 {
+                return Err(AppError::Database(format!(
+                    "Provider '{id}' does not exist for app type '{app_type}'"
+                )));
+            }
+        }
+        for provider in upserts {
+            Self::save_provider_in_transaction(&tx, app_type, provider)?;
         }
 
         tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
@@ -704,6 +744,66 @@ impl Database {
         self.save_provider(app_type_str, &provider)?;
 
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod provider_changes_tests {
+    use crate::database::Database;
+    use crate::provider::Provider;
+    use serde_json::json;
+
+    const APP_TYPE: &str = "cursor";
+
+    fn provider(id: &str, name: &str) -> Provider {
+        Provider::with_id(
+            id.to_string(),
+            name.to_string(),
+            json!({ "modelID": id }),
+            None,
+        )
+    }
+
+    #[test]
+    fn applies_upserts_and_deletes_in_one_change_set() {
+        let db = Database::memory().expect("memory db");
+        db.save_provider(APP_TYPE, &provider("keep", "Keep"))
+            .expect("save keep");
+        db.save_provider(APP_TYPE, &provider("remove", "Remove"))
+            .expect("save remove");
+
+        db.apply_provider_changes(
+            APP_TYPE,
+            &[provider("keep", "Updated"), provider("new", "New")],
+            &["remove".to_string()],
+        )
+        .expect("apply changes");
+
+        let providers = db.get_all_providers(APP_TYPE).expect("load providers");
+        assert_eq!(providers.len(), 2);
+        assert_eq!(providers["keep"].name, "Updated");
+        assert!(providers.contains_key("new"));
+        assert!(!providers.contains_key("remove"));
+    }
+
+    #[test]
+    fn rolls_back_when_any_delete_target_is_stale() {
+        let db = Database::memory().expect("memory db");
+        db.save_provider(APP_TYPE, &provider("keep", "Keep"))
+            .expect("save keep");
+        db.save_provider(APP_TYPE, &provider("remove", "Remove"))
+            .expect("save remove");
+
+        let result = db.apply_provider_changes(
+            APP_TYPE,
+            &[provider("keep", "Updated")],
+            &["remove".to_string(), "missing".to_string()],
+        );
+
+        assert!(result.is_err());
+        let providers = db.get_all_providers(APP_TYPE).expect("load providers");
+        assert_eq!(providers["keep"].name, "Keep");
+        assert!(providers.contains_key("remove"));
     }
 }
 

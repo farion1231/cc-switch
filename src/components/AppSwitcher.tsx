@@ -1,5 +1,6 @@
 import type { AppId } from "@/lib/api";
 import type { VisibleApps } from "@/types";
+import { APP_IDS } from "@/config/appConfig";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { cn } from "@/lib/utils";
 import { Monitor, Terminal } from "lucide-react";
@@ -18,17 +19,6 @@ interface AppSwitcherProps {
   compact?: boolean;
 }
 
-const ALL_APPS: AppId[] = [
-  "claude",
-  "claude-desktop",
-  "codex",
-  "gemini",
-  "grokbuild",
-  "opencode",
-  "openclaw",
-  "hermes",
-  "cursor",
-];
 const STORAGE_KEY = "cc-switch-last-app";
 
 export function AppSwitcher({
@@ -67,7 +57,7 @@ export function AppSwitcher({
   };
 
   // Filter apps based on visibility settings (default all visible)
-  const appsToShow = ALL_APPS.filter((app) => {
+  const appsToShow = APP_IDS.filter((app) => {
     if (!visibleApps) return true;
     return visibleApps[app];
   });
