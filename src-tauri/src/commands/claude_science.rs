@@ -573,7 +573,15 @@ fn write_proxy_managed_oauth_token(auth_dir: &Path, oauth_key: &str) -> Result<(
         refresh_token: Some(String::new()),
         api_key: None,
         token_expires_at: OAUTH_TOKEN_EXPIRY.to_string(),
-        provider: "claude_ai",
+        // Deliberately NOT "claude_ai": since 0.1.25 the daemon uses the stored
+        // OAuth session for claude.ai directory connectors, and when
+        // provider == "claude_ai" it classifies the (expected) rejection of our
+        // placeholder token as "session expired", surfacing an alarming
+        // "Your claude.ai session has expired" banner. With any other provider
+        // value the connector bootstrap degrades to a quiet "not signed in"
+        // state (`no_org`) that the web UI does not banner on, while
+        // inference keeps flowing through ANTHROPIC_BASE_URL unchanged.
+        provider: "proxy_managed",
         scopes: "user:inference user:file_upload user:profile user:mcp_servers user:plugins",
         email: SCIENCE_PROXY_EMAIL,
         account_uuid: SCIENCE_PROXY_USER_ID,
@@ -955,7 +963,10 @@ mod tests {
         assert_eq!(token["email"], SCIENCE_PROXY_EMAIL);
         assert_eq!(token["account_uuid"], SCIENCE_PROXY_USER_ID);
         assert_eq!(token["org_uuid"], SCIENCE_PROXY_ORG_ID);
-        assert_eq!(token["provider"], "claude_ai");
+        // Must stay a non-"claude_ai" value so 0.1.25+ treats the placeholder
+        // session as "not signed in" instead of "session expired" (see the
+        // comment at the construction site).
+        assert_eq!(token["provider"], "proxy_managed");
         assert_eq!(token["subscription_type"], "max");
         assert_eq!(token["token_expires_at"], OAUTH_TOKEN_EXPIRY);
         let scopes = token["scopes"].as_str().expect("scopes");
