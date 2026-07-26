@@ -2044,6 +2044,18 @@ pub fn prepare_codex_live_config_text_with_optional_catalog(
     }
 }
 
+fn invalidate_codex_desktop_available_models_cache_worker() {
+    let generation = {
+        let _guard = CODEX_DESKTOP_CACHE_SYNC_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        CODEX_DESKTOP_CACHE_SYNC_GENERATION
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1)
+    };
+    schedule_codex_desktop_available_models_cache_worker(generation, Vec::new(), None);
+}
+
 pub fn sync_codex_desktop_available_models_cache_from_settings(settings: &Value) {
     let model_ids = codex_model_ids_from_settings(settings);
     let (generation, sync_result) = {
@@ -2102,7 +2114,8 @@ pub fn sync_codex_desktop_available_models_cache_from_settings(settings: &Value)
 /// Reconcile the Desktop whitelist cache after restoring a raw Live backup.
 /// Official snapshots without a catalog clear any stale custom future pin.
 /// Raw snapshots that point at the cc-switch-owned catalog reload its model IDs
-/// and repin them; user-managed external catalog pointers are left untouched.
+/// and repin them; user-managed external catalog pointers keep their cache
+/// untouched while cancelling stale cc-switch background work.
 pub fn sync_codex_desktop_available_models_cache_after_live_restore(settings: &Value) {
     if settings.get("modelCatalog").is_some() {
         sync_codex_desktop_available_models_cache_from_settings(settings);
@@ -2141,7 +2154,9 @@ pub fn sync_codex_desktop_available_models_cache_after_live_restore(settings: &V
             .is_some()
     });
 
-    if !has_external_catalog_pointer {
+    if has_external_catalog_pointer {
+        invalidate_codex_desktop_available_models_cache_worker();
+    } else {
         sync_codex_desktop_available_models_cache_from_settings(settings);
     }
 }
@@ -4683,6 +4698,22 @@ web_search = "disabled"
         assert!(
             resolve_cc_switch_catalog_path(config, &generated).is_none(),
             "external catalog files should be left alone"
+        );
+    }
+
+    #[test]
+    fn codex_restore_external_catalog_invalidates_stale_cache_worker() {
+        let generation_before = CODEX_DESKTOP_CACHE_SYNC_GENERATION.load(Ordering::Acquire);
+
+        sync_codex_desktop_available_models_cache_after_live_restore(&json!({
+            "config": r#"model_catalog_json = "C:/Users/me/.codex/custom-models.json"
+        "#,
+        }));
+
+        let generation_after = CODEX_DESKTOP_CACHE_SYNC_GENERATION.load(Ordering::Acquire);
+        assert_ne!(
+            generation_after, generation_before,
+            "restoring a user-managed catalog must invalidate prior cc-switch cache work"
         );
     }
 
