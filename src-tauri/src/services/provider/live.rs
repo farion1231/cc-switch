@@ -1264,6 +1264,7 @@ pub(crate) fn sync_current_provider_for_app_to_live(
 
         let providers = state.db.get_all_providers(app_type.as_str())?;
         if let Some(provider) = providers.get(&current_id) {
+            let _ = sync_common_config_snippet_from_live_simple(state, app_type, provider);
             write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
         }
     }
