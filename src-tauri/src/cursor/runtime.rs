@@ -12,7 +12,7 @@ use crate::config::get_app_config_dir;
 use crate::cursor::projector;
 use crate::cursor::types::{
     CursorModelTestResult, CursorRuntimeState, CursorUsageEventPage, SidecarConfig,
-    SidecarModelAdapter,
+    SidecarModelAdapter, SidecarRuntimeState,
 };
 use crate::database::Database;
 use crate::error::AppError;
@@ -284,10 +284,8 @@ impl CursorRuntimeService {
         self.force_stop().await;
         drop(events);
 
-        let mut state = response?;
-        state.sidecar_running = false;
-        state.phase = "stopped".to_string();
-        state.platform = std::env::consts::OS.to_string();
+        let sidecar_state = response?;
+        let state = sidecar_state.into_runtime_state("stopped", false, std::env::consts::OS);
         let mut inner = self.inner.lock().await;
         inner.phase = state.phase.clone();
         inner.state = state.clone();
@@ -350,7 +348,7 @@ impl CursorRuntimeService {
             .send()
             .await
         {
-            Ok(response) => decode_response::<CursorRuntimeState>(response).await,
+            Ok(response) => decode_response::<SidecarRuntimeState>(response).await,
             Err(error) => Err(http_error(error)),
         };
 
@@ -363,14 +361,15 @@ impl CursorRuntimeService {
         }
 
         match response {
-            Ok(mut state) => {
-                state.sidecar_running = self.is_running().await;
-                state.phase = if state.sidecar_running {
-                    "running".to_string()
+            Ok(sidecar_state) => {
+                let sidecar_running = self.is_running().await;
+                let phase = if sidecar_running {
+                    "running"
                 } else {
-                    "stopped".to_string()
+                    "stopped"
                 };
-                state.platform = std::env::consts::OS.to_string();
+                let state =
+                    sidecar_state.into_runtime_state(phase, sidecar_running, std::env::consts::OS);
                 let mut inner = self.inner.lock().await;
                 inner.phase = state.phase.clone();
                 inner.state = state.clone();
@@ -419,7 +418,7 @@ impl CursorRuntimeService {
         result
     }
 
-    async fn fetch_state(&self) -> Result<CursorRuntimeState, AppError> {
+    async fn fetch_state(&self) -> Result<SidecarRuntimeState, AppError> {
         let response = self
             .request(reqwest::Method::GET, "/v1/state")
             .await?
@@ -430,10 +429,8 @@ impl CursorRuntimeService {
     }
 
     async fn refresh_state(&self) -> Result<CursorRuntimeState, AppError> {
-        let mut state = self.fetch_state().await?;
-        state.sidecar_running = true;
-        state.phase = "running".to_string();
-        state.platform = std::env::consts::OS.to_string();
+        let sidecar_state = self.fetch_state().await?;
+        let state = sidecar_state.into_runtime_state("running", true, std::env::consts::OS);
         let mut inner = self.inner.lock().await;
         inner.phase = state.phase.clone();
         inner.state = state.clone();

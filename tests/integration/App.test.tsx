@@ -124,6 +124,7 @@ vi.mock("@/components/AppSwitcher", () => ({
       <button onClick={() => onSwitch("claude")}>switch-claude</button>
       <button onClick={() => onSwitch("codex")}>switch-codex</button>
       <button onClick={() => onSwitch("openclaw")}>switch-openclaw</button>
+      <button onClick={() => onSwitch("cursor")}>switch-cursor</button>
     </div>
   ),
 }));
@@ -131,6 +132,18 @@ vi.mock("@/components/AppSwitcher", () => ({
 vi.mock("@/components/UpdateBadge", () => ({
   UpdateBadge: ({ onClick }: any) => (
     <button onClick={onClick}>update-badge</button>
+  ),
+}));
+
+vi.mock("@/components/cursor/CursorModelPanel", () => ({
+  CursorModelPanel: () => (
+    <div data-testid="cursor-model-panel">cursor-panel</div>
+  ),
+}));
+
+vi.mock("@/components/settings/SettingsPage", () => ({
+  SettingsPage: ({ defaultTab }: any) => (
+    <div data-testid="settings-page" data-default-tab={defaultTab} />
   ),
 }));
 
@@ -159,6 +172,8 @@ const renderApp = (AppComponent: ComponentType) => {
 describe("App integration with MSW", () => {
   beforeEach(() => {
     resetProviderState();
+    window.localStorage.removeItem("cc-switch-last-app");
+    window.localStorage.removeItem("cc-switch-last-view");
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
   });
@@ -218,6 +233,32 @@ describe("App integration with MSW", () => {
 
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
+  });
+
+  it("keeps Cursor usage in the shared statistics entry", async () => {
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list")).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByText("switch-cursor"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("cursor-model-panel")).toBeInTheDocument(),
+    );
+
+    const usageButton = screen.getByTitle("使用统计");
+    expect(usageButton).toBeInTheDocument();
+    fireEvent.click(usageButton);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("settings-page")).toHaveAttribute(
+        "data-default-tab",
+        "usage",
+      ),
+    );
   });
 
   it("shows toast when auto sync fails in background", async () => {

@@ -52,10 +52,6 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
 import { CursorModelDialog } from "./CursorModelDialog";
 
-interface CursorModelPanelProps {
-  onOpenUsage: () => void;
-}
-
 const PHASE_LABEL: Record<string, string> = {
   stopped: "未运行",
   starting: "启动中",
@@ -66,7 +62,7 @@ const PHASE_LABEL: Record<string, string> = {
   error: "异常",
 };
 
-export function CursorModelPanel({ onOpenUsage }: CursorModelPanelProps) {
+export function CursorModelPanel() {
   const providersQuery = useCursorProviders();
   const runtimeQuery = useCursorRuntimeState();
   const saveProvider = useSaveCursorProvider();
@@ -211,7 +207,6 @@ export function CursorModelPanel({ onOpenUsage }: CursorModelPanelProps) {
           onStart={handleStart}
           onStop={() => void handleStop()}
           onRefresh={() => void runtimeQuery.refetch()}
-          onOpenUsage={onOpenUsage}
         />
 
         {state?.lastError && (
@@ -394,7 +389,6 @@ function RuntimeCard({
   onStart,
   onStop,
   onRefresh,
-  onOpenUsage,
 }: {
   state?: CursorRuntimeState;
   enabledCount: number;
@@ -403,7 +397,6 @@ function RuntimeCard({
   onStart: () => void;
   onStop: () => void;
   onRefresh: () => void;
-  onOpenUsage: () => void;
 }) {
   const layers = [
     ["Sidecar", state?.sidecarRunning],
@@ -478,10 +471,6 @@ function RuntimeCard({
             >
               <RefreshCw className="mr-2 h-4 w-4" />
               刷新
-            </Button>
-            <Button variant="outline" size="sm" onClick={onOpenUsage}>
-              <Activity className="mr-2 h-4 w-4" />
-              使用统计
             </Button>
             {running ? (
               <Button

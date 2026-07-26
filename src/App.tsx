@@ -978,12 +978,7 @@ function App() {
           return <AgentsDefaultsPanel />;
         default:
           return activeApp === "cursor" ? (
-            <CursorModelPanel
-              onOpenUsage={() => {
-                setSettingsDefaultTab("usage");
-                setCurrentView("settings");
-              }}
-            />
+            <CursorModelPanel />
           ) : (
             <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
               <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
@@ -1242,7 +1237,7 @@ function App() {
                     setCurrentView("settings");
                   }}
                 />
-                {isCurrentAppTakeoverActive && (
+                {(activeApp === "cursor" || isCurrentAppTakeoverActive) && (
                   <Button
                     variant="ghost"
                     size="icon"

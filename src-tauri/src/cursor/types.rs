@@ -75,7 +75,9 @@ impl Default for CursorModelConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SidecarModelAdapter {
+    #[serde(default)]
     pub source_provider_id: String,
+    #[serde(default)]
     pub source_provider_name: String,
     pub display_name: String,
     #[serde(rename = "type")]
@@ -87,6 +89,7 @@ pub struct SidecarModelAdapter {
     pub tooltip_data: String,
     #[serde(rename = "modelID")]
     pub model_id: String,
+    #[serde(default)]
     pub pricing_model: String,
     pub reasoning_effort: String,
     #[serde(rename = "openAIEndpoint")]
@@ -104,6 +107,7 @@ pub struct SidecarModelAdapter {
     pub context_window_tokens: i64,
     pub max_completion_tokens: i64,
     pub anthropic_max_tokens: i64,
+    #[serde(default)]
     pub anthropic_thinking_effort: String,
     pub thinking_budget_tokens: i64,
 }
@@ -131,6 +135,43 @@ pub struct SidecarRoutingConfig {
 #[serde(rename_all = "camelCase")]
 pub struct SidecarHomeMetricsConfig {
     pub include_cache_write_in_hit_rate: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SidecarRuntimeState {
+    pub backend_listen_addr: String,
+    pub backend_running: bool,
+    pub proxy_listen_addr: String,
+    pub proxy_running: bool,
+    pub cursor_settings_applied: bool,
+    pub ca_installed: bool,
+    #[serde(default)]
+    pub ca_fingerprint: String,
+    pub last_error: String,
+}
+
+impl SidecarRuntimeState {
+    pub(crate) fn into_runtime_state(
+        self,
+        phase: impl Into<String>,
+        sidecar_running: bool,
+        platform: impl Into<String>,
+    ) -> CursorRuntimeState {
+        CursorRuntimeState {
+            phase: phase.into(),
+            sidecar_running,
+            backend_listen_addr: self.backend_listen_addr,
+            backend_running: self.backend_running,
+            proxy_listen_addr: self.proxy_listen_addr,
+            proxy_running: self.proxy_running,
+            cursor_settings_applied: self.cursor_settings_applied,
+            ca_installed: self.ca_installed,
+            ca_fingerprint: self.ca_fingerprint,
+            platform: platform.into(),
+            last_error: self.last_error,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -214,7 +255,7 @@ fn default_anthropic_effort() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{CursorModelConfig, SidecarModelAdapter};
+    use super::{CursorModelConfig, SidecarModelAdapter, SidecarRuntimeState};
 
     #[test]
     fn sidecar_adapter_uses_go_control_protocol_acronyms() {
@@ -251,6 +292,61 @@ mod tests {
         assert_eq!(value["openAIEndpoint"], "/v1/responses");
         assert!(value.get("baseUrl").is_none());
         assert!(value.get("modelId").is_none());
+    }
+
+    #[test]
+    fn sidecar_adapter_accepts_go_omitted_fields() {
+        let adapter: SidecarModelAdapter = serde_json::from_value(serde_json::json!({
+            "displayName": "OpenAI Model",
+            "type": "openai",
+            "baseURL": "https://example.com",
+            "apiKey": "secret",
+            "tooltipData": "Managed by CC Switch",
+            "modelID": "gpt-test",
+            "reasoningEffort": "medium",
+            "openAIEndpoint": "/v1/responses",
+            "openAIExtraParamsEnabled": false,
+            "openAIExtraParamsJSON": "",
+            "customHeadersEnabled": false,
+            "customHeadersJSON": "",
+            "anthropicExtraParamsEnabled": false,
+            "anthropicExtraParamsJSON": "",
+            "contextWindowTokens": 0,
+            "maxCompletionTokens": 0,
+            "anthropicMaxTokens": 0,
+            "thinkingBudgetTokens": 0
+        }))
+        .expect("deserialize normalized Go adapter response");
+
+        assert_eq!(adapter.provider_type, "openai");
+        assert!(adapter.source_provider_id.is_empty());
+        assert!(adapter.source_provider_name.is_empty());
+        assert!(adapter.pricing_model.is_empty());
+        assert!(adapter.anthropic_thinking_effort.is_empty());
+    }
+
+    #[test]
+    fn sidecar_state_does_not_require_cc_switch_managed_fields() {
+        let sidecar_state: SidecarRuntimeState = serde_json::from_value(serde_json::json!({
+            "backendListenAddr": "127.0.0.1:10001",
+            "backendRunning": true,
+            "proxyListenAddr": "127.0.0.1:10002",
+            "proxyRunning": true,
+            "cursorSettingsApplied": true,
+            "caInstalled": true,
+            "caFingerprint": "AA:BB",
+            "lastError": ""
+        }))
+        .expect("deserialize Go sidecar state");
+
+        let runtime_state = sidecar_state.into_runtime_state("running", true, "macos");
+        assert_eq!(runtime_state.phase, "running");
+        assert!(runtime_state.sidecar_running);
+        assert_eq!(runtime_state.platform, "macos");
+        assert!(runtime_state.backend_running);
+        assert!(runtime_state.proxy_running);
+        assert!(runtime_state.cursor_settings_applied);
+        assert!(runtime_state.ca_installed);
     }
 
     #[test]
