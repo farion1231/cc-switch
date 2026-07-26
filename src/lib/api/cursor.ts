@@ -111,6 +111,8 @@ export const cursorApi = {
     ),
   saveProvider: (provider: CursorProvider) =>
     invoke<boolean>("save_cursor_provider", { provider }),
+  saveProviders: (providers: CursorProvider[]) =>
+    invoke<boolean>("save_cursor_providers", { providers }),
   deleteProvider: (id: string) =>
     invoke<boolean>("delete_cursor_provider", { id }),
   setProviderEnabled: (id: string, enabled: boolean) =>

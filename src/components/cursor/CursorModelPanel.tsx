@@ -1,64 +1,44 @@
 import { forwardRef, useImperativeHandle, useMemo, useState } from "react";
 import {
   Activity,
+  ChevronDown,
   CircleAlert,
   Gauge,
-  Layers3,
-  List,
   Pencil,
-  Power,
   RefreshCw,
-  ShieldCheck,
-  ShieldMinus,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Switch } from "@/components/ui/switch";
+import { Card, CardContent } from "@/components/ui/card";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { Switch } from "@/components/ui/switch";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import {
   useCursorProviders,
   useCursorRuntimeState,
   useDeleteCursorProvider,
-  useInstallCursorCA,
-  useRemoveCursorCA,
   useSaveCursorProvider,
+  useSaveCursorProviders,
   useTestCursorModel,
   useToggleCursorProvider,
 } from "@/lib/query/cursor";
-import type {
-  CursorModelTestResult,
-  CursorProvider,
-  CursorRuntimeState,
-} from "@/lib/api/cursor";
+import type { CursorModelTestResult, CursorProvider } from "@/lib/api/cursor";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
 import {
   formatTokenCount,
   resolveCursorEndpointGroup,
 } from "@/lib/cursorModelMetadata";
+import { CursorEndpointDialog } from "./CursorEndpointDialog";
 import { CursorModelDialog } from "./CursorModelDialog";
-
-const PHASE_LABEL: Record<string, string> = {
-  stopped: "未运行",
-  starting: "启动中",
-  running: "运行中",
-  restoring: "恢复中",
-  testing: "测速中",
-  maintenance: "维护中",
-  error: "异常",
-};
 
 const getEndpointGroup = (provider: CursorProvider) =>
   resolveCursorEndpointGroup(
@@ -66,8 +46,6 @@ const getEndpointGroup = (provider: CursorProvider) =>
     provider.settingsConfig.providerGroup,
     provider.settingsConfig.type,
   );
-
-type CatalogViewMode = "provider" | "flat";
 
 export interface CursorModelPanelHandle {
   openAddModel: () => void;
@@ -78,28 +56,31 @@ export const CursorModelPanel = forwardRef<CursorModelPanelHandle>(
     const providersQuery = useCursorProviders();
     const runtimeQuery = useCursorRuntimeState();
     const saveProvider = useSaveCursorProvider();
+    const saveProviders = useSaveCursorProviders();
     const deleteProvider = useDeleteCursorProvider();
     const toggleProvider = useToggleCursorProvider();
-    const installCA = useInstallCursorCA();
-    const removeCA = useRemoveCursorCA();
     const testModel = useTestCursorModel();
 
     const [editing, setEditing] = useState<CursorProvider | null>(null);
     const [modelDialogOpen, setModelDialogOpen] = useState(false);
+    const [endpointDialogOpen, setEndpointDialogOpen] = useState(false);
+    const [editingEndpointProviders, setEditingEndpointProviders] = useState<
+      CursorProvider[]
+    >([]);
     const [deleteTarget, setDeleteTarget] = useState<CursorProvider | null>(
       null,
     );
     const [tests, setTests] = useState<Record<string, CursorModelTestResult>>(
       {},
     );
-    const [batchTesting, setBatchTesting] = useState(false);
-    const [catalogViewMode, setCatalogViewMode] =
-      useState<CatalogViewMode>("provider");
+    const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
+      () => new Set(),
+    );
 
     useImperativeHandle(ref, () => ({
       openAddModel: () => {
-        setEditing(null);
-        setModelDialogOpen(true);
+        setEditingEndpointProviders([]);
+        setEndpointDialogOpen(true);
       },
     }));
 
@@ -116,27 +97,22 @@ export const CursorModelPanel = forwardRef<CursorModelPanelHandle>(
     const providerGroups = useMemo(() => {
       const groups = new Map<
         string,
-        { label: string; baseUrl: string; providers: CursorProvider[] }
+        { label: string; providers: CursorProvider[] }
       >();
       for (const provider of providers) {
         const endpoint = getEndpointGroup(provider);
         const current = groups.get(endpoint.key);
         groups.set(endpoint.key, {
           label: current?.label || endpoint.label,
-          baseUrl: current?.baseUrl || endpoint.baseUrl,
           providers: [...(current?.providers ?? []), provider],
         });
       }
       return Array.from(groups.entries());
     }, [providers]);
-    const enabledProviders = providers.filter(
-      (provider) => provider.settingsConfig.enabled,
-    );
     const state = runtimeQuery.data;
     const busy = ["starting", "restoring", "testing", "maintenance"].includes(
       state?.phase ?? "",
     );
-    const running = state?.phase === "running";
 
     const reportError = (title: string, error: unknown) => {
       toast.error(title, {
@@ -154,12 +130,15 @@ export const CursorModelPanel = forwardRef<CursorModelPanelHandle>(
       }
     };
 
-    const handleRemoveCA = async () => {
+    const handleSaveEndpoint = async (nextProviders: CursorProvider[]) => {
       try {
-        await removeCA.mutateAsync(undefined);
-        toast.success("CC Switch Cursor CA 已移除");
+        await saveProviders.mutateAsync(nextProviders);
+        toast.success(
+          `${editingEndpointProviders.length > 0 ? "Endpoint 已更新" : "Endpoint 已添加"} · ${nextProviders.length} 个模型`,
+        );
       } catch (error) {
-        reportError("移除 Cursor CA 失败", error);
+        reportError("保存 Cursor Endpoint 失败", error);
+        throw error;
       }
     };
 
@@ -176,17 +155,6 @@ export const CursorModelPanel = forwardRef<CursorModelPanelHandle>(
         }
       } catch (error) {
         reportError(`${provider.name} 测速失败`, error);
-      }
-    };
-
-    const runAllTests = async () => {
-      setBatchTesting(true);
-      try {
-        for (const provider of enabledProviders) {
-          await runTest(provider);
-        }
-      } finally {
-        setBatchTesting(false);
       }
     };
 
@@ -225,14 +193,6 @@ export const CursorModelPanel = forwardRef<CursorModelPanelHandle>(
     return (
       <div className="h-full overflow-y-auto px-6 pb-12">
         <div className="mx-auto max-w-6xl space-y-5">
-          <RuntimeCard
-            state={state}
-            enabledCount={enabledProviders.length}
-            running={running}
-            busy={busy}
-            onRefresh={() => void runtimeQuery.refetch()}
-          />
-
           {state?.lastError && (
             <Alert variant="destructive">
               <CircleAlert className="h-4 w-4" />
@@ -242,48 +202,6 @@ export const CursorModelPanel = forwardRef<CursorModelPanelHandle>(
           )}
 
           <Card className="overflow-hidden border-border-default">
-            <CardHeader className="flex-row items-center justify-between space-y-0 border-b border-border-default bg-muted/20 py-4">
-              <div>
-                <CardTitle className="text-base">Cursor 模型目录</CardTitle>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  所有启用模型会同时投影到 Cursor；实际模型在 Cursor
-                  聊天框中选择。
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Select
-                  value={catalogViewMode}
-                  onValueChange={(value) =>
-                    setCatalogViewMode(value as CatalogViewMode)
-                  }
-                >
-                  <SelectTrigger
-                    className="w-[168px]"
-                    aria-label="模型目录视图"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="provider">按提供商分类</SelectItem>
-                    <SelectItem value="flat">平铺模型</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={enabledProviders.length === 0 || batchTesting}
-                  onClick={() => void runAllTests()}
-                >
-                  <Gauge
-                    className={cn(
-                      "mr-2 h-4 w-4",
-                      batchTesting && "animate-pulse",
-                    )}
-                  />
-                  全部测速
-                </Button>
-              </div>
-            </CardHeader>
             <CardContent className="p-0">
               {providers.length === 0 ? (
                 <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
@@ -296,106 +214,78 @@ export const CursorModelPanel = forwardRef<CursorModelPanelHandle>(
                     sidecar 转发 Cursor 聊天。
                   </p>
                 </div>
-              ) : catalogViewMode === "provider" ? (
-                <div className="divide-y divide-border-default">
-                  {providerGroups.map(([endpointKey, group]) => (
-                    <section key={endpointKey}>
-                      <div className="flex items-center justify-between border-b border-border-default bg-muted/20 px-5 py-2.5">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <Layers3 className="h-4 w-4 shrink-0 text-muted-foreground" />
-                            <h3 className="truncate text-sm font-medium">
-                              {group.label}
-                            </h3>
-                          </div>
-                          <p
-                            className="mt-0.5 truncate pl-6 font-mono text-xs text-muted-foreground"
-                            title={group.baseUrl}
-                          >
-                            {group.baseUrl}
-                          </p>
-                        </div>
-                        <Badge variant="secondary" className="ml-3 shrink-0">
-                          {group.providers.length} 个模型
-                        </Badge>
-                      </div>
-                      <div className="divide-y divide-border-default">
-                        {group.providers.map(renderModelRow)}
-                      </div>
-                    </section>
-                  ))}
-                </div>
               ) : (
                 <div className="divide-y divide-border-default">
-                  <div className="flex items-center gap-2 bg-muted/20 px-5 py-2.5 text-sm text-muted-foreground">
-                    <List className="h-4 w-4" />
-                    平铺模型
-                  </div>
-                  {providers.map(renderModelRow)}
+                  {providerGroups.map(([endpointKey, group]) => {
+                    const expanded = expandedGroups.has(endpointKey);
+                    return (
+                      <Collapsible
+                        key={endpointKey}
+                        open={expanded}
+                        onOpenChange={(open) =>
+                          setExpandedGroups((current) => {
+                            const next = new Set(current);
+                            if (open) next.add(endpointKey);
+                            else next.delete(endpointKey);
+                            return next;
+                          })
+                        }
+                      >
+                        <div className="flex items-center px-2">
+                          <CollapsibleTrigger asChild>
+                            <button
+                              type="button"
+                              className="flex min-w-0 flex-1 items-center gap-3 px-3 py-4 text-left transition-colors hover:bg-muted/40"
+                              aria-label={`${expanded ? "收起" : "展开"} ${group.label} 模型列表`}
+                            >
+                              <h3 className="min-w-0 flex-1 truncate font-semibold">
+                                {group.label}
+                              </h3>
+                              <Badge variant="secondary" className="shrink-0">
+                                {group.providers.length} 个模型
+                              </Badge>
+                              <ChevronDown
+                                className={cn(
+                                  "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+                                  expanded && "rotate-180",
+                                )}
+                              />
+                            </button>
+                          </CollapsibleTrigger>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            title={`编辑 ${group.label} Endpoint`}
+                            aria-label={`编辑 ${group.label} Endpoint`}
+                            onClick={() => {
+                              setEditingEndpointProviders(group.providers);
+                              setEndpointDialogOpen(true);
+                            }}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        <CollapsibleContent>
+                          <div className="divide-y divide-border-default border-t border-border-default bg-muted/[0.08]">
+                            {group.providers.map(renderModelRow)}
+                          </div>
+                        </CollapsibleContent>
+                      </Collapsible>
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
           </Card>
-
-          <Card className="border-border-default">
-            <CardHeader className="py-4">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <ShieldCheck className="h-4 w-4 text-emerald-500" />
-                CA 信任
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-wrap items-center justify-between gap-4 pt-0">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  {state?.caInstalled ? "已信任" : "未信任"}
-                  <Badge variant={state?.caInstalled ? "secondary" : "outline"}>
-                    {platformTrustLabel(state?.platform)}
-                  </Badge>
-                </div>
-                {state?.caFingerprint && (
-                  <p
-                    className="mt-1 max-w-2xl truncate font-mono text-xs text-muted-foreground"
-                    title={state.caFingerprint}
-                  >
-                    SHA-256 {state.caFingerprint}
-                  </p>
-                )}
-              </div>
-              <div className="flex gap-2">
-                {!state?.caInstalled && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      void installCA
-                        .mutateAsync(undefined)
-                        .then(() => toast.success("Cursor CA 已安装"))
-                        .catch((error) =>
-                          reportError("安装 Cursor CA 失败", error),
-                        )
-                    }
-                    disabled={busy}
-                  >
-                    <ShieldCheck className="mr-2 h-4 w-4" />
-                    安装 CA
-                  </Button>
-                )}
-                {state?.caInstalled && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void handleRemoveCA()}
-                    disabled={running || busy}
-                  >
-                    <ShieldMinus className="mr-2 h-4 w-4" />
-                    移除 CA
-                  </Button>
-                )}
-              </div>
-            </CardContent>
-          </Card>
         </div>
 
+        <CursorEndpointDialog
+          open={endpointDialogOpen}
+          providers={editingEndpointProviders}
+          onOpenChange={setEndpointDialogOpen}
+          onSave={handleSaveEndpoint}
+        />
         <CursorModelDialog
           open={modelDialogOpen}
           provider={editing}
@@ -420,98 +310,6 @@ export const CursorModelPanel = forwardRef<CursorModelPanelHandle>(
     );
   },
 );
-
-function RuntimeCard({
-  state,
-  enabledCount,
-  running,
-  busy,
-  onRefresh,
-}: {
-  state?: CursorRuntimeState;
-  enabledCount: number;
-  running: boolean;
-  busy: boolean;
-  onRefresh: () => void;
-}) {
-  const layers = [
-    ["Sidecar", state?.sidecarRunning],
-    ["Backend", state?.backendRunning],
-    ["Proxy", state?.proxyRunning],
-    ["Cursor 接管", state?.cursorSettingsApplied],
-  ] as const;
-  return (
-    <Card className="overflow-hidden border-border-default bg-gradient-to-br from-blue-500/[0.07] via-background to-violet-500/[0.06]">
-      <CardContent className="p-5">
-        <div className="flex flex-wrap items-start justify-between gap-5">
-          <div>
-            <div className="flex items-center gap-3">
-              <div
-                className={cn(
-                  "rounded-xl p-2.5",
-                  running
-                    ? "bg-emerald-500/15 text-emerald-500"
-                    : "bg-muted text-muted-foreground",
-                )}
-              >
-                <Power className="h-5 w-5" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-lg font-semibold">Cursor 模型转发</h2>
-                  <Badge
-                    variant={
-                      running
-                        ? "default"
-                        : state?.phase === "error"
-                          ? "destructive"
-                          : "secondary"
-                    }
-                  >
-                    {PHASE_LABEL[state?.phase ?? "stopped"] ?? state?.phase}
-                  </Badge>
-                </div>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  已启用 {enabledCount} 个模型
-                </p>
-              </div>
-            </div>
-            <div className="mt-5 flex flex-wrap gap-2">
-              {layers.map(([label, active]) => (
-                <span
-                  key={label}
-                  className={cn(
-                    "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs",
-                    active
-                      ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                      : "border-border-default bg-background/60 text-muted-foreground",
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "h-1.5 w-1.5 rounded-full",
-                      active ? "bg-emerald-500" : "bg-muted-foreground/40",
-                    )}
-                  />
-                  {label}
-                </span>
-              ))}
-            </div>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onRefresh}
-            disabled={busy}
-          >
-            <RefreshCw className="mr-2 h-4 w-4" />
-            刷新
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 function ModelRow({
   provider,
@@ -543,7 +341,6 @@ function ModelRow({
       <div className="min-w-[220px] flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-medium">{provider.name}</span>
-          <Badge variant="outline">{getEndpointGroup(provider).label}</Badge>
           <Badge variant="outline">
             {config.type === "anthropic" ? "Anthropic" : "OpenAI"}
           </Badge>
@@ -617,9 +414,3 @@ function ModelRow({
     </div>
   );
 }
-
-const platformTrustLabel = (platform?: string) => {
-  if (platform === "windows") return "CurrentUser\\Root";
-  if (platform === "linux") return "System Trust Store";
-  return "Login Keychain";
-};

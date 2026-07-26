@@ -40,6 +40,37 @@ pub async fn save_cursor_provider(
 }
 
 #[tauri::command]
+pub async fn save_cursor_providers(
+    state: State<'_, AppState>,
+    providers: Vec<Provider>,
+) -> Result<bool, String> {
+    if providers.is_empty() {
+        return Err("至少需要一个 Cursor 模型".to_string());
+    }
+
+    for provider in &providers {
+        let config: CursorModelConfig = serde_json::from_value(provider.settings_config.clone())
+            .map_err(|error| format!("Cursor Provider '{}' 配置无效: {error}", provider.name))?;
+        projector::project_single_model(&provider.id, &provider.name, config)
+            .map_err(|error| error.to_string())?;
+    }
+
+    for provider in &providers {
+        state
+            .db
+            .save_provider(CURSOR_APP_TYPE, provider)
+            .map_err(|error| error.to_string())?;
+    }
+
+    state
+        .cursor_runtime
+        .sync_config()
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(true)
+}
+
+#[tauri::command]
 pub async fn delete_cursor_provider(
     state: State<'_, AppState>,
     id: String,

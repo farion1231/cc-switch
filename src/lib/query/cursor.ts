@@ -47,6 +47,11 @@ export const useSaveCursorProvider = () =>
     cursorApi.saveProvider(provider),
   );
 
+export const useSaveCursorProviders = () =>
+  useCursorMutation((providers: CursorProvider[]) =>
+    cursorApi.saveProviders(providers),
+  );
+
 export const useDeleteCursorProvider = () =>
   useCursorMutation((id: string) => cursorApi.deleteProvider(id));
 

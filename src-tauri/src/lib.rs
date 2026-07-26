@@ -1383,6 +1383,7 @@ pub fn run() {
             // Cursor model catalog and runtime
             commands::get_cursor_providers,
             commands::save_cursor_provider,
+            commands::save_cursor_providers,
             commands::delete_cursor_provider,
             commands::set_cursor_provider_enabled,
             commands::get_cursor_runtime_state,

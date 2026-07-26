@@ -64,10 +64,23 @@ describe("cursorModelMetadata", () => {
         "openai",
       ),
     ).toEqual({
-      key: "https://relay.example.com/v1",
+      key: "openai:https://relay.example.com/v1",
       label: "主线路",
       baseUrl: "https://relay.example.com/v1/",
     });
+    expect(
+      resolveCursorEndpointGroup(
+        "https://relay.example.com/v1",
+        "主线路",
+        "anthropic",
+      ).key,
+    ).not.toBe(
+      resolveCursorEndpointGroup(
+        "https://relay.example.com/v1",
+        "主线路",
+        "openai",
+      ).key,
+    );
     expect(
       normalizeCursorEndpoint("https://relay.example.com/anthropic"),
     ).not.toBe(normalizeCursorEndpoint("https://relay.example.com/v1"));

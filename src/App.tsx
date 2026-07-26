@@ -1647,7 +1647,7 @@ function App() {
                           size="icon"
                           title={
                             activeApp === "cursor"
-                              ? "添加 Cursor 模型"
+                              ? "添加 Cursor Endpoint"
                               : undefined
                           }
                           className={`ml-2 ${addActionButtonClass}`}

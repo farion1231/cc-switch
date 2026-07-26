@@ -77,7 +77,7 @@ export const resolveCursorEndpointGroup = (
   providerGroup: string | undefined,
   type: CursorProviderType,
 ): CursorEndpointGroup => ({
-  key: normalizeCursorEndpoint(baseUrl),
+  key: `${type}:${normalizeCursorEndpoint(baseUrl)}`,
   label: providerGroup?.trim() || inferEndpointLabel(baseUrl, type),
   baseUrl: baseUrl.trim(),
 });

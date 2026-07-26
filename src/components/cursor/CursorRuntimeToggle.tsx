@@ -1,5 +1,13 @@
 import { useState } from "react";
-import { BadgeCheck, KeyRound, Loader2, Radio } from "lucide-react";
+import {
+  BadgeCheck,
+  KeyRound,
+  Loader2,
+  Radio,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldMinus,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,9 +23,11 @@ import {
   useCursorProviders,
   useCursorRuntimeState,
   useInstallCursorCA,
+  useRemoveCursorCA,
   useStartCursorRuntime,
   useStopCursorRuntime,
 } from "@/lib/query/cursor";
+import type { CursorRuntimeState } from "@/lib/api/cursor";
 import { cn } from "@/lib/utils";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
@@ -33,7 +43,9 @@ export function CursorRuntimeToggle({ className }: CursorRuntimeToggleProps) {
   const startRuntime = useStartCursorRuntime();
   const stopRuntime = useStopCursorRuntime();
   const installCA = useInstallCursorCA();
+  const removeCA = useRemoveCursorCA();
   const [trustDialogOpen, setTrustDialogOpen] = useState(false);
+  const [caDialogOpen, setCADialogOpen] = useState(false);
 
   const state = runtimeQuery.data;
   const running = state?.phase === "running";
@@ -41,7 +53,8 @@ export function CursorRuntimeToggle({ className }: CursorRuntimeToggleProps) {
     BUSY_PHASES.has(state?.phase ?? "") ||
     startRuntime.isPending ||
     stopRuntime.isPending ||
-    installCA.isPending;
+    installCA.isPending ||
+    removeCA.isPending;
   const enabledCount = Object.values(providersQuery.data ?? {}).filter(
     (provider) => provider.settingsConfig.enabled,
   ).length;
@@ -94,6 +107,25 @@ export function CursorRuntimeToggle({ className }: CursorRuntimeToggleProps) {
     }
   };
 
+  const handleInstallCA = async () => {
+    try {
+      await installCA.mutateAsync(undefined);
+      toast.success("Cursor CA 已安装");
+    } catch (error) {
+      reportError("安装 Cursor CA 失败", error);
+    }
+  };
+
+  const handleRemoveCA = async () => {
+    try {
+      await removeCA.mutateAsync(undefined);
+      setCADialogOpen(false);
+      toast.success("CC Switch Cursor CA 已移除");
+    } catch (error) {
+      reportError("移除 Cursor CA 失败", error);
+    }
+  };
+
   const tooltipText = running
     ? `Cursor 模型转发已开启 · ${enabledCount} 个模型`
     : canStart
@@ -129,6 +161,37 @@ export function CursorRuntimeToggle({ className }: CursorRuntimeToggleProps) {
         />
       </div>
 
+      <Button
+        variant="ghost"
+        size="icon"
+        className={cn(
+          "h-8 w-8 shrink-0",
+          state?.caInstalled
+            ? "text-emerald-600 dark:text-emerald-400"
+            : "text-amber-600 dark:text-amber-400",
+        )}
+        onClick={() => setCADialogOpen(true)}
+        disabled={runtimeQuery.isLoading}
+        title={state?.caInstalled ? "管理 Cursor CA" : "安装 Cursor CA"}
+        aria-label={state?.caInstalled ? "管理 Cursor CA" : "安装 Cursor CA"}
+      >
+        {state?.caInstalled ? (
+          <ShieldCheck className="h-4 w-4" />
+        ) : (
+          <ShieldAlert className="h-4 w-4" />
+        )}
+      </Button>
+
+      <CursorCAManagementDialog
+        open={caDialogOpen}
+        state={state}
+        busy={busy}
+        running={running}
+        onOpenChange={setCADialogOpen}
+        onInstall={() => void handleInstallCA()}
+        onRemove={() => void handleRemoveCA()}
+      />
+
       <CursorTrustDialog
         open={trustDialogOpen}
         platform={state?.platform}
@@ -137,6 +200,91 @@ export function CursorRuntimeToggle({ className }: CursorRuntimeToggleProps) {
         onConfirm={() => void handleInstallCAAndStart()}
       />
     </>
+  );
+}
+
+function CursorCAManagementDialog({
+  open,
+  state,
+  busy,
+  running,
+  onOpenChange,
+  onInstall,
+  onRemove,
+}: {
+  open: boolean;
+  state?: CursorRuntimeState;
+  busy: boolean;
+  running: boolean;
+  onOpenChange: (open: boolean) => void;
+  onInstall: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent zIndex="top">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <KeyRound className="h-5 w-5 text-blue-500" />
+            Cursor CA 信任
+          </DialogTitle>
+          <DialogDescription>
+            {state?.caInstalled
+              ? "本机已信任 CC Switch 为 Cursor 生成的独立 CA。"
+              : "Cursor 模型转发需要先信任本机生成的独立 CA。"}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 px-6 py-5 text-sm">
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-border-default bg-muted/30 p-3">
+            <span className="text-muted-foreground">状态</span>
+            <span className="font-medium">
+              {state?.caInstalled ? "已信任" : "未信任"}
+            </span>
+          </div>
+          {state?.caFingerprint && (
+            <p
+              className="truncate font-mono text-xs text-muted-foreground"
+              title={state.caFingerprint}
+            >
+              SHA-256 {state.caFingerprint}
+            </p>
+          )}
+          {running && (
+            <p className="text-xs text-muted-foreground">
+              请先关闭 Cursor 模型转发，再移除 CA。
+            </p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            关闭
+          </Button>
+          {state?.caInstalled ? (
+            <Button
+              variant="destructive"
+              onClick={onRemove}
+              disabled={busy || running}
+            >
+              {busy ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <ShieldMinus className="mr-2 h-4 w-4" />
+              )}
+              移除 CA
+            </Button>
+          ) : (
+            <Button onClick={onInstall} disabled={busy}>
+              {busy ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <ShieldCheck className="mr-2 h-4 w-4" />
+              )}
+              安装 CA
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -162,7 +310,7 @@ function CursorTrustDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent zIndex="top">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <KeyRound className="h-5 w-5 text-blue-500" />
@@ -176,7 +324,7 @@ function CursorTrustDialog({
           <p>{explanation}</p>
           <div className="rounded-lg border border-border-default bg-muted/30 p-3 text-muted-foreground">
             私钥仅保存在本机 CC Switch 数据目录。停止服务会恢复 Cursor 配置，但
-            CA 会保留；你可以稍后在 Cursor 页面独立移除。
+            CA 会保留；你可以稍后通过顶部的 CA 按钮移除。
           </div>
         </div>
         <DialogFooter>
