@@ -467,33 +467,33 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "AICoding",
-    websiteUrl: "https://aicoding.sh",
-    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
     settingsConfig: {
-      baseUrl: "https://api.aicoding.sh",
+      baseUrl: "https://router.shengsuanyun.com/api",
       apiKey: "",
       api: "anthropic-messages",
       models: [
         {
-          id: "claude-opus-5",
+          id: "anthropic/claude-opus-5",
           name: "Claude Opus 5",
           contextWindow: 1000000,
           cost: { input: 5, output: 25 },
         },
         {
-          id: "claude-sonnet-5",
+          id: "anthropic/claude-sonnet-5",
           name: "Claude Sonnet 5",
           contextWindow: 1000000,
           cost: { input: 3, output: 15 },
         },
       ],
     },
-    category: "third_party",
+    category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "aicoding",
-    icon: "aicoding",
-    iconColor: "#000000",
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -503,12 +503,12 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "aicoding/claude-opus-5",
-        fallbacks: ["aicoding/claude-sonnet-5"],
+        primary: "shengsuanyun/anthropic/claude-opus-5",
+        fallbacks: ["shengsuanyun/anthropic/claude-sonnet-5"],
       },
       modelCatalog: {
-        "aicoding/claude-opus-5": { alias: "Opus" },
-        "aicoding/claude-sonnet-5": { alias: "Sonnet" },
+        "shengsuanyun/anthropic/claude-opus-5": { alias: "Opus" },
+        "shengsuanyun/anthropic/claude-sonnet-5": { alias: "Sonnet" },
       },
     },
   },
@@ -559,33 +559,33 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "Shengsuanyun",
-    nameKey: "providerForm.presets.shengsuanyun",
-    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
-    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    name: "AICoding",
+    websiteUrl: "https://aicoding.sh",
+    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
     settingsConfig: {
-      baseUrl: "https://router.shengsuanyun.com/api",
+      baseUrl: "https://api.aicoding.sh",
       apiKey: "",
       api: "anthropic-messages",
       models: [
         {
-          id: "anthropic/claude-opus-5",
+          id: "claude-opus-5",
           name: "Claude Opus 5",
           contextWindow: 1000000,
           cost: { input: 5, output: 25 },
         },
         {
-          id: "anthropic/claude-sonnet-5",
+          id: "claude-sonnet-5",
           name: "Claude Sonnet 5",
           contextWindow: 1000000,
           cost: { input: 3, output: 15 },
         },
       ],
     },
-    category: "aggregator",
+    category: "third_party",
     isPartner: true,
-    partnerPromotionKey: "shengsuanyun",
-    icon: "shengsuanyun",
+    partnerPromotionKey: "aicoding",
+    icon: "aicoding",
+    iconColor: "#000000",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -595,12 +595,12 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "shengsuanyun/anthropic/claude-opus-5",
-        fallbacks: ["shengsuanyun/anthropic/claude-sonnet-5"],
+        primary: "aicoding/claude-opus-5",
+        fallbacks: ["aicoding/claude-sonnet-5"],
       },
       modelCatalog: {
-        "shengsuanyun/anthropic/claude-opus-5": { alias: "Opus" },
-        "shengsuanyun/anthropic/claude-sonnet-5": { alias: "Sonnet" },
+        "aicoding/claude-opus-5": { alias: "Opus" },
+        "aicoding/claude-sonnet-5": { alias: "Sonnet" },
       },
     },
   },
