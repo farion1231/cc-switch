@@ -1,0 +1,163 @@
+name: Release Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x86_64
+            os: windows-2022
+            sidecar_target: x86_64-pc-windows-msvc
+            tauri_target: x86_64-pc-windows-msvc
+            bundles: msi
+          - name: Windows ARM64
+            os: windows-11-arm
+            sidecar_target: aarch64-pc-windows-msvc
+            tauri_target: aarch64-pc-windows-msvc
+            bundles: msi
+            rust_target: aarch64-pc-windows-msvc
+          - name: Linux x86_64
+            os: ubuntu-22.04
+            sidecar_target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb,rpm
+          - name: Linux ARM64
+            os: ubuntu-22.04-arm
+            sidecar_target: aarch64-unknown-linux-gnu
+            bundles: appimage,deb,rpm
+          - name: macOS Universal
+            os: macos-14
+            sidecar_target: universal-apple-darwin
+            tauri_target: universal-apple-darwin
+            bundles: app,dmg
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: sidecars/cursor-byok/go.mod
+          cache-dependency-path: sidecars/cursor-byok/go.sum
+
+      - name: Setup protobuf compiler
+        uses: arduino/setup-protoc@v3
+        with:
+          version: '35.1'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install protobuf Go plugins
+        shell: bash
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.19.1
+
+      - name: Build and test Cursor sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.sidecar_target }}" = "universal-apple-darwin" ]; then
+            node scripts/build-cursor-sidecar.mjs aarch64-apple-darwin --test
+            node scripts/build-cursor-sidecar.mjs x86_64-apple-darwin --test
+          else
+            node scripts/build-cursor-sidecar.mjs ${{ matrix.sidecar_target }} --test
+          fi
+
+      - name: Add Rust target
+        if: matrix.rust_target != ''
+        shell: bash
+        run: rustup target add ${{ matrix.rust_target }}
+
+      - name: Add macOS Rust targets
+        if: runner.os == 'macOS'
+        shell: bash
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config curl wget file patchelf libssl-dev rpm \
+            libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev \
+            || sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.0-dev
+          sudo apt-get install -y --no-install-recommends libsoup-3.0-dev \
+            || sudo apt-get install -y --no-install-recommends libsoup2.4-dev
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.12.3
+          run_install: false
+
+      - name: Get pnpm store directory
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build unsigned test packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          command=(pnpm tauri build --bundles "${{ matrix.bundles }}" --config '{"bundle":{"createUpdaterArtifacts":false}}')
+          if [ -n "${{ matrix.tauri_target }}" ]; then
+            command+=(--target "${{ matrix.tauri_target }}")
+          fi
+          "${command[@]}"
+
+      - name: Collect packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-test-assets
+          find src-tauri/target -type f \( \
+            -name '*.msi' -o -name '*.exe' -o -name '*.AppImage' -o \
+            -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o \
+            -name '*.tar.gz' \) -print -exec cp {} release-test-assets/ \;
+          find src-tauri/target -type d -name '*.app' -print -exec ditto -c -k --sequesterRsrc --keepParent {} release-test-assets/ \; 2>/dev/null || true
+          test -n "$(find release-test-assets -mindepth 1 -maxdepth 1 -type f -print -quit)"
+          ls -lh release-test-assets
+
+      - name: Upload test packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: cc-switch-${{ matrix.os }}-${{ matrix.tauri_target || matrix.sidecar_target }}
+          path: release-test-assets/*
+          if-no-files-found: error
+          retention-days: 7
