@@ -254,7 +254,7 @@ impl ModelTestService {
                 )
                 .await
             }
-            AppType::Codex => {
+            AppType::Codex | AppType::GrokBuild => {
                 Self::check_codex_stream(
                     &client,
                     &base_url,
@@ -1400,6 +1400,8 @@ impl ModelTestService {
             AppType::Codex => {
                 Self::extract_codex_model(provider).unwrap_or_else(|| config.codex_model.clone())
             }
+            AppType::GrokBuild => Self::extract_grokbuild_model(provider)
+                .unwrap_or_else(|| crate::grok_config::DEFAULT_MODEL.to_string()),
             AppType::Gemini => Self::extract_env_model(provider, "GEMINI_MODEL")
                 .unwrap_or_else(|| config.gemini_model.clone()),
             AppType::OpenCode => {
@@ -1464,6 +1466,16 @@ impl ModelTestService {
             .get("model")
             .and_then(|v| v.as_str())
             .map(|s| s.trim().to_string())
+            .filter(|value| !value.is_empty())
+    }
+
+    fn extract_grokbuild_model(provider: &Provider) -> Option<String> {
+        provider
+            .settings_config
+            .get("config")
+            .and_then(|value| value.as_str())
+            .and_then(crate::grok_config::extract_model_config)
+            .map(|config| config.model)
             .filter(|value| !value.is_empty())
     }
 
@@ -1607,6 +1619,46 @@ mod tests {
             settings_config,
             None,
         )
+    }
+
+    #[test]
+    fn test_resolve_grokbuild_model_from_selected_config() {
+        let p = make_provider(serde_json::json!({
+            "config": r#"[models]
+default = "custom"
+
+[model."custom"]
+model = "grok-4.5-fast"
+base_url = "https://api.x.ai/v1"
+name = "Custom Grok"
+api_key = "k"
+api_backend = "responses"
+context_window = 500000
+"#,
+        }));
+
+        assert_eq!(
+            ModelTestService::resolve_effective_test_model(
+                &AppType::GrokBuild,
+                &p,
+                &StreamCheckConfig::default()
+            ),
+            "grok-4.5-fast"
+        );
+    }
+
+    #[test]
+    fn test_resolve_grokbuild_model_falls_back_for_official_config() {
+        let p = make_provider(serde_json::json!({ "config": "" }));
+
+        assert_eq!(
+            ModelTestService::resolve_effective_test_model(
+                &AppType::GrokBuild,
+                &p,
+                &StreamCheckConfig::default()
+            ),
+            crate::grok_config::DEFAULT_MODEL
+        );
     }
 
     #[test]
