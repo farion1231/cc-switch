@@ -2346,7 +2346,8 @@ impl ProviderService {
                     }
                 }
             } else {
-                let _ = live::sync_common_config_snippet_from_live_simple(state, &app_type, &provider);
+                let _ =
+                    live::sync_common_config_snippet_from_live_simple(state, &app_type, &provider);
                 write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
                 // 重写 live 后只重投影本应用的 MCP：全量 sync_all_enabled 会把
                 // 无关应用的 live 损坏（如 ~/.claude.json 坏 JSON）牵连进保存

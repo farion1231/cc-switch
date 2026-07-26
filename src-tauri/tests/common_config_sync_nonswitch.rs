@@ -74,15 +74,13 @@ fn add_new_provider_preserves_live_statusline_via_common_config() {
     let state = create_test_state_with_config(&config).expect("create test state");
 
     // No current provider → add() takes the `current.is_none()` branch and writes live.
-    ProviderService::add(&state, AppType::Claude, provider.clone(), true)
-        .expect("add provider");
+    ProviderService::add(&state, AppType::Claude, provider.clone(), true).expect("add provider");
 
     // The shared statusLine must survive the write, sourced from the refreshed snippet.
     let live_after: serde_json::Value =
         read_json_file(&get_claude_settings_path()).expect("read live after add");
     assert_eq!(
-        live_after["statusLine"]["command"],
-        "node /custom/statusline.mjs",
+        live_after["statusLine"]["command"], "node /custom/statusline.mjs",
         "add() must preserve the live-side shared statusLine via pre-write snippet sync"
     );
 }
@@ -107,14 +105,12 @@ fn update_current_provider_preserves_live_statusline_via_common_config() {
     let state = create_test_state_with_config(&config).expect("create test state");
 
     // update() with no takeover → takes the `else` branch and writes live.
-    ProviderService::update(&state, AppType::Claude, None, provider)
-        .expect("update provider");
+    ProviderService::update(&state, AppType::Claude, None, provider).expect("update provider");
 
     let live_after: serde_json::Value =
         read_json_file(&get_claude_settings_path()).expect("read live after update");
     assert_eq!(
-        live_after["statusLine"]["command"],
-        "node /custom/statusline.mjs",
+        live_after["statusLine"]["command"], "node /custom/statusline.mjs",
         "update() must preserve the live-side shared statusLine via pre-write snippet sync"
     );
 }
