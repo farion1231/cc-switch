@@ -150,7 +150,12 @@ async fn probe_watchdog_proxy(proxy_url: &str) -> (Option<bool>, Option<String>)
         .build()
     {
         Ok(client) => client,
-        Err(e) => return (Some(false), Some(format!("Failed to build proxy client: {e}"))),
+        Err(e) => {
+            return (
+                Some(false),
+                Some(format!("Failed to build proxy client: {e}")),
+            )
+        }
     };
 
     let direct_client = match reqwest::Client::builder()
@@ -185,7 +190,10 @@ async fn probe_watchdog_proxy(proxy_url: &str) -> (Option<bool>, Option<String>)
     }
 }
 
-async fn apply_watchdog_config(db: Arc<Database>, config: ProxyWatchdogConfig) -> Result<(), String> {
+async fn apply_watchdog_config(
+    db: Arc<Database>,
+    config: ProxyWatchdogConfig,
+) -> Result<(), String> {
     match config.mode {
         ProxyWatchdogMode::ManualOn => {
             http_client::validate_proxy(Some(&config.proxy_url))?;
@@ -214,7 +222,10 @@ async fn run_watchdog_step(db: Arc<Database>) -> Result<(), String> {
 
     match probe {
         Some(true) => {
-            if db.get_global_proxy_url().map_err(|e| e.to_string())?.as_deref()
+            if db
+                .get_global_proxy_url()
+                .map_err(|e| e.to_string())?
+                .as_deref()
                 != Some(config.proxy_url.as_str())
             {
                 apply_effective_proxy(&db, Some(&config.proxy_url))?;

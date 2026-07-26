@@ -4,8 +4,8 @@ use crate::app_config::AppType;
 use crate::commands::copilot::CopilotAuthState;
 use crate::error::AppError;
 use crate::services::model_test::{
-    HealthStatus as ModelTestHealthStatus, ModelTestService,
-    StreamCheckConfig as ModelTestConfig, StreamCheckResult as ModelTestResult,
+    HealthStatus as ModelTestHealthStatus, ModelTestService, StreamCheckConfig as ModelTestConfig,
+    StreamCheckResult as ModelTestResult,
 };
 use crate::services::stream_check::{
     HealthStatus, StreamCheckConfig, StreamCheckResult, StreamCheckService,

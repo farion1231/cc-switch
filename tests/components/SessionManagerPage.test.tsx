@@ -307,6 +307,28 @@ describe("SessionManagerPage", () => {
     listSpy.mockRestore();
   });
 
+  it("keeps persisted pins when a startup scan returns an empty list", async () => {
+    const pinnedKey = "codex:pinned-session:/mock/codex/pinned.jsonl";
+    const listSpy = vi.spyOn(sessionsApi, "list").mockResolvedValue([]);
+
+    window.localStorage.setItem(
+      PINNED_SESSIONS_STORAGE_KEY,
+      JSON.stringify([pinnedKey]),
+    );
+
+    renderPage();
+
+    await waitFor(() => expect(listSpy).toHaveBeenCalled());
+
+    expect(
+      JSON.parse(
+        window.localStorage.getItem(PINNED_SESSIONS_STORAGE_KEY) ?? "[]",
+      ),
+    ).toEqual([pinnedKey]);
+
+    listSpy.mockRestore();
+  });
+
   it("removes a deleted session from filtered search results", async () => {
     renderPage();
 

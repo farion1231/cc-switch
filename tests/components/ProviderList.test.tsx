@@ -11,12 +11,21 @@ const {
   updateProviderMock,
   updateSortOrderMock,
   updateTrayMenuMock,
+  addToFailoverQueueMock,
+  removeFromFailoverQueueMock,
+  failoverHookState,
 } = vi.hoisted(() => ({
   modelTestProviderMock: vi.fn(),
   dndContextPropsSpy: vi.fn(),
   updateProviderMock: vi.fn(),
   updateSortOrderMock: vi.fn(),
   updateTrayMenuMock: vi.fn(),
+  addToFailoverQueueMock: vi.fn(),
+  removeFromFailoverQueueMock: vi.fn(),
+  failoverHookState: {
+    isAutoFailoverEnabled: false,
+    failoverQueue: [] as Array<{ providerId: string; providerName: string }>,
+  },
 }));
 const useDragSortMock = vi.fn();
 const useSortableMock = vi.fn();
@@ -134,10 +143,18 @@ vi.mock("@/lib/api/connectivity-check", () => ({
 }));
 
 vi.mock("@/lib/query/failover", () => ({
-  useAutoFailoverEnabled: () => ({ data: false }),
-  useFailoverQueue: () => ({ data: [] }),
-  useAddToFailoverQueue: () => ({ mutate: vi.fn() }),
-  useRemoveFromFailoverQueue: () => ({ mutate: vi.fn() }),
+  useAutoFailoverEnabled: () => ({
+    data: failoverHookState.isAutoFailoverEnabled,
+  }),
+  useFailoverQueue: () => ({ data: failoverHookState.failoverQueue }),
+  useAddToFailoverQueue: () => ({
+    mutate: vi.fn(),
+    mutateAsync: addToFailoverQueueMock,
+  }),
+  useRemoveFromFailoverQueue: () => ({
+    mutate: vi.fn(),
+    mutateAsync: removeFromFailoverQueueMock,
+  }),
   useReorderFailoverQueue: () => ({ mutate: vi.fn() }),
 }));
 
@@ -176,6 +193,12 @@ beforeEach(() => {
   updateSortOrderMock.mockResolvedValue(undefined);
   updateTrayMenuMock.mockReset();
   updateTrayMenuMock.mockResolvedValue(undefined);
+  addToFailoverQueueMock.mockReset();
+  addToFailoverQueueMock.mockResolvedValue(undefined);
+  removeFromFailoverQueueMock.mockReset();
+  removeFromFailoverQueueMock.mockResolvedValue(undefined);
+  failoverHookState.isAutoFailoverEnabled = false;
+  failoverHookState.failoverQueue = [];
 
   useSortableMock.mockImplementation(({ id }: { id: string }) => ({
     setNodeRef: vi.fn(),
@@ -605,6 +628,160 @@ describe("ProviderList Component", () => {
 
     expect(firstControl).toHaveAttribute("data-selected", "true");
     expect(secondControl).toHaveAttribute("data-selected", "true");
+  });
+
+  it("selects a provider with one click in group management mode", () => {
+    const groupedProvider = createProvider({
+      id: "grouped",
+      meta: {
+        providerGroupId: "group-team",
+        providerGroupName: "Team",
+        providerGroupSortIndex: 0,
+      },
+    });
+    const first = createProvider({ id: "first" });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [groupedProvider, first],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ grouped: groupedProvider, first }}
+        currentProviderId=""
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("provider-group-manage-toggle"));
+
+    const firstControl = screen.getByTestId(
+      "provider-selection-control-first",
+    );
+    fireEvent.pointerDown(firstControl, { button: 0, pointerId: 17 });
+    fireEvent.pointerUp(window, { pointerId: 17 });
+
+    expect(firstControl).toHaveAttribute("data-selected", "true");
+  });
+
+  it("adds every missing provider in a group to the failover queue", async () => {
+    failoverHookState.isAutoFailoverEnabled = true;
+    const first = createProvider({
+      id: "group-first",
+      meta: {
+        providerGroupId: "group-team",
+        providerGroupName: "Team",
+        providerGroupSortIndex: 0,
+      },
+    });
+    const second = createProvider({
+      id: "group-second",
+      meta: {
+        providerGroupId: "group-team",
+        providerGroupName: "Team",
+        providerGroupSortIndex: 0,
+      },
+    });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [first, second],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ "group-first": first, "group-second": second }}
+        currentProviderId=""
+        appId="claude"
+        isProxyTakeover
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("provider-group-menu-group-team"));
+    fireEvent.click(
+      screen.getByTestId("provider-group-add-failover-group-team"),
+    );
+
+    await waitFor(() =>
+      expect(addToFailoverQueueMock).toHaveBeenCalledTimes(2),
+    );
+    expect(addToFailoverQueueMock).toHaveBeenNthCalledWith(1, {
+      appType: "claude",
+      providerId: "group-first",
+    });
+    expect(addToFailoverQueueMock).toHaveBeenNthCalledWith(2, {
+      appType: "claude",
+      providerId: "group-second",
+    });
+  });
+
+  it("removes queued providers in a group from the failover queue", async () => {
+    failoverHookState.isAutoFailoverEnabled = true;
+    failoverHookState.failoverQueue = [
+      { providerId: "group-first", providerName: "First" },
+    ];
+    const first = createProvider({
+      id: "group-first",
+      meta: {
+        providerGroupId: "group-team",
+        providerGroupName: "Team",
+        providerGroupSortIndex: 0,
+      },
+    });
+    const second = createProvider({
+      id: "group-second",
+      meta: {
+        providerGroupId: "group-team",
+        providerGroupName: "Team",
+        providerGroupSortIndex: 0,
+      },
+    });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [first, second],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ "group-first": first, "group-second": second }}
+        currentProviderId=""
+        appId="claude"
+        isProxyTakeover
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("provider-group-menu-group-team"));
+    fireEvent.click(
+      screen.getByTestId("provider-group-remove-failover-group-team"),
+    );
+
+    await waitFor(() =>
+      expect(removeFromFailoverQueueMock).toHaveBeenCalledTimes(1),
+    );
+    expect(removeFromFailoverQueueMock).toHaveBeenCalledWith({
+      appType: "claude",
+      providerId: "group-first",
+    });
   });
 
   it("sorts an ungrouped provider before a group dropped on the group outer target", async () => {

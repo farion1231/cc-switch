@@ -92,9 +92,11 @@ export function GlobalProxySettings() {
 
   useEffect(() => {
     if (watchdogConfig !== undefined) {
-      const { baseUrl, username: u, password: p } = extractAuth(
-        watchdogConfig.proxyUrl || "",
-      );
+      const {
+        baseUrl,
+        username: u,
+        password: p,
+      } = extractAuth(watchdogConfig.proxyUrl || "");
       setMode(watchdogConfig.mode);
       setUrl(baseUrl);
       setUsername(u);
@@ -221,9 +223,7 @@ export function GlobalProxySettings() {
           disabled={!canRefreshWatchdog || refreshMutation.isPending}
           onClick={() => refreshMutation.mutate()}
           title={t("settings.globalProxy.watchdogRefresh", {
-            defaultValue: canRefreshWatchdog
-              ? "立即检测"
-              : "仅自动模式可检测",
+            defaultValue: canRefreshWatchdog ? "立即检测" : "仅自动模式可检测",
           })}
         >
           {refreshMutation.isPending ? (

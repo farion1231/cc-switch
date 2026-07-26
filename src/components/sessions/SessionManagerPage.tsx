@@ -208,7 +208,7 @@ const filterSetToAllowedValues = (
 export function SessionManagerPage({ appId }: { appId: string }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { data, isLoading, refetch } = useSessionsQuery();
+  const { data, isLoading, isSuccess, refetch } = useSessionsQuery();
   const sessions = data ?? [];
   const detailRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -332,9 +332,11 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   }, [isLoading, validGroupExpansionKeys]);
 
   useEffect(() => {
-    if (isLoading) return;
+    if (isLoading || !isSuccess || sessions.length === 0) return;
 
-    const validKeys = new Set(sessions.map((session) => getSessionKey(session)));
+    const validKeys = new Set(
+      sessions.map((session) => getSessionKey(session)),
+    );
     setPinnedSessionKeys((current) => {
       let changed = false;
       const next = new Set<string>();
@@ -347,7 +349,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       });
       return changed ? next : current;
     });
-  }, [isLoading, sessions]);
+  }, [isLoading, isSuccess, sessions]);
 
   useEffect(() => {
     if (orderedFilteredSessions.length === 0) {
@@ -709,7 +711,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     const threshold = Math.max(0, Math.floor(cleanupMaxMessages));
     const candidates = orderedFilteredSessions.filter((session) => {
       if (!session.sourcePath) return false;
-      if (!includePinnedInCleanup && pinnedSessionKeys.has(getSessionKey(session))) {
+      if (
+        !includePinnedInCleanup &&
+        pinnedSessionKeys.has(getSessionKey(session))
+      ) {
         return false;
       }
       return true;
@@ -1282,17 +1287,19 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-7"
-                            onClick={() =>
-                              selectedSession &&
-                              toggleSessionPinned(selectedSession)
-                            }
+                              variant="ghost"
+                              size="icon"
+                              className="size-7"
+                              onClick={() =>
+                                selectedSession &&
+                                toggleSessionPinned(selectedSession)
+                              }
                               disabled={!selectedSession}
                             >
                               {selectedSession &&
-                              pinnedSessionKeys.has(getSessionKey(selectedSession)) ? (
+                              pinnedSessionKeys.has(
+                                getSessionKey(selectedSession),
+                              ) ? (
                                 <PinOff className="size-3.5" />
                               ) : (
                                 <Pin className="size-3.5" />
@@ -1301,7 +1308,9 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                           </TooltipTrigger>
                           <TooltipContent>
                             {selectedSession &&
-                            pinnedSessionKeys.has(getSessionKey(selectedSession))
+                            pinnedSessionKeys.has(
+                              getSessionKey(selectedSession),
+                            )
                               ? t("sessionManager.unpinSession", {
                                   defaultValue: "取消置顶",
                                 })
@@ -1758,7 +1767,9 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                               size="sm"
                               variant="outline"
                               className="gap-1.5"
-                              onClick={() => toggleSessionPinned(selectedSession)}
+                              onClick={() =>
+                                toggleSessionPinned(selectedSession)
+                              }
                             >
                               {pinnedSessionKeys.has(
                                 getSessionKey(selectedSession),
@@ -1781,7 +1792,9 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent>
-                            {pinnedSessionKeys.has(getSessionKey(selectedSession))
+                            {pinnedSessionKeys.has(
+                              getSessionKey(selectedSession),
+                            )
                               ? t("sessionManager.unpinSession", {
                                   defaultValue: "取消置顶",
                                 })

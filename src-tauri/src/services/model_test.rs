@@ -1810,10 +1810,7 @@ mod tests {
 
         // 401 鉴权错误（body 里没有 model 字样）
         let auth_err = r#"{"error":"Invalid API key"}"#;
-        assert_eq!(
-            ModelTestService::detect_error_category(401, auth_err),
-            None
-        );
+        assert_eq!(ModelTestService::detect_error_category(401, auth_err), None);
     }
 
     #[test]
@@ -2051,8 +2048,7 @@ mod tests {
 
     #[test]
     fn test_resolve_codex_stream_urls_for_v1_base() {
-        let urls =
-            ModelTestService::resolve_codex_stream_urls("https://api.openai.com/v1", false);
+        let urls = ModelTestService::resolve_codex_stream_urls("https://api.openai.com/v1", false);
 
         assert_eq!(urls, vec!["https://api.openai.com/v1/responses"]);
     }
@@ -2101,10 +2097,8 @@ mod tests {
 
     #[test]
     fn test_resolve_codex_chat_stream_urls_for_v1_base() {
-        let urls = ModelTestService::resolve_codex_chat_stream_urls(
-            "https://api.deepseek.com/v1",
-            false,
-        );
+        let urls =
+            ModelTestService::resolve_codex_chat_stream_urls("https://api.deepseek.com/v1", false);
 
         assert_eq!(urls, vec!["https://api.deepseek.com/v1/chat/completions"]);
     }

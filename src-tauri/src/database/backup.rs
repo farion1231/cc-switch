@@ -826,7 +826,10 @@ mod tests {
             stream_logs, 1,
             "scheduled backups must not prune connectivity history"
         );
-        assert_eq!(rollups, 0, "scheduled backups must not roll up request history");
+        assert_eq!(
+            rollups, 0,
+            "scheduled backups must not roll up request history"
+        );
 
         match old_test_home {
             Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
