@@ -2128,6 +2128,7 @@ impl ProviderService {
             state
                 .db
                 .set_current_provider(app_type.as_str(), &provider.id)?;
+            let _ = live::sync_common_config_snippet_from_live_simple(state, &app_type, &provider);
             write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
         }
 
