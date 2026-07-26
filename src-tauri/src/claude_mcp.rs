@@ -420,7 +420,6 @@ pub(crate) fn set_mcp_servers_map_at_path(
 mod tests {
     use super::*;
     use serde_json::json;
-    use serial_test::serial;
     use std::env;
     use tempfile::TempDir;
 

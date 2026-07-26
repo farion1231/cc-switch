@@ -127,6 +127,7 @@ const VALID_APPS: AppId[] = [
   "claude-desktop",
   "codex",
   "gemini",
+  "grokbuild",
   "opencode",
   "openclaw",
   "hermes",
@@ -194,6 +195,7 @@ function App() {
     "claude-desktop": true,
     codex: true,
     gemini: true,
+    grokbuild: true,
     opencode: true,
     openclaw: true,
     hermes: true,
@@ -204,6 +206,7 @@ function App() {
     if (visibleApps["claude-desktop"]) return "claude-desktop";
     if (visibleApps.codex) return "codex";
     if (visibleApps.gemini) return "gemini";
+    if (visibleApps.grokbuild) return "grokbuild";
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";
@@ -222,6 +225,7 @@ function App() {
       currentView === "sessions" &&
       sharedFeatureApp !== "claude" &&
       sharedFeatureApp !== "codex" &&
+      sharedFeatureApp !== "grokbuild" &&
       sharedFeatureApp !== "opencode" &&
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
@@ -291,6 +295,7 @@ function App() {
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||
+    sharedFeatureApp === "grokbuild" ||
     sharedFeatureApp === "opencode" ||
     sharedFeatureApp === "openclaw" ||
     sharedFeatureApp === "gemini" ||
@@ -1405,7 +1410,9 @@ function App() {
                               ? "openclaw"
                               : activeApp === "hermes"
                                 ? "hermes"
-                                : "default"
+                                : activeApp === "grokbuild"
+                                  ? "grokbuild"
+                                  : "default"
                           }
                           className="flex items-center gap-1"
                           initial={{ opacity: 0 }}

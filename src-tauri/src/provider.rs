@@ -74,13 +74,17 @@ impl Provider {
                 .is_some_and(codex_oauth_base_url_matches)
     }
 
+    pub fn is_xai_oauth(&self) -> bool {
+        self.provider_type() == Some("xai_oauth")
+    }
+
     pub fn is_github_copilot(&self) -> bool {
         self.provider_type() == Some("github_copilot")
             || self.claude_base_url_contains("githubcopilot.com")
     }
 
     pub fn uses_managed_account_auth(&self) -> bool {
-        self.is_github_copilot() || self.is_codex_oauth()
+        self.is_github_copilot() || self.is_codex_oauth() || self.is_xai_oauth()
     }
 
     pub fn is_official_equivalent_for_app(&self, app_type: &crate::app_config::AppType) -> bool {
@@ -285,6 +289,11 @@ impl Provider {
                 let api_key = first_non_empty(env, &["GEMINI_API_KEY", "GOOGLE_API_KEY"]);
                 (base_url, api_key)
             }
+            AppType::GrokBuild => settings
+                .get("config")
+                .and_then(Value::as_str)
+                .and_then(crate::grok_config::extract_credentials)
+                .unwrap_or_default(),
             // Hermes (config.yaml) flattens credentials at the top level, snake_case.
             AppType::Hermes => (
                 str_at(settings.get("base_url")),
