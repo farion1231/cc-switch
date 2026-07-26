@@ -54,9 +54,67 @@ pub(crate) fn canonicalize_json_string_if_parseable(value: &str) -> String {
         return value.to_string();
     }
 
-    serde_json::from_str::<Value>(trimmed)
-        .map(|parsed| canonical_json_string(&parsed))
-        .unwrap_or_else(|_| value.to_string())
+    if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
+        return canonical_json_string(&parsed);
+    }
+
+    // Third-party tool-call arguments sometimes contain invalid `\x` escapes
+    // inside string values (e.g. GLM emits `\'`, which JSON does not permit).
+    // Passing such text through verbatim poisons the session: the arguments
+    // land in the client's history and 400 the next request when the strict
+    // request path tries to parse them. As a best-effort repair, double every
+    // backslash that does not start a valid escape so it becomes a literal
+    // backslash; structural JSON outside string values is left untouched.
+    if let Ok(parsed) = serde_json::from_str::<Value>(&repair_invalid_escapes(trimmed)) {
+        return canonical_json_string(&parsed);
+    }
+
+    value.to_string()
+}
+
+/// Best-effort repair of invalid `\x` escape sequences inside JSON string
+/// values. Walks the text with a string-state machine and doubles every
+/// backslash that is not followed by a valid escape character (one of
+/// `\" \\ \/ \b \f \n \r \t \uXXXX`), turning the likes of `\'` or `\d` into a
+/// literal backslash plus the following character. Bytes outside string
+/// values (structural JSON) are copied unchanged.
+fn repair_invalid_escapes(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len() + 8);
+    let mut in_string = false;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if !in_string {
+            out.push(b);
+            in_string = b == b'"';
+            i += 1;
+        } else if b == b'\\' {
+            let valid_next = i + 1 < bytes.len()
+                && matches!(bytes[i + 1], b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' | b'u');
+            if valid_next {
+                out.push(b);
+                out.push(bytes[i + 1]);
+                i += 2;
+            } else {
+                // Illegal escape: double the backslash so it parses as a literal '\'.
+                out.push(b'\\');
+                out.push(b'\\');
+                i += 1;
+            }
+        } else if b == b'"' {
+            out.push(b);
+            in_string = false;
+            i += 1;
+        } else {
+            // UTF-8 lead/continuation bytes inside a string — copy verbatim.
+            out.push(b);
+            i += 1;
+        }
+    }
+
+    String::from_utf8(out).unwrap_or_else(|_| input.to_string())
 }
 
 /// Normalize a tool-call `arguments` string into a valid JSON payload.
@@ -186,5 +244,24 @@ mod tests {
             canonicalize_tool_arguments(Some(&json!({"b": 2, "a": 1}))),
             r#"{"a":1,"b":2}"#
         );
+    }
+
+    #[test]
+    fn canonicalize_tool_arguments_str_repairs_invalid_escape() {
+        // Third-party models (e.g. GLM) sometimes emit string values with
+        // invalid `\x` escapes such as `\'`. Canonicalization must yield a
+        // parseable document so the poisoned arguments cannot later fail the
+        // strict parse on the request path and 400 the whole request.
+        let repaired = canonicalize_tool_arguments_str(r#"{"plan":[{"step":"a\'b\'c"}]}"#);
+        let parsed: Value = serde_json::from_str(&repaired)
+            .expect("repaired arguments must parse as JSON");
+        assert_eq!(parsed["plan"][0]["step"], "a\\'b\\'c");
+    }
+
+    #[test]
+    fn canonicalize_tool_arguments_str_passthrough_when_unrepairable() {
+        // A structural error (not an invalid escape) cannot be repaired —
+        // pass through verbatim rather than silently dropping content.
+        assert_eq!(canonicalize_tool_arguments_str(r#"{"plan":[}"#), r#"{"plan":[}"#);
     }
 }
