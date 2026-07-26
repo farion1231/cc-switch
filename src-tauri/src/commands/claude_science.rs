@@ -385,7 +385,14 @@ fn run_cli_with_env(
             .arg(&profile.data_dir)
             .arg("--config")
             .arg(&profile.config_path)
-            .current_dir(&profile.data_dir);
+            // Must NOT be the data dir: since 0.1.25, sandboxed job spawns
+            // (pip/env provisioning) are seatbelt-denied read access inside
+            // the daemon's own data dir ("daemon territory"). Those spawns
+            // inherit the daemon's cwd, and pip crashes at os.getcwd() when
+            // it lands in denied territory — surfacing as "1 environment
+            // failed". Launching from the user's home keeps the inherited
+            // cwd readable, matching how the main profile is normally run.
+            .current_dir(crate::config::get_home_dir());
     }
 
     command
