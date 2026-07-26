@@ -210,7 +210,7 @@ impl Provider {
             AppType::Claude | AppType::ClaudeDesktop => {
                 let env = settings.get("env");
                 let base_url = str_at(env.and_then(|e| e.get("ANTHROPIC_BASE_URL")));
-                let api_key = first_non_empty(
+                let mut api_key = first_non_empty(
                     env,
                     &[
                         "ANTHROPIC_AUTH_TOKEN",
@@ -219,6 +219,11 @@ impl Provider {
                         "GOOGLE_API_KEY",
                     ],
                 );
+                // 顶层 apiKey/api_key 回退：provider 表单把真实 key 存在顶层 apiKey，
+                // env.ANTHROPIC_AUTH_TOKEN 常为空占位；不回退则用量查询误报"缺少 API Key"。
+                if api_key.is_empty() {
+                    api_key = first_non_empty(Some(settings), &["apiKey", "api_key"]);
+                }
                 (base_url, api_key)
             }
         };
