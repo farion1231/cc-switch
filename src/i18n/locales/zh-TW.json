@@ -991,7 +991,7 @@
     "providerKeyStatusLoading": "正在載入供應商識別碼狀態，請稍後再試",
     "getApiKey": "取得 API Key",
     "partnerPromotion": {
-      "sudocode": "SudoCode 讓 Claude Code 與 Claude Desktop 使用 Claude Opus 4.8，Codex 使用 GPT-5.6，一個 Key 統一管理。CC Switch 使用者註冊並加入 QQ 群 726213516，聯絡群主領取人民幣 ¥10 試用額度。",
+      "sudocode": "SudoCode 讓 Claude Code 與 Claude Desktop 使用 Claude Opus 5，Codex 使用 GPT-5.6，一個 Key 統一管理。CC Switch 使用者註冊並加入 QQ 群 726213516，聯絡群主領取人民幣 ¥10 試用額度。",
       "code0": "code0.ai 是面向開發者的 AI 程式設計服務平台，支援 Claude Code、Codex、Gemini。CC Switch 使用者專屬福利：透過官網聯繫客服即可領取測試額度！",
       "nekocode": "NekoCode 為開發者提供穩定、高效、可靠的 Claude、Codex 等 AI 模型 API 中轉服務，價格透明、按量計費。CC Switch 使用者專享 9 折：透過上方連結註冊，儲值時輸入優惠碼 cc-switch 即享 9 折優惠！",
       "packycode": "PackyCode 是 CC Switch 的官方合作夥伴，使用此連結註冊並在儲值時填寫「cc-switch」優惠碼，可以享受 9 折優惠",
@@ -1310,7 +1310,7 @@
     "promptCacheRoutingDisabled": "關閉",
     "promptCacheRoutingHint": "自動模式僅對已確認相容的上游傳送 prompt_cache_key；開啟可用於其他相容閘道，關閉可避免嚴格閘道因未知欄位回傳 400。只使用客戶端提供的穩定工作階段 ID。",
     "defaultModelLabel": "預設模型",
-    "defaultModelPlaceholder": "例如: gpt-5.6",
+    "defaultModelPlaceholder": "例如: gpt-5.6-sol",
     "defaultModelHint": "Codex 預設請求的模型，隨時可改，無需等待軟體更新供應商範本。留空且設定了模型映射時，預設使用映射第一行。",
     "defaultModelNotInCatalog": "該模型不在模型映射中，Codex 的 /model 選單不會列出它（直接請求仍然有效）。",
     "addToModelMapping": "加入映射",
@@ -2131,9 +2131,9 @@
       "addModel": "新增模型",
       "noModels": "暫無模型設定。切換至此供應商時將不會更新預設模型。",
       "modelId": "模型 ID",
-      "modelIdPlaceholder": "anthropic/claude-opus-4-8",
+      "modelIdPlaceholder": "anthropic/claude-opus-5",
       "modelName": "顯示名稱",
-      "modelNamePlaceholder": "Claude Opus 4.8",
+      "modelNamePlaceholder": "Claude Opus 5",
       "contextLength": "上下文長度",
       "advancedOptions": "進階選項",
       "modelsHint": "切換至此供應商時，第一個模型會寫入頂層 model.default。",
@@ -2911,13 +2911,13 @@
       "writing": "寫作"
     },
     "categoryTooltip": {
-      "visualEngineering": "前端與視覺工程類別，專注於 UI/UX 設計、樣式、動畫和介面實作，預設使用 Gemini 3.5 Flash 模型。",
+      "visualEngineering": "前端與視覺工程類別，專注於 UI/UX 設計、樣式、動畫和介面實作，預設使用 Gemini 3.6 Flash 模型。",
       "ultrabrain": "深度邏輯推理類別，用於需要廣泛分析的複雜架構決策，預設使用 GPT-5.3 Codex 的超高推理變體。",
       "deep": "深度自主問題解決類別，目標導向執行，行動前進行徹底研究，適用於需要深度理解的棘手問題。",
-      "artistry": "高度創意與藝術性任務類別，激發新穎想法和創造性解決方案，預設使用 Gemini 3.5 Flash 的高推理變體。",
+      "artistry": "高度創意與藝術性任務類別，激發新穎想法和創造性解決方案，預設使用 Gemini 3.6 Flash 的高推理變體。",
       "quick": "輕量任務類別，用於單檔案修改、錯別字修復、簡單調整等瑣碎工作，預設使用 Claude Haiku 4.5 快速模型。",
       "unspecifiedLow": "未分類低工作量任務類別，適用於不適合其他類別且工作量較小的任務，預設使用 Claude Sonnet 4.5。",
-      "unspecifiedHigh": "未分類高工作量任務類別，適用於不適合其他類別且工作量較大的任務，預設使用 Claude Opus 4.8 的最大變體。",
+      "unspecifiedHigh": "未分類高工作量任務類別，適用於不適合其他類別且工作量較大的任務，預設使用 Claude Opus 5 的最大變體。",
       "writing": "寫作類別，專注於文件、散文和技術寫作，預設使用 Kimi K2.5 模型。"
     },
     "slimAgentDesc": {

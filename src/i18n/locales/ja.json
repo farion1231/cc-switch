@@ -1020,7 +1020,7 @@
     "providerKeyStatusLoading": "プロバイダー識別子の状態を読み込んでいます。しばらくしてからもう一度お試しください",
     "getApiKey": "API Key を取得",
     "partnerPromotion": {
-      "sudocode": "SudoCode の1つのキーで、Claude Code と Claude Desktop では Claude Opus 4.8、Codex では GPT-5.6 を利用できます。登録後 QQ グループ 726213516 に参加し、管理者へ連絡すると CNY ¥10 のトライアルクレジットを受け取れます。",
+      "sudocode": "SudoCode の1つのキーで、Claude Code と Claude Desktop では Claude Opus 5、Codex では GPT-5.6 を利用できます。登録後 QQ グループ 726213516 に参加し、管理者へ連絡すると CNY ¥10 のトライアルクレジットを受け取れます。",
       "code0": "code0.ai は開発者向けの AI コーディングサービスプラットフォームで、Claude Code、Codex、Gemini に対応。CC Switch ユーザー限定特典：公式サイトからサポートに連絡してテストクレジットを受け取れます！",
       "nekocode": "NekoCode は Claude や Codex などの AI モデルに対応した、安定・高効率で信頼性の高い API 中継サービスを提供します。明瞭な従量課金制。CC Switch ユーザー限定 10%オフ：上のリンクから登録し、チャージ時にクーポンコード cc-switch を入力すると 10%オフ！",
       "packycode": "PackyCode は CC Switch の公式パートナーです。登録後チャージ時に \"cc-switch\" を入力すると 10% オフ",
@@ -1345,7 +1345,7 @@
     "modelMetadataAdvanced": "モデルメタデータ詳細オプション",
     "modelMetadataAdvancedHint": "未知のモデル向けに Codex メタデータを上書きします。空にすると対応する config.toml 設定を削除します。",
     "defaultModelLabel": "デフォルトモデル",
-    "defaultModelPlaceholder": "例: gpt-5.6",
+    "defaultModelPlaceholder": "例: gpt-5.6-sol",
     "defaultModelHint": "Codex がデフォルトでリクエストするモデルです。プリセットの更新を待たずにいつでも変更できます。空欄のままモデルマッピングを設定している場合は、マッピングの先頭行が使われます。",
     "defaultModelNotInCatalog": "このモデルはモデルマッピングにないため、Codex の /model メニューには表示されません（直接リクエストは有効です）。",
     "addToModelMapping": "マッピングに追加",
@@ -2160,9 +2160,9 @@
       "addModel": "モデルを追加",
       "noModels": "モデル未設定。このプロバイダーに切り替えてもデフォルトモデルは更新されません。",
       "modelId": "モデル ID",
-      "modelIdPlaceholder": "anthropic/claude-opus-4-8",
+      "modelIdPlaceholder": "anthropic/claude-opus-5",
       "modelName": "表示名",
-      "modelNamePlaceholder": "Claude Opus 4.8",
+      "modelNamePlaceholder": "Claude Opus 5",
       "contextLength": "コンテキスト長",
       "advancedOptions": "詳細オプション",
       "modelsHint": "切り替え時、最初のモデルが model.default に書き込まれます。",
@@ -2940,13 +2940,13 @@
       "writing": "ライティング"
     },
     "categoryTooltip": {
-      "visualEngineering": "フロントエンドとビジュアルエンジニアリングカテゴリ。UI/UX デザイン、スタイリング、アニメーション、インターフェース実装に特化。デフォルトで Gemini 3.5 Flash モデルを使用。",
+      "visualEngineering": "フロントエンドとビジュアルエンジニアリングカテゴリ。UI/UX デザイン、スタイリング、アニメーション、インターフェース実装に特化。デフォルトで Gemini 3.6 Flash モデルを使用。",
       "ultrabrain": "ディープロジック推論カテゴリ。広範な分析が必要な複雑なアーキテクチャ決定に使用。デフォルトで GPT-5.3 Codex の超高推論バリアントを使用。",
       "deep": "ディープ自律問題解決カテゴリ。目標指向の実行で、行動前に徹底的な調査を実施。深い理解が必要な難問に適しています。",
-      "artistry": "高度にクリエイティブで芸術的なタスクカテゴリ。斬新なアイデアとクリエイティブなソリューションを促進。デフォルトで Gemini 3.5 Flash の高推論バリアントを使用。",
+      "artistry": "高度にクリエイティブで芸術的なタスクカテゴリ。斬新なアイデアとクリエイティブなソリューションを促進。デフォルトで Gemini 3.6 Flash の高推論バリアントを使用。",
       "quick": "軽量タスクカテゴリ。単一ファイルの修正、タイポ修正、簡単な調整などの些細な作業に使用。デフォルトで Claude Haiku 4.5 高速モデルを使用。",
       "unspecifiedLow": "未分類の低作業量タスクカテゴリ。他のカテゴリに該当せず作業量が小さいタスクに適用。デフォルトで Claude Sonnet 4.5 を使用。",
-      "unspecifiedHigh": "未分類の高作業量タスクカテゴリ。他のカテゴリに該当せず作業量が大きいタスクに適用。デフォルトで Claude Opus 4.8 の max バリアントを使用。",
+      "unspecifiedHigh": "未分類の高作業量タスクカテゴリ。他のカテゴリに該当せず作業量が大きいタスクに適用。デフォルトで Claude Opus 5 の max バリアントを使用。",
       "writing": "ライティングカテゴリ。ドキュメント、散文、技術文書に特化。デフォルトで Kimi K2.5 モデルを使用。"
     },
     "slimAgentDesc": {

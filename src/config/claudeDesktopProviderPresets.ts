@@ -33,7 +33,7 @@ export interface ClaudeDesktopRoutePreset {
  */
 export const CLAUDE_DESKTOP_ROLE_ROUTE_IDS = {
   sonnet: "claude-sonnet-5",
-  opus: "claude-opus-4-8",
+  opus: "claude-opus-5",
   fable: "claude-fable-5",
   haiku: "claude-haiku-4-5",
 } as const;
@@ -335,7 +335,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiFormat: "anthropic",
     modelRoutes: mappedRoutes(
       "anthropic/claude-sonnet-5",
-      "anthropic/claude-opus-4.8",
+      "anthropic/claude-opus-5",
       "anthropic/claude-haiku-4.5",
     ),
     isPartner: true,
@@ -767,9 +767,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "proxy",
     apiFormat: "gemini_native",
     modelRoutes: brandedRoutes(
-      "gemini-3.5-flash",
-      "gemini-3.5-flash",
-      "gemini-3.5-flash",
+      "gemini-3.6-flash",
+      "gemini-3.6-flash",
+      "gemini-3.6-flash",
     ),
     endpointCandidates: ["https://generativelanguage.googleapis.com"],
     icon: "gemini",
@@ -801,7 +801,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiFormat: "openai_responses",
     providerType: "codex_oauth",
     requiresOAuth: true,
-    modelRoutes: brandedRoutes("gpt-5.6", "gpt-5.6", "gpt-5.6-luna"),
+    modelRoutes: brandedRoutes("gpt-5.6-sol", "gpt-5.6-sol", "gpt-5.6-luna"),
     icon: "openai",
     iconColor: "#000000",
   },
@@ -1043,7 +1043,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiFormat: "anthropic",
     modelRoutes: mappedRoutes(
       "anthropic/claude-sonnet-5",
-      "anthropic/claude-opus-4.8",
+      "anthropic/claude-opus-5",
       "anthropic/claude-haiku-4.5",
     ),
     endpointCandidates: ["https://open.cherryin.net"],
@@ -1083,7 +1083,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiFormat: "anthropic",
     modelRoutes: mappedRoutes(
       "anthropic/claude-sonnet-5",
-      "anthropic/claude-opus-4.8",
+      "anthropic/claude-opus-5",
       "anthropic/claude-haiku-4.5",
       true,
     ),
@@ -1100,7 +1100,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiFormat: "anthropic",
     modelRoutes: mappedRoutes(
       "anthropic/claude-sonnet-5",
-      "anthropic/claude-opus-4.8",
+      "anthropic/claude-opus-5",
       "anthropic/claude-haiku-4.5",
       true,
     ),
