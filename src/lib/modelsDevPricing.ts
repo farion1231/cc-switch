@@ -10,11 +10,18 @@ export interface ModelsDevCost {
   cache_write?: number;
 }
 
+export interface ModelsDevModalities {
+  input?: string[];
+  output?: string[];
+}
+
 export interface ModelsDevModel {
   id?: string;
   name?: string;
   release_date?: string;
   cost?: ModelsDevCost;
+  modalities?: ModelsDevModalities;
+  status?: string;
 }
 
 export interface ModelsDevProvider {
@@ -39,6 +46,41 @@ export interface ModelsDevEntry {
   cacheWrite: number;
 }
 
+const NON_TEXT_MODEL_MARKERS = [
+  "audio",
+  "deprecated",
+  "embedding",
+  "image",
+  "moderation",
+  "realtime",
+  "transcribe",
+  "tts",
+  "video",
+];
+const NON_TEXT_OUTPUT_MODALITIES = new Set(["audio", "image", "video"]);
+
+const isTextPricingModel = (modelId: string, model?: ModelsDevModel) => {
+  if (model?.status?.toLowerCase() === "deprecated") return false;
+
+  const outputModalities = model?.modalities?.output
+    ?.filter((modality): modality is string => typeof modality === "string")
+    .map((modality) => modality.toLowerCase());
+  if (
+    outputModalities?.length &&
+    (!outputModalities.includes("text") ||
+      outputModalities.some((modality) =>
+        NON_TEXT_OUTPUT_MODALITIES.has(modality),
+      ))
+  ) {
+    return false;
+  }
+
+  const searchableName = `${modelId} ${model?.name ?? ""}`.toLowerCase();
+  return !NON_TEXT_MODEL_MARKERS.some((marker) =>
+    searchableName.includes(marker),
+  );
+};
+
 export function normalizeModelIdForPricing(modelId: string): string {
   const afterSlash = modelId.slice(modelId.lastIndexOf("/") + 1);
   const beforeColon = afterSlash.split(":")[0] ?? "";
@@ -62,6 +104,7 @@ export function flattenModels(data: ModelsDevResponse): ModelsDevEntry[] {
     if (!provider || typeof provider !== "object") continue;
     const providerName = provider.name || providerId;
     for (const [modelId, model] of Object.entries(provider.models ?? {})) {
+      if (!isTextPricingModel(modelId, model)) continue;
       const cost = model?.cost;
       const input = typeof cost?.input === "number" ? cost.input : null;
       const output = typeof cost?.output === "number" ? cost.output : null;
@@ -101,7 +144,6 @@ export async function fetchModelsDevPricing(): Promise<ModelsDevResponse> {
   );
   try {
     const response = await fetch(MODELS_DEV_API_URL, {
-      cache: "no-store",
       signal: controller.signal,
     });
     if (!response.ok) {
@@ -114,15 +156,6 @@ export async function fetchModelsDevPricing(): Promise<ModelsDevResponse> {
 }
 
 const COMMON_MODEL_LIMIT_PER_FAMILY = 6;
-const NON_TEXT_MODEL_MARKERS = [
-  "audio",
-  "embedding",
-  "image",
-  "moderation",
-  "realtime",
-  "transcribe",
-  "tts",
-];
 
 interface CommonFamilyRule {
   id: string;
@@ -192,11 +225,6 @@ const COMMON_FAMILY_RULES: CommonFamilyRule[] = [
   },
 ];
 
-const isTextPricingModel = (modelId: string) => {
-  const normalized = modelId.toLowerCase();
-  return !NON_TEXT_MODEL_MARKERS.some((marker) => normalized.includes(marker));
-};
-
 /** Pick a bounded, canonical set of recent chat/coding models per family. */
 export function getCommonModelKeys(entries: ModelsDevEntry[]): Set<string> {
   const keys = new Set<string>();
@@ -205,7 +233,6 @@ export function getCommonModelKeys(entries: ModelsDevEntry[]): Set<string> {
     for (const entry of entries) {
       if (
         rule.providers.has(entry.providerId) &&
-        isTextPricingModel(entry.modelId) &&
         rule.matches(entry.modelId.toLowerCase())
       ) {
         keys.add(entry.key);

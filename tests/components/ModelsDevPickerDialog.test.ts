@@ -147,6 +147,45 @@ describe("flattenModels", () => {
     expect(entries.some((e) => e.modelId === "free-model")).toBe(false);
   });
 
+  it("filters deprecated and non-text output models while keeping multimodal input models", () => {
+    const entries = flattenModels({
+      acme: {
+        models: {
+          "multimodal-chat": {
+            name: "Multimodal Chat",
+            modalities: {
+              input: ["text", "image", "audio", "video"],
+              output: ["text"],
+            },
+            cost: { input: 1, output: 2 },
+          },
+          "legacy-chat": {
+            status: "deprecated",
+            modalities: { output: ["text"] },
+            cost: { input: 1, output: 2 },
+          },
+          "speech-model": {
+            modalities: { output: ["audio"] },
+            cost: { input: 1, output: 2 },
+          },
+          "mixed-output-model": {
+            modalities: { output: ["text", "audio"] },
+            cost: { input: 1, output: 2 },
+          },
+          "movie-generator": {
+            modalities: { output: ["video"] },
+            cost: { input: 1, output: 2 },
+          },
+          "fallback-video-model": {
+            cost: { input: 1, output: 2 },
+          },
+        },
+      },
+    });
+
+    expect(entries.map((entry) => entry.modelId)).toEqual(["multimodal-chat"]);
+  });
+
   it("selects a bounded canonical set of common model families", () => {
     const openAiModels = Object.fromEntries(
       Array.from({ length: 7 }, (_, index) => {

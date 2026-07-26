@@ -41,7 +41,7 @@ pub struct ModelPricingInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelsDevSyncConfig {
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub auto_sync_enabled: bool,
     #[serde(default = "default_true")]
     pub include_common_models: bool,
@@ -58,7 +58,7 @@ pub struct ModelsDevSyncConfig {
 impl Default for ModelsDevSyncConfig {
     fn default() -> Self {
         Self {
-            auto_sync_enabled: true,
+            auto_sync_enabled: false,
             include_common_models: true,
             selected_model_keys: Vec::new(),
             excluded_common_model_keys: Vec::new(),
@@ -528,13 +528,47 @@ mod tests {
 
     #[test]
     #[serial]
-    fn creates_local_file_with_default_auto_sync() {
+    fn creates_local_file_with_auto_sync_disabled_by_default() {
         with_test_home(|db, path| {
             let state = get_models_dev_sync_state(db).expect("sync state");
             assert!(path.exists());
-            assert!(state.config.auto_sync_enabled);
+            assert!(!state.config.auto_sync_enabled);
             assert!(state.config.include_common_models);
             assert_eq!(state.config_path, path.display().to_string());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn models_dev_batch_sync_overwrites_existing_manual_pricing() {
+        with_test_home(|db, path| {
+            let mut manual = sample_pricing();
+            manual.input_cost_per_million = "9".to_string();
+            manual.output_cost_per_million = "18".to_string();
+            update_model_pricing(db, manual).expect("save manual pricing");
+
+            let synced = sample_pricing();
+            update_model_pricing_batch(db, vec![synced.clone()]).expect("sync models.dev pricing");
+
+            let conn = db.conn.lock().expect("lock test database");
+            let input: String = conn
+                .query_row(
+                    "SELECT input_cost_per_million FROM model_pricing WHERE model_id = ?1",
+                    params!["custom-model"],
+                    |row| row.get(0),
+                )
+                .expect("query synced pricing");
+            drop(conn);
+            assert_eq!(input, synced.input_cost_per_million);
+
+            let content = fs::read_to_string(path).expect("read pricing file");
+            let file: ModelPricingFile = serde_json::from_str(&content).expect("parse file");
+            let saved = file
+                .models
+                .iter()
+                .find(|entry| entry.model_id == "custom-model")
+                .expect("saved synced pricing");
+            assert_eq!(saved, &synced);
         });
     }
 

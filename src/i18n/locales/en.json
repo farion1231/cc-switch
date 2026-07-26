@@ -1634,9 +1634,12 @@
     "modelsDevDefaultHint": "Showing the {{shown}} most recently released models (of {{total}}) — type to search all",
     "modelsDevAutoSync": {
       "title": "Automatic models.dev pricing sync",
-      "description": "Fetch selected prices on every CC Switch launch and keep them in your local pricing file.",
+      "description": "When enabled, fetch selected prices on every CC Switch launch and keep them in your local pricing file.",
       "enabled": "Enabled",
       "disabled": "Disabled",
+      "enableConfirmTitle": "Enable automatic pricing sync?",
+      "enableConfirmMessage": "After enabling, CC Switch will update prices for the selected models from models.dev on every launch. Built-in and manually configured prices with the same model ID will be overwritten.",
+      "enableConfirmAction": "Enable automatic sync",
       "configure": "Choose models",
       "configureTitle": "Choose models for automatic pricing sync",
       "configureDescription": "Search and filter models to update automatically. Your choices are stored locally.",

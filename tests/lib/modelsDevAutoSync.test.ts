@@ -101,6 +101,64 @@ describe("syncModelsDevPricing", () => {
       expect.any(Number),
       null,
     );
+    const fetchOptions = vi.mocked(fetch).mock.calls[0]?.[1];
+    expect(fetchOptions).toEqual({ signal: expect.any(AbortSignal) });
+    expect(fetchOptions).not.toHaveProperty("cache");
+  });
+
+  it("stops a startup sync when automatic sync is disabled during download", async () => {
+    getModelsDevSyncConfig.mockResolvedValueOnce(state).mockResolvedValueOnce({
+      ...state,
+      config: { ...state.config, autoSyncEnabled: false, lastSyncAt: 123 },
+    });
+
+    const result = await syncModelsDevPricing();
+
+    expect(result).toEqual({
+      skipped: true,
+      selected: 0,
+      imported: 0,
+      changed: 0,
+      syncedAt: 123,
+    });
+    expect(updateModelPricingBatch).not.toHaveBeenCalled();
+    expect(recordModelsDevSyncResult).not.toHaveBeenCalled();
+  });
+
+  it("uses the latest model selection after the download completes", async () => {
+    getModelsDevSyncConfig.mockResolvedValueOnce(state).mockResolvedValueOnce({
+      ...state,
+      config: {
+        ...state.config,
+        includeCommonModels: false,
+        selectedModelKeys: ["relay/custom-model"],
+      },
+    });
+
+    await syncModelsDevPricing();
+
+    expect(updateModelPricingBatch).toHaveBeenCalledWith([
+      expect.objectContaining({ modelId: "custom-model" }),
+    ]);
+  });
+
+  it("uses the latest selection for a forced sync even when automatic sync is disabled", async () => {
+    getModelsDevSyncConfig.mockResolvedValueOnce({
+      ...state,
+      config: {
+        ...state.config,
+        autoSyncEnabled: false,
+        includeCommonModels: false,
+        selectedModelKeys: ["relay/custom-model"],
+      },
+    });
+
+    const result = await syncModelsDevPricing(state, true);
+
+    expect(result.skipped).toBe(false);
+    expect(updateModelPricingBatch).toHaveBeenCalledWith([
+      expect.objectContaining({ modelId: "custom-model" }),
+    ]);
   });
 
   it("persists the last error without replacing the previous success time", async () => {

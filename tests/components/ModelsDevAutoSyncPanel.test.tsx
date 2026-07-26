@@ -50,7 +50,7 @@ import { ModelsDevAutoSyncPanel } from "@/components/usage/ModelsDevAutoSyncPane
 const state = {
   configPath: "C:/Users/test/.cc-switch/model-pricing.json",
   config: {
-    autoSyncEnabled: true,
+    autoSyncEnabled: false,
     includeCommonModels: true,
     selectedModelKeys: [],
     excludedCommonModelKeys: [],
@@ -114,21 +114,93 @@ describe("ModelsDevAutoSyncPanel", () => {
     );
   });
 
-  it("loads the default-on setting and persists toggle changes", async () => {
+  it("loads automatic sync as disabled by default", async () => {
     renderPanel();
 
     expect(
       await screen.findByText("usage.modelsDevAutoSync.title"),
     ).toBeInTheDocument();
     expect(screen.getByText(state.configPath)).toBeInTheDocument();
+    expect(screen.getByRole("switch")).not.toBeChecked();
+    expect(saveModelsDevSyncConfig).not.toHaveBeenCalled();
+  });
 
-    fireEvent.click(screen.getByRole("switch"));
+  it("persists disabling without showing the overwrite warning", async () => {
+    const enabledState = {
+      ...state,
+      config: { ...state.config, autoSyncEnabled: true },
+    };
+    getModelsDevSyncConfig.mockResolvedValue(enabledState);
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("switch"));
     await waitFor(() =>
       expect(saveModelsDevSyncConfig).toHaveBeenCalledWith({
-        ...state.config,
+        ...enabledState.config,
         autoSyncEnabled: false,
       }),
     );
+    expect(
+      screen.queryByText("usage.modelsDevAutoSync.enableConfirmTitle"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("warns about price overwrites before enabling automatic sync", async () => {
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("switch"));
+
+    expect(saveModelsDevSyncConfig).not.toHaveBeenCalled();
+    expect(
+      await screen.findByText("usage.modelsDevAutoSync.enableConfirmTitle"),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "usage.modelsDevAutoSync.enableConfirmAction",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(saveModelsDevSyncConfig).toHaveBeenCalledWith({
+        ...state.config,
+        autoSyncEnabled: true,
+      }),
+    );
+  });
+
+  it("keeps automatic sync disabled when the overwrite warning is cancelled", async () => {
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("switch"));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "common.cancel" }),
+    );
+
+    expect(saveModelsDevSyncConfig).not.toHaveBeenCalled();
+    expect(screen.getByRole("switch")).not.toBeChecked();
+  });
+
+  it("reloads the automatic sync config after reading the local pricing file", async () => {
+    const initialState = {
+      ...state,
+      config: { ...state.config, autoSyncEnabled: true },
+    };
+    getModelsDevSyncConfig
+      .mockResolvedValueOnce(initialState)
+      .mockResolvedValue(state);
+    renderPanel();
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "usage.modelsDevAutoSync.reloadLocalFile",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(getModelsDevSyncConfig).toHaveBeenCalledTimes(2),
+    );
+    expect(getModelPricing).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByRole("switch")).not.toBeChecked());
   });
 
   it("opens the searchable multi-select dialog with common models selected", async () => {

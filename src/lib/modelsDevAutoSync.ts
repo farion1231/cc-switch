@@ -26,22 +26,32 @@ export async function syncModelsDevPricing(
   state?: ModelsDevSyncState,
   force = false,
 ): Promise<ModelsDevSyncResult> {
-  const currentState = state ?? (await usageApi.getModelsDevSyncConfig());
-  if (!force && !currentState.config.autoSyncEnabled) {
+  const initialState = state ?? (await usageApi.getModelsDevSyncConfig());
+  if (!force && !initialState.config.autoSyncEnabled) {
     return {
       skipped: true,
       selected: 0,
       imported: 0,
       changed: 0,
-      syncedAt: currentState.config.lastSyncAt,
+      syncedAt: initialState.config.lastSyncAt,
     };
   }
 
   try {
     const data = await fetchModelsDevPricing();
+    const latestState = await usageApi.getModelsDevSyncConfig();
+    if (!force && !latestState.config.autoSyncEnabled) {
+      return {
+        skipped: true,
+        selected: 0,
+        imported: 0,
+        changed: 0,
+        syncedAt: latestState.config.lastSyncAt,
+      };
+    }
     const selectedEntries = resolveModelsDevSelection(
       flattenModels(data),
-      currentState.config,
+      latestState.config,
     );
     const pricing = toModelPricing(selectedEntries);
     const changed = pricing.length

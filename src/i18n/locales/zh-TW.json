@@ -1606,9 +1606,12 @@
     "modelsDevDefaultHint": "預設展示最新發布的 {{shown}} 個模型（共 {{total}} 個），輸入關鍵字可全量搜尋",
     "modelsDevAutoSync": {
       "title": "自動同步 models.dev 定價",
-      "description": "每次啟動 CC Switch 時擷取所選模型的最新價格，並儲存到本機定價檔案。",
+      "description": "開啟後，每次啟動 CC Switch 時擷取所選模型的最新價格，並儲存到本機定價檔案。",
       "enabled": "已開啟",
       "disabled": "已關閉",
+      "enableConfirmTitle": "開啟自動同步定價？",
+      "enableConfirmMessage": "開啟後，CC Switch 會在每次啟動時從 models.dev 更新所選模型的價格。相同模型 ID 的軟體內建價格和手動設定價格都會被覆寫。",
+      "enableConfirmAction": "開啟自動同步",
       "configure": "選擇模型",
       "configureTitle": "選擇自動同步定價的模型",
       "configureDescription": "透過搜尋和供應商篩選選擇需要自動更新的模型，選擇結果儲存在本機。",

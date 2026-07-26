@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   Dialog,
   DialogContent,
@@ -425,6 +426,7 @@ export function ModelsDevAutoSyncPanel() {
   const [isSaving, setIsSaving] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isReloading, setIsReloading] = useState(false);
+  const [showEnableConfirm, setShowEnableConfirm] = useState(false);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: MODELS_DEV_SYNC_CONFIG_QUERY_KEY,
@@ -478,7 +480,10 @@ export function ModelsDevAutoSyncPanel() {
     setIsReloading(true);
     try {
       await usageApi.getModelPricing();
-      await queryClient.invalidateQueries({ queryKey: usageKeys.all });
+      await Promise.all([
+        refetch(),
+        queryClient.invalidateQueries({ queryKey: usageKeys.all }),
+      ]);
       toast.success(t("usage.modelsDevAutoSync.localFileReloaded"));
     } catch (reloadError) {
       toast.error(
@@ -532,6 +537,14 @@ export function ModelsDevAutoSyncPanel() {
     ? new Date(data.config.lastSyncAt).toLocaleString(i18n.resolvedLanguage)
     : t("usage.modelsDevAutoSync.neverSynced");
 
+  const handleAutoSyncChange = (autoSyncEnabled: boolean) => {
+    if (autoSyncEnabled) {
+      setShowEnableConfirm(true);
+      return;
+    }
+    void saveConfig({ ...data.config, autoSyncEnabled: false });
+  };
+
   return (
     <>
       <div className="space-y-3 rounded-lg border border-border/50 bg-muted/15 p-4">
@@ -553,9 +566,7 @@ export function ModelsDevAutoSyncPanel() {
             <Switch
               checked={data.config.autoSyncEnabled}
               disabled={isSaving}
-              onCheckedChange={(autoSyncEnabled) =>
-                void saveConfig({ ...data.config, autoSyncEnabled })
-              }
+              onCheckedChange={handleAutoSyncChange}
               aria-label={t("usage.modelsDevAutoSync.title")}
             />
           </div>
@@ -640,6 +651,18 @@ export function ModelsDevAutoSyncPanel() {
           onSaved={updateCachedState}
         />
       )}
+      <ConfirmDialog
+        isOpen={showEnableConfirm}
+        title={t("usage.modelsDevAutoSync.enableConfirmTitle")}
+        message={t("usage.modelsDevAutoSync.enableConfirmMessage")}
+        confirmText={t("usage.modelsDevAutoSync.enableConfirmAction")}
+        variant="destructive"
+        onConfirm={() => {
+          setShowEnableConfirm(false);
+          void saveConfig({ ...data.config, autoSyncEnabled: true });
+        }}
+        onCancel={() => setShowEnableConfirm(false)}
+      />
     </>
   );
 }
