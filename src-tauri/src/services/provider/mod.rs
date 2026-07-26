@@ -2905,6 +2905,30 @@ impl ProviderService {
         live_config: &Value,
         result: &mut SwitchResult,
     ) {
+        Self::sync_common_config_snippet_from_live_core(
+            state,
+            app_type,
+            provider,
+            live_config,
+            &mut result.warnings,
+        );
+    }
+
+    /// Core of [`sync_common_config_snippet_from_live`]: re-extract the
+    /// common-config snippet from `live_config` and persist it to the DB,
+    /// pushing any non-fatal warnings into `warnings`. Shared by the switch
+    /// path (via the wrapper above) and the pre-write sync helper in
+    /// `live.rs` (which has no `SwitchResult`).
+    ///
+    /// Scope, opt-in, `_cleared` guard, and "skip when unchanged" semantics
+    /// are identical to the switch path — see the doc on the wrapper.
+    fn sync_common_config_snippet_from_live_core(
+        state: &AppState,
+        app_type: &AppType,
+        provider: &Provider,
+        live_config: &Value,
+        warnings: &mut Vec<String>,
+    ) {
         // 作用域限定 Claude + Codex（见函数文档）。
         if !matches!(app_type, AppType::Claude | AppType::Codex) {
             return;
@@ -2965,9 +2989,7 @@ impl ProviderService {
                 app_type.as_str(),
                 provider.id
             );
-            result
-                .warnings
-                .push(format!("common_config_sync_failed:{}", provider.id));
+            warnings.push(format!("common_config_sync_failed:{}", provider.id));
         }
     }
 
