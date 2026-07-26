@@ -759,6 +759,60 @@ impl ProxyService {
         Ok(())
     }
 
+    /// Reproject an already-taken-over official Codex route after the unified
+    /// history setting changes. Backup and live must move together: the backup
+    /// is the restore source, while live controls the provider bucket used now.
+    pub(crate) async fn reproject_codex_official_live_for_history_toggle(
+        &self,
+        provider: &Provider,
+    ) -> Result<(), String> {
+        let app_type = AppType::Codex;
+        let app_type_str = app_type.as_str();
+        let _guard = self.switch_locks.lock_for_app(app_type_str).await;
+        let previous_backup = self
+            .db
+            .get_live_backup(app_type_str)
+            .await
+            .map_err(|e| format!("读取 Codex 原备份失败: {e}"))?;
+        let previous_live = self
+            .read_codex_live()
+            .map_err(|e| format!("读取 Codex 原 Live 配置失败: {e}"))?;
+
+        let projection_result: Result<(), String> = async {
+            self.update_live_backup_from_provider_inner(app_type_str, provider)
+                .await?;
+            self.sync_codex_live_from_provider_while_proxy_active(provider)
+                .await
+        }
+        .await;
+
+        if let Err(error) = projection_result {
+            let backup_rollback = match previous_backup {
+                Some(backup) => {
+                    self.db
+                        .save_live_backup(app_type_str, &backup.original_config)
+                        .await
+                }
+                None => self.db.delete_live_backup(app_type_str).await,
+            };
+            let live_rollback = self.write_codex_live_verbatim(&previous_live);
+            let mut rollback_errors = Vec::new();
+            if let Err(rollback_error) = backup_rollback {
+                rollback_errors.push(format!("恢复 Codex 原备份失败: {rollback_error}"));
+            }
+            if let Err(rollback_error) = live_rollback {
+                rollback_errors.push(format!("恢复 Codex 原 Live 配置失败: {rollback_error}"));
+            }
+
+            if rollback_errors.is_empty() {
+                return Err(error);
+            }
+            return Err(format!("{error}；回滚失败: {}", rollback_errors.join("；")));
+        }
+
+        Ok(())
+    }
+
     pub async fn sync_grok_live_from_provider_while_proxy_active(
         &self,
         provider: &Provider,
@@ -5049,6 +5103,78 @@ wire_api = "responses"
 
         crate::settings::update_settings(crate::settings::AppSettings::default())
             .expect("reset settings");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_history_toggle_reprojection_rolls_back_backup_and_live_on_failure() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        crate::settings::update_settings(crate::settings::AppSettings {
+            unify_codex_session_history: true,
+            ..Default::default()
+        })
+        .expect("enable unified Codex history");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let mut proxy_config = db.get_proxy_config().await.expect("get proxy config");
+        proxy_config.listen_port = 0;
+        db.update_proxy_config(proxy_config)
+            .await
+            .expect("leave proxy on unresolved ephemeral port");
+
+        let oauth_auth = json!({
+            "auth_mode": "chatgpt",
+            "tokens": { "access_token": "oauth-access" }
+        });
+        let previous_live_config = r#"model_provider = "cc-switch-official"
+
+[model_providers.cc-switch-official]
+name = "OpenAI"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+supports_websockets = false
+"#;
+        crate::codex_config::write_codex_live_atomic(&oauth_auth, Some(previous_live_config))
+            .expect("seed previous taken-over live config");
+        let previous_live = service.read_codex_live().expect("read previous live");
+        let previous_backup = json!({
+            "auth": oauth_auth,
+            "config": ""
+        });
+        let previous_backup_json =
+            serde_json::to_string(&previous_backup).expect("serialize previous backup");
+        db.save_live_backup("codex", &previous_backup_json)
+            .await
+            .expect("seed previous backup");
+
+        let mut official = Provider::with_id(
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "OpenAI Official".to_string(),
+            json!({ "auth": {}, "config": "" }),
+            None,
+        );
+        official.category = Some("official".to_string());
+
+        let error = service
+            .reproject_codex_official_live_for_history_toggle(&official)
+            .await
+            .expect_err("unresolved proxy port must fail live reprojection");
+        assert!(
+            error.contains("代理监听端口为 0"),
+            "unexpected error: {error}"
+        );
+
+        let restored_backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("read restored backup")
+            .expect("restored backup exists");
+        assert_eq!(restored_backup.original_config, previous_backup_json);
+        let restored_live = service.read_codex_live().expect("read restored live");
+        assert_eq!(restored_live, previous_live);
     }
 
     #[tokio::test]
