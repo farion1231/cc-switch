@@ -66,7 +66,17 @@ jobs:
           go install connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.19.1
 
       - name: Build and test Cursor sidecar
-        run: node scripts/build-cursor-sidecar.mjs ${{ matrix.sidecar_target }} --test
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.sidecar_target }}" = "universal-apple-darwin" ]; then
+            # Tauri invokes Cargo once per architecture for a universal build and
+            # resolves externalBin using each concrete target triple.
+            node scripts/build-cursor-sidecar.mjs aarch64-apple-darwin --test
+            node scripts/build-cursor-sidecar.mjs x86_64-apple-darwin --test
+          else
+            node scripts/build-cursor-sidecar.mjs ${{ matrix.sidecar_target }} --test
+          fi
 
       - name: Add Windows ARM64 target
         if: runner.os == 'Windows' && matrix.arch == 'arm64'
@@ -194,21 +204,9 @@ jobs:
               fi
             fi
           fi
-          # 将“完整两行内容”作为环境变量注入（Tauri 支持传入完整私钥文本或文件路径）
-          # 使用多行写入语法，保持换行以便解析
-          # 将完整两行私钥内容进行 base64 编码，作为单行内容注入环境变量
-          if command -v base64 >/dev/null 2>&1; then
-            KEY_B64=$(base64 < "$KEY_PATH" | tr -d '\r\n')
-          elif command -v openssl >/dev/null 2>&1; then
-            KEY_B64=$(openssl base64 -A -in "$KEY_PATH")
-          else
-            KEY_B64=$(KEY_PATH="$KEY_PATH" node -e "process.stdout.write(require('fs').readFileSync(process.env.KEY_PATH).toString('base64'))")
-          fi
-          if [ -z "$KEY_B64" ]; then
-            echo "❌ 无法生成私钥 base64 内容" >&2
-            exit 1
-          fi
-          echo "TAURI_SIGNING_PRIVATE_KEY=$KEY_B64" >> "$GITHUB_ENV"
+          # Tauri accepts either raw key content or a file path. Pass the path to
+          # preserve the key's two-line minisign format without re-encoding it.
+          echo "TAURI_SIGNING_PRIVATE_KEY=$KEY_PATH" >> "$GITHUB_ENV"
           if [ -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" ]; then
             echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" >> $GITHUB_ENV
           fi
