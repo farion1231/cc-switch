@@ -78,14 +78,16 @@ export function usePromptActions(appId: AppId) {
       // Optimistic update
       const previousPrompts = prompts;
 
-      // 如果要启用当前提示词，先禁用其他所有提示词
-      if (enabled) {
+      // Enabling a prompt should preserve any other enabled prompts.
+      if (enabled && appId === "codex") {
+        setPrompts((prev) => ({
+          ...prev,
+          [id]: { ...prev[id], enabled: true },
+        }));
+      } else if (enabled) {
         const updatedPrompts = Object.keys(prompts).reduce(
           (acc, key) => {
-            acc[key] = {
-              ...prompts[key],
-              enabled: key === id,
-            };
+            acc[key] = { ...prompts[key], enabled: key === id };
             return acc;
           },
           {} as Record<string, Prompt>,

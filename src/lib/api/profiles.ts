@@ -27,7 +27,7 @@ export interface ProfilePayload {
   providers: PerApp<string | null>;
   mcp: PerApp<string[] | null>;
   skills: PerApp<string[] | null>;
-  prompts: PerApp<string | null>;
+  prompts: PerApp<string[] | null>;
 }
 
 export interface Profile {
