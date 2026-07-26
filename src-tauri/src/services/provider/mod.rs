@@ -50,12 +50,14 @@ use live::{
 };
 use usage::validate_usage_script;
 
-/// The built-in Codex official provider is safe to select during takeover:
-/// Codex keeps ownership of its ChatGPT login and the proxy only forwards the
-/// authenticated request. Other official providers retain the existing block.
+/// Managed OAuth providers that explicitly rely on the proxy backend are safe
+/// to select during takeover. Direct official API providers retain the block.
 pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &Provider) -> bool {
-    matches!(app_type, AppType::Codex)
-        && crate::proxy::providers::is_codex_official_provider(provider)
+    (matches!(app_type, AppType::Codex)
+        && crate::proxy::providers::is_codex_official_provider(provider))
+        || (matches!(app_type, AppType::Claude)
+            && provider.category.as_deref() == Some("third_party")
+            && provider.is_codex_oauth())
 }
 
 /// 统一会话开关变更后，立即按新开关状态重写当前官方 Codex 供应商的
@@ -181,6 +183,74 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex, OnceLock};
     use tempfile::TempDir;
+
+    #[test]
+    fn managed_claude_codex_oauth_supports_proxy_takeover() {
+        let mut provider = Provider::with_id(
+            "codex-oauth-claude".to_string(),
+            "Codex OAuth Claude".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            None,
+        );
+        provider.category = Some("third_party".to_string());
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..Default::default()
+        });
+
+        assert!(official_provider_supports_proxy_takeover(
+            &AppType::Claude,
+            &provider
+        ));
+    }
+
+    #[test]
+    fn official_claude_codex_oauth_remains_blocked_during_proxy_takeover() {
+        let mut provider = Provider::with_id(
+            "official-codex-oauth-claude".to_string(),
+            "Official Codex OAuth Claude".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..Default::default()
+        });
+
+        assert!(!official_provider_supports_proxy_takeover(
+            &AppType::Claude,
+            &provider
+        ));
+    }
+
+    #[test]
+    fn direct_official_claude_api_remains_blocked_during_proxy_takeover() {
+        let mut provider = Provider::with_id(
+            "official-claude".to_string(),
+            "Official Claude".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+                }
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+
+        assert!(!official_provider_supports_proxy_takeover(
+            &AppType::Claude,
+            &provider
+        ));
+    }
 
     struct TempHome {
         #[allow(dead_code)]
