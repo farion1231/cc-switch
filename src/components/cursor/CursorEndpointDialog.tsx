@@ -44,6 +44,7 @@ interface ModelDraft {
   provider?: CursorProvider;
   name: string;
   modelID: string;
+  contextWindowTokens?: number | null;
 }
 
 const createEndpointForm = (
@@ -188,6 +189,7 @@ export function CursorEndpointDialog({
         key: generateUUID(),
         name: model.id,
         modelID: model.id,
+        contextWindowTokens: model.contextWindowTokens,
       })),
     ]);
     setSelectedModelIds(new Set());
@@ -231,7 +233,11 @@ export function CursorEndpointDialog({
       };
       const nextProviders = validModels.map((model) => {
         const metadata = resolveCursorModelMetadata(
-          { id: model.modelID, ownedBy: null },
+          {
+            id: model.modelID,
+            ownedBy: null,
+            contextWindowTokens: model.contextWindowTokens,
+          },
           baseURL,
           form.type,
         );

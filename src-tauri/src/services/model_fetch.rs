@@ -32,12 +32,43 @@ struct ModelEntry {
         default,
         alias = "context_length",
         alias = "context_window",
+        alias = "contextWindow",
         alias = "context_window_tokens",
         alias = "max_context_length",
         alias = "max_context_tokens",
         deserialize_with = "deserialize_optional_positive_i64"
     )]
     context_window_tokens: Option<i64>,
+    #[serde(default)]
+    capabilities: Option<serde_json::Value>,
+}
+
+impl ModelEntry {
+    fn resolved_context_window_tokens(&self) -> Option<i64> {
+        self.context_window_tokens.or_else(|| {
+            let capabilities = self.capabilities.as_ref()?.as_object()?;
+            [
+                "context_length",
+                "context_window",
+                "contextWindow",
+                "context_window_tokens",
+                "max_context_length",
+                "max_context_tokens",
+            ]
+            .iter()
+            .filter_map(|key| capabilities.get(*key))
+            .find_map(parse_positive_i64)
+        })
+    }
+}
+
+fn parse_positive_i64(value: &serde_json::Value) -> Option<i64> {
+    let parsed = match value {
+        serde_json::Value::Number(number) => number.as_i64(),
+        serde_json::Value::String(raw) => raw.trim().parse::<i64>().ok(),
+        _ => None,
+    };
+    parsed.filter(|value| *value > 0)
 }
 
 fn deserialize_optional_positive_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
@@ -45,12 +76,8 @@ where
     D: serde::Deserializer<'de>,
 {
     let value = Option::<serde_json::Value>::deserialize(deserializer)?;
-    let parsed = match value {
-        Some(serde_json::Value::Number(number)) => number.as_i64(),
-        Some(serde_json::Value::String(raw)) => raw.trim().parse::<i64>().ok(),
-        _ => None,
-    };
-    Ok(parsed.filter(|value| *value > 0))
+    let parsed = value.as_ref().and_then(parse_positive_i64);
+    Ok(parsed)
 }
 
 const FETCH_TIMEOUT_SECS: u64 = 15;
@@ -130,10 +157,13 @@ pub async fn fetch_models(
                 .data
                 .unwrap_or_default()
                 .into_iter()
-                .map(|m| FetchedModel {
-                    id: m.id,
-                    owned_by: m.owned_by,
-                    context_window_tokens: m.context_window_tokens,
+                .map(|m| {
+                    let context_window_tokens = m.resolved_context_window_tokens();
+                    FetchedModel {
+                        id: m.id,
+                        owned_by: m.owned_by,
+                        context_window_tokens,
+                    }
                 })
                 .collect();
 
@@ -505,12 +535,25 @@ mod tests {
 
     #[test]
     fn test_parse_response_context_window_aliases() {
-        let json = r#"{"data":[{"id":"api-model","context_length":200000},{"id":"string-model","context_window":"128000"},{"id":"invalid-model","max_context_length":0}]}"#;
+        let json = r#"{"data":[{"id":"api-model","context_length":200000},{"id":"camel-model","contextWindow":272000},{"id":"string-model","context_window":"128000"},{"id":"invalid-model","max_context_length":0}]}"#;
         let resp: ModelsResponse = serde_json::from_str(json).unwrap();
         let data = resp.data.unwrap();
-        assert_eq!(data[0].context_window_tokens, Some(200000));
-        assert_eq!(data[1].context_window_tokens, Some(128000));
-        assert_eq!(data[2].context_window_tokens, None);
+        assert_eq!(data[0].resolved_context_window_tokens(), Some(200000));
+        assert_eq!(data[1].resolved_context_window_tokens(), Some(272000));
+        assert_eq!(data[2].resolved_context_window_tokens(), Some(128000));
+        assert_eq!(data[3].resolved_context_window_tokens(), None);
+    }
+
+    #[test]
+    fn test_parse_response_nested_capabilities_context_window() {
+        let json = r#"{"data":[{"id":"nested-model","capabilities":{"contextWindow":1048576,"maxOutput":65536}},{"id":"nested-string","capabilities":{"context_window":"262144"}},{"id":"top-level-wins","context_window":400000,"capabilities":{"contextWindow":272000}},{"id":"missing-context","capabilities":{"thinking":false}},{"id":"capability-list","capabilities":["tools","vision"]}]}"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        let data = resp.data.unwrap();
+        assert_eq!(data[0].resolved_context_window_tokens(), Some(1048576));
+        assert_eq!(data[1].resolved_context_window_tokens(), Some(262144));
+        assert_eq!(data[2].resolved_context_window_tokens(), Some(400000));
+        assert_eq!(data[3].resolved_context_window_tokens(), None);
+        assert_eq!(data[4].resolved_context_window_tokens(), None);
     }
 
     #[test]
