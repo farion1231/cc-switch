@@ -167,6 +167,11 @@ html[data-window-active="false"] .status-heartbeat {
     opacity: 1;
     transition-property: color;
   }
+
+  html[data-window-active="true"][data-status-heartbeat="true"]
+    .status-heartbeat {
+    opacity: 1;
+  }
 }
 
 ::-webkit-scrollbar {
