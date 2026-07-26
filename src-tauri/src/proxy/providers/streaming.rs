@@ -80,6 +80,8 @@ struct Usage {
 struct PromptTokensDetails {
     #[serde(default)]
     cached_tokens: u32,
+    #[serde(default)]
+    cache_write_tokens: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -103,7 +105,7 @@ fn build_anthropic_usage_json(usage: &Usage) -> Value {
     // OpenAI prompt_tokens 含缓存，Anthropic input_tokens 不含，需减去 cache_read 与 cache_creation
     // （三桶互斥，恒等 input + cache_read + cache_creation == prompt_tokens）。
     let cached = extract_cache_read_tokens(usage).unwrap_or(0);
-    let cache_creation = usage.cache_creation_input_tokens.unwrap_or(0);
+    let cache_creation = extract_cache_write_tokens(usage).unwrap_or(0);
     let input_tokens = usage
         .prompt_tokens
         .saturating_sub(cached)
@@ -233,7 +235,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                             if let Some(u) = &chunk.usage {
                                                 let cached = extract_cache_read_tokens(u).unwrap_or(0);
                                                 let cache_creation =
-                                                    u.cache_creation_input_tokens.unwrap_or(0);
+                                                    extract_cache_write_tokens(u).unwrap_or(0);
                                                 let input = u
                                                     .prompt_tokens
                                                     .saturating_sub(cached)
@@ -683,6 +685,18 @@ fn extract_cache_read_tokens(usage: &Usage) -> Option<u32> {
         .filter(|&v| v > 0)
 }
 
+/// Extract cache-write tokens from direct compatibility fields or OpenAI details.
+fn extract_cache_write_tokens(usage: &Usage) -> Option<u32> {
+    if let Some(value) = usage.cache_creation_input_tokens {
+        return Some(value);
+    }
+    usage
+        .prompt_tokens_details
+        .as_ref()
+        .map(|details| details.cache_write_tokens)
+        .filter(|value| *value > 0)
+}
+
 /// 映射停止原因
 fn map_stop_reason(finish_reason: Option<&str>) -> Option<String> {
     finish_reason.map(|r| {
@@ -1061,7 +1075,7 @@ mod tests {
         let input = concat!(
             "data: {\"id\":\"chatcmpl_cc\",\"model\":\"glm-5.1\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"tool-1\",\"type\":\"function\",\"function\":{\"name\":\"Bash\",\"arguments\":\"{\\\"command\\\":\\\"pwd\\\"}\"}}]}}]}\n\n",
             "data: {\"id\":\"chatcmpl_cc\",\"model\":\"glm-5.1\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
-            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1000,\"completion_tokens\":50,\"prompt_tokens_details\":{\"cached_tokens\":600},\"cache_creation_input_tokens\":300}}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1000,\"completion_tokens\":50,\"prompt_tokens_details\":{\"cached_tokens\":600,\"cache_write_tokens\":300}}}\n\n",
             "data: [DONE]\n\n"
         );
 

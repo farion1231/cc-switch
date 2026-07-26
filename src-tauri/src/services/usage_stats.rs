@@ -5,7 +5,9 @@
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::ModelPricing;
-use crate::services::sql_helpers::fresh_input_sql;
+use crate::services::sql_helpers::{
+    fresh_input_sql, INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL,
+};
 use chrono::{Local, NaiveDate, TimeZone, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -135,6 +137,9 @@ pub struct RequestLogDetail {
     pub output_tokens: u32,
     pub cache_read_tokens: u32,
     pub cache_creation_tokens: u32,
+    /// Internal storage semantics; omitted from the UI/API payload.
+    #[serde(skip)]
+    pub input_token_semantics: i64,
     pub input_cost_usd: String,
     pub output_cost_usd: String,
     pub cache_read_cost_usd: String,
@@ -154,15 +159,15 @@ pub struct RequestLogDetail {
     pub pricing_model: Option<String>,
 }
 
-/// 把 25 列的查询结果映射为 `RequestLogDetail`。
+/// 把 26 列的查询结果映射为 `RequestLogDetail`。
 ///
-/// 调用方的 SELECT **必须**按以下顺序返回 25 列：
+/// 调用方的 SELECT **必须**按以下顺序返回 26 列：
 /// `request_id, provider_id, provider_name, app_type, model, request_model,
 ///  cost_multiplier, input_tokens, output_tokens, cache_read_tokens,
 ///  cache_creation_tokens, input_cost_usd, output_cost_usd, cache_read_cost_usd,
 ///  cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
 ///  first_token_ms, duration_ms, status_code, error_message, created_at,
-///  data_source, pricing_model`
+///  data_source, pricing_model, input_token_semantics`
 ///
 /// 不需要 provider_name 时（如 backfill）SELECT `NULL AS provider_name` 占位即可。
 fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLogDetail> {
@@ -194,6 +199,7 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
         created_at: row.get(22)?,
         data_source: row.get(23)?,
         pricing_model: row.get(24)?,
+        input_token_semantics: row.get::<_, i64>(25)?,
     })
 }
 
@@ -208,6 +214,7 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_codex_session' THEN 'Codex (Session)' \
          WHEN '_gemini_session' THEN 'Gemini (Session)' \
          WHEN '_opencode_session' THEN 'OpenCode (Session)' \
+         WHEN '_grok_session' THEN 'Grok Build (Session)' \
          ELSE {log_alias}.provider_id END)"
     )
 }
@@ -408,6 +415,76 @@ pub(crate) fn has_matching_proxy_usage_log(
         |row| row.get::<_, bool>(0),
     )
     .map_err(|e| AppError::Database(format!("查询重复代理用量日志失败: {e}")))
+}
+
+/// grokbuild 会话导入的接管活动守卫：给定时刻 ±窗口内存在任何 grokbuild
+/// 代理直录行，即认为当时处于代理接管态，会话事件应整体跳过——同一请求
+/// 已由代理逐请求记账，会话侧再入账必双算。
+///
+/// 不复用 [`has_matching_proxy_usage_log`] 的指纹匹配：Grok 会话事件是
+/// 逐轮聚合值，与代理逐请求行的 token 值结构性不相等，指纹永不命中。
+/// 这里按"接管态检测"而非"行匹配"设计，故不过滤 status_code——失败的
+/// 代理请求同样证明流量正走代理。
+///
+/// 已知局限（有意取舍，方向保守只漏不双）：窗口不含 session 维度，任一
+/// grokbuild 代理行会给 ±窗口内的全部会话事件投下阴影——接管/官方两态在
+/// 十分钟内交替或并行使用时，官方侧轮次会被跳过（漏记而非双算）。
+pub(crate) fn has_recent_grokbuild_proxy_activity(
+    conn: &Connection,
+    created_at: i64,
+) -> Result<bool, AppError> {
+    let l_data_source = data_source_expr("l");
+    let sql = format!(
+        "SELECT EXISTS (
+            SELECT 1
+            FROM proxy_request_logs l
+            WHERE {l_data_source} = 'proxy'
+              AND l.app_type = 'grokbuild'
+              AND l.created_at BETWEEN ?1 - ?2 AND ?1 + ?2
+        )"
+    );
+    conn.query_row(
+        &sql,
+        params![created_at, SESSION_PROXY_DEDUP_WINDOW_SECONDS],
+        |row| row.get::<_, bool>(0),
+    )
+    .map_err(|e| AppError::Database(format!("查询 Grok 接管活动失败: {e}")))
+}
+
+pub(crate) fn has_suspected_codex_session_duplicate(
+    conn: &Connection,
+    request_id: &str,
+    key: &DedupKey,
+) -> Result<bool, AppError> {
+    let data_source = data_source_expr("l");
+    let sql = format!(
+        "SELECT EXISTS (
+            SELECT 1
+            FROM proxy_request_logs l
+            WHERE l.app_type = 'codex'
+              AND {data_source} = 'codex_session'
+              AND l.request_id <> ?1
+              AND LOWER(l.model) = LOWER(?2)
+              AND l.input_tokens = ?3
+              AND l.output_tokens = ?4
+              AND l.cache_read_tokens = ?5
+              AND l.created_at BETWEEN ?6 - ?7 AND ?6 + ?7
+        )"
+    );
+    conn.query_row(
+        &sql,
+        params![
+            request_id,
+            key.model,
+            key.input_tokens as i64,
+            key.output_tokens as i64,
+            key.cache_read_tokens as i64,
+            key.created_at,
+            SESSION_PROXY_DEDUP_WINDOW_SECONDS,
+        ],
+        |row| row.get::<_, bool>(0),
+    )
+    .map_err(|error| AppError::Database(format!("查询疑似重复 Codex 会话用量失败: {error}")))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1526,7 +1603,8 @@ impl Database {
                     l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
-                    l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model
+                    l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model,
+                    l.input_token_semantics
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              {where_clause}
@@ -1569,7 +1647,8 @@ impl Database {
                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                     input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                     is_streaming, latency_ms, first_token_ms, duration_ms,
-                    status_code, error_message, created_at, l.data_source, l.pricing_model
+                    status_code, error_message, created_at, l.data_source, l.pricing_model,
+                    l.input_token_semantics
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              WHERE l.request_id = ?"
@@ -1725,7 +1804,7 @@ impl Database {
                         input_cost_usd, output_cost_usd, cache_read_cost_usd,
                         cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
                         first_token_ms, duration_ms, status_code, error_message, created_at,
-                        data_source, pricing_model
+                        data_source, pricing_model, input_token_semantics
              FROM proxy_request_logs
              WHERE CAST(total_cost_usd AS REAL) <= 0
                AND (input_tokens > 0 OR output_tokens > 0
@@ -1806,15 +1885,22 @@ impl Database {
         let million = rust_decimal::Decimal::from(1_000_000u64);
 
         // 与 CostCalculator::calculate_for_app 保持一致的计算逻辑：
-        // 1. Codex/Gemini 的 input_tokens 包含 cache_read_tokens，需要扣除后按输入价计费
+        // 1. 历史 cache-inclusive 行只包含 cache read；新 total 行还包含 cache write。
         // 2. Claude/Anthropic 的 input_tokens 已经是 fresh input，不能再次扣减
         // 3. 各项成本是基础成本（不含倍率），倍率只作用于最终总价
-        let input_includes_cache_read = matches!(log.app_type.as_str(), "codex" | "gemini");
-        let billable_input_tokens = if input_includes_cache_read {
-            (log.input_tokens as u64).saturating_sub(log.cache_read_tokens as u64)
-        } else {
-            log.input_tokens as u64
-        };
+        let cache_inclusive_app =
+            crate::services::sql_helpers::is_cache_inclusive_app(log.app_type.as_str());
+        let billable_input_tokens =
+            if !cache_inclusive_app || log.input_token_semantics == INPUT_TOKEN_SEMANTICS_FRESH {
+                log.input_tokens as u64
+            } else if log.input_token_semantics == INPUT_TOKEN_SEMANTICS_TOTAL {
+                (log.input_tokens as u64)
+                    .saturating_sub(log.cache_read_tokens as u64)
+                    .saturating_sub(log.cache_creation_tokens as u64)
+            } else {
+                // v12 and earlier: input included cache reads but excluded cache writes.
+                (log.input_tokens as u64).saturating_sub(log.cache_read_tokens as u64)
+            };
         let input_cost =
             rust_decimal::Decimal::from(billable_input_tokens) * pricing.input / million;
         let output_cost =
@@ -2489,6 +2575,124 @@ mod tests {
         assert_eq!(output_cost, "30.000000");
         assert_eq!(total_cost, "35.000000");
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_distinguishes_legacy_and_total_cache_semantics() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            // v12 mirror row: input = fresh + read; creation was reported separately.
+            insert_usage_log(
+                &conn,
+                "legacy-cache-semantics",
+                "codex",
+                "p1",
+                "gpt-5.5",
+                "proxy",
+                1000,
+                800_000,
+                0,
+                600_000,
+                200_000,
+                200,
+                "0",
+            )?;
+            // v13 proxy row: input = fresh + read + creation.
+            insert_usage_log(
+                &conn,
+                "total-cache-semantics",
+                "codex",
+                "p1",
+                "gpt-5.5",
+                "proxy",
+                1001,
+                1_000_000,
+                0,
+                600_000,
+                200_000,
+                200,
+                "0",
+            )?;
+            conn.execute(
+                "UPDATE proxy_request_logs
+                 SET input_token_semantics = ?1
+                 WHERE request_id = 'total-cache-semantics'",
+                [INPUT_TOKEN_SEMANTICS_TOTAL],
+            )?;
+        }
+
+        assert_eq!(db.backfill_missing_usage_costs()?, 2);
+
+        let conn = lock_conn!(db.conn);
+        let mut stmt = conn.prepare(
+            "SELECT request_id, input_cost_usd
+             FROM proxy_request_logs
+             WHERE request_id IN ('legacy-cache-semantics', 'total-cache-semantics')
+             ORDER BY request_id",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            rows,
+            vec![
+                ("legacy-cache-semantics".to_string(), "1.000000".to_string()),
+                ("total-cache-semantics".to_string(), "1.000000".to_string()),
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_deducts_cache_read_for_grokbuild_total_rows() -> Result<(), AppError> {
+        // 回归：回填侧的 cache-inclusive 判定曾硬编码 codex|gemini 漏掉
+        // grokbuild，导致 TOTAL 行按全量 input 计价、cache_read 双算。
+        // 判定收敛到 sql_helpers::is_cache_inclusive_app 后按 450 fresh 计价。
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "grokbuild-total-backfill",
+                "grokbuild",
+                "_grok_session",
+                "grok-4.5",
+                "grok_session",
+                1000,
+                700,
+                100,
+                250,
+                0,
+                200,
+                "0",
+            )?;
+            conn.execute(
+                "UPDATE proxy_request_logs
+                 SET input_token_semantics = ?1
+                 WHERE request_id = 'grokbuild-total-backfill'",
+                [INPUT_TOKEN_SEMANTICS_TOTAL],
+            )?;
+        }
+
+        assert_eq!(db.backfill_missing_usage_costs()?, 1);
+
+        let conn = lock_conn!(db.conn);
+        let (input_cost, cache_read_cost, total_cost): (String, String, String) = conn.query_row(
+            "SELECT input_cost_usd, cache_read_cost_usd, total_cost_usd
+             FROM proxy_request_logs WHERE request_id = 'grokbuild-total-backfill'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        // grok-4.5 定价 2/6/0.50：input = (700-250)×2/1M，cache_read = 250×0.5/1M
+        assert_eq!(input_cost, "0.000900");
+        assert_eq!(cache_read_cost, "0.000125");
+        assert_eq!(total_cost, "0.001625");
         Ok(())
     }
 

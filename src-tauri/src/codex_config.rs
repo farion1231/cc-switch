@@ -6,12 +6,19 @@ use crate::config::{
     write_json_file, write_text_file,
 };
 use crate::error::AppError;
+use crate::model_capabilities::{image_input_capability_from_modalities, ImageInputCapability};
+use once_cell::sync::OnceCell;
 use serde_json::{json, Value};
 use std::fs;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use toml_edit::DocumentMut;
 
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
+/// Temporary model-provider id used while the built-in `codex-official`
+/// provider is routed through CC Switch.  A dedicated id is an ownership
+/// marker: unlike a generic localhost `base_url`, it can be detected and
+/// cleaned up without mistaking a user's own local provider for takeover.
+pub const CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID: &str = "cc-switch-official";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 const CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID: &str = "107580212";
 const CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER: &str = "statsig.cached.evaluations";
@@ -24,6 +31,19 @@ enum CodexDesktopStatsigWrapperEncoding {
     Utf8,
     Utf16Le,
 }
+
+const CODEX_PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+// Generating a ProxyChat catalog only needs one stable Codex model template per
+// process. Without this cache every provider switch/takeover can start the
+// Codex CLI again, which is especially expensive for npm-installed `codex.cmd`
+// on Windows. Tests deliberately bypass the global cache because they isolate
+// CODEX_HOME and seed different model templates.
+#[cfg(not(test))]
+static CODEX_MODEL_CATALOG_TEMPLATE_CACHE: OnceCell<Value> = OnceCell::new();
 
 /// Top-level `config.toml` key that controls Codex's built-in web-search tool.
 pub(crate) const CODEX_WEB_SEARCH_FIELD: &str = "web_search";
@@ -920,6 +940,17 @@ fn apply_codex_model_input_modalities(entry_obj: &mut serde_json::Map<String, Va
     }
 }
 
+fn codex_catalog_input_modalities(
+    model: &str,
+    declared_modalities: Option<&[String]>,
+) -> Vec<String> {
+    let modalities = match image_input_capability_from_modalities(model, declared_modalities) {
+        ImageInputCapability::Unsupported => &["text"][..],
+        ImageInputCapability::Supported | ImageInputCapability::Unknown => &["text", "image"][..],
+    };
+    modalities.iter().map(|item| (*item).to_string()).collect()
+}
+
 fn codex_catalog_model_entry(
     template: &Value,
     spec: &CodexCatalogModelSpec,
@@ -943,6 +974,18 @@ fn codex_catalog_model_entry(
     entry_obj.insert("upgrade".to_string(), Value::Null);
     apply_codex_model_reasoning_metadata(entry_obj, &spec.model);
     apply_codex_model_input_modalities(entry_obj, &spec.model);
+
+    // Image support is a model capability, not a tool-profile capability.
+    // Trust hidden preset metadata first, then the confirmed text-only registry;
+    // every unknown model fails open so GPT/relay aliases are never declared
+    // text-only merely because a template had a conservative default.
+    entry_obj.insert(
+        "input_modalities".to_string(),
+        json!(codex_catalog_input_modalities(
+            &spec.model,
+            spec.input_modalities.as_deref(),
+        )),
+    );
 
     if profile != CodexCatalogToolProfile::ProxyChat {
         // Native `/responses` and Anthropic gateways reject / drop Codex's freeform
@@ -980,9 +1023,6 @@ fn codex_catalog_model_entry(
         if let Some(parallel) = spec.supports_parallel_tool_calls {
             entry_obj.insert("supports_parallel_tool_calls".to_string(), json!(parallel));
         }
-        if let Some(modalities) = &spec.input_modalities {
-            entry_obj.insert("input_modalities".to_string(), json!(modalities));
-        }
     }
 
     entry
@@ -996,8 +1036,9 @@ struct CodexCatalogModelSpec {
     /// Per-row override for the native template's `supports_parallel_tool_calls`
     /// (e.g. MiniMax=true, MiMo=false). Only consulted for `NativeResponses`.
     supports_parallel_tool_calls: Option<bool>,
-    /// Per-row override for the native template's `input_modalities`
-    /// (e.g. `["text","image"]`). Only consulted for `NativeResponses`.
+    /// Hidden per-row capability declaration from built-in provider metadata.
+    /// When omitted, all catalog profiles consult the shared text-only model
+    /// registry and otherwise default to `["text", "image"]`.
     input_modalities: Option<Vec<String>>,
     /// Per-row override for the native template's `base_instructions` (the
     /// model identity / system preamble). Carries each vendor's OFFICIAL value
@@ -1271,13 +1312,28 @@ fn codex_cli_candidates() -> Vec<PathBuf> {
     candidates
 }
 
+fn codex_bundled_models_command(candidate: &Path) -> Command {
+    let mut command = Command::new(candidate);
+    command
+        .args(["debug", "models", "--bundled"])
+        .stdin(Stdio::null());
+
+    // A release build uses the Windows GUI subsystem, so a console child that
+    // is created without this flag gets its own transient console window. npm
+    // installs Codex as `codex.cmd`, which Windows launches through cmd.exe.
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    command
+}
+
 fn load_codex_model_template_from_bundled() -> Result<Option<Value>, AppError> {
     for candidate in codex_cli_candidates() {
         let candidate_label = candidate.to_string_lossy();
-        let output = match Command::new(&candidate)
-            .args(["debug", "models", "--bundled"])
-            .output()
-        {
+        let output = match codex_bundled_models_command(&candidate).output() {
             Ok(output) => output,
             Err(err) => {
                 log::debug!("failed to run `{candidate_label} debug models --bundled`: {err}");
@@ -1331,13 +1387,49 @@ fn load_codex_native_responses_template() -> Value {
     serde_json::from_str(text).expect("bundled codex native responses template must be valid JSON")
 }
 
-fn load_codex_model_catalog_template() -> Result<Value, AppError> {
+/// Fields Codex's external-catalog parser REQUIRES (no serde default): when
+/// one is missing Codex rejects the whole catalog file at startup ("missing
+/// field ..."). `base_instructions` is the other known required field; the
+/// templates always carry it and `codex_catalog_model_entry` handles it.
+/// When Codex requires a new field, add it here AND to the static templates.
+const CODEX_CATALOG_PARSER_REQUIRED_FIELDS: &[&str] = &["supports_reasoning_summaries"];
+
+/// `models_cache.json` is shared by every Codex install on the machine (npm
+/// CLI, desktop-bundled binary, ...), and each version serializes its own
+/// `ModelInfo` shape — the cache's field set follows whichever process wrote
+/// it last, so it cannot be assumed to satisfy the current external-catalog
+/// schema (observed live: 0.144.5 requires `supports_reasoning_summaries`
+/// while a coexisting build kept rewriting the cache without it). Backfill
+/// ONLY parser-required fields from the bundled static template: optional
+/// capability fields keep their missing-means-default semantics, and existing
+/// values always win.
+fn fill_template_fields_from_static(template: &mut Value) {
+    let Some(static_template) = load_codex_model_template_static() else {
+        return;
+    };
+    let (Some(template_obj), Some(static_obj)) =
+        (template.as_object_mut(), static_template.as_object())
+    else {
+        return;
+    };
+    for key in CODEX_CATALOG_PARSER_REQUIRED_FIELDS {
+        if !template_obj.contains_key(*key) {
+            if let Some(value) = static_obj.get(*key) {
+                template_obj.insert((*key).to_string(), value.clone());
+            }
+        }
+    }
+}
+
+fn load_codex_model_catalog_template_uncached() -> Result<Value, AppError> {
     // ① models_cache.json (created by Codex when it connects to OpenAI)
-    if let Some(template) = load_codex_model_template_from_cache()? {
+    if let Some(mut template) = load_codex_model_template_from_cache()? {
+        fill_template_fields_from_static(&mut template);
         return Ok(template);
     }
     // ② codex CLI (PATH + platform-specific common paths)
-    if let Some(template) = load_codex_model_template_from_bundled()? {
+    if let Some(mut template) = load_codex_model_template_from_bundled()? {
+        fill_template_fields_from_static(&mut template);
         return Ok(template);
     }
     // ③ Static fallback bundled at compile time
@@ -1348,6 +1440,29 @@ fn load_codex_model_catalog_template() -> Result<Value, AppError> {
     Err(AppError::Message(format!(
         "Codex model catalog template `{CODEX_MODEL_CATALOG_TEMPLATE_SLUG}` not found. Please start Codex once so models_cache.json is available, or ensure the `codex` CLI is on PATH."
     )))
+}
+
+fn get_or_load_codex_model_catalog_template<F>(
+    cache: &OnceCell<Value>,
+    loader: F,
+) -> Result<Value, AppError>
+where
+    F: FnOnce() -> Result<Value, AppError>,
+{
+    cache.get_or_try_init(loader).cloned()
+}
+
+#[cfg(not(test))]
+fn load_codex_model_catalog_template() -> Result<Value, AppError> {
+    get_or_load_codex_model_catalog_template(
+        &CODEX_MODEL_CATALOG_TEMPLATE_CACHE,
+        load_codex_model_catalog_template_uncached,
+    )
+}
+
+#[cfg(test)]
+fn load_codex_model_catalog_template() -> Result<Value, AppError> {
+    load_codex_model_catalog_template_uncached()
 }
 
 fn codex_model_catalog_from_specs(
@@ -1489,7 +1604,7 @@ pub fn prepare_codex_config_text_with_model_catalog(
 /// Reverse of `prepare_codex_config_text_with_model_catalog`: read the
 /// cc-switch–maintained catalog file referenced by `~/.codex/config.toml` and
 /// convert it back into the simplified shape the frontend table uses:
-/// `{ "models": [{ "model", "displayName"?, "contextWindow"? }, ...] }`.
+/// `{ "models": [{ "model", "displayName"?, "contextWindow"?, hidden overrides... }, ...] }`.
 ///
 /// We only reverse-parse catalogs whose `model_catalog_json` path is the
 /// cc-switch–generated file (identified by filename
@@ -1497,14 +1612,14 @@ pub fn prepare_codex_config_text_with_model_catalog(
 /// left alone — surfacing its richer structure as the simplified table would
 /// be a downgrade we can't safely round-trip.
 ///
-/// `displayName` and `contextWindow` are omitted from the returned entry when
-/// the on-disk value matches the fallback that
+/// `displayName`, `contextWindow`, and `inputModalities` are omitted from the
+/// returned entry when the on-disk value matches the fallback that
 /// `codex_model_catalog_from_settings` injects for unset inputs (slug for
-/// display_name, `model_context_window` or 128_000 for context_window). This
-/// preserves the "user left it blank" intent across round-trip; an unavoidable
-/// edge case is that a user-typed value that happens to equal the fallback
-/// will also collapse to blank, but the next save writes the same fallback so
-/// behavior stays consistent.
+/// display_name, `model_context_window` or 128_000 for context_window, and the
+/// shared confirmed-text-only inference for input modalities). This preserves
+/// the "user left it blank" intent across round-trip; an unavoidable edge case
+/// is that a user-typed value that happens to equal the fallback also collapses
+/// to blank, but the next save writes the same fallback so behavior is stable.
 ///
 /// All failure modes (missing file, parse error, no `model_catalog_json`,
 /// entries without `slug`) collapse to `Ok(None)` so callers can treat this
@@ -1559,9 +1674,8 @@ pub(crate) fn resolve_cc_switch_catalog_path(
 }
 
 /// Pure reverse-parsing core: convert Codex catalog JSON text back into the
-/// frontend's simplified `{ models: [{ model, displayName?, contextWindow? }] }`
-/// shape. Returns `None` when the catalog is unparseable, has no `models`
-/// array, or yields zero valid entries.
+/// frontend's simplified model-mapping shape. Returns `None` when the catalog
+/// is unparseable, has no `models` array, or yields zero valid entries.
 fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) -> Option<Value> {
     let catalog: Value = serde_json::from_str(catalog_text).ok()?;
     let models = catalog.get("models").and_then(|m| m.as_array())?;
@@ -1601,8 +1715,7 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
         }
 
         // Preserve native-profile per-row overrides so a DB-SSOT-missing
-        // fallback round-trip doesn't silently drop them (they are ignored by
-        // the ProxyChat profile, so carrying them is harmless).
+        // fallback round-trip doesn't silently drop them.
         if let Some(parallel) = entry
             .get("supports_parallel_tool_calls")
             .and_then(|v| v.as_bool())
@@ -1615,7 +1728,8 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
                 .filter_map(|m| m.as_str())
                 .map(str::to_string)
                 .collect();
-            if !mods.is_empty() {
+            let inferred = codex_catalog_input_modalities(model, None);
+            if !mods.is_empty() && mods != inferred {
                 obj.insert("inputModalities".to_string(), json!(mods));
             }
         }
@@ -1849,13 +1963,137 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
 /// backend), `name = "OpenAI"` keeps Codex's `is_openai()` feature gates
 /// (web search, remote compaction), and `supports_websockets` restores the
 /// built-in default that custom entries otherwise lose.
-fn codex_unified_official_provider_table() -> toml_edit::Table {
+fn codex_official_provider_table(
+    base_url: Option<&str>,
+    supports_websockets: bool,
+) -> toml_edit::Table {
     let mut table = toml_edit::Table::new();
     table["name"] = toml_edit::value("OpenAI");
     table["requires_openai_auth"] = toml_edit::value(true);
-    table["supports_websockets"] = toml_edit::value(true);
+    table["supports_websockets"] = toml_edit::value(supports_websockets);
     table["wire_api"] = toml_edit::value("responses");
+    if let Some(base_url) = base_url {
+        table["base_url"] = toml_edit::value(base_url.trim_end_matches('/'));
+    }
     table
+}
+
+fn codex_unified_official_provider_table() -> toml_edit::Table {
+    codex_official_provider_table(None, true)
+}
+
+fn remove_codex_proxy_placeholders_from_providers(providers: &mut toml_edit::Table) {
+    for (_, item) in providers.iter_mut() {
+        if let Some(table) = item.as_table_mut() {
+            let should_remove = table
+                .get("experimental_bearer_token")
+                .and_then(|item| item.as_str())
+                == Some(CODEX_PROXY_AUTH_PLACEHOLDER);
+            if should_remove {
+                table.remove("experimental_bearer_token");
+            }
+        } else if let Some(table) = item.as_inline_table_mut() {
+            let should_remove = table
+                .get("experimental_bearer_token")
+                .and_then(|value| value.as_str())
+                == Some(CODEX_PROXY_AUTH_PLACEHOLDER);
+            if should_remove {
+                table.remove("experimental_bearer_token");
+            }
+        }
+    }
+}
+
+/// Project the built-in Codex official provider through the local proxy while
+/// keeping authentication owned by Codex itself.
+///
+/// The resulting custom provider explicitly opts into OpenAI authentication,
+/// so Codex forwards its existing ChatGPT login to the local `/responses`
+/// endpoint.  No API key or bearer placeholder is written to `auth.json`.
+pub fn apply_codex_official_proxy_route(
+    config_text: &str,
+    proxy_base_url: &str,
+) -> Result<String, AppError> {
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+
+    // A third-party takeover may have left the proxy placeholder in config.toml.
+    // The official route must use Codex's native OpenAI login instead.
+    doc.as_table_mut().remove("experimental_bearer_token");
+    doc["model_provider"] = toml_edit::value(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID);
+
+    let mut providers = match doc.as_table_mut().remove("model_providers") {
+        Some(item) => item.into_table().map_err(|_| {
+            AppError::Message(
+                "Invalid Codex config.toml: model_providers must be a table".to_string(),
+            )
+        })?,
+        None => {
+            let mut table = toml_edit::Table::new();
+            table.set_implicit(true);
+            table
+        }
+    };
+
+    // Clean only CC Switch's placeholder from every stale provider table. Real
+    // user bearer tokens are preserved, as are all unrelated provider fields.
+    remove_codex_proxy_placeholders_from_providers(&mut providers);
+
+    // The local proxy currently exposes HTTP/SSE, not Codex websocket routes.
+    let table = codex_official_provider_table(Some(proxy_base_url), false);
+
+    providers.insert(
+        CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID,
+        toml_edit::Item::Table(table),
+    );
+    doc["model_providers"] = toml_edit::Item::Table(providers);
+    Ok(doc.to_string())
+}
+
+/// Whether a live Codex config is the official route projected by CC Switch.
+pub fn codex_config_has_official_proxy_route(config_text: &str) -> bool {
+    if !config_text.contains(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID) {
+        return false;
+    }
+    config_text
+        .parse::<DocumentMut>()
+        .ok()
+        .and_then(|doc| {
+            doc.get("model_provider")
+                .and_then(|item| item.as_str())
+                .map(str::to_string)
+        })
+        .as_deref()
+        == Some(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
+}
+
+/// Remove only the official takeover route owned by CC Switch. This is a
+/// last-resort crash cleanup when no live backup or provider SSOT is usable.
+pub fn remove_codex_official_proxy_route(config_text: &str) -> Result<String, AppError> {
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+    if doc.get("model_provider").and_then(|item| item.as_str())
+        != Some(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
+    {
+        return Ok(config_text.to_string());
+    }
+
+    doc.as_table_mut().remove("model_provider");
+    if let Some(item) = doc.as_table_mut().remove("model_providers") {
+        let mut providers = item.into_table().map_err(|_| {
+            AppError::Message(
+                "Invalid Codex config.toml: model_providers must be a table".to_string(),
+            )
+        })?;
+        providers.remove(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID);
+        remove_codex_proxy_placeholders_from_providers(&mut providers);
+        if !providers.is_empty() {
+            doc["model_providers"] = toml_edit::Item::Table(providers);
+        }
+    }
+    Ok(doc.to_string())
 }
 
 fn table_matches_codex_unified_official_provider(table: &toml_edit::Table) -> bool {
@@ -2321,6 +2559,98 @@ mod tests {
             custom.get("wire_api").and_then(|v| v.as_str()),
             Some("responses")
         );
+    }
+
+    #[test]
+    fn official_proxy_route_uses_native_auth_and_local_responses_provider() {
+        let input = r#"model = "gpt-5.4"
+experimental_bearer_token = "PROXY_MANAGED"
+
+[mcp_servers.example]
+command = "example"
+"#;
+        let output = apply_codex_official_proxy_route(input, "http://127.0.0.1:15721/v1")
+            .expect("apply official proxy route");
+        let doc: toml::Value = toml::from_str(&output).expect("parse output");
+
+        assert_eq!(
+            doc.get("model_provider").and_then(toml::Value::as_str),
+            Some(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
+        );
+        assert!(doc.get("experimental_bearer_token").is_none());
+        assert!(
+            doc.get("mcp_servers").is_some(),
+            "unrelated config survives"
+        );
+
+        let provider = &doc["model_providers"][CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID];
+        assert_eq!(
+            provider.get("base_url").and_then(toml::Value::as_str),
+            Some("http://127.0.0.1:15721/v1")
+        );
+        assert_eq!(
+            provider
+                .get("requires_openai_auth")
+                .and_then(toml::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            provider
+                .get("supports_websockets")
+                .and_then(toml::Value::as_bool),
+            Some(false)
+        );
+        assert!(codex_config_has_official_proxy_route(&output));
+    }
+
+    #[test]
+    fn official_proxy_route_cleanup_only_removes_owned_provider() {
+        let projected =
+            apply_codex_official_proxy_route("model = \"gpt-5.4\"\n", "http://127.0.0.1:15721/v1")
+                .expect("project");
+        let cleaned = remove_codex_official_proxy_route(&projected).expect("clean");
+        let doc: toml::Value = toml::from_str(&cleaned).expect("parse cleaned");
+        assert!(doc.get("model_provider").is_none());
+        assert!(doc.get("model_providers").is_none());
+        assert_eq!(
+            doc.get("model").and_then(toml::Value::as_str),
+            Some("gpt-5.4")
+        );
+    }
+
+    #[test]
+    fn official_proxy_route_rejects_non_table_model_providers_without_panicking() {
+        for input in [
+            "model_providers = 3\n",
+            "[[model_providers]]\nname = \"broken\"\n",
+        ] {
+            let result = apply_codex_official_proxy_route(input, "http://127.0.0.1:15721/v1");
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn official_proxy_route_normalizes_inline_tables_and_cleans_stale_placeholder() {
+        let input = r#"model_provider = "rightcode"
+model_providers = { rightcode = { name = "RightCode", experimental_bearer_token = "PROXY_MANAGED" } }
+"#;
+        let projected = apply_codex_official_proxy_route(input, "http://127.0.0.1:15721/v1")
+            .expect("project inline provider table");
+        let projected_doc: toml::Value = toml::from_str(&projected).expect("parse projected");
+        assert!(projected_doc["model_providers"]["rightcode"]
+            .get("experimental_bearer_token")
+            .is_none());
+        assert!(projected_doc["model_providers"]
+            .get(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
+            .is_some());
+
+        let cleaned = remove_codex_official_proxy_route(&projected).expect("clean projected");
+        let cleaned_doc: toml::Value = toml::from_str(&cleaned).expect("parse cleaned");
+        assert!(cleaned_doc.get("model_provider").is_none());
+        assert!(cleaned_doc["model_providers"].get("rightcode").is_some());
+        assert!(cleaned_doc["model_providers"]
+            .get(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
+            .is_none());
     }
 
     #[test]
@@ -2916,6 +3246,68 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
+    fn dynamic_template_backfills_parser_required_fields_from_static() {
+        // Simulate a template cloned from a models_cache.json written by a
+        // Codex build whose ModelInfo lacks parser-side required fields such
+        // as `supports_reasoning_summaries` (codex >= 0.144.5 rejects the
+        // whole catalog file without it).
+        let mut template = json!({
+            "slug": "gpt-5.5",
+            "context_window": 272_000,
+            "supports_parallel_tool_calls": false
+        });
+        fill_template_fields_from_static(&mut template);
+
+        assert_eq!(
+            template
+                .get("supports_reasoning_summaries")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        // Keys already present in the dynamic template are never overwritten.
+        assert_eq!(
+            template
+                .get("supports_parallel_tool_calls")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            template.get("context_window").and_then(Value::as_u64),
+            Some(272_000)
+        );
+        // Optional capability fields must NOT be backfilled: for the catalog
+        // parser "missing" means the parser default, not the static
+        // template's value.
+        assert!(template.get("supports_search_tool").is_none());
+        assert!(template.get("supports_image_detail_original").is_none());
+        assert!(template.get("web_search_tool_type").is_none());
+    }
+
+    #[test]
+    fn proxy_chat_catalog_entries_carry_reasoning_summaries_flag() {
+        // End to end: a stale dynamic template, once backfilled, must yield
+        // catalog entries codex 0.144.5+ can parse.
+        let mut template = json!({ "slug": "gpt-5.5" });
+        fill_template_fields_from_static(&mut template);
+        let specs = vec![CodexCatalogModelSpec {
+            model: "k3".to_string(),
+            display_name: "Kimi K3".to_string(),
+            context_window: 262_144,
+            supports_parallel_tool_calls: None,
+            input_modalities: None,
+            base_instructions: None,
+        }];
+        let catalog =
+            codex_model_catalog_from_specs(&specs, &template, CodexCatalogToolProfile::ProxyChat);
+        assert_eq!(
+            catalog["models"][0]
+                .get("supports_reasoning_summaries")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
     fn codex_model_catalog_uses_provider_models_and_context() {
         let template = json!({
             "slug": "gpt-5.5",
@@ -3394,6 +3786,85 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
+    fn catalog_infers_image_input_independently_of_tool_profile() {
+        // Start from a deliberately text-only template to prove that every
+        // profile overwrites template defaults with shared capability logic.
+        let template = json!({
+            "input_modalities": ["text"],
+            "apply_patch_tool_type": "freeform"
+        });
+        let specs = vec![
+            CodexCatalogModelSpec {
+                model: "gpt-5.4".to_string(),
+                display_name: "GPT 5.4".to_string(),
+                context_window: 128_000,
+                supports_parallel_tool_calls: None,
+                input_modalities: None,
+                base_instructions: None,
+            },
+            CodexCatalogModelSpec {
+                model: "deepseek/deepseek-v4-pro".to_string(),
+                display_name: "DeepSeek V4 Pro".to_string(),
+                context_window: 128_000,
+                supports_parallel_tool_calls: None,
+                input_modalities: None,
+                base_instructions: None,
+            },
+            CodexCatalogModelSpec {
+                model: "glm-5.2v".to_string(),
+                display_name: "GLM 5.2V".to_string(),
+                context_window: 128_000,
+                supports_parallel_tool_calls: None,
+                input_modalities: None,
+                base_instructions: None,
+            },
+            CodexCatalogModelSpec {
+                model: "deepseek-v4-flash".to_string(),
+                display_name: "Explicit Visual Override".to_string(),
+                context_window: 128_000,
+                supports_parallel_tool_calls: None,
+                input_modalities: Some(vec!["text".to_string(), "image".to_string()]),
+                base_instructions: None,
+            },
+            CodexCatalogModelSpec {
+                model: "custom-text-alias".to_string(),
+                display_name: "Explicit Text Override".to_string(),
+                context_window: 128_000,
+                supports_parallel_tool_calls: None,
+                input_modalities: Some(vec!["text".to_string()]),
+                base_instructions: None,
+            },
+        ];
+
+        for profile in [
+            CodexCatalogToolProfile::ProxyChat,
+            CodexCatalogToolProfile::NativeResponses,
+            CodexCatalogToolProfile::Anthropic,
+        ] {
+            let catalog = codex_model_catalog_from_specs(&specs, &template, profile);
+            let models = catalog["models"].as_array().expect("models array");
+            let modalities = |slug: &str| {
+                models
+                    .iter()
+                    .find(|entry| entry["slug"] == slug)
+                    .and_then(|entry| entry.get("input_modalities"))
+                    .cloned()
+                    .unwrap_or(Value::Null)
+            };
+
+            assert_eq!(modalities("gpt-5.4"), json!(["text", "image"]));
+            assert_eq!(modalities("deepseek/deepseek-v4-pro"), json!(["text"]));
+            assert_eq!(modalities("glm-5.2v"), json!(["text", "image"]));
+            assert_eq!(
+                modalities("deepseek-v4-flash"),
+                json!(["text", "image"]),
+                "explicit provider metadata must override the text-only registry"
+            );
+            assert_eq!(modalities("custom-text-alias"), json!(["text"]));
+        }
+    }
+
+    #[test]
     fn native_responses_catalog_always_carries_base_instructions() {
         // Regression guard for the "missing field `base_instructions`" parse
         // error: Codex refuses to load a model catalog whose entries lack
@@ -3743,6 +4214,40 @@ web_search = "disabled"
     }
 
     #[test]
+    fn build_simplified_catalog_squashes_inferred_modalities_and_keeps_overrides() {
+        let catalog = r#"{
+            "models": [
+                { "slug": "gpt-5.4", "input_modalities": ["text", "image"] },
+                { "slug": "deepseek-v4-pro", "input_modalities": ["text"] },
+                { "slug": "gpt-text-override", "input_modalities": ["text"] },
+                { "slug": "deepseek-v4-flash", "input_modalities": ["text", "image"] }
+            ]
+        }"#;
+
+        let result = build_simplified_catalog_from_texts("", catalog).expect("entries");
+        let models = result.get("models").unwrap().as_array().unwrap();
+
+        assert!(
+            models[0].get("inputModalities").is_none(),
+            "GPT text+image is inferred and must not become a sticky hidden override"
+        );
+        assert!(
+            models[1].get("inputModalities").is_none(),
+            "confirmed text-only capability is inferred and must remain registry-driven"
+        );
+        assert_eq!(
+            models[2].get("inputModalities"),
+            Some(&json!(["text"])),
+            "an unknown model explicitly forced to text-only must round-trip"
+        );
+        assert_eq!(
+            models[3].get("inputModalities"),
+            Some(&json!(["text", "image"])),
+            "an explicit image override for a registered text-only model must round-trip"
+        );
+    }
+
+    #[test]
     fn build_simplified_catalog_returns_none_when_unparseable() {
         assert!(build_simplified_catalog_from_texts("", "not json").is_none());
         assert!(build_simplified_catalog_from_texts("", "{}").is_none());
@@ -3769,6 +4274,63 @@ web_search = "disabled"
                 .any(|candidate| candidate == Path::new("codex")),
             "codex CLI candidates must include the PATH entry"
         );
+    }
+
+    #[test]
+    fn codex_bundled_models_command_uses_expected_program_and_args() {
+        let command = codex_bundled_models_command(Path::new("codex"));
+        assert_eq!(command.get_program(), "codex");
+        assert_eq!(
+            command
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            ["debug", "models", "--bundled"]
+        );
+    }
+
+    #[test]
+    fn successful_model_catalog_template_load_is_cached() {
+        use std::cell::Cell;
+
+        let cache = OnceCell::new();
+        let calls = Cell::new(0);
+        let first = get_or_load_codex_model_catalog_template(&cache, || {
+            calls.set(calls.get() + 1);
+            Ok(json!({ "slug": "first" }))
+        })
+        .expect("first template load");
+        let second = get_or_load_codex_model_catalog_template(&cache, || {
+            calls.set(calls.get() + 1);
+            Ok(json!({ "slug": "second" }))
+        })
+        .expect("cached template load");
+
+        assert_eq!(first, json!({ "slug": "first" }));
+        assert_eq!(second, first);
+        assert_eq!(calls.get(), 1, "successful template should load only once");
+    }
+
+    #[test]
+    fn failed_model_catalog_template_load_can_retry() {
+        use std::cell::Cell;
+
+        let cache = OnceCell::new();
+        let calls = Cell::new(0);
+        let first = get_or_load_codex_model_catalog_template(&cache, || {
+            calls.set(calls.get() + 1);
+            Err(AppError::Message("temporary failure".to_string()))
+        });
+        assert!(first.is_err());
+
+        let second = get_or_load_codex_model_catalog_template(&cache, || {
+            calls.set(calls.get() + 1);
+            Ok(json!({ "slug": "recovered" }))
+        })
+        .expect("retry template load");
+
+        assert_eq!(second, json!({ "slug": "recovered" }));
+        assert_eq!(calls.get(), 2, "failed loads must not poison the cache");
     }
 
     #[test]
