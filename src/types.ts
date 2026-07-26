@@ -284,6 +284,7 @@ export interface VisibleApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  cursor: boolean;
 }
 
 // WebDAV 同步状态

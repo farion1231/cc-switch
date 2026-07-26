@@ -69,6 +69,10 @@ const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
     accent: "text-purple-600 dark:text-purple-400",
     iconBg: "bg-purple-500/10",
   },
+  cursor: {
+    accent: "text-blue-600 dark:text-blue-400",
+    iconBg: "bg-blue-500/10",
+  },
 };
 
 /**
@@ -133,11 +137,12 @@ type CacheWriteState = "ok" | "partial" | "na";
  */
 function deriveCacheWriteState(appTypes: string[]): CacheWriteState {
   if (appTypes.length === 0) return "ok";
+  const hasMixedProtocolApp = appTypes.includes("cursor");
   const inclusive = appTypes.filter((t) =>
     CACHE_INCLUSIVE_APP_TYPES.has(t),
   ).length;
-  if (inclusive === appTypes.length) return "na";
-  if (inclusive === 0) return "ok";
+  if (!hasMixedProtocolApp && inclusive === appTypes.length) return "na";
+  if (!hasMixedProtocolApp && inclusive === 0) return "ok";
   return "partial";
 }
 

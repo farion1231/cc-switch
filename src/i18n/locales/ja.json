@@ -885,7 +885,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "cursor": "Cursor"
   },
   "grokBuild": {
     "apiBackend": "API Backend",
@@ -1488,6 +1489,7 @@
     "status": "ステータス",
     "multiplier": "倍率",
     "requestModel": "リクエストモデル",
+    "upstreamModel": "アップストリームモデル",
     "responseModel": "レスポンスモデル",
     "noData": "データなし",
     "unknownProvider": "不明なプロバイダー",
@@ -1502,7 +1504,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "grokbuild": "Grok Build"
+      "grokbuild": "Grok Build",
+      "cursor": "Cursor"
     },
     "rawInputLabel": "原始",
     "dataSources": "データソース",
@@ -1513,7 +1516,8 @@
       "codex_session": "Codex セッション",
       "gemini_session": "Gemini セッション",
       "opencode_session": "OpenCode セッション",
-      "grok_session": "Grok Build セッション"
+      "grok_session": "Grok Build セッション",
+      "cursor_sidecar": "Cursor Sidecar"
     },
     "sessionSync": {
       "trigger": "セッションログを同期",

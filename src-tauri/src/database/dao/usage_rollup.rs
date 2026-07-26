@@ -123,13 +123,13 @@ impl Database {
         // 明细行的这两列可能为 NULL（历史/手工数据），归一为 ''。
         let aggregation_sql = format!(
             "INSERT OR REPLACE INTO usage_daily_rollups
-                (date, app_type, provider_id, model, request_model, pricing_model,
+                (date, app_type, provider_id, provider_name_snapshot, model, request_model, pricing_model,
                  request_count, success_count,
                  input_tokens, output_tokens,
                  cache_read_tokens, cache_creation_tokens,
                  input_token_semantics, total_cost_usd, avg_latency_ms)
             SELECT
-                d, a, p, m, rm, pm,
+                d, a, p, COALESCE(NULLIF(pn, ''), old.provider_name_snapshot), m, rm, pm,
                 COALESCE(old.request_count, 0) + new_req,
                 COALESCE(old.success_count, 0) + new_succ,
                 COALESCE({fresh_old_input}, 0) + new_in,
@@ -146,7 +146,9 @@ impl Database {
             FROM (
                 SELECT
                     date(l.created_at, 'unixepoch', 'localtime') as d,
-                    l.app_type as a, l.provider_id as p, l.model as m,
+                    l.app_type as a, l.provider_id as p,
+                    MAX(COALESCE(l.provider_name_snapshot, '')) as pn,
+                    l.model as m,
                     COALESCE(l.request_model, '') as rm,
                     COALESCE(l.pricing_model, '') as pm,
                     COUNT(*) as new_req,

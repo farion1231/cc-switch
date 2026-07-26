@@ -8,7 +8,12 @@ import {
   ProviderForm,
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
-import { openclawApi, providersApi, vscodeApi, type AppId } from "@/lib/api";
+import {
+  openclawApi,
+  providersApi,
+  vscodeApi,
+  type ManagedAppId,
+} from "@/lib/api";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -18,7 +23,7 @@ interface EditProviderDialogProps {
     provider: Provider;
     originalId?: string;
   }) => Promise<void> | void;
-  appId: AppId;
+  appId: ManagedAppId;
   isProxyTakeover?: boolean; // 代理接管模式下不读取 live（避免显示被接管后的代理配置）
 }
 

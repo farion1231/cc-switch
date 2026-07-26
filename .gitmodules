@@ -1,0 +1,3 @@
+[submodule "sidecars/cursor-byok"]
+	path = sidecars/cursor-byok
+	url = https://github.com/DedSecer/cursor-byok

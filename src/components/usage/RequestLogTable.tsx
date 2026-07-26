@@ -24,6 +24,7 @@ import {
   type LogFilters,
   type UsageRangeSelection,
 } from "@/types/usage";
+import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import {
@@ -196,6 +197,14 @@ export function RequestLogTable({
                 ) : (
                   logs.map((log) => {
                     const unpriced = isUnpricedUsage(log);
+                    const modelRoute = [
+                      log.requestModel,
+                      log.model,
+                      log.pricingModel,
+                    ].filter(
+                      (value, index, route): value is string =>
+                        Boolean(value) && value !== route[index - 1],
+                    );
                     return (
                       <TableRow key={log.requestId}>
                         <TableCell className="text-center whitespace-nowrap text-xs px-1.5">
@@ -210,29 +219,31 @@ export function RequestLogTable({
                           )}
                         </TableCell>
                         <TableCell className="text-center">
-                          {log.providerName || t("usage.unknownProvider")}
+                          {log.providerName ||
+                            log.providerId ||
+                            t("usage.unknownProvider")}
                         </TableCell>
-                        <TableCell className="text-center font-mono text-xs max-w-[200px]">
+                        <TableCell className="text-center font-mono text-xs max-w-[240px]">
                           <div
                             className="truncate"
-                            title={
-                              log.requestModel && log.requestModel !== log.model
-                                ? `${log.requestModel} → ${log.model}`
-                                : log.model
-                            }
+                            title={modelRoute.join(" → ")}
                           >
-                            {log.requestModel &&
-                            log.requestModel !== log.model ? (
-                              <span>
-                                {log.requestModel}
-                                <span className="text-muted-foreground">
-                                  {" → "}
-                                  {log.model}
+                            {modelRoute.map((routeModel, index) => (
+                              <span key={`${index}:${routeModel}`}>
+                                {index > 0 && (
+                                  <span className="text-muted-foreground">
+                                    {" → "}
+                                  </span>
+                                )}
+                                <span
+                                  className={cn(
+                                    index > 0 && "text-muted-foreground",
+                                  )}
+                                >
+                                  {routeModel}
                                 </span>
                               </span>
-                            ) : (
-                              log.model
-                            )}
+                            ))}
                           </div>
                         </TableCell>
                         <TableCell className="text-center px-1.5">

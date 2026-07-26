@@ -856,7 +856,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "cursor": "Cursor"
   },
   "grokBuild": {
     "apiBackend": "API Backend",
@@ -1460,6 +1461,7 @@
     "status": "狀態",
     "multiplier": "倍率",
     "requestModel": "請求模型",
+    "upstreamModel": "上游模型",
     "responseModel": "回傳模型",
     "noData": "暫無資料",
     "unknownProvider": "未知供應商",
@@ -1474,7 +1476,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "grokbuild": "Grok Build"
+      "grokbuild": "Grok Build",
+      "cursor": "Cursor"
     },
     "rawInputLabel": "原始",
     "dataSources": "資料來源",
@@ -1485,7 +1488,8 @@
       "codex_session": "Codex 工作階段日誌",
       "gemini_session": "Gemini 工作階段日誌",
       "opencode_session": "OpenCode 工作階段日誌",
-      "grok_session": "Grok Build 工作階段日誌"
+      "grok_session": "Grok Build 工作階段日誌",
+      "cursor_sidecar": "Cursor Sidecar"
     },
     "sessionSync": {
       "trigger": "同步工作階段日誌",

@@ -1,4 +1,4 @@
-// 前端统一使用 AppId 作为应用标识（与后端命令参数 `app` 一致）
+// AppId 包含 UI 可切换和使用统计可筛选的全部应用。
 export type AppId =
   | "claude"
   | "claude-desktop"
@@ -7,4 +7,8 @@ export type AppId =
   | "grokbuild"
   | "opencode"
   | "openclaw"
-  | "hermes";
+  | "hermes"
+  | "cursor";
+
+// 旧配置领域使用 ManagedAppId，Cursor 不参与通用 Provider/Proxy/MCP/Skill 状态机。
+export type ManagedAppId = Exclude<AppId, "cursor">;

@@ -44,7 +44,7 @@ export interface UseSettingsResult {
   acknowledgeRestart: () => void;
 }
 
-export type { SettingsFormState, ResolvedDirectories };
+export type { SettingsFormState, DirectoryAppId, ResolvedDirectories };
 
 const sanitizeDir = (value?: string | null): string | undefined => {
   if (!value) return undefined;

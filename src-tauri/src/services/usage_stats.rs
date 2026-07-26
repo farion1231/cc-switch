@@ -137,8 +137,7 @@ pub struct RequestLogDetail {
     pub output_tokens: u32,
     pub cache_read_tokens: u32,
     pub cache_creation_tokens: u32,
-    /// Internal storage semantics; omitted from the UI/API payload.
-    #[serde(skip)]
+    /// 输入 token 的事件级口径：0=legacy、1=包含缓存、2=仅新输入。
     pub input_token_semantics: i64,
     pub input_cost_usd: String,
     pub output_cost_usd: String,
@@ -209,7 +208,7 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
 /// authoritative mapping from placeholder to readable name.
 fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
     format!(
-        "COALESCE({provider_alias}.name, CASE {log_alias}.provider_id \
+        "COALESCE(NULLIF({log_alias}.provider_name_snapshot, ''), {provider_alias}.name, CASE {log_alias}.provider_id \
          WHEN '_session' THEN 'Claude (Session)' \
          WHEN '_codex_session' THEN 'Codex (Session)' \
          WHEN '_gemini_session' THEN 'Gemini (Session)' \
@@ -1885,22 +1884,23 @@ impl Database {
         let million = rust_decimal::Decimal::from(1_000_000u64);
 
         // 与 CostCalculator::calculate_for_app 保持一致的计算逻辑：
-        // 1. 历史 cache-inclusive 行只包含 cache read；新 total 行还包含 cache write。
-        // 2. Claude/Anthropic 的 input_tokens 已经是 fresh input，不能再次扣减
-        // 3. 各项成本是基础成本（不含倍率），倍率只作用于最终总价
+        // 1. FRESH/TOTAL 是事件级硬契约，不依赖 app_type；Cursor 可混合两种协议。
+        // 2. 仅 legacy 行按旧应用白名单推断是否包含 cache read。
+        // 3. 各项成本是基础成本（不含倍率），倍率只作用于最终总价。
         let cache_inclusive_app =
             crate::services::sql_helpers::is_cache_inclusive_app(log.app_type.as_str());
-        let billable_input_tokens =
-            if !cache_inclusive_app || log.input_token_semantics == INPUT_TOKEN_SEMANTICS_FRESH {
-                log.input_tokens as u64
-            } else if log.input_token_semantics == INPUT_TOKEN_SEMANTICS_TOTAL {
-                (log.input_tokens as u64)
-                    .saturating_sub(log.cache_read_tokens as u64)
-                    .saturating_sub(log.cache_creation_tokens as u64)
-            } else {
-                // v12 and earlier: input included cache reads but excluded cache writes.
-                (log.input_tokens as u64).saturating_sub(log.cache_read_tokens as u64)
-            };
+        let billable_input_tokens = if log.input_token_semantics == INPUT_TOKEN_SEMANTICS_FRESH {
+            log.input_tokens as u64
+        } else if log.input_token_semantics == INPUT_TOKEN_SEMANTICS_TOTAL {
+            (log.input_tokens as u64)
+                .saturating_sub(log.cache_read_tokens as u64)
+                .saturating_sub(log.cache_creation_tokens as u64)
+        } else if cache_inclusive_app {
+            // v12 及更早版本：input 包含 cache read，但不包含 cache write。
+            (log.input_tokens as u64).saturating_sub(log.cache_read_tokens as u64)
+        } else {
+            log.input_tokens as u64
+        };
         let input_cost =
             rust_decimal::Decimal::from(billable_input_tokens) * pricing.input / million;
         let output_cost =
@@ -2402,6 +2402,7 @@ mod tests {
         conn.execute(
             "CREATE TABLE proxy_request_logs (
                 request_id TEXT PRIMARY KEY,
+                provider_name_snapshot TEXT,
                 app_type TEXT NOT NULL,
                 model TEXT NOT NULL,
                 input_tokens INTEGER NOT NULL,

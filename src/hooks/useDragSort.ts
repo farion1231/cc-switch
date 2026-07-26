@@ -11,9 +11,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import type { Provider } from "@/types";
-import { providersApi, type AppId } from "@/lib/api";
+import { providersApi, type ManagedAppId } from "@/lib/api";
 
-export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
+export function useDragSort(
+  providers: Record<string, Provider>,
+  appId: ManagedAppId,
+) {
   const queryClient = useQueryClient();
   const { t, i18n } = useTranslation();
 

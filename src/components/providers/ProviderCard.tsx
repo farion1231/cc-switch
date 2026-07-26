@@ -6,7 +6,7 @@ import type {
   DraggableSyntheticListeners,
 } from "@dnd-kit/core";
 import type { Provider } from "@/types";
-import type { AppId } from "@/lib/api";
+import type { ManagedAppId } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
@@ -40,7 +40,7 @@ interface DragHandleProps {
 interface ProviderCardProps {
   provider: Provider;
   isCurrent: boolean;
-  appId: AppId;
+  appId: ManagedAppId;
   isInConfig?: boolean; // OpenCode: 是否已添加到 opencode.json
   isOmo?: boolean;
   isOmoSlim?: boolean;
@@ -70,7 +70,7 @@ interface ProviderCardProps {
 }
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
-function isOfficialProvider(provider: Provider, appId: AppId): boolean {
+function isOfficialProvider(provider: Provider, appId: ManagedAppId): boolean {
   if (provider.category === "official") {
     return true;
   }

@@ -18,7 +18,7 @@ import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Provider } from "@/types";
-import type { AppId } from "@/lib/api";
+import type { ManagedAppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { useDragSort } from "@/hooks/useDragSort";
@@ -51,7 +51,7 @@ import { isTextEditableTarget } from "@/utils/domUtils";
 interface ProviderListProps {
   providers: Record<string, Provider>;
   currentProviderId: string;
-  appId: AppId;
+  appId: ManagedAppId;
   onSwitch: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
@@ -545,7 +545,7 @@ export function ProviderList({
 interface SortableProviderCardProps {
   provider: Provider;
   isCurrent: boolean;
-  appId: AppId;
+  appId: ManagedAppId;
   isInConfig: boolean;
   isOmo: boolean;
   isOmoSlim: boolean;

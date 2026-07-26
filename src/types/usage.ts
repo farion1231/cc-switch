@@ -21,6 +21,8 @@ export interface RequestLog {
   outputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
+  /** 0=legacy（按应用推断）、1=输入包含缓存、2=输入仅含新 token */
+  inputTokenSemantics: number;
   inputCostUsd: string;
   outputCostUsd: string;
   cacheReadCostUsd: string;
@@ -174,7 +176,13 @@ export interface UsageRangeSelection {
  * `opencode` / `openclaw` / `hermes` have no proxy handler at all — they
  * appear only as managed apps elsewhere.
  */
-export type AppType = "claude" | "codex" | "gemini" | "grokbuild" | "opencode";
+export type AppType =
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "grokbuild"
+  | "opencode"
+  | "cursor";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -184,6 +192,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "gemini",
   "grokbuild",
   "opencode",
+  "cursor",
 ];
 
 /**
@@ -204,19 +213,39 @@ export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
   "grokbuild",
 ]);
 
+export const INPUT_TOKEN_SEMANTICS = {
+  LEGACY: 0,
+  TOTAL: 1,
+  FRESH: 2,
+} as const;
+
 /** Subset of request-log fields needed to derive cache-normalized input. */
 export interface CacheNormalizableLog {
   appType: string;
   inputTokens: number;
   cacheReadTokens: number;
+  cacheCreationTokens: number;
+  inputTokenSemantics: number;
 }
 
 /**
- * For a single request log, return the input token count with cache reads
- * removed. Anthropic-style providers already report `inputTokens` without
- * cache, so they pass through unchanged.
+ * 返回单条事件去除缓存后的新输入 token。
+ *
+ * 新日志优先使用事件级口径；只有 legacy 日志才按应用白名单推断，
+ * 因而 Cursor 可在同一应用下安全混用 OpenAI 与 Anthropic 协议。
  */
 export function getFreshInputTokens(log: CacheNormalizableLog): number {
+  if (log.inputTokenSemantics === INPUT_TOKEN_SEMANTICS.FRESH) {
+    return log.inputTokens;
+  }
+
+  if (log.inputTokenSemantics === INPUT_TOKEN_SEMANTICS.TOTAL) {
+    const cached = log.cacheReadTokens + log.cacheCreationTokens;
+    return log.inputTokens >= cached
+      ? log.inputTokens - cached
+      : log.inputTokens;
+  }
+
   if (
     CACHE_INCLUSIVE_APP_TYPES.has(log.appType) &&
     log.inputTokens >= log.cacheReadTokens
