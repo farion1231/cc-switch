@@ -737,3 +737,88 @@ jobs:
         run: |
           set -euxo pipefail
           gh release upload "$GITHUB_REF_NAME" latest.json --clobber --repo "$GITHUB_REPOSITORY"
+
+  # Mirror the release assets to Cloudflare R2 so ccswitch.io/download can
+  # serve them directly (dl.ccswitch.io). Skips itself when the R2 secrets
+  # are not configured (e.g. on forks). Required secrets:
+  #   R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
+  sync-to-r2:
+    name: Sync release to R2
+    runs-on: ubuntu-22.04
+    needs: assemble-latest-json
+    permissions:
+      contents: read
+    env:
+      R2_BUCKET: cc-switch-releases
+      R2_PUBLIC_BASE_URL: https://dl.ccswitch.io
+      KEEP_VERSIONS: "5"
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      # aws-cli >= 2.23 defaults to CRC checksums that R2 rejects.
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+      R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+    steps:
+      - name: Check R2 secrets
+        id: r2
+        run: |
+          if [ -n "$AWS_ACCESS_KEY_ID" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "R2 secrets not configured; skipping download mirror sync."
+          fi
+
+      - name: Checkout scripts
+        if: steps.r2.outputs.configured == 'true'
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: scripts
+
+      - name: Download release assets
+        if: steps.r2.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p r2-assets
+          gh release download "$GITHUB_REF_NAME" --dir r2-assets --repo "$GITHUB_REPOSITORY"
+          ls -la r2-assets
+
+      - name: Generate download manifest
+        if: steps.r2.outputs.configured == 'true'
+        run: node scripts/generate-download-manifest.mjs r2-assets "$GITHUB_REF_NAME" "$R2_PUBLIC_BASE_URL" manifest.json
+
+      - name: Upload assets and manifest to R2
+        if: steps.r2.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          # Versioned asset paths never change — cache hard at the edge.
+          aws s3 cp r2-assets "s3://$R2_BUCKET/$GITHUB_REF_NAME/" \
+            --recursive \
+            --exclude "*.sig" --exclude "*.tar.gz" --exclude "latest.json" \
+            --cache-control "public, max-age=31536000, immutable" \
+            --endpoint-url "$R2_ENDPOINT"
+          # The manifest is replaced on every release — keep edge cache short.
+          aws s3 cp manifest.json "s3://$R2_BUCKET/manifest.json" \
+            --content-type "application/json" \
+            --cache-control "public, max-age=300" \
+            --endpoint-url "$R2_ENDPOINT"
+
+      - name: Prune old versions
+        if: steps.r2.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          versions=$(aws s3 ls "s3://$R2_BUCKET/" --endpoint-url "$R2_ENDPOINT" \
+            | awk '$1 == "PRE" {print $2}' | tr -d '/' | grep -E '^v[0-9]' | sort -V || true)
+          count=$(printf '%s\n' "$versions" | grep -c . || true)
+          if [ "$count" -le "$KEEP_VERSIONS" ]; then
+            echo "Nothing to prune ($count versions, keeping up to $KEEP_VERSIONS)."
+            exit 0
+          fi
+          printf '%s\n' "$versions" | head -n "-$KEEP_VERSIONS" | while read -r old; do
+            [ -n "$old" ] || continue
+            echo "Pruning s3://$R2_BUCKET/$old/"
+            aws s3 rm "s3://$R2_BUCKET/$old/" --recursive --endpoint-url "$R2_ENDPOINT"
+          done
