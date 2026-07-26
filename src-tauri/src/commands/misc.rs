@@ -2961,7 +2961,7 @@ fn build_unix_claude_launch_script(
         .or(claude_config_dir)
         .map(|config_dir| {
             format!(
-                "export CLAUDE_CONFIG_DIR={} && {claude_command}",
+                "env CLAUDE_CONFIG_DIR={} {claude_command}",
                 shell_single_quote(config_dir)
             )
         })
@@ -4184,7 +4184,7 @@ mod tests {
 
         let launch_command = build_claude_command_line(
             "/bin/bash",
-            "export CLAUDE_CONFIG_DIR='/tmp/.claude-profiles/api' && claude",
+            "env CLAUDE_CONFIG_DIR='/tmp/.claude-profiles/api' claude",
             Some(Path::new("/tmp/project")),
         );
         assert!(script.contains(&launch_command));
@@ -4193,6 +4193,26 @@ mod tests {
             .any(|line| line.starts_with("export CLAUDE_CONFIG_DIR=")));
         assert!(!script.contains("--settings"));
         assert!(!script.contains("claude_"));
+    }
+
+    #[test]
+    fn unix_profile_dir_mode_uses_portable_env_assignment_for_fish() {
+        let script = build_unix_claude_launch_script(
+            None,
+            Path::new("/tmp/launcher.sh"),
+            Some(Path::new("/tmp/project")),
+            Some("/tmp/.claude-profiles/api"),
+            None,
+            "/opt/homebrew/bin/fish",
+        );
+
+        let launch_command = build_claude_command_line(
+            "/opt/homebrew/bin/fish",
+            "env CLAUDE_CONFIG_DIR='/tmp/.claude-profiles/api' claude",
+            Some(Path::new("/tmp/project")),
+        );
+        assert!(script.contains(&launch_command));
+        assert!(!script.contains("export CLAUDE_CONFIG_DIR="));
     }
 
     #[test]
@@ -4208,7 +4228,7 @@ mod tests {
 
         let launch_command = build_claude_command_line(
             "/bin/bash",
-            "export CLAUDE_CONFIG_DIR='/tmp/.claude-profiles/api' && claude --settings '/tmp/claude_provider.json'",
+            "env CLAUDE_CONFIG_DIR='/tmp/.claude-profiles/api' claude --settings '/tmp/claude_provider.json'",
             Some(Path::new("/tmp/project")),
         );
         assert!(script.contains(&launch_command));
@@ -4264,7 +4284,7 @@ mod tests {
 
         let launch_command = build_claude_command_line(
             "/bin/bash",
-            "export CLAUDE_CONFIG_DIR='/tmp/.configured-claude' && claude --settings '/tmp/claude_provider.json'",
+            "env CLAUDE_CONFIG_DIR='/tmp/.configured-claude' claude --settings '/tmp/claude_provider.json'",
             Some(Path::new("/tmp/project")),
         );
         assert!(script.contains(&launch_command));
