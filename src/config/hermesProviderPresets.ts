@@ -171,11 +171,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "PackyCode",
-    websiteUrl: "https://www.packyapi.com",
-    apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
+    websiteUrl: "https://www.packyapi.ai",
+    apiKeyUrl: "https://www.packyapi.ai/register?aff=cc-switch",
     settingsConfig: {
       name: "packycode",
-      base_url: "https://www.packyapi.com",
+      base_url: "https://www.packyapi.ai",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -213,11 +213,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "APINebula",
-    websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/VjM74M",
+    websiteUrl: "https://apinebula.ai",
+    apiKeyUrl: "https://apinebula.ai/VjM74M",
     settingsConfig: {
       name: "apinebula",
-      base_url: "https://apinebula.com/v1",
+      base_url: "https://apinebula.ai/v1",
       api_key: "",
       api_mode: "chat_completions",
       models: [
@@ -335,23 +335,27 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "Shengsuanyun",
-    nameKey: "providerForm.presets.shengsuanyun",
-    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
-    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    name: "AICoding",
+    websiteUrl: "https://aicoding.sh",
+    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
     settingsConfig: {
-      name: "shengsuanyun",
-      base_url: "https://router.shengsuanyun.com/api/v1",
+      name: "aicoding",
+      base_url: "https://api.aicoding.sh",
       api_key: "",
-      api_mode: "chat_completions",
-      models: [{ id: "openai/gpt-5.5", name: "GPT-5.5" }],
+      api_mode: "anthropic_messages",
+      models: [
+        { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
+        { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
+        { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
+      ],
     },
-    category: "aggregator",
+    category: "third_party",
     isPartner: true,
-    partnerPromotionKey: "shengsuanyun",
-    icon: "shengsuanyun",
+    partnerPromotionKey: "aicoding",
+    icon: "aicoding",
+    iconColor: "#000000",
     suggestedDefaults: {
-      model: { default: "openai/gpt-5.5", provider: "shengsuanyun" },
+      model: { default: "claude-opus-4-8", provider: "aicoding" },
     },
   },
   {
@@ -376,6 +380,26 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#5B7FFF",
     suggestedDefaults: {
       model: { default: "claude-opus-4-8", provider: "aigocode" },
+    },
+  },
+  {
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    settingsConfig: {
+      name: "shengsuanyun",
+      base_url: "https://router.shengsuanyun.com/api/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [{ id: "openai/gpt-5.5", name: "GPT-5.5" }],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
+    suggestedDefaults: {
+      model: { default: "openai/gpt-5.5", provider: "shengsuanyun" },
     },
   },
   {
@@ -810,11 +834,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "RightCode",
-    websiteUrl: "https://www.right.codes",
-    apiKeyUrl: "https://www.right.codes/register?aff=CCSWITCH",
+    websiteUrl: "https://www.rightapi.ai",
+    apiKeyUrl: "https://www.rightapi.ai/register?aff=CCSWITCH",
     settingsConfig: {
       name: "rightcode",
-      base_url: "https://www.right.codes/claude",
+      base_url: "https://www.rightapi.ai/claude",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -946,7 +970,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     name: "SudoCode.chat",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
-      "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
     settingsConfig: {
       name: "sudocode",
       base_url: "https://api.sudocode.chat/v1",

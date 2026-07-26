@@ -187,10 +187,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
 
   {
     name: "PackyCode",
-    websiteUrl: "https://www.packyapi.com",
-    apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
+    websiteUrl: "https://www.packyapi.ai",
+    apiKeyUrl: "https://www.packyapi.ai/register?aff=cc-switch",
     settingsConfig: {
-      baseUrl: "https://www.packyapi.com",
+      baseUrl: "https://www.packyapi.ai",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -268,10 +268,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "APINebula",
-    websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/VjM74M",
+    websiteUrl: "https://apinebula.ai",
+    apiKeyUrl: "https://apinebula.ai/VjM74M",
     settingsConfig: {
-      baseUrl: "https://apinebula.com/v1",
+      baseUrl: "https://apinebula.ai/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
@@ -467,33 +467,33 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "Shengsuanyun",
-    nameKey: "providerForm.presets.shengsuanyun",
-    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
-    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    name: "AICoding",
+    websiteUrl: "https://aicoding.sh",
+    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
     settingsConfig: {
-      baseUrl: "https://router.shengsuanyun.com/api",
+      baseUrl: "https://api.aicoding.sh",
       apiKey: "",
       api: "anthropic-messages",
       models: [
         {
-          id: "anthropic/claude-opus-4.8",
+          id: "claude-opus-4-8",
           name: "Claude Opus 4.8",
           contextWindow: 1000000,
           cost: { input: 5, output: 25 },
         },
         {
-          id: "anthropic/claude-sonnet-5",
+          id: "claude-sonnet-5",
           name: "Claude Sonnet 5",
           contextWindow: 1000000,
           cost: { input: 3, output: 15 },
         },
       ],
     },
-    category: "aggregator",
+    category: "third_party",
     isPartner: true,
-    partnerPromotionKey: "shengsuanyun",
-    icon: "shengsuanyun",
+    partnerPromotionKey: "aicoding",
+    icon: "aicoding",
+    iconColor: "#000000",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -503,12 +503,12 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     suggestedDefaults: {
       model: {
-        primary: "shengsuanyun/anthropic/claude-opus-4.8",
-        fallbacks: ["shengsuanyun/anthropic/claude-sonnet-5"],
+        primary: "aicoding/claude-opus-4-8",
+        fallbacks: ["aicoding/claude-sonnet-5"],
       },
       modelCatalog: {
-        "shengsuanyun/anthropic/claude-opus-4.8": { alias: "Opus" },
-        "shengsuanyun/anthropic/claude-sonnet-5": { alias: "Sonnet" },
+        "aicoding/claude-opus-4-8": { alias: "Opus" },
+        "aicoding/claude-sonnet-5": { alias: "Sonnet" },
       },
     },
   },
@@ -555,6 +555,52 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       modelCatalog: {
         "aigocode/claude-opus-4-8": { alias: "Opus" },
         "aigocode/claude-sonnet-5": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    settingsConfig: {
+      baseUrl: "https://router.shengsuanyun.com/api",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "anthropic/claude-opus-4.8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+        {
+          id: "anthropic/claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15 },
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "shengsuanyun/anthropic/claude-opus-4.8",
+        fallbacks: ["shengsuanyun/anthropic/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "shengsuanyun/anthropic/claude-opus-4.8": { alias: "Opus" },
+        "shengsuanyun/anthropic/claude-sonnet-5": { alias: "Sonnet" },
       },
     },
   },
@@ -1219,10 +1265,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "RightCode",
-    websiteUrl: "https://www.right.codes",
-    apiKeyUrl: "https://www.right.codes/register?aff=CCSWITCH",
+    websiteUrl: "https://www.rightapi.ai",
+    apiKeyUrl: "https://www.rightapi.ai/register?aff=CCSWITCH",
     settingsConfig: {
-      baseUrl: "https://www.right.codes/claude",
+      baseUrl: "https://www.rightapi.ai/claude",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -1478,7 +1524,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     name: "SudoCode.chat",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
-      "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
     settingsConfig: {
       baseUrl: "https://api.sudocode.chat/v1",
       apiKey: "",

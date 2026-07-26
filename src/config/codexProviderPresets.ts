@@ -196,19 +196,16 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   },
   {
     name: "PackyCode",
-    websiteUrl: "https://www.packyapi.com",
-    apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
+    websiteUrl: "https://www.packyapi.ai",
+    apiKeyUrl: "https://www.packyapi.ai/register?aff=cc-switch",
     category: "third_party",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "packycode",
-      "https://www.packyapi.com/v1",
+      "https://www.packyapi.ai/v1",
       "gpt-5.5",
     ),
-    endpointCandidates: [
-      "https://www.packyapi.com/v1",
-      "https://api-slb.packyapi.com/v1",
-    ],
+    endpointCandidates: ["https://www.packyapi.ai/v1"],
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "packycode", // 促销信息 i18n key
     icon: "packycode",
@@ -231,8 +228,8 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   },
   {
     name: "APINebula",
-    websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/VjM74M",
+    websiteUrl: "https://apinebula.ai",
+    apiKeyUrl: "https://apinebula.ai/VjM74M",
     category: "third_party",
     auth: generateThirdPartyAuth(""),
     config: `model_provider = "custom"
@@ -243,10 +240,10 @@ disable_response_storage = true
 
 [model_providers.custom]
 name = "APINebula"
-base_url = "https://apinebula.com/v1"
+base_url = "https://apinebula.ai/v1"
 wire_api = "responses"
 requires_openai_auth = true`,
-    endpointCandidates: ["https://apinebula.com/v1"],
+    endpointCandidates: ["https://apinebula.ai/v1"],
     apiFormat: "openai_responses",
     isPartner: true,
     partnerPromotionKey: "apinebula",
@@ -336,20 +333,20 @@ requires_openai_auth = true`,
     icon: "unity2",
   },
   {
-    name: "Shengsuanyun",
-    nameKey: "providerForm.presets.shengsuanyun",
-    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
-    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    name: "AICoding",
+    websiteUrl: "https://aicoding.sh",
+    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
-      "shengsuanyun",
-      "https://router.shengsuanyun.com/api/v1",
-      "openai/gpt-5.5",
+      "aicoding",
+      "https://api.aicoding.sh",
+      "gpt-5.5",
     ),
-    category: "aggregator",
+    endpointCandidates: ["https://api.aicoding.sh"],
     isPartner: true,
-    partnerPromotionKey: "shengsuanyun",
-    icon: "shengsuanyun",
+    partnerPromotionKey: "aicoding",
+    icon: "aicoding",
+    iconColor: "#000000",
   },
   {
     name: "AIGoCode",
@@ -367,6 +364,22 @@ requires_openai_auth = true`,
     partnerPromotionKey: "aigocode", // 促销信息 i18n key
     icon: "aigocode",
     iconColor: "#5B7FFF",
+  },
+  {
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "shengsuanyun",
+      "https://router.shengsuanyun.com/api/v1",
+      "openai/gpt-5.5",
+    ),
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
   },
   {
     name: "SubRouter",
@@ -728,12 +741,12 @@ requires_openai_auth = true`,
   },
   {
     name: "RightCode",
-    websiteUrl: "https://www.right.codes",
-    apiKeyUrl: "https://www.right.codes/register?aff=CCSWITCH",
+    websiteUrl: "https://www.rightapi.ai",
+    apiKeyUrl: "https://www.rightapi.ai/register?aff=CCSWITCH",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "rightcode",
-      "https://right.codes/codex/v1",
+      "https://www.rightapi.ai/codex/v1",
       "gpt-5.5",
     ),
     category: "third_party",
@@ -835,7 +848,7 @@ requires_openai_auth = true`,
     name: "SudoCode.chat",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
-      "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
     category: "third_party",
     auth: generateThirdPartyAuth(""),
     config: `model_provider = "custom"

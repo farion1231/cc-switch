@@ -359,13 +359,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
 
   {
     name: "PackyCode",
-    websiteUrl: "https://www.packyapi.com",
-    apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
+    websiteUrl: "https://www.packyapi.ai",
+    apiKeyUrl: "https://www.packyapi.ai/register?aff=cc-switch",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "PackyCode",
       options: {
-        baseURL: "https://www.packyapi.com/v1",
+        baseURL: "https://www.packyapi.ai/v1",
         apiKey: "",
         setCacheKey: true,
       },
@@ -416,13 +416,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "APINebula",
-    websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/VjM74M",
+    websiteUrl: "https://apinebula.ai",
+    apiKeyUrl: "https://apinebula.ai/VjM74M",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "APINebula",
       options: {
-        baseURL: "https://apinebula.com/v1",
+        baseURL: "https://apinebula.ai/v1",
         apiKey: "",
         setCacheKey: true,
       },
@@ -560,27 +560,27 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "Shengsuanyun",
-    nameKey: "providerForm.presets.shengsuanyun",
-    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
-    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    name: "AICoding",
+    websiteUrl: "https://aicoding.sh",
+    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
-      name: "Shengsuanyun",
+      name: "AICoding",
       options: {
-        baseURL: "https://router.shengsuanyun.com/api/v1",
+        baseURL: "https://api.aicoding.sh",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "anthropic/claude-opus-4.8": { name: "Claude Opus 4.8" },
-        "anthropic/claude-sonnet-5": { name: "Claude Sonnet 5" },
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
+        "claude-opus-4-8": { name: "Claude Opus 4.8" },
       },
     },
-    category: "aggregator",
+    category: "third_party",
     isPartner: true,
-    partnerPromotionKey: "shengsuanyun",
-    icon: "shengsuanyun",
+    partnerPromotionKey: "aicoding",
+    icon: "aicoding",
+    iconColor: "#000000",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -611,6 +611,36 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     partnerPromotionKey: "aigocode",
     icon: "aigocode",
     iconColor: "#5B7FFF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "Shengsuanyun",
+      options: {
+        baseURL: "https://router.shengsuanyun.com/api/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "anthropic/claude-opus-4.8": { name: "Claude Opus 4.8" },
+        "anthropic/claude-sonnet-5": { name: "Claude Sonnet 5" },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -1009,13 +1039,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "RightCode",
-    websiteUrl: "https://www.right.codes",
-    apiKeyUrl: "https://www.right.codes/register?aff=CCSWITCH",
+    websiteUrl: "https://www.rightapi.ai",
+    apiKeyUrl: "https://www.rightapi.ai/register?aff=CCSWITCH",
     settingsConfig: {
       npm: "@ai-sdk/openai",
       name: "RightCode",
       options: {
-        baseURL: "https://right.codes/codex/v1",
+        baseURL: "https://www.rightapi.ai/codex/v1",
         apiKey: "",
         setCacheKey: true,
       },
@@ -1187,7 +1217,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     name: "SudoCode.chat",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
-      "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
     settingsConfig: {
       npm: "@ai-sdk/openai",
       name: "SudoCode.chat",
