@@ -21,6 +21,7 @@ use crate::store::AppState;
 
 const CLAUDE_SCIENCE_BIN_ENV: &str = "CLAUDE_SCIENCE_BIN";
 const MANAGED_PROFILE_DIR: &str = "claude-science-proxy";
+const SCIENCE_HOME_DIR: &str = ".claude-science";
 const SCIENCE_PROXY_USER_ID: &str = "00000000-0000-4000-8000-000000157210";
 const SCIENCE_PROXY_ORG_ID: &str = "00000000-0000-4000-8000-000000157211";
 const SCIENCE_PROXY_EMAIL: &str = "cc-switch-proxy@localhost.invalid";
@@ -393,11 +394,11 @@ fn run_cli_with_env(
 }
 
 fn managed_profile_paths() -> ScienceProfilePaths {
-    managed_profile_paths_for_app_config_dir(&crate::config::get_app_config_dir())
+    managed_profile_paths_for_science_home(&crate::config::get_home_dir().join(SCIENCE_HOME_DIR))
 }
 
-fn managed_profile_paths_for_app_config_dir(app_config_dir: &Path) -> ScienceProfilePaths {
-    let data_dir = app_config_dir.join(MANAGED_PROFILE_DIR);
+fn managed_profile_paths_for_science_home(science_home: &Path) -> ScienceProfilePaths {
+    let data_dir = science_home.join(MANAGED_PROFILE_DIR);
     let auth_dir = data_dir.clone();
     let config_path = data_dir.join("config.toml");
 
@@ -408,8 +409,36 @@ fn managed_profile_paths_for_app_config_dir(app_config_dir: &Path) -> SciencePro
     }
 }
 
+fn legacy_managed_profile_dir() -> PathBuf {
+    crate::config::get_app_config_dir().join(MANAGED_PROFILE_DIR)
+}
+
+/// Pre-relocation builds kept the managed profile under the cc-switch config
+/// dir (`~/.cc-switch/claude-science-proxy`). Since Claude Science 0.1.25,
+/// sandboxed job spawns (pip/env provisioning, MCP servers) are seatbelt-
+/// restricted to Claude Science's own home (`~/.claude-science`); a data dir
+/// outside that tree gets `deny(1) file-read-data`, which crashes pip at
+/// `os.getcwd()` and surfaces as "1 environment failed". Move the profile
+/// into Science's home, best-effort; on failure a fresh profile is created.
+fn migrate_legacy_profile(profile: &ScienceProfilePaths) {
+    migrate_legacy_profile_dir(&legacy_managed_profile_dir(), &profile.data_dir);
+}
+
+fn migrate_legacy_profile_dir(legacy: &Path, target: &Path) {
+    if legacy == target || !legacy.exists() || target.exists() {
+        return;
+    }
+    if let Some(parent) = target.parent() {
+        if fs::create_dir_all(parent).is_err() {
+            return;
+        }
+    }
+    let _ = fs::rename(legacy, target);
+}
+
 fn prepare_managed_profile() -> Result<ScienceProfilePaths, String> {
     let profile = managed_profile_paths();
+    migrate_legacy_profile(&profile);
     prepare_profile_at(&profile)?;
     Ok(profile)
 }
@@ -901,15 +930,50 @@ mod tests {
     }
 
     #[test]
-    fn managed_profile_paths_stay_under_cc_switch_config_dir() {
-        let root = PathBuf::from("/tmp/cc-switch-test-config");
-        let paths = managed_profile_paths_for_app_config_dir(&root);
+    fn managed_profile_paths_stay_under_claude_science_home() {
+        let root = PathBuf::from("/tmp/claude-science-test-home");
+        let paths = managed_profile_paths_for_science_home(&root);
 
         assert_eq!(paths.data_dir, root.join(MANAGED_PROFILE_DIR));
         assert_eq!(paths.auth_dir, root.join(MANAGED_PROFILE_DIR));
         assert_eq!(
             paths.config_path,
             root.join(MANAGED_PROFILE_DIR).join("config.toml")
+        );
+    }
+
+    #[test]
+    fn migrate_legacy_profile_moves_dir_when_target_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let legacy = tmp.path().join("cc-switch").join(MANAGED_PROFILE_DIR);
+        let target = tmp.path().join("science-home").join(MANAGED_PROFILE_DIR);
+        fs::create_dir_all(&legacy).expect("legacy dir");
+        fs::write(legacy.join("marker.txt"), b"state").expect("legacy marker");
+
+        migrate_legacy_profile_dir(&legacy, &target);
+
+        assert!(!legacy.exists());
+        assert_eq!(
+            fs::read(target.join("marker.txt")).expect("migrated marker"),
+            b"state"
+        );
+    }
+
+    #[test]
+    fn migrate_legacy_profile_keeps_existing_target() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let legacy = tmp.path().join("cc-switch").join(MANAGED_PROFILE_DIR);
+        let target = tmp.path().join("science-home").join(MANAGED_PROFILE_DIR);
+        fs::create_dir_all(&legacy).expect("legacy dir");
+        fs::create_dir_all(&target).expect("target dir");
+        fs::write(target.join("marker.txt"), b"current").expect("target marker");
+
+        migrate_legacy_profile_dir(&legacy, &target);
+
+        assert!(legacy.exists());
+        assert_eq!(
+            fs::read(target.join("marker.txt")).expect("target marker"),
+            b"current"
         );
     }
 
@@ -934,7 +998,7 @@ mod tests {
     #[test]
     fn prepare_profile_writes_config_and_proxy_managed_oauth_token() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let profile = managed_profile_paths_for_app_config_dir(tmp.path());
+        let profile = managed_profile_paths_for_science_home(tmp.path());
 
         prepare_profile_at(&profile).expect("prepare profile");
 
@@ -985,7 +1049,7 @@ mod tests {
     #[test]
     fn prepare_profile_removes_stale_oauth_tokens() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let profile = managed_profile_paths_for_app_config_dir(tmp.path());
+        let profile = managed_profile_paths_for_science_home(tmp.path());
         let token_dir = profile.auth_dir.join(OAUTH_TOKEN_DIR);
         fs::create_dir_all(&token_dir).expect("token dir");
         fs::write(token_dir.join("stale.enc"), "stale").expect("stale token");
@@ -1075,7 +1139,7 @@ printf 'model=%s\n' "${ANTHROPIC_MODEL-}"
 printf 'sonnet_name=%s\n' "${ANTHROPIC_DEFAULT_SONNET_MODEL_NAME-}"
 "#,
         );
-        let profile = managed_profile_paths_for_app_config_dir(&tmp.path().join("cc-switch"));
+        let profile = managed_profile_paths_for_science_home(&tmp.path().join("cc-switch"));
         fs::create_dir_all(&profile.data_dir).expect("profile data dir");
 
         std::env::set_var("ANTHROPIC_MODEL", "stale-model");
