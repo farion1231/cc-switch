@@ -74,6 +74,7 @@ fn push_model_entry(models: &mut Vec<FetchedModel>, entry: &Value, fallback_id: 
         models.push(FetchedModel {
             id: id.to_string(),
             owned_by: Some("Codex".to_string()),
+            context_window_tokens: None,
         });
         return;
     }
@@ -83,6 +84,7 @@ fn push_model_entry(models: &mut Vec<FetchedModel>, entry: &Value, fallback_id: 
             models.push(FetchedModel {
                 id: id.to_string(),
                 owned_by: Some("Codex".to_string()),
+                context_window_tokens: None,
             });
         }
         return;
@@ -104,7 +106,31 @@ fn push_model_entry(models: &mut Vec<FetchedModel>, entry: &Value, fallback_id: 
     )
     .or_else(|| Some("Codex".to_string()));
 
-    models.push(FetchedModel { id, owned_by });
+    models.push(FetchedModel {
+        id,
+        owned_by,
+        context_window_tokens: integer_field(
+            obj,
+            &[
+                "context_window",
+                "contextWindow",
+                "context_length",
+                "contextLength",
+                "max_context_length",
+            ],
+        ),
+    });
+}
+
+fn integer_field(obj: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<i64> {
+    keys.iter()
+        .filter_map(|key| obj.get(*key))
+        .find_map(|value| match value {
+            Value::Number(number) => number.as_i64(),
+            Value::String(raw) => raw.trim().parse::<i64>().ok(),
+            _ => None,
+        })
+        .filter(|value| *value > 0)
 }
 
 fn string_field(obj: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<String> {

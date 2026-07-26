@@ -6,6 +6,7 @@ export type CursorProviderType = "openai" | "anthropic";
 export interface CursorModelConfig {
   enabled: boolean;
   type: CursorProviderType;
+  providerGroup: string;
   baseURL: string;
   apiKey: string;
   modelID: string;
@@ -68,6 +69,7 @@ export const createCursorModelConfig = (
 ): CursorModelConfig => ({
   enabled: true,
   type: "openai",
+  providerGroup: "",
   baseURL: "https://api.openai.com",
   apiKey: "",
   modelID: "",
@@ -89,9 +91,24 @@ export const createCursorModelConfig = (
   ...overrides,
 });
 
+export const normalizeCursorProviders = (
+  providers: Record<string, Provider>,
+): Record<string, CursorProvider> =>
+  Object.fromEntries(
+    Object.entries(providers).map(([id, provider]) => [
+      id,
+      {
+        ...provider,
+        settingsConfig: createCursorModelConfig(provider.settingsConfig),
+      } satisfies CursorProvider,
+    ]),
+  );
+
 export const cursorApi = {
-  getProviders: () =>
-    invoke<Record<string, CursorProvider>>("get_cursor_providers"),
+  getProviders: async (): Promise<Record<string, CursorProvider>> =>
+    normalizeCursorProviders(
+      await invoke<Record<string, Provider>>("get_cursor_providers"),
+    ),
   saveProvider: (provider: CursorProvider) =>
     invoke<boolean>("save_cursor_provider", { provider }),
   deleteProvider: (id: string) =>

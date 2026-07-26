@@ -1,4 +1,9 @@
-import { Suspense, type ComponentType } from "react";
+import {
+  forwardRef,
+  Suspense,
+  useImperativeHandle,
+  type ComponentType,
+} from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -136,9 +141,10 @@ vi.mock("@/components/UpdateBadge", () => ({
 }));
 
 vi.mock("@/components/cursor/CursorModelPanel", () => ({
-  CursorModelPanel: () => (
-    <div data-testid="cursor-model-panel">cursor-panel</div>
-  ),
+  CursorModelPanel: forwardRef((_props, ref) => {
+    useImperativeHandle(ref, () => ({ openAddModel: vi.fn() }));
+    return <div data-testid="cursor-model-panel">cursor-panel</div>;
+  }),
 }));
 
 vi.mock("@/components/settings/SettingsPage", () => ({

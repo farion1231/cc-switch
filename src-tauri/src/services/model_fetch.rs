@@ -15,6 +15,7 @@ use std::time::Duration;
 pub struct FetchedModel {
     pub id: String,
     pub owned_by: Option<String>,
+    pub context_window_tokens: Option<i64>,
 }
 
 /// OpenAI 兼容的 /v1/models 响应格式
@@ -27,6 +28,29 @@ struct ModelsResponse {
 struct ModelEntry {
     id: String,
     owned_by: Option<String>,
+    #[serde(
+        default,
+        alias = "context_length",
+        alias = "context_window",
+        alias = "context_window_tokens",
+        alias = "max_context_length",
+        alias = "max_context_tokens",
+        deserialize_with = "deserialize_optional_positive_i64"
+    )]
+    context_window_tokens: Option<i64>,
+}
+
+fn deserialize_optional_positive_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    let parsed = match value {
+        Some(serde_json::Value::Number(number)) => number.as_i64(),
+        Some(serde_json::Value::String(raw)) => raw.trim().parse::<i64>().ok(),
+        _ => None,
+    };
+    Ok(parsed.filter(|value| *value > 0))
 }
 
 const FETCH_TIMEOUT_SECS: u64 = 15;
@@ -57,6 +81,7 @@ pub async fn fetch_models(
     is_full_url: bool,
     models_url_override: Option<&str>,
     user_agent: Option<HeaderValue>,
+    provider_type: Option<&str>,
 ) -> Result<Vec<FetchedModel>, String> {
     if api_key.is_empty() {
         return Err("API Key is required to fetch models".to_string());
@@ -76,6 +101,11 @@ pub async fn fetch_models(
             .get(url)
             .header("Authorization", format!("Bearer {api_key}"))
             .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS));
+        if provider_type == Some("anthropic") {
+            request = request
+                .header("x-api-key", api_key)
+                .header("anthropic-version", "2023-06-01");
+        }
         // 自定义 User-Agent：部分 /models 端点同样有 UA 白名单（如 Kimi Coding Plan），
         // 与转发 / 检测路径共用同一 UA，避免"代理可用但取模型失败"。
         if let Some(ua) = &user_agent {
@@ -103,6 +133,7 @@ pub async fn fetch_models(
                 .map(|m| FetchedModel {
                     id: m.id,
                     owned_by: m.owned_by,
+                    context_window_tokens: m.context_window_tokens,
                 })
                 .collect();
 
@@ -470,6 +501,16 @@ mod tests {
         let data = resp.data.unwrap();
         assert_eq!(data[0].id, "my-model");
         assert!(data[0].owned_by.is_none());
+    }
+
+    #[test]
+    fn test_parse_response_context_window_aliases() {
+        let json = r#"{"data":[{"id":"api-model","context_length":200000},{"id":"string-model","context_window":"128000"},{"id":"invalid-model","max_context_length":0}]}"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        let data = resp.data.unwrap();
+        assert_eq!(data[0].context_window_tokens, Some(200000));
+        assert_eq!(data[1].context_window_tokens, Some(128000));
+        assert_eq!(data[2].context_window_tokens, None);
     }
 
     #[test]

@@ -95,7 +95,11 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
-import { CursorModelPanel } from "@/components/cursor/CursorModelPanel";
+import {
+  CursorModelPanel,
+  type CursorModelPanelHandle,
+} from "@/components/cursor/CursorModelPanel";
+import { CursorRuntimeToggle } from "@/components/cursor/CursorRuntimeToggle";
 
 type View =
   | "providers"
@@ -259,6 +263,7 @@ function App() {
   useUsageCacheBridge();
 
   const promptPanelRef = useRef<any>(null);
+  const cursorModelPanelRef = useRef<CursorModelPanelHandle>(null);
   const mcpPanelRef = useRef<any>(null);
   const skillsPageRef = useRef<any>(null);
   const unifiedSkillsPanelRef = useRef<any>(null);
@@ -978,7 +983,7 @@ function App() {
           return <AgentsDefaultsPanel />;
         default:
           return activeApp === "cursor" ? (
-            <CursorModelPanel />
+            <CursorModelPanel ref={cursorModelPanelRef} />
           ) : (
             <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
               <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
@@ -1258,6 +1263,14 @@ function App() {
           </div>
 
           <div className="flex flex-1 min-w-0 items-center justify-end gap-1.5">
+            {currentView === "providers" && activeApp === "cursor" && (
+              <div
+                className="flex shrink-0 items-center gap-1.5"
+                style={{ WebkitAppRegion: "no-drag" } as any}
+              >
+                <CursorRuntimeToggle />
+              </div>
+            )}
             {currentView === "providers" &&
               activeApp !== "opencode" &&
               activeApp !== "openclaw" &&
@@ -1415,7 +1428,7 @@ function App() {
                       compact={isToolbarCompact}
                     />
 
-                    {activeApp !== "cursor" && (
+                    {
                       <>
                         <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
                           <AnimatePresence mode="wait">
@@ -1435,7 +1448,46 @@ function App() {
                               exit={{ opacity: 0 }}
                               transition={{ duration: 0.15 }}
                             >
-                              {activeApp === "hermes" ? (
+                              {activeApp === "cursor" ? (
+                                <>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setCurrentView("skills")}
+                                    className="w-8 px-2 text-muted-foreground hover:bg-black/5 hover:text-foreground dark:hover:bg-white/5"
+                                    title={t("skills.manage")}
+                                  >
+                                    <Wrench className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setCurrentView("prompts")}
+                                    className="w-8 px-2 text-muted-foreground hover:bg-black/5 hover:text-foreground dark:hover:bg-white/5"
+                                    title={t("prompts.manage")}
+                                  >
+                                    <Book className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    disabled
+                                    className="w-8 px-2 text-muted-foreground hover:bg-black/5 hover:text-foreground dark:hover:bg-white/5"
+                                    title="Cursor 会话管理暂未支持"
+                                  >
+                                    <History className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setCurrentView("mcp")}
+                                    className="w-8 px-2 text-muted-foreground hover:bg-black/5 hover:text-foreground dark:hover:bg-white/5"
+                                    title={t("mcp.title")}
+                                  >
+                                    <McpIcon size={16} />
+                                  </Button>
+                                </>
+                              ) : activeApp === "hermes" ? (
                                 <>
                                   <Button
                                     variant="ghost"
@@ -1587,14 +1639,23 @@ function App() {
                         </div>
 
                         <Button
-                          onClick={() => setIsAddOpen(true)}
+                          onClick={() =>
+                            activeApp === "cursor"
+                              ? cursorModelPanelRef.current?.openAddModel()
+                              : setIsAddOpen(true)
+                          }
                           size="icon"
+                          title={
+                            activeApp === "cursor"
+                              ? "添加 Cursor 模型"
+                              : undefined
+                          }
                           className={`ml-2 ${addActionButtonClass}`}
                         >
                           <Plus className="w-5 h-5" />
                         </Button>
                       </>
-                    )}
+                    }
                   </>
                 )}
               </div>

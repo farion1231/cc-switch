@@ -7,6 +7,8 @@ pub struct CursorModelConfig {
     pub enabled: bool,
     #[serde(rename = "type")]
     pub provider_type: String,
+    #[serde(default)]
+    pub provider_group: String,
     #[serde(rename = "baseURL")]
     pub base_url: String,
     #[serde(rename = "apiKey")]
@@ -50,6 +52,7 @@ impl Default for CursorModelConfig {
         Self {
             enabled: true,
             provider_type: "openai".to_string(),
+            provider_group: String::new(),
             base_url: String::new(),
             api_key: String::new(),
             model_id: String::new(),
