@@ -1,8 +1,9 @@
 use indexmap::IndexMap;
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 
 use crate::app_config::AppType;
 use crate::commands::copilot::CopilotAuthState;
+use crate::commands::xai_oauth::XaiOAuthState;
 use crate::error::AppError;
 use crate::provider::{ClaudeDesktopMode, Provider};
 use crate::services::{
@@ -100,16 +101,63 @@ pub fn switch_provider_test_hook(
 }
 
 #[tauri::command]
-pub fn switch_provider(
-    state: State<'_, AppState>,
+pub async fn switch_provider(
+    app_handle: tauri::AppHandle,
     app: String,
     id: String,
 ) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    switch_provider_internal(&state, app_type, &id).map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle
+            .try_state::<AppState>()
+            .ok_or_else(|| "应用状态不可用".to_string())?;
+        switch_provider_internal(state.inner(), app_type, &id).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("供应商切换任务执行失败: {e}"))?
 }
 
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
+    if matches!(app_type, AppType::GrokBuild) {
+        // 官方登录态（live 语法合法且无自定义模型表）+ 用户手动导入：
+        // 导入的正确结果是让 Grok Official 成为当前供应商，而非报错。
+        // 只挂在命令层 = 只有手动动作可达；启动自动导入走 service 层、
+        // 官方态照旧报错静默跳过，删掉的官方条目不会被重启复活
+        //（全项目惯例：启动自动导入只产出 default，从不产出官方条目）。
+        if let Ok(settings) = crate::grok_config::read_grok_live_settings() {
+            let config = settings
+                .get("config")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if crate::grok_config::is_official_live_config(config) {
+                state.db.ensure_official_seed_by_id(
+                    crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
+                    AppType::GrokBuild,
+                )?;
+                state.db.set_current_provider(
+                    app_type.as_str(),
+                    crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
+                )?;
+                crate::settings::set_current_provider(
+                    &app_type,
+                    Some(crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID),
+                )?;
+                return Ok(true);
+            }
+        }
+
+        // Safety net: 与 claude-desktop 导入同语义 —— 用户主动点导入是"重新
+        // 整理该表"的隐式信号，把官方入口补回来。覆盖导入必然失败的场景
+        //（live 文件缺失 / TOML 语法错误 / 残缺的自定义配置），避免
+        // "报错 + 空列表"死胡同。失败只 warn，不影响导入主流程。
+        if let Err(e) = state.db.ensure_official_seed_by_id(
+            crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
+            AppType::GrokBuild,
+        ) {
+            log::warn!("Failed to ensure grokbuild-official seed during import: {e}");
+        }
+    }
+
     let imported = ProviderService::import_default_config(state, app_type.clone())?;
 
     if imported {
@@ -239,6 +287,17 @@ pub fn ensure_codex_official_provider(state: State<'_, AppState>) -> Result<bool
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn ensure_grokbuild_official_provider(state: State<'_, AppState>) -> Result<bool, String> {
+    state
+        .db
+        .ensure_official_seed_by_id(
+            crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
+            AppType::GrokBuild,
+        )
+        .map_err(|e| e.to_string())
+}
+
 fn claude_provider_models_are_claude_safe(provider: &Provider) -> bool {
     let Some(env) = provider
         .settings_config
@@ -274,7 +333,7 @@ pub(crate) fn suggested_claude_desktop_routes(
             .meta
             .as_ref()
             .and_then(|meta| meta.provider_type.as_deref()),
-        Some("github_copilot") | Some("codex_oauth")
+        Some("github_copilot") | Some("codex_oauth") | Some("xai_oauth")
     );
 
     fn add_route(
@@ -384,6 +443,7 @@ pub async fn queryProviderUsage(
     app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
     copilot_state: State<'_, CopilotAuthState>,
+    xai_state: State<'_, XaiOAuthState>,
     #[allow(non_snake_case)] providerId: String, // 使用 camelCase 匹配前端
     app: String,
 ) -> Result<crate::provider::UsageResult, String> {
@@ -396,8 +456,14 @@ pub async fn queryProviderUsage(
     //      不写失败快照、不 emit：保留上一份托盘快照，与前端 react-query reject
     //      保留上次 data 的语义一致；否则失败快照会经 useUsageCacheBridge 盲写
     //      回 query 缓存，抹掉 reject 本该保留的旧值。
-    let inner =
-        query_provider_usage_inner(&state, &copilot_state, app_type.clone(), &providerId).await;
+    let inner = query_provider_usage_inner(
+        &state,
+        &copilot_state,
+        &xai_state,
+        app_type.clone(),
+        &providerId,
+    )
+    .await;
     if let Ok(snapshot) = &inner {
         let payload = serde_json::json!({
             "kind": "script",
@@ -463,6 +529,7 @@ fn resolve_coding_plan_credentials(
 async fn query_provider_usage_inner(
     state: &AppState,
     copilot_state: &CopilotAuthState,
+    xai_state: &XaiOAuthState,
     app_type: AppType,
     provider_id: &str,
 ) -> Result<crate::provider::UsageResult, String> {
@@ -631,9 +698,19 @@ async fn query_provider_usage_inner(
             });
         }
 
-        let quota = crate::services::subscription::get_subscription_quota(app_type.as_str())
-            .await
-            .map_err(|e| format!("Failed to query subscription quota: {e}"))?;
+        // xAI OAuth 托管供应商的额度属绑定的 SuperGrok 账号，而非所在 app 的
+        // CLI 凭据（对 codex/claude 而言 CLI 凭据是 ChatGPT/Claude 订阅，跨了
+        // 订阅体系，查出来的数字张冠李戴）。
+        let quota = if provider.map(Provider::is_xai_oauth).unwrap_or(false) {
+            let account_id = provider
+                .and_then(|p| p.meta.as_ref())
+                .and_then(|m| m.managed_account_id_for("xai_oauth"));
+            crate::commands::xai_oauth::query_xai_oauth_quota_for(xai_state, account_id).await?
+        } else {
+            crate::services::subscription::get_subscription_quota(app_type.as_str())
+                .await
+                .map_err(|e| format!("Failed to query subscription quota: {e}"))?
+        };
 
         if !quota.success {
             return Ok(crate::provider::UsageResult {

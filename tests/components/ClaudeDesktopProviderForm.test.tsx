@@ -30,6 +30,35 @@ function renderForm(
 }
 
 describe("ClaudeDesktopProviderForm", () => {
+  it.each(["github_copilot", "codex_oauth", "xai_oauth"])(
+    "托管 OAuth %s 即使旧数据是 direct 也强制开启模型映射",
+    (providerType) => {
+      renderForm({
+        name: "Managed OAuth Provider",
+        category: "third_party",
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://api.example.com",
+          },
+        },
+        meta: {
+          providerType,
+          claudeDesktopMode: "direct",
+          apiFormat: "anthropic",
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-5": { model: "upstream-model" },
+          },
+        },
+      });
+
+      const modelMappingToggle = screen.getByRole("switch", {
+        name: "需要模型映射",
+      });
+      expect(modelMappingToggle).toBeChecked();
+      expect(modelMappingToggle).toBeDisabled();
+    },
+  );
+
   it("编辑模型映射的菜单显示名时保持输入框焦点", () => {
     renderForm({
       name: "Proxy Provider",

@@ -75,6 +75,7 @@ struct ChatToResponsesState {
     reasoning: ReasoningItemState,
     inline_think: InlineThinkState,
     tools: BTreeMap<usize, ToolCallState>,
+    next_tool_index_to_add: usize,
     output_items: Vec<(u32, Value)>,
     latest_usage: Option<Value>,
     finish_reason: Option<String>,
@@ -94,6 +95,7 @@ impl Default for ChatToResponsesState {
             reasoning: ReasoningItemState::default(),
             inline_think: InlineThinkState::default(),
             tools: BTreeMap::new(),
+            next_tool_index_to_add: 0,
             output_items: Vec::new(),
             latest_usage: None,
             finish_reason: None,
@@ -347,16 +349,16 @@ impl ChatToResponsesState {
             .unwrap_or("")
             .to_string();
 
-        let mut should_add = false;
         let mut output_index = None;
         let mut item_id = String::new();
-        let mut pending_arguments = String::new();
         let current_name: String;
 
         {
             let state = self.tools.entry(chat_index).or_default();
-            if let Some(id) = id_delta {
-                state.call_id = id;
+            if let Some(ref id) = id_delta {
+                if !id.is_empty() {
+                    state.call_id.clone_from(id);
+                }
             }
             if let Some(ref name) = name_delta {
                 if !name.is_empty() {
@@ -373,10 +375,7 @@ impl ChatToResponsesState {
                 }
             }
 
-            if !state.added && !state.call_id.is_empty() && !state.name.is_empty() {
-                should_add = true;
-                pending_arguments = state.arguments.clone();
-            } else if state.added {
+            if state.added {
                 output_index = state.output_index;
                 item_id = state.item_id.clone();
             }
@@ -386,26 +385,51 @@ impl ChatToResponsesState {
         let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&current_name);
         let mut events = Vec::new();
 
-        if should_add {
+        if !args_delta.is_empty() && !is_custom_tool {
+            if let Some(output_index) = output_index {
+                events.push(sse::function_call_arguments_delta(
+                    output_index,
+                    &item_id,
+                    &args_delta,
+                ));
+            }
+        }
+
+        events.extend(self.flush_ready_tool_calls());
+
+        events
+    }
+
+    fn flush_ready_tool_calls(&mut self) -> Vec<Bytes> {
+        // Release consecutive Chat indexes so late identity fragments cannot reorder calls.
+        let mut events = Vec::new();
+        loop {
+            let key = self.next_tool_index_to_add;
+            let Some(state) = self.tools.get(&key) else {
+                break;
+            };
+            if state.added || state.done {
+                self.next_tool_index_to_add += 1;
+                continue;
+            }
+            if state.call_id.is_empty() || state.name.is_empty() {
+                break;
+            }
+
             let assigned = self.next_output_index();
-            let Some(state) = self.tools.get_mut(&chat_index) else {
-                return events;
+            let Some(state) = self.tools.get_mut(&key) else {
+                continue;
             };
             state.added = true;
-            if state.call_id.is_empty() {
-                state.call_id = format!("call_{chat_index}");
-            }
             state.output_index = Some(assigned);
-            let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&state.name);
             state.item_id = response_tool_call_item_id_from_chat_name(
                 &state.call_id,
                 &state.name,
                 &self.tool_context,
             );
-            item_id = state.item_id.clone();
 
             let item = response_tool_call_item_from_chat_name(
-                &item_id,
+                &state.item_id,
                 "in_progress",
                 &state.call_id,
                 &state.name,
@@ -416,21 +440,16 @@ impl ChatToResponsesState {
 
             events.push(sse::output_item_added(assigned, &item));
 
-            if !pending_arguments.is_empty() && !is_custom_tool {
+            if !state.arguments.is_empty()
+                && !self.tool_context.is_custom_tool_chat_name(&state.name)
+            {
                 events.push(sse::function_call_arguments_delta(
                     assigned,
                     &state.item_id,
-                    &pending_arguments,
+                    &state.arguments,
                 ));
             }
-        } else if !args_delta.is_empty() && !is_custom_tool {
-            if let Some(output_index) = output_index {
-                events.push(sse::function_call_arguments_delta(
-                    output_index,
-                    &item_id,
-                    &args_delta,
-                ));
-            }
+            self.next_tool_index_to_add += 1;
         }
 
         events
@@ -844,6 +863,16 @@ mod tests {
         String::from_utf8(bytes.concat()).unwrap()
     }
 
+    fn parse_sse_events(output: &str) -> Vec<Value> {
+        output
+            .split("\n\n")
+            .filter_map(|block| {
+                let data = block.lines().find_map(|line| line.strip_prefix("data: "))?;
+                serde_json::from_str(data).ok()
+            })
+            .collect()
+    }
+
     #[tokio::test]
     async fn converts_text_chat_sse_to_responses_sse() {
         let output = collect(vec![
@@ -914,6 +943,114 @@ mod tests {
         assert!(output.contains("event: response.function_call_arguments.done"));
         assert!(output.contains("\"type\":\"function_call\""));
         assert!(output.contains("\"call_id\":\"call_1\""));
+    }
+
+    #[tokio::test]
+    async fn preserves_tool_identity_across_empty_continuation_deltas() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_dashscope\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_dashscope\",\"type\":\"function\",\"function\":{\"name\":\"exec_command\",\"arguments\":\"{\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_dashscope\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"\",\"type\":\"function\",\"function\":{\"name\":\"\",\"arguments\":\"\\\"cmd\\\":\\\"date\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let added = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.added")
+            .collect::<Vec<_>>();
+        let done = events
+            .iter()
+            .find(|event| event["type"] == "response.output_item.done")
+            .unwrap();
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+
+        assert_eq!(added.len(), 1);
+        for item in [&done["item"], &completed["response"]["output"][0]] {
+            assert_eq!(item["type"], "function_call");
+            assert_eq!(item["name"], "exec_command");
+            assert_eq!(item["call_id"], "call_dashscope");
+            assert_eq!(item["arguments"], r#"{"cmd":"date"}"#);
+        }
+        assert!(!output.contains(r#""name":"""#));
+        assert!(!output.contains(r#""call_id":"""#));
+    }
+
+    #[tokio::test]
+    async fn preserves_parallel_tool_order_when_earlier_name_arrives_late() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_parallel\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_first\",\"type\":\"function\",\"function\":{\"name\":\"\",\"arguments\":\"{\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_parallel\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_second\",\"type\":\"function\",\"function\":{\"name\":\"second_tool\",\"arguments\":\"{\\\"value\\\":2}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_parallel\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"first_tool\",\"arguments\":\"\\\"value\\\":1}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let added = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.added")
+            .collect::<Vec<_>>();
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        let items = completed["response"]["output"].as_array().unwrap();
+
+        assert_eq!(added.len(), 2);
+        assert_eq!(added[0]["output_index"], 0);
+        assert_eq!(added[0]["item"]["name"], "first_tool");
+        assert_eq!(added[1]["output_index"], 1);
+        assert_eq!(added[1]["item"]["name"], "second_tool");
+        assert_eq!(items[0]["name"], "first_tool");
+        assert_eq!(items[0]["call_id"], "call_first");
+        assert_eq!(items[0]["arguments"], r#"{"value":1}"#);
+        assert_eq!(items[1]["name"], "second_tool");
+        assert_eq!(items[1]["call_id"], "call_second");
+        assert_eq!(items[1]["arguments"], r#"{"value":2}"#);
+    }
+
+    #[tokio::test]
+    async fn finalization_keeps_valid_call_after_unnamed_earlier_call() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_parallel_missing\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_missing\",\"type\":\"function\",\"function\":{\"arguments\":\"{}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_parallel_missing\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_valid\",\"type\":\"function\",\"function\":{\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"date\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        let items = completed["response"]["output"].as_array().unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["name"], "exec_command");
+        assert_eq!(items[0]["call_id"], "call_valid");
+        assert_eq!(items[0]["arguments"], r#"{"cmd":"date"}"#);
+        assert!(!output.contains("call_missing"));
+    }
+
+    #[tokio::test]
+    async fn finalization_keeps_non_contiguous_tool_index() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_sparse\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":2,\"id\":\"call_sparse\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"README.md\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        let items = completed["response"]["output"].as_array().unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["name"], "read_file");
+        assert_eq!(items[0]["call_id"], "call_sparse");
+        assert_eq!(items[0]["arguments"], r#"{"path":"README.md"}"#);
     }
 
     #[tokio::test]

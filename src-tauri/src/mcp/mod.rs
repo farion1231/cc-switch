@@ -14,6 +14,7 @@
 mod claude;
 mod codex;
 mod gemini;
+mod grokbuild;
 mod hermes;
 mod opencode;
 mod validation;
@@ -29,6 +30,9 @@ pub use codex::{
 pub use gemini::{
     import_from_gemini, remove_server_from_gemini, sync_enabled_to_gemini,
     sync_single_server_to_gemini,
+};
+pub use grokbuild::{
+    import_from_grokbuild, remove_server_from_grokbuild, sync_single_server_to_grokbuild,
 };
 pub use hermes::{import_from_hermes, remove_server_from_hermes, sync_single_server_to_hermes};
 pub use opencode::{

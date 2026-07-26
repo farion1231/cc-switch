@@ -241,8 +241,13 @@ impl ProxyResponse {
 /// `proxy_url`: optional upstream HTTP proxy URL (e.g. `http://127.0.0.1:7890`).
 /// When set, the raw write path uses HTTP CONNECT tunneling through the proxy,
 /// so header-case preservation works even when an upstream proxy is configured.
+///
+/// `log_display` is a caller-supplied, already-sanitized string used only for
+/// logging; this layer never derives a log value from the raw `uri`.
+#[allow(clippy::too_many_arguments)]
 pub async fn send_request(
     uri: http::Uri,
+    log_display: &str,
     method: http::Method,
     headers: http::HeaderMap,
     original_extensions: http::Extensions,
@@ -256,13 +261,13 @@ pub async fn send_request(
         .as_ref()
         .map(|c| !c.cases.is_empty())
         .unwrap_or(false);
-
     log::debug!(
-        "[HyperClient] Sending request: uri={uri}, header_count={}, \
+        "[HyperClient] Sending request: target={}, header_count={}, \
          has_host={}, has_original_cases={has_cases}, proxy={:?}",
+        log_display,
         headers.len(),
         headers.contains_key(http::header::HOST),
-        proxy_url,
+        proxy_url.map(super::http_client::mask_url),
     );
 
     if let Some(original_cases) = original_cases

@@ -87,6 +87,7 @@ const PINNED_SESSIONS_STORAGE_KEY = "cc-switch.sessionManager.pinnedSessions";
 type ProviderFilter =
   | "all"
   | "codex"
+  | "grokbuild"
   | "claude"
   | "opencode"
   | "openclaw"
@@ -1226,6 +1227,16 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                   size={14}
                                 />
                                 <span>Codex</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="grokbuild">
+                              <div className="flex items-center gap-2">
+                                <ProviderIcon
+                                  icon="grok"
+                                  name="grokbuild"
+                                  size={14}
+                                />
+                                <span>Grok Build</span>
                               </div>
                             </SelectItem>
                             <SelectItem value="claude">

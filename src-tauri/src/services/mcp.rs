@@ -37,6 +37,9 @@ impl McpService {
         if prev_apps.gemini && !server.apps.gemini {
             Self::remove_server_from_app(state, &server.id, &AppType::Gemini)?;
         }
+        if prev_apps.grokbuild && !server.apps.grokbuild {
+            Self::remove_server_from_app(state, &server.id, &AppType::GrokBuild)?;
+        }
         if prev_apps.opencode && !server.apps.opencode {
             Self::remove_server_from_app(state, &server.id, &AppType::OpenCode)?;
         }
@@ -122,6 +125,13 @@ impl McpService {
             AppType::Gemini => {
                 mcp::sync_single_server_to_gemini(&Default::default(), &server.id, &server.server)?;
             }
+            AppType::GrokBuild => {
+                mcp::sync_single_server_to_grokbuild(
+                    &Default::default(),
+                    &server.id,
+                    &server.server,
+                )?;
+            }
             AppType::OpenCode => {
                 mcp::sync_single_server_to_opencode(
                     &Default::default(),
@@ -162,6 +172,7 @@ impl McpService {
             }
             AppType::Codex => mcp::remove_server_from_codex(id)?,
             AppType::Gemini => mcp::remove_server_from_gemini(id)?,
+            AppType::GrokBuild => mcp::remove_server_from_grokbuild(id)?,
             AppType::OpenCode => {
                 mcp::remove_server_from_opencode(id)?;
             }
@@ -393,6 +404,32 @@ impl McpService {
         Ok(new_count)
     }
 
+    /// 从 Grok Build 的 `[mcp_servers]` 导入 MCP。
+    pub fn import_from_grokbuild(state: &AppState) -> Result<usize, AppError> {
+        let mut temp_config = crate::app_config::MultiAppConfig::default();
+        let count = crate::mcp::import_from_grokbuild(&mut temp_config)?;
+        let mut new_count = 0;
+
+        if count > 0 {
+            if let Some(servers) = &temp_config.mcp.servers {
+                let mut existing = state.db.get_all_mcp_servers()?;
+                for server in servers.values() {
+                    let to_save = if let Some(existing_server) = existing.get(&server.id) {
+                        let mut merged = existing_server.clone();
+                        merged.apps.grokbuild = true;
+                        merged
+                    } else {
+                        new_count += 1;
+                        server.clone()
+                    };
+                    state.db.save_mcp_server(&to_save)?;
+                    existing.insert(to_save.id.clone(), to_save);
+                }
+            }
+        }
+        Ok(new_count)
+    }
+
     /// 从 OpenCode 导入 MCP（v3.9.2+ 新增）
     pub fn import_from_opencode(state: &AppState) -> Result<usize, AppError> {
         // 创建临时 MultiAppConfig 用于导入
@@ -479,10 +516,11 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 5] = [
+        let results: [(&str, Result<usize, AppError>); 6] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
+            ("grokbuild", Self::import_from_grokbuild(state)),
             ("opencode", Self::import_from_opencode(state)),
             ("hermes", Self::import_from_hermes(state)),
         ];
