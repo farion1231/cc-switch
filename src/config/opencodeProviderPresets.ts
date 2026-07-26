@@ -560,27 +560,27 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "Shengsuanyun",
-    nameKey: "providerForm.presets.shengsuanyun",
-    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
-    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    name: "AICoding",
+    websiteUrl: "https://aicoding.sh",
+    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
-      name: "Shengsuanyun",
+      name: "AICoding",
       options: {
-        baseURL: "https://router.shengsuanyun.com/api/v1",
+        baseURL: "https://api.aicoding.sh",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "anthropic/claude-opus-4.8": { name: "Claude Opus 4.8" },
-        "anthropic/claude-sonnet-5": { name: "Claude Sonnet 5" },
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
+        "claude-opus-4-8": { name: "Claude Opus 4.8" },
       },
     },
-    category: "aggregator",
+    category: "third_party",
     isPartner: true,
-    partnerPromotionKey: "shengsuanyun",
-    icon: "shengsuanyun",
+    partnerPromotionKey: "aicoding",
+    icon: "aicoding",
+    iconColor: "#000000",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -611,6 +611,36 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     partnerPromotionKey: "aigocode",
     icon: "aigocode",
     iconColor: "#5B7FFF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "Shengsuanyun",
+      options: {
+        baseURL: "https://router.shengsuanyun.com/api/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "anthropic/claude-opus-4.8": { name: "Claude Opus 4.8" },
+        "anthropic/claude-sonnet-5": { name: "Claude Sonnet 5" },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
     templateValues: {
       apiKey: {
         label: "API Key",
