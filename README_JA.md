@@ -35,8 +35,8 @@ Kimi K3 は Moonshot AI がこれまでに開発した中で最も高性能な�
 
 <table>
 <tr>
-<td width="180"><a href="https://www.packyapi.com/register?aff=cc-switch"><img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150"></a></td>
-<td>PackyCode のご支援に感謝します！PackyCode は Claude Code、Codex、Gemini などのリレーサービスを提供する信頼性の高い API 中継プラットフォームです。本ソフト利用者向けに特別割引があります：<a href="https://www.packyapi.com/register?aff=cc-switch">このリンク</a>で登録し、チャージ時に「cc-switch」クーポンを入力すると 10% オフになります。</td>
+<td width="180"><a href="https://www.packyapi.ai/register?aff=cc-switch"><img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150"></a></td>
+<td>PackyCode のご支援に感謝します！PackyCode は Claude Code、Codex、Gemini などのリレーサービスを提供する信頼性の高い API 中継プラットフォームです。本ソフト利用者向けに特別割引があります：<a href="https://www.packyapi.ai/register?aff=cc-switch">このリンク</a>で登録し、チャージ時に「cc-switch」クーポンを入力すると 10% オフになります。</td>
 </tr>
 
 <tr>
@@ -45,8 +45,8 @@ Kimi K3 は Moonshot AI がこれまでに開発した中で最も高性能な�
 </tr>
 
 <tr>
-<td width="180"><a href="https://apinebula.com/VjM74M"><img src="assets/partners/logos/apinebula_banner.png" alt="APINebula" width="150"></a></td>
-<td>本プロジェクトは「APINEBULA」のスポンサーシップにより運営されています！APINEBULA は、「銀河録像局」傘下のエンタープライズ向け AI 統合プラットフォームです。大手の豊富なリソースを背景に、開発者、チーム、そして企業ユーザーの皆様へ、安定性とコストパフォーマンスに優れた大規模言語モデル（LLM）の API 連携サービスを提供しています。Claude、GPT、Gemini をはじめとする世界中の主要なフルスペック（満血）モデルを 1 つの API に集約。世界トップクラスの AI モデルを、<strong>最大 90% OFF（元の価格の 1 割〜）</strong>という圧倒的な低価格でご利用いただけます。また、企業向けの高度な並行処理（高コンカレンシー）、正式な契約締結、法人口座振り込み、請求書・領収書発行など、ビジネス利用に必要なサポートも万全です。AI プログラミング、AI エージェント開発、業務システムへの統合など、様々なシーンに最適です。<a href="https://apinebula.com/VjM74M">こちらのリンク</a>から登録し、チャージ時にプロモコード <strong>「ccswitch」を入力すると、さらに 10% OFF</strong> の割引特典が適用されます！</td>
+<td width="180"><a href="https://apinebula.ai/VjM74M"><img src="assets/partners/logos/apinebula_banner.png" alt="APINebula" width="150"></a></td>
+<td>本プロジェクトは「APINEBULA」のスポンサーシップにより運営されています！APINEBULA は、「銀河録像局」傘下のエンタープライズ向け AI 統合プラットフォームです。大手の豊富なリソースを背景に、開発者、チーム、そして企業ユーザーの皆様へ、安定性とコストパフォーマンスに優れた大規模言語モデル（LLM）の API 連携サービスを提供しています。Claude、GPT、Gemini をはじめとする世界中の主要なフルスペック（満血）モデルを 1 つの API に集約。世界トップクラスの AI モデルを、<strong>最大 90% OFF（元の価格の 1 割〜）</strong>という圧倒的な低価格でご利用いただけます。また、企業向けの高度な並行処理（高コンカレンシー）、正式な契約締結、法人口座振り込み、請求書・領収書発行など、ビジネス利用に必要なサポートも万全です。AI プログラミング、AI エージェント開発、業務システムへの統合など、様々なシーンに最適です。<a href="https://apinebula.ai/VjM74M">こちらのリンク</a>から登録し、チャージ時にプロモコード <strong>「ccswitch」を入力すると、さらに 10% OFF</strong> の割引特典が適用されます！</td>
 </tr>
 
 <tr>
@@ -88,6 +88,11 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
+<td width="180"><a href="https://aicoding.sh/i/CCSWITCH"><img src="assets/partners/logos/aicoding.jpg" alt="AICoding" width="150"></a></td>
+<td>AICoding.sh のご支援に感謝します！AICoding.sh —— グローバル AI モデル API 超お得な中継サービス！Claude Code 81% オフ、GPT 99% オフ！数百社の企業に高コストパフォーマンスの AI サービスを提供。Claude Code、GPT、Gemini および国内主要モデルに対応、エンタープライズ級の高同時接続、迅速な請求書発行、24 時間年中無休の専属テクニカルサポート。<a href="https://aicoding.sh/i/CCSWITCH">こちらのリンク</a>から登録した CC Switch ユーザーは、初回チャージ 10% オフ！</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://subrouter.ai/register?aff=l3ri"><img src="assets/partners/logos/subrouter-banner.png" alt="SubRouter" width="150"></a></td>
 <td>本プロジェクトをご支援いただいている SubRouter に感謝します！SubRouter は、AI サービス事業者向けのマーケットプレイス兼スマートルーティングプラットフォームです。事業者は独立した運営サイトを立ち上げ、プランを公開し、ユーザー・モデル・価格を管理でき、ユーザーはマーケットでサービスを見つけ、統一された API を通じて安定かつ高効率なモデル呼び出しを利用できます。<a href="https://subrouter.ai/register?aff=l3ri">こちらのリンク</a>から登録してください！</td>
 </tr>
@@ -98,8 +103,8 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://console.claudeapi.com/register?aff=pCLD"><img src="assets/partners/logos/claudeapi.png" alt="ClaudeAPI" width="150"></a></td>
-<td>本プロジェクトは <a href="https://console.claudeapi.com/register?aff=pCLD">Claude API</a> がスポンサーです。Claude API 直結 — わずか 3 分で Claude Code や Agent アプリに接続可能。新規ユーザーにはテストクレジットを提供しています。Anthropic 公式キーおよび AWS Bedrock 公式チャネルに基づいており、リバースエンジニアリングや性能劣化はありません。Opus / Sonnet / Haiku の全モデルラインナップをサポートし、Tool Use や 1M コンテキストなどの公式機能をすべて保持しています。Claude Code ヘビーユーザー、Agent エンジニア、企業技術チームに最適です。請求書発行およびチーム対応が可能です。<a href="https://console.claudeapi.com/register?aff=pCLD">こちら</a>から登録してください！</td>
+<td width="180"><a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS"><img src="assets/partners/logos/claudeapi.png" alt="ClaudeAPI" width="150"></a></td>
+<td>本プロジェクトは <a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS">Claude API</a> がスポンサーです。Claude API 直結 — わずか 3 分で Claude Code や Agent アプリに接続可能。新規ユーザーにはテストクレジットを提供しています。Anthropic 公式キーおよび AWS Bedrock 公式チャネルに基づいており、リバースエンジニアリングや性能劣化はありません。Opus / Sonnet / Haiku の全モデルラインナップをサポートし、Tool Use や 1M コンテキストなどの公式機能をすべて保持しています。Claude Code ヘビーユーザー、Agent エンジニア、企業技術チームに最適です。請求書発行およびチーム対応が可能です。<a href="https://console.apito.ai/agent/register/pQBql2buaqiX3dDS">こちら</a>から登録してください！</td>
 </tr>
 
 <tr>
@@ -165,8 +170,8 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 </tr>
 
 <tr>
-<td width="180"><a href="https://www.right.codes/register?aff=CCSWITCH"><img src="assets/partners/logos/rightcode.jpg" alt="RightCode" width="150"></a></td>
-<td>本プロジェクトへのご支援として、Right Code にご協賛いただき誠にありがとうございます。Right Code は、Claude Code、Codex、Gemini などのモデル向け中継サービスを安定して提供しており、従量課金と月額プランの 2 つの料金体系から選択できます。チャージ後に請求書の発行が可能で、法人・チームのお客様には専任担当による個別対応も行っています。さらに、CC Switch ユーザー向けの特別優待として、<a href="https://www.right.codes/register?aff=CCSWITCH">こちらのリンク</a>から登録すると、チャージのたびに実際の支払額の 5% 相当の従量課金クレジットが付与されます。</td>
+<td width="180"><a href="https://www.rightapi.ai/register?aff=CCSWITCH"><img src="assets/partners/logos/rightcode.jpg" alt="RightCode" width="150"></a></td>
+<td>本プロジェクトへのご支援として、Right Code にご協賛いただき誠にありがとうございます。Right Code は、Claude Code、Codex、Gemini などのモデル向け中継サービスを安定して提供しており、従量課金と月額プランの 2 つの料金体系から選択できます。チャージ後に請求書の発行が可能で、法人・チームのお客様には専任担当による個別対応も行っています。さらに、CC Switch ユーザー向けの特別優待として、<a href="https://www.rightapi.ai/register?aff=CCSWITCH">こちらのリンク</a>から登録すると、チャージのたびに実際の支払額の 5% 相当の従量課金クレジットが付与されます。</td>
 </tr>
 
 <tr>

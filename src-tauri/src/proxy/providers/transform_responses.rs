@@ -8,7 +8,13 @@
 //! - system prompt 使用 `instructions` 字段而非 system role message
 //! - usage 字段命名与 Anthropic 一致 (input_tokens/output_tokens)
 
-use crate::proxy::{error::ProxyError, json_canonical::canonical_json_string};
+use crate::proxy::{
+    error::ProxyError,
+    json_canonical::canonical_json_string,
+    tool_media::{
+        strip_and_clamp_media_from_tool_value, ToolMediaScope, TOOL_RESULT_MEDIA_ATTACHED_MARKER,
+    },
+};
 use serde_json::{json, Value};
 
 use super::reasoning_bridge::{
@@ -80,8 +86,11 @@ fn anthropic_tool_result_to_responses_output(block: &Value) -> Value {
     let content = block.get("content");
 
     if !is_error {
-        if let Some(Value::String(text)) = content {
-            return json!(text);
+        if let Some(text @ Value::String(_)) = content {
+            if let Some(output) = alternate_image_tool_result_to_responses(text) {
+                return Value::Array(output);
+            }
+            return text.clone();
         }
     }
 
@@ -92,7 +101,13 @@ fn anthropic_tool_result_to_responses_output(block: &Value) -> Value {
 
     match content {
         Some(Value::String(text)) => {
-            output.push(json!({"type":"input_text","text":text}));
+            if let Some(mut alternate) =
+                alternate_image_tool_result_to_responses(&Value::String(text.clone()))
+            {
+                output.append(&mut alternate);
+            } else {
+                output.push(json!({"type":"input_text","text":text}));
+            }
         }
         Some(Value::Array(blocks)) => {
             for part in blocks {
@@ -105,6 +120,10 @@ fn anthropic_tool_result_to_responses_output(block: &Value) -> Value {
                     Some("image") => {
                         if let Some(image) = anthropic_image_to_responses_part(part) {
                             output.push(image);
+                        } else if let Some(mut alternate) =
+                            alternate_image_tool_result_to_responses(part)
+                        {
+                            output.append(&mut alternate);
                         } else {
                             output.push(json!({
                                 "type":"input_text",
@@ -122,6 +141,77 @@ fn anthropic_tool_result_to_responses_output(block: &Value) -> Value {
                             }));
                         }
                     }
+                    _ => {
+                        if let Some(mut alternate) = alternate_image_tool_result_to_responses(part)
+                        {
+                            output.append(&mut alternate);
+                        } else {
+                            output.push(json!({
+                                "type":"input_text",
+                                "text":canonical_json_string(part)
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+        Some(value) => {
+            if let Some(mut alternate) = alternate_image_tool_result_to_responses(value) {
+                output.append(&mut alternate);
+            } else {
+                output.push(json!({
+                    "type":"input_text",
+                    "text":canonical_json_string(value)
+                }));
+            }
+        }
+        None => {}
+    }
+
+    Value::Array(output)
+}
+
+fn alternate_image_tool_result_to_responses(value: &Value) -> Option<Vec<Value>> {
+    let mut cleaned = value.clone();
+    let replacement_block = json!({
+        "type":"input_text",
+        "text":TOOL_RESULT_MEDIA_ATTACHED_MARKER
+    });
+    let mut chat_media_parts = Vec::new();
+    let replaced = strip_and_clamp_media_from_tool_value(
+        &mut cleaned,
+        &mut chat_media_parts,
+        ToolMediaScope::ImagesOnly,
+        &replacement_block,
+        TOOL_RESULT_MEDIA_ATTACHED_MARKER,
+    );
+    if replaced == 0 {
+        return None;
+    }
+
+    let mut output = Vec::new();
+    append_sanitized_responses_tool_value(&cleaned, &mut output);
+    output.extend(
+        chat_media_parts
+            .iter()
+            .filter_map(responses_image_from_chat_media),
+    );
+    Some(output)
+}
+
+fn append_sanitized_responses_tool_value(value: &Value, output: &mut Vec<Value>) {
+    match value {
+        Value::String(text) if !text.is_empty() => {
+            output.push(json!({"type":"input_text","text":text}));
+        }
+        Value::Array(parts) => {
+            for part in parts {
+                match part.get("type").and_then(Value::as_str) {
+                    Some("input_text" | "output_text" | "text") => {
+                        if let Some(text) = part.get("text").and_then(Value::as_str) {
+                            output.push(json!({"type":"input_text","text":text}));
+                        }
+                    }
                     _ => output.push(json!({
                         "type":"input_text",
                         "text":canonical_json_string(part)
@@ -129,14 +219,37 @@ fn anthropic_tool_result_to_responses_output(block: &Value) -> Value {
                 }
             }
         }
-        Some(value) => output.push(json!({
+        Value::Object(object)
+            if matches!(
+                object.get("type").and_then(Value::as_str),
+                Some("input_text" | "output_text" | "text")
+            ) =>
+        {
+            if let Some(text) = object.get("text").and_then(Value::as_str) {
+                output.push(json!({"type":"input_text","text":text}));
+            }
+        }
+        Value::Null | Value::String(_) => {}
+        other => output.push(json!({
             "type":"input_text",
-            "text":canonical_json_string(value)
+            "text":canonical_json_string(other)
         })),
-        None => {}
     }
+}
 
-    Value::Array(output)
+fn responses_image_from_chat_media(part: &Value) -> Option<Value> {
+    let image_url = part
+        .pointer("/image_url/url")
+        .and_then(Value::as_str)
+        .filter(|url| !url.trim().is_empty())?;
+    let mut image = json!({
+        "type":"input_image",
+        "image_url":image_url
+    });
+    if let Some(detail) = part.pointer("/image_url/detail") {
+        image["detail"] = detail.clone();
+    }
+    Some(image)
 }
 
 pub(crate) fn sanitize_anthropic_tool_use_input(name: &str, input: Value) -> Value {
@@ -1155,6 +1268,78 @@ mod tests {
         assert_eq!(output[2]["image_url"], "https://example.com/error.png");
         assert_eq!(output[3]["type"], "input_file");
         assert_eq!(output[3]["filename"], "trace.pdf");
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_converts_mcp_tool_image() {
+        let input = json!({
+            "model":"gpt-5",
+            "messages":[{"role":"user","content":[{
+                "type":"tool_result",
+                "tool_use_id":"call_1",
+                "content":[{
+                    "type":"image",
+                    "mimeType":"image/webp",
+                    "data":"MCP_RESPONSES_IMAGE_SENTINEL"
+                }]
+            }]}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        let output = result["input"][0]["output"].as_array().unwrap();
+
+        assert_eq!(output[0]["type"], "input_text");
+        assert!(!output[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("MCP_RESPONSES_IMAGE_SENTINEL"));
+        assert_eq!(output[1]["type"], "input_image");
+        assert_eq!(
+            output[1]["image_url"],
+            "data:image/webp;base64,MCP_RESPONSES_IMAGE_SENTINEL"
+        );
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_converts_json_string_tool_image() {
+        let residual_base64 = "A".repeat(20_000);
+        let encoded = json!({
+            "content":[
+                {
+                    "type":"image_url",
+                    "image_url":{"url":"data:image/png;base64,STRING_RESPONSES_SENTINEL"}
+                },
+                {"type":"video","data":residual_base64}
+            ]
+        })
+        .to_string();
+        let input = json!({
+            "model":"gpt-5",
+            "messages":[{"role":"user","content":[{
+                "type":"tool_result",
+                "tool_use_id":"call_1",
+                "content":encoded
+            }]}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        let output = result["input"][0]["output"].as_array().unwrap();
+        let image = output
+            .iter()
+            .find(|part| part["type"] == "input_image")
+            .expect("stringified image must stay a Responses image");
+
+        assert_eq!(
+            image["image_url"],
+            "data:image/png;base64,STRING_RESPONSES_SENTINEL"
+        );
+        assert!(output
+            .iter()
+            .filter_map(|part| part.get("text").and_then(Value::as_str))
+            .all(|text| !text.contains("STRING_RESPONSES_SENTINEL")));
+        let serialized = result.to_string();
+        assert!(serialized.contains("[cc-switch: omitted 20000 bytes]"));
+        assert!(!serialized.contains(&"A".repeat(64)));
     }
 
     #[test]
