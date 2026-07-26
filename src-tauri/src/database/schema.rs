@@ -1545,6 +1545,8 @@ impl Database {
                 "1.00",
                 "12.50",
             ),
+            // Claude Opus 5（与 Opus 4.8 同价位；fast mode $10/$50 不入表）
+            ("claude-opus-5", "Claude Opus 5", "5", "25", "0.50", "6.25"),
             // Claude 4.8 系列
             (
                 "claude-opus-4-8",
