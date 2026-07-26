@@ -1936,23 +1936,48 @@ pub fn sync_codex_desktop_available_models_cache_from_settings(settings: &Value)
 }
 
 /// Reconcile the Desktop whitelist cache after restoring a raw Live backup.
-/// Snapshot backups with an existing catalog pointer keep their current pin;
-/// official snapshots without a catalog clear any stale custom future pin.
+/// Official snapshots without a catalog clear any stale custom future pin.
+/// Raw snapshots that point at the cc-switch-owned catalog reload its model IDs
+/// and repin them; user-managed external catalog pointers are left untouched.
 pub fn sync_codex_desktop_available_models_cache_after_live_restore(settings: &Value) {
-    let has_inline_catalog = settings.get("modelCatalog").is_some();
-    let has_catalog_pointer = settings
+    if settings.get("modelCatalog").is_some() {
+        sync_codex_desktop_available_models_cache_from_settings(settings);
+        return;
+    }
+
+    let config_text = settings
         .get("config")
         .and_then(Value::as_str)
-        .and_then(|config_text| config_text.parse::<DocumentMut>().ok())
-        .is_some_and(|doc| {
-            doc.get("model_catalog_json")
-                .and_then(|item| item.as_str())
-                .map(str::trim)
-                .filter(|path| !path.is_empty())
-                .is_some()
-        });
+        .unwrap_or_default();
+    let generated_path = get_codex_model_catalog_path();
+    if resolve_cc_switch_catalog_path(config_text, &generated_path).is_some() {
+        match read_codex_model_catalog_simplified_from_live() {
+            Ok(Some(model_catalog)) => {
+                let mut restored_settings = settings.clone();
+                if let Some(object) = restored_settings.as_object_mut() {
+                    object.insert("modelCatalog".to_string(), model_catalog);
+                    sync_codex_desktop_available_models_cache_from_settings(&restored_settings);
+                }
+            }
+            Ok(None) => log::warn!(
+                "Restored a cc-switch Codex model catalog pointer, but its model IDs could not be reloaded for the Desktop cache"
+            ),
+            Err(err) => log::warn!(
+                "Failed to reload the restored cc-switch Codex model catalog for the Desktop cache: {err}"
+            ),
+        }
+        return;
+    }
 
-    if has_inline_catalog || !has_catalog_pointer {
+    let has_external_catalog_pointer = config_text.parse::<DocumentMut>().ok().is_some_and(|doc| {
+        doc.get("model_catalog_json")
+            .and_then(|item| item.as_str())
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .is_some()
+    });
+
+    if !has_external_catalog_pointer {
         sync_codex_desktop_available_models_cache_from_settings(settings);
     }
 }
