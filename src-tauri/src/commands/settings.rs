@@ -47,6 +47,10 @@ fn merge_settings_for_save(
     // 无条件取现有值。若按 incoming 透传：后端清掉 marker（如关闭统一会话
     // 开关）后、前端 query 缓存刷新前的一次全量保存会把旧 marker 重放回来，
     // 重新开启时被"复活"的标记挡住而漏迁。
+    if incoming.session_manager_pinned_sessions.is_none() {
+        incoming.session_manager_pinned_sessions =
+            existing.session_manager_pinned_sessions.clone();
+    }
     incoming.local_migrations = existing.local_migrations.clone();
     incoming
 }
@@ -329,6 +333,44 @@ mod tests {
         CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
         WebDavSyncSettings,
     };
+
+    #[test]
+    fn save_settings_should_preserve_existing_pinned_sessions_when_payload_omits_it() {
+        let existing = AppSettings {
+            session_manager_pinned_sessions: Some(vec![
+                "codex:session-a".to_string(),
+                "claude:session-b".to_string(),
+            ]),
+            ..AppSettings::default()
+        };
+
+        let incoming = AppSettings::default();
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert_eq!(
+            merged.session_manager_pinned_sessions,
+            Some(vec![
+                "codex:session-a".to_string(),
+                "claude:session-b".to_string(),
+            ]),
+        );
+    }
+
+    #[test]
+    fn save_settings_should_allow_clearing_pinned_sessions() {
+        let existing = AppSettings {
+            session_manager_pinned_sessions: Some(vec!["codex:session-a".to_string()]),
+            ..AppSettings::default()
+        };
+
+        let incoming = AppSettings {
+            session_manager_pinned_sessions: Some(Vec::new()),
+            ..AppSettings::default()
+        };
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert_eq!(merged.session_manager_pinned_sessions, Some(Vec::new()));
+    }
 
     #[test]
     fn save_settings_should_preserve_existing_webdav_when_payload_omits_it() {

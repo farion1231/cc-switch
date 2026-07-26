@@ -2361,6 +2361,7 @@ function SortableProviderCard({
     transform: CSS.Transform.toString(transform),
     transition,
   };
+  const selectionPointerHandledRef = useRef(false);
 
   return (
     <div
@@ -2383,10 +2384,30 @@ function SortableProviderCard({
           tabIndex={0}
           aria-checked={isSelected}
           aria-label="选择供应商"
-          className="touch-none select-none pt-5"
-          onPointerDown={(event) =>
-            onSelectionSwipeStart(event, provider.id, isSelected)
-          }
+          className="flex w-9 touch-none select-none justify-center self-stretch rounded-md pt-5 transition-colors hover:bg-muted/60"
+          onPointerDown={(event) => {
+            if (event.button === 0) {
+              selectionPointerHandledRef.current = true;
+            }
+            onSelectionSwipeStart(event, provider.id, isSelected);
+          }}
+          onPointerUp={() => {
+            window.setTimeout(() => {
+              selectionPointerHandledRef.current = false;
+            }, 250);
+          }}
+          onPointerCancel={() => {
+            selectionPointerHandledRef.current = false;
+          }}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (selectionPointerHandledRef.current) {
+              selectionPointerHandledRef.current = false;
+              return;
+            }
+            onToggleSelected(!isSelected);
+          }}
           onKeyDown={(event) => {
             if (event.key !== " " && event.key !== "Enter") return;
             event.preventDefault();

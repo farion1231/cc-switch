@@ -30,7 +30,7 @@ import {
   useSessionMessagesQuery,
   useSessionsQuery,
 } from "@/lib/query";
-import { sessionsApi } from "@/lib/api";
+import { sessionsApi, settingsApi } from "@/lib/api";
 import type { SessionMeta } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -114,15 +114,16 @@ const readInitialPinnedSessionKeys = (): Set<string> => {
   try {
     const stored = window.localStorage.getItem(PINNED_SESSIONS_STORAGE_KEY);
     const parsed = stored ? JSON.parse(stored) : [];
-    return new Set(
-      Array.isArray(parsed)
-        ? parsed.filter((value): value is string => typeof value === "string")
-        : [],
-    );
+    return new Set(normalizePinnedSessionKeys(parsed));
   } catch {
     return new Set();
   }
 };
+
+const normalizePinnedSessionKeys = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 
 const readInitialSessionListViewMode = (): SessionListViewMode => {
   if (typeof window === "undefined") return "flat";
@@ -209,7 +210,7 @@ const filterSetToAllowedValues = (
 export function SessionManagerPage({ appId }: { appId: string }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { data, isLoading, isSuccess, refetch } = useSessionsQuery();
+  const { data, isLoading, refetch } = useSessionsQuery();
   const sessions = data ?? [];
   const detailRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -228,6 +229,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const [selectionMode, setSelectionMode] = useState(false);
   const [pinnedSessionKeys, setPinnedSessionKeys] = useState<Set<string>>(
     readInitialPinnedSessionKeys,
+  );
+  const [pinnedSettingsHydrated, setPinnedSettingsHydrated] = useState(false);
+  const pinnedSettingsPersistQueueRef = useRef<Promise<void>>(
+    Promise.resolve(),
   );
   const [cleanupMaxMessages, setCleanupMaxMessages] = useState(20);
   const [includePinnedInCleanup, setIncludePinnedInCleanup] = useState(false);
@@ -315,11 +320,62 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   }, [expandedDirectoryGroups, expandedProviderGroups]);
 
   useEffect(() => {
-    window.localStorage.setItem(
-      PINNED_SESSIONS_STORAGE_KEY,
-      JSON.stringify(Array.from(pinnedSessionKeys).sort()),
-    );
-  }, [pinnedSessionKeys]);
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const settings = await settingsApi.get();
+        if (cancelled) return;
+
+        const settingsKeys = normalizePinnedSessionKeys(
+          settings.sessionManagerPinnedSessions,
+        );
+        const localKeys = Array.from(readInitialPinnedSessionKeys());
+        setPinnedSessionKeys(new Set([...settingsKeys, ...localKeys]));
+      } catch (error) {
+        console.warn("Failed to load pinned session settings", error);
+      } finally {
+        if (!cancelled) {
+          setPinnedSettingsHydrated(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const persistPinnedSessionKeys = useCallback(
+    (keys: Set<string>) => {
+      const serializedKeys = Array.from(keys).sort();
+      window.localStorage.setItem(
+        PINNED_SESSIONS_STORAGE_KEY,
+        JSON.stringify(serializedKeys),
+      );
+
+      if (!pinnedSettingsHydrated) return;
+
+      pinnedSettingsPersistQueueRef.current =
+        pinnedSettingsPersistQueueRef.current
+          .catch(() => undefined)
+          .then(async () => {
+            const settings = await settingsApi.get();
+            await settingsApi.save({
+              ...settings,
+              sessionManagerPinnedSessions: serializedKeys,
+            });
+          })
+          .catch((error) => {
+            console.warn("Failed to save pinned session settings", error);
+          });
+    },
+    [pinnedSettingsHydrated],
+  );
+
+  useEffect(() => {
+    persistPinnedSessionKeys(pinnedSessionKeys);
+  }, [persistPinnedSessionKeys, pinnedSessionKeys]);
 
   useEffect(() => {
     if (isLoading) return;
@@ -331,26 +387,6 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       filterSetToAllowedValues(current, validGroupExpansionKeys.directoryKeys),
     );
   }, [isLoading, validGroupExpansionKeys]);
-
-  useEffect(() => {
-    if (isLoading || !isSuccess || sessions.length === 0) return;
-
-    const validKeys = new Set(
-      sessions.map((session) => getSessionKey(session)),
-    );
-    setPinnedSessionKeys((current) => {
-      let changed = false;
-      const next = new Set<string>();
-      current.forEach((key) => {
-        if (validKeys.has(key)) {
-          next.add(key);
-        } else {
-          changed = true;
-        }
-      });
-      return changed ? next : current;
-    });
-  }, [isLoading, isSuccess, sessions]);
 
   useEffect(() => {
     if (orderedFilteredSessions.length === 0) {

@@ -403,6 +403,9 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_manager_pinned_sessions: Option<Vec<String>>,
+
     // ===== 主页面显示的应用 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_apps: Option<VisibleApps>,
@@ -525,6 +528,7 @@ impl Default for AppSettings {
             first_run_notice_confirmed: None,
             common_config_confirmed: None,
             language: None,
+            session_manager_pinned_sessions: None,
             visible_apps: None,
             claude_config_dir: None,
             codex_config_dir: None,
