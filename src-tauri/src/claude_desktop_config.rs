@@ -32,8 +32,8 @@ pub const ANTHROPIC_CLAUDE_ROUTE_PREFIX: &str = "anthropic/claude-";
 /// Claude Desktop schema 不接受此后缀，import 边界翻译为 `supports1m` 字段。
 pub const ONE_M_CONTEXT_MARKER: &str = "[1m]";
 
-const CURRENT_OPUS_ROUTE_ID: &str = "claude-opus-4-8";
-const LEGACY_OPUS_ROUTE_ID: &str = "claude-opus-4-7";
+const CURRENT_OPUS_ROUTE_ID: &str = "claude-opus-5";
+const LEGACY_OPUS_ROUTE_ID: &str = "claude-opus-4-8";
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1989,7 +1989,7 @@ mod tests {
             .iter()
             .find(|route| route.upstream_model == "deepseek-v4-pro")
             .expect("repaired route");
-        assert_eq!(repaired.route_id, "claude-opus-4-8");
+        assert_eq!(repaired.route_id, "claude-opus-5");
         assert_eq!(repaired.label_override.as_deref(), Some("deepseek-v4-pro"));
         assert!(repaired.supports_1m);
         let repaired_old = routes
