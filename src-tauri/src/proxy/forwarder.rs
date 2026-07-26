@@ -39,6 +39,47 @@ use tauri::Manager;
 use tokio::sync::RwLock;
 
 const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
+const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
+const ONE_M_CONTEXT_BETA: &str = "context-1m-2025-08-07";
+
+fn strip_one_m_suffix_from_body(body: &mut Value) -> bool {
+    let Some(model) = body
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    else {
+        return false;
+    };
+
+    let stripped = super::model_mapper::strip_one_m_suffix_for_upstream(&model);
+    if stripped == model {
+        return false;
+    }
+
+    log::debug!("[ModelMapper] 去除本地 1M 标记: {model} → {stripped}");
+    body["model"] = Value::String(stripped.to_string());
+    true
+}
+
+fn merge_anthropic_beta_values(existing: Option<&str>, required: &[&str]) -> String {
+    let mut values = required
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect::<Vec<_>>();
+
+    for value in existing
+        .into_iter()
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if !values.iter().any(|current| current == value) {
+            values.push(value.to_string());
+        }
+    }
+
+    values.join(",")
+}
 
 fn validate_codex_official_authorization(headers: &http::HeaderMap) -> Result<(), ProxyError> {
     let authorization = headers
@@ -1178,6 +1219,9 @@ impl RequestForwarder {
             super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
         }
 
+        // Desktop route mapping can produce an upstream model carrying [1m]. Preserve
+        // that capability before the generic upstream cleanup removes the marker.
+        let mut claude_desktop_one_m = false;
         if is_copilot {
             mapped_body =
                 super::providers::copilot_model_map::apply_copilot_model_normalization(mapped_body);
@@ -1188,8 +1232,12 @@ impl RequestForwarder {
             // model-catalog match (apply_codex_upstream_model) and the transform's own
             // strip+`context-1m` beta detection. The marker is stripped later, on the
             // final anthropic_body.
-            mapped_body =
-                super::model_mapper::strip_one_m_suffix_for_upstream_from_body(mapped_body);
+            if matches!(app_type, AppType::ClaudeDesktop) {
+                claude_desktop_one_m = strip_one_m_suffix_from_body(&mut mapped_body);
+            } else {
+                mapped_body =
+                    super::model_mapper::strip_one_m_suffix_for_upstream_from_body(mapped_body);
+            }
         }
 
         // --- Copilot 优化器：分类 + 请求体优化（在格式转换之前执行） ---
@@ -1868,29 +1916,24 @@ impl RequestForwarder {
 
         // 预计算 anthropic-beta 值（仅 Claude）
         let anthropic_beta_value = if should_send_anthropic_headers {
-            const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
-            Some(if let Some(beta) = headers.get("anthropic-beta") {
-                if let Ok(beta_str) = beta.to_str() {
-                    if beta_str.contains(CLAUDE_CODE_BETA) {
-                        beta_str.to_string()
-                    } else {
-                        format!("{CLAUDE_CODE_BETA},{beta_str}")
-                    }
-                } else {
-                    CLAUDE_CODE_BETA.to_string()
-                }
+            let existing = headers
+                .get("anthropic-beta")
+                .and_then(|value| value.to_str().ok());
+            let required = if claude_desktop_one_m {
+                &[CLAUDE_CODE_BETA, ONE_M_CONTEXT_BETA][..]
             } else {
-                CLAUDE_CODE_BETA.to_string()
-            })
+                &[CLAUDE_CODE_BETA][..]
+            };
+            Some(merge_anthropic_beta_values(existing, required))
         } else if codex_impersonate_claude_code || codex_anthropic_one_m {
             // Codex→Anthropic: emulation injects the claude-code marker; a [1m]
             // model injects the context-1m marker.
             let mut betas: Vec<&str> = Vec::new();
             if codex_impersonate_claude_code {
-                betas.push("claude-code-20250219");
+                betas.push(CLAUDE_CODE_BETA);
             }
             if codex_anthropic_one_m {
-                betas.push("context-1m-2025-08-07");
+                betas.push(ONE_M_CONTEXT_BETA);
             }
             Some(betas.join(","))
         } else {
@@ -3622,6 +3665,26 @@ mod tests {
             streaming_first_byte_timeout,
             max_attempts: 1,
         }
+    }
+
+    #[test]
+    fn desktop_one_m_upstream_marker_is_detected_and_stripped() {
+        let mut body = json!({"model": "claude-sonnet-4-5-20250929[1m]"});
+
+        assert!(strip_one_m_suffix_from_body(&mut body));
+        assert_eq!(body["model"], json!("claude-sonnet-4-5-20250929"));
+        assert!(!strip_one_m_suffix_from_body(&mut body));
+    }
+
+    #[test]
+    fn desktop_one_m_beta_is_merged_without_duplicates() {
+        assert_eq!(
+            merge_anthropic_beta_values(
+                Some("prompt-caching-2024-07-31,context-1m-2025-08-07"),
+                &[CLAUDE_CODE_BETA, ONE_M_CONTEXT_BETA],
+            ),
+            "claude-code-20250219,context-1m-2025-08-07,prompt-caching-2024-07-31"
+        );
     }
 
     #[test]
