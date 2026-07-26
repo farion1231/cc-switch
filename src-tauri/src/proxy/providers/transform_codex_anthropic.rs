@@ -10,11 +10,11 @@
 //! - `transform_responses.rs`: Anthropic request → Responses request, Responses response → Anthropic response
 //! - this module:               Responses request → Anthropic request, Anthropic response → Responses response
 
+use super::codex_message_items::indexed_response_message_item_id;
 use super::transform_codex_chat::{
     build_codex_tool_context_from_request, response_tool_call_item_from_chat_name,
     response_tool_call_item_id_from_chat_name, CodexToolContext,
 };
-use super::codex_message_items::indexed_response_message_item_id;
 use super::transform_responses::{sanitize_anthropic_tool_use_input, TOOL_RESULT_ERROR_MARKER};
 use crate::proxy::error::ProxyError;
 use crate::proxy::json_canonical::canonical_json_string;
