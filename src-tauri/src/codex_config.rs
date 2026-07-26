@@ -698,38 +698,35 @@ fn merge_codex_desktop_statsig_available_models(wrapper: &mut Value, model_ids: 
     }
 }
 
-#[cfg(target_os = "windows")]
-fn append_codex_leveldb_layouts(candidates: &mut Vec<PathBuf>, codex_root: &Path) {
-    candidates.push(codex_root.join("Local Storage").join("leveldb"));
-    candidates.push(
+fn codex_desktop_leveldb_candidates_for_root(codex_root: &Path) -> Vec<PathBuf> {
+    vec![
+        codex_root.join("Local Storage").join("leveldb"),
         codex_root
             .join("Default")
             .join("Local Storage")
             .join("leveldb"),
-    );
-    candidates.push(
         codex_root
             .join("Partitions")
             .join("codex-browser-app")
             .join("Local Storage")
             .join("leveldb"),
-    );
-    candidates.push(
         codex_root
             .join("Default")
             .join("Partitions")
             .join("codex-browser-app")
             .join("Local Storage")
             .join("leveldb"),
-    );
+    ]
 }
 
 #[cfg(target_os = "windows")]
 fn codex_desktop_windows_leveldb_candidates(appdata: &Path, local_appdata: &Path) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     let appdata_codex = appdata.join("Codex");
-    append_codex_leveldb_layouts(&mut candidates, &appdata_codex);
-    append_codex_leveldb_layouts(&mut candidates, &appdata_codex.join("web").join("Codex"));
+    candidates.extend(codex_desktop_leveldb_candidates_for_root(&appdata_codex));
+    candidates.extend(codex_desktop_leveldb_candidates_for_root(
+        &appdata_codex.join("web").join("Codex"),
+    ));
 
     let packages = local_appdata.join("Packages");
     if let Ok(entries) = fs::read_dir(packages) {
@@ -743,8 +740,10 @@ fn codex_desktop_windows_leveldb_candidates(appdata: &Path, local_appdata: &Path
                 .join("LocalCache")
                 .join("Roaming")
                 .join("Codex");
-            append_codex_leveldb_layouts(&mut candidates, &package_codex);
-            append_codex_leveldb_layouts(&mut candidates, &package_codex.join("web").join("Codex"));
+            candidates.extend(codex_desktop_leveldb_candidates_for_root(&package_codex));
+            candidates.extend(codex_desktop_leveldb_candidates_for_root(
+                &package_codex.join("web").join("Codex"),
+            ));
         }
     }
     candidates
@@ -770,25 +769,13 @@ fn codex_desktop_local_storage_leveldb_candidates() -> Vec<PathBuf> {
             .join("Library")
             .join("Application Support")
             .join("Codex");
-        candidates.push(codex_root.join("Local Storage").join("leveldb"));
-        candidates.push(
-            codex_root
-                .join("Default")
-                .join("Local Storage")
-                .join("leveldb"),
-        );
+        candidates.extend(codex_desktop_leveldb_candidates_for_root(&codex_root));
     }
 
     #[cfg(target_os = "linux")]
     {
         let codex_root = get_home_dir().join(".config").join("Codex");
-        candidates.push(codex_root.join("Local Storage").join("leveldb"));
-        candidates.push(
-            codex_root
-                .join("Default")
-                .join("Local Storage")
-                .join("leveldb"),
-        );
+        candidates.extend(codex_desktop_leveldb_candidates_for_root(&codex_root));
     }
 
     candidates
@@ -3914,6 +3901,31 @@ base_url = "https://production.api/v1"
                 < future_pin
         );
         db.close().expect("close leveldb");
+    }
+
+    #[test]
+    fn codex_desktop_leveldb_root_candidates_include_partitioned_layouts() {
+        let root = PathBuf::from("Codex");
+        let candidates = codex_desktop_leveldb_candidates_for_root(&root);
+
+        assert_eq!(candidates.len(), 4);
+        assert!(candidates.contains(&root.join("Local Storage").join("leveldb")));
+        assert!(candidates.contains(&root.join("Default").join("Local Storage").join("leveldb")));
+        assert!(candidates.contains(
+            &root
+                .join("Partitions")
+                .join("codex-browser-app")
+                .join("Local Storage")
+                .join("leveldb")
+        ));
+        assert!(candidates.contains(
+            &root
+                .join("Default")
+                .join("Partitions")
+                .join("codex-browser-app")
+                .join("Local Storage")
+                .join("leveldb")
+        ));
     }
 
     #[cfg(target_os = "windows")]
