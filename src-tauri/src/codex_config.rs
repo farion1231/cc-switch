@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(test))]
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -33,6 +35,9 @@ const CODEX_DESKTOP_CACHE_RETRY_MAX_DELAY_SECS: u64 = 30;
 const CODEX_DESKTOP_CACHE_RENEWAL_INTERVAL_SECS: u64 = 7 * 24 * 60 * 60;
 static CODEX_DESKTOP_CACHE_SYNC_GENERATION: AtomicU64 = AtomicU64::new(0);
 static CODEX_DESKTOP_CACHE_SYNC_LOCK: Mutex<()> = Mutex::new(());
+#[cfg(not(test))]
+static CODEX_DESKTOP_CACHE_WORKER_SENDER: OnceCell<Sender<CodexDesktopCacheWorkerUpdate>> =
+    OnceCell::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CodexDesktopStatsigWrapperEncoding {
@@ -941,52 +946,6 @@ fn codex_desktop_cache_error_is_locked(err: &str) -> bool {
     err.contains("Codex Desktop localStorage LevelDB is locked:")
 }
 
-fn retry_codex_desktop_available_models_cache_until_ready<AttemptFn, SleepFn>(
-    mut attempt: AttemptFn,
-    mut sleep: SleepFn,
-) -> CodexDesktopCacheRetryOutcome
-where
-    AttemptFn: FnMut() -> CodexDesktopCacheRetryOutcome,
-    SleepFn: FnMut(Duration),
-{
-    let mut delay_secs = CODEX_DESKTOP_CACHE_RETRY_INITIAL_DELAY_SECS;
-    loop {
-        sleep(Duration::from_secs(delay_secs));
-        match attempt() {
-            CodexDesktopCacheRetryOutcome::Failed(err)
-                if codex_desktop_cache_error_is_locked(&err) =>
-            {
-                delay_secs = delay_secs
-                    .saturating_mul(2)
-                    .min(CODEX_DESKTOP_CACHE_RETRY_MAX_DELAY_SECS);
-            }
-            outcome => return outcome,
-        }
-    }
-}
-
-fn renew_codex_desktop_available_models_cache_until_superseded<AttemptFn, SleepFn>(
-    mut attempt: AttemptFn,
-    mut sleep: SleepFn,
-) -> CodexDesktopCacheRetryOutcome
-where
-    AttemptFn: FnMut() -> CodexDesktopCacheRetryOutcome,
-    SleepFn: FnMut(Duration),
-{
-    loop {
-        sleep(Duration::from_secs(
-            CODEX_DESKTOP_CACHE_RENEWAL_INTERVAL_SECS,
-        ));
-        match attempt() {
-            CodexDesktopCacheRetryOutcome::Superseded => {
-                return CodexDesktopCacheRetryOutcome::Superseded;
-            }
-            CodexDesktopCacheRetryOutcome::Synced(_) | CodexDesktopCacheRetryOutcome::Failed(_) => {
-            }
-        }
-    }
-}
-
 fn attempt_codex_desktop_available_models_cache_retry(
     generation: u64,
     model_ids: &[String],
@@ -1003,82 +962,183 @@ fn attempt_codex_desktop_available_models_cache_retry(
     }
 }
 
+fn codex_desktop_cache_worker_next_delay(
+    outcome: &CodexDesktopCacheRetryOutcome,
+    has_custom_catalog: bool,
+    retry_delay_secs: &mut u64,
+) -> Option<Duration> {
+    match outcome {
+        CodexDesktopCacheRetryOutcome::Superseded => None,
+        CodexDesktopCacheRetryOutcome::Synced(_) if !has_custom_catalog => None,
+        CodexDesktopCacheRetryOutcome::Synced(updated) if *updated > 0 => {
+            *retry_delay_secs = CODEX_DESKTOP_CACHE_RETRY_INITIAL_DELAY_SECS;
+            Some(Duration::from_secs(
+                CODEX_DESKTOP_CACHE_RENEWAL_INTERVAL_SECS,
+            ))
+        }
+        CodexDesktopCacheRetryOutcome::Synced(_) => {
+            let delay = Duration::from_secs(*retry_delay_secs);
+            *retry_delay_secs = retry_delay_secs
+                .saturating_mul(2)
+                .min(CODEX_DESKTOP_CACHE_RETRY_MAX_DELAY_SECS);
+            Some(delay)
+        }
+        CodexDesktopCacheRetryOutcome::Failed(err) if codex_desktop_cache_error_is_locked(err) => {
+            let delay = Duration::from_secs(*retry_delay_secs);
+            *retry_delay_secs = retry_delay_secs
+                .saturating_mul(2)
+                .min(CODEX_DESKTOP_CACHE_RETRY_MAX_DELAY_SECS);
+            Some(delay)
+        }
+        CodexDesktopCacheRetryOutcome::Failed(_) => Some(Duration::from_secs(
+            CODEX_DESKTOP_CACHE_RENEWAL_INTERVAL_SECS,
+        )),
+    }
+}
+
 #[cfg(not(test))]
-fn schedule_codex_desktop_available_models_cache_renewal(generation: u64, model_ids: Vec<String>) {
-    std::thread::spawn(move || {
-        let outcome = renew_codex_desktop_available_models_cache_until_superseded(
-            || {
-                let outcome =
-                    attempt_codex_desktop_available_models_cache_retry(generation, &model_ids);
-                let outcome = match outcome {
-                    CodexDesktopCacheRetryOutcome::Failed(err)
-                        if codex_desktop_cache_error_is_locked(&err) =>
-                    {
-                        retry_codex_desktop_available_models_cache_until_ready(
-                            || {
-                                attempt_codex_desktop_available_models_cache_retry(
-                                    generation, &model_ids,
-                                )
-                            },
-                            std::thread::sleep,
-                        )
+struct CodexDesktopCacheWorkerTask {
+    generation: u64,
+    model_ids: Vec<String>,
+    next_delay: Duration,
+    retry_delay_secs: u64,
+}
+
+#[cfg(not(test))]
+enum CodexDesktopCacheWorkerUpdate {
+    Schedule {
+        generation: u64,
+        model_ids: Vec<String>,
+        next_delay: Duration,
+    },
+    Cancel {
+        generation: u64,
+    },
+}
+
+#[cfg(not(test))]
+fn run_codex_desktop_available_models_cache_worker(
+    receiver: Receiver<CodexDesktopCacheWorkerUpdate>,
+) {
+    let mut task: Option<CodexDesktopCacheWorkerTask> = None;
+    loop {
+        let update = match task.as_ref().map(|task| task.next_delay) {
+            Some(delay) => match receiver.recv_timeout(delay) {
+                Ok(update) => Some(update),
+                Err(RecvTimeoutError::Timeout) => {
+                    let mut active_task = task.take().expect("cache worker task exists");
+                    let outcome = attempt_codex_desktop_available_models_cache_retry(
+                        active_task.generation,
+                        &active_task.model_ids,
+                    );
+                    match &outcome {
+                        CodexDesktopCacheRetryOutcome::Synced(updated) if *updated > 0 => {
+                            log::debug!(
+                                "Synced {updated} Codex Desktop model whitelist cache entries in the background"
+                            );
+                        }
+                        CodexDesktopCacheRetryOutcome::Synced(_) => log::debug!(
+                            "Codex Desktop model whitelist cache is not available yet; retrying discovery"
+                        ),
+                        CodexDesktopCacheRetryOutcome::Superseded => log::debug!(
+                            "Cancelled stale Codex Desktop model whitelist cache work after a provider change"
+                        ),
+                        CodexDesktopCacheRetryOutcome::Failed(err) => log::warn!(
+                            "Codex Desktop model whitelist cache background sync failed: {err}"
+                        ),
                     }
-                    outcome => outcome,
-                };
-                match &outcome {
-                    CodexDesktopCacheRetryOutcome::Synced(updated) if *updated > 0 => {
-                        log::debug!(
-                            "Renewed {updated} Codex Desktop model whitelist cache entries"
-                        );
+                    if let Some(next_delay) = codex_desktop_cache_worker_next_delay(
+                        &outcome,
+                        !active_task.model_ids.is_empty(),
+                        &mut active_task.retry_delay_secs,
+                    ) {
+                        active_task.next_delay = next_delay;
+                        task = Some(active_task);
                     }
-                    CodexDesktopCacheRetryOutcome::Synced(_) => {}
-                    CodexDesktopCacheRetryOutcome::Superseded => log::debug!(
-                        "Stopped stale Codex Desktop model whitelist cache renewal after a newer provider switch"
-                    ),
-                    CodexDesktopCacheRetryOutcome::Failed(err) => log::warn!(
-                        "Codex Desktop model whitelist cache renewal failed; retrying at the next renewal interval: {err}"
-                    ),
+                    None
                 }
-                outcome
+                Err(RecvTimeoutError::Disconnected) => return,
             },
-            std::thread::sleep,
-        );
-        debug_assert_eq!(outcome, CodexDesktopCacheRetryOutcome::Superseded);
-    });
+            None => match receiver.recv() {
+                Ok(update) => Some(update),
+                Err(_) => return,
+            },
+        };
+
+        if let Some(update) = update {
+            match update {
+                CodexDesktopCacheWorkerUpdate::Schedule {
+                    generation,
+                    model_ids,
+                    next_delay,
+                } if CODEX_DESKTOP_CACHE_SYNC_GENERATION.load(Ordering::Acquire) == generation => {
+                    task = Some(CodexDesktopCacheWorkerTask {
+                        generation,
+                        model_ids,
+                        next_delay,
+                        retry_delay_secs: CODEX_DESKTOP_CACHE_RETRY_INITIAL_DELAY_SECS,
+                    });
+                }
+                CodexDesktopCacheWorkerUpdate::Cancel { generation }
+                    if CODEX_DESKTOP_CACHE_SYNC_GENERATION.load(Ordering::Acquire)
+                        == generation =>
+                {
+                    task = None;
+                }
+                CodexDesktopCacheWorkerUpdate::Schedule { .. }
+                | CodexDesktopCacheWorkerUpdate::Cancel { .. } => log::debug!(
+                    "Ignored stale Codex Desktop cache worker update after a newer provider change"
+                ),
+            }
+        }
+    }
+}
+
+#[cfg(not(test))]
+fn codex_desktop_available_models_cache_worker_sender(
+) -> Result<&'static Sender<CodexDesktopCacheWorkerUpdate>, String> {
+    CODEX_DESKTOP_CACHE_WORKER_SENDER.get_or_try_init(
+        || -> Result<Sender<CodexDesktopCacheWorkerUpdate>, String> {
+            let (sender, receiver) = mpsc::channel();
+            std::thread::Builder::new()
+                .name("codex-desktop-cache-worker".to_string())
+                .spawn(move || run_codex_desktop_available_models_cache_worker(receiver))
+                .map_err(|err| format!("Failed to start Codex Desktop cache worker: {err}"))?;
+            Ok(sender)
+        },
+    )
+}
+
+#[cfg(not(test))]
+fn schedule_codex_desktop_available_models_cache_worker(
+    generation: u64,
+    model_ids: Vec<String>,
+    next_delay: Option<Duration>,
+) {
+    let update = match next_delay {
+        Some(next_delay) => CodexDesktopCacheWorkerUpdate::Schedule {
+            generation,
+            model_ids,
+            next_delay,
+        },
+        None => CodexDesktopCacheWorkerUpdate::Cancel { generation },
+    };
+    match codex_desktop_available_models_cache_worker_sender() {
+        Ok(sender) => {
+            if let Err(err) = sender.send(update) {
+                log::warn!("Failed to update Codex Desktop cache worker: {err}");
+            }
+        }
+        Err(err) => log::warn!("{err}"),
+    }
 }
 
 #[cfg(test)]
-fn schedule_codex_desktop_available_models_cache_renewal(
+fn schedule_codex_desktop_available_models_cache_worker(
     _generation: u64,
     _model_ids: Vec<String>,
+    _next_delay: Option<Duration>,
 ) {
-}
-
-fn schedule_codex_desktop_available_models_cache_retry(generation: u64, model_ids: Vec<String>) {
-    std::thread::spawn(move || {
-        let outcome = retry_codex_desktop_available_models_cache_until_ready(
-            || attempt_codex_desktop_available_models_cache_retry(generation, &model_ids),
-            std::thread::sleep,
-        );
-        match outcome {
-            CodexDesktopCacheRetryOutcome::Synced(updated) => {
-                if updated > 0 {
-                    log::info!(
-                        "Retried Codex Desktop model whitelist cache sync after the LevelDB lock was released; updated {updated} entries"
-                    );
-                }
-                if !model_ids.is_empty() {
-                    schedule_codex_desktop_available_models_cache_renewal(generation, model_ids);
-                }
-            }
-            CodexDesktopCacheRetryOutcome::Superseded => log::debug!(
-                "Stopped stale Codex Desktop model whitelist cache retry after a newer provider switch"
-            ),
-            CodexDesktopCacheRetryOutcome::Failed(err) => log::warn!(
-                "Codex Desktop model whitelist cache retry stopped after a non-lock error: {err}"
-            ),
-        }
-    });
 }
 
 fn extract_codex_top_level_u64(config_text: &str, field: &str) -> Option<u64> {
@@ -2003,19 +2063,39 @@ pub fn sync_codex_desktop_available_models_cache_from_settings(settings: &Value)
             if updated > 0 {
                 log::info!("Synced {updated} Codex Desktop model whitelist cache entries");
             }
-            if !model_ids.is_empty() {
-                schedule_codex_desktop_available_models_cache_renewal(generation, model_ids);
-            }
+            let next_delay = if model_ids.is_empty() {
+                None
+            } else if updated > 0 {
+                Some(Duration::from_secs(
+                    CODEX_DESKTOP_CACHE_RENEWAL_INTERVAL_SECS,
+                ))
+            } else {
+                Some(Duration::from_secs(
+                    CODEX_DESKTOP_CACHE_RETRY_INITIAL_DELAY_SECS,
+                ))
+            };
+            schedule_codex_desktop_available_models_cache_worker(generation, model_ids, next_delay);
         }
         Err(err) if codex_desktop_cache_error_is_locked(&err) => {
             log::warn!(
                 "Codex provider switched while the Desktop model whitelist cache was locked; retrying in the background: {err}"
             );
-            schedule_codex_desktop_available_models_cache_retry(generation, model_ids);
+            schedule_codex_desktop_available_models_cache_worker(
+                generation,
+                model_ids,
+                Some(Duration::from_secs(
+                    CODEX_DESKTOP_CACHE_RETRY_INITIAL_DELAY_SECS,
+                )),
+            );
         }
-        Err(err) => log::warn!(
-            "Codex provider switched, but the Desktop model whitelist cache was not synced: {err}"
-        ),
+        Err(err) => {
+            log::warn!(
+                "Codex provider switched, but the Desktop model whitelist cache was not synced: {err}"
+            );
+            let next_delay = (!model_ids.is_empty())
+                .then(|| Duration::from_secs(CODEX_DESKTOP_CACHE_RENEWAL_INTERVAL_SECS));
+            schedule_codex_desktop_available_models_cache_worker(generation, model_ids, next_delay);
+        }
     }
 }
 
@@ -3872,67 +3952,78 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
-    fn codex_desktop_statsig_retry_retries_after_leveldb_lock_release() {
-        use std::cell::Cell;
+    fn codex_desktop_cache_worker_retries_locks_and_stops_when_superseded() {
+        let mut retry_delay_secs = CODEX_DESKTOP_CACHE_RETRY_INITIAL_DELAY_SECS;
 
-        let attempts = Cell::new(0);
-        let sleeps = Cell::new(0);
-        let outcome = retry_codex_desktop_available_models_cache_until_ready(
-            || {
-                attempts.set(attempts.get() + 1);
-                if attempts.get() == 1 {
-                    CodexDesktopCacheRetryOutcome::Failed(
-                        "Codex Desktop localStorage LevelDB is locked: test".to_string(),
-                    )
-                } else {
-                    CodexDesktopCacheRetryOutcome::Synced(2)
-                }
-            },
-            |_| sleeps.set(sleeps.get() + 1),
-        );
-
-        assert_eq!(outcome, CodexDesktopCacheRetryOutcome::Synced(2));
-        assert_eq!(attempts.get(), 2);
-        assert_eq!(sleeps.get(), 2);
-    }
-
-    #[test]
-    fn codex_desktop_statsig_retry_stops_after_newer_provider_switch() {
-        use std::cell::Cell;
-
-        let sleeps = Cell::new(0);
-        let outcome = retry_codex_desktop_available_models_cache_until_ready(
-            || CodexDesktopCacheRetryOutcome::Superseded,
-            |_| sleeps.set(sleeps.get() + 1),
-        );
-
-        assert_eq!(outcome, CodexDesktopCacheRetryOutcome::Superseded);
-        assert_eq!(sleeps.get(), 1);
-    }
-
-    #[test]
-    fn codex_desktop_statsig_renewal_repeats_until_provider_changes() {
-        use std::cell::{Cell, RefCell};
-
-        let attempts = Cell::new(0);
-        let sleeps = RefCell::new(Vec::new());
-        let outcome = renew_codex_desktop_available_models_cache_until_superseded(
-            || {
-                attempts.set(attempts.get() + 1);
-                if attempts.get() <= 2 {
-                    CodexDesktopCacheRetryOutcome::Synced(1)
-                } else {
-                    CodexDesktopCacheRetryOutcome::Superseded
-                }
-            },
-            |duration| sleeps.borrow_mut().push(duration),
-        );
-
-        assert_eq!(outcome, CodexDesktopCacheRetryOutcome::Superseded);
-        assert_eq!(attempts.get(), 3);
         assert_eq!(
-            sleeps.into_inner(),
-            vec![Duration::from_secs(CODEX_DESKTOP_CACHE_RENEWAL_INTERVAL_SECS); 3]
+            codex_desktop_cache_worker_next_delay(
+                &CodexDesktopCacheRetryOutcome::Failed(
+                    "Codex Desktop localStorage LevelDB is locked: test".to_string(),
+                ),
+                true,
+                &mut retry_delay_secs,
+            ),
+            Some(Duration::from_secs(1))
+        );
+        assert_eq!(retry_delay_secs, 2);
+        assert_eq!(
+            codex_desktop_cache_worker_next_delay(
+                &CodexDesktopCacheRetryOutcome::Superseded,
+                true,
+                &mut retry_delay_secs,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn codex_desktop_cache_worker_retries_missing_cache_soon() {
+        let mut retry_delay_secs = CODEX_DESKTOP_CACHE_RETRY_INITIAL_DELAY_SECS;
+
+        assert_eq!(
+            codex_desktop_cache_worker_next_delay(
+                &CodexDesktopCacheRetryOutcome::Synced(0),
+                true,
+                &mut retry_delay_secs,
+            ),
+            Some(Duration::from_secs(1))
+        );
+        assert_eq!(retry_delay_secs, 2);
+        assert_eq!(
+            codex_desktop_cache_worker_next_delay(
+                &CodexDesktopCacheRetryOutcome::Synced(0),
+                true,
+                &mut retry_delay_secs,
+            ),
+            Some(Duration::from_secs(2))
+        );
+    }
+
+    #[test]
+    fn codex_desktop_cache_worker_renews_custom_cache_and_stops_for_official() {
+        let mut retry_delay_secs = CODEX_DESKTOP_CACHE_RETRY_MAX_DELAY_SECS;
+
+        assert_eq!(
+            codex_desktop_cache_worker_next_delay(
+                &CodexDesktopCacheRetryOutcome::Synced(1),
+                true,
+                &mut retry_delay_secs,
+            ),
+            Some(Duration::from_secs(
+                CODEX_DESKTOP_CACHE_RENEWAL_INTERVAL_SECS
+            ))
+        );
+        assert_eq!(
+            retry_delay_secs,
+            CODEX_DESKTOP_CACHE_RETRY_INITIAL_DELAY_SECS
+        );
+        assert_eq!(
+            codex_desktop_cache_worker_next_delay(
+                &CodexDesktopCacheRetryOutcome::Synced(1),
+                false,
+                &mut retry_delay_secs,
+            ),
+            None
         );
     }
 
