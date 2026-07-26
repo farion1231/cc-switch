@@ -502,18 +502,18 @@ export function ClaudeFormFields({
       ? codexOauthModelsLoading
       : isXaiOauthPreset
         ? xaiOauthModelsLoading
-      : isKiroPreset
-        ? kiroModelsLoading
-        : isFetchingModels;
+        : isKiroPreset
+          ? kiroModelsLoading
+          : isFetchingModels;
   const handleModelFetchClick = isCopilotPreset
     ? handleFetchCopilotModels
     : isCodexOauthPreset
       ? handleFetchCodexOauthModels
       : isXaiOauthPreset
         ? handleFetchXaiOauthModels
-      : isKiroPreset
-        ? handleFetchKiroModels
-        : handleFetchModels;
+        : isKiroPreset
+          ? handleFetchKiroModels
+          : handleFetchModels;
 
   // 模型输入框：支持手动输入 + 下拉选择
   const renderModelInput = (

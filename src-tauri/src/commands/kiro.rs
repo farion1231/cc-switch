@@ -78,10 +78,14 @@ pub(crate) async fn fetch_kiro_models(
         .map_err(|e| format!("获取 Kiro 模型列表网络错误: {e}"))?;
 
     let status = res.status();
+    let body_text = res
+        .text()
+        .await
+        .map_err(|e| format!("读取 Kiro 模型列表响应体失败: {e}"))?;
+
     if !status.is_success() {
-        let body = res.text().await.unwrap_or_default();
-        log::warn!("[Kiro] ListAvailableModels 失败 status={status} body={body}");
-        return Err(format!("获取 Kiro 模型列表失败: {status} {body}"));
+        log::warn!("[Kiro] ListAvailableModels 失败 status={status} body={body_text}");
+        return Err(format!("获取 Kiro 模型列表失败: {status} {body_text}"));
     }
 
     #[derive(serde::Deserialize)]
@@ -107,30 +111,34 @@ pub(crate) async fn fetch_kiro_models(
         properties: Option<SchemaProperties>,
     }
     #[derive(serde::Deserialize)]
+    struct TokenLimits {
+        #[serde(rename = "maxInputTokens")]
+        max_input_tokens: Option<u32>,
+    }
+    #[derive(serde::Deserialize)]
     struct KiroModel {
         #[serde(rename = "modelId")]
         model_id: String,
         #[serde(rename = "additionalModelRequestFieldsSchema", default)]
         additional_schema: Option<AdditionalSchema>,
+        #[serde(rename = "tokenLimits", default)]
+        token_limits: Option<TokenLimits>,
     }
     #[derive(serde::Deserialize)]
     struct ListModelsResponse {
         models: Option<Vec<KiroModel>>,
     }
 
-    let data: ListModelsResponse = res
-        .json()
-        .await
-        .map_err(|e| format!("解析 Kiro 模型列表响应失败: {e}"))?;
+    let data: ListModelsResponse =
+        serde_json::from_str(&body_text).map_err(|e| format!("解析 Kiro 模型列表响应失败: {e}"))?;
 
-    let re = regex::Regex::new(r"(\d)\.(\d)").unwrap();
     let models: Vec<FetchedModel> = data
         .models
         .unwrap_or_default()
         .into_iter()
         .map(|m| {
             // 能力驱动：解析 additionalModelRequestFieldsSchema 并写入全局缓存，
-            // 键为 Kiro 侧 modelId（与 anthropic_to_kiro 中 map_model_to_kiro 产出一致）。
+            // 键为 Kiro 侧 modelId。
             let props = m
                 .additional_schema
                 .as_ref()
@@ -141,20 +149,18 @@ pub(crate) async fn fetch_kiro_models(
                 .and_then(|o| o.properties.as_ref())
                 .map(|e| e.effort.is_some())
                 .unwrap_or(false);
+            let context_window = m.token_limits.as_ref().and_then(|t| t.max_input_tokens);
             crate::proxy::providers::transform_kiro::set_model_caps(
                 &m.model_id,
                 crate::proxy::providers::transform_kiro::KiroModelCaps {
                     supports_thinking,
                     supports_effort,
+                    context_window,
                 },
             );
 
-            let mapped_id = re
-                .replace_all(&m.model_id, "$1-$2")
-                .into_owned()
-                .replace('.', "-");
             FetchedModel {
-                id: mapped_id,
+                id: m.model_id,
                 owned_by: Some("Kiro".to_string()),
             }
         })

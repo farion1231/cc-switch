@@ -19,6 +19,7 @@ pub struct KiroModelCaps {
     #[allow(dead_code)]
     pub supports_thinking: bool,
     pub supports_effort: bool,
+    pub context_window: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -50,6 +51,24 @@ pub fn get_model_caps(kiro_model_id: &str) -> Option<KiroModelCaps> {
         .read()
         .ok()
         .and_then(|m| m.get(kiro_model_id).copied())
+}
+
+/// 获取某个 Kiro 模型的上下文窗口大小（来自 ListAvailableModels 接口返回的 tokenLimits.maxInputTokens）。
+/// 若未获取到（如未刷新过模型列表），使用 272,000 兜底。
+pub fn get_model_context_window(kiro_model_id: Option<&str>) -> u32 {
+    let raw_id = match kiro_model_id {
+        Some(id) if !id.is_empty() => id,
+        _ => return 272_000,
+    };
+
+    // 从模型能力缓存（ListAvailableModels 返回的 tokenLimits.maxInputTokens）中读取
+    if let Some(caps) = get_model_caps(raw_id) {
+        if let Some(cw) = caps.context_window {
+            return cw;
+        }
+    }
+
+    272_000
 }
 
 fn now_ms() -> u64 {
@@ -229,22 +248,6 @@ pub struct KiroCurrentMessage {
     pub user_input_message: KiroUserInputMessage,
 }
 
-/// Map Anthropic model to Kiro model ID
-///
-/// 仅把数字-数字边界（版本号，如 `4-5`）转换为点号（`4.5`），保留品牌名中的连字符。
-/// 例如 `claude-haiku-4-5` -> `claude-haiku-4.5`（不是 `claude.haiku.4.5`）。
-/// 这与参考实现 resolveKiroModel 一致；多余的全连字符替换会让 Kiro 返回
-/// REQUEST_BODY_INVALID。
-pub fn map_model_to_kiro(model: &str) -> String {
-    let lower = model.to_lowercase();
-    if lower == "auto" {
-        return "auto".to_string();
-    }
-    // 只替换 (digit)-(digit) 为 (digit).(digit)，保留其余连字符
-    let re = regex::Regex::new(r"(\d)-(\d)").unwrap();
-    re.replace_all(&lower, "$1.$2").into_owned()
-}
-
 fn sanitize_surrogates(text: &str) -> String {
     // Rust strings are valid UTF-8, but we may want to filter out unpaired surrogates
     // if the original text was parsed from JSON containing raw escape sequences.
@@ -296,8 +299,11 @@ pub fn anthropic_to_kiro(
     session_id: Option<&str>,
     profile_arn: Option<String>,
 ) -> Result<Value, ProxyError> {
-    let original_model = body.get("model").and_then(|m| m.as_str()).unwrap_or("auto");
-    let kiro_model_id = map_model_to_kiro(original_model);
+    let kiro_model_id = body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or("auto")
+        .to_string();
 
     // Build history and current message
     let mut history: Vec<KiroHistoryEntry> = Vec::new();
@@ -323,7 +329,7 @@ pub fn anthropic_to_kiro(
         let len = messages.len();
         if len > 0 {
             // Process history messages (all except the last one)
-            for (i, msg) in messages.iter().take(len - 1).enumerate() {
+            for msg in messages.iter().take(len - 1) {
                 let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
                 let content = msg.get("content");
 
@@ -394,10 +400,7 @@ pub fn anthropic_to_kiro(
                         }
                     }
 
-                    let mut content_str = text_parts.join("\n\n");
-                    if i == 0 && !system_prompt.is_empty() {
-                        content_str = format!("{}\n\n{}", system_prompt, content_str);
-                    }
+                    let content_str = text_parts.join("\n\n");
 
                     let uim = KiroUserInputMessage {
                         content: sanitize_surrogates(&content_str),
@@ -552,9 +555,6 @@ pub fn anthropic_to_kiro(
             }
 
             current_content = text_parts.join("\n\n");
-            if len == 1 && !system_prompt.is_empty() {
-                current_content = format!("{}\n\n{}", system_prompt, current_content);
-            }
             if !images.is_empty() {
                 current_images = Some(images);
             }
@@ -584,13 +584,26 @@ pub fn anthropic_to_kiro(
     // 能力驱动：在 kiro_model_id 被 move 进消息体前先查询缓存。
     let model_caps = get_model_caps(&kiro_model_id);
 
-    let user_message = KiroUserInputMessage {
+    let mut user_message = KiroUserInputMessage {
         content: sanitize_surrogates(&current_content),
-        model_id: kiro_model_id,
+        model_id: kiro_model_id.clone(),
         origin: "KIRO_CLI".to_string(),
         images: current_images,
         user_input_message_context: uimc,
     };
+
+    // 将系统提示词注入到首条历史消息或当前消息的 content 中
+    if !history.is_empty() {
+        if let Some(ref mut uim) = history[0].user_input_message {
+            if !system_prompt.is_empty() {
+                uim.content = format!("{}\n\n{}", system_prompt, uim.content);
+            }
+        }
+    } else {
+        if !system_prompt.is_empty() {
+            user_message.content = format!("{}\n\n{}", system_prompt, user_message.content);
+        }
+    }
 
     // Build additionalModelRequestFields
     let mut additional_fields = json!({});
@@ -654,17 +667,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn map_model_preserves_brand_hyphens() {
-        // 只转换版本号的数字-数字边界，保留品牌名连字符
-        assert_eq!(map_model_to_kiro("claude-haiku-4-5"), "claude-haiku-4.5");
-        assert_eq!(map_model_to_kiro("claude-sonnet-4-6"), "claude-sonnet-4.6");
-        assert_eq!(map_model_to_kiro("claude-opus-4-8"), "claude-opus-4.8");
-        assert_eq!(map_model_to_kiro("auto"), "auto");
-        // 大小写归一
-        assert_eq!(map_model_to_kiro("Claude-Sonnet-4-5"), "claude-sonnet-4.5");
-    }
-
-    #[test]
     fn conversation_id_falls_back_to_uuid_when_session_missing() {
         let provider = Provider {
             id: "test".to_string(),
@@ -695,7 +697,7 @@ mod tests {
             .pointer("/conversationState/currentMessage/userInputMessage/modelId")
             .and_then(|v| v.as_str())
             .unwrap();
-        assert_eq!(model_id, "claude-sonnet-4.5");
+        assert_eq!(model_id, "claude-sonnet-4-5");
     }
 
     fn kiro_provider() -> Provider {
@@ -736,10 +738,11 @@ mod tests {
 
         // 明确不支持 effort：不加 output_config
         set_model_caps(
-            "claude-haiku-4.5",
+            "claude-haiku-4-5",
             KiroModelCaps {
                 supports_thinking: false,
                 supports_effort: false,
+                context_window: None,
             },
         );
         let out = anthropic_to_kiro(make_body("claude-haiku-4-5"), &provider, None, None).unwrap();
@@ -747,10 +750,11 @@ mod tests {
 
         // 明确支持 effort：加 output_config
         set_model_caps(
-            "claude-sonnet-4.5",
+            "claude-sonnet-4-5",
             KiroModelCaps {
                 supports_thinking: true,
                 supports_effort: true,
+                context_window: None,
             },
         );
         let out = anthropic_to_kiro(make_body("claude-sonnet-4-5"), &provider, None, None).unwrap();

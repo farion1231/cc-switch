@@ -420,7 +420,10 @@ async fn handle_claude_transform(
             )))
         } else if api_format == "kiro" {
             Box::new(Box::pin(
-                super::providers::streaming_kiro::create_anthropic_sse_stream_from_kiro(stream),
+                super::providers::streaming_kiro::create_anthropic_sse_stream_from_kiro_with_model(
+                    stream,
+                    Some(ctx.request_model.clone()),
+                ),
             ))
         } else {
             Box::new(Box::pin(create_anthropic_sse_stream(stream)))
@@ -1458,7 +1461,10 @@ async fn handle_codex_anthropic_to_responses_transform(
             Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>,
         > = if ctx.provider.is_kiro() {
             let anthropic_stream =
-                super::providers::streaming_kiro::create_anthropic_sse_stream_from_kiro(stream);
+                super::providers::streaming_kiro::create_anthropic_sse_stream_from_kiro_with_model(
+                    stream,
+                    Some(ctx.request_model.clone()),
+                );
             Box::pin(create_responses_sse_stream_from_anthropic_with_context(
                 anthropic_stream,
                 codex_tool_context,
@@ -1488,10 +1494,11 @@ async fn handle_codex_anthropic_to_responses_transform(
         read_decoded_body(response, ctx.tag, body_timeout).await?;
     let body_str = String::from_utf8_lossy(&body_bytes);
     let anthropic_response: Value = if ctx.provider.is_kiro() {
-        super::providers::streaming_kiro::kiro_eventstream_to_anthropic_response(&body_bytes)
-            .map_err(|message| {
-                ProxyError::TransformError(format!("Kiro upstream error: {message}"))
-            })?
+        super::providers::streaming_kiro::kiro_eventstream_to_anthropic_response_with_model(
+            &body_bytes,
+            Some(&ctx.request_model),
+        )
+        .map_err(|message| ProxyError::TransformError(format!("Kiro upstream error: {message}")))?
     } else {
         match serde_json::from_slice(&body_bytes) {
             Ok(value) => value,

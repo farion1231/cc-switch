@@ -209,7 +209,7 @@ async fn check_kiro_provider(
     let url = format!("https://runtime.{api_region}.kiro.dev/");
 
     // 2) 构造最小 Kiro 运行时请求体
-    let kiro_model_id = crate::proxy::providers::transform_kiro::map_model_to_kiro(&model);
+    let kiro_model_id = model.clone();
     let current_message = serde_json::json!({
         "userInputMessage": {
             "content": "ping",

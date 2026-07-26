@@ -33,8 +33,8 @@ export interface CodexProviderPreset {
   iconColor?: string; // 图标颜色
   // Codex API 格式
   apiFormat?: CodexApiFormat;
-  // 托管账号预设：目前仅 xAI OAuth（Grok 订阅经本地代理注入 token 直连 api.x.ai）
-  providerType?: "xai_oauth";
+  // 托管账号预设：xAI OAuth / Kiro OAuth 等需要本地代理注入 token 的供应商
+  providerType?: "xai_oauth" | "kiro";
   // OAuth 预设：隐藏 API Key 输入，保存前要求已登录托管账号
   requiresOAuth?: boolean;
   // Codex Chat 本地路由模式下的模型目录
@@ -43,9 +43,6 @@ export interface CodexProviderPreset {
   codexChatReasoning?: CodexChatReasoning;
   // Session-based prompt-cache routing override for Chat Completions upstreams
   promptCacheRouting?: PromptCacheRoutingMode;
-  // Managed provider identity and authentication requirements.
-  providerType?: "kiro";
-  requiresOAuth?: boolean;
 }
 
 /**
@@ -416,6 +413,7 @@ requires_openai_auth = true`,
     icon: "aigocode",
     iconColor: "#5B7FFF",
   },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",

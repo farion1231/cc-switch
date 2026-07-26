@@ -105,6 +105,7 @@ fn map_device_code_response(
 }
 
 #[tauri::command(rename_all = "camelCase")]
+#[allow(clippy::too_many_arguments)]
 pub async fn auth_start_login(
     auth_provider: String,
     github_domain: Option<String>,

@@ -1314,7 +1314,7 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://runtime.us-east-1.kiro.dev",
         ANTHROPIC_MODEL: "claude-sonnet-5",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4.5",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5",
         ANTHROPIC_DEFAULT_FABLE_MODEL: "claude-fable-5",

@@ -829,15 +829,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     providerType: "kiro",
     requiresOAuth: true,
     modelRoutes: [
-      ...brandedRoutes(
-        "claude-sonnet-5",
-        "claude-opus-5",
-        "claude-haiku-4-5",
-      ),
+      ...brandedRoutes("claude-sonnet-5", "claude-opus-5", "claude-haiku-4.5"),
       {
         routeId: "claude-fable-5",
         upstreamModel: "claude-fable-5",
         labelOverride: "claude-fable-5",
+        supports1m: false,
       },
     ],
     icon: "kiro",

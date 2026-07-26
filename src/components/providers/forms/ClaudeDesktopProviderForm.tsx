@@ -806,13 +806,13 @@ export function ClaudeDesktopProviderForm({
                 authProvider: "xai_oauth",
                 accountId: selectedXaiAccountId ?? undefined,
               }
-          : activeProviderType === "kiro"
-            ? {
-                source: "managed_account",
-                authProvider: "kiro",
-                accountId: selectedKiroAccountId ?? undefined,
-              }
-            : undefined;
+            : activeProviderType === "kiro"
+              ? {
+                  source: "managed_account",
+                  authProvider: "kiro",
+                  accountId: selectedKiroAccountId ?? undefined,
+                }
+              : undefined;
     meta.codexFastMode =
       activeProviderType === "codex_oauth" ? codexFastMode : undefined;
 
@@ -987,7 +987,9 @@ export function ClaudeDesktopProviderForm({
                 {activeProviderType !== "xai_oauth" && (
                   <div className="space-y-2">
                     <Label>
-                      {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
+                      {t("providerForm.apiFormat", {
+                        defaultValue: "API 格式",
+                      })}
                     </Label>
                     <Select
                       value={apiFormat}
@@ -1007,7 +1009,8 @@ export function ClaudeDesktopProviderForm({
                         </SelectItem>
                         <SelectItem value="openai_chat">
                           {t("providerForm.apiFormatOpenAIChat", {
-                            defaultValue: "OpenAI Chat Completions (需开启路由)",
+                            defaultValue:
+                              "OpenAI Chat Completions (需开启路由)",
                           })}
                         </SelectItem>
                         <SelectItem value="openai_responses">

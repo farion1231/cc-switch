@@ -476,7 +476,7 @@ fn is_managed_oauth_proxy_provider(provider: &Provider) -> bool {
         .meta
         .as_ref()
         .and_then(|meta| meta.provider_type.as_deref())
-        .map_or(false, |provider_type| {
+        .is_some_and(|provider_type| {
             matches!(
                 provider_type,
                 "github_copilot" | "codex_oauth" | "xai_oauth" | "kiro"

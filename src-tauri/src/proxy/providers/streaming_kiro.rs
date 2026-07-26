@@ -32,13 +32,13 @@ pub enum KiroStreamEvent {
     },
     ToolUseInput(String),
     ToolUseStop(bool),
-    /// 上下文使用百分比（当前仅解析，暂未透传给下游）
-    #[allow(dead_code)]
+    /// 上下文使用百分比，通过 contextUsagePercentage 反推 input tokens
     ContextUsage(f64),
     Usage {
         input_tokens: Option<u32>,
         output_tokens: Option<u32>,
     },
+    Credit(f64),
     Error {
         error: String,
         message: Option<String>,
@@ -268,6 +268,13 @@ fn parse_kiro_event(parsed: &Value) -> Option<KiroStreamEvent> {
         });
     }
     if let Some(usage) = parsed.get("usage") {
+        if let Some(unit_val) = parsed.get("unit").and_then(|u| u.as_str()) {
+            if unit_val == "credit" {
+                if let Some(credits) = usage.as_f64() {
+                    return Some(KiroStreamEvent::Credit(credits));
+                }
+            }
+        }
         if parsed.get("unit").is_none() {
             let input_tokens = usage
                 .get("inputTokens")
@@ -320,9 +327,18 @@ fn parse_kiro_events(buffer: &str) -> (Vec<KiroStreamEvent>, String) {
             }
         };
 
-        if let Ok(parsed) = serde_json::from_str::<Value>(&buffer[json_start..=json_end]) {
-            if let Some(event) = parse_kiro_event(&parsed) {
-                events.push(event);
+        match serde_json::from_str::<Value>(&buffer[json_start..=json_end]) {
+            Ok(parsed) => {
+                if let Some(event) = parse_kiro_event(&parsed) {
+                    events.push(event);
+                }
+            }
+            Err(err) => {
+                log::error!(
+                    "[Kiro] Failed to parse event JSON (error={}): {}",
+                    err,
+                    &buffer[json_start..=json_end]
+                );
             }
         }
         pos = json_end + 1;
@@ -332,9 +348,21 @@ fn parse_kiro_events(buffer: &str) -> (Vec<KiroStreamEvent>, String) {
 }
 
 /// Create Anthropic SSE Stream from Kiro Response Stream
+#[allow(dead_code)]
 pub fn create_anthropic_sse_stream_from_kiro<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    create_anthropic_sse_stream_from_kiro_with_model(stream, None)
+}
+
+/// Create Anthropic SSE Stream from Kiro Response Stream with Model ID for dynamic context window resolution
+pub fn create_anthropic_sse_stream_from_kiro_with_model<E: std::error::Error + Send + 'static>(
+    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+    model_id: Option<String>,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    let context_window_f64 =
+        crate::proxy::providers::transform_kiro::get_model_context_window(model_id.as_deref())
+            as f64;
     async_stream::stream! {
         let mut buffer = String::new();
         let mut utf8_remainder: Vec<u8> = Vec::new();
@@ -350,6 +378,7 @@ pub fn create_anthropic_sse_stream_from_kiro<E: std::error::Error + Send + 'stat
         let mut thinking_parser = ThinkingTagParser::default();
         let stream_started = std::time::Instant::now();
         let mut logged_first_content = false;
+        let mut context_usage_pct: Option<f64> = None;
 
         tokio::pin!(stream);
 
@@ -517,6 +546,37 @@ pub fn create_anthropic_sse_stream_from_kiro<E: std::error::Error + Send + 'stat
                                     "output_tokens": output_tokens.unwrap_or(0)
                                 }));
                             }
+                            KiroStreamEvent::ContextUsage(pct) => {
+                                context_usage_pct = Some(pct);
+                            }
+                            KiroStreamEvent::Credit(credits) => {
+                                // 通过 contextUsagePercentage 和模型上下文窗口反推 input_tokens
+                                let estimated_input = if let Some(pct) = context_usage_pct {
+                                    (context_window_f64 * pct / 100.0).round() as u32
+                                } else {
+                                    0
+                                };
+                                // 通过 credit 用量反推 output_tokens：
+                                // 25 credits = 1 USD; Claude Sonnet 定价 $3/M input, $15/M output
+                                let total_cost_usd = credits / 25.0;
+                                let input_cost = estimated_input as f64 * 3.0 / 1_000_000.0;
+                                let output_cost = (total_cost_usd - input_cost).max(0.0);
+                                let estimated_output = (output_cost * 1_000_000.0 / 15.0).round() as u32;
+
+                                log::info!(
+                                    "[Kiro] Token estimation: credits={:.6}, cost_usd={:.6}, context_pct={:.2}%, input_tokens={}, output_tokens={}",
+                                    credits,
+                                    total_cost_usd,
+                                    context_usage_pct.unwrap_or(0.0),
+                                    estimated_input,
+                                    estimated_output,
+                                );
+
+                                latest_usage = Some(json!({
+                                    "input_tokens": estimated_input,
+                                    "output_tokens": estimated_output
+                                }));
+                            }
                             KiroStreamEvent::Error { error, message } => {
                                 let err_json = json!({
                                     "type": "error",
@@ -602,7 +662,17 @@ pub fn create_anthropic_sse_stream_from_kiro<E: std::error::Error + Send + 'stat
 /// 返回 `Err(message)` 表示 eventstream 中出现了 application 级错误事件
 /// （KiroStreamEvent::Error，如配额/模型/鉴权错误）。此时不应伪造成功消息，
 /// 调用方应据此向客户端返回错误响应。
+#[allow(dead_code)]
 pub fn kiro_eventstream_to_anthropic_response(body: &[u8]) -> Result<Value, String> {
+    kiro_eventstream_to_anthropic_response_with_model(body, None)
+}
+
+pub fn kiro_eventstream_to_anthropic_response_with_model(
+    body: &[u8],
+    model_id: Option<&str>,
+) -> Result<Value, String> {
+    let context_window_f64 =
+        crate::proxy::providers::transform_kiro::get_model_context_window(model_id) as f64;
     let text = String::from_utf8_lossy(body);
     let (events, _remaining) = parse_kiro_events(&text);
 
@@ -617,6 +687,7 @@ pub fn kiro_eventstream_to_anthropic_response(body: &[u8]) -> Result<Value, Stri
     let mut has_tool_calls = false;
     let mut input_tokens: u32 = 0;
     let mut output_tokens: u32 = 0;
+    let mut context_usage_pct: Option<f64> = None;
 
     fn flush_text(
         current_text: &mut String,
@@ -706,6 +777,35 @@ pub fn kiro_eventstream_to_anthropic_response(body: &[u8]) -> Result<Value, Stri
                     output_tokens = v;
                 }
             }
+            KiroStreamEvent::ContextUsage(pct) => {
+                context_usage_pct = Some(pct);
+            }
+            KiroStreamEvent::Credit(credits) => {
+                // 通过 contextUsagePercentage 和模型上下文窗口反推 input_tokens
+                let estimated_input = if let Some(pct) = context_usage_pct {
+                    (context_window_f64 * pct / 100.0).round() as u32
+                } else {
+                    0
+                };
+                // 通过 credit 用量反推 output_tokens：
+                // 25 credits = 1 USD; Claude Sonnet 定价 $3/M input, $15/M output
+                let total_cost_usd = credits / 25.0;
+                let input_cost = estimated_input as f64 * 3.0 / 1_000_000.0;
+                let output_cost = (total_cost_usd - input_cost).max(0.0);
+                let estimated_output = (output_cost * 1_000_000.0 / 15.0).round() as u32;
+
+                log::info!(
+                    "[Kiro] Token estimation (non-stream): credits={:.6}, cost_usd={:.6}, context_pct={:.2}%, input_tokens={}, output_tokens={}",
+                    credits,
+                    total_cost_usd,
+                    context_usage_pct.unwrap_or(0.0),
+                    estimated_input,
+                    estimated_output,
+                );
+
+                input_tokens = estimated_input;
+                output_tokens = estimated_output;
+            }
             KiroStreamEvent::Error { error, message } => {
                 // 出现 application 级错误事件：放弃聚合，向上抛错，避免伪造成功消息。
                 return Err(message.unwrap_or(error));
@@ -724,7 +824,7 @@ pub fn kiro_eventstream_to_anthropic_response(body: &[u8]) -> Result<Value, Stri
         "end_turn"
     };
 
-    Ok(json!({
+    let aggregated_response = json!({
         "id": format!("msg_kiro{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
         "type": "message",
         "role": "assistant",
@@ -736,7 +836,9 @@ pub fn kiro_eventstream_to_anthropic_response(body: &[u8]) -> Result<Value, Stri
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
         }
-    }))
+    });
+
+    Ok(aggregated_response)
 }
 
 #[cfg(test)]

@@ -3159,7 +3159,7 @@ base_url = "https://production.api/v1"
     fn catalog_applies_per_model_reasoning_efforts() {
         let settings = json!({
             "modelCatalog": { "models": [{
-                "model": "gpt-5-6-luna",
+                "model": "gpt-5.6-luna",
                 "reasoningEfforts": ["none", "low", "medium", "high", "xhigh", "max"],
                 "defaultReasoningEffort": "high"
             }] }

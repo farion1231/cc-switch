@@ -1314,7 +1314,12 @@ function ProviderFormFull({
     // cloud_provider（如 Bedrock）通过模板变量处理认证，跳过通用校验
     if (category !== "official" && category !== "cloud_provider") {
       if (appId === "claude") {
-        if (!isCodexOauthProvider && !isXaiOauthProvider && !isKiroProvider && !baseUrl.trim()) {
+        if (
+          !isCodexOauthProvider &&
+          !isXaiOauthProvider &&
+          !isKiroProvider &&
+          !baseUrl.trim()
+        ) {
           issues.push(
             t("providerForm.endpointRequired", {
               defaultValue: "非官方供应商请填写 API 端点",
@@ -1617,13 +1622,13 @@ function ProviderFormFull({
                 authProvider: "xai_oauth",
                 accountId: selectedXaiAccountId ?? undefined,
               }
-          : isKiroProvider
-            ? {
-                source: "managed_account",
-                authProvider: "kiro",
-                accountId: selectedKiroAccountId ?? undefined,
-              }
-            : undefined,
+            : isKiroProvider
+              ? {
+                  source: "managed_account",
+                  authProvider: "kiro",
+                  accountId: selectedKiroAccountId ?? undefined,
+                }
+              : undefined,
       // GitHub Copilot 多账号：保存关联的账号 ID
       githubAccountId:
         isCopilotProvider && selectedGitHubAccountId

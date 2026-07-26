@@ -246,6 +246,59 @@ impl RequestForwarder {
         }
     }
 
+    /// Kiro 请求内容超长（CONTENT_LENGTH_EXCEEDS_THRESHOLD），
+    /// 裁剪历史记录后重试一次。
+    fn kiro_content_length_retry_should_trigger(
+        adapter_name: &str,
+        api_format: &str,
+        already_retried: bool,
+        error: &ProxyError,
+    ) -> bool {
+        if !matches!(adapter_name, "Claude" | "Codex") || api_format != "kiro" || already_retried {
+            return false;
+        }
+        match error {
+            ProxyError::UpstreamError {
+                status: 400,
+                body: Some(b),
+            } => b.contains("CONTENT_LENGTH_EXCEEDS_THRESHOLD"),
+            _ => false,
+        }
+    }
+
+    /// 裁剪已序列化的 Kiro 请求体中的 conversationState.history 数组，
+    /// 保留最近的消息（后半部分），返回裁剪掉的条目数。
+    fn kiro_trim_history(body: &mut Value) -> usize {
+        let history = body
+            .pointer_mut("/conversationState/history")
+            .and_then(|h| h.as_array_mut());
+
+        let Some(history) = history else {
+            return 0;
+        };
+
+        let original_len = history.len();
+        if original_len <= 2 {
+            return 0; // 历史太短，无法再裁剪
+        }
+
+        // 保留后半部分（最近的消息）
+        let keep = original_len / 2;
+        let trim_count = original_len - keep;
+        history.drain(..trim_count);
+
+        // 确保历史以包含 userInputMessage 的条目开头，
+        // 避免首条仅含 assistantResponseMessage 导致 Kiro 拒绝
+        while !history.is_empty() {
+            if history[0].get("userInputMessage").is_some() {
+                break;
+            }
+            history.remove(0);
+        }
+
+        original_len - history.len()
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         router: Arc<ProviderRouter>,
@@ -472,6 +525,7 @@ impl RequestForwarder {
             let mut budget_rectifier_retried = false;
             let mut media_rectifier_retried = false;
             let mut kiro_additional_fields_retried = false;
+            let mut kiro_content_length_retried = false;
 
             // 上限检查：尊重用户在 AppProxyConfig.max_retries 上配置的「重试次数」。
             // 放在熔断器 allow 检查之前，避免在已经超限时还占用 HalfOpen 探测名额。
@@ -693,6 +747,92 @@ impl RequestForwarder {
                                     return Err(err);
                                 }
                                 continue;
+                            }
+                        }
+                    }
+
+                    // Kiro: 请求内容超长（CONTENT_LENGTH_EXCEEDS_THRESHOLD），裁剪历史后重试
+                    if Self::kiro_content_length_retry_should_trigger(
+                        adapter.name(),
+                        super::providers::get_claude_api_format(provider),
+                        kiro_content_length_retried,
+                        &e,
+                    ) {
+                        kiro_content_length_retried = true;
+                        let _ = kiro_content_length_retried; // 跨 provider 持久，避免重复重试
+                        let mut retry_body = provider_body.clone();
+                        let trimmed = Self::kiro_trim_history(&mut retry_body);
+                        if trimmed > 0 {
+                            log::info!(
+                                "[{app_type_str}] [Kiro] CONTENT_LENGTH_EXCEEDS_THRESHOLD, 裁剪 {trimmed} 条历史记录后重试"
+                            );
+                            match self
+                                .forward(
+                                    app_type,
+                                    &method,
+                                    provider,
+                                    endpoint,
+                                    &retry_body,
+                                    &headers,
+                                    &extensions,
+                                    adapter.as_ref(),
+                                )
+                                .await
+                            {
+                                Ok((response, claude_api_format, outbound_model)) => {
+                                    log::info!("[{app_type_str}] [Kiro] 裁剪历史后重试成功");
+                                    self.record_success_result(
+                                        &provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
+                                    {
+                                        let mut current_providers =
+                                            self.current_providers.write().await;
+                                        current_providers.insert(
+                                            app_type_str.to_string(),
+                                            (provider.id.clone(), provider.name.clone()),
+                                        );
+                                    }
+                                    {
+                                        let mut status = self.status.write().await;
+                                        status.success_requests += 1;
+                                        status.last_error = None;
+                                        if status.total_requests > 0 {
+                                            status.success_rate = (status.success_requests as f32
+                                                / status.total_requests as f32)
+                                                * 100.0;
+                                        }
+                                    }
+                                    return Ok(ForwardResult {
+                                        response,
+                                        provider: provider.clone(),
+                                        claude_api_format,
+                                        outbound_model,
+                                        connection_guard: None,
+                                    });
+                                }
+                                Err(retry_err) => {
+                                    log::warn!(
+                                        "[{app_type_str}] [Kiro] 裁剪历史后重试仍失败: {retry_err}"
+                                    );
+                                    if let Some(err) = self
+                                        .handle_rectifier_retry_failure(
+                                            retry_err,
+                                            provider,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                            "kiro CONTENT_LENGTH_EXCEEDS_THRESHOLD 裁剪重试",
+                                            &mut last_error,
+                                            &mut last_provider,
+                                        )
+                                        .await
+                                    {
+                                        return Err(err);
+                                    }
+                                    continue;
+                                }
                             }
                         }
                     }
@@ -1658,13 +1798,11 @@ impl RequestForwarder {
                     .get_profile_arn_for_account(account_id.as_deref())
                     .await;
                 if anthropic_body.get("thinking").is_some() {
-                    let kiro_model_id = super::providers::transform_kiro::map_model_to_kiro(
-                        anthropic_body
-                            .get("model")
-                            .and_then(Value::as_str)
-                            .unwrap_or("auto"),
-                    );
-                    if super::providers::transform_kiro::get_model_caps(&kiro_model_id).is_none() {
+                    let kiro_model_id = anthropic_body
+                        .get("model")
+                        .and_then(Value::as_str)
+                        .unwrap_or("auto");
+                    if super::providers::transform_kiro::get_model_caps(kiro_model_id).is_none() {
                         crate::commands::prewarm_kiro_models(
                             kiro_state.0.clone(),
                             account_id.clone(),
@@ -1760,13 +1898,11 @@ impl RequestForwarder {
                         // 先拉一次模型列表填充缓存（fetch_kiro_models 作为副作用写入），
                         // 避免首个思考请求白费一次 400 重试。失败不阻断，仍由 400 重试兑底。
                         if mapped_body.get("thinking").is_some() {
-                            let kiro_model_id = super::providers::transform_kiro::map_model_to_kiro(
-                                mapped_body
-                                    .get("model")
-                                    .and_then(|m| m.as_str())
-                                    .unwrap_or("auto"),
-                            );
-                            if super::providers::transform_kiro::get_model_caps(&kiro_model_id)
+                            let kiro_model_id = mapped_body
+                                .get("model")
+                                .and_then(|m| m.as_str())
+                                .unwrap_or("auto");
+                            if super::providers::transform_kiro::get_model_caps(kiro_model_id)
                                 .is_none()
                             {
                                 crate::commands::prewarm_kiro_models(
