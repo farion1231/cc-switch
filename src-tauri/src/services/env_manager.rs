@@ -213,37 +213,55 @@ fn persist_unix_user_env_var(name: &str, value: Option<&str>) -> Result<(), Stri
 #[cfg(any(not(target_os = "windows"), test))]
 fn ensure_unix_shell_startup_sources_env(home: &std::path::Path) -> Result<(), String> {
     for (rc_name, source_line) in UNIX_SHELL_STARTUP_FILES {
-        let path = home.join(rc_name);
-        let current = match fs::read_to_string(&path) {
-            Ok(current) => current,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(err) => {
-                return Err(format!(
-                    "读取 Unix shell 启动文件失败 {}: {err}",
-                    path.display()
-                ))
-            }
-        };
-        if has_active_shell_source(&current, source_line) {
-            continue;
-        }
+        ensure_unix_shell_startup_file_sources_env(&home.join(rc_name), source_line)?;
+    }
 
-        let mut next = current;
-        if !next.is_empty() && !next.ends_with('\n') {
-            next.push('\n');
-        }
-        next.push_str(source_line);
-        next.push('\n');
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| {
-                format!("创建 Unix shell 启动文件目录失败 {}: {e}", parent.display())
-            })?;
-        }
-        fs::write(&path, next)
-            .map_err(|e| format!("更新 Unix shell 启动文件失败 {}: {e}", path.display()))?;
+    if let Some(path) = existing_bash_login_startup_file(home) {
+        ensure_unix_shell_startup_file_sources_env(&path, UNIX_SHELL_SOURCE_LINE)?;
     }
 
     Ok(())
+}
+
+#[cfg(any(not(target_os = "windows"), test))]
+fn existing_bash_login_startup_file(home: &std::path::Path) -> Option<PathBuf> {
+    [".bash_profile", ".bash_login"]
+        .into_iter()
+        .map(|name| home.join(name))
+        .find(|path| path.exists())
+}
+
+#[cfg(any(not(target_os = "windows"), test))]
+fn ensure_unix_shell_startup_file_sources_env(
+    path: &std::path::Path,
+    source_line: &str,
+) -> Result<(), String> {
+    let current = match fs::read_to_string(path) {
+        Ok(current) => current,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => {
+            return Err(format!(
+                "读取 Unix shell 启动文件失败 {}: {err}",
+                path.display()
+            ))
+        }
+    };
+    if has_active_shell_source(&current, source_line) {
+        return Ok(());
+    }
+
+    let mut next = current;
+    if !next.is_empty() && !next.ends_with('\n') {
+        next.push('\n');
+    }
+    next.push_str(source_line);
+    next.push('\n');
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("创建 Unix shell 启动文件目录失败 {}: {e}", parent.display()))?;
+    }
+    fs::write(path, next)
+        .map_err(|e| format!("更新 Unix shell 启动文件失败 {}: {e}", path.display()))
 }
 
 #[cfg(any(not(target_os = "windows"), test))]
@@ -756,6 +774,38 @@ mod tests {
         let fish_config = temp_home.path().join(".config/fish/config.fish");
         let fish_content = fs::read_to_string(fish_config).expect("read fish config");
         assert!(fish_content.contains(UNIX_FISH_SOURCE_LINE));
+    }
+
+    #[test]
+    fn unix_shell_startup_update_uses_existing_bash_profile_first() {
+        let temp_home = tempfile::tempdir().expect("temp home");
+        let bash_profile = temp_home.path().join(".bash_profile");
+        let bash_login = temp_home.path().join(".bash_login");
+        fs::write(&bash_profile, "# bash profile\n").expect("seed bash profile");
+        fs::write(&bash_login, "# bash login\n").expect("seed bash login");
+
+        ensure_unix_shell_startup_sources_env(temp_home.path()).expect("install startup hooks");
+
+        let profile_content = fs::read_to_string(&bash_profile).expect("read bash profile");
+        assert!(profile_content.contains(UNIX_SHELL_SOURCE_LINE));
+        assert_eq!(
+            fs::read_to_string(&bash_login).expect("read bash login"),
+            "# bash login\n",
+            "Bash ignores .bash_login when .bash_profile exists, so only the first file should change"
+        );
+    }
+
+    #[test]
+    fn unix_shell_startup_update_uses_existing_bash_login_when_profile_is_absent() {
+        let temp_home = tempfile::tempdir().expect("temp home");
+        let bash_login = temp_home.path().join(".bash_login");
+        fs::write(&bash_login, "# bash login\n").expect("seed bash login");
+
+        ensure_unix_shell_startup_sources_env(temp_home.path()).expect("install startup hooks");
+
+        let login_content = fs::read_to_string(&bash_login).expect("read bash login");
+        assert!(login_content.contains(UNIX_SHELL_SOURCE_LINE));
+        assert!(!temp_home.path().join(".bash_profile").exists());
     }
 
     #[test]
