@@ -595,7 +595,16 @@ fn codex_desktop_statsig_has_only_models_config(wrapper: &Value) -> bool {
     let Some(dynamic_configs) = data.get("dynamic_configs").and_then(Value::as_object) else {
         return false;
     };
-    dynamic_configs.len() == 1
+    let has_sibling_evaluations =
+        ["feature_gates", "layer_configs"]
+            .iter()
+            .any(|key| match data.get(*key) {
+                None => false,
+                Some(Value::Object(entries)) => !entries.is_empty(),
+                Some(_) => true,
+            });
+    !has_sibling_evaluations
+        && dynamic_configs.len() == 1
         && dynamic_configs.contains_key(CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID)
 }
 
@@ -2346,7 +2355,7 @@ pub fn sync_codex_desktop_available_models_cache_after_live_restore(settings: &V
     }
 }
 
-fn sync_codex_desktop_available_models_cache_after_provider_write(
+pub(crate) fn sync_codex_desktop_available_models_cache_after_provider_write(
     settings: &Value,
     config_text: Option<&str>,
 ) {
@@ -4129,6 +4138,28 @@ base_url = "https://production.api/v1"
             &["gpt-5.6-sol".to_string()]
         ));
         assert_eq!(wrapper, original);
+    }
+
+    #[test]
+    fn codex_desktop_statsig_pin_rejects_sibling_evaluation_collections() {
+        let data = json!({
+            "dynamic_configs": {
+                CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID: {
+                    "value": { "available_models": ["gpt-5.5"] }
+                }
+            },
+            "feature_gates": { "unrelated-gate": { "value": true } },
+            "layer_configs": { "unrelated-layer": { "value": { "enabled": true } } }
+        });
+        let wrapper = json!({
+            "source": "Network",
+            "data": data.to_string()
+        });
+
+        assert!(
+            !codex_desktop_statsig_has_only_models_config(&wrapper),
+            "evaluation bundles with sibling collections must not be future-pinned"
+        );
     }
 
     #[test]
