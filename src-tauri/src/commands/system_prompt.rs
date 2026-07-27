@@ -25,10 +25,7 @@ pub async fn get_system_prompt_file(app: String) -> Result<String, String> {
 /// 保存指定应用的全局系统提示文件内容
 /// 优先使用 custom_file_path（如果设置），否则使用默认路径
 #[tauri::command]
-pub async fn save_system_prompt_file(
-    app: String,
-    content: String,
-) -> Result<(), String> {
+pub async fn save_system_prompt_file(app: String, content: String) -> Result<(), String> {
     let toggle = settings::get_injection_toggle(&app);
     let path = if let Some(ref custom) = toggle.custom_file_path {
         std::path::PathBuf::from(custom)
@@ -37,8 +34,7 @@ pub async fn save_system_prompt_file(
         prompt_file_path(&app_type).map_err(|e| e.to_string())?
     };
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("创建目录失败: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
     }
     std::fs::write(&path, &content).map_err(|e| format!("保存文件失败: {e}"))?;
     Ok(())
@@ -53,10 +49,7 @@ pub async fn get_injection_toggle(app: String) -> Result<InjectionToggle, String
 
 /// 设置指定应用的注入开关状态
 #[tauri::command]
-pub async fn set_injection_toggle(
-    app: String,
-    toggle: InjectionToggle,
-) -> Result<(), String> {
+pub async fn set_injection_toggle(app: String, toggle: InjectionToggle) -> Result<(), String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     settings::set_injection_toggle(app_type.as_str(), toggle).map_err(|e| e.to_string())
 }

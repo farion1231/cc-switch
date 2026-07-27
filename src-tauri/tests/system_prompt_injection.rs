@@ -34,12 +34,7 @@ mod system_prompt_injection_tests {
 
     #[test]
     fn injection_combines_file_and_shared() {
-        let result = build_injection_content(
-            "测试数据：111",
-            "测试数据：222",
-            true,
-            true,
-        );
+        let result = build_injection_content("测试数据：111", "测试数据：222", true, true);
         assert_eq!(
             result.as_deref(),
             Some("测试数据：111\n\n---\n\n测试数据：222")

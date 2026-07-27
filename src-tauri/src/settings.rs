@@ -1214,8 +1214,7 @@ pub fn load_shared_prompt() -> String {
 pub fn save_shared_prompt(content: &str) -> Result<(), AppError> {
     let path = shared_prompt_path();
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| AppError::io(parent, e))?;
+        std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
     std::fs::write(&path, content).map_err(|e| AppError::io(&path, e))
 }
