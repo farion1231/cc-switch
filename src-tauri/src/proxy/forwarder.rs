@@ -1573,6 +1573,34 @@ impl RequestForwarder {
             );
         }
 
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+        {
+            let activated_names: Vec<&str> = request_body
+                .get("tools")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+                .filter(|name| name.contains("__") && *name != "tool_search")
+                .collect();
+            if !activated_names.is_empty() {
+                let tool_choice = request_body
+                    .get("tool_choice")
+                    .map(crate::proxy::json_canonical::canonical_json_string)
+                    .unwrap_or_else(|| "<absent>".to_string());
+                log::info!(
+                    "[Codex] Activated deferred tools for native Responses upstream \
+                     (provider={}, count={}, tool_choice={}, names={:?})",
+                    provider.id,
+                    activated_names.len(),
+                    tool_choice,
+                    activated_names
+                );
+            }
+        }
+
         // Same native-Responses path: scrub the OpenAI-backend-private fields
         // and tool carriers (`external_web_access`, `prompt_cache_retention`,
         // `additional_tools`, `tool_search`, …) that xAI's strict serde parser
