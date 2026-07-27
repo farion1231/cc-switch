@@ -17,16 +17,6 @@ fn write_skill(dir: &std::path::Path, name: &str) {
     .expect("write SKILL.md");
 }
 
-#[cfg(unix)]
-fn symlink_dir(src: &std::path::Path, dest: &std::path::Path) {
-    std::os::unix::fs::symlink(src, dest).expect("create symlink");
-}
-
-#[cfg(windows)]
-fn symlink_dir(src: &std::path::Path, dest: &std::path::Path) {
-    std::os::windows::fs::symlink_dir(src, dest).expect("create symlink");
-}
-
 #[test]
 fn import_from_apps_respects_explicit_app_selection() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
@@ -120,7 +110,7 @@ fn import_from_apps_does_not_rewrite_selected_app_directory() {
 }
 
 #[test]
-fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
+fn sync_to_app_removes_disabled_and_orphaned_ssot_managed_links() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
     let home = ensure_test_home();
@@ -132,9 +122,9 @@ fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
     write_skill(&orphan_skill, "Orphan");
 
     let opencode_skills_dir = home.join(".config").join("opencode").join("skills");
-    fs::create_dir_all(&opencode_skills_dir).expect("create opencode skills dir");
-    symlink_dir(&disabled_skill, &opencode_skills_dir.join("disabled-skill"));
-    symlink_dir(&orphan_skill, &opencode_skills_dir.join("orphan-skill"));
+    SkillService::sync_to_app_dir("disabled-skill", &AppType::OpenCode)
+        .expect("sync disabled skill");
+    SkillService::sync_to_app_dir("orphan-skill", &AppType::OpenCode).expect("sync orphan skill");
 
     let state = create_test_state().expect("create test state");
     state
