@@ -1095,7 +1095,9 @@ fn codex_desktop_cache_worker_next_delay(
                 .min(CODEX_DESKTOP_CACHE_RETRY_MAX_DELAY_SECS);
             Some(delay)
         }
-        CodexDesktopCacheRetryOutcome::Failed(err) if codex_desktop_cache_error_is_locked(err) => {
+        CodexDesktopCacheRetryOutcome::Failed(err)
+            if has_custom_catalog || codex_desktop_cache_error_is_locked(err) =>
+        {
             let delay = Duration::from_secs(*retry_delay_secs);
             *retry_delay_secs = retry_delay_secs
                 .saturating_mul(2)
@@ -2229,7 +2231,7 @@ pub fn sync_codex_desktop_available_models_cache_from_settings(settings: &Value)
                 "Codex provider switched, but the Desktop model whitelist cache was not synced: {err}"
             );
             let next_delay = (!model_ids.is_empty())
-                .then(|| Duration::from_secs(CODEX_DESKTOP_CACHE_RENEWAL_INTERVAL_SECS));
+                .then(|| Duration::from_secs(CODEX_DESKTOP_CACHE_RETRY_INITIAL_DELAY_SECS));
             schedule_codex_desktop_available_models_cache_worker(generation, model_ids, next_delay);
         }
     }
@@ -4096,7 +4098,7 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
-    fn codex_desktop_cache_worker_retries_locks_and_stops_when_superseded() {
+    fn codex_desktop_cache_worker_retries_discovery_failures_and_stops_when_superseded() {
         let mut retry_delay_secs = CODEX_DESKTOP_CACHE_RETRY_INITIAL_DELAY_SECS;
 
         assert_eq!(
@@ -4110,6 +4112,19 @@ base_url = "https://production.api/v1"
             Some(Duration::from_secs(1))
         );
         assert_eq!(retry_delay_secs, 2);
+        assert_eq!(
+            codex_desktop_cache_worker_next_delay(
+                &CodexDesktopCacheRetryOutcome::Failed(
+                    "Failed to open Codex Desktop localStorage LevelDB: incomplete manifest"
+                        .to_string(),
+                ),
+                true,
+                &mut retry_delay_secs,
+            ),
+            Some(Duration::from_secs(2))
+        );
+        assert_eq!(retry_delay_secs, 4);
+
         assert_eq!(
             codex_desktop_cache_worker_next_delay(
                 &CodexDesktopCacheRetryOutcome::Superseded,
