@@ -26,6 +26,7 @@ pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 pub const CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID: &str = "cc-switch-official";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 const CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID: &str = "107580212";
+const CODEX_DESKTOP_STATSIG_OWNED_MODELS_KEY: &str = "cc_switch_injected_available_models";
 const CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER: &str = "statsig.cached.evaluations";
 const CODEX_DESKTOP_STATSIG_LAST_MODIFIED_KEY_MARKER: &str =
     "statsig.last_modified_time.evaluations";
@@ -689,9 +690,17 @@ fn unpin_codex_desktop_statsig_last_modified_cache_keys(
 }
 
 fn merge_codex_desktop_statsig_available_models(wrapper: &mut Value, model_ids: &[String]) -> bool {
-    if model_ids.is_empty() {
-        return false;
-    }
+    let previous_owned = wrapper
+        .get(CODEX_DESKTOP_STATSIG_OWNED_MODELS_KEY)
+        .and_then(Value::as_array)
+        .map(|models| {
+            models
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<HashSet<_>>()
+        })
+        .unwrap_or_default();
     let Some(data_text) = wrapper.get("data").and_then(Value::as_str) else {
         return false;
     };
@@ -723,31 +732,58 @@ fn merge_codex_desktop_statsig_available_models(wrapper: &mut Value, model_ids: 
         return false;
     };
 
+    let original_models = available_models.clone();
+    available_models.retain(|model| {
+        model
+            .as_str()
+            .map(|model_id| !previous_owned.contains(model_id))
+            .unwrap_or(true)
+    });
     let mut seen = available_models
         .iter()
         .filter_map(Value::as_str)
         .map(str::to_string)
         .collect::<HashSet<_>>();
-    let mut changed = false;
+    let mut current_owned = Vec::new();
     for model_id in model_ids {
         if seen.insert(model_id.clone()) {
             available_models.push(json!(model_id));
-            changed = true;
+            current_owned.push(model_id.clone());
         }
     }
-    if !changed {
-        return false;
-    }
+    let data_changed = *available_models != original_models;
+    let updated_data_text = if data_changed {
+        let Ok(updated_data_text) = serde_json::to_string(&data) else {
+            return false;
+        };
+        Some(updated_data_text)
+    } else {
+        None
+    };
 
-    let Ok(updated_data_text) = serde_json::to_string(&data) else {
+    let Some(wrapper_obj) = wrapper.as_object_mut() else {
         return false;
     };
-    if let Some(wrapper_obj) = wrapper.as_object_mut() {
+    if let Some(updated_data_text) = updated_data_text {
         wrapper_obj.insert("data".to_string(), json!(updated_data_text));
-        true
-    } else {
-        false
     }
+    let metadata_changed = if current_owned.is_empty() {
+        wrapper_obj
+            .remove(CODEX_DESKTOP_STATSIG_OWNED_MODELS_KEY)
+            .is_some()
+    } else {
+        let current_owned = json!(current_owned);
+        if wrapper_obj.get(CODEX_DESKTOP_STATSIG_OWNED_MODELS_KEY) == Some(&current_owned) {
+            false
+        } else {
+            wrapper_obj.insert(
+                CODEX_DESKTOP_STATSIG_OWNED_MODELS_KEY.to_string(),
+                current_owned,
+            );
+            true
+        }
+    };
+    data_changed || metadata_changed
 }
 
 fn codex_desktop_leveldb_candidates_for_root(codex_root: &Path) -> Vec<PathBuf> {
@@ -1031,7 +1067,10 @@ fn sync_codex_desktop_available_models_cache_path(
         .map(|result| result.updated_count)
 }
 
-fn codex_desktop_leveldb_candidate_is_active_layout(path: &Path) -> bool {
+fn codex_desktop_leveldb_candidate_is_active_layout_for_platform(
+    path: &Path,
+    root_layouts_active: bool,
+) -> bool {
     let components = path
         .components()
         .map(|component| component.as_os_str().to_string_lossy())
@@ -1042,6 +1081,18 @@ fn codex_desktop_leveldb_candidate_is_active_layout(path: &Path) -> bool {
         || components.windows(2).any(|pair| {
             pair[0].eq_ignore_ascii_case("web") && pair[1].eq_ignore_ascii_case("Codex")
         })
+        || (root_layouts_active
+            && components.windows(2).any(|pair| {
+                pair[0].eq_ignore_ascii_case("Local Storage")
+                    && pair[1].eq_ignore_ascii_case("leveldb")
+            }))
+}
+
+fn codex_desktop_leveldb_candidate_is_active_layout(path: &Path) -> bool {
+    codex_desktop_leveldb_candidate_is_active_layout_for_platform(
+        path,
+        cfg!(any(target_os = "macos", target_os = "linux")),
+    )
 }
 fn sync_codex_desktop_available_models_cache_candidates(
     candidates: &[PathBuf],
@@ -4116,6 +4167,32 @@ base_url = "https://production.api/v1"
             &mut wrapper,
             &models
         ));
+
+        let next_models = vec!["gpt-5.6-sol".to_string(), "gpt-5.6-orbit".to_string()];
+        assert!(merge_codex_desktop_statsig_available_models(
+            &mut wrapper,
+            &next_models
+        ));
+        assert_eq!(
+            codex_desktop_statsig_available_model_ids(&wrapper),
+            Some(HashSet::from([
+                "gpt-5.5".to_string(),
+                "gpt-5.6-sol".to_string(),
+                "gpt-5.6-orbit".to_string(),
+            ]))
+        );
+
+        assert!(merge_codex_desktop_statsig_available_models(
+            &mut wrapper,
+            &[]
+        ));
+        assert_eq!(
+            codex_desktop_statsig_available_model_ids(&wrapper),
+            Some(HashSet::from([
+                "gpt-5.5".to_string(),
+                "gpt-5.6-sol".to_string(),
+            ]))
+        );
     }
 
     #[test]
@@ -4716,6 +4793,18 @@ base_url = "https://production.api/v1"
                 .join("Local Storage")
                 .join("leveldb")
         ));
+        assert!(
+            codex_desktop_leveldb_candidate_is_active_layout_for_platform(&candidates[0], true),
+            "macOS/Linux root Local Storage must be considered active"
+        );
+        assert!(
+            codex_desktop_leveldb_candidate_is_active_layout_for_platform(&candidates[1], true),
+            "macOS/Linux Default Local Storage must be considered active"
+        );
+        assert!(
+            !codex_desktop_leveldb_candidate_is_active_layout_for_platform(&candidates[0], false),
+            "Windows legacy root storage must still require partition/web discovery"
+        );
     }
 
     #[test]
