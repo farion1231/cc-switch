@@ -24,6 +24,25 @@ pub fn build_provider_share_url(
         ));
     }
 
+    // Claude routing-metadata guard. The link carries `meta.apiFormat` (below)
+    // but NOT the other proxy-routing meta fields. A provider that depends on
+    // any of them would import with silently different routing (e.g. a full
+    // base_url getting the endpoint path appended, or a custom User-Agent /
+    // prompt-cache key dropped). Reject at generation time rather than ship a
+    // link that breaks the "identical" promise. (`custom_endpoints` is
+    // intentionally not guarded: only the primary endpoint is shared, which
+    // degrades gracefully without breaking routing.)
+    if matches!(app_type, AppType::Claude) {
+        if let Some(meta) = provider.meta.as_ref() {
+            let unsupported = unsupported_claude_routing_meta(meta);
+            if let Some(field) = unsupported {
+                return Err(AppError::InvalidInput(format!(
+                    "This provider cannot be shared: uses unsupported routing metadata ({field})"
+                )));
+            }
+        }
+    }
+
     let config_json = serde_json::to_string(&provider.settings_config)
         .map_err(|e| AppError::Message(format!("Failed to serialize provider config: {e}")))?;
     let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
@@ -46,32 +65,26 @@ pub fn build_provider_share_url(
         if let Some(notes) = provider.notes.as_deref().filter(|s| !s.is_empty()) {
             qp.append_pair("notes", notes);
         }
+        if let Some(api_format) = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.api_format.as_deref())
+            .filter(|s| !s.is_empty())
+        {
+            // Claude wire-format routing (meta.apiFormat). Without it the
+            // receiver falls back to "anthropic" and sends the wrong wire
+            // format to OpenAI-Chat / Responses / Gemini-native upstreams.
+            qp.append_pair("apiFormat", api_format);
+        }
         if let Some(script) = provider.meta.as_ref().and_then(|m| m.usage_script.as_ref()) {
-            qp.append_pair(
-                "usageEnabled",
-                if script.enabled { "true" } else { "false" },
-            );
-            if !script.code.is_empty() {
-                qp.append_pair(
-                    "usageScript",
-                    &BASE64_STANDARD.encode(script.code.as_bytes()),
-                );
-            }
-            if let Some(v) = script.api_key.as_deref().filter(|s| !s.is_empty()) {
-                qp.append_pair("usageApiKey", v);
-            }
-            if let Some(v) = script.base_url.as_deref().filter(|s| !s.is_empty()) {
-                qp.append_pair("usageBaseUrl", v);
-            }
-            if let Some(v) = script.access_token.as_deref().filter(|s| !s.is_empty()) {
-                qp.append_pair("usageAccessToken", v);
-            }
-            if let Some(v) = script.user_id.as_deref().filter(|s| !s.is_empty()) {
-                qp.append_pair("usageUserId", v);
-            }
-            if let Some(interval) = script.auto_query_interval {
-                qp.append_pair("usageAutoInterval", &interval.to_string());
-            }
+            // Carry the FULL UsageScript (templateType, codingPlanProvider,
+            // Volcengine AK/SK, Zhipu org/project, ...) as a single base64
+            // JSON blob. The scattered usage_* params would drop native
+            // template fields and leave the receiver running an empty script.
+            let script_json = serde_json::to_string(script).map_err(|e| {
+                AppError::Message(format!("Failed to serialize usage_script: {e}"))
+            })?;
+            qp.append_pair("usageScriptConfig", &BASE64_STANDARD.encode(script_json.as_bytes()));
         }
     }
     let share_url = url.to_string();
@@ -122,7 +135,63 @@ pub fn build_provider_share_url(
         ));
     }
 
+    // Extend the fidelity invariant to the carried meta fields (`apiFormat` and
+    // the full `usage_script`). A mismatch means the link would drop or alter
+    // routing / usage-template metadata on the receiving side.
+    let rebuilt_meta = rebuilt.meta.as_ref();
+    let orig_meta = provider.meta.as_ref();
+    if json_str(rebuilt_meta.and_then(|m| m.api_format.as_ref()))
+        != json_str(orig_meta.and_then(|m| m.api_format.as_ref()))
+        || json_str(rebuilt_meta.and_then(|m| m.usage_script.as_ref()))
+            != json_str(orig_meta.and_then(|m| m.usage_script.as_ref()))
+    {
+        return Err(AppError::InvalidInput(
+            "This provider cannot be shared: its metadata does not round-trip identically"
+                .to_string(),
+        ));
+    }
+
     Ok(share_url)
+}
+
+/// Serialize an `Option<&T: Serialize>` to a JSON string, treating `None` and
+/// serialization failure as the empty string so two `None`s compare equal.
+fn json_str<T: serde::Serialize>(value: Option<&T>) -> String {
+    value
+        .and_then(|v| serde_json::to_string(v).ok())
+        .unwrap_or_default()
+}
+
+/// Return the name of the first proxy-routing meta field that is set but not
+/// carried by the share link, or `None` if the provider is safe to share.
+///
+/// Scoped to Claude (Codex routing lives in the carried TOML; additive apps
+/// use the carried JSON). `custom_endpoints` is deliberately excluded - only
+/// the primary endpoint is shared, which degrades without breaking routing.
+fn unsupported_claude_routing_meta(meta: &crate::provider::ProviderMeta) -> Option<&'static str> {
+    if meta.is_full_url == Some(true) {
+        return Some("isFullUrl");
+    }
+    if meta.custom_user_agent.as_deref().is_some_and(|s| !s.is_empty()) {
+        return Some("customUserAgent");
+    }
+    if meta.impersonate_claude_code == Some(true) {
+        return Some("impersonateClaudeCode");
+    }
+    if meta.prompt_cache_key.as_deref().is_some_and(|s| !s.is_empty()) {
+        return Some("promptCacheKey");
+    }
+    if meta.prompt_cache_routing.as_deref().is_some_and(|s| !s.is_empty()) {
+        return Some("promptCacheRouting");
+    }
+    if meta
+        .local_proxy_request_overrides
+        .as_ref()
+        .is_some_and(|o| !o.is_empty())
+    {
+        return Some("localProxyRequestOverrides");
+    }
+    None
 }
 
 #[cfg(test)]
@@ -322,7 +391,9 @@ mod tests {
     }
 
     #[test]
-    fn usage_script_fields_are_carried() {
+    fn usage_script_config_carries_full_script() {
+        // usageScriptConfig 携带完整 UsageScript（含原生模板字段），而非仅 code。
+        // 接收方应逐字段还原，使 token_plan / coding-plan 类渠道的用量查询可用。
         let mut provider = make_provider(
             "带用量",
             json!({
@@ -332,41 +403,172 @@ mod tests {
                 }
             }),
         );
+        let original_script = UsageScript {
+            enabled: true,
+            language: "javascript".to_string(),
+            code: "return { used: 1 }".to_string(),
+            timeout: Some(10),
+            api_key: Some("usage-key".to_string()),
+            base_url: Some("https://usage.example.com".to_string()),
+            access_token: None,
+            user_id: Some("42".to_string()),
+            template_type: Some("token_plan".to_string()),
+            auto_query_interval: Some(30),
+            coding_plan_provider: Some("zhipu_team".to_string()),
+            access_key_id: Some("AKID".to_string()),
+            secret_access_key: Some("SK".to_string()),
+            team_organization_id: Some("org-1".to_string()),
+            team_project_id: Some("proj-1".to_string()),
+        };
         provider.meta = Some(ProviderMeta {
-            usage_script: Some(UsageScript {
-                enabled: true,
-                language: "javascript".to_string(),
-                code: "return { used: 1 }".to_string(),
-                timeout: Some(10),
-                api_key: Some("usage-key".to_string()),
-                base_url: Some("https://usage.example.com".to_string()),
-                access_token: None,
-                user_id: Some("42".to_string()),
-                template_type: None,
-                auto_query_interval: Some(30),
-                coding_plan_provider: None,
-                access_key_id: None,
-                secret_access_key: None,
-                team_organization_id: None,
-                team_project_id: None,
-            }),
+            usage_script: Some(original_script.clone()),
             ..Default::default()
         });
 
         let url = build_provider_share_url(&AppType::Claude, &provider).unwrap();
         let parsed = crate::deeplink::parse_deeplink_url(&url).unwrap();
-        assert_eq!(parsed.usage_enabled, Some(true));
-        assert_eq!(parsed.usage_api_key.as_deref(), Some("usage-key"));
+        // 不再发出零散 usage_* 参数
+        assert!(parsed.usage_script.is_none());
+        assert!(parsed.usage_api_key.is_none());
+        assert!(parsed.usage_enabled.is_none());
+        // usageScriptConfig blob 解码后应与原 UsageScript 深度相等
+        let blob_b64 = parsed
+            .usage_script_config
+            .as_deref()
+            .expect("usageScriptConfig present");
+        let decoded =
+            crate::deeplink::utils::decode_base64_param("usageScriptConfig", blob_b64).unwrap();
+        let restored: UsageScript =
+            serde_json::from_slice(&decoded).expect("deserialize usage script");
         assert_eq!(
-            parsed.usage_base_url.as_deref(),
-            Some("https://usage.example.com")
+            serde_json::to_string(&restored).unwrap(),
+            serde_json::to_string(&original_script).unwrap(),
+            "usage_script must round-trip verbatim"
         );
-        assert_eq!(parsed.usage_user_id.as_deref(), Some("42"));
-        assert_eq!(parsed.usage_auto_interval, Some(30));
-        // usageScript 是 base64，经解码应还原脚本代码
-        let script_b64 = parsed.usage_script.expect("usageScript present");
-        let decoded = crate::deeplink::utils::decode_base64_param("usageScript", &script_b64)
-            .expect("decode usage script");
-        assert_eq!(String::from_utf8(decoded).unwrap(), "return { used: 1 }");
+    }
+
+    /// 带 meta 的往返：生成 -> 解析 -> 合并 -> 构建，断言 settings_config +
+    /// 携带的 meta 字段（apiFormat / usage_script）均深度相等。
+    fn assert_round_trip_with_meta(
+        app: &str,
+        name: &str,
+        settings_config: serde_json::Value,
+        meta: ProviderMeta,
+    ) {
+        let app_type = AppType::from_str(app).unwrap();
+        let provider = {
+            let mut p = make_provider(name, settings_config.clone());
+            p.meta = Some(meta);
+            p
+        };
+        let url = build_provider_share_url(&app_type, &provider).expect("share url");
+        let parsed = crate::deeplink::parse_deeplink_url(&url).expect("parse");
+        let merged = crate::deeplink::parse_and_merge_config(&parsed).expect("merge");
+        let imported = build_provider_from_request(&app_type, &merged).expect("build");
+        assert_eq!(imported.settings_config, settings_config);
+        assert_eq!(
+            super::json_str(imported.meta.as_ref().and_then(|m| m.api_format.as_ref())),
+            super::json_str(provider.meta.as_ref().and_then(|m| m.api_format.as_ref()))
+        );
+        assert_eq!(
+            super::json_str(imported.meta.as_ref().and_then(|m| m.usage_script.as_ref())),
+            super::json_str(provider.meta.as_ref().and_then(|m| m.usage_script.as_ref()))
+        );
+    }
+
+    #[test]
+    fn round_trip_claude_with_api_format() {
+        // OpenAI-Chat 上游的 Claude 渠道：meta.apiFormat 是 wire-format 路由的 SSOT。
+        // 未携带时接收方回退 "anthropic"，会跳过代理转换、发错 wire format。
+        assert_round_trip_with_meta(
+            "claude",
+            "OpenAI Chat Claude",
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-1",
+                    "ANTHROPIC_BASE_URL": "https://relay.example.com"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+    }
+
+    #[test]
+    fn round_trip_claude_with_anthropic_api_key() {
+        // PatewayAI / Gemini Native / AiHubMix 形态：凭证仅存于 ANTHROPIC_API_KEY。
+        // 修复前 merge_claude_config 提取不到 key、build_claude_settings 会注入多余的
+        // ANTHROPIC_AUTH_TOKEN，破坏逐字相等；修复后应可分享且逐字一致。
+        assert_round_trip(
+            "claude",
+            "API Key Claude",
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "sk-from-api-key",
+                    "ANTHROPIC_BASE_URL": "https://relay.example.com"
+                }
+            }),
+        );
+    }
+
+    #[test]
+    fn round_trip_claude_with_token_plan_usage() {
+        // 原生用量模板（token_plan + 智谱团队 org/project）：修复前 templateType 与
+        // coding-plan 字段被丢弃，接收方用量查询走空脚本。修复后应逐字还原。
+        assert_round_trip_with_meta(
+            "claude",
+            "智谱团队",
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-zhipu",
+                    "ANTHROPIC_BASE_URL": "https://zhipu.example.com"
+                }
+            }),
+            ProviderMeta {
+                usage_script: Some(UsageScript {
+                    enabled: true,
+                    language: "javascript".to_string(),
+                    code: String::new(),
+                    timeout: Some(10),
+                    api_key: None,
+                    base_url: None,
+                    access_token: None,
+                    user_id: None,
+                    template_type: Some("token_plan".to_string()),
+                    auto_query_interval: Some(60),
+                    coding_plan_provider: Some("zhipu_team".to_string()),
+                    access_key_id: None,
+                    secret_access_key: None,
+                    team_organization_id: Some("org-1".to_string()),
+                    team_project_id: Some("proj-1".to_string()),
+                }),
+                ..Default::default()
+            },
+        );
+    }
+
+    #[test]
+    fn claude_with_unsupported_routing_meta_is_rejected() {
+        // is_full_url 影响代理 URL 拼接但未被携带 -> 生成时直接拒绝，避免静默行为不一致。
+        let mut provider = make_provider(
+            "完整 URL Claude",
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-1",
+                    "ANTHROPIC_BASE_URL": "https://relay.example.com/full"
+                }
+            }),
+        );
+        provider.meta = Some(ProviderMeta {
+            is_full_url: Some(true),
+            ..Default::default()
+        });
+        let err = build_provider_share_url(&AppType::Claude, &provider).unwrap_err();
+        assert!(
+            err.to_string().contains("unsupported routing metadata"),
+            "actual: {err}"
+        );
     }
 }

@@ -236,7 +236,7 @@ pub fn extract_base_url(config_toml: &str) -> Option<String> {
     Some(extract_model_config(config_toml)?.base_url)
 }
 
-fn update_selected_model_string(
+pub(crate) fn update_selected_model_string(
     config_toml: &str,
     field: &str,
     value: &str,

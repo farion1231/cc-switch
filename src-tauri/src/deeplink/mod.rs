@@ -137,4 +137,17 @@ pub struct DeepLinkImportRequest {
     /// Auto query interval in minutes (0 to disable)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_auto_interval: Option<u64>,
+
+    // ============ Share-link fidelity fields (v3.9+) ============
+    /// Claude wire-format routing (`meta.apiFormat`): "anthropic" | "openai_chat"
+    /// | "openai_responses" | "gemini_native". Carried so a shared Claude
+    /// provider preserves its proxy transform on the receiving side.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_format: Option<String>,
+    /// Base64-encoded JSON of the full `UsageScript` (carries `templateType`,
+    /// `codingPlanProvider`, Volcengine AK/SK, Zhipu org/project, etc. that the
+    /// scattered `usage_*` params would drop). Authoritative when present; the
+    /// scattered params remain parsed only for legacy hand-crafted links.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_script_config: Option<String>,
 }

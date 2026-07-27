@@ -233,15 +233,34 @@ fn usage_base_url_override(request: &DeepLinkImportRequest) -> Option<String> {
 
 /// Build provider meta with usage script configuration
 fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<ProviderMeta>, AppError> {
-    // Check if any usage script fields are provided
-    if request.usage_script.is_none()
-        && request.usage_enabled.is_none()
-        && request.usage_api_key.is_none()
-        && request.usage_base_url.is_none()
-        && request.usage_access_token.is_none()
-        && request.usage_user_id.is_none()
-        && request.usage_auto_interval.is_none()
-    {
+    // Share-link fidelity path: a `usageScriptConfig` blob carries the full
+    // `UsageScript` (templateType, codingPlanProvider, Volcengine AK/SK, Zhipu
+    // org/project, ...) verbatim, restoring native usage templates the
+    // scattered `usage_*` params would drop. Authoritative when present.
+    if let Some(blob_b64) = request.usage_script_config.as_deref().filter(|s| !s.is_empty()) {
+        let decoded = decode_base64_param("usage_script_config", blob_b64)?;
+        let usage_script: UsageScript = serde_json::from_slice(&decoded).map_err(|e| {
+            AppError::InvalidInput(format!("Invalid usage_script_config JSON: {e}"))
+        })?;
+        return Ok(Some(ProviderMeta {
+            usage_script: Some(usage_script),
+            api_format: request.api_format.clone(),
+            ..Default::default()
+        }));
+    }
+
+    // Check if any usage script fields are provided. `api_format` is tracked
+    // separately so a provider that carries only routing metadata doesn't
+    // synthesize a spurious empty `usage_script` here (which would break the
+    // share-link fidelity gate).
+    let has_usage_fields = request.usage_script.is_some()
+        || request.usage_enabled.is_some()
+        || request.usage_api_key.is_some()
+        || request.usage_base_url.is_some()
+        || request.usage_access_token.is_some()
+        || request.usage_user_id.is_some()
+        || request.usage_auto_interval.is_some();
+    if !has_usage_fields && request.api_format.is_none() {
         return Ok(None);
     }
 
@@ -257,7 +276,7 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
     // Determine enabled state: explicit param > has code > false
     let enabled = request.usage_enabled.unwrap_or(!code.is_empty());
 
-    let usage_script = UsageScript {
+    let usage_script = has_usage_fields.then(|| UsageScript {
         enabled,
         language: "javascript".to_string(),
         code,
@@ -273,10 +292,11 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
         secret_access_key: None,
         team_organization_id: None,
         team_project_id: None,
-    };
+    });
 
     Ok(Some(ProviderMeta {
-        usage_script: Some(usage_script),
+        usage_script,
+        api_format: request.api_format.clone(),
         ..Default::default()
     }))
 }
@@ -308,10 +328,20 @@ fn build_claude_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
         .and_then(|v| v.as_object_mut())
         .expect("env is always an object (guarded above)");
 
-    env.insert(
-        "ANTHROPIC_AUTH_TOKEN".to_string(),
-        json!(request.api_key.clone().unwrap_or_default()),
-    );
+    // Write the credential back to the field the sender used. Presets like
+    // PatewayAI / Gemini Native / AiHubMix store the key only as
+    // `ANTHROPIC_API_KEY`; writing `ANTHROPIC_AUTH_TOKEN` here would inject a
+    // spurious second key and break the verbatim round-trip. Default to
+    // `ANTHROPIC_AUTH_TOKEN` (the canonical Claude Code field) when the base
+    // env doesn't already pin a credential field.
+    let cred_field = if env.contains_key("ANTHROPIC_API_KEY")
+        && !env.contains_key("ANTHROPIC_AUTH_TOKEN")
+    {
+        "ANTHROPIC_API_KEY"
+    } else {
+        "ANTHROPIC_AUTH_TOKEN"
+    };
+    env.insert(cred_field.to_string(), json!(request.api_key.clone().unwrap_or_default()));
     env.insert(
         "ANTHROPIC_BASE_URL".to_string(),
         json!(get_primary_endpoint(request)),
@@ -485,13 +515,102 @@ fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     settings
 }
 
+/// Apply explicit `apiKey`/`endpoint`/`model` URL overrides onto a native
+/// GrokBuild TOML, preserving unrelated keys via `toml_edit`.
+///
+/// Returns `Some(updated_toml)` only when at least one value actually differs
+/// from the embedded TOML; returns `None` when nothing changed (so the caller
+/// can keep the original verbatim) or when the TOML is too malformed to read
+/// the selected model profile. Rewrite failures are logged and skipped
+/// best-effort rather than aborting the import.
+fn apply_grokbuild_passthrough_overrides(
+    toml_str: &str,
+    request: &DeepLinkImportRequest,
+) -> Option<String> {
+    let model_cfg = crate::grok_config::extract_model_config(toml_str)?;
+    let mut current = toml_str.to_string();
+    let mut changed = false;
+
+    if let Some(url_key) = request
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+    {
+        if model_cfg.api_key.as_deref().map(str::trim) != Some(url_key) {
+            match crate::grok_config::update_api_key(&current, url_key) {
+                Ok(updated) => {
+                    current = updated;
+                    changed = true;
+                }
+                Err(e) => log::warn!("grokbuild passthrough: apiKey override failed: {e}"),
+            }
+        }
+    }
+
+    let primary = get_primary_endpoint(request);
+    let primary_trimmed = primary.trim().trim_end_matches('/');
+    if !primary_trimmed.is_empty() {
+        let current_base = model_cfg.base_url.trim_end_matches('/');
+        if current_base != primary_trimmed {
+            match crate::grok_config::update_selected_model_string(
+                &current,
+                "base_url",
+                primary_trimmed,
+            ) {
+                Ok(updated) => {
+                    current = updated;
+                    changed = true;
+                }
+                Err(e) => log::warn!("grokbuild passthrough: endpoint override failed: {e}"),
+            }
+        }
+    }
+
+    if let Some(url_model) = request
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+    {
+        if model_cfg.model.trim() != url_model {
+            match crate::grok_config::update_selected_model_string(&current, "model", url_model) {
+                Ok(updated) => {
+                    current = updated;
+                    changed = true;
+                }
+                Err(e) => log::warn!("grokbuild passthrough: model override failed: {e}"),
+            }
+        }
+    }
+
+    changed.then_some(current)
+}
+
 fn build_grokbuild_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     // Share-link passthrough: a config whose `config` field is a TOML string is
     // the native GrokBuild shape — keep it verbatim so custom TOML keys survive.
     // Legacy deeplinks without an embedded TOML string fall through to the
     // template rebuild below.
-    if let Some(settings) = decoded_config_object(request) {
+    if let Some(mut settings) = decoded_config_object(request) {
         if settings.get("config").is_some_and(|v| v.is_string()) {
+            // Apply explicit URL overrides on top of the embedded TOML. Share
+            // links carry no `apiKey`/`endpoint`/`model` params, so
+            // `parse_and_merge_config` backfills them from the TOML itself and
+            // every value matches -> no rewrite -> verbatim. A hand-crafted
+            // link that pairs an embedded TOML with explicit overrides would
+            // otherwise silently keep the stale embedded credentials/routing;
+            // here we rewrite only the differing values (via toml_edit, which
+            // preserves comments/ordering and unrelated keys).
+            if let Some(toml_str) = settings
+                .get("config")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+            {
+                if let Some(updated) = apply_grokbuild_passthrough_overrides(&toml_str, request) {
+                    settings.insert("config".to_string(), serde_json::Value::String(updated));
+                }
+            }
             return serde_json::Value::Object(settings);
         }
     }
@@ -770,9 +889,15 @@ fn merge_claude_config(
             AppError::InvalidInput("Claude config must have 'env' object".to_string())
         })?;
 
-    // Auto-fill API key if not provided in URL
+    // Auto-fill API key if not provided in URL. Prefer ANTHROPIC_AUTH_TOKEN
+    // (canonical), fall back to ANTHROPIC_API_KEY for presets like PatewayAI /
+    // Gemini Native / AiHubMix that store the key only under that field.
     if request.api_key.as_ref().is_none_or(|s| s.is_empty()) {
-        if let Some(token) = env.get("ANTHROPIC_AUTH_TOKEN").and_then(|v| v.as_str()) {
+        if let Some(token) = env
+            .get("ANTHROPIC_AUTH_TOKEN")
+            .or_else(|| env.get("ANTHROPIC_API_KEY"))
+            .and_then(|v| v.as_str())
+        {
             request.api_key = Some(token.to_string());
         }
     }
