@@ -290,14 +290,14 @@
     },
     "unifyCodexHistory": {
       "title": "統一 Codex 會話歷史",
-      "message": "開啟後，官方訂閱與第三方將共用同一個會話歷史清單。注意：跨供應商繼續舊會話時，可能因對方後端無法解密 encrypted_content 推理內容而失敗。\n\n可選擇同時把現有官方會話歷史遷入共享清單（遷移前自動備份到 ~/.cc-switch/backups，關閉開關時可選擇恢復）。",
-      "migrateExisting": "同時遷入現有官方會話歷史",
+      "message": "開啟後，已儲存的會話會雙向跟隨目前選取的 Codex 供應商。切換後請重新開啟正在執行的會話。注意：一個後端產生的 encrypted_content 可能無法由另一個後端讀取。",
+      "migrateExisting": "立即同步所有現有會話",
       "confirm": "我已了解，繼續開啟"
     },
     "unifyCodexHistoryOff": {
       "title": "關閉統一會話歷史",
-      "message": "關閉後，官方訂閱與第三方將恢復各自獨立的會話歷史清單。開啟期間產生的會話因無法區分來源，將留在第三方歷史中，官方訂閱將看不到它們。",
-      "restoreBackup": "把開啟時遷入的官方會話還原回官方歷史（按備份精確還原）",
+      "message": "關閉後，切換供應商將不再重新綁定已儲存的會話；現有會話保留在最後一次選取的供應商下。",
+      "restoreBackup": "從舊版 CC Switch 建立的備份中恢復官方會話",
       "confirm": "關閉"
     },
     "usage": {
@@ -682,10 +682,8 @@
     "skipClaudeOnboarding": "跳過 Claude Code 初次安裝確認",
     "skipClaudeOnboardingDescription": "開啟後跳過 Claude Code 初次安裝確認",
     "codexAuth": "Codex 應用增強",
-    "preserveCodexOfficialAuthOnSwitch": "非接管切換時保留官方登入",
-    "preserveCodexOfficialAuthOnSwitchDescription": "控制未開啟本機路由時切換第三方供應商是否保留 Codex 官方登入；路由接管期間一律保留",
     "unifyCodexSessionHistory": "統一 Codex 會話歷史",
-    "unifyCodexSessionHistoryDescription": "開啟後，官方訂閱將以共享的 custom 供應商標識執行，官方與第三方會話出現在同一歷史清單中，並可選擇把現有官方會話一併遷入（遷移前自動備份）。關閉開關時可按備份恢復遷入的會話。注意：跨供應商繼續舊會話時，對方後端可能無法解密會話中的 encrypted_content 推理內容，導致繼續失敗",
+    "unifyCodexSessionHistoryDescription": "開啟後，已儲存的會話會雙向跟隨目前選取的 Codex 供應商；切換後請重新開啟正在執行的會話。開啟時可選擇同步現有會話。注意：一個後端產生的 encrypted_content 可能無法由另一個後端讀取",
     "unifyCodexHistoryRestoreCompleted": "已按備份還原官方會話歷史（{{files}} 個會話檔案、{{rows}} 條索引記錄）",
     "unifyCodexHistoryRestoreFailed": "還原官方會話歷史失敗，請重試",
     "unifyCodexHistoryRestoreNothing": "目前 Codex 目錄沒有可恢復的遷移備份",

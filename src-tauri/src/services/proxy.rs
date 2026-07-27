@@ -2367,14 +2367,6 @@ impl ProxyService {
                     crate::proxy::providers::is_codex_official_provider(provider),
                 )?;
             }
-
-            // 统一会话开关：备份是接管释放时恢复 live 的来源，官方配置的
-            // 共享 custom 路由注入必须落在备份里，否则恢复后开关失效。
-            crate::codex_config::apply_codex_unified_session_bucket_to_settings(
-                provider.category.as_deref(),
-                &mut effective_settings,
-            )
-            .map_err(|e| format!("注入统一会话路由失败: {e}"))?;
         }
 
         if matches!(app_type_enum, AppType::GrokBuild) {
@@ -2859,22 +2851,19 @@ impl ProxyService {
         provider: Option<&Provider>,
     ) -> Result<(), String> {
         let Some(provider) = provider else {
-            if crate::settings::preserve_codex_official_auth_on_switch() {
-                if let (Some(auth), Some(config_str)) = (
-                    config.get("auth"),
-                    config.get("config").and_then(|v| v.as_str()),
-                ) {
-                    if auth.get("OPENAI_API_KEY").and_then(|v| v.as_str())
-                        == Some(PROXY_TOKEN_PLACEHOLDER)
-                    {
-                        let live_config = crate::codex_config::prepare_codex_provider_live_config(
-                            auth, config_str,
-                        )
-                        .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
-                        crate::codex_config::write_codex_live_config_atomic(Some(&live_config))
+            if let (Some(auth), Some(config_str)) = (
+                config.get("auth"),
+                config.get("config").and_then(|v| v.as_str()),
+            ) {
+                if auth.get("OPENAI_API_KEY").and_then(|v| v.as_str())
+                    == Some(PROXY_TOKEN_PLACEHOLDER)
+                {
+                    let live_config =
+                        crate::codex_config::prepare_codex_provider_live_config(auth, config_str)
                             .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
-                        return Ok(());
-                    }
+                    crate::codex_config::write_codex_live_config_atomic(Some(&live_config))
+                        .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
+                    return Ok(());
                 }
             }
 
@@ -4877,14 +4866,8 @@ experimental_bearer_token = "PROXY_MANAGED"
 
     #[test]
     #[serial]
-    fn codex_custom_provider_live_write_can_overwrite_auth_when_preserve_disabled() {
+    fn codex_custom_provider_live_write_scopes_token_and_keeps_official_auth() {
         let _home = TempHome::new();
-        crate::settings::reload_settings().expect("reload settings");
-        crate::settings::update_settings(crate::settings::AppSettings {
-            preserve_codex_official_auth_on_switch: false,
-            ..Default::default()
-        })
-        .expect("disable Codex official auth preservation");
 
         let db = Arc::new(Database::memory().expect("init db"));
         let service = ProxyService::new(db);
@@ -4947,22 +4930,18 @@ wire_api = "responses"
             crate::config::read_json_file(&crate::codex_config::get_codex_auth_path())
                 .expect("read live auth");
         assert_eq!(
-            live_auth,
-            json!({
-                "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
-            }),
-            "disabled preservation should let third-party switches overwrite auth.json"
+            live_auth, oauth_auth,
+            "third-party proxy takeover must not overwrite official OAuth"
         );
 
         let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
             .expect("read live config");
-        assert!(
-            !live_config.contains("experimental_bearer_token"),
-            "provider token should stay in auth.json when preservation is disabled"
+        let live_config: toml::Value = toml::from_str(&live_config).expect("parse live config");
+        assert_eq!(
+            live_config["model_providers"]["rightcode"]["experimental_bearer_token"].as_str(),
+            Some(PROXY_TOKEN_PLACEHOLDER),
+            "proxy token must be scoped to the active provider"
         );
-
-        crate::settings::update_settings(crate::settings::AppSettings::default())
-            .expect("reset settings");
     }
 
     #[test]

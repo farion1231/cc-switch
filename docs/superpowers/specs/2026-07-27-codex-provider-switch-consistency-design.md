@@ -28,11 +28,11 @@ uses the `custom` route for official traffic.
 ## Required invariants
 
 1. Official live traffic uses Codex's built-in `openai` provider.
-2. Third-party live traffic uses the configured `custom` provider.
+2. Third-party live traffic uses its configured model-provider ID.
 3. Global `auth.json` never receives a third-party API key when resumable `openai`
-   threads may exist. Third-party credentials are scoped to `custom`.
-4. A valid inactive `custom` definition remains available while any persisted or
-   already-loaded thread may still reference it.
+   threads may exist. Third-party credentials are scoped to their provider table.
+4. Valid inactive provider definitions remain available while persisted or
+   already-loaded threads may still reference them.
 5. With unified history enabled, persisted provider and model metadata equal the
    selected target before CC Switch publishes the new current-provider state.
 6. A failed switch restores live files, history metadata, and current-provider state.
@@ -60,9 +60,9 @@ Alternatives rejected:
 `codex_config` prepares a target snapshot before any state is committed:
 
 - official target: `model_provider = "openai"`, native official auth in `auth.json`;
-- third-party target: `model_provider = "custom"`, provider-scoped bearer token in
-  `[model_providers.custom]`, official auth left untouched;
-- a complete inactive `custom` table is retained when switching to official;
+- third-party target: its configured `model_provider`, with the API key stored only
+  as that provider table's scoped bearer token;
+- complete inactive provider tables are retained when switching;
 - an incomplete placeholder such as only `name = "OpenAI"` is replaced by the last
   complete custom route instead of blocking preservation;
 - official-as-custom unified-session injection is removed.
@@ -87,46 +87,43 @@ Database discovery scans every `state_*.sqlite` in:
 Paths are canonicalized and deduplicated. Unknown JSONL event shapes and unrelated
 SQLite tables are left untouched.
 
-### Restoration ledger
+### Transaction journal
 
-Before the first field-level rewrite, record the original provider/model in a
-versioned ledger keyed by Codex directory and stable thread/event identity. Later
-switches never overwrite an existing original value. This permits exact restoration
-without replacing whole JSONL files or deleting messages created after the toggle was
-enabled.
-
-Each switch also creates a generation backup of changed JSONL files and SQLite
-databases. The ledger is the semantic restore source; generation backups are the
-failure rollback source.
+Before writing, the reconciler parses every target JSONL file and state database and
+builds an in-memory change journal containing the exact original fields/content. No
+artifact is touched until all inputs validate. If a later write fails, applied
+databases and files are restored in reverse order. Concurrent changes are detected
+with file metadata and row-value predicates rather than overwritten.
 
 ### Coordinated switch
 
-Codex switches acquire one process-wide lock and run in this order:
+Codex switches run in this order, with the history lock held from reconciliation
+through current-provider publication:
 
 1. validate the target provider and build its complete live snapshot in memory;
 2. capture current-provider settings/database values and live files;
 3. write a dual-safe live state in which both `openai` and retained `custom` routes
    have only their own credentials;
 4. if unified mode is enabled, reconcile JSONL and all state databases to the target;
-5. verify every changed artifact and expected row/file counts;
-6. publish the target as current in local settings and the CC Switch database;
-7. re-project Codex MCP configuration and return success.
+5. publish the target as current in local settings and the CC Switch database;
+6. re-project Codex MCP configuration and return success.
 
-If steps 3-6 fail, restore changed history from the generation backup, restore live
-files, and restore both current-provider stores. Rollback failure is reported together
-with the original error.
+If steps 3-5 fail, restore changed history from the in-memory journal, restore live
+files, and restore the local current-provider value. The database current-provider
+update is itself transactional and is published last. Rollback failure is reported
+together with the original error.
 
 Backfill of the outgoing provider remains best-effort but occurs before the switch
 snapshot. It cannot change routing, credentials, or the transaction commit point.
 
 ## Toggle behavior
 
-- Enabling immediately reconciles existing history to the currently selected Codex
-  provider.
+- Enabling can immediately reconcile existing history to the currently selected
+  Codex provider when the user selects that option.
 - While enabled, every successful switch reconciles all resumable threads to the new
   target.
-- Disabling stops future rebinding. If the user chooses restore, the ledger restores
-  each captured provider/model value exactly; otherwise current tags remain usable.
+- Disabling stops future rebinding; current tags remain usable. Exact-restore backups
+  created by older releases remain available for backward compatibility.
 - Legacy settings fields are migrated without silently enabling the mode.
 
 ## Active Codex processes
@@ -156,7 +153,7 @@ Test-driven coverage must include:
 - official OAuth and third-party key isolation;
 - JSONL timestamp preservation;
 - switch failure rollback at live, JSONL, SQLite, settings, and database boundaries;
-- enable, repeated switches, disable, and exact ledger restoration;
+- enable, repeated switches, disable, and transactional rollback;
 - formatting, Clippy with warnings denied, Rust tests, frontend typecheck/tests, release
   compilation, and Windows installer generation.
 

@@ -11,8 +11,7 @@ use crate::config::{atomic_write, copy_file, get_app_config_dir};
 use crate::database::{is_official_seed_id, Database};
 use crate::error::AppError;
 use crate::settings::{
-    CodexOfficialHistoryUnifyMigration, CodexProviderTemplateMigration,
-    CodexThirdPartyHistoryProviderBucketMigration,
+    CodexProviderTemplateMigration, CodexThirdPartyHistoryProviderBucketMigration,
 };
 use chrono::{Local, Utc};
 use rusqlite::{backup::Backup, params_from_iter, Connection};
@@ -32,14 +31,8 @@ const OFFICIAL_UNIFY_RESTORE_BACKUP_NAME: &str = "codex-official-history-unify-r
 /// SQLite 变量上限保守值，IN 列表按此分块。
 const STATE_DB_ID_CHUNK: usize = 500;
 
-/// 串行化官方历史的迁移与还原：开启迁移（启动重试 + 设置保存后台任务）和
-/// 关闭还原可能在毫秒级先后被触发，对同一批 jsonl / state DB 双向改写。
-static CODEX_OFFICIAL_HISTORY_OP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 fn lock_codex_official_history_op() -> std::sync::MutexGuard<'static, ()> {
-    CODEX_OFFICIAL_HISTORY_OP_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    crate::codex_history_reconcile::lock_history_operation()
 }
 /// Codex 内建默认 provider id：config.toml 没有 `model_provider` 键时会话归入此桶。
 /// 官方订阅（ChatGPT OAuth / OpenAI API key）的历史会话都记录这个 id。
@@ -187,105 +180,6 @@ pub fn maybe_migrate_codex_provider_template_bucket(
     Ok(outcome)
 }
 
-/// 统一会话开关的存量迁移：把官方会话（内建 "openai" 桶）迁入共享 "custom" 桶。
-///
-/// 仅当用户在开启弹窗里勾选了"迁入既有官方会话"（`unify_codex_migrate_existing`）
-/// 且本轮未完成时执行；开关关闭时标记与勾选意愿都会被清除（见 `save_settings`），
-/// 重新开启并再次勾选即可补迁关闭期间产生的官方会话。
-/// custom 桶里官方与第三方会话无法区分，自动逻辑绝不反向搬回；
-/// 用户可在关闭开关时选择按备份账本精确还原（见 `restore_codex_official_history_from_backups`）。
-/// 迁移前 jsonl / state DB 均备份到 `~/.cc-switch/backups/codex-official-history-unify-v1/`。
-pub fn maybe_migrate_codex_official_history_to_unified_bucket(
-) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
-    if !crate::settings::unify_codex_session_history() {
-        return Ok(CodexHistoryProviderBucketMigrationOutcome {
-            skipped_reason: Some("unify_toggle_off".to_string()),
-            ..Default::default()
-        });
-    }
-    if !crate::settings::unify_codex_migrate_existing_requested() {
-        return Ok(CodexHistoryProviderBucketMigrationOutcome {
-            skipped_reason: Some("stock_migration_not_requested".to_string()),
-            ..Default::default()
-        });
-    }
-    let _op_guard = lock_codex_official_history_op();
-    let codex_dir = get_codex_config_dir();
-    // marker 绑定迁移时的 Codex 目录：切换 codex_config_dir 后旧 marker 不再
-    // 挡住新目录的迁移（迁移幂等，重跑无害）。
-    let codex_dir_key = canonical_dir_string(&codex_dir);
-    if crate::settings::is_codex_official_history_unify_migrated_for_dir(&codex_dir_key) {
-        return Ok(CodexHistoryProviderBucketMigrationOutcome {
-            skipped_reason: Some("already_migrated".to_string()),
-            ..Default::default()
-        });
-    }
-    // live 必须已实际路由到共享 custom 桶才允许迁移：官方配置的注入可能被拒
-    // （已有显式 model_provider / 形态冲突的 custom 表，见
-    // `inject_codex_unified_session_bucket`），代理接管期间的 live 也不带统一
-    // 路由（注入只进备份）。这些状态下新会话仍落 "openai" 桶，迁移只会把
-    // 历史搬进当前 live 看不见的桶里。开关与迁移意愿保持不动，待 live 真正
-    // 统一后（下次切换 / 接管释放后的启动重试）再迁。
-    if !codex_config_text_routes_custom(&read_codex_config_text().unwrap_or_default()) {
-        return Ok(CodexHistoryProviderBucketMigrationOutcome {
-            skipped_reason: Some("live_not_unified".to_string()),
-            ..Default::default()
-        });
-    }
-
-    let source_provider_ids: BTreeSet<String> =
-        std::iter::once(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string()).collect();
-    let backup_root = migration_backup_root(OFFICIAL_UNIFY_MIGRATION_NAME);
-    let migrated_jsonl_files =
-        migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root)?;
-    let migrated_state_rows =
-        migrate_codex_state_dbs(&codex_dir, &source_provider_ids, &backup_root)?;
-    // 备份代际记录来源目录，restore 据此只取当前目录的账本。
-    write_backup_generation_meta(&backup_root, &codex_dir_key)?;
-
-    let outcome = CodexHistoryProviderBucketMigrationOutcome {
-        source_provider_ids: source_provider_ids.into_iter().collect(),
-        migrated_jsonl_files,
-        migrated_state_rows,
-        skipped_reason: None,
-    };
-
-    // 条件写入在 settings 写锁内原子完成："迁移期间开关被关掉"时不写完成标记，
-    // 避免下一次开启被标记挡住而漏迁"关闭期间"新产生的 openai 桶会话。
-    // 与关闭路径（update_settings + 清标记）共用同一把锁，无检查-写入窗口。
-    let marker_written = crate::settings::mark_codex_official_history_unify_migrated_if_enabled(
-        CodexOfficialHistoryUnifyMigration {
-            completed_at: Utc::now().to_rfc3339(),
-            target_provider_id: CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string(),
-            migrated_jsonl_files,
-            migrated_state_rows,
-            codex_config_dir: Some(codex_dir_key),
-        },
-    )?;
-    if !marker_written {
-        return Ok(CodexHistoryProviderBucketMigrationOutcome {
-            skipped_reason: Some("toggle_disabled_during_migration".to_string()),
-            ..outcome
-        });
-    }
-
-    Ok(outcome)
-}
-
-/// live config.toml 是否路由到共享 custom 桶（会话分桶只看这个实态：
-/// base_url / 接管与否都不影响 session_meta 记录的 model_provider）。
-fn codex_config_text_routes_custom(config_text: &str) -> bool {
-    config_text
-        .parse::<DocumentMut>()
-        .ok()
-        .and_then(|doc| {
-            doc.get("model_provider")
-                .and_then(|item| item.as_str())
-                .map(|id| id.trim() == CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
-        })
-        .unwrap_or(false)
-}
-
 /// 目录的规范化字符串形式，用作 marker / 备份代际的目录身份。
 /// canonicalize 失败（目录尚不存在等）时退回原始路径字符串。
 fn canonical_dir_string(dir: &Path) -> String {
@@ -293,18 +187,6 @@ fn canonical_dir_string(dir: &Path) -> String {
         .unwrap_or_else(|_| dir.to_path_buf())
         .to_string_lossy()
         .to_string()
-}
-
-/// 在备份代际根目录写入 meta.json，记录这批备份来自哪个 Codex 目录。
-/// 代际目录不存在（本轮没有任何文件被迁移）时跳过。
-fn write_backup_generation_meta(backup_root: &Path, codex_dir_key: &str) -> Result<(), AppError> {
-    if !backup_root.exists() {
-        return Ok(());
-    }
-    let payload = serde_json::json!({ "codexConfigDir": codex_dir_key });
-    let bytes =
-        serde_json::to_vec_pretty(&payload).map_err(|e| AppError::JsonSerialize { source: e })?;
-    atomic_write(&backup_root.join("meta.json"), &bytes)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1266,6 +1148,11 @@ fn relative_backup_path(path: &Path, root: &Path) -> PathBuf {
     if let Ok(relative) = path.strip_prefix(root) {
         return relative.to_path_buf();
     }
+    if let Ok(canonical_root) = fs::canonicalize(root) {
+        if let Ok(relative) = path.strip_prefix(canonical_root) {
+            return relative.to_path_buf();
+        }
+    }
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     path.hash(&mut hasher);
@@ -1311,39 +1198,6 @@ mod tests {
 
     fn source_ids(values: &[&str]) -> BTreeSet<String> {
         values.iter().map(|value| value.to_string()).collect()
-    }
-
-    #[test]
-    fn detects_custom_routed_codex_config_for_unify_gate() {
-        // 注入产物（官方 + 统一开关）
-        assert!(codex_config_text_routes_custom(
-            r#"model_provider = "custom"
-
-[model_providers.custom]
-name = "OpenAI"
-requires_openai_auth = true
-supports_websockets = true
-wire_api = "responses"
-"#
-        ));
-        // 第三方供应商的常规 custom 路由（带 base_url）同样算已统一
-        assert!(codex_config_text_routes_custom(
-            r#"model_provider = "custom"
-
-[model_providers.custom]
-name = "AIHubMix"
-base_url = "https://aihubmix.example/v1"
-"#
-        ));
-        // 注入被拒的形态：显式 openai 路由 / 无 model_provider（接管期间、空配置）
-        assert!(!codex_config_text_routes_custom(
-            "model_provider = \"openai\"\n"
-        ));
-        assert!(!codex_config_text_routes_custom(
-            "base_url = \"http://127.0.0.1:15721/codex\"\n"
-        ));
-        assert!(!codex_config_text_routes_custom(""));
-        assert!(!codex_config_text_routes_custom("not toml ["));
     }
 
     fn migrate_provider_templates_for_test(

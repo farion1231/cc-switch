@@ -68,50 +68,23 @@ pub async fn save_settings(
     let unify_codex_changed =
         merged.unify_codex_session_history != existing.unify_codex_session_history;
     let unify_codex_enabled = merged.unify_codex_session_history;
+    let unify_codex_migrate_existing = merged.unify_codex_migrate_existing.unwrap_or(false);
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
 
-    // 统一会话开关变更时立即重写当前官方 Codex 供应商的 live 配置，
-    // 不必等下一次切换才生效。
     if unify_codex_changed {
-        // live 重写失败时回滚设置并把保存整体报失败：若设置保持已切换状态，
-        // live 仍跑旧桶，后续的历史迁移/还原会让会话再次分裂（开启=历史
-        // 迁走而新会话仍写 openai 桶；关闭=会话还原而 live 仍写 custom）。
-        // 报错让前端 saved=false 短路还原；回滚是整次保存的事务语义
-        // （本开关的保存只携带开关相关字段）。
-        if let Err(err) =
-            crate::services::provider::reapply_current_codex_official_live(state.inner())
-        {
-            log::warn!("统一 Codex 会话历史开关变更后重写 live 配置失败，回滚设置: {err}");
-            if let Err(rollback_err) = crate::settings::update_settings(existing) {
-                log::error!("回滚统一会话开关设置失败: {rollback_err}");
-            }
-            return Err(format!(
-                "统一 Codex 会话历史开关未生效（live 配置重写失败）: {err}"
-            ));
-        }
-
         if unify_codex_enabled {
-            // 后台执行存量迁移（openai 桶 → custom 桶；仅当用户勾选了迁入既有
-            // 会话，函数内部自门控）。大会话目录可能要读数秒，不能阻塞设置保存；
-            // 失败时不写完成标记，下次启动自动重试。
-            tauri::async_runtime::spawn_blocking(|| {
-                match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
-                    Ok(outcome) => {
-                        if let Some(reason) = outcome.skipped_reason {
-                            log::debug!("○ Codex official history unify migration skipped: {reason}");
-                        } else {
-                            log::info!(
-                                "✓ Codex official history unify migration completed: jsonl_files={}, state_rows={}",
-                                outcome.migrated_jsonl_files,
-                                outcome.migrated_state_rows
-                            );
-                        }
+            if unify_codex_migrate_existing {
+                if let Err(err) =
+                    crate::codex_history_reconcile::reconcile_history_for_current_provider(
+                        &state.db,
+                    )
+                {
+                    if let Err(rollback_err) = crate::settings::update_settings(existing) {
+                        log::error!("回滚统一会话开关设置失败: {rollback_err}");
                     }
-                    Err(e) => {
-                        log::warn!("✗ Codex official history unify migration failed: {e}");
-                    }
+                    return Err(format!("统一 Codex 会话历史失败: {err}"));
                 }
-            });
+            }
         } else {
             // 清除标记与迁移意愿，让重新开启并再次勾选时能补迁
             // 关闭期间落入 openai 桶的官方会话。

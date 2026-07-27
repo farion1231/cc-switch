@@ -377,18 +377,17 @@ pub struct AppSettings {
     /// Whether to show the project profile switcher on the main page header
     #[serde(default = "default_show_profile_switcher")]
     pub show_profile_switcher: bool,
-    /// Keep Codex ChatGPT login material in auth.json when switching to third-party providers.
-    /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
+    /// Legacy preference retained for settings-file compatibility. Codex
+    /// credentials are now always isolated safely during provider switches.
     #[serde(default)]
     pub preserve_codex_official_auth_on_switch: bool,
-    /// Run official Codex providers under the shared "custom" model_provider id
-    /// so official sessions share one resume-history bucket with third-party
-    /// providers. Opt-in: defaults to false.
+    /// Rebind persisted Codex sessions to the currently selected provider on
+    /// every switch. Opt-in: defaults to false.
     #[serde(default)]
     pub unify_codex_session_history: bool,
-    /// User opted in (via the enable dialog checkbox) to migrate existing
-    /// official sessions ("openai" bucket) into the shared bucket. Persisted so
-    /// a failed migration retries at startup; cleared when the toggle turns off.
+    /// User opted in (via the enable dialog checkbox) to reconcile existing
+    /// sessions immediately. Persisted so a failed reconciliation retries at
+    /// startup; cleared when the toggle turns off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unify_codex_migrate_existing: Option<bool>,
     /// User has confirmed the failover toggle first-run notice
@@ -815,38 +814,6 @@ pub fn mark_codex_provider_template_migrated(
     })
 }
 
-/// 统一会话迁移标记是否覆盖指定目录。标记里没记目录（不应出现的旧格式）
-/// 视为不匹配——重跑迁移是幂等的，宁可重迁也不漏迁。
-pub fn is_codex_official_history_unify_migrated_for_dir(codex_dir: &str) -> bool {
-    get_settings()
-        .local_migrations
-        .as_ref()
-        .and_then(|migrations| migrations.codex_official_history_unify_v1.as_ref())
-        .is_some_and(|migration| migration.codex_config_dir.as_deref() == Some(codex_dir))
-}
-
-/// 条件写入迁移完成标记：仅当此刻开关仍开启且迁移意愿仍在时才写。
-/// 检查与写入在 settings 写锁内原子完成，与关闭开关路径
-/// （`update_settings` / 清标记）串行，消除"迁移线程复查开关后、写标记前
-/// 用户恰好关闭开关"的竞态窗口。返回是否实际写入。
-pub fn mark_codex_official_history_unify_migrated_if_enabled(
-    migration: CodexOfficialHistoryUnifyMigration,
-) -> Result<bool, AppError> {
-    let mut written = false;
-    mutate_settings(|settings| {
-        if settings.unify_codex_session_history
-            && settings.unify_codex_migrate_existing.unwrap_or(false)
-        {
-            settings
-                .local_migrations
-                .get_or_insert_with(Default::default)
-                .codex_official_history_unify_v1 = Some(migration);
-            written = true;
-        }
-    })?;
-    Ok(written)
-}
-
 pub fn clear_codex_official_history_unify_migration() -> Result<(), AppError> {
     mutate_settings(|settings| {
         if let Some(migrations) = settings.local_migrations.as_mut() {
@@ -931,16 +898,6 @@ pub fn get_hermes_override_dir() -> Option<PathBuf> {
         .hermes_config_dir
         .as_ref()
         .map(|p| resolve_override_path(p))
-}
-
-pub fn preserve_codex_official_auth_on_switch() -> bool {
-    settings_store()
-        .read()
-        .unwrap_or_else(|e| {
-            log::warn!("设置锁已毒化，使用恢复值: {e}");
-            e.into_inner()
-        })
-        .preserve_codex_official_auth_on_switch
 }
 
 pub fn unify_codex_session_history() -> bool {

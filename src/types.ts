@@ -367,12 +367,11 @@ export interface Settings {
   enableFailoverToggle?: boolean;
   // Whether to show the project profile switcher on the main page header
   showProfileSwitcher?: boolean;
-  // Preserve Codex ChatGPT login in auth.json when switching third-party providers
+  // Legacy preference retained for settings-file compatibility
   preserveCodexOfficialAuthOnSwitch?: boolean;
-  // Run official Codex under the shared "custom" provider id so future
-  // sessions share one resume-history bucket with third-party providers
+  // Rebind persisted Codex sessions to the currently selected provider
   unifyCodexSessionHistory?: boolean;
-  // User opted in (enable dialog checkbox) to migrate existing official sessions
+  // User opted in (enable dialog checkbox) to reconcile existing sessions
   unifyCodexMigrateExisting?: boolean;
   // User has confirmed the failover toggle first-run notice
   failoverConfirmed?: boolean;

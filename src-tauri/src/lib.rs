@@ -6,6 +6,7 @@ mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
 mod codex_history_migration;
+mod codex_history_reconcile;
 mod codex_state_db;
 mod commands;
 mod config;
@@ -770,22 +771,19 @@ pub fn run() {
                         }
                     }
 
-                    // 统一会话开关的官方历史迁移：开关开启但上次未完成（如文件被占用
-                    // 中途失败）时在启动期重试；函数内部自门控，开关关闭时直接跳过。
-                    match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
-                        Ok(outcome) => {
-                            if let Some(reason) = outcome.skipped_reason {
-                                log::debug!("○ Codex official history unify migration skipped: {reason}");
-                            } else {
-                                log::info!(
-                                    "✓ Codex official history unify migration completed: jsonl_files={}, state_rows={}",
-                                    outcome.migrated_jsonl_files,
-                                    outcome.migrated_state_rows
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            log::warn!("✗ Codex official history unify migration failed: {e}");
+                    if crate::settings::unify_codex_session_history()
+                        && crate::settings::unify_codex_migrate_existing_requested()
+                    {
+                        match crate::codex_history_reconcile::reconcile_history_for_current_provider(
+                            &db_for_codex_history_migration,
+                        ) {
+                            Ok(Some(outcome)) => log::info!(
+                                "✓ Codex history reconciled to current provider: jsonl_files={}, state_rows={}",
+                                outcome.changed_jsonl_files,
+                                outcome.changed_state_rows
+                            ),
+                            Ok(None) => log::debug!("○ No current Codex provider to reconcile"),
+                            Err(e) => log::warn!("✗ Codex history reconciliation failed: {e}"),
                         }
                     }
                 });

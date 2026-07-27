@@ -9,8 +9,111 @@ use cc_switch_lib::{
 mod support;
 use support::{
     create_test_state, create_test_state_with_config, enable_codex_official_auth_preservation,
-    ensure_test_home, reset_test_fs, test_mutex,
+    enable_codex_unified_history, ensure_test_home, reset_test_fs, test_mutex,
 };
+
+fn create_codex_thread_artifacts(codex_dir: &std::path::Path) {
+    let session_path = codex_dir.join("sessions/2026/07/thread-1.jsonl");
+    std::fs::create_dir_all(session_path.parent().expect("session parent"))
+        .expect("create session parent");
+    std::fs::write(
+        &session_path,
+        concat!(
+            r#"{"type":"session_meta","payload":{"id":"thread-1","model_provider":"openai"}}"#,
+            "\n",
+            r#"{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"model":"gpt-5.4","model_provider_id":"openai"}}}"#,
+            "\n"
+        ),
+    )
+    .expect("write Codex session");
+
+    let state_path = codex_dir.join("state_5.sqlite");
+    let connection = rusqlite::Connection::open(state_path).expect("open Codex state DB");
+    connection
+        .execute_batch(
+            "CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                model_provider TEXT NOT NULL,
+                model TEXT NOT NULL
+            );
+            INSERT INTO threads (id, model_provider, model)
+            VALUES ('thread-1', 'openai', 'gpt-5.4');",
+        )
+        .expect("seed Codex state DB");
+}
+
+fn read_codex_thread_routes(codex_dir: &std::path::Path) -> (String, String, String, String) {
+    let session = std::fs::read_to_string(codex_dir.join("sessions/2026/07/thread-1.jsonl"))
+        .expect("read Codex session");
+    let mut lines = session.lines();
+    let meta: serde_json::Value =
+        serde_json::from_str(lines.next().expect("session meta")).expect("parse session meta");
+    let settings: serde_json::Value = serde_json::from_str(lines.next().expect("thread settings"))
+        .expect("parse thread settings");
+    let connection =
+        rusqlite::Connection::open(codex_dir.join("state_5.sqlite")).expect("open Codex state DB");
+    let (db_provider, db_model) = connection
+        .query_row(
+            "SELECT model_provider, model FROM threads WHERE id = 'thread-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read Codex state route");
+    (
+        meta["payload"]["model_provider"]
+            .as_str()
+            .expect("session provider")
+            .to_string(),
+        settings["payload"]["thread_settings"]["model_provider_id"]
+            .as_str()
+            .expect("thread provider")
+            .to_string(),
+        db_provider,
+        db_model,
+    )
+}
+
+fn codex_bidirectional_switch_fixture() -> (MultiAppConfig, serde_json::Value, &'static str) {
+    let official_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": "official-openai-key",
+        "tokens": {"access_token": "official-token", "account_id": "acct-1"}
+    });
+    let official_config = "model = \"gpt-5.4\"\n";
+    let mut config = MultiAppConfig::default();
+    let manager = config
+        .get_manager_mut(&AppType::Codex)
+        .expect("codex manager");
+    manager.current = "official".to_string();
+    let mut official = Provider::with_id(
+        "official".to_string(),
+        "OpenAI Official".to_string(),
+        json!({"auth": official_auth, "config": official_config}),
+        None,
+    );
+    official.category = Some("official".to_string());
+    manager.providers.insert("official".to_string(), official);
+    let mut custom = Provider::with_id(
+        "custom".to_string(),
+        "Custom".to_string(),
+        json!({
+            "auth": {"OPENAI_API_KEY": "third-party-key"},
+            "config": concat!(
+                "model_provider = \"custom\"\n",
+                "model = \"gpt-5.6-sol\"\n\n",
+                "[model_providers.custom]\n",
+                "name = \"Custom\"\n",
+                "base_url = \"https://third.example/v1\"\n",
+                "wire_api = \"responses\"\n",
+                "requires_openai_auth = true\n"
+            )
+        }),
+        None,
+    );
+    custom.category = Some("custom".to_string());
+    manager.providers.insert("custom".to_string(), custom);
+    (config, official_auth, official_config)
+}
 
 fn sanitize_provider_name(name: &str) -> String {
     name.chars()
@@ -800,6 +903,108 @@ requires_openai_auth = true
         parsed["model_providers"]["aihubmix"]["experimental_bearer_token"].as_str(),
         Some("third-party-key"),
         "the selected third-party provider owns its bearer token"
+    );
+}
+
+#[test]
+fn codex_unified_switch_rebinds_existing_threads_in_both_directions() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_unified_history();
+    let _home = ensure_test_home();
+
+    let (config, official_auth, official_config) = codex_bidirectional_switch_fixture();
+    write_codex_live_atomic(&official_auth, Some(official_config)).expect("seed official live");
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    let codex_dir = cc_switch_lib::get_codex_config_path()
+        .parent()
+        .expect("Codex config directory")
+        .to_path_buf();
+    create_codex_thread_artifacts(&codex_dir);
+
+    ProviderService::switch(&state, AppType::Codex, "custom")
+        .expect("switch existing threads to custom");
+    assert_eq!(
+        read_codex_thread_routes(&codex_dir),
+        (
+            "custom".to_string(),
+            "custom".to_string(),
+            "custom".to_string(),
+            "gpt-5.6-sol".to_string()
+        )
+    );
+    let custom_auth: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read custom auth");
+    assert!(custom_auth.get("OPENAI_API_KEY").is_none());
+    assert_eq!(
+        custom_auth
+            .pointer("/tokens/access_token")
+            .and_then(serde_json::Value::as_str),
+        Some("official-token")
+    );
+
+    ProviderService::switch(&state, AppType::Codex, "official")
+        .expect("switch existing threads back to official");
+    assert_eq!(
+        read_codex_thread_routes(&codex_dir),
+        (
+            "openai".to_string(),
+            "openai".to_string(),
+            "openai".to_string(),
+            "gpt-5.4".to_string()
+        )
+    );
+    assert_eq!(
+        read_json_file::<serde_json::Value>(&cc_switch_lib::get_codex_auth_path())
+            .expect("read official auth"),
+        official_auth
+    );
+}
+
+#[test]
+fn codex_unified_switch_rolls_back_when_history_reconciliation_fails() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_unified_history();
+    let _home = ensure_test_home();
+    let (config, official_auth, official_config) = codex_bidirectional_switch_fixture();
+    write_codex_live_atomic(&official_auth, Some(official_config)).expect("seed official live");
+    let state = create_test_state_with_config(&config).expect("create test state");
+    let codex_dir = cc_switch_lib::get_codex_config_path()
+        .parent()
+        .expect("Codex config directory")
+        .to_path_buf();
+    create_codex_thread_artifacts(&codex_dir);
+    std::fs::create_dir_all(codex_dir.join("sqlite")).expect("create nested state directory");
+    std::fs::write(codex_dir.join("sqlite/state_6.sqlite"), b"invalid sqlite")
+        .expect("write invalid state DB");
+
+    ProviderService::switch(&state, AppType::Codex, "custom")
+        .expect_err("history failure must abort the switch");
+
+    assert_eq!(
+        ProviderService::current(&state, AppType::Codex).expect("read current provider"),
+        "official"
+    );
+    assert_eq!(
+        read_codex_thread_routes(&codex_dir),
+        (
+            "openai".to_string(),
+            "openai".to_string(),
+            "openai".to_string(),
+            "gpt-5.4".to_string()
+        )
+    );
+    assert_eq!(
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+            .expect("read rolled back config"),
+        official_config
+    );
+    assert_eq!(
+        read_json_file::<serde_json::Value>(&cc_switch_lib::get_codex_auth_path())
+            .expect("read rolled back auth"),
+        official_auth
     );
 }
 
