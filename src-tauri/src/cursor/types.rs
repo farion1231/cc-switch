@@ -258,6 +258,10 @@ pub struct CursorUsageEvent {
     pub cache_read_tokens: i64,
     pub cache_write_tokens: i64,
     pub usage_present: bool,
+    #[serde(default)]
+    pub usage_status: String,
+    #[serde(default)]
+    pub cache_usage_observed: bool,
 }
 
 fn default_tooltip() -> String {

@@ -49,6 +49,7 @@ struct DeltaTokens {
     input: u32,
     cached_input: u32,
     output: u32,
+    cache_usage_observed: bool,
 }
 
 impl DeltaTokens {
@@ -430,11 +431,13 @@ fn compute_delta(prev: &Option<CumulativeTokens>, current: &CumulativeTokens) ->
             input: current.input as u32,
             cached_input: current.cached_input as u32,
             output: current.output as u32,
+            cache_usage_observed: false,
         },
         Some(p) => DeltaTokens {
             input: current.input.saturating_sub(p.input) as u32,
             cached_input: current.cached_input.saturating_sub(p.cached_input) as u32,
             output: current.output.saturating_sub(p.output) as u32,
+            cache_usage_observed: false,
         },
     }
 }
@@ -693,18 +696,30 @@ fn parse_codex_file(
                     current_model = normalize_codex_model(model);
                 }
 
-                let (cumulative, is_total) = if let Some(total) = info.get("total_token_usage") {
-                    (parse_cumulative_tokens(total), true)
-                } else if let Some(last) = info.get("last_token_usage") {
-                    (parse_cumulative_tokens(last), false)
-                } else {
-                    continue;
-                };
+                let (cumulative, is_total, cache_usage_observed) =
+                    if let Some(total) = info.get("total_token_usage") {
+                        (
+                            parse_cumulative_tokens(total),
+                            true,
+                            total.get("cached_input_tokens").is_some()
+                                || total.get("cache_read_input_tokens").is_some(),
+                        )
+                    } else if let Some(last) = info.get("last_token_usage") {
+                        (
+                            parse_cumulative_tokens(last),
+                            false,
+                            last.get("cached_input_tokens").is_some()
+                                || last.get("cache_read_input_tokens").is_some(),
+                        )
+                    } else {
+                        continue;
+                    };
                 let Some(cumulative) = cumulative else {
                     continue;
                 };
                 let delta = if is_total {
-                    let delta = compute_delta(&prev_total, &cumulative);
+                    let mut delta = compute_delta(&prev_total, &cumulative);
+                    delta.cache_usage_observed = cache_usage_observed;
                     prev_total = Some(cumulative);
                     delta
                 } else {
@@ -712,6 +727,7 @@ fn parse_codex_file(
                         input: cumulative.input as u32,
                         cached_input: cumulative.cached_input as u32,
                         output: cumulative.output as u32,
+                        cache_usage_observed,
                     }
                 };
                 let delta = DeltaTokens {
@@ -1125,6 +1141,7 @@ fn insert_codex_session_entry(
         output_tokens: delta.output,
         cache_read_tokens: delta.cached_input,
         cache_creation_tokens: 0,
+        cache_usage_observed: delta.cache_usage_observed,
         model: Some(model.to_string()),
         message_id: None,
     };
@@ -1157,10 +1174,11 @@ fn insert_codex_session_entry(
             "INSERT OR IGNORE INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+            cache_usage_observed,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
             rusqlite::params![
                 request_id,
                 "_codex_session",    // provider_id
@@ -1171,6 +1189,7 @@ fn insert_codex_session_entry(
                 delta.output,
                 delta.cached_input,
                 0i64,                // cache_creation_tokens: Codex 日志无此数据
+                i64::from(delta.cache_usage_observed),
                 input_cost,
                 output_cost,
                 cache_read_cost,
@@ -1813,6 +1832,7 @@ mod tests {
             input: 10,
             cached_input: 1,
             output: 2,
+            cache_usage_observed: true,
         };
         let mut suspected_duplicates = 0;
         let inserted = insert_codex_session_entry(
@@ -1842,6 +1862,7 @@ mod tests {
             input: 10,
             cached_input: 1,
             output: 2,
+            cache_usage_observed: true,
         };
         let mut suspected_duplicates = 0;
         assert!(insert_codex_session_entry(

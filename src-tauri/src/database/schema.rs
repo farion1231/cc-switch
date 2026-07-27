@@ -216,6 +216,8 @@ impl Database {
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
             input_token_semantics INTEGER NOT NULL DEFAULT 0,
+            token_usage_status TEXT NOT NULL DEFAULT 'reported',
+            cache_usage_observed INTEGER NOT NULL DEFAULT 1,
             input_cost_usd TEXT NOT NULL DEFAULT '0', output_cost_usd TEXT NOT NULL DEFAULT '0',
             cache_read_cost_usd TEXT NOT NULL DEFAULT '0', cache_creation_cost_usd TEXT NOT NULL DEFAULT '0',
             total_cost_usd TEXT NOT NULL DEFAULT '0', latency_ms INTEGER NOT NULL, first_token_ms INTEGER,
@@ -303,6 +305,10 @@ impl Database {
                 output_tokens INTEGER NOT NULL DEFAULT 0,
                 cache_read_tokens INTEGER NOT NULL DEFAULT 0,
                 cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_observed_request_count INTEGER NOT NULL DEFAULT 0,
+                cache_observed_input_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_observed_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_observed_creation_tokens INTEGER NOT NULL DEFAULT 0,
                 input_token_semantics INTEGER NOT NULL DEFAULT 0,
                 total_cost_usd TEXT NOT NULL DEFAULT '0',
                 avg_latency_ms INTEGER NOT NULL DEFAULT 0,
@@ -536,6 +542,16 @@ impl Database {
                         log::info!("迁移数据库从 v17 到 v18（Cursor Endpoint 独立持久化）");
                         Self::migrate_v17_to_v18(conn)?;
                         Self::set_user_version(conn, 18)?;
+                    }
+                    18 => {
+                        log::info!("迁移数据库从 v18 到 v19（记录 token 用量来源状态）");
+                        Self::migrate_v18_to_v19(conn)?;
+                        Self::set_user_version(conn, 19)?;
+                    }
+                    19 => {
+                        log::info!("迁移数据库从 v19 到 v20（记录缓存统计可观测性）");
+                        Self::migrate_v19_to_v20(conn)?;
+                        Self::set_user_version(conn, 20)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1671,6 +1687,105 @@ impl Database {
                 rusqlite::params![config.to_string(), provider_id],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn migrate_v18_to_v19(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "proxy_request_logs")? {
+            return Ok(());
+        }
+        Self::add_column_if_missing(
+            conn,
+            "proxy_request_logs",
+            "token_usage_status",
+            "TEXT NOT NULL DEFAULT 'reported'",
+        )?;
+        let required_columns = [
+            "data_source",
+            "status_code",
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "cache_creation_tokens",
+        ];
+        if required_columns
+            .into_iter()
+            .all(|column| Self::has_column(conn, "proxy_request_logs", column).unwrap_or(false))
+        {
+            conn.execute(
+                "UPDATE proxy_request_logs
+                 SET token_usage_status = 'missing'
+                 WHERE data_source = 'cursor_sidecar'
+                   AND status_code >= 200 AND status_code < 300
+                   AND input_tokens = 0 AND output_tokens = 0
+                   AND cache_read_tokens = 0 AND cache_creation_tokens = 0",
+                [],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn migrate_v19_to_v20(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "proxy_request_logs")? {
+            Self::add_column_if_missing(
+                conn,
+                "proxy_request_logs",
+                "cache_usage_observed",
+                "INTEGER NOT NULL DEFAULT 1",
+            )?;
+            if Self::has_column(conn, "proxy_request_logs", "status_code")? {
+                conn.execute(
+                    "UPDATE proxy_request_logs
+                     SET cache_usage_observed = 0
+                     WHERE status_code < 200 OR status_code >= 300",
+                    [],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            }
+            if Self::has_column(conn, "proxy_request_logs", "token_usage_status")? {
+                conn.execute(
+                    "UPDATE proxy_request_logs
+                     SET cache_usage_observed = 0
+                     WHERE token_usage_status <> 'reported'",
+                    [],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            }
+        }
+
+        if Self::table_exists(conn, "usage_daily_rollups")? {
+            for (column, definition) in [
+                ("cache_observed_request_count", "INTEGER NOT NULL DEFAULT 0"),
+                ("cache_observed_input_tokens", "INTEGER NOT NULL DEFAULT 0"),
+                ("cache_observed_read_tokens", "INTEGER NOT NULL DEFAULT 0"),
+                (
+                    "cache_observed_creation_tokens",
+                    "INTEGER NOT NULL DEFAULT 0",
+                ),
+            ] {
+                Self::add_column_if_missing(conn, "usage_daily_rollups", column, definition)?;
+            }
+            let required_columns = [
+                "request_count",
+                "input_tokens",
+                "cache_read_tokens",
+                "cache_creation_tokens",
+            ];
+            if required_columns.into_iter().all(|column| {
+                Self::has_column(conn, "usage_daily_rollups", column).unwrap_or(false)
+            }) {
+                conn.execute(
+                    "UPDATE usage_daily_rollups
+                     SET cache_observed_request_count = request_count,
+                         cache_observed_input_tokens = input_tokens,
+                         cache_observed_read_tokens = cache_read_tokens,
+                         cache_observed_creation_tokens = cache_creation_tokens",
+                    [],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            }
         }
         Ok(())
     }
@@ -3134,6 +3249,110 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(linked_count, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v19_to_v20_backfills_cache_observability_conservatively() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute_batch(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, input_tokens, output_tokens,
+                token_usage_status, latency_ms, status_code, created_at, data_source
+             ) VALUES
+                ('reported-success', 'proxy', 'claude', 'model', 10, 2, 'reported', 1, 200, 1, 'proxy'),
+                ('estimated-success', 'cursor', 'cursor', 'model', 10, 2, 'estimated', 1, 200, 2, 'cursor_sidecar'),
+                ('missing-success', 'cursor', 'cursor', 'model', 0, 0, 'missing', 1, 200, 3, 'cursor_sidecar'),
+                ('reported-failure', 'proxy', 'claude', 'model', 10, 0, 'reported', 1, 500, 4, 'proxy');
+             INSERT INTO usage_daily_rollups (
+                date, app_type, provider_id, model, request_count, success_count,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                total_cost_usd, avg_latency_ms
+             ) VALUES
+                ('2026-01-01', 'claude', 'proxy', 'model', 3, 3, 120, 10, 70, 30, '0', 1);",
+        )?;
+        conn.execute(
+            "ALTER TABLE proxy_request_logs DROP COLUMN cache_usage_observed",
+            [],
+        )?;
+        for column in [
+            "cache_observed_request_count",
+            "cache_observed_input_tokens",
+            "cache_observed_read_tokens",
+            "cache_observed_creation_tokens",
+        ] {
+            conn.execute(
+                &format!("ALTER TABLE usage_daily_rollups DROP COLUMN {column}"),
+                [],
+            )?;
+        }
+        Database::set_user_version(&conn, 19)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        let observed = [
+            "reported-success",
+            "estimated-success",
+            "missing-success",
+            "reported-failure",
+        ]
+        .into_iter()
+        .map(|request_id| {
+            conn.query_row(
+                "SELECT cache_usage_observed FROM proxy_request_logs WHERE request_id = ?1",
+                [request_id],
+                |row| row.get::<_, i64>(0),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(observed, [1, 0, 0, 0]);
+
+        let rollup: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT cache_observed_request_count, cache_observed_input_tokens,
+                    cache_observed_read_tokens, cache_observed_creation_tokens
+             FROM usage_daily_rollups",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(rollup, (3, 120, 70, 30));
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v18_to_v19_marks_only_unknown_cursor_usage_as_missing() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute_batch(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, latency_ms, status_code,
+                created_at, data_source
+             ) VALUES
+                ('cursor-missing', 'cursor', 'cursor', 'model', 0, 0, 0, 0, 1, 200, 1, 'cursor_sidecar'),
+                ('cursor-reported', 'cursor', 'cursor', 'model', 10, 2, 0, 0, 1, 200, 2, 'cursor_sidecar'),
+                ('proxy-zero', 'proxy', 'claude', 'model', 0, 0, 0, 0, 1, 200, 3, 'proxy');",
+        )?;
+        conn.execute(
+            "ALTER TABLE proxy_request_logs DROP COLUMN token_usage_status",
+            [],
+        )?;
+        Database::set_user_version(&conn, 18)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let statuses = ["cursor-missing", "cursor-reported", "proxy-zero"]
+            .into_iter()
+            .map(|request_id| {
+                conn.query_row(
+                    "SELECT token_usage_status FROM proxy_request_logs WHERE request_id = ?1",
+                    [request_id],
+                    |row| row.get::<_, String>(0),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(statuses, ["missing", "reported", "reported"]);
         Ok(())
     }
 

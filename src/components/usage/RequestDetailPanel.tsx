@@ -55,6 +55,8 @@ export function RequestDetailPanel({
 
   const freshInput = getFreshInputTokens(request);
   const isCacheInclusive = request.inputTokens !== freshInput;
+  const usageEstimated = request.tokenUsageStatus === "estimated";
+  const usageMissing = request.tokenUsageStatus === "missing";
   const unpriced = isUnpricedUsage(request);
 
   return (
@@ -147,8 +149,24 @@ export function RequestDetailPanel({
 
           {/* Token 使用量 */}
           <div className="rounded-lg border p-4">
-            <h3 className="mb-3 font-semibold">
+            <h3 className="mb-3 flex items-center gap-2 font-semibold">
               {t("usage.tokenUsage", "Token 使用量")}
+              {usageEstimated && (
+                <span
+                  className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-normal text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+                  title={t("usage.tokenUsageEstimatedHint")}
+                >
+                  {t("usage.tokenUsageEstimated")}
+                </span>
+              )}
+              {usageMissing && (
+                <span
+                  className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
+                  title={t("usage.tokenUsageMissingHint")}
+                >
+                  {t("usage.tokenUsageMissing")}
+                </span>
+              )}
             </h3>
             <dl className="grid grid-cols-2 gap-3 text-sm">
               <div>
@@ -156,8 +174,8 @@ export function RequestDetailPanel({
                   {t("usage.inputTokens", "输入 Tokens")}
                 </dt>
                 <dd className="font-mono">
-                  {freshInput.toLocaleString()}
-                  {isCacheInclusive && (
+                  {usageMissing ? "—" : freshInput.toLocaleString()}
+                  {!usageMissing && isCacheInclusive && (
                     <span className="ml-2 text-xs text-muted-foreground/70 font-normal">
                       ({t("usage.rawInputLabel", "原始")}:{" "}
                       {request.inputTokens.toLocaleString()})
@@ -170,7 +188,7 @@ export function RequestDetailPanel({
                   {t("usage.outputTokens", "输出 Tokens")}
                 </dt>
                 <dd className="font-mono">
-                  {request.outputTokens.toLocaleString()}
+                  {usageMissing ? "—" : request.outputTokens.toLocaleString()}
                 </dd>
               </div>
               <div>
@@ -178,7 +196,9 @@ export function RequestDetailPanel({
                   {t("usage.cacheReadTokens", "缓存读取")}
                 </dt>
                 <dd className="font-mono">
-                  {request.cacheReadTokens.toLocaleString()}
+                  {usageMissing
+                    ? "—"
+                    : request.cacheReadTokens.toLocaleString()}
                 </dd>
               </div>
               <div>
@@ -186,7 +206,9 @@ export function RequestDetailPanel({
                   {t("usage.cacheCreationTokens", "缓存写入")}
                 </dt>
                 <dd className="font-mono">
-                  {request.cacheCreationTokens.toLocaleString()}
+                  {usageMissing
+                    ? "—"
+                    : request.cacheCreationTokens.toLocaleString()}
                 </dd>
               </div>
               <div className="col-span-2">
@@ -194,7 +216,9 @@ export function RequestDetailPanel({
                   {t("usage.totalTokens", "总计")}
                 </dt>
                 <dd className="text-lg font-semibold">
-                  {(freshInput + request.outputTokens).toLocaleString()}
+                  {usageMissing
+                    ? "—"
+                    : (freshInput + request.outputTokens).toLocaleString()}
                 </dd>
               </div>
             </dl>

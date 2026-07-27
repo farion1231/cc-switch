@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RequestLogTable } from "@/components/usage/RequestLogTable";
-import type { UsageRangeSelection } from "@/types/usage";
+import type { RequestLog, UsageRangeSelection } from "@/types/usage";
 
 const useRequestLogsMock = vi.hoisted(() => vi.fn());
 
@@ -54,6 +54,34 @@ vi.mock("@/components/ui/table", () => ({
   TableHeader: ({ children }: any) => <thead>{children}</thead>,
   TableRow: ({ children }: any) => <tr>{children}</tr>,
 }));
+
+const makeLog = (
+  requestId: string,
+  tokenUsageStatus: RequestLog["tokenUsageStatus"],
+): RequestLog => ({
+  requestId,
+  providerId: "provider",
+  providerName: "Provider",
+  appType: "cursor",
+  model: "model",
+  costMultiplier: "1",
+  inputTokens: tokenUsageStatus === "missing" ? 0 : 120,
+  outputTokens: tokenUsageStatus === "missing" ? 0 : 30,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  inputTokenSemantics: 2,
+  tokenUsageStatus,
+  inputCostUsd: "0.001",
+  outputCostUsd: "0.001",
+  cacheReadCostUsd: "0",
+  cacheCreationCostUsd: "0",
+  totalCostUsd: "0.002",
+  isStreaming: true,
+  latencyMs: 100,
+  statusCode: 200,
+  createdAt: 1_710_000_000,
+  dataSource: "cursor_sidecar",
+});
 
 describe("RequestLogTable", () => {
   beforeEach(() => {
@@ -116,6 +144,35 @@ describe("RequestLogTable", () => {
         }),
       );
     });
+  });
+
+  it("distinguishes estimated usage from missing usage", () => {
+    useRequestLogsMock.mockReturnValue({
+      data: {
+        data: [
+          makeLog("estimated-request", "estimated"),
+          makeLog("missing-request", "missing"),
+        ],
+        total: 2,
+        page: 0,
+        pageSize: 20,
+      },
+      isLoading: false,
+    });
+
+    render(
+      <RequestLogTable
+        range={{ preset: "today" }}
+        rangeLabel="Today"
+        appType="cursor"
+        refreshIntervalMs={0}
+      />,
+    );
+
+    expect(screen.getAllByText("usage.tokenUsageEstimated")).toHaveLength(3);
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("120")).toBeInTheDocument();
+    expect(screen.getByText("30")).toBeInTheDocument();
   });
 
   it("resets pagination when the dashboard app filter changes", async () => {

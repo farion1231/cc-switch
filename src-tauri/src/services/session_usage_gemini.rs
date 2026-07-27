@@ -33,6 +33,7 @@ struct GeminiTokens {
     input: u32,
     output: u32,
     cached: u32,
+    cache_usage_observed: bool,
     thoughts: u32,
 }
 
@@ -222,6 +223,7 @@ fn parse_gemini_tokens(tokens: &serde_json::Value) -> GeminiTokens {
         input: tokens.get("input").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
         output: tokens.get("output").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
         cached: tokens.get("cached").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        cache_usage_observed: tokens.get("cached").is_some(),
         thoughts: tokens.get("thoughts").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
     }
 }
@@ -272,6 +274,7 @@ fn insert_gemini_session_entry(
         output_tokens,
         cache_read_tokens: tokens.cached,
         cache_creation_tokens: 0,
+        cache_usage_observed: tokens.cache_usage_observed,
         model: Some(model.to_string()),
         message_id: None,
     };
@@ -304,15 +307,17 @@ fn insert_gemini_session_entry(
         "INSERT INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+            cache_usage_observed,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
         ON CONFLICT(request_id) DO UPDATE SET
             model = excluded.model,
             input_tokens = excluded.input_tokens,
             output_tokens = excluded.output_tokens,
             cache_read_tokens = excluded.cache_read_tokens,
+            cache_usage_observed = excluded.cache_usage_observed,
             input_cost_usd = excluded.input_cost_usd,
             output_cost_usd = excluded.output_cost_usd,
             cache_read_cost_usd = excluded.cache_read_cost_usd,
@@ -332,6 +337,7 @@ fn insert_gemini_session_entry(
             output_tokens,
             tokens.cached,
             0i64,                // cache_creation_tokens
+            i64::from(tokens.cache_usage_observed),
             input_cost,
             output_cost,
             cache_read_cost,
@@ -405,6 +411,7 @@ mod tests {
             input: 10,
             output: 2,
             cached: 1,
+            cache_usage_observed: true,
             thoughts: 5,
         };
         let inserted = insert_gemini_session_entry(

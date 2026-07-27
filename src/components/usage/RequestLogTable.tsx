@@ -197,6 +197,8 @@ export function RequestLogTable({
                 ) : (
                   logs.map((log) => {
                     const unpriced = isUnpricedUsage(log);
+                    const usageEstimated = log.tokenUsageStatus === "estimated";
+                    const usageMissing = log.tokenUsageStatus === "missing";
                     const modelRoute = [
                       log.requestModel,
                       log.model,
@@ -255,42 +257,84 @@ export function RequestLogTable({
                               <div
                                 className="tabular-nums"
                                 title={
-                                  isCacheInclusive
-                                    ? `Raw: ${log.inputTokens.toLocaleString()}`
-                                    : undefined
+                                  usageMissing
+                                    ? t("usage.tokenUsageMissingHint")
+                                    : usageEstimated
+                                      ? t("usage.tokenUsageEstimatedHint")
+                                      : isCacheInclusive
+                                        ? `Raw: ${log.inputTokens.toLocaleString()}`
+                                        : undefined
                                 }
                               >
-                                {fmtInt(freshInput, locale)}
+                                {usageMissing
+                                  ? "—"
+                                  : fmtInt(freshInput, locale)}
                               </div>
                             );
                           })()}
-                          {(log.cacheReadTokens > 0 ||
-                            log.cacheCreationTokens > 0) && (
-                            <div className="text-[10px] text-muted-foreground whitespace-nowrap">
-                              {[
-                                log.cacheReadTokens > 0 &&
-                                  `R${fmtInt(log.cacheReadTokens, locale)}`,
-                                log.cacheCreationTokens > 0 &&
-                                  `W${fmtInt(log.cacheCreationTokens, locale)}`,
-                              ]
-                                .filter(Boolean)
-                                .join("·")}
+                          {usageEstimated && (
+                            <div
+                              className="text-[10px] text-amber-600 dark:text-amber-400"
+                              title={t("usage.tokenUsageEstimatedHint")}
+                            >
+                              {t("usage.tokenUsageEstimated")}
                             </div>
                           )}
+                          {!usageMissing &&
+                            (log.cacheReadTokens > 0 ||
+                              log.cacheCreationTokens > 0) && (
+                              <div className="text-[10px] text-muted-foreground whitespace-nowrap">
+                                {[
+                                  log.cacheReadTokens > 0 &&
+                                    `R${fmtInt(log.cacheReadTokens, locale)}`,
+                                  log.cacheCreationTokens > 0 &&
+                                    `W${fmtInt(log.cacheCreationTokens, locale)}`,
+                                ]
+                                  .filter(Boolean)
+                                  .join("·")}
+                              </div>
+                            )}
                         </TableCell>
                         <TableCell className="text-center">
-                          {fmtInt(log.outputTokens, locale)}
+                          <div
+                            className="tabular-nums"
+                            title={
+                              usageMissing
+                                ? t("usage.tokenUsageMissingHint")
+                                : usageEstimated
+                                  ? t("usage.tokenUsageEstimatedHint")
+                                  : undefined
+                            }
+                          >
+                            {usageMissing
+                              ? "—"
+                              : fmtInt(log.outputTokens, locale)}
+                          </div>
+                          {usageEstimated && (
+                            <div className="text-[10px] text-amber-600 dark:text-amber-400">
+                              {t("usage.tokenUsageEstimated")}
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell className="text-center px-1.5">
                           <div
                             className={`font-medium tabular-nums ${
-                              unpriced ? "text-muted-foreground" : ""
+                              unpriced || usageMissing
+                                ? "text-muted-foreground"
+                                : ""
                             }`}
                           >
-                            {unpriced
-                              ? t("usage.unpriced", "未定价")
-                              : fmtUsd(log.totalCostUsd, 4)}
+                            {usageMissing
+                              ? "—"
+                              : unpriced
+                                ? t("usage.unpriced", "未定价")
+                                : fmtUsd(log.totalCostUsd, 4)}
                           </div>
+                          {usageEstimated && !unpriced && (
+                            <div className="text-[10px] text-amber-600 dark:text-amber-400">
+                              {t("usage.tokenUsageEstimated")}
+                            </div>
+                          )}
                           {parseFiniteNumber(log.costMultiplier) != null &&
                             parseFiniteNumber(log.costMultiplier) !== 1 && (
                               <div className="text-[11px] text-muted-foreground">

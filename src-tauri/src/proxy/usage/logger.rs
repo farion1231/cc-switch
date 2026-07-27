@@ -170,11 +170,11 @@ impl<'a> UsageLogger<'a> {
             "{insert_verb} INTO proxy_request_logs (
                 request_id, provider_id, app_type, model, request_model, pricing_model,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                input_token_semantics,
+                input_token_semantics, cache_usage_observed,
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                 latency_ms, first_token_ms, status_code, error_message, session_id,
                 provider_type, is_streaming, cost_multiplier, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)"
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)"
         );
         let affected_rows = conn
             .execute(
@@ -191,6 +191,7 @@ impl<'a> UsageLogger<'a> {
                     log.usage.cache_read_tokens,
                     log.usage.cache_creation_tokens,
                     input_token_semantics,
+                    i64::from(log.usage.cache_usage_observed),
                     input_cost,
                     output_cost,
                     cache_read_cost,
@@ -518,6 +519,7 @@ mod tests {
                 output_tokens: 5,
                 cache_read_tokens: 2,
                 cache_creation_tokens: 0,
+                cache_usage_observed: true,
                 model: None,
                 message_id: Some("resp-1".to_string()),
             },
@@ -555,6 +557,7 @@ mod tests {
             output_tokens: 500,
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
+            cache_usage_observed: false,
             model: None,
             message_id: None,
         };
