@@ -1585,11 +1585,22 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        if !Self::table_exists(conn, "providers")? {
+            return Ok(());
+        }
+
+        let (created_at_expression, order_by) =
+            if Self::has_column(conn, "providers", "created_at")? {
+                ("COALESCE(created_at, 0)", "created_at, id")
+            } else {
+                ("CAST(0 AS INTEGER)", "id")
+            };
+        let sql = format!(
+            "SELECT id, settings_config, {created_at_expression}
+             FROM providers WHERE app_type = 'cursor' ORDER BY {order_by}"
+        );
         let mut stmt = conn
-            .prepare(
-                "SELECT id, settings_config, COALESCE(created_at, 0)
-                 FROM providers WHERE app_type = 'cursor' ORDER BY created_at, id",
-            )
+            .prepare(&sql)
             .map_err(|e| AppError::Database(e.to_string()))?;
         let rows = stmt
             .query_map([], |row| {
