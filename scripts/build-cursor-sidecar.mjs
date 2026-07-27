@@ -2,8 +2,10 @@ import {
   chmodSync,
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -111,6 +113,20 @@ function generateProto() {
   );
 }
 
+function makeTreeWritable(path) {
+  if (!existsSync(path)) return;
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink()) return;
+  if (stat.isDirectory()) {
+    chmodSync(path, stat.mode | 0o700);
+    for (const entry of readdirSync(path)) {
+      makeTreeWritable(join(path, entry));
+    }
+    return;
+  }
+  chmodSync(path, stat.mode | 0o600);
+}
+
 function preparePatchedDependencies() {
   const moduleJson = run(
     "go",
@@ -127,11 +143,11 @@ function preparePatchedDependencies() {
     fail("无法准备不含默认 CA 的 goproxy 构建副本");
   }
 
+  makeTreeWritable(patchedGoproxyDir);
   rmSync(patchedGoproxyDir, { recursive: true, force: true });
   cpSync(upstreamDir, patchedGoproxyDir, { recursive: true });
+  makeTreeWritable(patchedGoproxyDir);
   const patchedGoproxyCerts = join(patchedGoproxyDir, "certs.go");
-  chmodSync(patchedGoproxyDir, 0o755);
-  chmodSync(patchedGoproxyCerts, 0o644);
   cpSync(goproxyReplacementSource, patchedGoproxyCerts);
 
   const sourceGoMod = readFileSync(join(sourceDir, "go.mod"), "utf8");
