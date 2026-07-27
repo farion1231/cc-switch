@@ -12,6 +12,7 @@ use crate::proxy::{
     },
     sse::{append_utf8_safe, strip_sse_field, take_sse_block},
 };
+use base64::Engine as _;
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Map, Value};
@@ -433,11 +434,63 @@ fn normalize_codex_oauth_input_item(item: Value) -> Value {
         .unwrap_or_default();
     if item_type == "reasoning" {
         normalize_codex_oauth_reasoning_item(&mut object);
+    } else if item_type == "agent_message" {
+        normalize_codex_oauth_agent_message(&mut object);
     } else if codex_oauth_input_item_forbids_content(item_type) {
         object.remove("content");
     }
 
     Value::Object(object)
+}
+
+/// Codex Multi-Agent V2 can persist a third-party agent's plaintext reply in an
+/// `encrypted_content` block. The official backend later treats that block as an
+/// opaque ciphertext and permanently rejects the conversation. Preserve plausible
+/// ciphertexts, but recover clearly plaintext blocks as ordinary input text.
+fn normalize_codex_oauth_agent_message(object: &mut Map<String, Value>) {
+    let Some(Value::Array(content)) = object.get_mut("content") else {
+        return;
+    };
+
+    for part in content {
+        let Value::Object(part) = part else {
+            continue;
+        };
+        if part.get("type").and_then(Value::as_str) != Some("encrypted_content") {
+            continue;
+        }
+        let Some(value) = part
+            .get("encrypted_content")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        if looks_like_codex_encrypted_content(&value) {
+            continue;
+        }
+
+        part.clear();
+        part.insert("type".to_string(), Value::String("input_text".to_string()));
+        part.insert("text".to_string(), Value::String(value));
+    }
+}
+
+fn looks_like_codex_encrypted_content(value: &str) -> bool {
+    if value.len() < 64 || !value.is_ascii() {
+        return false;
+    }
+    [
+        &base64::engine::general_purpose::STANDARD,
+        &base64::engine::general_purpose::URL_SAFE,
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+    ]
+    .into_iter()
+    .any(|engine| {
+        engine
+            .decode(value)
+            .is_ok_and(|decoded| decoded.len() >= 32)
+    })
 }
 
 /// 判断 input item 是否是 Codex 内部控制消息。
@@ -1793,6 +1846,7 @@ mod tests {
         // Codex Multi-Agent V2 会把任务投递和子 Agent 结果作为 agent_message 写入历史，
         // 其 content 是 official backend 的必填字段。旧的“非 message 全删 content”
         // 规则会把第 21 条历史变成 input[20].content 缺失。
+        let encrypted = base64::engine::general_purpose::STANDARD.encode([7_u8; 64]);
         let mut input = (0..20)
             .map(|index| {
                 json!({
@@ -1816,7 +1870,7 @@ mod tests {
                 },
                 {
                     "type": "encrypted_content",
-                    "encrypted_content": "encrypted-payload"
+                    "encrypted_content": encrypted
                 }
             ]
         }));
@@ -1835,6 +1889,31 @@ mod tests {
         assert_eq!(input[20]["recipient"], "/root");
         assert_eq!(input[20]["content"][0]["type"], "input_text");
         assert_eq!(input[20]["content"][1]["type"], "encrypted_content");
+    }
+
+    #[test]
+    fn codex_oauth_responses_normalizer_recovers_plaintext_encrypted_agent_message() {
+        let encrypted = base64::engine::general_purpose::STANDARD.encode([9_u8; 64]);
+        let input = json!({
+            "input": [{
+                "type": "agent_message",
+                "author": "/root/research",
+                "recipient": "/root",
+                "content": [
+                    {"type": "input_text", "text": "status"},
+                    {"type": "encrypted_content", "encrypted_content": "父 agent，我收到的 payload 为空。"},
+                    {"type": "encrypted_content", "encrypted_content": encrypted}
+                ]
+            }]
+        });
+
+        let normalized = normalize_codex_oauth_responses_request(input, false);
+        let content = normalized["input"][0]["content"].as_array().unwrap();
+        assert_eq!(
+            content[1],
+            json!({"type": "input_text", "text": "父 agent，我收到的 payload 为空。"})
+        );
+        assert_eq!(content[2]["type"], "encrypted_content");
     }
 
     #[test]

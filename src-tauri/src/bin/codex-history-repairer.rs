@@ -378,6 +378,10 @@ mod windows_gui {
                 result.prefix_duplicate_rows_removed, result.prefix_duplicate_rows_to_remove
             ),
             format!(
+                "internal transcript cleanup: {} / {}",
+                result.internal_transcript_rows_removed, result.internal_transcript_rows_to_remove
+            ),
+            format!(
                 "prefix index cleanup: {} / {}",
                 result.session_index_duplicate_rows_removed,
                 result.session_index_duplicate_rows_to_remove

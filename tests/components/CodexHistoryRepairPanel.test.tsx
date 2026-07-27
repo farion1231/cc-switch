@@ -56,6 +56,8 @@ function repairOutcomeFixture(dryRun: boolean) {
     threadRowsInserted: dryRun ? 0 : 2,
     prefixDuplicateRowsToRemove: 3,
     prefixDuplicateRowsRemoved: dryRun ? 0 : 3,
+    internalTranscriptRowsToRemove: 2,
+    internalTranscriptRowsRemoved: dryRun ? 0 : 2,
     threadMetadataRowsToRebuild: dryRun ? 5 : 0,
     threadMetadataRowsRebuilt: dryRun ? 0 : 5,
     backfillStateToUpdate: true,

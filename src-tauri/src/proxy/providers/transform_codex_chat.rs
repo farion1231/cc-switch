@@ -12,10 +12,7 @@ use super::codex_chat_common::{
 use crate::provider::{CodexCacheConfig, CodexChatReasoningConfig};
 use crate::proxy::{
     error::ProxyError,
-    json_canonical::{
-        canonical_json_string, canonicalize_json_string_if_parseable, canonicalize_tool_arguments,
-        short_sha256_hex,
-    },
+    json_canonical::{canonical_json_string, canonicalize_tool_arguments, short_sha256_hex},
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -809,16 +806,18 @@ fn append_responses_item_as_chat_message(
                 last_assistant_index,
             );
             let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
-            let output = match item.get("output") {
-                Some(Value::String(s)) => canonicalize_json_string_if_parseable(s),
-                Some(v) => canonical_json_string(v),
-                None => String::new(),
-            };
+            let (output, images) = chat_tool_output_content(item.get("output"));
             messages.push(json!({
                 "role": "tool",
                 "tool_call_id": call_id,
                 "content": output
             }));
+            if !images.is_empty() {
+                messages.push(json!({
+                    "role": "user",
+                    "content": images
+                }));
+            }
         }
         Some("custom_tool_call_output") | Some("tool_search_output") => {
             flush_pending_tool_calls(
@@ -912,6 +911,45 @@ fn append_responses_item_as_chat_message(
     }
 
     Ok(())
+}
+
+fn chat_tool_output_content(output: Option<&Value>) -> (String, Vec<Value>) {
+    let parsed_output = match output {
+        Some(Value::String(value)) => match serde_json::from_str::<Value>(value) {
+            Ok(parsed) => parsed,
+            Err(_) => return (value.clone(), Vec::new()),
+        },
+        Some(value) => value.clone(),
+        None => return (String::new(), Vec::new()),
+    };
+
+    let Value::Array(parts) = &parsed_output else {
+        return (canonical_json_string(&parsed_output), Vec::new());
+    };
+    let mut retained = Vec::with_capacity(parts.len());
+    let mut images = Vec::new();
+    for part in parts {
+        let image_url = part
+            .get("type")
+            .and_then(Value::as_str)
+            .filter(|part_type| *part_type == "input_image")
+            .and_then(|_| part.get("image_url"))
+            .and_then(Value::as_str);
+        if let Some(image_url) = image_url {
+            images.push(json!({
+                "type": "image_url",
+                "image_url": {"url": image_url}
+            }));
+        } else {
+            retained.push(part.clone());
+        }
+    }
+    let text = if retained.is_empty() {
+        format!("[tool returned {} image(s)]", images.len())
+    } else {
+        canonical_json_string(&Value::Array(retained))
+    };
+    (text, images)
 }
 
 fn flush_pending_tool_calls(
@@ -3236,6 +3274,39 @@ mod tests {
         assert_eq!(messages[0]["reasoning_content"], "Need to read a file.");
         assert_eq!(messages[0]["tool_calls"][0]["id"], "call_1");
         assert_eq!(messages[1]["role"], "tool");
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_tool_images_as_multimodal_parts() {
+        let input = json!({
+            "model": "vision-model",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_image",
+                    "name": "view_image",
+                    "arguments": "{\"path\":\"screen.png\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_image",
+                    "output": "[{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,AAAA\"}]"
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(messages[1]["content"], "[tool returned 1 image(s)]");
+        assert_eq!(messages[2]["role"], "user");
+        assert_eq!(messages[2]["content"][0]["type"], "image_url");
+        assert_eq!(
+            messages[2]["content"][0]["image_url"]["url"],
+            "data:image/png;base64,AAAA"
+        );
+        assert!(!messages[1]["content"].as_str().unwrap().contains("base64"));
     }
 
     #[test]

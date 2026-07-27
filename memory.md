@@ -1,5 +1,13 @@
 # CC Switch Repository Memory
 
+## 2026-07-27 Codex 内部转录、坏 encrypted_content 与工具图片上下文根修
+
+- Issue #18 的损坏形态是 Multi-Agent V2 rollout 中 `agent_message.content[].type=encrypted_content` 却承载可读明文；CCSwitchMulti 的 Chat -> Responses 响应转换不生成 `agent_message`，因此源头在 Codex 本地子 Agent 投递层，但 CCSM 官方 OAuth 出站必须自愈，否则坏记录会被官方 backend 当密文解码并让任务及后续 fork 永久 5 次重连。只在载荷无法按 Base64/Base64URL 解码为至少 32 字节时降级成 `input_text`，合法密文保持原样；网络/TUN 只能改变触发概率，不能修复已污染 rollout。
+- 新版历史修复只接受顶层 `type=event_msg` 且 `payload.type=user_message` 的真实事件作为用户正文；`The following is the Codex agent history...`、`<environment_context>`、AGENTS/developer 环境、handoff/工具状态等内部恢复转录不能生成 title/preview/first_user_message。带附件的 Desktop 包装应提取 `My request for Codex:` 后正文，只有 `Files mentioned by the user` 而无真实请求的事件应忽略。
+- 为回收旧版误修结果，历史修复会识别“已有 thread 行标题是内部转录，且 rollout 的所有 user_message 都是内部事件、没有真实用户请求”的行；预览显示 `internal transcript cleanup`，应用时只删除 `threads` 与 `session_index.jsonl` 索引，保留 rollout 文件和既有备份/进程关闭保护。prefix 对话比对也必须复用同一真实用户正文过滤，避免内部转录参与分叉判断。
+- “禁止 session_index append”必须覆盖聚焦移动阶段：旧 `move_focus_session_index_rows` 会为 selected 但 index 中不存在的 ID 补造新行，这是修复过量的第二入口。现在只移动/改名原生 index 已存在的行，DB 聚焦不再隐式创造侧边栏条目。rollout 元数据的 `updated_at_ms` 以 JSONL 事件时间为准；文件 mtime 只能在没有任何事件时间时兜底，否则重复 session id 的新旧快照选择会不稳定。
+- Responses -> Chat 的 `function_call_output` 若包含 `[{type:"input_image",image_url:"data:..."}]`，不能再 canonical JSON 后塞进 tool content，否则 Base64 会按普通文本计 token 并迅速撑爆上下文。正确映射是 tool 消息保留短占位，随后追加 user multimodal `image_url` part；非图片输出仍保持 canonical JSON。
+
 ## 2026-07-25 Codex official 模型图片能力丢失根因
 
 - 症状：在 CCSwitchMulti MultiRouter 下选择 official GPT 模型时，Codex Desktop 提示模型不支持图片输入。

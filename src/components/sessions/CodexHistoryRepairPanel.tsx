@@ -292,6 +292,7 @@ export function CodexHistoryRepairPanel({
         `rollout 发现: ${preview.rolloutThreadsDiscovered}`,
         `新增 thread-store 行: ${preview.threadRowsToInsert}`,
         `回收被最长对话覆盖的 thread: ${preview.prefixDuplicateRowsToRemove}`,
+        `回收误索引的内部转录: ${preview.internalTranscriptRowsToRemove}`,
         `重建索引元数据: ${preview.threadMetadataRowsToRebuild}`,
         `backfill 状态: ${preview.backfillStateToUpdate ? "将更新为 complete" : "当前 DB 无此表"}`,
         `provider rows: ${preview.providerRowsToUpdate}`,
@@ -1068,6 +1069,10 @@ function RepairResultPanel({
                 <RepairMetric
                   label="prefix cleanup"
                   value={result.prefixDuplicateRowsToRemove}
+                />
+                <RepairMetric
+                  label="internal cleanup"
+                  value={result.internalTranscriptRowsToRemove}
                 />
                 <RepairMetric label="focus" value={result.focusSelectedCount} />
                 <RepairMetric

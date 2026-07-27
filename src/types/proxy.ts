@@ -237,6 +237,8 @@ export interface CodexHistoryVisibilityRepairOutcome {
   threadRowsInserted: number;
   prefixDuplicateRowsToRemove: number;
   prefixDuplicateRowsRemoved: number;
+  internalTranscriptRowsToRemove: number;
+  internalTranscriptRowsRemoved: number;
   threadMetadataRowsToRebuild: number;
   threadMetadataRowsRebuilt: number;
   backfillStateToUpdate: boolean;

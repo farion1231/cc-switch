@@ -254,6 +254,9 @@ pub struct CodexHistoryVisibilityRepairOutcome {
     /// 被更长且内容一致的 rollout 完整覆盖的误索引线程数。
     pub prefix_duplicate_rows_to_remove: usize,
     pub prefix_duplicate_rows_removed: usize,
+    /// 旧版修复误索引为聊天的 developer/tool/subagent 恢复转录。
+    pub internal_transcript_rows_to_remove: usize,
+    pub internal_transcript_rows_removed: usize,
     /// 线程索引字段（preview/first_user_message/has_user_event/recency 等）与 rollout
     /// 事实不一致的行数。新版 Desktop 的 thread/list 直接依赖这些字段。
     pub thread_metadata_rows_to_rebuild: usize,
@@ -1073,7 +1076,7 @@ struct HistoryVisibilityRepairRuntimeOptions {
     backup_root_override: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 /// SQLite threads 表中参与历史可见性判断的字段快照。
 struct ThreadHistoryRow {
     id: String,
@@ -1194,9 +1197,14 @@ fn repair_codex_history_visibility_at(
         }
     }
     let prefix_duplicate_ids = plan_prefix_duplicate_thread_removals(&rows);
-    rows.retain(|row| !prefix_duplicate_ids.contains(&row.id));
-    rollout_metadata.retain(|metadata| !prefix_duplicate_ids.contains(&metadata.id));
-    metadata_repairs.retain(|metadata| !prefix_duplicate_ids.contains(&metadata.id));
+    let internal_transcript_ids = plan_internal_transcript_thread_removals(&rows);
+    let cleanup_ids: BTreeSet<_> = prefix_duplicate_ids
+        .union(&internal_transcript_ids)
+        .cloned()
+        .collect();
+    rows.retain(|row| !cleanup_ids.contains(&row.id));
+    rollout_metadata.retain(|metadata| !cleanup_ids.contains(&metadata.id));
+    metadata_repairs.retain(|metadata| !cleanup_ids.contains(&metadata.id));
     let thread_rows_to_insert = rollout_metadata
         .iter()
         .filter(|metadata| !existing_ids.contains(&metadata.id))
@@ -1361,7 +1369,10 @@ fn repair_codex_history_visibility_at(
         .filter(|row| resolve_history_path(row.rollout_path.as_deref()).is_some())
         .count();
     let sqlite_focus_rows_to_update = selected_focus_rows.len();
-    let session_index_rows_to_move = selected_focus_rows.len();
+    let session_index_rows_to_move = selected_focus_rows
+        .iter()
+        .filter(|row| session_index_ids.contains(&row.id))
+        .count();
     let session_index_titles_to_update =
         count_session_index_title_updates(&session_index_lines, &selected_focus_rows);
 
@@ -1377,6 +1388,7 @@ fn repair_codex_history_visibility_at(
         rollout_threads_discovered: rollout_metadata.len(),
         thread_rows_to_insert,
         prefix_duplicate_rows_to_remove: prefix_duplicate_ids.len(),
+        internal_transcript_rows_to_remove: internal_transcript_ids.len(),
         thread_metadata_rows_to_rebuild: metadata_repairs.len(),
         backfill_state_to_update: Database::table_exists(&conn, "backfill_state")?,
         provider_rows_to_update: provider_update_ids.len(),
@@ -1390,7 +1402,7 @@ fn repair_codex_history_visibility_at(
                 serde_json::from_str::<Value>(line)
                     .ok()
                     .and_then(|value| json_string(&value, "id"))
-                    .map(|id| prefix_duplicate_ids.contains(&id))
+                    .map(|id| cleanup_ids.contains(&id))
                     .unwrap_or(false)
             })
             .count(),
@@ -1426,6 +1438,7 @@ fn repair_codex_history_visibility_at(
 
     let has_changes = outcome.thread_rows_to_insert > 0
         || outcome.prefix_duplicate_rows_to_remove > 0
+        || outcome.internal_transcript_rows_to_remove > 0
         || outcome.thread_metadata_rows_to_rebuild > 0
         || outcome.provider_rows_to_update > 0
         || outcome.rollout_first_lines_to_update > 0
@@ -1459,6 +1472,7 @@ fn repair_codex_history_visibility_at(
         .transaction()
         .map_err(|e| AppError::Database(format!("开启 Codex 历史修复事务失败: {e}")))?;
     outcome.prefix_duplicate_rows_removed = delete_thread_rows(&tx, &prefix_duplicate_ids)?;
+    outcome.internal_transcript_rows_removed = delete_thread_rows(&tx, &internal_transcript_ids)?;
     outcome.thread_rows_inserted =
         insert_missing_thread_rows(&tx, &rollout_metadata, target_provider)?;
     outcome.thread_metadata_rows_rebuilt =
@@ -1474,7 +1488,7 @@ fn repair_codex_history_visibility_at(
     outcome.rollout_first_lines_updated = apply_rollout_provider_updates(rollout_provider_updates)?;
     outcome.session_index_appended = 0;
     outcome.session_index_duplicate_rows_removed =
-        remove_session_index_rows(&index_path, &prefix_duplicate_ids)?;
+        remove_session_index_rows(&index_path, &cleanup_ids)?;
     let session_index_counts = move_focus_session_index_rows(&index_path, &selected_focus_rows)?;
     outcome.session_index_rows_moved = session_index_counts.rows_moved;
     outcome.session_index_titles_updated = session_index_counts.titles_updated;
@@ -1857,7 +1871,9 @@ fn rollout_visible_conversation(path: &Path) -> Vec<VisibleConversationMessage> 
         let (role, content) = match payload.get("type").and_then(Value::as_str) {
             Some("user_message") => (
                 "user",
-                json_string(payload, "message").or_else(|| json_string(payload, "text")),
+                json_string(payload, "message")
+                    .or_else(|| json_string(payload, "text"))
+                    .and_then(|message| visible_rollout_user_message(&message)),
             ),
             _ => continue,
         };
@@ -1990,6 +2006,7 @@ fn parse_rollout_thread_metadata(
         updated_at_ms: fallback_ms,
         ..Default::default()
     };
+    let mut saw_event_timestamp = false;
     for line in content.lines() {
         let Ok(value) = serde_json::from_str::<Value>(line) else {
             continue;
@@ -1999,10 +2016,13 @@ fn parse_rollout_thread_metadata(
             .and_then(Value::as_str)
             .and_then(parse_rfc3339_millis)
         {
-            if metadata.created_at_ms == fallback_ms {
+            if !saw_event_timestamp {
                 metadata.created_at_ms = timestamp;
+                metadata.updated_at_ms = timestamp;
+                saw_event_timestamp = true;
+            } else {
+                metadata.updated_at_ms = metadata.updated_at_ms.max(timestamp);
             }
-            metadata.updated_at_ms = metadata.updated_at_ms.max(timestamp);
         }
         let payload = value.get("payload").unwrap_or(&Value::Null);
         if value.get("type").and_then(Value::as_str) == Some("session_meta") {
@@ -2017,11 +2037,13 @@ fn parse_rollout_thread_metadata(
             .get("type")
             .and_then(Value::as_str)
             .or_else(|| value.get("type").and_then(Value::as_str));
-        if matches!(event_type, Some("user_message")) {
+        if value.get("type").and_then(Value::as_str) == Some("event_msg")
+            && matches!(event_type, Some("user_message"))
+        {
             let message =
                 json_string(payload, "message").or_else(|| json_string(&value, "message"));
             if let Some(message) = message
-                .map(|text| strip_rollout_user_message_prefix(&text))
+                .and_then(|text| visible_rollout_user_message(&text))
                 .filter(|text| !text.is_empty())
             {
                 metadata.has_user_event = true;
@@ -2087,6 +2109,88 @@ fn strip_rollout_user_message_prefix(value: &str) -> String {
         .unwrap_or(value)
         .trim()
         .to_string()
+}
+
+fn visible_rollout_user_message(value: &str) -> Option<String> {
+    let message = strip_rollout_user_message_prefix(value);
+    let trimmed = message.trim();
+    if trimmed.is_empty() || rollout_message_is_internal_transcript(trimmed) {
+        return None;
+    }
+
+    if let Some((_, request)) = trimmed.rsplit_once("My request for Codex:") {
+        let request = request.trim();
+        if !request.is_empty() {
+            return Some(request.to_string());
+        }
+    }
+    if trimmed.starts_with("Files mentioned by the user:")
+        || trimmed.starts_with("# Files mentioned by the user:")
+    {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+fn rollout_message_is_internal_transcript(value: &str) -> bool {
+    let value = value.trim_start();
+    value.starts_with("The following is the Codex agent history whose request")
+        || value.starts_with("<environment_context>")
+        || value.starts_with("<developer")
+        || value.starts_with("# AGENTS.md instructions")
+        || value.starts_with("Another language model started to solve this problem")
+        || value.starts_with("You have access to the state of the tools")
+}
+
+fn plan_internal_transcript_thread_removals(rows: &[ThreadHistoryRow]) -> BTreeSet<String> {
+    rows.iter()
+        .filter(|row| thread_row_looks_internal(row))
+        .filter_map(|row| {
+            let path = resolve_history_path(row.rollout_path.as_deref())?;
+            rollout_contains_only_internal_user_events(&path).then(|| row.id.clone())
+        })
+        .collect()
+}
+
+fn thread_row_looks_internal(row: &ThreadHistoryRow) -> bool {
+    [&row.preview, &row.first_user_message, &row.title]
+        .into_iter()
+        .flatten()
+        .map(|value| value.trim_start())
+        .any(|value| {
+            rollout_message_is_internal_transcript(value)
+                || value.starts_with("Files mentioned by the user:")
+                || value.starts_with("# Files mentioned by the user:")
+        })
+}
+
+fn rollout_contains_only_internal_user_events(path: &Path) -> bool {
+    let Ok(file) = fs::File::open(path) else {
+        return false;
+    };
+    let mut saw_internal = false;
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) != Some("event_msg") {
+            continue;
+        }
+        let payload = value.get("payload").unwrap_or(&Value::Null);
+        if payload.get("type").and_then(Value::as_str) != Some("user_message") {
+            continue;
+        }
+        let Some(message) =
+            json_string(payload, "message").or_else(|| json_string(payload, "text"))
+        else {
+            continue;
+        };
+        if visible_rollout_user_message(&message).is_some() {
+            return false;
+        }
+        saw_internal = true;
+    }
+    saw_internal
 }
 
 fn thread_history_row_from_rollout(metadata: &RolloutThreadMetadata) -> ThreadHistoryRow {
@@ -2465,7 +2569,6 @@ fn move_focus_session_index_rows(
     let lines = read_jsonl_lines(index_path)?;
     let selected_by_id: HashMap<&str, &FocusThreadRow> =
         selected.iter().map(|row| (row.id.as_str(), row)).collect();
-    let mut seen = HashSet::new();
     let mut kept = Vec::new();
     let mut moved = Vec::new();
     let mut titles_updated = 0;
@@ -2476,9 +2579,6 @@ fn move_focus_session_index_rows(
             .and_then(|value| value.get("id"))
             .and_then(Value::as_str)
             .map(str::to_string);
-        if let Some(thread_id) = thread_id.as_deref() {
-            seen.insert(thread_id.to_string());
-        }
         if let Some(selected_row) = thread_id
             .as_deref()
             .and_then(|thread_id| selected_by_id.get(thread_id))
@@ -2510,19 +2610,6 @@ fn move_focus_session_index_rows(
         } else {
             kept.push(line);
         }
-    }
-    for selected_row in selected {
-        if seen.contains(&selected_row.id) {
-            continue;
-        }
-        let value = serde_json::json!({
-            "id": selected_row.id,
-            "thread_name": selected_row.title,
-            "updated_at": selected_row.updated_iso,
-        });
-        moved.push(
-            serde_json::to_string(&value).map_err(|e| AppError::JsonSerialize { source: e })?,
-        );
     }
     let moved_count = moved.len();
     kept.extend(moved);
@@ -4554,6 +4641,84 @@ mod tests {
     }
 
     #[test]
+    fn visible_rollout_message_rejects_internal_recovery_transcripts() {
+        assert_eq!(
+            visible_rollout_user_message(
+                "The following is the Codex agent history whose request and response were recovered"
+            ),
+            None
+        );
+        assert_eq!(
+            visible_rollout_user_message("<environment_context>\n<cwd>C:\\work</cwd>"),
+            None
+        );
+        assert_eq!(
+            visible_rollout_user_message(
+                "Another language model started to solve this problem and produced a summary"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn visible_rollout_message_extracts_request_from_attachment_envelope() {
+        let message = "# Files mentioned by the user:\n\n## screen.png\n\n## My request for Codex:\n修复历史记录";
+        assert_eq!(
+            visible_rollout_user_message(message).as_deref(),
+            Some("修复历史记录")
+        );
+    }
+
+    #[test]
+    fn rollout_metadata_uses_real_request_after_internal_recovery_events() {
+        let dir = tempdir().expect("tempdir");
+        let rollout = dir.path().join("recovered.jsonl");
+        fs::write(
+            &rollout,
+            r##"{"timestamp":"2026-07-27T01:00:00Z","type":"session_meta","payload":{"id":"recovered","cwd":"C:\\work"}}
+{"timestamp":"2026-07-27T01:00:01Z","type":"user_message","message":"top-level legacy tool transcript"}
+{"timestamp":"2026-07-27T01:00:02Z","type":"event_msg","payload":{"type":"user_message","message":"The following is the Codex agent history whose request and response were recovered"}}
+{"timestamp":"2026-07-27T01:00:03Z","type":"event_msg","payload":{"type":"user_message","message":"# Files mentioned by the user:\n\n## screenshot.png\n\n## My request for Codex:\n修复真正的问题"}}
+"##,
+        )
+        .expect("rollout");
+
+        let metadata = parse_rollout_thread_metadata(&rollout, false)
+            .expect("parse")
+            .expect("metadata");
+        assert_eq!(
+            metadata.first_user_message.as_deref(),
+            Some("修复真正的问题")
+        );
+        assert_eq!(metadata.preview.as_deref(), Some("修复真正的问题"));
+        assert_eq!(metadata.title.as_deref(), Some("修复真正的问题"));
+    }
+
+    #[test]
+    fn plans_cleanup_for_previous_repair_internal_transcript_rows() {
+        let dir = tempdir().expect("tempdir");
+        let rollout = dir.path().join("internal.jsonl");
+        fs::write(
+            &rollout,
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"The following is the Codex agent history whose request and response were recovered\"}}\n",
+        )
+        .expect("rollout");
+        let rows = vec![ThreadHistoryRow {
+            id: "bad-history-row".to_string(),
+            rollout_path: Some(rollout.to_string_lossy().to_string()),
+            preview: Some(
+                "The following is the Codex agent history whose request was recovered".to_string(),
+            ),
+            ..Default::default()
+        }];
+
+        assert_eq!(
+            plan_internal_transcript_thread_removals(&rows),
+            BTreeSet::from(["bad-history-row".to_string()])
+        );
+    }
+
+    #[test]
     fn rebuilds_thread_store_metadata_from_rollout_when_backfill_is_complete() {
         let dir = tempdir().expect("tempdir");
         let codex_dir = dir.path().join(".codex");
@@ -4568,6 +4733,11 @@ mod tests {
         create_history_test_threads_table(&conn);
         conn.execute_batch("CREATE TABLE backfill_state (id INTEGER PRIMARY KEY, status TEXT NOT NULL, last_watermark TEXT, last_success_at INTEGER, updated_at INTEGER NOT NULL); INSERT INTO backfill_state VALUES (1, 'complete', NULL, 0, 0);")
             .expect("backfill state");
+        fs::write(
+            codex_dir.join("session_index.jsonl"),
+            "{\"id\":\"restored\",\"thread_name\":\"restore this history\",\"updated_at\":\"2026-07-25T02:01:00Z\"}\n",
+        )
+        .expect("native index");
         let active = ActiveCodexStateDb {
             path: db_path.clone(),
             kind: "codex_root".to_string(),
@@ -5371,7 +5541,7 @@ mod tests {
         assert_eq!(dry_run.provider_rows_to_update, 2);
         assert_eq!(dry_run.user_event_rows_to_update, 2);
         assert_eq!(dry_run.visible_candidate_rows, 2);
-        assert_eq!(dry_run.session_index_missing_to_append, 2);
+        assert_eq!(dry_run.session_index_missing_to_append, 0);
         assert_eq!(dry_run.workspace_hints_to_fix, 2);
         assert_eq!(dry_run.projectless_ids_to_remove, 2);
         assert_eq!(dry_run.saved_workspace_roots_to_add, 1);
@@ -5406,12 +5576,12 @@ mod tests {
 
         assert_eq!(applied.provider_rows_updated, 2);
         assert_eq!(applied.user_event_rows_updated, 2);
-        assert_eq!(applied.session_index_appended, 2);
+        assert_eq!(applied.session_index_appended, 0);
         assert_eq!(applied.workspace_hints_fixed, 2);
         assert_eq!(applied.projectless_ids_removed, 2);
         assert_eq!(applied.saved_workspace_roots_added, 1);
         assert_eq!(applied.sqlite_focus_rows_updated, 2);
-        assert_eq!(applied.session_index_rows_moved, 2);
+        assert_eq!(applied.session_index_rows_moved, 0);
         assert_eq!(applied.rollout_mtimes_touched, 2);
         assert_eq!(
             applied.backup_dir,
@@ -5429,8 +5599,8 @@ mod tests {
         assert_eq!(fixed_rows, 2);
 
         let index_text = fs::read_to_string(codex_dir.join("session_index.jsonl")).expect("index");
-        assert!(index_text.contains("\"id\":\"t1\""));
-        assert!(index_text.contains("\"id\":\"t2\""));
+        assert!(!index_text.contains("\"id\":\"t1\""));
+        assert!(!index_text.contains("\"id\":\"t2\""));
 
         let global_state: Value = serde_json::from_str(
             &fs::read_to_string(codex_dir.join(".codex-global-state.json")).expect("global state"),
@@ -5710,7 +5880,7 @@ mod tests {
         assert!(!dry_run.balanced_recent_window_enabled);
         assert_eq!(dry_run.balanced_recent_window_rows, 0);
         assert_eq!(dry_run.sqlite_focus_rows_to_update, 1);
-        assert_eq!(dry_run.session_index_rows_to_move, 1);
+        assert_eq!(dry_run.session_index_rows_to_move, 0);
         assert_eq!(dry_run.rollout_mtimes_to_touch, 1);
     }
 
@@ -5875,7 +6045,7 @@ mod tests {
         .expect("apply repair");
 
         assert_eq!(applied.session_index_titles_updated, 1);
-        assert_eq!(applied.session_index_rows_moved, 8);
+        assert_eq!(applied.session_index_rows_moved, 1);
         assert_eq!(applied.rollout_mtimes_touched, 8);
 
         let index_text = fs::read_to_string(codex_dir.join("session_index.jsonl")).expect("index");
