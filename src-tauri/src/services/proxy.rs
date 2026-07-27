@@ -2919,7 +2919,7 @@ impl ProxyService {
         if official_passthrough || placeholder_auth {
             let config_str = config.get("config").and_then(|v| v.as_str()).unwrap_or("");
             let profile = provider
-                .map(crate::proxy::providers::resolve_codex_catalog_tool_profile)
+                .map(crate::proxy::providers::resolve_codex_proxy_catalog_tool_profile)
                 .unwrap_or(crate::codex_config::CodexCatalogToolProfile::ProxyChat);
             let prepared_config =
                 crate::codex_config::prepare_codex_live_config_text_with_optional_catalog(
@@ -4060,6 +4060,89 @@ wire_api = "responses"
 
         crate::settings::update_settings(crate::settings::AppSettings::default())
             .expect("reset settings");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_native_responses_enables_tool_search_only_for_local_proxy_takeover() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+        let mut provider = Provider::with_id(
+            "native-custom".to_string(),
+            "Native Custom".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER },
+                "config": r#"model_provider = "custom"
+model = "native-model"
+
+[model_providers.custom]
+name = "Native Custom"
+base_url = "https://native.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#,
+                "modelCatalog": { "models": [{ "model": "native-model" }] }
+            }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+        provider.meta = Some(ProviderMeta {
+            api_format: Some("openai_responses".to_string()),
+            ..Default::default()
+        });
+
+        service
+            .write_codex_live_for_provider(&provider.settings_config, Some(&provider))
+            .expect("write direct native config");
+        let catalog_path = crate::codex_config::get_codex_model_catalog_path();
+        let direct_catalog: Value = serde_json::from_str(
+            &std::fs::read_to_string(&catalog_path).expect("read direct catalog"),
+        )
+        .expect("parse direct catalog");
+        assert_eq!(
+            direct_catalog["models"][0]
+                .get("supports_search_tool")
+                .and_then(Value::as_bool),
+            Some(false),
+            "direct native Responses config must not advertise proxy-only tool search"
+        );
+
+        service
+            .write_codex_takeover_live_for_provider(&provider.settings_config, Some(&provider))
+            .expect("write proxied native config");
+        let proxied_catalog: Value = serde_json::from_str(
+            &std::fs::read_to_string(&catalog_path).expect("read proxied catalog"),
+        )
+        .expect("parse proxied catalog");
+        assert_eq!(
+            proxied_catalog["models"][0]
+                .get("supports_search_tool")
+                .and_then(Value::as_bool),
+            Some(true),
+            "local proxy takeover must let Codex build the deferred-tool search index"
+        );
+        assert!(
+            proxied_catalog["models"][0]
+                .get("apply_patch_tool_type")
+                .is_none(),
+            "proxied native Responses must keep the clean function-only tool profile"
+        );
+
+        service
+            .write_codex_live_for_provider(&provider.settings_config, Some(&provider))
+            .expect("restore direct native config");
+        let restored_catalog: Value = serde_json::from_str(
+            &std::fs::read_to_string(&catalog_path).expect("read restored direct catalog"),
+        )
+        .expect("parse restored direct catalog");
+        assert_eq!(
+            restored_catalog["models"][0]["supports_search_tool"].as_bool(),
+            Some(false),
+            "leaving the local proxy path must remove the proxy-only capability"
+        );
     }
 
     #[tokio::test]

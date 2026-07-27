@@ -266,6 +266,23 @@ pub fn resolve_codex_catalog_tool_profile(
     )
 }
 
+/// Resolve the catalog profile used while CC-Switch owns the local Codex route.
+/// Direct native Responses configs stay conservative, while a non-official
+/// native Responses provider can advertise ToolSearch because the local proxy
+/// supplies the compatibility transport.
+pub fn resolve_codex_proxy_catalog_tool_profile(
+    provider: &Provider,
+) -> crate::codex_config::CodexCatalogToolProfile {
+    use crate::codex_config::CodexCatalogToolProfile;
+    let profile = resolve_codex_catalog_tool_profile(provider);
+    if !is_codex_official_provider(provider) && profile == CodexCatalogToolProfile::NativeResponses
+    {
+        CodexCatalogToolProfile::ProxiedNativeResponses
+    } else {
+        profile
+    }
+}
+
 /// Extract the real upstream model configured for a Codex provider.
 pub fn codex_provider_upstream_model(provider: &Provider) -> Option<String> {
     provider
@@ -1172,6 +1189,20 @@ wire_api = "anthropic"
         assert_eq!(
             resolve_codex_catalog_tool_profile(&native),
             CodexCatalogToolProfile::NativeResponses
+        );
+        assert_eq!(
+            resolve_codex_proxy_catalog_tool_profile(&native),
+            CodexCatalogToolProfile::ProxiedNativeResponses,
+            "a non-official native provider gets ToolSearch capability only on the local proxy route"
+        );
+
+        let mut official = native.clone();
+        official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+        official.category = Some("official".to_string());
+        assert_eq!(
+            resolve_codex_proxy_catalog_tool_profile(&official),
+            CodexCatalogToolProfile::NativeResponses,
+            "official Codex routing must not receive the custom-provider ToolSearch capability"
         );
 
         let chat = create_provider(json!({ "apiFormat": "openai_chat" }));

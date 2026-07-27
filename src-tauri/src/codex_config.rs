@@ -127,6 +127,11 @@ const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
 pub enum CodexCatalogToolProfile {
     ProxyChat,
     NativeResponses,
+    /// Codex reaches a third-party native Responses gateway through CC-Switch's
+    /// local proxy. Keep the clean function-only native tool shape, but advertise
+    /// ToolSearch support so app-server builds the deferred dynamic-tool index;
+    /// the proxy translates ToolSearch for upstream compatibility.
+    ProxiedNativeResponses,
     /// Codex talks (through cc-switch's proxy) to a native Anthropic Messages
     /// gateway. Like `NativeResponses` it must suppress Codex's freeform custom
     /// tools — the Responses→Anthropic transform keeps only `function` tools.
@@ -527,6 +532,10 @@ fn codex_catalog_model_entry(
         if let Some(parallel) = spec.supports_parallel_tool_calls {
             entry_obj.insert("supports_parallel_tool_calls".to_string(), json!(parallel));
         }
+    }
+
+    if profile == CodexCatalogToolProfile::ProxiedNativeResponses {
+        entry_obj.insert("supports_search_tool".to_string(), json!(true));
     }
 
     entry
@@ -997,9 +1006,9 @@ fn codex_model_catalog_from_settings(
     // no cache dependency); proxy-chat providers keep cloning Codex's gpt-5.5
     // entry so the proxy can rewrite custom<->function tools as before.
     let template = match profile {
-        CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
-            load_codex_native_responses_template()
-        }
+        CodexCatalogToolProfile::NativeResponses
+        | CodexCatalogToolProfile::ProxiedNativeResponses
+        | CodexCatalogToolProfile::Anthropic => load_codex_native_responses_template(),
         CodexCatalogToolProfile::ProxyChat => load_codex_model_catalog_template()?,
     };
     Ok(Some(codex_model_catalog_from_specs(
@@ -1087,7 +1096,8 @@ pub fn prepare_codex_config_text_with_model_catalog(
             // The Responses→Anthropic transform silently drops the Codex web_search
             // hosted tool, so always disable it here rather than present a dead tool.
             CodexCatalogToolProfile::Anthropic => true,
-            CodexCatalogToolProfile::NativeResponses => {
+            CodexCatalogToolProfile::NativeResponses
+            | CodexCatalogToolProfile::ProxiedNativeResponses => {
                 codex_native_gateway_rejects_web_search(&config_text)
             }
             CodexCatalogToolProfile::ProxyChat => false,
