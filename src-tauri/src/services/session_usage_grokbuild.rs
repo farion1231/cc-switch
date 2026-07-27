@@ -145,7 +145,9 @@ fn sync_unified_log(
             continue;
         }
 
-        let line = std::str::from_utf8(&line_buf).unwrap_or("").trim_end_matches(['\r', '\n']);
+        let line = std::str::from_utf8(&line_buf)
+            .unwrap_or("")
+            .trim_end_matches(['\r', '\n']);
         if line.trim().is_empty() {
             committed_offset = line_offset;
             continue;
@@ -365,10 +367,7 @@ fn normalize_model_id(raw: &str, profile_models: &HashMap<String, String>) -> St
 
     // `[model.cpa] model = "grok-4.3"` 时 summary 可能只记 profile slug
     let resolved = if looks_like_provider_slug(id) {
-        profile_models
-            .get(id)
-            .map(String::as_str)
-            .unwrap_or(id)
+        profile_models.get(id).map(String::as_str).unwrap_or(id)
     } else {
         id
     };
@@ -590,7 +589,10 @@ mod tests {
     #[test]
     fn normalize_model_aliases_and_provider_slugs() {
         let profiles = empty_profiles();
-        assert_eq!(normalize_model_id("grok-build", &profiles), "grok-build-0.1");
+        assert_eq!(
+            normalize_model_id("grok-build", &profiles),
+            "grok-build-0.1"
+        );
         assert_eq!(
             normalize_model_id("grok-code-fast-1", &profiles),
             "grok-build-0.1"
@@ -713,8 +715,7 @@ context_window = 500000
             .expect("write partial");
         }
 
-        let (imported, _) =
-            sync_unified_log(&db, &log_path, &HashMap::new(), DEFAULT_MODEL)?;
+        let (imported, _) = sync_unified_log(&db, &log_path, &HashMap::new(), DEFAULT_MODEL)?;
         assert_eq!(imported, 1);
 
         let path_str = log_path.to_string_lossy().to_string();
@@ -751,8 +752,7 @@ context_window = 500000
             file.flush().ok();
         }
 
-        let (imported2, _) =
-            sync_unified_log(&db, &log_path, &HashMap::new(), DEFAULT_MODEL)?;
+        let (imported2, _) = sync_unified_log(&db, &log_path, &HashMap::new(), DEFAULT_MODEL)?;
         // 第一行已存在（skip），第二行新导入
         assert_eq!(imported2, 1);
 
