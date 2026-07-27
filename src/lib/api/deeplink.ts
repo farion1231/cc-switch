@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { AppId } from "./types";
 
 export type ResourceType = "provider" | "prompt" | "mcp" | "skill";
 
@@ -100,5 +101,18 @@ export const deeplinkApi = {
     request: DeepLinkImportRequest,
   ): Promise<ImportResult> => {
     return invoke("import_from_deeplink_unified", { request });
+  },
+
+  /**
+   * Generate a shareable deeplink for a single provider
+   * @param app Target application id
+   * @param providerId Provider id in the database
+   * @returns ccswitch:// share URL (includes API key)
+   */
+  generateProviderDeeplink: async (
+    app: AppId,
+    providerId: string,
+  ): Promise<string> => {
+    return invoke("generate_provider_deeplink", { app, providerId });
   },
 };
