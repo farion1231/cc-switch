@@ -942,8 +942,9 @@ fn sync_codex_desktop_available_models_cache_path_with_status(
     }
 
     let mut updates = Vec::new();
-    let mut ready_model_cache = false;
     let mut requires_short_retry = false;
+    let mut statsig_cache_origins = HashSet::new();
+    let mut ready_model_cache_origins = HashSet::new();
     let mut pinned_cache_keys_by_origin: HashMap<String, HashSet<String>> = HashMap::new();
     let mut unpinned_cache_keys_by_origin: HashMap<String, HashSet<String>> = HashMap::new();
     let mut model_cache_keys_by_origin: HashMap<String, HashSet<String>> = HashMap::new();
@@ -954,6 +955,7 @@ fn sync_codex_desktop_available_models_cache_path_with_status(
         ) else {
             continue;
         };
+        statsig_cache_origins.insert(origin.clone());
         let Some(cache_key) = codex_desktop_statsig_cache_key_from_leveldb_key(&key_text) else {
             continue;
         };
@@ -1032,19 +1034,25 @@ fn sync_codex_desktop_available_models_cache_path_with_status(
                         .is_some_and(|value| value > now_millis)
                 })
         });
+        if pinned_after_update {
+            ready_model_cache_origins.insert(origin.clone());
+        }
         if !changed {
-            ready_model_cache |= pinned_after_update;
             continue;
         }
         let Some(updated) = encode_codex_desktop_statsig_wrapper(prefix, encoding, &last_modified)
         else {
             continue;
         };
-        ready_model_cache |= pinned_after_update;
         updates.push((key, updated));
     }
 
     let updated_count = updates.len();
+
+    let ready_model_cache = !statsig_cache_origins.is_empty()
+        && statsig_cache_origins
+            .iter()
+            .all(|origin| ready_model_cache_origins.contains(origin));
     for (key, value) in updates {
         db.put(&key, &value)
             .map_err(|err| format!("Failed to update Codex Desktop localStorage LevelDB: {err}"))?;
@@ -2343,22 +2351,28 @@ fn sync_codex_desktop_available_models_cache_model_ids(model_ids: Vec<String>) {
     }
 }
 
+fn codex_desktop_available_models_cache_ids_after_restored_catalog_reload(
+    settings: &Value,
+    model_catalog: Option<Value>,
+) -> Option<Vec<String>> {
+    let model_catalog = model_catalog?;
+    let mut restored_settings = settings.clone();
+    let object = restored_settings.as_object_mut()?;
+    object.insert("modelCatalog".to_string(), model_catalog);
+    Some(codex_model_ids_from_settings(&restored_settings))
+}
+
 fn sync_codex_desktop_available_models_cache_after_restored_catalog_reload(
     settings: &Value,
     model_catalog: Option<Value>,
 ) -> bool {
-    let Some(model_catalog) = model_catalog else {
-        invalidate_codex_desktop_available_models_cache_worker();
-        return false;
-    };
-    let mut restored_settings = settings.clone();
-    let Some(object) = restored_settings.as_object_mut() else {
-        invalidate_codex_desktop_available_models_cache_worker();
-        return false;
-    };
-    object.insert("modelCatalog".to_string(), model_catalog);
-    sync_codex_desktop_available_models_cache_from_settings(&restored_settings);
-    true
+    let model_ids = codex_desktop_available_models_cache_ids_after_restored_catalog_reload(
+        settings,
+        model_catalog,
+    );
+    let reloaded = model_ids.is_some();
+    sync_codex_desktop_available_models_cache_model_ids(model_ids.unwrap_or_default());
+    reloaded
 }
 
 /// Reconcile the Desktop whitelist cache after restoring a raw Live backup.
@@ -4483,7 +4497,7 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
-    fn codex_desktop_statsig_sync_scopes_pins_to_leveldb_origin() {
+    fn codex_desktop_statsig_sync_scopes_pins_and_readiness_to_leveldb_origin() {
         let temp_dir = tempfile::tempdir().expect("create temp leveldb");
         let options = rusty_leveldb::Options {
             create_if_missing: true,
@@ -4491,6 +4505,7 @@ base_url = "https://production.api/v1"
         };
         let mut db = rusty_leveldb::DB::open(temp_dir.path(), options).expect("open temp leveldb");
         let cache_key = b"_https://codex\x00statsig.cached.evaluations.active".to_vec();
+        let other_cache_key = b"_https://example\x00statsig.cached.evaluations.current".to_vec();
         let codex_last_modified_key =
             b"_https://codex\x00statsig.last_modified_time.evaluations".to_vec();
         let other_last_modified_key =
@@ -4509,6 +4524,19 @@ base_url = "https://production.api/v1"
         )
         .unwrap();
         db.put(&cache_key, &cache_value).expect("seed cache");
+        let other_data = json!({
+            "dynamic_configs": {
+                "unrelated-config": { "value": { "enabled": true } }
+            }
+        });
+        let other_cache_value = encode_codex_desktop_statsig_wrapper(
+            Some(1),
+            CodexDesktopStatsigWrapperEncoding::Utf8,
+            &json!({ "source": "Network", "data": other_data.to_string() }),
+        )
+        .unwrap();
+        db.put(&other_cache_key, &other_cache_value)
+            .expect("seed current-origin cache");
         let last_modified_value = encode_codex_desktop_statsig_wrapper(
             Some(1),
             CodexDesktopStatsigWrapperEncoding::Utf8,
@@ -4521,14 +4549,18 @@ base_url = "https://production.api/v1"
             .expect("seed unrelated last modified cache");
         db.close().expect("close seeded leveldb");
 
+        let result = sync_codex_desktop_available_models_cache_path_with_status(
+            temp_dir.path(),
+            &["gpt-5.6-sol".to_string()],
+        )
+        .expect("sync temp leveldb");
         assert_eq!(
-            sync_codex_desktop_available_models_cache_path(
-                temp_dir.path(),
-                &["gpt-5.6-sol".to_string()],
-            )
-            .expect("sync temp leveldb"),
-            2,
+            result.updated_count, 2,
             "only the Codex cache and its matching last-modified entry should change"
+        );
+        assert!(
+            !result.ready_model_cache,
+            "one pinned origin must not hide another origin whose models cache is not ready"
         );
 
         let options = rusty_leveldb::Options {
@@ -5355,15 +5387,24 @@ web_search = "disabled"
     }
 
     #[test]
-    fn codex_restore_catalog_reload_failure_invalidates_stale_cache_worker() {
-        let generation_before = CODEX_DESKTOP_CACHE_SYNC_GENERATION.load(Ordering::Acquire);
-
-        sync_codex_desktop_available_models_cache_after_restored_catalog_reload(&json!({}), None);
-
-        let generation_after = CODEX_DESKTOP_CACHE_SYNC_GENERATION.load(Ordering::Acquire);
-        assert_ne!(
-            generation_after, generation_before,
-            "failed restored catalog reloads must cancel prior cache work"
+    fn codex_restore_catalog_reload_failure_selects_owned_cache_cleanup() {
+        assert_eq!(
+            codex_desktop_available_models_cache_ids_after_restored_catalog_reload(
+                &json!({}),
+                None,
+            ),
+            None,
+            "a failed catalog reload must select empty owned-model cleanup"
+        );
+        assert_eq!(
+            codex_desktop_available_models_cache_ids_after_restored_catalog_reload(
+                &json!({}),
+                Some(json!({
+                    "models": [{ "model": "gpt-5.6-sol" }]
+                })),
+            ),
+            Some(vec!["gpt-5.6-sol".to_string()]),
+            "a successful catalog reload must repin its restored model IDs"
         );
     }
 
