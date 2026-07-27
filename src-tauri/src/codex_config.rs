@@ -1016,8 +1016,8 @@ fn set_codex_model_catalog_json_field(
         .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
 
     match catalog_path {
-        Some(_) => {
-            doc["model_catalog_json"] = toml_edit::value(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+        Some(path) => {
+            doc["model_catalog_json"] = toml_edit::value(path.to_string_lossy().to_string());
         }
         None => {
             let should_remove = doc
