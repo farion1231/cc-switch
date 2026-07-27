@@ -57,6 +57,7 @@ enum CodexDesktopCacheRetryOutcome {
 struct CodexDesktopCachePathSyncResult {
     updated_count: usize,
     ready_model_cache: bool,
+    requires_short_retry: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -584,6 +585,20 @@ fn codex_desktop_statsig_available_model_ids(wrapper: &Value) -> Option<HashSet<
         })
 }
 
+fn codex_desktop_statsig_has_only_models_config(wrapper: &Value) -> bool {
+    let Some(data_text) = wrapper.get("data").and_then(Value::as_str) else {
+        return false;
+    };
+    let Ok(data) = serde_json::from_str::<Value>(data_text) else {
+        return false;
+    };
+    let Some(dynamic_configs) = data.get("dynamic_configs").and_then(Value::as_object) else {
+        return false;
+    };
+    dynamic_configs.len() == 1
+        && dynamic_configs.contains_key(CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID)
+}
+
 fn codex_desktop_statsig_has_all_models(wrapper: &Value, model_ids: &[String]) -> bool {
     let Some(available_models) = codex_desktop_statsig_available_model_ids(wrapper) else {
         return false;
@@ -883,7 +898,9 @@ fn sync_codex_desktop_available_models_cache_path_with_status(
 
     let mut updates = Vec::new();
     let mut ready_model_cache = false;
+    let mut requires_short_retry = false;
     let mut pinned_cache_keys_by_origin: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut unpinned_cache_keys_by_origin: HashMap<String, HashSet<String>> = HashMap::new();
     let mut model_cache_keys_by_origin: HashMap<String, HashSet<String>> = HashMap::new();
     for (key, key_text, value) in cache_entries {
         let Some(origin) = codex_desktop_leveldb_origin_for_marker(
@@ -899,11 +916,21 @@ fn sync_codex_desktop_available_models_cache_path_with_status(
         else {
             continue;
         };
-        if codex_desktop_statsig_available_model_ids(&wrapper).is_some() {
+        let has_models_config = codex_desktop_statsig_available_model_ids(&wrapper).is_some();
+        let models_config_isolated =
+            has_models_config && codex_desktop_statsig_has_only_models_config(&wrapper);
+        if has_models_config {
             model_cache_keys_by_origin
                 .entry(origin.clone())
                 .or_default()
                 .insert(cache_key.clone());
+            if !model_ids.is_empty() && !models_config_isolated {
+                requires_short_retry = true;
+                unpinned_cache_keys_by_origin
+                    .entry(origin.clone())
+                    .or_default()
+                    .insert(cache_key.clone());
+            }
         }
         let changed = merge_codex_desktop_statsig_available_models(&mut wrapper, model_ids);
         let has_all_models =
@@ -915,7 +942,7 @@ fn sync_codex_desktop_available_models_cache_path_with_status(
             };
             updates.push((key, updated));
         }
-        if has_all_models {
+        if has_all_models && models_config_isolated {
             pinned_cache_keys_by_origin
                 .entry(origin)
                 .or_default()
@@ -925,34 +952,41 @@ fn sync_codex_desktop_available_models_cache_path_with_status(
 
     let now_millis = codex_desktop_now_millis();
     for (key, origin, prefix, encoding, mut last_modified) in last_modified_entries {
-        let cache_keys = if model_ids.is_empty() {
+        let unpinned_cache_keys = if model_ids.is_empty() {
             model_cache_keys_by_origin.get(&origin)
         } else {
-            pinned_cache_keys_by_origin.get(&origin)
+            unpinned_cache_keys_by_origin.get(&origin)
         };
-        let Some(cache_keys) = cache_keys else {
+        let pinned_cache_keys = (!model_ids.is_empty())
+            .then(|| pinned_cache_keys_by_origin.get(&origin))
+            .flatten();
+        if unpinned_cache_keys.is_none() && pinned_cache_keys.is_none() {
             continue;
-        };
-        let changed = if model_ids.is_empty() {
-            unpin_codex_desktop_statsig_last_modified_cache_keys(
+        }
+        let mut changed = false;
+        if let Some(cache_keys) = unpinned_cache_keys {
+            changed |= unpin_codex_desktop_statsig_last_modified_cache_keys(
                 &mut last_modified,
                 cache_keys,
                 now_millis,
-            )
-        } else {
-            pin_codex_desktop_statsig_last_modified_cache_keys(
+            );
+        }
+        if let Some(cache_keys) = pinned_cache_keys {
+            changed |= pin_codex_desktop_statsig_last_modified_cache_keys(
                 &mut last_modified,
                 cache_keys,
                 now_millis,
-            )
-        };
-        let pinned_after_update = !model_ids.is_empty()
-            && cache_keys.iter().all(|cache_key| {
-                last_modified
-                    .get(cache_key)
-                    .and_then(Value::as_i64)
-                    .is_some_and(|value| value > now_millis)
-            });
+            );
+        }
+        let pinned_after_update = pinned_cache_keys.is_some_and(|cache_keys| {
+            !cache_keys.is_empty()
+                && cache_keys.iter().all(|cache_key| {
+                    last_modified
+                        .get(cache_key)
+                        .and_then(Value::as_i64)
+                        .is_some_and(|value| value > now_millis)
+                })
+        });
         if !changed {
             ready_model_cache |= pinned_after_update;
             continue;
@@ -975,6 +1009,7 @@ fn sync_codex_desktop_available_models_cache_path_with_status(
     Ok(CodexDesktopCachePathSyncResult {
         updated_count,
         ready_model_cache,
+        requires_short_retry,
     })
 }
 
@@ -1011,6 +1046,7 @@ fn sync_codex_desktop_available_models_cache_candidates(
         .collect::<Vec<_>>();
     let mut updated_count = 0;
     let mut found_active_model_cache = false;
+    let mut found_active_short_retry = false;
     let mut errors = Vec::new();
     for path in paths {
         match sync_codex_desktop_available_models_cache_path_with_status(path, model_ids) {
@@ -1018,6 +1054,7 @@ fn sync_codex_desktop_available_models_cache_candidates(
                 updated_count += result.updated_count;
                 if codex_desktop_leveldb_candidate_is_active_layout(path) {
                     found_active_model_cache |= result.ready_model_cache;
+                    found_active_short_retry |= result.requires_short_retry;
                 }
             }
             Err(err) => errors.push(err),
@@ -1037,7 +1074,9 @@ fn sync_codex_desktop_available_models_cache_candidates(
         }
         Ok(CodexDesktopCacheSyncResult {
             updated_count,
-            needs_discovery: !model_ids.is_empty() && !found_active_model_cache,
+            needs_discovery: !errors.is_empty()
+                || (!model_ids.is_empty()
+                    && (!found_active_model_cache || found_active_short_retry)),
         })
     }
 }
@@ -1088,25 +1127,14 @@ fn codex_desktop_cache_worker_next_delay(
                 CODEX_DESKTOP_CACHE_RENEWAL_INTERVAL_SECS,
             ))
         }
-        CodexDesktopCacheRetryOutcome::Discovering(_) => {
+        CodexDesktopCacheRetryOutcome::Discovering(_)
+        | CodexDesktopCacheRetryOutcome::Failed(_) => {
             let delay = Duration::from_secs(*retry_delay_secs);
             *retry_delay_secs = retry_delay_secs
                 .saturating_mul(2)
                 .min(CODEX_DESKTOP_CACHE_RETRY_MAX_DELAY_SECS);
             Some(delay)
         }
-        CodexDesktopCacheRetryOutcome::Failed(err)
-            if has_custom_catalog || codex_desktop_cache_error_is_locked(err) =>
-        {
-            let delay = Duration::from_secs(*retry_delay_secs);
-            *retry_delay_secs = retry_delay_secs
-                .saturating_mul(2)
-                .min(CODEX_DESKTOP_CACHE_RETRY_MAX_DELAY_SECS);
-            Some(delay)
-        }
-        CodexDesktopCacheRetryOutcome::Failed(_) => Some(Duration::from_secs(
-            CODEX_DESKTOP_CACHE_RENEWAL_INTERVAL_SECS,
-        )),
     }
 }
 
@@ -2201,12 +2229,12 @@ pub fn sync_codex_desktop_available_models_cache_from_settings(settings: &Value)
             if updated > 0 {
                 log::info!("Synced {updated} Codex Desktop model whitelist cache entries");
             }
-            let next_delay = if model_ids.is_empty() {
-                None
-            } else if result.needs_discovery {
+            let next_delay = if result.needs_discovery {
                 Some(Duration::from_secs(
                     CODEX_DESKTOP_CACHE_RETRY_INITIAL_DELAY_SECS,
                 ))
+            } else if model_ids.is_empty() {
+                None
             } else {
                 Some(Duration::from_secs(
                     CODEX_DESKTOP_CACHE_RENEWAL_INTERVAL_SECS,
@@ -2230,8 +2258,9 @@ pub fn sync_codex_desktop_available_models_cache_from_settings(settings: &Value)
             log::warn!(
                 "Codex provider switched, but the Desktop model whitelist cache was not synced: {err}"
             );
-            let next_delay = (!model_ids.is_empty())
-                .then(|| Duration::from_secs(CODEX_DESKTOP_CACHE_RETRY_INITIAL_DELAY_SECS));
+            let next_delay = Some(Duration::from_secs(
+                CODEX_DESKTOP_CACHE_RETRY_INITIAL_DELAY_SECS,
+            ));
             schedule_codex_desktop_available_models_cache_worker(generation, model_ids, next_delay);
         }
     }
@@ -4127,6 +4156,18 @@ base_url = "https://production.api/v1"
 
         assert_eq!(
             codex_desktop_cache_worker_next_delay(
+                &CodexDesktopCacheRetryOutcome::Failed(
+                    "Failed to close Codex Desktop localStorage LevelDB: transient".to_string(),
+                ),
+                false,
+                &mut retry_delay_secs,
+            ),
+            Some(Duration::from_secs(4))
+        );
+        assert_eq!(retry_delay_secs, 8);
+
+        assert_eq!(
+            codex_desktop_cache_worker_next_delay(
                 &CodexDesktopCacheRetryOutcome::Superseded,
                 true,
                 &mut retry_delay_secs,
@@ -4201,7 +4242,8 @@ base_url = "https://production.api/v1"
             "dynamic_configs": {
                 CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID: {
                     "value": { "available_models": ["gpt-5.5"] }
-                }
+                },
+                "unrelated-feature": { "value": { "enabled": true } }
             }
         });
         let wrapper = json!({ "source": "Network", "data": data.to_string() });
@@ -4222,13 +4264,19 @@ base_url = "https://production.api/v1"
             .expect("seed last modified cache");
         db.close().expect("close seeded leveldb");
 
-        assert_eq!(
-            sync_codex_desktop_available_models_cache_path(
-                temp_dir.path(),
-                &["gpt-5.6-sol".to_string(), "gpt-5.6-terra".to_string()],
-            )
-            .expect("sync temp leveldb"),
-            2
+        let result = sync_codex_desktop_available_models_cache_path_with_status(
+            temp_dir.path(),
+            &["gpt-5.6-sol".to_string(), "gpt-5.6-terra".to_string()],
+        )
+        .expect("sync temp leveldb");
+        assert_eq!(result.updated_count, 1);
+        assert!(
+            !result.ready_model_cache,
+            "a shared dynamic-config bundle must not be treated as safely pinned"
+        );
+        assert!(
+            result.requires_short_retry,
+            "a shared dynamic-config bundle needs short maintenance retries"
         );
 
         let options = rusty_leveldb::Options {
@@ -4246,16 +4294,20 @@ base_url = "https://production.api/v1"
                 "gpt-5.6-terra".to_string(),
             ]))
         );
+        let data = serde_json::from_str::<Value>(wrapper["data"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            data["dynamic_configs"]["unrelated-feature"]["value"]["enabled"],
+            true
+        );
+
         let last_modified_value = db
             .get(&last_modified_key)
             .expect("read updated last modified cache");
         let (_, _, last_modified) =
             decode_codex_desktop_statsig_wrapper(&last_modified_value).unwrap();
-        assert!(
-            last_modified["statsig.cached.evaluations.active"]
-                .as_i64()
-                .unwrap()
-                > 1_000
+        assert_eq!(
+            last_modified["statsig.cached.evaluations.active"].as_i64(),
+            Some(1_000)
         );
         db.close().expect("close leveldb");
     }
@@ -4519,10 +4571,17 @@ base_url = "https://production.api/v1"
             .expect("seed last modified cache");
         db.close().expect("close seeded leveldb");
 
-        assert_eq!(
-            sync_codex_desktop_available_models_cache_path(temp_dir.path(), &[])
-                .expect("clear future cache pin"),
-            1
+        let invalid_path = temp_dir.path().join("not-a-leveldb");
+        std::fs::write(&invalid_path, b"not a directory").expect("seed invalid candidate");
+        let result = sync_codex_desktop_available_models_cache_candidates(
+            &[temp_dir.path().to_path_buf(), invalid_path],
+            &[],
+        )
+        .expect("clear future cache pin despite one transient candidate failure");
+        assert_eq!(result.updated_count, 1);
+        assert!(
+            result.needs_discovery,
+            "partial official unpin failures must keep short retries active"
         );
 
         let options = rusty_leveldb::Options {
