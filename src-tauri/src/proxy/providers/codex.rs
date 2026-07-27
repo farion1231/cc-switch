@@ -275,9 +275,19 @@ pub fn resolve_codex_proxy_catalog_tool_profile(
 ) -> crate::codex_config::CodexCatalogToolProfile {
     use crate::codex_config::CodexCatalogToolProfile;
     let profile = resolve_codex_catalog_tool_profile(provider);
-    if !is_codex_official_provider(provider) && profile == CodexCatalogToolProfile::NativeResponses
+    if !is_codex_official_provider(provider)
+        && matches!(
+            profile,
+            CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic
+        )
     {
-        CodexCatalogToolProfile::ProxiedNativeResponses
+        match profile {
+            CodexCatalogToolProfile::NativeResponses => {
+                CodexCatalogToolProfile::ProxiedNativeResponses
+            }
+            CodexCatalogToolProfile::Anthropic => CodexCatalogToolProfile::ProxiedAnthropic,
+            _ => unreachable!(),
+        }
     } else {
         profile
     }
@@ -1178,6 +1188,11 @@ wire_api = "anthropic"
         assert_eq!(
             resolve_codex_catalog_tool_profile(&settings_anthropic),
             CodexCatalogToolProfile::Anthropic
+        );
+        assert_eq!(
+            resolve_codex_proxy_catalog_tool_profile(&settings_anthropic),
+            CodexCatalogToolProfile::ProxiedAnthropic,
+            "proxy-owned Anthropic routing needs the ToolSearch-capable proxy profile"
         );
 
         // Native openai_responses (meta) → NativeResponses; chat → ProxyChat.

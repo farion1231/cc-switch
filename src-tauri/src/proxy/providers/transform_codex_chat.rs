@@ -56,6 +56,7 @@ const CUSTOM_TOOL_PRESERVED_METADATA_HEADING: &str = "Original tool definition:"
 pub(crate) enum ToolSearchShimStatus {
     ExistingNative,
     ExistingFunction,
+    ReplacedNative,
     Injected,
     SkippedNoTools,
     InvalidTools,
@@ -66,6 +67,7 @@ impl ToolSearchShimStatus {
         match self {
             Self::ExistingNative => "existing_native",
             Self::ExistingFunction => "existing_function",
+            Self::ReplacedNative => "replaced_native",
             Self::Injected => "injected",
             Self::SkippedNoTools => "skipped_no_tools",
             Self::InvalidTools => "invalid_tools",
@@ -300,7 +302,10 @@ pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolCo
     context
 }
 
-pub(crate) fn ensure_responses_tool_search_shim(body: &mut Value) -> ToolSearchShimStatus {
+pub(crate) fn ensure_responses_tool_search_shim(
+    body: &mut Value,
+    replace_native_tool_search: bool,
+) -> ToolSearchShimStatus {
     let Some(body) = body.as_object_mut() else {
         return ToolSearchShimStatus::InvalidTools;
     };
@@ -319,9 +324,15 @@ pub(crate) fn ensure_responses_tool_search_shim(body: &mut Value) -> ToolSearchS
         return ToolSearchShimStatus::SkippedNoTools;
     }
 
-    for tool in tools.iter() {
+    for tool in tools.iter_mut() {
         match tool.get("type").and_then(Value::as_str) {
-            Some("tool_search") => return ToolSearchShimStatus::ExistingNative,
+            Some("tool_search") if replace_native_tool_search => {
+                *tool = tool_search_responses_function_tool();
+                return ToolSearchShimStatus::ReplacedNative;
+            }
+            Some("tool_search") => {
+                return ToolSearchShimStatus::ExistingNative;
+            }
             Some("function")
                 if responses_tool_name(tool).as_deref() == Some(TOOL_SEARCH_PROXY_NAME) =>
             {
@@ -2495,7 +2506,7 @@ mod tests {
     fn responses_tool_search_shim_uses_native_function_shape_and_is_idempotent() {
         let mut empty = json!({"model": "gpt-5.4", "input": "hi"});
         assert_eq!(
-            ensure_responses_tool_search_shim(&mut empty),
+            ensure_responses_tool_search_shim(&mut empty, false),
             ToolSearchShimStatus::SkippedNoTools
         );
         assert!(empty.get("tools").is_none());
@@ -2506,23 +2517,46 @@ mod tests {
             "tools": [{"type": "function", "name": "shell", "parameters": {}}]
         });
         assert_eq!(
-            ensure_responses_tool_search_shim(&mut missing),
+            ensure_responses_tool_search_shim(&mut missing, false),
             ToolSearchShimStatus::Injected
         );
         assert_eq!(missing["tools"][1]["type"], "function");
         assert_eq!(missing["tools"][1]["name"], "tool_search");
         assert_eq!(missing["tools"][1]["parameters"]["required"][0], "query");
         assert_eq!(
-            ensure_responses_tool_search_shim(&mut missing),
+            ensure_responses_tool_search_shim(&mut missing, false),
             ToolSearchShimStatus::ExistingFunction
         );
 
         let mut native = json!({"tools": [{"type": "tool_search"}]});
         assert_eq!(
-            ensure_responses_tool_search_shim(&mut native),
+            ensure_responses_tool_search_shim(&mut native, false),
             ToolSearchShimStatus::ExistingNative
         );
         assert_eq!(native["tools"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn xai_native_tool_search_is_converted_before_sanitization() {
+        let mut body = json!({
+            "model": "grok-4.5",
+            "tools": [
+                {"type": "tool_search"},
+                {"type": "function", "name": "shell", "parameters": {}}
+            ]
+        });
+
+        assert_eq!(
+            ensure_responses_tool_search_shim(&mut body, true),
+            ToolSearchShimStatus::ReplacedNative
+        );
+        crate::proxy::providers::transform_codex_responses_xai_sanitize::sanitize_xai_responses_request(&mut body);
+
+        assert!(body["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| { tool["type"] == "function" && tool["name"] == TOOL_SEARCH_PROXY_NAME }));
     }
 
     #[test]

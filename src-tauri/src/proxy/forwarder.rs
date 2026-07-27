@@ -1423,6 +1423,9 @@ impl RequestForwarder {
         {
             let action = super::providers::transform_codex_chat::ensure_responses_tool_search_shim(
                 &mut mapped_body,
+                !codex_responses_to_chat
+                    && !codex_responses_to_anthropic
+                    && super::providers::provider_needs_responses_namespace_flatten(provider),
             );
             let provider_type = provider
                 .meta
