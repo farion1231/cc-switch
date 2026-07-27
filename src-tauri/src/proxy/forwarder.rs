@@ -1107,6 +1107,39 @@ impl RequestForwarder {
         })
     }
 
+    fn inject_system_prompt(app_type: &AppType, body: &mut serde_json::Value) {
+        let toggle = crate::settings::get_injection_toggle(app_type.as_str());
+        if !toggle.enabled { return; }
+        let mut parts = Vec::new();
+        if let Some(ref p) = toggle.custom_file_path {
+            let path = std::path::PathBuf::from(p);
+            if path.exists() {
+                if let Ok(c) = std::fs::read_to_string(&path) { let t = c.trim(); if !t.is_empty() { parts.push(t.to_string()); } }
+            }
+        } else if let Ok(path) = crate::prompt_files::prompt_file_path(app_type) {
+            if path.exists() {
+                if let Ok(c) = std::fs::read_to_string(&path) { let t = c.trim(); if !t.is_empty() { parts.push(t.to_string()); } }
+            }
+        }
+        if toggle.receive_shared {
+            let s = crate::settings::load_shared_prompt(); let t = s.trim(); if !t.is_empty() { parts.push(t.to_string()); }
+        }
+        if parts.is_empty() { return; }
+        let extra = parts.join("\n\n---\n\n");
+        log::info!("[{}] System 注入已生效, {} chars", app_type.as_str(), extra.len());
+        if let Some(system) = body.get("system") {
+            let mut val = system.clone();
+            match &mut val {
+                serde_json::Value::String(s) => { s.push_str("\n\n---\n\n"); s.push_str(&extra); }
+                serde_json::Value::Array(arr) => { arr.push(serde_json::json!({"type":"text","text":extra})); }
+                _ => { val = serde_json::Value::String(extra); }
+            }
+            body.as_object_mut().map(|o| o.insert("system".into(), val));
+        } else {
+            body.as_object_mut().map(|o| o.insert("system".into(), serde_json::Value::String(extra)));
+        }
+    }
+
     /// 转发单个请求（使用适配器）
     ///
     /// 成功时返回 `(response, claude_api_format, outbound_model)`，其中
@@ -1500,8 +1533,10 @@ impl RequestForwarder {
                 &mut anthropic_body,
                 &codex_anthropic_cache_config(&self.optimizer_config),
             );
+            Self::inject_system_prompt(app_type, &mut anthropic_body);
             anthropic_body
         } else if needs_transform {
+            Self::inject_system_prompt(app_type, &mut mapped_body);
             if adapter.name() == "Claude" {
                 let api_format = resolved_claude_api_format
                     .as_deref()
@@ -1589,93 +1624,6 @@ impl RequestForwarder {
         {
             outbound_model = Some(m.to_string());
         }
-
-        // System Prompt 注入：根据 app_type 读取配置并注入
-        let injection_extra = {
-            let toggle = crate::settings::get_injection_toggle(app_type.as_str());
-            if toggle.enabled {
-                let mut parts = Vec::new();
-                // 优先使用自定义路径
-                if let Some(ref custom_path) = toggle.custom_file_path {
-                    let p = std::path::PathBuf::from(custom_path);
-                    if p.exists() {
-                        match std::fs::read_to_string(&p) {
-                            Ok(content) => {
-                                let t = content.trim();
-                                if !t.is_empty() {
-                                    parts.push(t.to_string());
-                                }
-                            }
-                            Err(e) => log::warn!(
-                                "[{}] 读取自定义规则文件失败: {} {}",
-                                app_type.as_str(),
-                                custom_path,
-                                e
-                            ),
-                        }
-                    } else {
-                        log::warn!(
-                            "[{}] 自定义规则文件不存在: {}",
-                            app_type.as_str(),
-                            custom_path
-                        );
-                    }
-                } else if let Ok(path) = crate::prompt_files::prompt_file_path(app_type) {
-                    if path.exists() {
-                        if let Ok(content) = std::fs::read_to_string(&path) {
-                            let t = content.trim();
-                            if !t.is_empty() {
-                                parts.push(t.to_string());
-                            }
-                        }
-                    }
-                }
-                if toggle.receive_shared {
-                    let shared = crate::settings::load_shared_prompt();
-                    let t = shared.trim();
-                    if !t.is_empty() {
-                        parts.push(t.to_string());
-                    }
-                }
-                if parts.is_empty() {
-                    None
-                } else {
-                    Some(parts.join("\n\n---\n\n"))
-                }
-            } else {
-                None
-            }
-        };
-        if let Some(ref extra) = injection_extra {
-            log::info!(
-                "[{}] System 注入已生效, 内容长度: {} chars",
-                app_type.as_str(),
-                extra.len()
-            );
-            if let Some(system) = filtered_body.get("system") {
-                let mut val = system.clone();
-                match &mut val {
-                    serde_json::Value::String(s) => {
-                        s.push_str("\n\n---\n\n");
-                        s.push_str(extra);
-                    }
-                    serde_json::Value::Array(arr) => {
-                        arr.push(serde_json::json!({"type":"text","text":extra}));
-                    }
-                    _ => {
-                        val = serde_json::Value::String(extra.clone());
-                    }
-                }
-                filtered_body
-                    .as_object_mut()
-                    .map(|o| o.insert("system".into(), val));
-            } else {
-                filtered_body
-                    .as_object_mut()
-                    .map(|o| o.insert("system".into(), serde_json::Value::String(extra.clone())));
-            }
-        }
-
         log_prompt_cache_trace(
             app_type,
             provider,
