@@ -1127,6 +1127,24 @@ impl RequestForwarder {
         if parts.is_empty() { return; }
         let extra = parts.join("\n\n---\n\n");
         log::info!("[{}] System 注入已生效, {} chars", app_type.as_str(), extra.len());
+
+        // Chat Completions 格式 (OpenAI): message[0].role="system"
+        if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
+            if let Some(first) = messages.first_mut() {
+                if first.get("role").and_then(|r| r.as_str()) == Some("system") {
+                    if let Some(content) = first.get_mut("content").and_then(|c| c.as_str()) {
+                        let new = format!("{}\n\n---\n\n{}", content, extra);
+                        first["content"] = serde_json::Value::String(new);
+                        return;
+                    }
+                }
+            }
+            // 没有 system message 则插入
+            messages.insert(0, serde_json::json!({"role":"system","content":extra}));
+            return;
+        }
+
+        // Anthropic 格式: 顶层 system 字段
         if let Some(system) = body.get("system") {
             let mut val = system.clone();
             match &mut val {
@@ -1477,6 +1495,7 @@ impl RequestForwarder {
                 self.session_client_provided
                     .then_some(self.session_id.as_str()),
             );
+            Self::inject_system_prompt(app_type, &mut chat_body);
             chat_body
         } else if codex_responses_to_anthropic {
             let mut mapped_body = mapped_body;
@@ -1553,6 +1572,7 @@ impl RequestForwarder {
                 adapter.transform_request(mapped_body, provider)?
             }
         } else {
+            Self::inject_system_prompt(app_type, &mut mapped_body);
             mapped_body
         };
 
