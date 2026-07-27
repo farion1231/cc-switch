@@ -515,11 +515,10 @@ impl StreamCheckService {
             }
         };
 
-        let is_responses_proto = match provider.meta.as_ref().and_then(|m| m.api_format.as_deref())
-        {
-            Some("openai_responses") => true,
-            _ => false,
-        };
+        let is_responses_proto = matches!(
+            provider.meta.as_ref().and_then(|m| m.api_format.as_deref()),
+            Some("openai_responses")
+        );
 
         if *app_type == AppType::Gemini {
             Self::probe_gemini_api(client, base_url, &api_key, &model, &prompt, timeout).await
