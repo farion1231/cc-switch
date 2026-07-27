@@ -450,6 +450,13 @@ fn extract_codex_top_level_u64(config_text: &str, field: &str) -> Option<u64> {
         .filter(|value| *value > 0)
 }
 
+fn default_codex_context_window(model: &str) -> u64 {
+    match model {
+        "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna" => 272_000,
+        _ => 128_000,
+    }
+}
+
 fn codex_catalog_input_modalities(
     model: &str,
     declared_modalities: Option<&[String]>,
@@ -561,8 +568,8 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
         return Vec::new();
     };
 
-    let default_context_window =
-        extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
+    let configured_context_window =
+        extract_codex_top_level_u64(config_text, "model_context_window");
     let mut seen = std::collections::HashSet::new();
     let mut specs = Vec::new();
 
@@ -592,7 +599,8 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
                 .get("contextWindow")
                 .or_else(|| model_config.get("context_window")),
         )
-        .unwrap_or(default_context_window);
+        .or(configured_context_window)
+        .unwrap_or_else(|| default_codex_context_window(model));
 
         let supports_parallel_tool_calls = model_config
             .get("supportsParallelToolCalls")
@@ -1119,11 +1127,12 @@ pub fn prepare_codex_config_text_with_model_catalog(
 /// `displayName`, `contextWindow`, and `inputModalities` are omitted from the
 /// returned entry when the on-disk value matches the fallback that
 /// `codex_model_catalog_from_settings` injects for unset inputs (slug for
-/// display_name, `model_context_window` or 128_000 for context_window, and the
-/// shared confirmed-text-only inference for input modalities). This preserves
-/// the "user left it blank" intent across round-trip; an unavoidable edge case
-/// is that a user-typed value that happens to equal the fallback also collapses
-/// to blank, but the next save writes the same fallback so behavior is stable.
+/// display_name, `model_context_window`, the canonical model default, or
+/// 128_000 for context_window, and the shared confirmed-text-only inference
+/// for input modalities). This preserves the "user left it blank" intent
+/// across round-trip; an unavoidable edge case is that a user-typed value that
+/// happens to equal the fallback also collapses to blank, but the next save
+/// writes the same fallback so behavior is stable.
 ///
 /// All failure modes (missing file, parse error, no `model_catalog_json`,
 /// entries without `slug`) collapse to `Ok(None)` so callers can treat this
@@ -1184,8 +1193,8 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
     let catalog: Value = serde_json::from_str(catalog_text).ok()?;
     let models = catalog.get("models").and_then(|m| m.as_array())?;
 
-    let default_context_window =
-        extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
+    let configured_context_window =
+        extract_codex_top_level_u64(config_text, "model_context_window");
 
     let mut entries = Vec::with_capacity(models.len());
     for entry in models {
@@ -1210,10 +1219,15 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
             obj.insert("displayName".to_string(), json!(display_name));
         }
 
-        if let Some(context_window) = entry
-            .get("context_window")
-            .and_then(|v| v.as_u64())
-            .filter(|v| *v > 0 && *v != default_context_window)
+        if let Some(context_window) =
+            entry
+                .get("context_window")
+                .and_then(|v| v.as_u64())
+                .filter(|v| {
+                    let fallback = configured_context_window
+                        .unwrap_or_else(|| default_codex_context_window(model));
+                    *v > 0 && *v != fallback
+                })
         {
             obj.insert("contextWindow".to_string(), json!(context_window));
         }
@@ -2896,6 +2910,54 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
+    fn codex_catalog_defaults_canonical_gpt_5_6_models_to_272k() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "gpt-5.6-sol" },
+                    { "model": "gpt-5.6-terra" },
+                    { "model": "gpt-5.6-luna" },
+                    { "model": "openai/gpt-5.6-sol" },
+                    { "model": "custom-model" }
+                ]
+            }
+        });
+
+        let specs = codex_catalog_model_specs(&settings, "");
+        let windows: Vec<(&str, u64)> = specs
+            .iter()
+            .map(|spec| (spec.model.as_str(), spec.context_window))
+            .collect();
+
+        assert_eq!(
+            windows,
+            vec![
+                ("gpt-5.6-sol", 272_000),
+                ("gpt-5.6-terra", 272_000),
+                ("gpt-5.6-luna", 272_000),
+                ("openai/gpt-5.6-sol", 128_000),
+                ("custom-model", 128_000),
+            ]
+        );
+    }
+
+    #[test]
+    fn codex_catalog_explicit_context_windows_override_model_defaults() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "gpt-5.6-sol", "contextWindow": 300_000 },
+                    { "model": "gpt-5.6-terra" }
+                ]
+            }
+        });
+
+        let specs = codex_catalog_model_specs(&settings, "model_context_window = 200000");
+        assert_eq!(specs[0].context_window, 300_000);
+        assert_eq!(specs[1].context_window, 200_000);
+    }
+
+    #[test]
     fn native_responses_profile_suppresses_apply_patch_and_keeps_shell() {
         // Native (direct) /responses providers must NOT emit a freeform
         // apply_patch (type=="custom") tool — gateways like MiMo reject it.
@@ -3370,6 +3432,21 @@ web_search = "disabled"
             entry.get("contextWindow").is_none(),
             "default 128_000 should be squashed so the form shows blank, matching the user's blank input"
         );
+    }
+
+    #[test]
+    fn build_simplified_catalog_squashes_gpt_5_6_model_default() {
+        let catalog = r#"{
+            "models": [
+                { "slug": "gpt-5.6-sol", "display_name": "gpt-5.6-sol", "context_window": 272000 },
+                { "slug": "custom-model", "display_name": "custom-model", "context_window": 128000 }
+            ]
+        }"#;
+        let result = build_simplified_catalog_from_texts("", catalog).expect("entries");
+        let models = result.get("models").unwrap().as_array().unwrap();
+
+        assert!(models[0].get("contextWindow").is_none());
+        assert!(models[1].get("contextWindow").is_none());
     }
 
     #[test]
