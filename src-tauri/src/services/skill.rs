@@ -2254,8 +2254,17 @@ impl SkillService {
 
         let bytes = response.bytes().await?;
         let cursor = std::io::Cursor::new(bytes);
-        let mut archive = zip::ZipArchive::new(cursor)?;
+        let archive = zip::ZipArchive::new(cursor)?;
+        Self::extract_repo_archive(archive, dest)
+    }
 
+    /// 把 GitHub 仓库归档解压到 `dest`（剥掉归档自带的一层根目录）。
+    ///
+    /// 与 `download_and_extract` 分离，使 zip-slip 防护可在不联网的情况下被单测覆盖。
+    fn extract_repo_archive<R: std::io::Read + std::io::Seek>(
+        mut archive: zip::ZipArchive<R>,
+        dest: &Path,
+    ) -> Result<()> {
         let root_name = if !archive.is_empty() {
             let first_file = archive.by_index(0)?;
             let name = first_file.name();
@@ -2273,16 +2282,21 @@ impl SkillService {
 
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
-            let file_path = file.name().to_string();
+            // 用 enclosed_name() 而非裸 name()：它会拒绝 `..` 与绝对路径，
+            // 防止恶意仓库的压缩包条目（如 `repo-main/../../../evil`）通过
+            // dest.join() 逃出目标目录（zip-slip）。skill 仓库可由 deeplink
+            // 添加，压缩包内容属第三方可控输入。
+            let Some(safe_path) = file.enclosed_name() else {
+                log::warn!("跳过不安全的压缩包条目: {}", file.name());
+                continue;
+            };
 
-            let relative_path =
-                if let Some(stripped) = file_path.strip_prefix(&format!("{root_name}/")) {
-                    stripped
-                } else {
-                    continue;
-                };
+            // GitHub 归档统一带一层 `<repo>-<branch>/` 根目录，需剥掉后再落盘。
+            let Ok(relative_path) = safe_path.strip_prefix(&root_name) else {
+                continue;
+            };
 
-            if relative_path.is_empty() {
+            if relative_path.as_os_str().is_empty() {
                 continue;
             }
 
@@ -3052,6 +3066,59 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    /// 构造一个模拟 GitHub 归档的 ZIP：带一层 `repo-main/` 根目录，
+    /// 其中掺入一个用 `../` 逃逸的恶意条目。
+    fn build_zip_with_traversal_entry() -> Vec<u8> {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        let mut buf = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts = SimpleFileOptions::default();
+
+            // 合法条目：会被正常解压
+            zip.start_file("repo-main/SKILL.md", opts).unwrap();
+            zip.write_all(b"---\nname: ok\n---\n").unwrap();
+
+            // 恶意条目：企图写到目标目录之外
+            zip.start_file("repo-main/../../escaped.txt", opts).unwrap();
+            zip.write_all(b"pwned").unwrap();
+
+            zip.finish().unwrap();
+        }
+        buf
+    }
+
+    #[test]
+    fn extract_repo_archive_rejects_path_traversal_entries() {
+        let temp = tempdir().expect("tempdir");
+        // dest 放在深一层，这样 `../../` 若生效会落在 temp 根下、可被检出
+        let dest = temp.path().join("nested").join("dest");
+        fs::create_dir_all(&dest).expect("create dest");
+
+        let bytes = build_zip_with_traversal_entry();
+        let archive =
+            zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("archive parses");
+
+        SkillService::extract_repo_archive(archive, &dest).expect("extract must not fail");
+
+        // 合法条目正常落盘
+        assert!(
+            dest.join("SKILL.md").is_file(),
+            "legitimate entry should be extracted"
+        );
+        // 逃逸条目必须没有写到 dest 之外的任何位置
+        assert!(
+            !temp.path().join("escaped.txt").exists(),
+            "zip-slip entry must not escape dest (temp root)"
+        );
+        assert!(
+            !temp.path().join("nested").join("escaped.txt").exists(),
+            "zip-slip entry must not escape dest (parent dir)"
+        );
+    }
 
     fn write_skill(dir: &Path, name: &str) {
         fs::create_dir_all(dir).expect("create skill dir");
