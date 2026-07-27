@@ -1418,13 +1418,25 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
         };
         match value.get("type").and_then(|t| t.as_str()).unwrap_or("") {
             "message_start" => {
-                if let Some(msg) = value.get("message") {
+                // Only accept an object message; a malformed upstream could send a
+                // scalar/array here, and the later `message["content"] = …` index
+                // assignment would panic on a non-object Value.
+                if let Some(msg) = value.get("message").filter(|m| m.is_object()) {
                     *message = Some(msg.clone());
                 }
             }
             "content_block_start" => {
                 if let Some(index) = value.get("index").and_then(|v| v.as_u64()) {
-                    let block = value.get("content_block").cloned().unwrap_or(json!({}));
+                    // Sanitize to an object: any later index-assignment (`["text"]`,
+                    // `["signature"]`, `["input"]`) requires a JSON object, so a
+                    // malformed non-object block from the upstream is replaced with
+                    // an empty object instead of being stored verbatim (which would
+                    // panic on the next delta).
+                    let block = value
+                        .get("content_block")
+                        .filter(|b| b.is_object())
+                        .cloned()
+                        .unwrap_or(json!({}));
                     blocks.insert(index, block);
                     json_accum.entry(index).or_default();
                 }
@@ -2951,6 +2963,32 @@ data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":
     fn test_anthropic_sse_aggregation_truncated_without_output_errors() {
         let sse =
             "data: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"content\":[]}}\n\n";
+        assert!(anthropic_sse_to_message_value(sse).is_err());
+    }
+
+    #[test]
+    fn test_anthropic_sse_aggregation_non_object_content_block_does_not_panic() {
+        // A malformed upstream can send a non-object `content_block`; the index
+        // assignment on the next delta would have panicked before the shape guard.
+        let sse = concat!(
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"content\":[]}}\n\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":[1]}\n\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"x\"}}\n\n",
+            "data: {\"type\":\"message_stop\"}\n\n",
+        );
+        let msg = anthropic_sse_to_message_value(sse)
+            .expect("aggregation must not panic on a non-object content_block");
+        assert_eq!(msg["content"][0]["text"], json!("x"));
+    }
+
+    #[test]
+    fn test_anthropic_sse_aggregation_non_object_message_errors_not_panic() {
+        // A malformed upstream can send a scalar `message`; the later
+        // `message["content"] = …` would have panicked before the shape guard.
+        let sse = concat!(
+            "data: {\"type\":\"message_start\",\"message\":\"oops\"}\n\n",
+            "data: {\"type\":\"message_stop\"}\n\n",
+        );
         assert!(anthropic_sse_to_message_value(sse).is_err());
     }
 }

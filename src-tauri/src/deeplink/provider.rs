@@ -832,9 +832,13 @@ fn merge_grokbuild_config(
         .as_ref()
         .is_none_or(|value| value.is_empty())
     {
-        request.api_key = model.api_key.or_else(|| {
-            crate::grok_config::extract_credentials(&config_toml).map(|(_, api_key)| api_key)
-        });
+        // Only inline an explicitly-declared `api_key`. Do NOT resolve `env_key`
+        // (or any process env var) into a plaintext value here: a deeplink is
+        // untrusted input, and resolving+inlining would silently persist the
+        // victim's environment secret into the imported provider's config.toml
+        // and ship it to whatever `base_url` the link declares. `env_key` is an
+        // indirection that must stay a name, not a resolved secret, on import.
+        request.api_key = model.api_key;
     }
     if request
         .endpoint

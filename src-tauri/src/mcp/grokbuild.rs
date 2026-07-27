@@ -148,10 +148,22 @@ pub fn sync_single_server_to_grokbuild(
             AppError::McpValidation(format!("解析 Grok Build config.toml 失败: {e}"))
         })?
     };
-    if !doc.contains_key("mcp_servers") {
+    // 若 mcp_servers 缺失或存在但不是 table（如 `mcp_servers = "x"` / `[]`），
+    // 用空 table 归一化，避免后续 `doc["mcp_servers"][id] = …` 对非 table 索引
+    // 触发 toml_edit 的 IndexMut panic。用户手写的 config.toml 不可信。
+    let mcp_servers = doc
+        .get_mut("mcp_servers")
+        .and_then(toml_edit::Item::as_table_like_mut);
+    if mcp_servers.is_none() {
         doc["mcp_servers"] = toml_edit::table();
     }
-    doc["mcp_servers"][id] = Item::Table(json_server_to_grokbuild_toml_table(server_spec)?);
+    let servers = doc
+        .get_mut("mcp_servers")
+        .and_then(toml_edit::Item::as_table_like_mut)
+        .ok_or_else(|| {
+            AppError::McpValidation("Grok Build config.toml 的 mcp_servers 不是表".to_string())
+        })?;
+    servers.insert(id, Item::Table(json_server_to_grokbuild_toml_table(server_spec)?));
     crate::config::write_text_file(&path, &doc.to_string())
 }
 
