@@ -2090,6 +2090,20 @@ pub(crate) fn resolve_cc_switch_catalog_path(
     }
 }
 
+fn codex_config_has_external_model_catalog_pointer(
+    config_text: &str,
+    generated_path: &Path,
+) -> bool {
+    let Ok(doc) = config_text.parse::<DocumentMut>() else {
+        return false;
+    };
+    let has_pointer = doc
+        .get("model_catalog_json")
+        .and_then(|item| item.as_str())
+        .is_some_and(|path| !path.trim().is_empty());
+    has_pointer && resolve_cc_switch_catalog_path(config_text, generated_path).is_none()
+}
+
 /// Pure reverse-parsing core: convert Codex catalog JSON text back into the
 /// frontend's simplified model-mapping shape. Returns `None` when the catalog
 /// is unparseable, has no `models` array, or yields zero valid entries.
@@ -2266,6 +2280,24 @@ pub fn sync_codex_desktop_available_models_cache_from_settings(settings: &Value)
     }
 }
 
+fn sync_codex_desktop_available_models_cache_after_restored_catalog_reload(
+    settings: &Value,
+    model_catalog: Option<Value>,
+) -> bool {
+    let Some(model_catalog) = model_catalog else {
+        invalidate_codex_desktop_available_models_cache_worker();
+        return false;
+    };
+    let mut restored_settings = settings.clone();
+    let Some(object) = restored_settings.as_object_mut() else {
+        invalidate_codex_desktop_available_models_cache_worker();
+        return false;
+    };
+    object.insert("modelCatalog".to_string(), model_catalog);
+    sync_codex_desktop_available_models_cache_from_settings(&restored_settings);
+    true
+}
+
 /// Reconcile the Desktop whitelist cache after restoring a raw Live backup.
 /// Official snapshots without a catalog clear any stale custom future pin.
 /// Raw snapshots that point at the cc-switch-owned catalog reload its model IDs
@@ -2284,30 +2316,28 @@ pub fn sync_codex_desktop_available_models_cache_after_live_restore(settings: &V
     let generated_path = get_codex_model_catalog_path();
     if resolve_cc_switch_catalog_path(config_text, &generated_path).is_some() {
         match read_codex_model_catalog_simplified_from_live() {
-            Ok(Some(model_catalog)) => {
-                let mut restored_settings = settings.clone();
-                if let Some(object) = restored_settings.as_object_mut() {
-                    object.insert("modelCatalog".to_string(), model_catalog);
-                    sync_codex_desktop_available_models_cache_from_settings(&restored_settings);
+            Ok(model_catalog) => {
+                if !sync_codex_desktop_available_models_cache_after_restored_catalog_reload(
+                    settings,
+                    model_catalog,
+                ) {
+                    log::warn!(
+                        "Restored a cc-switch Codex model catalog pointer, but its model IDs could not be reloaded for the Desktop cache"
+                    );
                 }
             }
-            Ok(None) => log::warn!(
-                "Restored a cc-switch Codex model catalog pointer, but its model IDs could not be reloaded for the Desktop cache"
-            ),
-            Err(err) => log::warn!(
-                "Failed to reload the restored cc-switch Codex model catalog for the Desktop cache: {err}"
-            ),
+            Err(err) => {
+                invalidate_codex_desktop_available_models_cache_worker();
+                log::warn!(
+                    "Failed to reload the restored cc-switch Codex model catalog for the Desktop cache: {err}"
+                );
+            }
         }
         return;
     }
 
-    let has_external_catalog_pointer = config_text.parse::<DocumentMut>().ok().is_some_and(|doc| {
-        doc.get("model_catalog_json")
-            .and_then(|item| item.as_str())
-            .map(str::trim)
-            .filter(|path| !path.is_empty())
-            .is_some()
-    });
+    let has_external_catalog_pointer =
+        codex_config_has_external_model_catalog_pointer(config_text, &generated_path);
 
     if has_external_catalog_pointer {
         invalidate_codex_desktop_available_models_cache_worker();
@@ -2315,6 +2345,23 @@ pub fn sync_codex_desktop_available_models_cache_after_live_restore(settings: &V
         sync_codex_desktop_available_models_cache_from_settings(settings);
     }
 }
+
+fn sync_codex_desktop_available_models_cache_after_provider_write(
+    settings: &Value,
+    config_text: Option<&str>,
+) {
+    let generated_path = get_codex_model_catalog_path();
+    let preserves_external_catalog = settings.get("modelCatalog").is_none()
+        && config_text.is_some_and(|text| {
+            codex_config_has_external_model_catalog_pointer(text, &generated_path)
+        });
+    if preserves_external_catalog {
+        invalidate_codex_desktop_available_models_cache_worker();
+    } else {
+        sync_codex_desktop_available_models_cache_from_settings(settings);
+    }
+}
+
 pub fn write_codex_provider_live_with_catalog(
     settings: &Value,
     category: Option<&str>,
@@ -2328,7 +2375,10 @@ pub fn write_codex_provider_live_with_catalog(
 
     write_codex_live_for_provider(category, auth, prepared_config.as_deref())?;
 
-    sync_codex_desktop_available_models_cache_from_settings(settings);
+    sync_codex_desktop_available_models_cache_after_provider_write(
+        settings,
+        prepared_config.as_deref(),
+    );
 
     Ok(())
 }
@@ -5140,6 +5190,35 @@ web_search = "disabled"
         assert_ne!(
             generation_after, generation_before,
             "restoring a user-managed catalog must invalidate prior cc-switch cache work"
+        );
+    }
+
+    #[test]
+    fn codex_provider_write_external_catalog_invalidates_stale_cache_worker() {
+        let generation_before = CODEX_DESKTOP_CACHE_SYNC_GENERATION.load(Ordering::Acquire);
+
+        sync_codex_desktop_available_models_cache_after_provider_write(
+            &json!({}),
+            Some(r#"model_catalog_json = "C:/Users/me/.codex/custom-models.json""#),
+        );
+
+        let generation_after = CODEX_DESKTOP_CACHE_SYNC_GENERATION.load(Ordering::Acquire);
+        assert_ne!(
+            generation_after, generation_before,
+            "provider writes that preserve an external catalog must cancel prior cache work"
+        );
+    }
+
+    #[test]
+    fn codex_restore_catalog_reload_failure_invalidates_stale_cache_worker() {
+        let generation_before = CODEX_DESKTOP_CACHE_SYNC_GENERATION.load(Ordering::Acquire);
+
+        sync_codex_desktop_available_models_cache_after_restored_catalog_reload(&json!({}), None);
+
+        let generation_after = CODEX_DESKTOP_CACHE_SYNC_GENERATION.load(Ordering::Acquire);
+        assert_ne!(
+            generation_after, generation_before,
+            "failed restored catalog reloads must cancel prior cache work"
         );
     }
 
