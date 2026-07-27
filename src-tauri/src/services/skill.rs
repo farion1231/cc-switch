@@ -2111,6 +2111,13 @@ impl SkillService {
             return None;
         }
 
+        // 显式拒绝两种分隔符，不能依赖 components() 的平台语义：
+        // `\` 在 Linux/macOS 上不是分隔符，会被当成合法单段名放行，
+        // 但同一个值同步/还原到 Windows 上就变成了嵌套路径。
+        if trimmed.contains('/') || trimmed.contains('\\') {
+            return None;
+        }
+
         let path = Path::new(trimmed);
         let mut components = path.components();
         match (components.next(), components.next()) {
