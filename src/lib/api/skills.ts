@@ -76,6 +76,8 @@ export interface UnmanagedSkill {
 export interface ImportSkillSelection {
   directory: string;
   apps: SkillApps;
+  /** Absolute path from scan_unmanaged; preferred for nested Claude plugin skills */
+  path?: string;
 }
 
 /** 技能对象（兼容旧 API） */

@@ -280,6 +280,10 @@ pub struct ImportSkillSelection {
     pub directory: String,
     #[serde(default)]
     pub apps: SkillApps,
+    /// Absolute source path from scan results. Preferred when present so nested
+    /// Claude plugin marketplace skills can be imported without re-searching.
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1373,7 +1377,10 @@ impl SkillService {
 
     /// 扫描未管理的 Skills
     ///
-    /// 扫描各应用目录，找出未被 CC Switch 管理的 Skills
+    /// 扫描各应用目录，找出未被 CC Switch 管理的 Skills。
+    /// Claude Code 插件市场技能位于
+    /// `~/.claude/plugins/marketplaces/<marketplace>/.../skills/<skill>/SKILL.md`，
+    /// 需要递归扫描，而不是只看一层 `~/.claude/skills/`。
     pub fn scan_unmanaged(db: &Arc<Database>) -> Result<Vec<UnmanagedSkill>> {
         let managed_skills = db.get_all_installed_skills()?;
         let managed_dirs: HashSet<String> = managed_skills
@@ -1388,6 +1395,10 @@ impl SkillService {
                 scan_sources.push((d, app.as_str().to_string()));
             }
         }
+        // Claude plugin marketplace roots (legacy + current layouts).
+        for (root, label) in Self::claude_plugin_marketplace_scan_roots() {
+            scan_sources.push((root, label));
+        }
         if let Some(agents_dir) = get_agents_skills_dir() {
             scan_sources.push((agents_dir, "agents".to_string()));
         }
@@ -1398,17 +1409,35 @@ impl SkillService {
         let mut unmanaged: HashMap<String, UnmanagedSkill> = HashMap::new();
 
         for (scan_dir, label) in &scan_sources {
-            let entries = match fs::read_dir(scan_dir) {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if !path.is_dir() {
-                    continue;
+            if !scan_dir.exists() {
+                continue;
+            }
+            // Flat app skills dirs: one level of direct children with SKILL.md.
+            // Nested Claude marketplace roots: recursive SKILL.md discovery.
+            let skill_dirs = if Self::is_nested_skill_scan_root(scan_dir) {
+                match Self::scan_skills_in_dir(scan_dir) {
+                    Ok(dirs) => dirs,
+                    Err(_) => continue,
                 }
-                let dir_name = entry.file_name().to_string_lossy().to_string();
-                if dir_name.starts_with('.') || managed_dirs.contains(&dir_name) {
+            } else {
+                let entries = match fs::read_dir(scan_dir) {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+                entries
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|path| path.is_dir() && path.join("SKILL.md").exists())
+                    .collect::<Vec<_>>()
+            };
+
+            for path in skill_dirs {
+                let dir_name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                if dir_name.is_empty() || dir_name.starts_with('.') || managed_dirs.contains(&dir_name)
+                {
                     continue;
                 }
 
@@ -1420,7 +1449,11 @@ impl SkillService {
 
                 unmanaged
                     .entry(dir_name.clone())
-                    .and_modify(|s| s.found_in.push(label.clone()))
+                    .and_modify(|s| {
+                        if !s.found_in.contains(label) {
+                            s.found_in.push(label.clone());
+                        }
+                    })
                     .or_insert(UnmanagedSkill {
                         directory: dir_name,
                         name,
@@ -1432,6 +1465,33 @@ impl SkillService {
         }
 
         Ok(unmanaged.into_values().collect())
+    }
+
+    /// Claude plugin marketplace roots that store nested `*/skills/*/SKILL.md`.
+    fn claude_plugin_marketplace_scan_roots() -> Vec<(PathBuf, String)> {
+        let mut roots = Vec::new();
+        let home = crate::config::get_home_dir();
+        let mut candidates = vec![home.join(".claude")];
+        if let Some(custom) = crate::settings::get_claude_override_dir() {
+            candidates.push(custom);
+        }
+        for base in candidates {
+            let marketplaces = base.join("plugins").join("marketplaces");
+            if marketplaces.is_dir() {
+                roots.push((marketplaces, "claude-plugins".to_string()));
+            }
+        }
+        roots
+    }
+
+    fn is_nested_skill_scan_root(scan_dir: &Path) -> bool {
+        scan_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| name == "marketplaces")
+            || scan_dir
+                .components()
+                .any(|c| matches!(c, std::path::Component::Normal(p) if p == "marketplaces"))
     }
 
     /// 从应用目录导入 Skills
@@ -1459,6 +1519,9 @@ impl SkillService {
                 search_sources.push((d, app.as_str().to_string()));
             }
         }
+        for (root, label) in Self::claude_plugin_marketplace_scan_roots() {
+            search_sources.push((root, label));
+        }
         if let Some(agents_dir) = get_agents_skills_dir() {
             search_sources.push((agents_dir, "agents".to_string()));
         }
@@ -1466,16 +1529,44 @@ impl SkillService {
 
         for selection in imports {
             let dir_name = selection.directory;
-            // 在所有候选目录中查找
+            // Prefer the absolute path returned by scan_unmanaged (needed for
+            // nested Claude plugin marketplace skills). Fall back to name lookup.
             let mut source_path: Option<PathBuf> = None;
+            if let Some(raw_path) = selection.path.as_deref() {
+                let candidate = PathBuf::from(raw_path);
+                if candidate.is_dir() && candidate.join("SKILL.md").exists() {
+                    source_path = Some(candidate);
+                }
+            }
 
-            for (base, label) in &search_sources {
-                let skill_path = base.join(&dir_name);
-                if skill_path.exists() {
-                    if source_path.is_none() {
-                        source_path = Some(skill_path);
+            if source_path.is_none() {
+                for (base, label) in &search_sources {
+                    // Flat sources: base/<dir_name>/SKILL.md
+                    let flat = base.join(&dir_name);
+                    if flat.is_dir() && flat.join("SKILL.md").exists() {
+                        if source_path.is_none() {
+                            source_path = Some(flat);
+                        }
+                        log::debug!("Skill '{dir_name}' found in source '{label}'");
+                        continue;
                     }
-                    log::debug!("Skill '{dir_name}' found in source '{label}'");
+                    // Nested marketplace: search for a directory named dir_name with SKILL.md
+                    if Self::is_nested_skill_scan_root(base) {
+                        if let Ok(dirs) = Self::scan_skills_in_dir(base) {
+                            if let Some(found) = dirs.into_iter().find(|p| {
+                                p.file_name()
+                                    .map(|n| n.to_string_lossy() == dir_name)
+                                    .unwrap_or(false)
+                            }) {
+                                if source_path.is_none() {
+                                    source_path = Some(found);
+                                }
+                                log::debug!(
+                                    "Skill '{dir_name}' found under nested source '{label}'"
+                                );
+                            }
+                        }
+                    }
                 }
             }
 
@@ -3145,6 +3236,119 @@ mod tests {
         assert!(
             dest.join("SKILL.md").is_file(),
             "existing destination skill should be preserved"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn scan_unmanaged_finds_claude_plugin_marketplace_skills() {
+        struct EnvGuard(Option<std::ffi::OsString>);
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                    None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                }
+            }
+        }
+
+        let temp = tempdir().expect("tempdir");
+        let _guard = EnvGuard(std::env::var_os("CC_SWITCH_TEST_HOME"));
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+
+        // Flat legacy path should still work.
+        let flat = temp
+            .path()
+            .join(".claude")
+            .join("skills")
+            .join("flat-skill");
+        write_skill(&flat, "Flat Skill");
+
+        // Nested Claude Code plugin marketplace layout from #5582.
+        let nested = temp
+            .path()
+            .join(".claude")
+            .join("plugins")
+            .join("marketplaces")
+            .join("anthropic-agent-skills")
+            .join("plugins")
+            .join("demo-plugin")
+            .join("skills")
+            .join("nested-marketplace-skill");
+        write_skill(&nested, "Nested Marketplace Skill");
+
+        let db = Arc::new(crate::database::Database::memory().expect("memory db"));
+        let found = SkillService::scan_unmanaged(&db).expect("scan unmanaged skills");
+        let by_dir: HashMap<_, _> = found.into_iter().map(|s| (s.directory.clone(), s)).collect();
+
+        assert!(
+            by_dir.contains_key("flat-skill"),
+            "flat ~/.claude/skills skill should still be found"
+        );
+        let nested_hit = by_dir
+            .get("nested-marketplace-skill")
+            .expect("nested marketplace skill should be found");
+        assert!(
+            nested_hit
+                .found_in
+                .iter()
+                .any(|s| s == "claude-plugins"),
+            "nested skill should be tagged as claude-plugins, got {:?}",
+            nested_hit.found_in
+        );
+        assert!(
+            nested_hit.path.contains("marketplaces"),
+            "path should point into marketplaces tree: {}",
+            nested_hit.path
+        );
+        assert_eq!(nested_hit.name, "Nested Marketplace Skill");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn import_from_apps_uses_explicit_path_for_nested_marketplace_skill() {
+        struct EnvGuard(Option<std::ffi::OsString>);
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                    None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                }
+            }
+        }
+
+        let temp = tempdir().expect("tempdir");
+        let _guard = EnvGuard(std::env::var_os("CC_SWITCH_TEST_HOME"));
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+
+        let nested = temp
+            .path()
+            .join(".claude")
+            .join("plugins")
+            .join("marketplaces")
+            .join("demo-marketplace")
+            .join("skills")
+            .join("import-me");
+        write_skill(&nested, "Import Me");
+
+        let db = Arc::new(crate::database::Database::memory().expect("memory db"));
+        let imported = SkillService::import_from_apps(
+            &db,
+            vec![ImportSkillSelection {
+                directory: "import-me".to_string(),
+                apps: SkillApps::default(),
+                path: Some(nested.display().to_string()),
+            }],
+        )
+        .expect("import nested skill via absolute path");
+
+        assert_eq!(imported.len(), 1);
+        assert_eq!(imported[0].directory, "import-me");
+        assert_eq!(imported[0].name, "Import Me");
+        let ssot = SkillService::get_ssot_dir().expect("ssot dir");
+        assert!(
+            ssot.join("import-me").join("SKILL.md").is_file(),
+            "imported skill should land in SSOT"
         );
     }
 }
