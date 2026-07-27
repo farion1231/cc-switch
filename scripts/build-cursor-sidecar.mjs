@@ -17,12 +17,10 @@ const sourceDir = resolve(
   process.env.CURSOR_BYOK_DIR ?? join(repoRoot, "sidecars", "cursor-byok"),
 );
 const outputDir = resolve(repoRoot, "src-tauri", "binaries");
-const targetArg = process.argv[2];
-const testMode = process.argv.includes("--test");
-let target =
-  targetArg && targetArg !== "--test"
-    ? targetArg
-    : process.env.TAURI_ENV_TARGET_TRIPLE;
+const args = process.argv.slice(2);
+const targetArg = args.find((argument) => !argument.startsWith("--"));
+const testMode = args.includes("--test");
+let target = targetArg ?? process.env.TAURI_ENV_TARGET_TRIPLE ?? "host";
 const baseName = "cursor-sidecar";
 const goproxyVersion = "v1.7.2";
 const goproxyReplacementSource = join(
@@ -272,7 +270,12 @@ if (!target) {
   );
 }
 if (!existsSync(join(sourceDir, "go.mod"))) {
-  fail(`Cursor sidecar 源码不存在或 submodule 未初始化: ${sourceDir}`);
+  fail(
+    [
+      `Cursor sidecar 源码不存在或 submodule 未初始化: ${sourceDir}`,
+      "请运行: git submodule update --init --recursive",
+    ].join("\n"),
+  );
 }
 
 generateProto();

@@ -20,29 +20,46 @@ There are many ways to contribute:
 
 ### Prerequisites
 
-- Node.js 18+ and pnpm 8+
+- Node.js 20+ and pnpm 10+
 - Rust 1.85+ and Cargo
+- Go 1.25+
+- Protocol Buffers compiler (`protoc`; CI uses 35.1)
 - [Tauri 2.0 prerequisites](https://v2.tauri.app/start/prerequisites/)
+
+Install the protobuf Go plugins used to generate the Cursor sidecar protocol bindings:
+
+```bash
+go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+go install connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.19.1
+```
 
 ### Quick Start
 
-```bash
-# Install dependencies
-pnpm install
+Clone the repository with its submodules, or initialize them in an existing clone:
 
-# Start development server with hot reload
+```bash
+git clone --recurse-submodules https://github.com/farion1231/cc-switch.git
+cd cc-switch
+
+# Existing clone only
+# git submodule update --init --recursive
+
+pnpm install --frozen-lockfile
 pnpm dev
 ```
+
+`pnpm dev` builds the Cursor sidecar for the host platform before starting the Tauri development server. `pnpm build` performs the same preparation for the selected Tauri target.
 
 ### Useful Commands
 
 | Command | Description |
 |---------|-------------|
-| `pnpm dev` | Start dev server (hot reload) |
-| `pnpm build` | Production build |
+| `pnpm dev` | Build the host sidecar and start the development server |
+| `pnpm build` | Build the sidecar and production application |
+| `pnpm build:cursor-sidecar` | Build the Cursor sidecar for the current Tauri target (host by default) |
+| `pnpm test:cursor-sidecar` | Build and test the Cursor sidecar for the host platform |
 | `pnpm typecheck` | TypeScript type checking |
 | `pnpm test:unit` | Run unit tests |
-| `pnpm lint` | ESLint check |
 | `pnpm format` | Format code (Prettier) |
 | `pnpm format:check` | Check code formatting |
 
@@ -65,6 +82,7 @@ Run all checks before submitting:
 
 ```bash
 pnpm typecheck && pnpm format:check && pnpm test:unit
+pnpm test:cursor-sidecar
 cd src-tauri && cargo fmt --check && cargo clippy && cargo test
 ```
 
@@ -79,6 +97,7 @@ cd src-tauri && cargo fmt --check && cargo clippy && cargo test
 
 - [ ] `pnpm typecheck` passes
 - [ ] `pnpm format:check` passes
+- [ ] `pnpm test:cursor-sidecar` passes (if Cursor sidecar code changed)
 - [ ] `cargo clippy` passes (if Rust code changed)
 - [ ] Updated i18n files if user-facing text changed
 
@@ -148,29 +167,46 @@ CC Switch supports three languages. When modifying user-facing text:
 
 ### 前提条件
 
-- Node.js 18+ 和 pnpm 8+
+- Node.js 20+ 和 pnpm 10+
 - Rust 1.85+ 和 Cargo
+- Go 1.25+
+- Protocol Buffers 编译器（`protoc`；CI 使用 35.1）
 - [Tauri 2.0 开发环境](https://v2.tauri.app/start/prerequisites/)
+
+安装生成 Cursor sidecar 协议绑定所需的 protobuf Go 插件：
+
+```bash
+go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+go install connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.19.1
+```
 
 ### 快速开始
 
-```bash
-# 安装依赖
-pnpm install
+克隆仓库时同时初始化子模块，或在已有仓库中补充初始化：
 
-# 启动开发服务器（热重载）
+```bash
+git clone --recurse-submodules https://github.com/farion1231/cc-switch.git
+cd cc-switch
+
+# 仅已有仓库需要执行
+# git submodule update --init --recursive
+
+pnpm install --frozen-lockfile
 pnpm dev
 ```
+
+`pnpm dev` 会先为本机平台构建 Cursor sidecar，再启动 Tauri 开发服务器。`pnpm build` 会为所选 Tauri 目标执行相同的准备工作。
 
 ### 常用命令
 
 | 命令 | 说明 |
 |------|------|
-| `pnpm dev` | 启动开发服务器（热重载） |
-| `pnpm build` | 构建生产版本 |
+| `pnpm dev` | 构建本机 sidecar 并启动开发服务器 |
+| `pnpm build` | 构建 sidecar 和生产版本应用 |
+| `pnpm build:cursor-sidecar` | 为当前 Tauri 目标构建 Cursor sidecar（默认本机平台） |
+| `pnpm test:cursor-sidecar` | 为本机平台构建并测试 Cursor sidecar |
 | `pnpm typecheck` | TypeScript 类型检查 |
 | `pnpm test:unit` | 运行单元测试 |
-| `pnpm lint` | ESLint 检查 |
 | `pnpm format` | 格式化代码（Prettier） |
 | `pnpm format:check` | 检查代码格式 |
 
@@ -193,6 +229,7 @@ cargo test       # 运行测试
 
 ```bash
 pnpm typecheck && pnpm format:check && pnpm test:unit
+pnpm test:cursor-sidecar
 cd src-tauri && cargo fmt --check && cargo clippy && cargo test
 ```
 
@@ -207,6 +244,7 @@ cd src-tauri && cargo fmt --check && cargo clippy && cargo test
 
 - [ ] `pnpm typecheck` 通过
 - [ ] `pnpm format:check` 通过
+- [ ] `pnpm test:cursor-sidecar` 通过（如修改了 Cursor sidecar 代码）
 - [ ] `cargo clippy` 通过（如修改了 Rust 代码）
 - [ ] 如修改了用户可见文本，已更新国际化文件
 
