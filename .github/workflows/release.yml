@@ -788,7 +788,12 @@ jobs:
 
       - name: Generate download manifest
         if: steps.r2.outputs.configured == 'true'
-        run: node scripts/generate-download-manifest.mjs r2-assets "$GITHUB_REF_NAME" "$R2_PUBLIC_BASE_URL" manifest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          pub_date=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json publishedAt --jq .publishedAt)
+          node scripts/generate-download-manifest.mjs r2-assets "$GITHUB_REF_NAME" "$R2_PUBLIC_BASE_URL" manifest.json "$pub_date"
 
       - name: Upload assets and manifest to R2
         if: steps.r2.outputs.configured == 'true'

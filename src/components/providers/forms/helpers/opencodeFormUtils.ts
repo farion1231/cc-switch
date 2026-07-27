@@ -24,7 +24,7 @@ export const GEMINI_DEFAULT_CONFIG = JSON.stringify(
     env: {
       GOOGLE_GEMINI_BASE_URL: "",
       GEMINI_API_KEY: "",
-      GEMINI_MODEL: "gemini-3.5-flash",
+      GEMINI_MODEL: "gemini-3.6-flash",
     },
   },
   null,
