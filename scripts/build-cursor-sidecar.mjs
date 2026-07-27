@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -130,7 +131,10 @@ function preparePatchedDependencies() {
 
   rmSync(patchedGoproxyDir, { recursive: true, force: true });
   cpSync(upstreamDir, patchedGoproxyDir, { recursive: true });
-  cpSync(goproxyReplacementSource, join(patchedGoproxyDir, "certs.go"));
+  const patchedGoproxyCerts = join(patchedGoproxyDir, "certs.go");
+  chmodSync(patchedGoproxyDir, 0o755);
+  chmodSync(patchedGoproxyCerts, 0o644);
+  cpSync(goproxyReplacementSource, patchedGoproxyCerts);
 
   const sourceGoMod = readFileSync(join(sourceDir, "go.mod"), "utf8");
   const patchedModulePath = patchedGoproxyDir.replaceAll("\\", "/");
