@@ -163,7 +163,10 @@ pub fn sync_single_server_to_grokbuild(
         .ok_or_else(|| {
             AppError::McpValidation("Grok Build config.toml 的 mcp_servers 不是表".to_string())
         })?;
-    servers.insert(id, Item::Table(json_server_to_grokbuild_toml_table(server_spec)?));
+    servers.insert(
+        id,
+        Item::Table(json_server_to_grokbuild_toml_table(server_spec)?),
+    );
     crate::config::write_text_file(&path, &doc.to_string())
 }
 

@@ -785,17 +785,21 @@ impl SkillService {
             .get_installed_skill(id)?
             .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
 
+        // DB 行可能被同步导入污染（远端快照 raw SQL 直接灌库，绕过安装期校验），
+        // 下方 remove_dir_all 之前必须校验 directory，防止任意目录删除。
+        let directory = Self::require_valid_directory(&skill.directory)?;
+
         let backup_path =
             Self::create_uninstall_backup(&skill)?.map(|path| path.to_string_lossy().to_string());
 
         // 从所有应用目录删除
         for app in AppType::all() {
-            let _ = Self::remove_from_app(&skill.directory, &app);
+            let _ = Self::remove_from_app(&directory, &app);
         }
 
         // 从 SSOT 删除
         let ssot_dir = Self::get_ssot_dir()?;
-        let skill_path = ssot_dir.join(&skill.directory);
+        let skill_path = ssot_dir.join(&directory);
         if skill_path.exists() {
             fs::remove_dir_all(&skill_path)?;
         }
@@ -1302,8 +1306,12 @@ impl SkillService {
             ));
         }
 
+        // meta.json 是文件内容（可能来自手工放置或不可信备份），directory 此前
+        // 未经任何校验就直接 join——可穿越出 SSOT 目录写任意位置。必须先校验。
+        let directory = Self::require_valid_directory(&metadata.skill.directory)?;
+
         let ssot_dir = Self::get_ssot_dir()?;
-        let restore_path = ssot_dir.join(&metadata.skill.directory);
+        let restore_path = ssot_dir.join(&directory);
         if restore_path.exists() || Self::is_symlink(&restore_path) {
             return Err(anyhow!(
                 "Restore target already exists: {}",
@@ -1312,6 +1320,7 @@ impl SkillService {
         }
 
         let mut restored_skill = metadata.skill;
+        restored_skill.directory = directory;
         restored_skill.installed_at = Utc::now().timestamp();
         restored_skill.apps = SkillApps::only(current_app);
         restored_skill.updated_at = 0;
@@ -1581,22 +1590,25 @@ impl SkillService {
             return Ok(());
         }
 
-        let ssot_dir = Self::get_ssot_dir()?;
-        let source = ssot_dir.join(directory);
+        // directory 可能来自被污染的 DB 行（如同步导入的远端快照），join 前必须校验。
+        let directory = Self::require_valid_directory(directory)?;
 
-        Self::validate_sync_source_dir(&source, directory)?;
+        let ssot_dir = Self::get_ssot_dir()?;
+        let source = ssot_dir.join(&directory);
+
+        Self::validate_sync_source_dir(&source, &directory)?;
 
         let app_dir = Self::get_app_skills_dir(app)?;
         fs::create_dir_all(&app_dir)?;
 
-        let dest = app_dir.join(directory);
+        let dest = app_dir.join(&directory);
 
         let sync_method = Self::get_sync_method();
 
         match sync_method {
             SyncMethod::Auto => {
                 if dest.exists() && !Self::is_symlink(&dest) {
-                    Self::replace_dest_with_copy(&source, &dest, directory)?;
+                    Self::replace_dest_with_copy(&source, &dest, &directory)?;
                     log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
                     return Ok(());
                 }
@@ -1620,7 +1632,7 @@ impl SkillService {
                     }
                 }
                 // Fallback 到 copy
-                Self::replace_dest_with_copy(&source, &dest, directory)?;
+                Self::replace_dest_with_copy(&source, &dest, &directory)?;
                 log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
             }
             SyncMethod::Symlink => {
@@ -1631,7 +1643,7 @@ impl SkillService {
                 log::debug!("Skill {directory} 已通过 symlink 同步到 {app:?}");
             }
             SyncMethod::Copy => {
-                Self::replace_dest_with_copy(&source, &dest, directory)?;
+                Self::replace_dest_with_copy(&source, &dest, &directory)?;
                 log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
             }
         }
@@ -1753,8 +1765,12 @@ impl SkillService {
             return Ok(());
         }
 
+        // directory 可能来自被污染的 DB 行（如同步导入的远端快照），
+        // 这里执行的是删除操作，join 前必须校验，防止任意目录删除。
+        let directory = Self::require_valid_directory(directory)?;
+
         let app_dir = Self::get_app_skills_dir(app)?;
-        let skill_path = app_dir.join(directory);
+        let skill_path = app_dir.join(&directory);
 
         if skill_path.exists() || Self::is_symlink(&skill_path) {
             Self::remove_path(&skill_path)?;
@@ -2112,6 +2128,18 @@ impl SkillService {
             }
             _ => None,
         }
+    }
+
+    /// 校验来自 DB 行 / 备份 meta.json 等外部来源的 directory 字段。
+    ///
+    /// 存储值按构造本应是单段安装名（见 sanitize_install_name），但有两个入口
+    /// 会绕过安装期校验：同步导入的远端快照直接灌库（raw SQL），以及手工放置 /
+    /// 不可信备份里的 meta.json。任何把它 join 进文件系统路径的使用点（尤其是
+    /// remove_dir_all 这类删除操作）必须先过这道校验，拒绝路径穿越。
+    fn require_valid_directory(directory: &str) -> Result<String> {
+        Self::sanitize_install_name(directory).ok_or_else(|| {
+            anyhow!("Invalid skill directory (possible path traversal): {directory:?}")
+        })
     }
 
     /// 在目录树中查找名称匹配且包含 SKILL.md 的子目录
@@ -3099,8 +3127,7 @@ mod tests {
         fs::create_dir_all(&dest).expect("create dest");
 
         let bytes = build_zip_with_traversal_entry();
-        let archive =
-            zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("archive parses");
+        let archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("archive parses");
 
         SkillService::extract_repo_archive(archive, &dest).expect("extract must not fail");
 
@@ -3127,6 +3154,146 @@ mod tests {
             format!("---\nname: {name}\ndescription: Test skill\n---\n"),
         )
         .expect("write SKILL.md");
+    }
+
+    /// CC_SWITCH_TEST_HOME 隔离守卫（serial 测试间互斥由 #[serial] 保证，
+    /// 守卫只负责在测试结束后恢复原值）。
+    struct TestHomeGuard(Option<std::ffi::OsString>);
+    impl TestHomeGuard {
+        fn set(home: &Path) -> Self {
+            let guard = Self(std::env::var_os("CC_SWITCH_TEST_HOME"));
+            std::env::set_var("CC_SWITCH_TEST_HOME", home);
+            guard
+        }
+    }
+    impl Drop for TestHomeGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+
+    fn poisoned_skill(id: &str, directory: &str) -> InstalledSkill {
+        InstalledSkill {
+            id: id.to_string(),
+            name: "poisoned".to_string(),
+            description: None,
+            directory: directory.to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps::default(),
+            installed_at: 0,
+            content_hash: None,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn require_valid_directory_accepts_single_segment_names_only() {
+        assert_eq!(
+            SkillService::require_valid_directory("my-skill").expect("valid name"),
+            "my-skill"
+        );
+        for bad in [
+            "..",
+            "../..",
+            "../../etc",
+            "a/b",
+            "a\\b",
+            "",
+            ".hidden",
+            "C:\\evil",
+            "/etc",
+        ] {
+            assert!(
+                SkillService::require_valid_directory(bad).is_err(),
+                "must reject: {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn restore_from_backup_rejects_traversal_directory_in_metadata() {
+        let temp = tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        // 手工放置一个备份：meta.json 里的 directory 指向 SSOT 之外。
+        // SSOT 位于 {home}/.cc-switch/skills，"../../pwned-restore" 若生效会写到 {home}/pwned-restore。
+        let backup_id = "20260727_120000_evil";
+        let backup_dir = SkillService::get_backup_dir()
+            .expect("backup dir")
+            .join(backup_id);
+        write_skill(&backup_dir.join("skill"), "evil");
+        let metadata = SkillBackupMetadata {
+            skill: poisoned_skill("owner/repo:evil", "../../pwned-restore"),
+            backup_created_at: 0,
+            source_path: "x".to_string(),
+        };
+        fs::write(
+            backup_dir.join("meta.json"),
+            serde_json::to_string_pretty(&metadata).expect("serialize metadata"),
+        )
+        .expect("write meta.json");
+
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        let result = SkillService::restore_from_backup(&db, backup_id, &AppType::Claude);
+
+        assert!(
+            result.is_err(),
+            "restore must reject a traversal directory from meta.json"
+        );
+        assert!(
+            !temp.path().join("pwned-restore").exists(),
+            "restore must not write outside the SSOT dir"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn remove_from_app_rejects_traversal_directory() {
+        let temp = tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        // 受害目录与 app skills 目录都先建好，保证未修复时代码真的能删到它：
+        // app_dir = {home}/.claude/skills，"../../victim-remove" 解析为 {home}/victim-remove。
+        let victim = temp.path().join("victim-remove");
+        fs::create_dir_all(&victim).expect("create victim dir");
+        fs::create_dir_all(temp.path().join(".claude").join("skills")).expect("create app dir");
+
+        let result = SkillService::remove_from_app("../../victim-remove", &AppType::Claude);
+
+        assert!(result.is_err(), "remove_from_app must reject traversal");
+        assert!(victim.exists(), "victim directory must not be deleted");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn uninstall_rejects_traversal_directory_from_db_row() {
+        let temp = tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        // 模拟同步导入灌进来的脏数据：directory 含路径穿越（save_skill 不校验，
+        // 与 import_sql_string_for_sync 的效果一致）。SSOT = {home}/.cc-switch/skills，
+        // "../../victim-uninstall" 解析为 {home}/victim-uninstall。
+        let victim = temp.path().join("victim-uninstall");
+        fs::create_dir_all(&victim).expect("create victim dir");
+
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        let skill = poisoned_skill("owner/repo:evil", "../../victim-uninstall");
+        db.save_skill(&skill).expect("seed poisoned row");
+
+        let result = SkillService::uninstall(&db, &skill.id);
+
+        assert!(
+            result.is_err(),
+            "uninstall must reject a traversal directory from the DB row"
+        );
+        assert!(victim.exists(), "victim directory must not be deleted");
     }
 
     #[test]
