@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(not(test))]
@@ -580,6 +580,15 @@ fn codex_desktop_statsig_has_all_models(wrapper: &Value, model_ids: &[String]) -
         .all(|model_id| available_models.contains(model_id))
 }
 
+fn codex_desktop_leveldb_origin_for_marker(key_text: &str, marker: &str) -> Option<String> {
+    let marker_start = key_text.find(marker)?;
+    Some(
+        key_text[..marker_start]
+            .trim_end_matches(char::from(0))
+            .to_string(),
+    )
+}
+
 fn codex_desktop_statsig_cache_key_from_leveldb_key(key_text: &str) -> Option<String> {
     let start = key_text.find(CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER)?;
     Some(key_text[start..].trim_matches(char::from(0)).to_string())
@@ -836,10 +845,20 @@ fn sync_codex_desktop_available_models_cache_path(
             };
             let key_text = String::from_utf8_lossy(&key).to_string();
             if key_text.contains(CODEX_DESKTOP_STATSIG_LAST_MODIFIED_KEY_MARKER) {
-                if let Some((prefix, encoding, last_modified)) =
-                    decode_codex_desktop_statsig_wrapper(&value)
-                {
-                    last_modified_entries.push((key.to_vec(), prefix, encoding, last_modified));
+                if let (Some(origin), Some((prefix, encoding, last_modified))) = (
+                    codex_desktop_leveldb_origin_for_marker(
+                        &key_text,
+                        CODEX_DESKTOP_STATSIG_LAST_MODIFIED_KEY_MARKER,
+                    ),
+                    decode_codex_desktop_statsig_wrapper(&value),
+                ) {
+                    last_modified_entries.push((
+                        key.to_vec(),
+                        origin,
+                        prefix,
+                        encoding,
+                        last_modified,
+                    ));
                 }
             }
             if !key_text.contains(CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER) {
@@ -850,9 +869,15 @@ fn sync_codex_desktop_available_models_cache_path(
     }
 
     let mut updates = Vec::new();
-    let mut pinned_cache_keys = HashSet::new();
-    let mut model_cache_keys = HashSet::new();
+    let mut pinned_cache_keys_by_origin: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut model_cache_keys_by_origin: HashMap<String, HashSet<String>> = HashMap::new();
     for (key, key_text, value) in cache_entries {
+        let Some(origin) = codex_desktop_leveldb_origin_for_marker(
+            &key_text,
+            CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER,
+        ) else {
+            continue;
+        };
         let Some(cache_key) = codex_desktop_statsig_cache_key_from_leveldb_key(&key_text) else {
             continue;
         };
@@ -861,11 +886,17 @@ fn sync_codex_desktop_available_models_cache_path(
             continue;
         };
         if codex_desktop_statsig_available_model_ids(&wrapper).is_some() {
-            model_cache_keys.insert(cache_key.clone());
+            model_cache_keys_by_origin
+                .entry(origin.clone())
+                .or_default()
+                .insert(cache_key.clone());
         }
         let changed = merge_codex_desktop_statsig_available_models(&mut wrapper, model_ids);
         if !model_ids.is_empty() && codex_desktop_statsig_has_all_models(&wrapper, model_ids) {
-            pinned_cache_keys.insert(cache_key);
+            pinned_cache_keys_by_origin
+                .entry(origin)
+                .or_default()
+                .insert(cache_key);
         }
         if !changed {
             continue;
@@ -877,17 +908,25 @@ fn sync_codex_desktop_available_models_cache_path(
     }
 
     let now_millis = codex_desktop_now_millis();
-    for (key, prefix, encoding, mut last_modified) in last_modified_entries {
+    for (key, origin, prefix, encoding, mut last_modified) in last_modified_entries {
+        let cache_keys = if model_ids.is_empty() {
+            model_cache_keys_by_origin.get(&origin)
+        } else {
+            pinned_cache_keys_by_origin.get(&origin)
+        };
+        let Some(cache_keys) = cache_keys else {
+            continue;
+        };
         let changed = if model_ids.is_empty() {
             unpin_codex_desktop_statsig_last_modified_cache_keys(
                 &mut last_modified,
-                &model_cache_keys,
+                cache_keys,
                 now_millis,
             )
         } else {
             pin_codex_desktop_statsig_last_modified_cache_keys(
                 &mut last_modified,
-                &pinned_cache_keys,
+                cache_keys,
                 now_millis,
             )
         };
@@ -1163,7 +1202,13 @@ fn codex_reasoning_level(effort: &str) -> Value {
 }
 
 fn codex_model_reasoning_metadata(model: &str) -> Option<(&'static str, &'static [&'static str])> {
-    match model.trim().to_ascii_lowercase().as_str() {
+    let normalized_model = model
+        .trim()
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match normalized_model.as_str() {
         "gpt-5.6-sol" => Some(("low", &["low", "medium", "high", "xhigh", "max", "ultra"])),
         "gpt-5.6-terra" => Some((
             "medium",
@@ -3791,7 +3836,7 @@ base_url = "https://production.api/v1"
         let settings = json!({
             "modelCatalog": {
                 "models": [
-                    { "model": "gpt-5.6-sol" },
+                    { "model": "openai/gpt-5.6-sol" },
                     { "model": "gpt-5.6-terra" },
                     { "model": "gpt-5.6-luna" },
                     { "model": "gpt-5.5" }
@@ -4112,6 +4157,84 @@ base_url = "https://production.api/v1"
                 .as_i64()
                 .unwrap()
                 > 1_000
+        );
+        db.close().expect("close leveldb");
+    }
+
+    #[test]
+    fn codex_desktop_statsig_sync_scopes_pins_to_leveldb_origin() {
+        let temp_dir = tempfile::tempdir().expect("create temp leveldb");
+        let options = rusty_leveldb::Options {
+            create_if_missing: true,
+            ..Default::default()
+        };
+        let mut db = rusty_leveldb::DB::open(temp_dir.path(), options).expect("open temp leveldb");
+        let cache_key = b"_https://codex\x00statsig.cached.evaluations.active".to_vec();
+        let codex_last_modified_key =
+            b"_https://codex\x00statsig.last_modified_time.evaluations".to_vec();
+        let other_last_modified_key =
+            b"_https://example\x00statsig.last_modified_time.evaluations".to_vec();
+        let data = json!({
+            "dynamic_configs": {
+                CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID: {
+                    "value": { "available_models": ["gpt-5.5"] }
+                }
+            }
+        });
+        let cache_value = encode_codex_desktop_statsig_wrapper(
+            Some(1),
+            CodexDesktopStatsigWrapperEncoding::Utf8,
+            &json!({ "source": "Network", "data": data.to_string() }),
+        )
+        .unwrap();
+        db.put(&cache_key, &cache_value).expect("seed cache");
+        let last_modified_value = encode_codex_desktop_statsig_wrapper(
+            Some(1),
+            CodexDesktopStatsigWrapperEncoding::Utf8,
+            &json!({ "statsig.cached.evaluations.active": 1_000 }),
+        )
+        .unwrap();
+        db.put(&codex_last_modified_key, &last_modified_value)
+            .expect("seed Codex last modified cache");
+        db.put(&other_last_modified_key, &last_modified_value)
+            .expect("seed unrelated last modified cache");
+        db.close().expect("close seeded leveldb");
+
+        assert_eq!(
+            sync_codex_desktop_available_models_cache_path(
+                temp_dir.path(),
+                &["gpt-5.6-sol".to_string()],
+            )
+            .expect("sync temp leveldb"),
+            2,
+            "only the Codex cache and its matching last-modified entry should change"
+        );
+
+        let options = rusty_leveldb::Options {
+            create_if_missing: false,
+            ..Default::default()
+        };
+        let mut db = rusty_leveldb::DB::open(temp_dir.path(), options).expect("reopen leveldb");
+        let codex_value = db
+            .get(&codex_last_modified_key)
+            .expect("read Codex last modified cache");
+        let (_, _, codex_last_modified) =
+            decode_codex_desktop_statsig_wrapper(&codex_value).unwrap();
+        assert!(
+            codex_last_modified["statsig.cached.evaluations.active"]
+                .as_i64()
+                .unwrap()
+                > 1_000
+        );
+        let other_value = db
+            .get(&other_last_modified_key)
+            .expect("read unrelated last modified cache");
+        let (_, _, other_last_modified) =
+            decode_codex_desktop_statsig_wrapper(&other_value).unwrap();
+        assert_eq!(
+            other_last_modified["statsig.cached.evaluations.active"].as_i64(),
+            Some(1_000),
+            "an unrelated LocalStorage origin must not be future-pinned"
         );
         db.close().expect("close leveldb");
     }
