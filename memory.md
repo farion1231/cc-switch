@@ -1,5 +1,14 @@
 # CC Switch Repository Memory
 
+## 2026-07-27 Codex 历史归类与结构化工具多模态根修
+
+- 官方 Codex `95637f7056835fea66bdd0044414af480fc0fd74` 的 Desktop 默认列表规则是 `INTERACTIVE_SESSION_SOURCES`，即 `SessionSource::Cli/VSCode`；`Exec/Mcp/Custom/Internal/SubAgent/Unknown` 不是默认用户任务。`thread_source` 是第二层标签：仅 `user` 或旧记录缺省值可作为主任务，`subagent`、`memory_consolidation` 和任意 feature 名均不能被普通历史修复顶进侧边栏。rollout `source` 既可能是字符串，也可能是外部标记对象（例如 `{"sub_agent":...}`），解析时必须先归一化来源类别。
+- 官方 state reducer 只用 `event_msg.user_message` 和新版 `event_msg.item_completed` 中的 `item.type=user_message` 建立 `has_user_event/first_user_message/title`；`response_item` 的 user/developer 内容是模型输入转录，tool call/output 是工具管线，均不能独立创造历史元数据。CCSM 历史正文只显示经过内部包装过滤的真实 user event（兼容旧 rollout 的 response user）与 assistant message，并去掉 developer、工具调用/结果、环境说明和恢复转录。
+- 历史修复仍只允许恢复 active `threads` 或原生 `session_index.jsonl` 已存在的 session id；不扫描 rollout 创造新 sidebar id。旧版误修行按内部转录和严格用户消息前缀回收，只删 DB/index，保留 rollout；相同前缀后用户消息发生分叉的真实任务全部保留。
+- 图片上下文根因由 `git blame/log` 定位到 `693c3872f042d3a578f4a45aa9897542a620b262`（2026-06-02）：最初 Responses -> Chat 桥接把所有 `function_call_output.output` 统一 canonical JSON 字符串化。`f59fab6c243ea629270755f0da0986ac2b21a22d`（2026-06-07）只补了普通 message 的旧 `input_file/input_audio` 映射，没有覆盖工具结构化输出；新版 `view_image` 返回 Base64 `input_image` 后，图片遂作为文本 token 进入上下文。
+- 官方 `FunctionCallOutputContentItem` 支持 `input_text/input_image/input_audio/encrypted_content`，且 `custom_tool_call_output` 复用同一 payload。转换器必须同时处理 function/custom output：文本保留；图片提升为 Chat `image_url` 并保留 detail；data audio URL 转为 Chat `input_audio`；远程音频、密文、未知结构只生成有界占位，绝不能泄漏或字符串化 Base64/密文。text-only 模型对图片/音频/文件只发占位。普通 JSON 数组仍 canonical 透传，不能误判成结构化 content items。
+- 普通 message 路径同时兼容当前 Codex `input_audio.audio_url` 与旧 `input_audio` 对象；data URL 可转换，远程 URL 有界降级。Chat file 只支持 `file_id/file_data`，URL-only file 必须显式占位而不是静默丢失或文本展开。官方当前 function output schema没有 `input_file`，未知文件/二进制 item 按有界未知项处理。
+
 ## 2026-07-27 Codex 内部转录、坏 encrypted_content 与工具图片上下文根修
 
 - Issue #18 的损坏形态是 Multi-Agent V2 rollout 中 `agent_message.content[].type=encrypted_content` 却承载可读明文；CCSwitchMulti 的 Chat -> Responses 响应转换不生成 `agent_message`，因此源头在 Codex 本地子 Agent 投递层，但 CCSM 官方 OAuth 出站必须自愈，否则坏记录会被官方 backend 当密文解码并让任务及后续 fork 永久 5 次重连。只在载荷无法按 Base64/Base64URL 解码为至少 32 字节时降级成 `input_text`，合法密文保持原样；网络/TUN 只能改变触发概率，不能修复已污染 rollout。

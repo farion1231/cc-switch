@@ -806,20 +806,20 @@ fn append_responses_item_as_chat_message(
                 last_assistant_index,
             );
             let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
-            let (output, images) = chat_tool_output_content(item.get("output"));
+            let converted = chat_tool_output_content(item.get("output"), text_only_model);
             messages.push(json!({
                 "role": "tool",
                 "tool_call_id": call_id,
-                "content": output
+                "content": converted.tool_text
             }));
-            if !images.is_empty() {
+            if !converted.follow_up_parts.is_empty() {
                 messages.push(json!({
                     "role": "user",
-                    "content": images
+                    "content": converted.follow_up_parts
                 }));
             }
         }
-        Some("custom_tool_call_output") | Some("tool_search_output") => {
+        Some("custom_tool_call_output") => {
             flush_pending_tool_calls(
                 messages,
                 pending_tool_calls,
@@ -827,11 +827,31 @@ fn append_responses_item_as_chat_message(
                 last_assistant_index,
             );
             let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
-            let output = canonical_json_string(item);
+            let converted = chat_tool_output_content(item.get("output"), text_only_model);
             messages.push(json!({
                 "role": "tool",
                 "tool_call_id": call_id,
-                "content": output
+                "content": converted.tool_text
+            }));
+            if !converted.follow_up_parts.is_empty() {
+                messages.push(json!({
+                    "role": "user",
+                    "content": converted.follow_up_parts
+                }));
+            }
+        }
+        Some("tool_search_output") => {
+            flush_pending_tool_calls(
+                messages,
+                pending_tool_calls,
+                pending_reasoning,
+                last_assistant_index,
+            );
+            let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+            messages.push(json!({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": canonical_json_string(item)
             }));
         }
         Some("reasoning") => {
@@ -913,43 +933,144 @@ fn append_responses_item_as_chat_message(
     Ok(())
 }
 
-fn chat_tool_output_content(output: Option<&Value>) -> (String, Vec<Value>) {
+struct ChatToolOutputContent {
+    tool_text: String,
+    follow_up_parts: Vec<Value>,
+}
+
+fn chat_tool_output_content(
+    output: Option<&Value>,
+    text_only_model: bool,
+) -> ChatToolOutputContent {
     let parsed_output = match output {
         Some(Value::String(value)) => match serde_json::from_str::<Value>(value) {
             Ok(parsed) => parsed,
-            Err(_) => return (value.clone(), Vec::new()),
+            Err(_) => {
+                return ChatToolOutputContent {
+                    tool_text: value.clone(),
+                    follow_up_parts: Vec::new(),
+                };
+            }
         },
         Some(value) => value.clone(),
-        None => return (String::new(), Vec::new()),
+        None => {
+            return ChatToolOutputContent {
+                tool_text: String::new(),
+                follow_up_parts: Vec::new(),
+            };
+        }
     };
 
     let Value::Array(parts) = &parsed_output else {
-        return (canonical_json_string(&parsed_output), Vec::new());
+        return ChatToolOutputContent {
+            tool_text: canonical_json_string(&parsed_output),
+            follow_up_parts: Vec::new(),
+        };
     };
-    let mut retained = Vec::with_capacity(parts.len());
-    let mut images = Vec::new();
+    let is_structured_content = parts.iter().all(Value::is_object)
+        && parts.iter().any(|part| {
+            matches!(
+                part.get("type").and_then(Value::as_str),
+                Some("input_text" | "input_image" | "input_audio" | "encrypted_content")
+            )
+        });
+    if !is_structured_content {
+        return ChatToolOutputContent {
+            tool_text: canonical_json_string(&parsed_output),
+            follow_up_parts: Vec::new(),
+        };
+    }
+    let mut text_parts = Vec::new();
+    let mut follow_up_parts = Vec::new();
+    let mut image_count = 0usize;
+    let mut audio_count = 0usize;
+    let mut encrypted_count = 0usize;
+    let mut unsupported_count = 0usize;
     for part in parts {
-        let image_url = part
-            .get("type")
-            .and_then(Value::as_str)
-            .filter(|part_type| *part_type == "input_image")
-            .and_then(|_| part.get("image_url"))
-            .and_then(Value::as_str);
-        if let Some(image_url) = image_url {
-            images.push(json!({
-                "type": "image_url",
-                "image_url": {"url": image_url}
-            }));
-        } else {
-            retained.push(part.clone());
+        match part.get("type").and_then(Value::as_str) {
+            Some("input_text") => {
+                if let Some(text) = part.get("text").and_then(Value::as_str) {
+                    if !text.is_empty() {
+                        text_parts.push(text.to_string());
+                    }
+                }
+            }
+            Some("input_image") => {
+                image_count += 1;
+                if text_only_model {
+                    continue;
+                }
+                if let Some(image_url) = part.get("image_url").and_then(Value::as_str) {
+                    let mut image = json!({"url": image_url});
+                    if let Some(detail) = part.get("detail").and_then(Value::as_str) {
+                        image["detail"] = json!(detail);
+                    }
+                    follow_up_parts.push(json!({
+                        "type": "image_url",
+                        "image_url": image
+                    }));
+                }
+            }
+            Some("input_audio") => {
+                audio_count += 1;
+                if text_only_model {
+                    continue;
+                }
+                if let Some(audio) = part
+                    .get("audio_url")
+                    .and_then(Value::as_str)
+                    .and_then(data_audio_url_to_chat_audio)
+                {
+                    follow_up_parts.push(json!({
+                        "type": "input_audio",
+                        "input_audio": audio
+                    }));
+                } else {
+                    unsupported_count += 1;
+                }
+            }
+            Some("encrypted_content") => encrypted_count += 1,
+            Some(_) | None => unsupported_count += 1,
         }
     }
-    let text = if retained.is_empty() {
-        format!("[tool returned {} image(s)]", images.len())
-    } else {
-        canonical_json_string(&Value::Array(retained))
-    };
-    (text, images)
+    if image_count > 0 {
+        text_parts.push(if text_only_model {
+            format!("[tool returned {image_count} image(s); omitted for text-only model]")
+        } else {
+            format!("[tool returned {image_count} image(s)]")
+        });
+    }
+    if audio_count > 0 {
+        text_parts.push(if text_only_model {
+            format!("[tool returned {audio_count} audio item(s); omitted for text-only model]")
+        } else {
+            format!("[tool returned {audio_count} audio item(s)]")
+        });
+    }
+    if encrypted_count > 0 {
+        text_parts.push(format!(
+            "[tool returned {encrypted_count} encrypted content item(s)]"
+        ));
+    }
+    if unsupported_count > 0 {
+        text_parts.push(format!(
+            "[tool returned {unsupported_count} unsupported structured item(s)]"
+        ));
+    }
+    ChatToolOutputContent {
+        tool_text: text_parts.join("\n"),
+        follow_up_parts,
+    }
+}
+
+fn data_audio_url_to_chat_audio(value: &str) -> Option<Value> {
+    let rest = value.strip_prefix("data:audio/")?;
+    let (media, data) = rest.split_once(",")?;
+    let format = media.strip_suffix(";base64")?;
+    if format.is_empty() || data.is_empty() {
+        return None;
+    }
+    Some(json!({"data": data, "format": format}))
 }
 
 fn flush_pending_tool_calls(
@@ -1237,21 +1358,48 @@ fn responses_content_to_chat_content(_role: &str, content: &Value, text_only_mod
                 }
             }
             "input_file" => {
-                if let Some(file) = responses_input_file_to_chat_file(part) {
+                if text_only_model {
+                    chat_parts.push(json!({
+                        "type": "text",
+                        "text": "[file omitted: current model accepts text-only input]"
+                    }));
+                } else if let Some(file) = responses_input_file_to_chat_file(part) {
                     chat_parts.push(json!({
                         "type": "file",
                         "file": file
                     }));
                     has_non_text_part = true;
+                } else {
+                    chat_parts.push(json!({
+                        "type": "text",
+                        "text": "[file omitted: unsupported file URL]"
+                    }));
                 }
             }
             "input_audio" => {
-                if let Some(input_audio) = part.get("input_audio") {
+                if text_only_model {
+                    chat_parts.push(json!({
+                        "type": "text",
+                        "text": "[audio omitted: current model accepts text-only input]"
+                    }));
+                    continue;
+                }
+                let input_audio = part.get("input_audio").cloned().or_else(|| {
+                    part.get("audio_url")
+                        .and_then(Value::as_str)
+                        .and_then(data_audio_url_to_chat_audio)
+                });
+                if let Some(input_audio) = input_audio {
                     chat_parts.push(json!({
                         "type": "input_audio",
-                        "input_audio": input_audio.clone()
+                        "input_audio": input_audio
                     }));
                     has_non_text_part = true;
+                } else {
+                    chat_parts.push(json!({
+                        "type": "text",
+                        "text": "[audio omitted: unsupported audio URL]"
+                    }));
                 }
             }
             _ => {}
@@ -3307,6 +3455,82 @@ mod tests {
             "data:image/png;base64,AAAA"
         );
         assert!(!messages[1]["content"].as_str().unwrap().contains("base64"));
+    }
+
+    #[test]
+    fn responses_request_to_chat_converts_all_structured_custom_tool_modalities() {
+        let input = json!({
+            "model": "vision-model",
+            "input": [{
+                "type": "custom_tool_call_output",
+                "call_id": "custom_1",
+                "output": [
+                    {"type":"input_text","text":"inspection complete"},
+                    {"type":"input_image","image_url":"data:image/png;base64,AAAA","detail":"high"},
+                    {"type":"input_audio","audio_url":"data:audio/wav;base64,QVVESU8="},
+                    {"type":"encrypted_content","encrypted_content":"opaque-secret"},
+                    {"type":"future_binary","data":"SHOULD_NOT_LEAK"}
+                ]
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+        let tool_text = messages[0]["content"].as_str().unwrap();
+        assert!(tool_text.contains("inspection complete"));
+        assert!(tool_text.contains("encrypted content"));
+        assert!(tool_text.contains("unsupported structured"));
+        assert!(!tool_text.contains("opaque-secret"));
+        assert!(!tool_text.contains("SHOULD_NOT_LEAK"));
+        assert_eq!(messages[1]["content"][0]["image_url"]["detail"], "high");
+        assert_eq!(messages[1]["content"][1]["input_audio"]["format"], "wav");
+        assert_eq!(messages[1]["content"][1]["input_audio"]["data"], "QVVESU8=");
+    }
+
+    #[test]
+    fn responses_request_to_chat_bounds_tool_modalities_for_text_only_models() {
+        let input = json!({
+            "model": "deepseek-v4-pro",
+            "input": [{
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": [
+                    {"type":"input_image","image_url":"data:image/png;base64,VERY_LARGE_IMAGE"},
+                    {"type":"input_audio","audio_url":"data:audio/wav;base64,VERY_LARGE_AUDIO"}
+                ]
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 1);
+        let content = messages[0]["content"].as_str().unwrap();
+        assert!(content.contains("omitted for text-only model"));
+        assert!(!content.contains("VERY_LARGE"));
+    }
+
+    #[test]
+    fn responses_request_to_chat_maps_current_audio_url_and_bounds_remote_media() {
+        let input = json!({
+            "model": "multimodal-model",
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {"type":"input_audio","audio_url":"data:audio/mp3;base64,TVAz"},
+                    {"type":"input_file","file_url":"https://example.test/report.pdf"}
+                ]
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let content = result["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["input_audio"]["format"], "mp3");
+        assert_eq!(content[0]["input_audio"]["data"], "TVAz");
+        assert_eq!(content[1]["text"], "[file omitted: unsupported file URL]");
+        assert!(!result
+            .to_string()
+            .contains("https://example.test/report.pdf"));
     }
 
     #[test]

@@ -1868,15 +1868,7 @@ fn rollout_visible_conversation(path: &Path) -> Vec<VisibleConversationMessage> 
             continue;
         }
         let payload = value.get("payload").unwrap_or(&Value::Null);
-        let (role, content) = match payload.get("type").and_then(Value::as_str) {
-            Some("user_message") => (
-                "user",
-                json_string(payload, "message")
-                    .or_else(|| json_string(payload, "text"))
-                    .and_then(|message| visible_rollout_user_message(&message)),
-            ),
-            _ => continue,
-        };
+        let (role, content) = ("user", rollout_user_event_preview(payload));
         let Some(content) = content.map(|text| normalize_visible_message(&text)) else {
             continue;
         };
@@ -2029,7 +2021,7 @@ fn parse_rollout_thread_metadata(
             metadata.id = json_string(payload, "id").unwrap_or_default();
             metadata.model_provider = json_string(payload, "model_provider");
             metadata.cwd = json_string(payload, "cwd");
-            metadata.source = json_string(payload, "source");
+            metadata.source = rollout_session_source_kind(payload.get("source"));
             metadata.thread_source = json_string(payload, "thread_source");
             continue;
         }
@@ -2037,15 +2029,8 @@ fn parse_rollout_thread_metadata(
             .get("type")
             .and_then(Value::as_str)
             .or_else(|| value.get("type").and_then(Value::as_str));
-        if value.get("type").and_then(Value::as_str) == Some("event_msg")
-            && matches!(event_type, Some("user_message"))
-        {
-            let message =
-                json_string(payload, "message").or_else(|| json_string(&value, "message"));
-            if let Some(message) = message
-                .and_then(|text| visible_rollout_user_message(&text))
-                .filter(|text| !text.is_empty())
-            {
+        if value.get("type").and_then(Value::as_str) == Some("event_msg") {
+            if let Some(message) = rollout_user_event_preview(payload) {
                 metadata.has_user_event = true;
                 if metadata.first_user_message.is_none() {
                     metadata.first_user_message = Some(message.clone());
@@ -2056,8 +2041,10 @@ fn parse_rollout_thread_metadata(
                 if metadata.title.is_none() {
                     metadata.title = Some(message);
                 }
+                continue;
             }
-        } else if matches!(event_type, Some("thread_goal_updated")) && metadata.preview.is_none() {
+        }
+        if matches!(event_type, Some("thread_goal_updated")) && metadata.preview.is_none() {
             let objective = payload
                 .pointer("/goal/objective")
                 .and_then(Value::as_str)
@@ -2088,6 +2075,84 @@ fn parse_rollout_thread_metadata(
     Ok(Some(metadata))
 }
 
+fn rollout_session_source_kind(source: Option<&Value>) -> Option<String> {
+    match source? {
+        Value::String(value) => Some(value.trim().to_ascii_lowercase()),
+        Value::Object(value)
+            if value.contains_key("sub_agent") || value.contains_key("subagent") =>
+        {
+            Some("subagent".to_string())
+        }
+        Value::Object(value) if value.len() == 1 => value
+            .keys()
+            .next()
+            .map(|key| key.trim().to_ascii_lowercase()),
+        _ => None,
+    }
+}
+
+fn rollout_user_event_preview(payload: &Value) -> Option<String> {
+    match payload.get("type").and_then(Value::as_str) {
+        Some("user_message") => {
+            let message = json_string(payload, "message").or_else(|| json_string(payload, "text"));
+            visible_user_text_or_modality_placeholder(
+                message.as_deref(),
+                payload.get("images"),
+                payload.get("audio"),
+            )
+        }
+        Some("item_completed")
+            if payload.pointer("/item/type").and_then(Value::as_str) == Some("user_message") =>
+        {
+            let item = payload.get("item")?;
+            let message = item
+                .get("content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|part| {
+                    matches!(
+                        part.get("type").and_then(Value::as_str),
+                        Some("text") | Some("input_text")
+                    )
+                    .then(|| part.get("text").and_then(Value::as_str))
+                    .flatten()
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            visible_user_text_or_modality_placeholder(
+                (!message.trim().is_empty()).then_some(message.as_str()),
+                item.get("images"),
+                item.get("audio"),
+            )
+        }
+        _ => None,
+    }
+}
+
+fn visible_user_text_or_modality_placeholder(
+    message: Option<&str>,
+    images: Option<&Value>,
+    audio: Option<&Value>,
+) -> Option<String> {
+    if let Some(message) = message.and_then(visible_rollout_user_message) {
+        return Some(message);
+    }
+    if images
+        .and_then(Value::as_array)
+        .is_some_and(|items| !items.is_empty())
+    {
+        return Some("[Image]".to_string());
+    }
+    if audio
+        .and_then(Value::as_array)
+        .is_some_and(|items| !items.is_empty())
+    {
+        return Some("[Audio]".to_string());
+    }
+    None
+}
+
 fn json_string(value: &Value, key: &str) -> Option<String> {
     value
         .get(key)
@@ -2111,7 +2176,7 @@ fn strip_rollout_user_message_prefix(value: &str) -> String {
         .to_string()
 }
 
-fn visible_rollout_user_message(value: &str) -> Option<String> {
+pub(crate) fn visible_rollout_user_message(value: &str) -> Option<String> {
     let message = strip_rollout_user_message_prefix(value);
     let trimmed = message.trim();
     if trimmed.is_empty() || rollout_message_is_internal_transcript(trimmed) {
@@ -2177,15 +2242,13 @@ fn rollout_contains_only_internal_user_events(path: &Path) -> bool {
             continue;
         }
         let payload = value.get("payload").unwrap_or(&Value::Null);
-        if payload.get("type").and_then(Value::as_str) != Some("user_message") {
+        let is_user_event = payload.get("type").and_then(Value::as_str) == Some("user_message")
+            || (payload.get("type").and_then(Value::as_str) == Some("item_completed")
+                && payload.pointer("/item/type").and_then(Value::as_str) == Some("user_message"));
+        if !is_user_event {
             continue;
         }
-        let Some(message) =
-            json_string(payload, "message").or_else(|| json_string(payload, "text"))
-        else {
-            continue;
-        };
-        if visible_rollout_user_message(&message).is_some() {
+        if rollout_user_event_preview(payload).is_some() {
             return false;
         }
         saw_internal = true;
@@ -4692,6 +4755,51 @@ mod tests {
         );
         assert_eq!(metadata.preview.as_deref(), Some("修复真正的问题"));
         assert_eq!(metadata.title.as_deref(), Some("修复真正的问题"));
+    }
+
+    #[test]
+    fn rollout_metadata_matches_official_item_completed_user_reducer() {
+        let dir = tempdir().expect("tempdir");
+        let rollout = dir.path().join("paginated.jsonl");
+        fs::write(
+            &rollout,
+            r#"{"timestamp":"2026-07-27T01:00:00Z","type":"session_meta","payload":{"id":"paginated","cwd":"C:\\work","source":"vscode","thread_source":"user"}}
+{"timestamp":"2026-07-27T01:00:01Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"user_message","content":[{"type":"text","text":"new reducer request"}]}}}
+"#,
+        )
+        .expect("rollout");
+
+        let metadata = parse_rollout_thread_metadata(&rollout, false)
+            .expect("parse")
+            .expect("metadata");
+        assert_eq!(metadata.source.as_deref(), Some("vscode"));
+        assert_eq!(
+            metadata.first_user_message.as_deref(),
+            Some("new reducer request")
+        );
+        assert!(metadata.has_user_event);
+    }
+
+    #[test]
+    fn rollout_source_taxonomy_separates_interactive_and_subagent_sessions() {
+        assert_eq!(
+            rollout_session_source_kind(Some(&serde_json::json!("cli"))).as_deref(),
+            Some("cli")
+        );
+        assert_eq!(
+            rollout_session_source_kind(Some(&serde_json::json!({"sub_agent":{"review":{}}})))
+                .as_deref(),
+            Some("subagent")
+        );
+        assert!(is_interactive_history_source(Some("cli")));
+        assert!(is_interactive_history_source(Some("vscode")));
+        assert!(!is_interactive_history_source(Some("exec")));
+        assert!(!is_interactive_history_source(Some("mcp")));
+        assert!(!is_interactive_history_source(Some("subagent")));
+        assert!(is_user_thread_source(Some("user")));
+        assert!(!is_user_thread_source(Some("subagent")));
+        assert!(!is_user_thread_source(Some("memory_consolidation")));
+        assert!(!is_user_thread_source(Some("feature")));
     }
 
     #[test]

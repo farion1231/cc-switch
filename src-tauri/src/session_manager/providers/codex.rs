@@ -55,7 +55,7 @@ fn scan_sessions_in_roots(roots: &[PathBuf]) -> Vec<SessionMeta> {
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     let file = File::open(path).map_err(|e| format!("Failed to open session file: {e}"))?;
     let reader = BufReader::new(file);
-    let mut messages = Vec::new();
+    let mut messages: Vec<SessionMessage> = Vec::new();
 
     for line in reader.lines() {
         let line = match line {
@@ -67,42 +67,59 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             Err(_) => continue,
         };
 
-        if value.get("type").and_then(Value::as_str) != Some("response_item") {
-            continue;
-        }
-
         let payload = match value.get("payload") {
             Some(payload) => payload,
             None => continue,
         };
+        let envelope_type = value.get("type").and_then(Value::as_str);
+        let payload_type = payload.get("type").and_then(Value::as_str);
 
-        let payload_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
-
-        // Codex uses separate payload types for tool interactions
-        let (role, content) = match payload_type {
-            "message" => {
-                let role = payload
-                    .get("role")
+        // Visible history is reconstructed from authoritative user events and final
+        // assistant messages. response_item user/developer records are model-input
+        // transcripts and function items are tool plumbing, not ordinary chat rows.
+        let (role, content) = match (envelope_type, payload_type) {
+            (Some("event_msg"), Some("user_message")) => (
+                "user".to_string(),
+                payload
+                    .get("message")
+                    .or_else(|| payload.get("text"))
                     .and_then(Value::as_str)
-                    .unwrap_or("unknown")
-                    .to_string();
-                let content = payload.get("content").map(extract_text).unwrap_or_default();
-                (role, content)
+                    .and_then(crate::codex_history_migration::visible_rollout_user_message)
+                    .unwrap_or_default(),
+            ),
+            (Some("event_msg"), Some("item_completed"))
+                if payload.pointer("/item/type").and_then(Value::as_str)
+                    == Some("user_message") =>
+            {
+                (
+                    "user".to_string(),
+                    crate::codex_history_migration::visible_rollout_user_message(
+                        &payload
+                            .pointer("/item/content")
+                            .map(extract_text)
+                            .unwrap_or_default(),
+                    )
+                    .unwrap_or_default(),
+                )
             }
-            "function_call" => {
-                let name = payload
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown");
-                ("assistant".to_string(), format!("[Tool: {name}]"))
+            (Some("response_item"), Some("message"))
+                if payload.get("role").and_then(Value::as_str) == Some("assistant") =>
+            {
+                (
+                    "assistant".to_string(),
+                    payload.get("content").map(extract_text).unwrap_or_default(),
+                )
             }
-            "function_call_output" => {
-                let output = payload
-                    .get("output")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string();
-                ("tool".to_string(), output)
+            (Some("response_item"), Some("message"))
+                if payload.get("role").and_then(Value::as_str) == Some("user") =>
+            {
+                (
+                    "user".to_string(),
+                    crate::codex_history_migration::visible_rollout_user_message(
+                        &payload.get("content").map(extract_text).unwrap_or_default(),
+                    )
+                    .unwrap_or_default(),
+                )
             }
             _ => continue,
         };
@@ -113,6 +130,12 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 
         let ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
 
+        if messages
+            .last()
+            .is_some_and(|previous| previous.role == role && previous.content == content)
+        {
+            continue;
+        }
         messages.push(SessionMessage { role, content, ts });
     }
 
@@ -645,7 +668,7 @@ mod tests {
     }
 
     #[test]
-    fn load_messages_includes_function_call_and_output() {
+    fn load_messages_excludes_tool_plumbing_from_visible_chat() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("session.jsonl");
         std::fs::write(
@@ -661,18 +684,34 @@ mod tests {
         .expect("write");
 
         let msgs = load_messages(&path).expect("load");
-        assert_eq!(msgs.len(), 4);
+        assert_eq!(msgs.len(), 2);
 
         assert_eq!(msgs[0].role, "user");
         assert_eq!(msgs[0].content, "list files");
 
         assert_eq!(msgs[1].role, "assistant");
-        assert!(msgs[1].content.contains("[Tool: shell]"));
+        assert_eq!(msgs[1].content, "Done.");
+    }
 
-        assert_eq!(msgs[2].role, "tool");
-        assert!(msgs[2].content.contains("file1.txt"));
+    #[test]
+    fn load_messages_excludes_developer_and_recovery_transcripts() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"developer\",\"content\":\"tool instructions\"}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"<environment_context>\\n<cwd>C:\\\\work</cwd>\"}}\n",
+                "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"call_1\",\"output\":\"secret tool state\"}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"real request\"}}\n",
+                "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"real answer\"}}\n"
+            ),
+        )
+        .expect("write");
 
-        assert_eq!(msgs[3].role, "assistant");
-        assert_eq!(msgs[3].content, "Done.");
+        let messages = load_messages(&path).expect("load");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content, "real request");
+        assert_eq!(messages[1].content, "real answer");
     }
 }
