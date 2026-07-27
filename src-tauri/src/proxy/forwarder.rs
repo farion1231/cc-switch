@@ -42,6 +42,14 @@ const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
 const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
 const ONE_M_CONTEXT_BETA: &str = "context-1m-2025-08-07";
 
+fn body_model_has_one_m_suffix(body: &Value) -> bool {
+    let Some(model) = body.get("model").and_then(Value::as_str) else {
+        return false;
+    };
+
+    super::model_mapper::strip_one_m_suffix_for_upstream(model) != model
+}
+
 fn strip_one_m_suffix_from_body(body: &mut Value) -> bool {
     let Some(model) = body
         .get("model")
@@ -59,6 +67,11 @@ fn strip_one_m_suffix_from_body(body: &mut Value) -> bool {
     log::debug!("[ModelMapper] 去除本地 1M 标记: {model} → {stripped}");
     body["model"] = Value::String(stripped.to_string());
     true
+}
+
+fn resolve_claude_desktop_one_m(requested_one_m: bool, mapped_body: &mut Value) -> bool {
+    let mapped_one_m = strip_one_m_suffix_from_body(mapped_body);
+    requested_one_m || mapped_one_m
 }
 
 fn merge_anthropic_beta_values(existing: Option<&str>, required: &[&str]) -> String {
@@ -1197,6 +1210,11 @@ impl RequestForwarder {
             validate_codex_official_authorization(headers)?;
         }
 
+        // Preserve the requested route's 1M intent before Desktop model mapping
+        // replaces it with the configured upstream model.
+        let claude_desktop_requested_one_m = matches!(app_type, AppType::ClaudeDesktop)
+            && body_model_has_one_m_suffix(body);
+
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
@@ -1233,7 +1251,10 @@ impl RequestForwarder {
             // strip+`context-1m` beta detection. The marker is stripped later, on the
             // final anthropic_body.
             if matches!(app_type, AppType::ClaudeDesktop) {
-                claude_desktop_one_m = strip_one_m_suffix_from_body(&mut mapped_body);
+                claude_desktop_one_m = resolve_claude_desktop_one_m(
+                    claude_desktop_requested_one_m,
+                    &mut mapped_body,
+                );
             } else {
                 mapped_body =
                     super::model_mapper::strip_one_m_suffix_for_upstream_from_body(mapped_body);
@@ -3668,12 +3689,35 @@ mod tests {
     }
 
     #[test]
+    fn desktop_one_m_requested_marker_survives_route_mapping() {
+        let requested = json!({"model": "claude-sonnet-4-5[1m]"});
+        let mut mapped = json!({"model": "claude-sonnet-4-5-20250929"});
+
+        let requested_one_m = body_model_has_one_m_suffix(&requested);
+        let one_m = resolve_claude_desktop_one_m(requested_one_m, &mut mapped);
+
+        assert!(one_m);
+        assert_eq!(mapped["model"], json!("claude-sonnet-4-5-20250929"));
+    }
+
+    #[test]
     fn desktop_one_m_upstream_marker_is_detected_and_stripped() {
         let mut body = json!({"model": "claude-sonnet-4-5-20250929[1m]"});
 
-        assert!(strip_one_m_suffix_from_body(&mut body));
+        assert!(resolve_claude_desktop_one_m(false, &mut body));
         assert_eq!(body["model"], json!("claude-sonnet-4-5-20250929"));
-        assert!(!strip_one_m_suffix_from_body(&mut body));
+    }
+
+    #[test]
+    fn desktop_without_one_m_marker_stays_disabled() {
+        let requested = json!({"model": "claude-sonnet-4-5"});
+        let mut mapped = json!({"model": "claude-sonnet-4-5-20250929"});
+
+        let requested_one_m = body_model_has_one_m_suffix(&requested);
+        let one_m = resolve_claude_desktop_one_m(requested_one_m, &mut mapped);
+
+        assert!(!one_m);
+        assert_eq!(mapped["model"], json!("claude-sonnet-4-5-20250929"));
     }
 
     #[test]
