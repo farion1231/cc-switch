@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, RefreshCw } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,25 +56,32 @@ const parsePositiveInteger = (value: string) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 };
 
-const validateJSONObject = (enabled: boolean, value: string, label: string) => {
-  if (!enabled) return;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value || "{}");
-  } catch {
-    throw new Error(`${label}不是有效 JSON`);
-  }
-  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
-    throw new Error(`${label}必须是 JSON 对象`);
-  }
-};
-
 export function CursorModelDialog({
   open,
   provider,
   onOpenChange,
   onSave,
 }: CursorModelDialogProps) {
+  const { t } = useTranslation();
+  const validateJSONObject = (
+    enabled: boolean,
+    value: string,
+    label: string,
+  ) => {
+    if (!enabled) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(value || "{}");
+    } catch {
+      throw new Error(t("cursor.modelDialog.error.invalidJson", { label }));
+    }
+    if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
+      throw new Error(
+        t("cursor.modelDialog.error.jsonObjectRequired", { label }),
+      );
+    }
+  };
+
   const [form, setForm] = useState<FormState>(() => createFormState(provider));
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -126,7 +134,7 @@ export function CursorModelDialog({
     const baseUrl = form.config.baseURL.trim();
     const apiKey = form.config.apiKey.trim();
     if (!baseUrl || !apiKey) {
-      setError("请先填写 Base URL 和 API Key");
+      setError(t("cursor.modelDialog.error.credentialsRequired"));
       return;
     }
 
@@ -143,16 +151,17 @@ export function CursorModelDialog({
       );
       setDiscoveredModels(models);
       if (models.length === 0) {
-        setError("提供商返回了空模型列表");
+        setError(t("cursor.modelDialog.error.emptyModelList"));
       }
     } catch (discoveryError) {
       setDiscoveredModels([]);
       setError(
-        `自动发现失败：${
-          discoveryError instanceof Error
-            ? discoveryError.message
-            : String(discoveryError)
-        }`,
+        t("cursor.modelDialog.error.discoveryFailed", {
+          error:
+            discoveryError instanceof Error
+              ? discoveryError.message
+              : String(discoveryError),
+        }),
       );
     } finally {
       setDiscovering(false);
@@ -194,26 +203,28 @@ export function CursorModelDialog({
       apiKey: form.config.apiKey.trim(),
       modelID: form.config.modelID.trim(),
       pricingModel: form.config.pricingModel.trim(),
-      tooltipData: form.config.tooltipData.trim() || "Managed by CC Switch",
+      tooltipData:
+        form.config.tooltipData.trim() ||
+        t("cursor.modelDialog.defaults.tooltipData"),
     };
     try {
       if (!name || !config.baseURL || !config.apiKey || !config.modelID) {
-        throw new Error("名称、Base URL、API Key 和上游模型不能为空");
+        throw new Error(t("cursor.modelDialog.error.requiredFields"));
       }
       validateJSONObject(
         config.openAIExtraParamsEnabled,
         config.openAIExtraParamsJSON,
-        "OpenAI 额外参数",
+        t("cursor.modelDialog.fields.openAIExtraParams"),
       );
       validateJSONObject(
         config.anthropicExtraParamsEnabled,
         config.anthropicExtraParamsJSON,
-        "Anthropic 额外参数",
+        t("cursor.modelDialog.fields.anthropicExtraParams"),
       );
       validateJSONObject(
         config.customHeadersEnabled,
         config.customHeadersJSON,
-        "自定义请求头",
+        t("cursor.modelDialog.fields.customHeaders"),
       );
       setSaving(true);
       await onSave({
@@ -239,18 +250,22 @@ export function CursorModelDialog({
   const footer = (
     <>
       <span className="mr-auto min-w-0 truncate text-xs text-muted-foreground">
-        配置保存后，模型会归入对应的提供商分组。
+        {t("cursor.modelDialog.footerHint")}
       </span>
       <Button
         variant="outline"
         onClick={() => onOpenChange(false)}
         disabled={saving}
       >
-        取消
+        {t("common.cancel")}
       </Button>
       <Button onClick={() => void handleSave()} disabled={saving}>
         {!provider && <Plus className="mr-2 h-4 w-4" />}
-        {saving ? "保存中…" : provider ? "保存修改" : "添加模型"}
+        {saving
+          ? t("common.saving")
+          : provider
+            ? t("cursor.modelDialog.saveChanges")
+            : t("cursor.modelDialog.addModel")}
       </Button>
     </>
   );
@@ -258,7 +273,11 @@ export function CursorModelDialog({
   return (
     <FullScreenPanel
       isOpen={open}
-      title={provider ? "编辑 Cursor 模型" : "添加 Cursor 模型"}
+      title={
+        provider
+          ? t("cursor.modelDialog.editTitle")
+          : t("cursor.modelDialog.addTitle")
+      }
       onClose={() => onOpenChange(false)}
       footer={footer}
       contentClassName="pt-3"
@@ -273,26 +292,30 @@ export function CursorModelDialog({
 
           <section className="space-y-5">
             <div>
-              <h3 className="text-base font-semibold">基础配置</h3>
+              <h3 className="text-base font-semibold">
+                {t("cursor.modelDialog.basic.title")}
+              </h3>
               <p className="mt-1 text-sm text-muted-foreground">
-                填写提供商连接信息，并选择要显示在 Cursor 中的模型。
+                {t("cursor.modelDialog.basic.description")}
               </p>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <Field
-                label="提供商名称"
-                hint="同一提供商名称和接口地址下的模型会归为一组"
+                label={t("cursor.modelDialog.fields.providerName")}
+                hint={t("cursor.modelDialog.fields.providerNameHint")}
               >
                 <Input
                   value={config.providerGroup}
                   onChange={(event) =>
                     setConfig("providerGroup", event.target.value)
                   }
-                  placeholder="例如 OpenRouter"
+                  placeholder={t(
+                    "cursor.modelDialog.placeholders.providerName",
+                  )}
                 />
               </Field>
-              <Field label="API 协议">
+              <Field label={t("cursor.modelDialog.fields.apiProtocol")}>
                 <Select
                   value={config.type}
                   onValueChange={(value) =>
@@ -303,35 +326,43 @@ export function CursorModelDialog({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="openai">OpenAI Compatible</SelectItem>
+                    <SelectItem value="openai">
+                      {t("cursor.protocol.openAICompatible")}
+                    </SelectItem>
                     <SelectItem value="anthropic">
-                      Anthropic Compatible
+                      {t("cursor.protocol.anthropicCompatible")}
                     </SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
             </div>
 
-            <Field label="API 端点" hint="供应商的 API Base URL">
+            <Field
+              label={t("cursor.modelDialog.fields.apiEndpoint")}
+              hint={t("cursor.modelDialog.fields.apiEndpointHint")}
+            >
               <Input
                 value={config.baseURL}
                 onChange={(event) => setConfig("baseURL", event.target.value)}
-                placeholder="https://api.example.com"
+                placeholder={t("cursor.modelDialog.placeholders.apiEndpoint")}
               />
             </Field>
 
-            <Field label="API Key" hint="凭证仅存储在本机数据库中">
+            <Field
+              label={t("cursor.modelDialog.fields.apiKey")}
+              hint={t("cursor.modelDialog.fields.apiKeyHint")}
+            >
               <Input
                 type="password"
                 value={config.apiKey}
                 onChange={(event) => setConfig("apiKey", event.target.value)}
                 autoComplete="new-password"
-                placeholder="sk-..."
+                placeholder={t("cursor.modelDialog.placeholders.apiKey")}
               />
             </Field>
 
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="模型显示名称">
+              <Field label={t("cursor.modelDialog.fields.displayName")}>
                 <Input
                   value={form.name}
                   onChange={(event) =>
@@ -340,10 +371,10 @@ export function CursorModelDialog({
                       name: event.target.value,
                     }))
                   }
-                  placeholder="例如 GPT-5 Coding"
+                  placeholder={t("cursor.modelDialog.placeholders.displayName")}
                 />
               </Field>
-              <Field label="上游模型 ID">
+              <Field label={t("cursor.modelDialog.fields.upstreamModelId")}>
                 <div className="flex gap-2">
                   <Input
                     value={config.modelID}
@@ -352,8 +383,8 @@ export function CursorModelDialog({
                     }
                     placeholder={
                       config.type === "anthropic"
-                        ? "claude-sonnet-4-6"
-                        : "gpt-5.4"
+                        ? t("cursor.modelDialog.placeholders.anthropicModelId")
+                        : t("cursor.modelDialog.placeholders.openAIModelId")
                     }
                   />
                   {discoveredModels.length > 0 && (
@@ -373,10 +404,12 @@ export function CursorModelDialog({
                       className={`mr-2 h-4 w-4 ${discovering ? "animate-spin" : ""}`}
                     />
                     {discovering
-                      ? "获取中…"
+                      ? t("cursor.modelDialog.models.fetching")
                       : discoveredModels.length > 0
-                        ? `${discoveredModels.length} 个模型`
-                        : "获取模型"}
+                        ? t("cursor.modelDialog.models.count", {
+                            count: discoveredModels.length,
+                          })
+                        : t("cursor.modelDialog.models.fetchAction")}
                   </Button>
                 </div>
               </Field>
@@ -396,28 +429,34 @@ export function CursorModelDialog({
                 ) : (
                   <ChevronRight className="h-4 w-4" />
                 )}
-                高级设置
+                {t("cursor.modelDialog.advanced.title")}
               </Button>
             </CollapsibleTrigger>
             {!advancedOpen && (
               <p className="ml-1 mt-1 text-xs text-muted-foreground">
-                计价、推理参数、Token 限制以及自定义请求参数
+                {t("cursor.modelDialog.advanced.description")}
               </p>
             )}
             <CollapsibleContent className="space-y-5 pt-4">
-              <Field label="计价模型（可选）" hint="留空时使用上游模型 ID">
+              <Field
+                label={t("cursor.modelDialog.fields.pricingModel")}
+                hint={t("cursor.modelDialog.fields.pricingModelHint")}
+              >
                 <Input
                   value={config.pricingModel}
                   onChange={(event) =>
                     setConfig("pricingModel", event.target.value)
                   }
-                  placeholder={config.modelID || "与定价表模型一致"}
+                  placeholder={
+                    config.modelID ||
+                    t("cursor.modelDialog.placeholders.pricingModel")
+                  }
                 />
               </Field>
 
               {config.type === "openai" ? (
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <Field label="OpenAI Endpoint">
+                  <Field label={t("cursor.modelDialog.fields.openAIEndpoint")}>
                     <Select
                       value={config.openAIEndpoint}
                       onValueChange={(value) =>
@@ -429,17 +468,19 @@ export function CursorModelDialog({
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="/v1/responses">
-                          Responses API
+                          {t("cursor.modelDialog.options.responsesApi")}
                         </SelectItem>
                         <SelectItem value="/v1/chat/completions">
-                          Chat Completions
+                          {t("cursor.modelDialog.options.chatCompletions")}
                         </SelectItem>
-                        <SelectItem value="/custom">Custom</SelectItem>
+                        <SelectItem value="/custom">
+                          {t("cursor.modelDialog.options.custom")}
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </Field>
                   <EffortField
-                    label="推理强度"
+                    label={t("cursor.modelDialog.fields.reasoningEffort")}
                     value={config.reasoningEffort}
                     onValueChange={(value) =>
                       setConfig("reasoningEffort", value)
@@ -449,13 +490,15 @@ export function CursorModelDialog({
               ) : (
                 <div className="grid gap-4 sm:grid-cols-2">
                   <EffortField
-                    label="Thinking Effort"
+                    label={t("cursor.modelDialog.fields.thinkingEffort")}
                     value={config.anthropicThinkingEffort}
                     onValueChange={(value) =>
                       setConfig("anthropicThinkingEffort", value)
                     }
                   />
-                  <Field label="Thinking Budget Tokens">
+                  <Field
+                    label={t("cursor.modelDialog.fields.thinkingBudgetTokens")}
+                  >
                     <Input
                       inputMode="numeric"
                       value={config.thinkingBudgetTokens || ""}
@@ -465,7 +508,9 @@ export function CursorModelDialog({
                           parsePositiveInteger(event.target.value),
                         )
                       }
-                      placeholder="4096"
+                      placeholder={t(
+                        "cursor.modelDialog.placeholders.thinkingBudgetTokens",
+                      )}
                     />
                   </Field>
                 </div>
@@ -473,13 +518,19 @@ export function CursorModelDialog({
 
               <div className="grid gap-4 sm:grid-cols-3">
                 <Field
-                  label="上下文窗口"
+                  label={t("cursor.modelDialog.fields.contextWindow")}
                   hint={
                     contextWindowSource === "provider"
-                      ? `提供商返回 ${formatTokenCount(config.contextWindowTokens)} tokens`
+                      ? t("cursor.modelDialog.contextWindow.provider", {
+                          tokens: formatTokenCount(config.contextWindowTokens),
+                        })
                       : contextWindowSource === "inferred"
-                        ? `已推断为 ${formatTokenCount(config.contextWindowTokens)} tokens`
-                        : "自动发现未提供时可手工填写"
+                        ? t("cursor.modelDialog.contextWindow.inferred", {
+                            tokens: formatTokenCount(
+                              config.contextWindowTokens,
+                            ),
+                          })
+                        : t("cursor.modelDialog.contextWindow.manualHint")
                   }
                 >
                   <Input
@@ -492,10 +543,12 @@ export function CursorModelDialog({
                         parsePositiveInteger(event.target.value),
                       );
                     }}
-                    placeholder="200000"
+                    placeholder={t(
+                      "cursor.modelDialog.placeholders.contextWindowTokens",
+                    )}
                   />
                 </Field>
-                <Field label="最大输出 Tokens">
+                <Field label={t("cursor.modelDialog.fields.maxOutputTokens")}>
                   <Input
                     inputMode="numeric"
                     value={config.maxCompletionTokens || ""}
@@ -505,10 +558,14 @@ export function CursorModelDialog({
                         parsePositiveInteger(event.target.value),
                       )
                     }
-                    placeholder="65536"
+                    placeholder={t(
+                      "cursor.modelDialog.placeholders.maxOutputTokens",
+                    )}
                   />
                 </Field>
-                <Field label="Anthropic Max Tokens">
+                <Field
+                  label={t("cursor.modelDialog.fields.anthropicMaxTokens")}
+                >
                   <Input
                     inputMode="numeric"
                     value={config.anthropicMaxTokens || ""}
@@ -518,13 +575,15 @@ export function CursorModelDialog({
                         parsePositiveInteger(event.target.value),
                       )
                     }
-                    placeholder="65536"
+                    placeholder={t(
+                      "cursor.modelDialog.placeholders.anthropicMaxTokens",
+                    )}
                   />
                 </Field>
               </div>
 
               <JSONOption
-                label="自定义请求头"
+                label={t("cursor.modelDialog.fields.customHeaders")}
                 enabled={config.customHeadersEnabled}
                 value={config.customHeadersJSON}
                 onEnabledChange={(value) =>
@@ -535,8 +594,8 @@ export function CursorModelDialog({
               <JSONOption
                 label={
                   config.type === "openai"
-                    ? "OpenAI 额外参数"
-                    : "Anthropic 额外参数"
+                    ? t("cursor.modelDialog.fields.openAIExtraParams")
+                    : t("cursor.modelDialog.fields.anthropicExtraParams")
                 }
                 enabled={
                   config.type === "openai"
@@ -600,6 +659,8 @@ function EffortField({
   value: string;
   onValueChange: (value: string) => void;
 }) {
+  const { t } = useTranslation();
+
   return (
     <Field label={label}>
       <Select value={value} onValueChange={onValueChange}>
@@ -609,7 +670,7 @@ function EffortField({
         <SelectContent>
           {["low", "medium", "high", "xhigh", "max"].map((option) => (
             <SelectItem key={option} value={option}>
-              {option}
+              {t(`cursor.modelDialog.effort.${option}`)}
             </SelectItem>
           ))}
         </SelectContent>
@@ -631,6 +692,8 @@ function JSONOption({
   onEnabledChange: (enabled: boolean) => void;
   onValueChange: (value: string) => void;
 }) {
+  const { t } = useTranslation();
+
   return (
     <div className="rounded-lg border border-border-default p-4">
       <div className="flex items-center justify-between gap-3">
@@ -642,7 +705,7 @@ function JSONOption({
           className="mt-3 min-h-24 font-mono text-xs"
           value={value}
           onChange={(event) => onValueChange(event.target.value)}
-          placeholder='{"header": "value"}'
+          placeholder={t("cursor.modelDialog.placeholders.jsonObject")}
         />
       )}
     </div>

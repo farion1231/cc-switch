@@ -9,6 +9,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -59,6 +60,7 @@ const resolveCursorEndpointIcon = (providers: CursorProvider[]) => {
 
 export const CursorModelPanel = forwardRef<ProviderCatalogHandle>(
   function CursorModelPanel(_props, ref) {
+    const { t } = useTranslation();
     const endpointsQuery = useCursorEndpoints();
     const providersQuery = useCursorProviders();
     const runtimeQuery = useCursorRuntimeState();
@@ -120,9 +122,9 @@ export const CursorModelPanel = forwardRef<ProviderCatalogHandle>(
     const handleSave = async (provider: CursorProvider) => {
       try {
         await saveProvider.mutateAsync(provider);
-        toast.success("Cursor 模型已保存");
+        toast.success(t("cursor.panel.toast.modelSaved"));
       } catch (error) {
-        reportError("保存 Cursor 模型失败", error);
+        reportError(t("cursor.panel.error.modelSaveFailed"), error);
         throw error;
       }
     };
@@ -131,10 +133,15 @@ export const CursorModelPanel = forwardRef<ProviderCatalogHandle>(
       try {
         await saveProviders.mutateAsync(changes);
         toast.success(
-          `${editingEndpoint ? "Endpoint 已更新" : "Endpoint 已添加"} · ${changes.upserts.length} 个模型`,
+          t(
+            editingEndpoint
+              ? "cursor.panel.toast.endpointUpdated"
+              : "cursor.panel.toast.endpointAdded",
+            { count: changes.upserts.length },
+          ),
         );
       } catch (error) {
-        reportError("保存 Cursor Endpoint 失败", error);
+        reportError(t("cursor.panel.error.endpointSaveFailed"), error);
         throw error;
       }
     };
@@ -144,14 +151,20 @@ export const CursorModelPanel = forwardRef<ProviderCatalogHandle>(
         const result = await testModel.mutateAsync(provider.id);
         setTests((current) => ({ ...current, [provider.id]: result }));
         if (result.status === "success") {
-          toast.success(`${provider.name} 测速完成`);
+          toast.success(
+            t("cursor.panel.toast.testSucceeded", { name: provider.name }),
+          );
         } else {
-          toast.error(`${provider.name} 测速失败`, {
-            description: result.error,
-          });
+          toast.error(
+            t("cursor.panel.toast.testFailed", { name: provider.name }),
+            { description: result.error },
+          );
         }
       } catch (error) {
-        reportError(`${provider.name} 测速失败`, error);
+        reportError(
+          t("cursor.panel.toast.testFailed", { name: provider.name }),
+          error,
+        );
       }
     };
 
@@ -166,7 +179,7 @@ export const CursorModelPanel = forwardRef<ProviderCatalogHandle>(
           try {
             await toggleProvider.mutateAsync({ id: provider.id, enabled });
           } catch (error) {
-            reportError("更新模型启用状态失败", error);
+            reportError(t("cursor.panel.error.toggleFailed"), error);
           }
         }}
         onTest={() => void runTest(provider)}
@@ -186,7 +199,7 @@ export const CursorModelPanel = forwardRef<ProviderCatalogHandle>(
       return (
         <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
           <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-          加载 Cursor 运行状态…
+          {t("cursor.panel.loadingRuntime")}
         </div>
       );
     }
@@ -197,7 +210,7 @@ export const CursorModelPanel = forwardRef<ProviderCatalogHandle>(
           {state?.lastError && (
             <Alert variant="destructive">
               <CircleAlert className="h-4 w-4" />
-              <AlertTitle>Cursor 运行时异常</AlertTitle>
+              <AlertTitle>{t("cursor.panel.runtimeError")}</AlertTitle>
               <AlertDescription>{state.lastError}</AlertDescription>
             </Alert>
           )}
@@ -207,10 +220,11 @@ export const CursorModelPanel = forwardRef<ProviderCatalogHandle>(
               <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-muted">
                 <Activity className="h-7 w-7 text-muted-foreground" />
               </div>
-              <h3 className="text-lg font-semibold">尚未配置 Cursor 模型</h3>
+              <h3 className="text-lg font-semibold">
+                {t("cursor.panel.empty.title")}
+              </h3>
               <p className="mt-2 max-w-lg text-sm text-muted-foreground">
-                添加 OpenAI 或 Anthropic 兼容 Endpoint 后，即可通过安全的本地
-                sidecar 转发 Cursor 聊天。
+                {t("cursor.panel.empty.description")}
               </p>
             </div>
           ) : (
@@ -243,7 +257,15 @@ export const CursorModelPanel = forwardRef<ProviderCatalogHandle>(
                           <button
                             type="button"
                             className="flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                            aria-label={`${expanded ? "收起" : "展开"} ${endpoint.name} 模型列表`}
+                            aria-label={t(
+                              "cursor.panel.endpoint.toggleAriaLabel",
+                              {
+                                action: expanded
+                                  ? t("cursor.panel.endpoint.collapse")
+                                  : t("cursor.panel.endpoint.expand"),
+                                name: endpoint.name,
+                              },
+                            )}
                           >
                             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-muted transition-transform duration-300 group-hover/endpoint:scale-105">
                               <ProviderIcon
@@ -262,8 +284,10 @@ export const CursorModelPanel = forwardRef<ProviderCatalogHandle>(
                                   variant="secondary"
                                   className="rounded-md px-1.5 py-0.5 text-[10px]"
                                 >
-                                  {enabledCount}/{endpointProviders.length}{" "}
-                                  已启用
+                                  {t("cursor.panel.endpoint.enabledCount", {
+                                    enabled: enabledCount,
+                                    total: endpointProviders.length,
+                                  })}
                                 </Badge>
                               </div>
                               <p
@@ -286,8 +310,12 @@ export const CursorModelPanel = forwardRef<ProviderCatalogHandle>(
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 shrink-0 p-1 opacity-0 pointer-events-none transition-opacity duration-200 group-hover/endpoint:opacity-100 group-hover/endpoint:pointer-events-auto group-focus-within/endpoint:opacity-100 group-focus-within/endpoint:pointer-events-auto"
-                          title={`编辑 ${endpoint.name} Endpoint`}
-                          aria-label={`编辑 ${endpoint.name} Endpoint`}
+                          title={t("cursor.panel.endpoint.editAriaLabel", {
+                            name: endpoint.name,
+                          })}
+                          aria-label={t("cursor.panel.endpoint.editAriaLabel", {
+                            name: endpoint.name,
+                          })}
                           onClick={() => {
                             setEditingEndpoint(endpoint);
                             setEditingEndpointProviders(endpointProviders);
@@ -301,7 +329,7 @@ export const CursorModelPanel = forwardRef<ProviderCatalogHandle>(
                         <div className="space-y-2 border-t border-border-default bg-muted/[0.08] p-3">
                           {endpointProviders.length === 0 ? (
                             <div className="rounded-lg border border-dashed border-border px-5 py-6 text-center text-sm text-muted-foreground">
-                              暂无模型，可编辑 Endpoint 后重新添加。
+                              {t("cursor.panel.endpoint.noModels")}
                             </div>
                           ) : (
                             endpointProviders.map(renderModelRow)
@@ -331,14 +359,18 @@ export const CursorModelPanel = forwardRef<ProviderCatalogHandle>(
         />
         <ConfirmDialog
           isOpen={Boolean(deleteTarget)}
-          title="删除 Cursor 模型"
-          message={`确定删除“${deleteTarget?.name ?? ""}”吗？历史使用记录仍会按 Provider ID 和名称快照保留。`}
+          title={t("cursor.panel.delete.title")}
+          message={t("cursor.panel.delete.message", {
+            name: deleteTarget?.name ?? "",
+          })}
           onConfirm={() => {
             if (!deleteTarget) return;
             void deleteProvider
               .mutateAsync(deleteTarget.id)
-              .then(() => toast.success("Cursor 模型已删除"))
-              .catch((error) => reportError("删除 Cursor 模型失败", error))
+              .then(() => toast.success(t("cursor.panel.toast.modelDeleted")))
+              .catch((error) =>
+                reportError(t("cursor.panel.error.modelDeleteFailed"), error),
+              )
               .finally(() => setDeleteTarget(null));
           }}
           onCancel={() => setDeleteTarget(null)}
@@ -367,6 +399,7 @@ function ModelRow({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation();
   const config = provider.settingsConfig;
   return (
     <div
@@ -386,7 +419,7 @@ function ModelRow({
               variant="secondary"
               className="rounded-md px-1.5 py-0.5 text-[10px]"
             >
-              已停用
+              {t("cursor.panel.model.disabled")}
             </Badge>
           )}
         </div>
@@ -398,7 +431,9 @@ function ModelRow({
         </p>
         {config.pricingModel && config.pricingModel !== config.modelID && (
           <p className="text-xs text-muted-foreground">
-            计价模型 {config.pricingModel}
+            {t("cursor.panel.model.pricingModel", {
+              model: config.pricingModel,
+            })}
           </p>
         )}
       </div>
@@ -407,15 +442,19 @@ function ModelRow({
           {test.status === "success" ? (
             <>
               <div className="font-medium text-emerald-600 dark:text-emerald-400">
-                {test.tokensPerSecond.toFixed(1)} tok/s
+                {t("cursor.panel.model.tokensPerSecond", {
+                  value: test.tokensPerSecond.toFixed(1),
+                })}
               </div>
               <div className="text-muted-foreground">
-                首 token {test.firstTextTokenMs} ms
+                {t("cursor.panel.model.firstToken", {
+                  milliseconds: test.firstTextTokenMs,
+                })}
               </div>
             </>
           ) : (
             <div className="max-w-44 truncate text-red-500" title={test.error}>
-              {test.error || "测速失败"}
+              {test.error || t("cursor.panel.model.testFailed")}
             </div>
           )}
         </div>
@@ -425,15 +464,19 @@ function ModelRow({
           checked={config.enabled}
           disabled={disabled}
           onCheckedChange={onToggle}
-          aria-label={`启用 ${provider.name}`}
+          aria-label={t("cursor.panel.model.enableAriaLabel", {
+            name: provider.name,
+          })}
         />
         <div className="flex items-center gap-1 opacity-0 pointer-events-none transition-opacity duration-200 group-hover/model:opacity-100 group-hover/model:pointer-events-auto group-focus-within/model:opacity-100 group-focus-within/model:pointer-events-auto">
           <Button
             variant="ghost"
             size="icon"
             onClick={onEdit}
-            title="编辑"
-            aria-label={`编辑 ${provider.name}`}
+            title={t("common.edit")}
+            aria-label={t("cursor.panel.model.editAriaLabel", {
+              name: provider.name,
+            })}
             className="h-8 w-8 p-1"
           >
             <Edit className="h-4 w-4" />
@@ -443,8 +486,10 @@ function ModelRow({
             size="icon"
             onClick={onTest}
             disabled={testing || disabled}
-            title="检测连通"
-            aria-label={`检测 ${provider.name} 连通性`}
+            title={t("cursor.panel.model.testAction")}
+            aria-label={t("cursor.panel.model.testAriaLabel", {
+              name: provider.name,
+            })}
             className="h-8 w-8 p-1"
           >
             {testing ? (
@@ -458,8 +503,10 @@ function ModelRow({
             size="icon"
             onClick={onDelete}
             disabled={disabled}
-            title="删除"
-            aria-label={`删除 ${provider.name}`}
+            title={t("common.delete")}
+            aria-label={t("cursor.panel.model.deleteAriaLabel", {
+              name: provider.name,
+            })}
             className="h-8 w-8 p-1 hover:text-red-500 dark:hover:text-red-400"
           >
             <Trash2 className="h-4 w-4" />

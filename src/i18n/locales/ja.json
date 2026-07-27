@@ -888,6 +888,236 @@
     "hermes": "Hermes",
     "cursor": "Cursor"
   },
+  "cursor": {
+    "protocol": {
+      "openAICompatible": "OpenAI 互換",
+      "anthropicCompatible": "Anthropic 互換"
+    },
+    "runtime": {
+      "toast": {
+        "started": "Cursor モデルルーティングを開始しました",
+        "stopped": "Cursor の元の設定を復元しました",
+        "trustedAndStarted": "CA を信頼し、Cursor モデルルーティングを開始しました",
+        "caInstalled": "Cursor CA をインストールしました",
+        "caRemoved": "CC Switch Cursor CA を削除しました"
+      },
+      "error": {
+        "startFailed": "Cursor モデルルーティングの開始に失敗しました",
+        "stopFailed": "Cursor モデルルーティングの停止に失敗しました",
+        "enableFailed": "Cursor モデルルーティングの有効化に失敗しました",
+        "caInstallFailed": "Cursor CA のインストールに失敗しました",
+        "caRemoveFailed": "Cursor CA の削除に失敗しました"
+      },
+      "tooltip": {
+        "running": "Cursor モデルルーティングは有効です · {{count}} モデル",
+        "start": "Cursor モデルルーティングを有効化 · {{count}} モデル",
+        "noModels": "先に Cursor モデルを 1 つ以上追加して有効にしてください"
+      },
+      "toggleAriaLabel": "Cursor モデルルーティング",
+      "ca": {
+        "manage": "Cursor CA を管理",
+        "install": "Cursor CA をインストール",
+        "dialogTitle": "Cursor CA の信頼",
+        "installedDescription": "このデバイスは CC Switch が Cursor 用に生成した専用 CA を信頼しています。",
+        "requiredDescription": "Cursor モデルルーティングには、このデバイスで生成した専用 CA の信頼が必要です。",
+        "status": "状態",
+        "trusted": "信頼済み",
+        "notTrusted": "未信頼",
+        "fingerprint": "SHA-256 {{fingerprint}}",
+        "stopBeforeRemove": "CA を削除する前に Cursor モデルルーティングを停止してください。",
+        "removeAction": "CA を削除",
+        "installAction": "CA をインストール"
+      },
+      "trust": {
+        "dialogTitle": "Cursor ルーティングを初めて有効化",
+        "description": "Cursor の HTTPS トラフィックには、このインストール用に生成した専用 CA の信頼が必要です。",
+        "privateKeyNotice": "秘密鍵はローカルの CC Switch データディレクトリにのみ保存されます。サービスを停止すると Cursor の設定は復元されますが、CA は残ります。後で上部の CA ボタンから削除できます。",
+        "confirmAction": "信頼して開始",
+        "platform": {
+          "windows": "証明書は現在のユーザーの Windows Root 証明書ストアにインストールされます。管理者権限は不要です。",
+          "linux": "pkexec を通じて管理者権限を要求し、現在のディストリビューションのシステム信頼ストアにインストールします。",
+          "macos": "証明書は現在のユーザーの macOS ログインキーチェーンにインストールされます。システムから確認を求められる場合があります。"
+        }
+      }
+    },
+    "panel": {
+      "toast": {
+        "modelSaved": "Cursor モデルを保存しました",
+        "endpointUpdated": "Endpoint を更新しました · {{count}} モデル",
+        "endpointAdded": "Endpoint を追加しました · {{count}} モデル",
+        "testSucceeded": "{{name}} の速度テストが完了しました",
+        "testFailed": "{{name}} の速度テストに失敗しました",
+        "modelDeleted": "Cursor モデルを削除しました"
+      },
+      "error": {
+        "modelSaveFailed": "Cursor モデルの保存に失敗しました",
+        "endpointSaveFailed": "Cursor Endpoint の保存に失敗しました",
+        "toggleFailed": "モデルの有効状態の更新に失敗しました",
+        "modelDeleteFailed": "Cursor モデルの削除に失敗しました"
+      },
+      "loadingRuntime": "Cursor ランタイムの状態を読み込み中…",
+      "runtimeError": "Cursor ランタイムエラー",
+      "empty": {
+        "title": "Cursor モデルが設定されていません",
+        "description": "OpenAI または Anthropic 互換の Endpoint を追加すると、安全なローカル sidecar 経由で Cursor チャットをルーティングできます。"
+      },
+      "endpoint": {
+        "collapse": "折りたたむ",
+        "expand": "展開する",
+        "toggleAriaLabel": "{{name}} のモデル一覧を{{action}}",
+        "enabledCount": "{{enabled}}/{{total}} 有効",
+        "editAriaLabel": "{{name}} Endpoint を編集",
+        "noModels": "モデルがありません。Endpoint を編集して追加し直してください。"
+      },
+      "delete": {
+        "title": "Cursor モデルを削除",
+        "message": "「{{name}}」を削除しますか？過去の使用記録は Provider ID と名前のスナップショットで保持されます。"
+      },
+      "model": {
+        "disabled": "無効",
+        "pricingModel": "料金モデル {{model}}",
+        "tokensPerSecond": "{{value}} tok/s",
+        "firstToken": "最初の token {{milliseconds}} ms",
+        "testFailed": "速度テストに失敗しました",
+        "enableAriaLabel": "{{name}} を有効化",
+        "editAriaLabel": "{{name}} を編集",
+        "testAction": "接続をテスト",
+        "testAriaLabel": "{{name}} の接続をテスト",
+        "deleteAriaLabel": "{{name}} を削除"
+      }
+    },
+    "endpointDialog": {
+      "error": {
+        "credentialsRequired": "先に API エンドポイントと API Key を入力してください",
+        "emptyModelList": "プロバイダーから空のモデル一覧が返されました",
+        "fetchFailed": "モデルの取得に失敗しました: {{error}}",
+        "requiredFields": "プロバイダー名、API エンドポイント、API Key は必須です",
+        "modelRequired": "モデルを 1 つ以上追加してください",
+        "modelFieldsRequired": "モデル表示名とモデル ID は必須です",
+        "duplicateModelId": "同じ Endpoint に重複するモデル ID は追加できません"
+      },
+      "footerHint": "保存すると、この Endpoint 配下のすべてのモデルの接続設定が更新されます。",
+      "saveAction": "Endpoint を保存",
+      "addAction": "Endpoint を追加",
+      "editTitle": "Cursor Endpoint を編集",
+      "addTitle": "Cursor Endpoint を追加",
+      "config": {
+        "title": "Endpoint 設定",
+        "description": "この Endpoint 配下のすべてのモデルで接続設定を共有します。"
+      },
+      "fields": {
+        "providerName": "プロバイダー名",
+        "apiProtocol": "API プロトコル",
+        "apiEndpoint": "API エンドポイント",
+        "apiKey": "API Key",
+        "apiKeyHint": "認証情報はローカルデータベースにのみ保存されます",
+        "displayName": "表示名",
+        "modelId": "モデル ID"
+      },
+      "placeholders": {
+        "providerName": "例: OpenRouter",
+        "apiEndpoint": "https://api.example.com",
+        "apiKey": "sk-...",
+        "displayName": "例: GPT-5 Coding",
+        "modelId": "gpt-5.4"
+      },
+      "models": {
+        "title": "モデル一覧",
+        "description": "手動で追加するか、プロバイダー API から一括取得できます。",
+        "fetchAction": "モデルを取得",
+        "addManually": "手動で追加",
+        "selectLabel": "追加するモデルを選択",
+        "addSelected": "選択項目を追加（{{count}}）",
+        "empty": "モデルがありません。モデルを取得するか、手動で追加してください。",
+        "removeAction": "モデルを削除"
+      }
+    },
+    "modelDialog": {
+      "error": {
+        "invalidJson": "{{label}} は有効な JSON ではありません",
+        "jsonObjectRequired": "{{label}} は JSON オブジェクトである必要があります",
+        "credentialsRequired": "先に Base URL と API Key を入力してください",
+        "emptyModelList": "プロバイダーから空のモデル一覧が返されました",
+        "discoveryFailed": "自動検出に失敗しました: {{error}}",
+        "requiredFields": "名前、Base URL、API Key、上流モデルは必須です"
+      },
+      "defaults": {
+        "tooltipData": "CC Switch が管理"
+      },
+      "footerHint": "保存後、モデルは対応するプロバイダーグループに分類されます。",
+      "saveChanges": "変更を保存",
+      "addModel": "モデルを追加",
+      "editTitle": "Cursor モデルを編集",
+      "addTitle": "Cursor モデルを追加",
+      "basic": {
+        "title": "基本設定",
+        "description": "プロバイダーの接続情報を入力し、Cursor に表示するモデルを選択します。"
+      },
+      "fields": {
+        "providerName": "プロバイダー名",
+        "providerNameHint": "プロバイダー名と API エンドポイントが同じモデルは同じグループに分類されます",
+        "apiProtocol": "API プロトコル",
+        "apiEndpoint": "API エンドポイント",
+        "apiEndpointHint": "プロバイダーの API Base URL",
+        "apiKey": "API Key",
+        "apiKeyHint": "認証情報はローカルデータベースにのみ保存されます",
+        "displayName": "モデル表示名",
+        "upstreamModelId": "上流モデル ID",
+        "pricingModel": "料金モデル（任意）",
+        "pricingModelHint": "空欄の場合は上流モデル ID を使用します",
+        "openAIEndpoint": "OpenAI Endpoint",
+        "reasoningEffort": "推論強度",
+        "thinkingEffort": "Thinking Effort",
+        "thinkingBudgetTokens": "Thinking Budget Tokens",
+        "contextWindow": "コンテキストウィンドウ",
+        "maxOutputTokens": "最大出力 Tokens",
+        "anthropicMaxTokens": "Anthropic Max Tokens",
+        "customHeaders": "カスタムリクエストヘッダー",
+        "openAIExtraParams": "OpenAI 追加パラメータ",
+        "anthropicExtraParams": "Anthropic 追加パラメータ"
+      },
+      "placeholders": {
+        "providerName": "例: OpenRouter",
+        "apiEndpoint": "https://api.example.com",
+        "apiKey": "sk-...",
+        "displayName": "例: GPT-5 Coding",
+        "anthropicModelId": "claude-sonnet-4-6",
+        "openAIModelId": "gpt-5.4",
+        "pricingModel": "料金表のモデルと一致",
+        "thinkingBudgetTokens": "4096",
+        "contextWindowTokens": "200000",
+        "maxOutputTokens": "65536",
+        "anthropicMaxTokens": "65536",
+        "jsonObject": "{\"header\": \"value\"}"
+      },
+      "models": {
+        "fetching": "取得中…",
+        "count": "{{count}} モデル",
+        "fetchAction": "モデルを取得"
+      },
+      "advanced": {
+        "title": "詳細設定",
+        "description": "料金、推論パラメータ、Token 制限、カスタムリクエストパラメータ"
+      },
+      "contextWindow": {
+        "provider": "プロバイダーから {{tokens}} tokens が返されました",
+        "inferred": "{{tokens}} tokens と推定されました",
+        "manualHint": "自動検出で値が得られない場合は手動で入力してください"
+      },
+      "options": {
+        "responsesApi": "Responses API",
+        "chatCompletions": "Chat Completions",
+        "custom": "カスタム"
+      },
+      "effort": {
+        "low": "低",
+        "medium": "中",
+        "high": "高",
+        "xhigh": "非常に高い",
+        "max": "最大"
+      }
+    }
+  },
   "grokBuild": {
     "apiBackend": "API Backend",
     "contextWindow": "コンテキストウィンドウ",
