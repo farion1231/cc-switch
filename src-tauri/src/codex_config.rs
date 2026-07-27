@@ -2284,7 +2284,10 @@ fn invalidate_codex_desktop_available_models_cache_worker() {
 }
 
 pub fn sync_codex_desktop_available_models_cache_from_settings(settings: &Value) {
-    let model_ids = codex_model_ids_from_settings(settings);
+    sync_codex_desktop_available_models_cache_model_ids(codex_model_ids_from_settings(settings));
+}
+
+fn sync_codex_desktop_available_models_cache_model_ids(model_ids: Vec<String>) {
     let (generation, sync_result) = {
         let _guard = CODEX_DESKTOP_CACHE_SYNC_LOCK
             .lock()
@@ -2406,20 +2409,29 @@ pub fn sync_codex_desktop_available_models_cache_after_live_restore(settings: &V
     }
 }
 
-pub(crate) fn sync_codex_desktop_available_models_cache_after_provider_write(
+fn codex_desktop_available_models_cache_ids_after_provider_write(
     settings: &Value,
     config_text: Option<&str>,
-) {
+) -> Vec<String> {
     let generated_path = get_codex_model_catalog_path();
     let preserves_external_catalog = settings.get("modelCatalog").is_none()
         && config_text.is_some_and(|text| {
             codex_config_has_external_model_catalog_pointer(text, &generated_path)
         });
     if preserves_external_catalog {
-        invalidate_codex_desktop_available_models_cache_worker();
+        Vec::new()
     } else {
-        sync_codex_desktop_available_models_cache_from_settings(settings);
+        codex_model_ids_from_settings(settings)
     }
+}
+
+pub(crate) fn sync_codex_desktop_available_models_cache_after_provider_write(
+    settings: &Value,
+    config_text: Option<&str>,
+) {
+    sync_codex_desktop_available_models_cache_model_ids(
+        codex_desktop_available_models_cache_ids_after_provider_write(settings, config_text),
+    );
 }
 
 pub fn write_codex_provider_live_with_catalog(
@@ -4714,7 +4726,11 @@ base_url = "https://production.api/v1"
         let value = encode_codex_desktop_statsig_wrapper(
             Some(1),
             CodexDesktopStatsigWrapperEncoding::Utf8,
-            &json!({ "source": "Network", "data": data.to_string() }),
+            &json!({
+                "source": "Network",
+                "data": data.to_string(),
+                CODEX_DESKTOP_STATSIG_OWNED_MODELS_KEY: ["gpt-5.6-sol"]
+            }),
         )
         .unwrap();
         db.put(&key, &value).expect("seed cache");
@@ -4736,7 +4752,7 @@ base_url = "https://production.api/v1"
             &[],
         )
         .expect("clear future cache pin despite one transient candidate failure");
-        assert_eq!(result.updated_count, 1);
+        assert_eq!(result.updated_count, 2);
         assert!(
             result.needs_discovery,
             "partial official unpin failures must keep short retries active"
@@ -4751,11 +4767,11 @@ base_url = "https://production.api/v1"
         let (_, _, wrapper) = decode_codex_desktop_statsig_wrapper(&value).unwrap();
         assert_eq!(
             codex_desktop_statsig_available_model_ids(&wrapper),
-            Some(HashSet::from([
-                "gpt-5.5".to_string(),
-                "gpt-5.6-sol".to_string(),
-            ]))
+            Some(HashSet::from(["gpt-5.5".to_string()]))
         );
+        assert!(wrapper
+            .get(CODEX_DESKTOP_STATSIG_OWNED_MODELS_KEY)
+            .is_none());
         let last_modified_value = db
             .get(&last_modified_key)
             .expect("read updated last modified cache");
@@ -5314,18 +5330,27 @@ web_search = "disabled"
     }
 
     #[test]
-    fn codex_provider_write_external_catalog_invalidates_stale_cache_worker() {
-        let generation_before = CODEX_DESKTOP_CACHE_SYNC_GENERATION.load(Ordering::Acquire);
-
-        sync_codex_desktop_available_models_cache_after_provider_write(
+    fn codex_provider_write_external_catalog_selects_owned_cache_cleanup() {
+        let model_ids = codex_desktop_available_models_cache_ids_after_provider_write(
             &json!({}),
             Some(r#"model_catalog_json = "C:/Users/me/.codex/custom-models.json""#),
         );
+        assert!(
+            model_ids.is_empty(),
+            "preserving an external catalog must reconcile the cache with an empty cc-switch model set"
+        );
 
-        let generation_after = CODEX_DESKTOP_CACHE_SYNC_GENERATION.load(Ordering::Acquire);
-        assert_ne!(
-            generation_after, generation_before,
-            "provider writes that preserve an external catalog must cancel prior cache work"
+        assert_eq!(
+            codex_desktop_available_models_cache_ids_after_provider_write(
+                &json!({
+                    "modelCatalog": {
+                        "models": [{ "model": "gpt-5.6-sol" }]
+                    }
+                }),
+                Some("model_provider = \"custom\""),
+            ),
+            vec!["gpt-5.6-sol".to_string()],
+            "inline cc-switch catalogs must still sync their provider model IDs"
         );
     }
 
