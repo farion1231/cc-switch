@@ -348,6 +348,32 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
 
 /// 将单个 MCP 服务器同步到 Codex live 配置
 /// 始终使用 Codex 官方格式 [mcp_servers]，并清理可能存在的错误格式 [mcp.servers]
+/// 把单个 MCP server 表写入 `[mcp_servers]`，并保证该键是「表」。
+///
+/// `~/.codex/config.toml` 是用户可手改的：若 `mcp_servers` 存在但不是表
+/// （如 `mcp_servers = "x"` / `[]`），仅判 `contains_key` 会跳过重建，随后的
+/// `doc["mcp_servers"][id] = …` 会触发 toml_edit 的 `IndexMut` panic
+/// （panic 发生在 Tauri command 内、跨 FFI 展开）。这里统一归一化后再插入。
+fn upsert_mcp_server_table(
+    doc: &mut toml_edit::DocumentMut,
+    id: &str,
+    table: toml_edit::Table,
+) -> Result<(), AppError> {
+    if doc
+        .get_mut("mcp_servers")
+        .and_then(toml_edit::Item::as_table_like_mut)
+        .is_none()
+    {
+        doc["mcp_servers"] = toml_edit::table();
+    }
+    let servers = doc
+        .get_mut("mcp_servers")
+        .and_then(toml_edit::Item::as_table_like_mut)
+        .ok_or_else(|| AppError::McpValidation("config.toml 的 mcp_servers 不是表".to_string()))?;
+    servers.insert(id, toml_edit::Item::Table(table));
+    Ok(())
+}
+
 pub fn sync_single_server_to_codex(
     _config: &MultiAppConfig,
     id: &str,
@@ -356,7 +382,6 @@ pub fn sync_single_server_to_codex(
     if !should_sync_codex_mcp() {
         return Ok(());
     }
-    use toml_edit::Item;
 
     // 读取现有的 config.toml
     let config_path = crate::codex_config::get_codex_config_path();
@@ -383,16 +408,9 @@ pub fn sync_single_server_to_codex(
         }
     }
 
-    // 确保 [mcp_servers] 表存在
-    if !doc.contains_key("mcp_servers") {
-        doc["mcp_servers"] = toml_edit::table();
-    }
-
     // 将 JSON 服务器规范转换为 TOML 表
     let toml_table = json_server_to_toml_table(server_spec)?;
-
-    // 使用唯一正确的格式：[mcp_servers]
-    doc["mcp_servers"][id] = Item::Table(toml_table);
+    upsert_mcp_server_table(&mut doc, id, toml_table)?;
 
     // 写回文件
     let new_text = doc.to_string();
@@ -682,6 +700,56 @@ pub(super) fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upsert_normalizes_non_table_mcp_servers_without_panicking() {
+        // 用户手改过的 config.toml：mcp_servers 是字符串而不是表。
+        // 修复前 `doc["mcp_servers"][id] = …` 会 panic。
+        for malformed in [
+            "mcp_servers = \"x\"\n",
+            "mcp_servers = []\n",
+            "mcp_servers = 42\n",
+        ] {
+            let mut doc = malformed
+                .parse::<toml_edit::DocumentMut>()
+                .expect("fixture parses");
+            let table = json_server_to_toml_table(&json!({
+                "type": "stdio",
+                "command": "npx"
+            }))
+            .expect("server table");
+
+            upsert_mcp_server_table(&mut doc, "echo", table)
+                .unwrap_or_else(|e| panic!("upsert must not fail for {malformed:?}: {e}"));
+
+            let servers = doc
+                .get("mcp_servers")
+                .and_then(|item| item.as_table_like())
+                .unwrap_or_else(|| panic!("mcp_servers must be normalized to a table"));
+            assert!(servers.contains_key("echo"));
+        }
+    }
+
+    #[test]
+    fn upsert_preserves_existing_servers_in_a_valid_table() {
+        let mut doc = "[mcp_servers.keep]\ncommand = \"keep\"\n"
+            .parse::<toml_edit::DocumentMut>()
+            .expect("fixture parses");
+        let table = json_server_to_toml_table(&json!({
+            "type": "stdio",
+            "command": "npx"
+        }))
+        .expect("server table");
+
+        upsert_mcp_server_table(&mut doc, "added", table).expect("upsert");
+
+        let servers = doc
+            .get("mcp_servers")
+            .and_then(|item| item.as_table_like())
+            .expect("table");
+        assert!(servers.contains_key("keep"), "existing server must survive");
+        assert!(servers.contains_key("added"));
+    }
 
     #[test]
     fn http_headers_are_only_written_to_codex_http_headers() {
