@@ -703,6 +703,46 @@ mod tests {
     }
 
     #[test]
+    fn extract_gemini_common_config_strips_credentials_keeps_shareable() {
+        // Gemini 的共享片段会被 deep-merge 回**其它** Gemini 供应商的 env
+        // (live.rs::apply_common_config_to_settings)，因此任何凭据都不得进入片段。
+        // 之前这里只硬编码跳过 GEMINI_API_KEY/GOOGLE_GEMINI_BASE_URL，而
+        // GOOGLE_API_KEY 是 provider.rs 认可的一等 Gemini 凭据 → 会泄露到别的供应商。
+        let settings = json!({
+            "env": {
+                "GEMINI_API_KEY": "g-gem",
+                "GOOGLE_API_KEY": "g-legacy-real-key",
+                "GOOGLE_GEMINI_BASE_URL": "https://gemini.example",
+                "GOOGLE_APPLICATION_CREDENTIALS": "/path/creds.json",
+                "SOME_PROXY_AUTH_TOKEN": "tok-proxy",
+                // 可共享的非机密配置必须保留
+                "GEMINI_TIMEOUT_MS": "30000"
+            }
+        });
+
+        let snippet =
+            ProviderService::extract_gemini_common_config(&settings).expect("extract should work");
+        let value: Value = serde_json::from_str(&snippet).expect("snippet is valid JSON");
+
+        for leaked in [
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "SOME_PROXY_AUTH_TOKEN",
+        ] {
+            assert!(
+                value.get(leaked).is_none(),
+                "credential {leaked} must not leak into the shared Gemini snippet"
+            );
+        }
+        assert_eq!(
+            value.get("GEMINI_TIMEOUT_MS").and_then(|v| v.as_str()),
+            Some("30000"),
+            "shareable non-secret config must be preserved"
+        );
+    }
+
+    #[test]
     fn extract_claude_common_config_strips_all_credentials_keeps_shareable() {
         // env 混入多种凭据（Anthropic/OpenRouter/Google/OpenAI/Gemini + AWS/Vertex）
         // 与可共享配置；顶层混入非标准的 apiKey/api_key 凭据与正常设置。
@@ -3242,7 +3282,15 @@ impl ProviderService {
         let mut snippet = serde_json::Map::new();
         if let Some(env) = env {
             for (key, value) in env {
-                if key == "GOOGLE_GEMINI_BASE_URL" || key == "GEMINI_API_KEY" {
+                // 端点/主凭据按名剥离；其余凭据交给 `is_sensitive_config_key` 统一
+                // 模式匹配（与 Claude 提取器一致）。只列固定名单会漏掉下一个
+                // `*_API_KEY` —— 例如 `GOOGLE_API_KEY`（provider.rs 认可的一等
+                // Gemini 凭据），而共享片段会被 deep-merge 回其它 Gemini 供应商，
+                // 漏剥即等于把 A 账号的密钥写进 B 供应商并发往 B 的 base_url。
+                if key == "GOOGLE_GEMINI_BASE_URL"
+                    || key == "GEMINI_API_KEY"
+                    || Self::is_sensitive_config_key(key)
+                {
                     continue;
                 }
                 let Value::String(v) = value else {
