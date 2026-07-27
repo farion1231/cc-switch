@@ -274,13 +274,16 @@ impl CodexToolContext {
 
 pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolContext {
     let mut context = CodexToolContext::default();
+    let declared_tools = body.get("tools").and_then(|v| v.as_array());
+    let has_declared_tools = declared_tools.is_some_and(|tools| !tools.is_empty());
 
-    if let Some(tools) = body.get("tools").and_then(|v| v.as_array()) {
+    if let Some(tools) = declared_tools {
         for tool in tools {
             context.add_response_tool(tool);
         }
     }
 
+    let has_tool_search_history = body.get("input").is_some_and(contains_tool_search_history);
     if let Some(input) = body.get("input") {
         collect_tool_search_output_tools(input, &mut context);
     }
@@ -289,7 +292,11 @@ pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolCo
     // third-party providers. Codex Desktop may register every dynamic tool as
     // deferred while omitting the native tool_search declaration, so keep the
     // synthetic function in both the upstream tool list and this restore map.
-    context.add_tool_search_tool();
+    // Clean requests with no tools and no prior search exchange stay untouched
+    // for strict third-party providers that do not support function calling.
+    if has_declared_tools || has_tool_search_history {
+        context.add_tool_search_tool();
+    }
     context
 }
 
@@ -297,6 +304,7 @@ pub(crate) fn ensure_responses_tool_search_shim(body: &mut Value) -> ToolSearchS
     let Some(body) = body.as_object_mut() else {
         return ToolSearchShimStatus::InvalidTools;
     };
+    let has_tool_search_history = body.get("input").is_some_and(contains_tool_search_history);
     let tools_value = body
         .entry("tools".to_string())
         .or_insert_with(|| Value::Array(Vec::new()));
@@ -306,7 +314,7 @@ pub(crate) fn ensure_responses_tool_search_shim(body: &mut Value) -> ToolSearchS
     let Some(tools) = tools_value.as_array_mut() else {
         return ToolSearchShimStatus::InvalidTools;
     };
-    if tools.is_empty() {
+    if tools.is_empty() && !has_tool_search_history {
         body.remove("tools");
         return ToolSearchShimStatus::SkippedNoTools;
     }
@@ -1216,6 +1224,25 @@ fn responses_content_to_chat_content(_role: &str, content: &Value) -> Value {
 
 fn responses_input_file_to_chat_file(part: &Value) -> Option<Value> {
     chat_file_from_input_file(part)
+}
+
+fn contains_tool_search_history(value: &Value) -> bool {
+    match value {
+        Value::Array(items) => items.iter().any(contains_tool_search_history),
+        Value::Object(obj) => {
+            match obj.get("type").and_then(Value::as_str) {
+                Some("tool_search_call" | "tool_search_output") => return true,
+                Some("function_call")
+                    if obj.get("name").and_then(Value::as_str) == Some(TOOL_SEARCH_PROXY_NAME) =>
+                {
+                    return true;
+                }
+                _ => {}
+            }
+            obj.values().any(contains_tool_search_history)
+        }
+        _ => false,
+    }
 }
 
 fn collect_tool_search_output_tools(value: &Value, context: &mut CodexToolContext) {
@@ -2399,10 +2426,9 @@ mod tests {
     }
 
     #[test]
-    fn responses_request_to_chat_exposes_tool_search_and_loaded_namespace_tools() {
+    fn responses_request_to_chat_exposes_search_history_and_loaded_tools_without_top_level_tools() {
         let input = json!({
             "model": "gpt-5.4",
-            "tools": [{"type": "tool_search"}],
             "input": [
                 {
                     "type": "tool_search_call",
@@ -2528,15 +2554,15 @@ mod tests {
     }
 
     #[test]
-    fn responses_request_to_chat_injects_tool_search_for_empty_or_missing_tools() {
+    fn responses_request_to_chat_does_not_inject_tool_search_for_empty_or_missing_tools() {
         for input in [
             json!({"model": "gpt-5.4", "tools": [], "input": "hi"}),
             json!({"model": "gpt-5.4", "input": "hi"}),
         ] {
             let result = responses_to_chat_completions(input).unwrap();
-            let tools = result["tools"].as_array().unwrap();
-            assert_eq!(tools.len(), 1);
-            assert_eq!(tools[0]["function"]["name"], "tool_search");
+            assert!(result.get("tools").is_none());
+            assert!(result.get("tool_choice").is_none());
+            assert!(result.get("parallel_tool_calls").is_none());
         }
     }
 
@@ -4044,7 +4070,6 @@ mod tests {
     fn chat_response_to_responses_restores_loaded_namespace_tool_call() {
         let request = json!({
             "model": "gpt-5.4",
-            "tools": [{"type": "tool_search"}],
             "input": [{
                 "type": "tool_search_output",
                 "call_id": "call_tool_search_1",
@@ -4462,6 +4487,7 @@ mod tests {
     fn responses_request_to_chat_keeps_auto_tool_choice_with_injected_tool_search() {
         let input = json!({
             "model": "qwen3-7-max",
+            "tools": [{"type": "function", "name": "shell", "parameters": {}}],
             "tool_choice": "auto",
             "input": "hi"
         });
@@ -4469,13 +4495,13 @@ mod tests {
         let result = responses_to_chat_completions(input).unwrap();
 
         assert_eq!(result["tool_choice"], "auto");
-        assert_eq!(result["tools"].as_array().unwrap().len(), 1);
-        assert_eq!(result["tools"][0]["function"]["name"], "tool_search");
+        assert_eq!(result["tools"].as_array().unwrap().len(), 2);
+        assert_eq!(result["tools"][1]["function"]["name"], "tool_search");
         assert_eq!(result["model"], "qwen3-7-max");
     }
 
     #[test]
-    fn responses_request_to_chat_keeps_auto_tool_choice_when_tools_empty_array() {
+    fn responses_request_to_chat_drops_tool_choice_when_tools_empty_array() {
         let input = json!({
             "model": "gpt-5.4",
             "tools": [],
@@ -4485,15 +4511,15 @@ mod tests {
 
         let result = responses_to_chat_completions(input).unwrap();
 
-        assert_eq!(result["tool_choice"], "auto");
-        assert_eq!(result["tools"].as_array().unwrap().len(), 1);
-        assert_eq!(result["tools"][0]["function"]["name"], "tool_search");
+        assert!(result.get("tool_choice").is_none());
+        assert!(result.get("tools").is_none());
     }
 
     #[test]
     fn responses_request_to_chat_keeps_parallel_tool_calls_with_injected_tool_search() {
         let input = json!({
             "model": "gpt-5.4",
+            "tools": [{"type": "function", "name": "shell", "parameters": {}}],
             "tool_choice": "auto",
             "parallel_tool_calls": true,
             "input": "hi"
@@ -4503,8 +4529,8 @@ mod tests {
 
         assert_eq!(result["tool_choice"], "auto");
         assert_eq!(result["parallel_tool_calls"], true);
-        assert_eq!(result["tools"].as_array().unwrap().len(), 1);
-        assert_eq!(result["tools"][0]["function"]["name"], "tool_search");
+        assert_eq!(result["tools"].as_array().unwrap().len(), 2);
+        assert_eq!(result["tools"][1]["function"]["name"], "tool_search");
     }
 
     #[test]
@@ -4588,7 +4614,7 @@ mod tests {
     }
 
     #[test]
-    fn responses_request_to_chat_no_tool_choice_gets_only_tool_search_shim() {
+    fn responses_request_to_chat_no_tool_choice_without_tools_stays_tool_free() {
         let input = json!({
             "model": "gpt-5.4",
             "input": "hi"
@@ -4596,20 +4622,13 @@ mod tests {
 
         let result = responses_to_chat_completions(input).unwrap();
 
-        assert!(
-            result.get("tool_choice").is_none(),
-            "tool_choice should be absent"
-        );
-        assert_eq!(result["tools"].as_array().unwrap().len(), 1);
-        assert_eq!(result["tools"][0]["function"]["name"], "tool_search");
-        assert!(
-            result.get("parallel_tool_calls").is_none(),
-            "parallel_tool_calls should be absent"
-        );
+        assert!(result.get("tool_choice").is_none());
+        assert!(result.get("tools").is_none());
+        assert!(result.get("parallel_tool_calls").is_none());
     }
 
     #[test]
-    fn responses_request_to_chat_tool_choice_none_survives_with_tool_search_shim() {
+    fn responses_request_to_chat_drops_tool_choice_none_without_tools() {
         let input = json!({
             "model": "gpt-5.4",
             "tool_choice": "none",
@@ -4618,9 +4637,8 @@ mod tests {
 
         let result = responses_to_chat_completions(input).unwrap();
 
-        assert_eq!(result["tool_choice"], "none");
-        assert_eq!(result["tools"].as_array().unwrap().len(), 1);
-        assert_eq!(result["tools"][0]["function"]["name"], "tool_search");
+        assert!(result.get("tool_choice").is_none());
+        assert!(result.get("tools").is_none());
     }
 
     #[test]
