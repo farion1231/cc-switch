@@ -1212,8 +1212,8 @@ impl RequestForwarder {
 
         // Preserve the requested route's 1M intent before Desktop model mapping
         // replaces it with the configured upstream model.
-        let claude_desktop_requested_one_m = matches!(app_type, AppType::ClaudeDesktop)
-            && body_model_has_one_m_suffix(body);
+        let claude_desktop_requested_one_m =
+            matches!(app_type, AppType::ClaudeDesktop) && body_model_has_one_m_suffix(body);
 
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
