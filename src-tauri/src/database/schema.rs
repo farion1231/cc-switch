@@ -1631,7 +1631,7 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
         drop(stmt);
 
-        let mut endpoint_ids = std::collections::HashMap::<String, String>::new();
+        let mut endpoint_ids = std::collections::HashMap::<(String, String, String), String>::new();
         for (provider_id, raw_config, created_at) in rows {
             let mut config: serde_json::Value = serde_json::from_str(&raw_config)
                 .map_err(|e| AppError::Database(format!("解析 Cursor Provider 配置失败: {e}")))?;
@@ -1653,7 +1653,12 @@ impl Database {
                     value.to_string().trim_end_matches('/').to_string()
                 })
                 .unwrap_or_else(|_| base_url.trim_end_matches('/').to_string());
-            let group_key = format!("{provider_type}:{normalized_url}");
+            let api_key = config["apiKey"].as_str().unwrap_or_default().to_string();
+            let group_key = (
+                provider_type.clone(),
+                normalized_url.clone(),
+                api_key.clone(),
+            );
             let endpoint_id = endpoint_ids
                 .entry(group_key)
                 .or_insert_with(|| uuid::Uuid::new_v4().to_string())
@@ -1663,7 +1668,6 @@ impl Database {
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or(normalized_url.as_str())
                 .to_string();
-            let api_key = config["apiKey"].as_str().unwrap_or_default();
 
             conn.execute(
                 "INSERT OR IGNORE INTO cursor_endpoints
@@ -3249,6 +3253,60 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(linked_count, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v17_to_v18_groups_endpoints_by_type_url_and_api_key() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute("DELETE FROM cursor_endpoints", [])?;
+        for (id, base_url, api_key) in [
+            ("shared-a", "https://api.example.com/", "shared-key"),
+            ("shared-b", "https://api.example.com", "shared-key"),
+            ("other-key", "https://api.example.com", "other-key"),
+            ("other-url", "https://other.example.com", "shared-key"),
+        ] {
+            conn.execute(
+                "INSERT INTO providers
+                 (id, app_type, name, settings_config, meta)
+                 VALUES (?1, 'cursor', ?1, ?2, '{}')",
+                rusqlite::params![
+                    id,
+                    serde_json::json!({
+                        "enabled": true,
+                        "type": "openai",
+                        "providerGroup": "Example",
+                        "baseURL": base_url,
+                        "apiKey": api_key,
+                        "modelID": id
+                    })
+                    .to_string()
+                ],
+            )?;
+        }
+        Database::set_user_version(&conn, 17)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        let endpoint_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM cursor_endpoints", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(endpoint_count, 3);
+
+        let endpoint_id_for = |provider_id: &str| -> Result<String, rusqlite::Error> {
+            conn.query_row(
+                "SELECT json_extract(settings_config, '$.endpointId')
+                 FROM providers WHERE id = ?1 AND app_type = 'cursor'",
+                [provider_id],
+                |row| row.get(0),
+            )
+        };
+        let shared_endpoint = endpoint_id_for("shared-a")?;
+        assert_eq!(shared_endpoint, endpoint_id_for("shared-b")?);
+        assert_ne!(shared_endpoint, endpoint_id_for("other-key")?);
+        assert_ne!(shared_endpoint, endpoint_id_for("other-url")?);
         Ok(())
     }
 

@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -316,21 +317,10 @@ impl CursorRuntimeService {
         };
         let next_config = project_next(&self.db)?;
 
-        if running {
-            self.put_config(&next_config).await?;
-        }
-
-        if let Err(commit_error) = commit() {
-            if let Some(previous_config) = previous_config {
-                if let Err(rollback_error) = self.put_config(&previous_config).await {
-                    return Err(AppError::Message(format!(
-                        "数据库更新失败: {commit_error}; Cursor sidecar 回滚失败: {rollback_error}"
-                    )));
-                }
-            }
-            return Err(commit_error);
-        }
-        Ok(())
+        apply_config_change(previous_config, next_config, commit, |config| async move {
+            self.put_config(&config).await
+        })
+        .await
     }
 
     pub async fn is_running(&self) -> bool {
@@ -609,6 +599,34 @@ impl CursorRuntimeService {
     }
 }
 
+async fn apply_config_change<C, W, WF>(
+    previous_config: Option<SidecarConfig>,
+    next_config: SidecarConfig,
+    commit: C,
+    mut write_sidecar: W,
+) -> Result<(), AppError>
+where
+    C: FnOnce() -> Result<(), AppError>,
+    W: FnMut(SidecarConfig) -> WF,
+    WF: Future<Output = Result<(), AppError>>,
+{
+    if previous_config.is_some() {
+        write_sidecar(next_config).await?;
+    }
+
+    if let Err(commit_error) = commit() {
+        if let Some(previous_config) = previous_config {
+            if let Err(rollback_error) = write_sidecar(previous_config).await {
+                return Err(AppError::Message(format!(
+                    "数据库更新失败: {commit_error}; Cursor sidecar 回滚失败: {rollback_error}"
+                )));
+            }
+        }
+        return Err(commit_error);
+    }
+    Ok(())
+}
+
 fn http_error(error: reqwest::Error) -> AppError {
     AppError::Message(format!("Cursor sidecar 请求失败: {error}"))
 }
@@ -635,4 +653,149 @@ async fn decode_response<T: serde::de::DeserializeOwned>(
     }
     serde_json::from_slice(&bytes)
         .map_err(|error| AppError::Message(format!("解析 Cursor sidecar 响应失败: {error}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    use super::apply_config_change;
+    use crate::cursor::types::{SidecarConfig, SidecarHomeMetricsConfig, SidecarRoutingConfig};
+    use crate::error::AppError;
+
+    fn config(mode: &str) -> SidecarConfig {
+        SidecarConfig {
+            log: false,
+            provider_stream_idle_timeout: 240,
+            backend_listen_addr: "127.0.0.1:18090".to_string(),
+            proxy_listen_addr: "127.0.0.1:18080".to_string(),
+            model_adapters: Vec::new(),
+            routing: SidecarRoutingConfig {
+                mode: mode.to_string(),
+            },
+            home_metrics: SidecarHomeMetricsConfig::default(),
+            last_agent_model_hash: String::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn config_change_without_running_sidecar_only_commits_database() {
+        let committed = Cell::new(false);
+        let writes = Rc::new(RefCell::new(Vec::new()));
+        let result = apply_config_change(
+            None,
+            config("next"),
+            || {
+                committed.set(true);
+                Ok(())
+            },
+            {
+                let writes = Rc::clone(&writes);
+                move |config| {
+                    writes.borrow_mut().push(config.routing.mode);
+                    std::future::ready(Ok(()))
+                }
+            },
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(committed.get());
+        assert!(writes.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn running_sidecar_applies_next_config_before_database_commit() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let result = apply_config_change(
+            Some(config("previous")),
+            config("next"),
+            {
+                let events = Rc::clone(&events);
+                move || {
+                    events.borrow_mut().push("commit".to_string());
+                    Ok(())
+                }
+            },
+            {
+                let events = Rc::clone(&events);
+                move |config| {
+                    events
+                        .borrow_mut()
+                        .push(format!("sidecar:{}", config.routing.mode));
+                    std::future::ready(Ok(()))
+                }
+            },
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(events.borrow().as_slice(), ["sidecar:next", "commit"]);
+    }
+
+    #[tokio::test]
+    async fn sidecar_rejection_prevents_database_commit() {
+        let committed = Cell::new(false);
+        let result = apply_config_change(
+            Some(config("previous")),
+            config("next"),
+            || {
+                committed.set(true);
+                Ok(())
+            },
+            |_| std::future::ready(Err(AppError::Message("sidecar rejected".to_string()))),
+        )
+        .await;
+
+        assert_eq!(result.unwrap_err().to_string(), "sidecar rejected");
+        assert!(!committed.get());
+    }
+
+    #[tokio::test]
+    async fn database_failure_restores_previous_sidecar_config() {
+        let writes = Rc::new(RefCell::new(Vec::new()));
+        let result = apply_config_change(
+            Some(config("previous")),
+            config("next"),
+            || Err(AppError::Database("commit failed".to_string())),
+            {
+                let writes = Rc::clone(&writes);
+                move |config| {
+                    writes.borrow_mut().push(config.routing.mode);
+                    std::future::ready(Ok(()))
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(result.unwrap_err().to_string(), "数据库错误: commit failed");
+        assert_eq!(writes.borrow().as_slice(), ["next", "previous"]);
+    }
+
+    #[tokio::test]
+    async fn rollback_failure_reports_both_database_and_sidecar_errors() {
+        let write_count = Cell::new(0);
+        let result = apply_config_change(
+            Some(config("previous")),
+            config("next"),
+            || Err(AppError::Database("commit failed".to_string())),
+            |_| {
+                let current = write_count.get() + 1;
+                write_count.set(current);
+                std::future::ready(if current == 1 {
+                    Ok(())
+                } else {
+                    Err(AppError::Message("rollback rejected".to_string()))
+                })
+            },
+        )
+        .await;
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "数据库更新失败: 数据库错误: commit failed; Cursor sidecar 回滚失败: rollback rejected"
+        );
+        assert_eq!(write_count.get(), 2);
+    }
 }
