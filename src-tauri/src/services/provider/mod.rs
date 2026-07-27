@@ -51,6 +51,38 @@ pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &
         && crate::proxy::providers::is_codex_official_provider(provider)
 }
 
+fn reproject_codex_official_config_only(
+    state: &AppState,
+    provider: &Provider,
+) -> Result<(), AppError> {
+    let mut effective_provider = provider.clone();
+    effective_provider.settings_config = live::build_effective_settings_with_common_config(
+        state.db.as_ref(),
+        &AppType::Codex,
+        provider,
+    )?;
+    let config_text = effective_provider
+        .settings_config
+        .get("config")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(&effective_provider);
+    let projected_config = crate::codex_config::prepare_codex_config_text_with_model_catalog(
+        &effective_provider.settings_config,
+        config_text,
+        profile,
+    )?;
+    let projected_config = if crate::settings::unify_codex_session_history() {
+        crate::codex_config::inject_codex_unified_session_bucket(&projected_config)?
+    } else {
+        projected_config
+    };
+
+    // A history toggle changes routing only. Never rewrite auth.json here:
+    // Codex may rotate OAuth tokens concurrently with this projection.
+    crate::codex_config::write_codex_live_config_atomic(Some(&projected_config))
+}
+
 /// 统一会话开关变更后，立即按新开关状态重写当前官方 Codex 供应商的
 /// live 配置，使开关即时生效（无需等下一次切换）。
 /// 当前供应商非官方（或不存在）时为 no-op：注入只作用于官方配置，
@@ -61,13 +93,12 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
         return Ok(false);
     }
     let providers = state.db.get_all_providers(AppType::Codex.as_str())?;
-    let Some(provider) = providers.get(&current_id) else {
+    let Some(stored_provider) = providers.get(&current_id) else {
         return Ok(false);
     };
-    if provider.category.as_deref() != Some("official") {
+    if stored_provider.category.as_deref() != Some("official") {
         return Ok(false);
     }
-
     // 代理接管期间 live 归代理所有（开启代理时官方供应商只警告不拦截，
     // 二者可以共存）。有接管标记时，backup 与 live 必须在同一把切换锁下
     // 一起重投影；仅残留 backup 而 live 未被接管时，只更新恢复源，避免把
@@ -84,7 +115,7 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
         futures::executor::block_on(
             state
                 .proxy_service
-                .reproject_codex_official_live_for_history_toggle(provider),
+                .reproject_codex_official_live_for_history_toggle(stored_provider),
         )
         .map_err(|e| AppError::Message(format!("重投影 Codex 官方接管配置失败: {e}")))?;
         return Ok(true);
@@ -93,13 +124,18 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
         futures::executor::block_on(
             state
                 .proxy_service
-                .update_live_backup_from_provider(AppType::Codex.as_str(), provider),
+                .update_live_backup_from_provider(AppType::Codex.as_str(), stored_provider),
         )
         .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
         return Ok(true);
     }
 
-    live::write_live_with_common_config(&state.db, &AppType::Codex, provider)?;
+    let _guard = futures::executor::block_on(
+        state
+            .proxy_service
+            .lock_switch_for_app(AppType::Codex.as_str()),
+    );
+    reproject_codex_official_config_only(state, stored_provider)?;
     // 重写 live 会整体替换 config.toml（有意设计），[mcp_servers] 随之丢失，
     // 写完必须立刻从 DB 重新投影启用的 MCP。只投影 Codex 而非
     // sync_all_enabled：后者按 AppType::all() 顺序逐应用短路，排在 Codex

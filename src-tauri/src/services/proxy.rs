@@ -2392,6 +2392,7 @@ impl ProxyService {
                 .map_err(|e| format!("构建 {app_type} 有效配置失败: {e}"))?;
 
         if matches!(app_type_enum, AppType::Codex) {
+            let existing_live_value = self.read_codex_live().ok();
             let existing_backup_value = self
                 .db
                 .get_live_backup(app_type)
@@ -2402,19 +2403,27 @@ impl ProxyService {
                         .map_err(|e| format!("解析 {app_type} 现有备份失败: {e}"))
                 })
                 .transpose()?;
-            // A stale takeover marker can survive without its DB backup (for
-            // example after a partial cleanup). In that abnormal state the live
-            // auth file is still the only copy of the user's login, so use it as
-            // the preservation source instead of replacing it with the empty
-            // official seed snapshot.
-            let existing_backup_value =
-                existing_backup_value.or_else(|| self.read_codex_live().ok());
-
-            if let Some(existing_value) = existing_backup_value.as_ref() {
+            // Config and MCP state belong to the restore backup while takeover
+            // is active. OAuth auth is different: Codex can rotate it in the
+            // live auth.json at any time, so live is authoritative when it
+            // contains native login material.
+            let config_source = existing_backup_value
+                .as_ref()
+                .or(existing_live_value.as_ref());
+            if let Some(existing_value) = config_source {
                 Self::preserve_toml_mcp_servers_from_existing_config(
                     &mut effective_settings,
                     existing_value,
                 )?;
+            }
+            let live_oauth_source = existing_live_value.as_ref().filter(|live| {
+                live.get("auth")
+                    .is_some_and(crate::codex_config::codex_auth_has_oauth_login_material)
+            });
+            let auth_source = live_oauth_source
+                .or(existing_backup_value.as_ref())
+                .or(existing_live_value.as_ref());
+            if let Some(existing_value) = auth_source {
                 Self::preserve_codex_auth_in_backup(
                     &mut effective_settings,
                     existing_value,
