@@ -869,20 +869,25 @@ async fn handle_responses_for_app(
         .await;
     }
 
-    // Native Responses passthrough to a strict gateway (xAI): the request-side
-    // flatten (in the forwarder) turned Codex `namespace` tools into flat
-    // function tools, so the upstream returns flat function-call names. Restore
-    // them to `{name, namespace}` so the Codex client matches them against its
-    // namespaced tool registry.
-    if super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)
-        && !namespace_restore_map.is_empty()
-    {
-        return handle_codex_responses_namespace_restore(
+    let restore_tool_search =
+        super::providers::should_restore_codex_native_tool_search(&ctx.provider, &endpoint);
+    let restore_namespaces =
+        super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)
+            && !namespace_restore_map.is_empty();
+    if restore_tool_search || restore_namespaces {
+        log::debug!(
+            "[Codex] Native Responses tool restore provider={} tool_search={} namespaces={}",
+            ctx.provider.id,
+            restore_tool_search,
+            restore_namespaces
+        );
+        return handle_codex_responses_tool_restore(
             response,
             &ctx,
             &state,
             connection_guard,
             namespace_restore_map,
+            restore_tool_search,
         )
         .await;
     }
@@ -1003,15 +1008,25 @@ async fn handle_responses_compact_for_app(
         .await;
     }
 
-    if super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)
-        && !namespace_restore_map.is_empty()
-    {
-        return handle_codex_responses_namespace_restore(
+    let restore_tool_search =
+        super::providers::should_restore_codex_native_tool_search(&ctx.provider, &endpoint);
+    let restore_namespaces =
+        super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)
+            && !namespace_restore_map.is_empty();
+    if restore_tool_search || restore_namespaces {
+        log::debug!(
+            "[Codex] Native Responses compact tool restore provider={} tool_search={} namespaces={}",
+            ctx.provider.id,
+            restore_tool_search,
+            restore_namespaces
+        );
+        return handle_codex_responses_tool_restore(
             response,
             &ctx,
             &state,
             connection_guard,
             namespace_restore_map,
+            restore_tool_search,
         )
         .await;
     }
@@ -1026,12 +1041,10 @@ async fn handle_responses_compact_for_app(
     .await
 }
 
-/// Response handler for the native Responses passthrough to a strict gateway
-/// (xAI), restoring the flattened `function_call` names produced by the
-/// request-side namespace flatten. Success bodies only carry a light rename;
-/// error bodies and everything unrelated pass through unchanged. Usage is
-/// collected exactly as `process_response` would (same `CODEX_PARSER_CONFIG`).
-async fn handle_codex_responses_namespace_restore(
+/// Response handler for native third-party Responses passthrough. It restores
+/// both flattened namespace identities and a synthetic `function_call` named
+/// `tool_search` into the native `tool_search_call` expected by Codex.
+async fn handle_codex_responses_tool_restore(
     response: super::hyper_client::ProxyResponse,
     ctx: &RequestContext,
     state: &ProxyState,
@@ -1040,6 +1053,7 @@ async fn handle_codex_responses_namespace_restore(
         String,
         transform_codex_responses_namespace::NamespacedName,
     >,
+    restore_tool_search: bool,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
 
@@ -1061,9 +1075,10 @@ async fn handle_codex_responses_namespace_restore(
         }
 
         let restore_stream =
-            transform_codex_responses_namespace::create_namespace_restore_sse_stream(
+            transform_codex_responses_namespace::create_tool_call_restore_sse_stream(
                 response.bytes_stream(),
                 restore_map,
+                restore_tool_search,
             );
         let usage_collector =
             create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
@@ -1077,7 +1092,7 @@ async fn handle_codex_responses_namespace_restore(
 
         let body = axum::body::Body::from_stream(logged_stream);
         return builder.body(body).map_err(|e| {
-            log::error!("[{}] 构建 namespace 还原流式响应失败: {e}", ctx.tag);
+            log::error!("[{}] 构建 Codex 工具还原流式响应失败: {e}", ctx.tag);
             ProxyError::Internal(format!("Failed to build streaming response: {e}"))
         });
     }
@@ -1100,9 +1115,10 @@ async fn handle_codex_responses_namespace_restore(
     // this only guards against a malformed upstream).
     let restored_bytes = match serde_json::from_slice::<Value>(&body_bytes) {
         Ok(mut value) => {
-            transform_codex_responses_namespace::restore_response_namespaces(
+            transform_codex_responses_namespace::restore_response_tool_calls(
                 &mut value,
                 &restore_map,
+                restore_tool_search,
             );
             if let Some(usage) =
                 TokenUsage::from_codex_response_auto(&value).filter(TokenUsage::has_billable_tokens)
@@ -1147,7 +1163,7 @@ async fn handle_codex_responses_namespace_restore(
             match serde_json::to_vec(&value) {
                 Ok(bytes) => Bytes::from(bytes),
                 Err(e) => {
-                    log::error!("[{}] 序列化 namespace 还原响应失败: {e}", ctx.tag);
+                    log::error!("[{}] 序列化 Codex 工具还原响应失败: {e}", ctx.tag);
                     body_bytes
                 }
             }
@@ -1169,7 +1185,7 @@ async fn handle_codex_responses_namespace_restore(
     builder
         .body(axum::body::Body::from(restored_bytes))
         .map_err(|e| {
-            log::error!("[{}] 构建 namespace 还原响应失败: {e}", ctx.tag);
+            log::error!("[{}] 构建 Codex 工具还原响应失败: {e}", ctx.tag);
             ProxyError::Internal(format!("Failed to build response: {e}"))
         })
 }

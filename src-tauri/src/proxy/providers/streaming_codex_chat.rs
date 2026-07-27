@@ -1189,6 +1189,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn restores_injected_tool_search_on_streamed_tool_call_items_once() {
+        let request = json!({
+            "model": "gpt-5.4",
+            "tools": [{"type": "function", "name": "plain", "parameters": {}}],
+            "input": "Search for desktop task tools."
+        });
+        let context =
+            super::super::transform_codex_chat::build_codex_tool_context_from_request(&request);
+        let output = collect_with_context(
+            vec![
+                "data: {\"id\":\"chatcmpl_tool_search\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_tool_search_1\",\"type\":\"function\",\"function\":{\"name\":\"tool_search\"}}]}}]}\n\n",
+                "data: {\"id\":\"chatcmpl_tool_search\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"query\\\":\\\"automation thread tools\\\",\"}}]}}]}\n\n",
+                "data: {\"id\":\"chatcmpl_tool_search\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"limit\\\":8}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            context,
+        )
+        .await;
+
+        assert!(output.contains("\"type\":\"tool_search_call\""));
+        assert!(output.contains("\"execution\":\"client\""));
+        assert!(output.contains("\"call_id\":\"call_tool_search_1\""));
+        assert!(output.contains("\"query\":\"automation thread tools\""));
+        assert!(output.matches("\"type\":\"tool_search_call\"").count() >= 2);
+        assert_eq!(
+            output.matches("event: response.output_item.done").count(),
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn stream_error_emits_failed_without_completed() {
         let upstream = stream::iter(vec![Err::<Bytes, std::io::Error>(std::io::Error::other(
             "boom",

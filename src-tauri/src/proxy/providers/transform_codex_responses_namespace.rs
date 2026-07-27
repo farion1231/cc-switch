@@ -18,8 +18,9 @@
 //!   rewrite namespace-qualified `function_call` items in the replayed `input`
 //!   history to the flat name and drop a `namespace`-typed `tool_choice`.
 //! - **Response**: restore the flat `function_call` names back to
-//!   `{name, namespace}` so the Codex client can match the call against its own
-//!   namespaced tool registry (streaming and non-streaming).
+//!   `{name, namespace}` and convert the synthetic `function_call` named
+//!   `tool_search` into the native client-executed `tool_search_call` expected
+//!   by Codex (streaming and non-streaming).
 //!
 //! Flatten and restore both derive their name map from the *same* request tools
 //! via [`flatten_namespace_tool_name`], so the forwarder (flatten) and the
@@ -32,7 +33,7 @@ use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
 
-use super::transform_codex_chat::flatten_namespace_tool_name;
+use super::transform_codex_chat::{flatten_namespace_tool_name, tool_search_arguments_from_value};
 use crate::proxy::error::ProxyError;
 use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
 
@@ -221,29 +222,31 @@ pub(crate) fn flatten_request_namespaces(body: &mut Value) -> Result<bool, Proxy
     Ok(true)
 }
 
-/// Restore flattened `function_call` names in a full (non-streaming) Responses
-/// payload back to their `{name, namespace}` identity. Returns whether anything
-/// changed.
-pub(crate) fn restore_response_namespaces(
+/// Restore native Responses function-call identities. Namespace restoration
+/// uses the request-derived map; tool-search restoration is enabled only on the
+/// provider-gated third-party compatibility path.
+pub(crate) fn restore_response_tool_calls(
     value: &mut Value,
     map: &HashMap<String, NamespacedName>,
+    restore_tool_search: bool,
 ) -> bool {
-    if map.is_empty() {
+    if map.is_empty() && !restore_tool_search {
         return false;
     }
-    restore_value(value, map)
+    restore_value(value, map, restore_tool_search)
 }
 
 /// Restore a single parsed SSE event (e.g. `response.output_item.added` /
 /// `.done` carrying a `function_call`). Returns whether anything changed.
-pub(crate) fn restore_sse_event_namespaces(
+pub(crate) fn restore_sse_event_tool_calls(
     event: &mut Value,
     map: &HashMap<String, NamespacedName>,
+    restore_tool_search: bool,
 ) -> bool {
-    if map.is_empty() {
+    if map.is_empty() && !restore_tool_search {
         return false;
     }
-    restore_value(event, map)
+    restore_value(event, map, restore_tool_search)
 }
 
 fn namespace_children(tool: &Value) -> Vec<Value> {
@@ -307,17 +310,31 @@ fn rewrite_namespace_qualified_call(
     }
 }
 
-fn restore_value(value: &mut Value, map: &HashMap<String, NamespacedName>) -> bool {
+fn restore_value(
+    value: &mut Value,
+    map: &HashMap<String, NamespacedName>,
+    restore_tool_search: bool,
+) -> bool {
     let mut changed = false;
     match value {
         Value::Array(items) => {
             for item in items {
-                changed |= restore_value(item, map);
+                changed |= restore_value(item, map, restore_tool_search);
             }
         }
         Value::Object(obj) => {
             if obj.get("type").and_then(Value::as_str) == Some("function_call") {
-                if let Some(flat) = obj.get("name").and_then(Value::as_str) {
+                let is_tool_search = restore_tool_search
+                    && obj.get("namespace").is_none()
+                    && obj.get("name").and_then(Value::as_str) == Some("tool_search");
+                if is_tool_search {
+                    let arguments = tool_search_arguments_from_value(obj.get("arguments"));
+                    obj.insert("type".to_string(), json!("tool_search_call"));
+                    obj.insert("execution".to_string(), json!("client"));
+                    obj.insert("arguments".to_string(), arguments);
+                    obj.remove("name");
+                    changed = true;
+                } else if let Some(flat) = obj.get("name").and_then(Value::as_str) {
                     if let Some(entry) = map.get(flat) {
                         obj.insert("name".to_string(), json!(entry.name));
                         obj.insert("namespace".to_string(), json!(entry.namespace));
@@ -326,7 +343,7 @@ fn restore_value(value: &mut Value, map: &HashMap<String, NamespacedName>) -> bo
                 }
             }
             for child in obj.values_mut() {
-                changed |= restore_value(child, map);
+                changed |= restore_value(child, map, restore_tool_search);
             }
         }
         _ => {}
@@ -334,13 +351,13 @@ fn restore_value(value: &mut Value, map: &HashMap<String, NamespacedName>) -> bo
     changed
 }
 
-/// Wrap a native Responses SSE byte stream, restoring flattened `function_call`
-/// names in each event back to their namespace identity. Events that carry no
-/// affected function call pass through with their inner content preserved
-/// verbatim (only the block delimiter is normalized to `\n\n`).
-pub(crate) fn create_namespace_restore_sse_stream<E>(
+/// Wrap a native Responses SSE byte stream, restoring flattened namespace
+/// calls and synthetic tool-search calls. Unaffected events pass through with
+/// their inner content preserved verbatim.
+pub(crate) fn create_tool_call_restore_sse_stream<E>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
     map: HashMap<String, NamespacedName>,
+    restore_tool_search: bool,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send
 where
     E: std::error::Error + Send + 'static,
@@ -359,7 +376,7 @@ where
                         if block.trim().is_empty() {
                             continue;
                         }
-                        yield Ok(restore_sse_block(&block, &map));
+                        yield Ok(restore_sse_block(&block, &map, restore_tool_search));
                     }
                 }
                 Err(e) => {
@@ -376,7 +393,7 @@ where
         }
         let tail = std::mem::take(&mut buffer);
         if !tail.trim().is_empty() {
-            yield Ok(restore_sse_block(&tail, &map));
+            yield Ok(restore_sse_block(&tail, &map, restore_tool_search));
         }
     }
 }
@@ -384,7 +401,11 @@ where
 /// Restore one SSE block. When the block's `data:` JSON carries an affected
 /// function call, re-serialize just that line; otherwise the original block text
 /// is preserved and only the `\n\n` delimiter re-appended.
-fn restore_sse_block(block: &str, map: &HashMap<String, NamespacedName>) -> Bytes {
+fn restore_sse_block(
+    block: &str,
+    map: &HashMap<String, NamespacedName>,
+    restore_tool_search: bool,
+) -> Bytes {
     let mut event_name: Option<&str> = None;
     let mut data_parts: Vec<&str> = Vec::new();
     for line in block.lines() {
@@ -411,7 +432,7 @@ fn restore_sse_block(block: &str, map: &HashMap<String, NamespacedName>) -> Byte
         Err(_) => return Bytes::from(format!("{block}\n\n")),
     };
 
-    if !restore_sse_event_namespaces(&mut event, map) {
+    if !restore_sse_event_tool_calls(&mut event, map, restore_tool_search) {
         return Bytes::from(format!("{block}\n\n"));
     }
 
@@ -546,7 +567,7 @@ mod tests {
                 }
             ]
         });
-        assert!(restore_response_namespaces(&mut response, &map));
+        assert!(restore_response_tool_calls(&mut response, &map, false));
         let call = &response["output"][0];
         assert_eq!(call["name"], "read");
         assert_eq!(call["namespace"], "mcp__files__");
@@ -560,9 +581,36 @@ mod tests {
                 { "type": "function_call", "name": "plain_tool", "call_id": "x" }
             ]
         });
-        assert!(!restore_response_namespaces(&mut response, &map));
+        assert!(!restore_response_tool_calls(&mut response, &map, false));
         assert_eq!(response["output"][0]["name"], "plain_tool");
         assert!(response["output"][0].get("namespace").is_none());
+    }
+
+    #[test]
+    fn restore_converts_tool_search_function_call_for_native_responses() {
+        let mut response = json!({
+            "output": [{
+                "type": "function_call",
+                "name": "tool_search",
+                "call_id": "search-1",
+                "status": "completed",
+                "arguments": "{\"query\":\"automation\",\"limit\":\"8\"}"
+            }]
+        });
+
+        assert!(restore_response_tool_calls(
+            &mut response,
+            &HashMap::new(),
+            true
+        ));
+        let call = &response["output"][0];
+        assert_eq!(call["type"], "tool_search_call");
+        assert_eq!(call["execution"], "client");
+        assert_eq!(call["call_id"], "search-1");
+        assert_eq!(call["status"], "completed");
+        assert_eq!(call["arguments"]["query"], "automation");
+        assert_eq!(call["arguments"]["limit"], 8);
+        assert!(call.get("name").is_none());
     }
 
     #[test]
@@ -604,7 +652,7 @@ mod tests {
             Ok(Bytes::from(done)),
         ];
         let input = stream::iter(chunks);
-        let out = create_namespace_restore_sse_stream(input, map);
+        let out = create_tool_call_restore_sse_stream(input, map, false);
         futures::pin_mut!(out);
 
         let mut collected = String::new();
@@ -619,5 +667,34 @@ mod tests {
         // Unrelated events preserved verbatim.
         assert!(collected.contains("\"delta\":\"hi\""));
         assert!(collected.contains("[DONE]"));
+    }
+
+    #[tokio::test]
+    async fn sse_stream_restores_native_tool_search_function_call() {
+        let added = "event: response.output_item.added\n\
+                     data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"name\":\"tool_search\",\"call_id\":\"search-1\",\"status\":\"in_progress\",\"arguments\":\"\"}}\n\n";
+        let done = "event: response.output_item.done\n\
+                    data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"name\":\"tool_search\",\"call_id\":\"search-1\",\"status\":\"completed\",\"arguments\":\"{\\\"query\\\":\\\"thread tools\\\",\\\"limit\\\":8}\"}}\n\n";
+        let input = stream::iter(vec![
+            Ok::<Bytes, std::io::Error>(Bytes::from(added)),
+            Ok(Bytes::from(done)),
+            Ok(Bytes::from("data: [DONE]\n\n")),
+        ]);
+        let out = create_tool_call_restore_sse_stream(input, HashMap::new(), true);
+        futures::pin_mut!(out);
+
+        let mut collected = String::new();
+        while let Some(chunk) = out.next().await {
+            collected.push_str(std::str::from_utf8(&chunk.unwrap()).unwrap());
+        }
+
+        assert_eq!(
+            collected.matches("\"type\":\"tool_search_call\"").count(),
+            2
+        );
+        assert!(collected.contains("\"execution\":\"client\""));
+        assert!(collected.contains("\"query\":\"thread tools\""));
+        assert!(collected.contains("\"limit\":8"));
+        assert!(!collected.contains("\"name\":\"tool_search\""));
     }
 }

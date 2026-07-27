@@ -1414,6 +1414,37 @@ impl RequestForwarder {
         // suffix and add the context-1m beta header.
         let mut codex_anthropic_one_m = false;
 
+        // This compatibility hook only runs after the local proxy has selected
+        // the actual third-party provider. Direct/non-takeover Codex routing
+        // bypasses this forwarder, while official ChatGPT/OAuth providers are
+        // explicitly excluded by the provider gate.
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && super::providers::should_inject_codex_tool_search_shim(provider, endpoint)
+        {
+            let action = super::providers::transform_codex_chat::ensure_responses_tool_search_shim(
+                &mut mapped_body,
+            );
+            let provider_type = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.provider_type.as_deref())
+                .unwrap_or("custom");
+            let compatibility_path = if codex_responses_to_chat {
+                "responses_to_chat"
+            } else if codex_responses_to_anthropic {
+                "responses_to_anthropic"
+            } else {
+                "native_responses"
+            };
+            log::debug!(
+                "[Codex] tool_search shim provider={} provider_type={} path={} action={}",
+                provider.id,
+                provider_type,
+                compatibility_path,
+                action.as_str()
+            );
+        }
+
         // 转换请求体（如果需要）
         let mut request_body = if codex_responses_to_chat {
             let mut mapped_body = mapped_body;
