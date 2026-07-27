@@ -64,6 +64,9 @@ export const useSaveCursorProviders = () =>
     cursorApi.saveProviders(changes),
   );
 
+export const useDeleteCursorEndpoint = () =>
+  useCursorMutation((id: string) => cursorApi.deleteEndpoint(id));
+
 export const useDeleteCursorProvider = () =>
   useCursorMutation((id: string) => cursorApi.deleteProvider(id));
 

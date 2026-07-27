@@ -947,13 +947,15 @@
         "endpointAdded": "Endpoint 已添加 · {{count}} 个模型",
         "testSucceeded": "{{name}} 测速完成",
         "testFailed": "{{name}} 测速失败",
-        "modelDeleted": "Cursor 模型已删除"
+        "modelDeleted": "Cursor 模型已删除",
+        "endpointDeleted": "Cursor Endpoint 及其 API Key 已删除"
       },
       "error": {
         "modelSaveFailed": "保存 Cursor 模型失败",
         "endpointSaveFailed": "保存 Cursor Endpoint 失败",
         "toggleFailed": "更新模型启用状态失败",
-        "modelDeleteFailed": "删除 Cursor 模型失败"
+        "modelDeleteFailed": "删除 Cursor 模型失败",
+        "endpointDeleteFailed": "删除 Cursor Endpoint 失败"
       },
       "loadingRuntime": "加载 Cursor 运行状态…",
       "runtimeError": "Cursor 运行时异常",
@@ -967,7 +969,12 @@
         "toggleAriaLabel": "{{action}} {{name}} 模型列表",
         "enabledCount": "{{enabled}}/{{total}} 已启用",
         "editAriaLabel": "编辑 {{name}} Endpoint",
+        "deleteAriaLabel": "删除 {{name}} Endpoint",
         "noModels": "暂无模型，可编辑 Endpoint 后重新添加。"
+      },
+      "endpointDelete": {
+        "title": "删除 Cursor Endpoint",
+        "message": "确定删除“{{name}}”吗？该 Endpoint、其中所有模型和保存的 API Key 都会被永久删除。"
       },
       "delete": {
         "title": "删除 Cursor 模型",

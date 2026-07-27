@@ -25,6 +25,7 @@ import {
   useCursorEndpoints,
   useCursorProviders,
   useCursorRuntimeState,
+  useDeleteCursorEndpoint,
   useDeleteCursorProvider,
   useSaveCursorProvider,
   useSaveCursorProviders,
@@ -66,6 +67,7 @@ export const CursorModelPanel = forwardRef<ProviderCatalogHandle>(
     const runtimeQuery = useCursorRuntimeState();
     const saveProvider = useSaveCursorProvider();
     const saveProviders = useSaveCursorProviders();
+    const deleteEndpoint = useDeleteCursorEndpoint();
     const deleteProvider = useDeleteCursorProvider();
     const toggleProvider = useToggleCursorProvider();
     const testModel = useTestCursorModel();
@@ -81,6 +83,8 @@ export const CursorModelPanel = forwardRef<ProviderCatalogHandle>(
     const [deleteTarget, setDeleteTarget] = useState<CursorProvider | null>(
       null,
     );
+    const [deleteEndpointTarget, setDeleteEndpointTarget] =
+      useState<CursorEndpoint | null>(null);
     const [tests, setTests] = useState<Record<string, CursorModelTestResult>>(
       {},
     );
@@ -310,6 +314,25 @@ export const CursorModelPanel = forwardRef<ProviderCatalogHandle>(
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 shrink-0 p-1 opacity-0 pointer-events-none transition-opacity duration-200 group-hover/endpoint:opacity-100 group-hover/endpoint:pointer-events-auto group-focus-within/endpoint:opacity-100 group-focus-within/endpoint:pointer-events-auto"
+                          title={t("cursor.panel.endpoint.deleteAriaLabel", {
+                            name: endpoint.name,
+                          })}
+                          aria-label={t(
+                            "cursor.panel.endpoint.deleteAriaLabel",
+                            {
+                              name: endpoint.name,
+                            },
+                          )}
+                          disabled={busy}
+                          onClick={() => setDeleteEndpointTarget(endpoint)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0 p-1 opacity-0 pointer-events-none transition-opacity duration-200 group-hover/endpoint:opacity-100 group-hover/endpoint:pointer-events-auto group-focus-within/endpoint:opacity-100 group-focus-within/endpoint:pointer-events-auto"
                           title={t("cursor.panel.endpoint.editAriaLabel", {
                             name: endpoint.name,
                           })}
@@ -356,6 +379,29 @@ export const CursorModelPanel = forwardRef<ProviderCatalogHandle>(
           provider={editing}
           onOpenChange={setModelDialogOpen}
           onSave={handleSave}
+        />
+        <ConfirmDialog
+          isOpen={Boolean(deleteEndpointTarget)}
+          title={t("cursor.panel.endpointDelete.title")}
+          message={t("cursor.panel.endpointDelete.message", {
+            name: deleteEndpointTarget?.name ?? "",
+          })}
+          onConfirm={() => {
+            if (!deleteEndpointTarget) return;
+            void deleteEndpoint
+              .mutateAsync(deleteEndpointTarget.id)
+              .then(() =>
+                toast.success(t("cursor.panel.toast.endpointDeleted")),
+              )
+              .catch((error) =>
+                reportError(
+                  t("cursor.panel.error.endpointDeleteFailed"),
+                  error,
+                ),
+              )
+              .finally(() => setDeleteEndpointTarget(null));
+          }}
+          onCancel={() => setDeleteEndpointTarget(null)}
         />
         <ConfirmDialog
           isOpen={Boolean(deleteTarget)}

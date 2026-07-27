@@ -947,13 +947,15 @@
         "endpointAdded": "Endpoint を追加しました · {{count}} モデル",
         "testSucceeded": "{{name}} の速度テストが完了しました",
         "testFailed": "{{name}} の速度テストに失敗しました",
-        "modelDeleted": "Cursor モデルを削除しました"
+        "modelDeleted": "Cursor モデルを削除しました",
+        "endpointDeleted": "Cursor Endpoint と API Key を削除しました"
       },
       "error": {
         "modelSaveFailed": "Cursor モデルの保存に失敗しました",
         "endpointSaveFailed": "Cursor Endpoint の保存に失敗しました",
         "toggleFailed": "モデルの有効状態の更新に失敗しました",
-        "modelDeleteFailed": "Cursor モデルの削除に失敗しました"
+        "modelDeleteFailed": "Cursor モデルの削除に失敗しました",
+        "endpointDeleteFailed": "Cursor Endpoint の削除に失敗しました"
       },
       "loadingRuntime": "Cursor ランタイムの状態を読み込み中…",
       "runtimeError": "Cursor ランタイムエラー",
@@ -967,7 +969,12 @@
         "toggleAriaLabel": "{{name}} のモデル一覧を{{action}}",
         "enabledCount": "{{enabled}}/{{total}} 有効",
         "editAriaLabel": "{{name}} Endpoint を編集",
+        "deleteAriaLabel": "{{name}} Endpoint を削除",
         "noModels": "モデルがありません。Endpoint を編集して追加し直してください。"
+      },
+      "endpointDelete": {
+        "title": "Cursor Endpoint を削除",
+        "message": "「{{name}}」を削除しますか？Endpoint、すべてのモデル、保存された API Key が完全に削除されます。"
       },
       "delete": {
         "title": "Cursor モデルを削除",

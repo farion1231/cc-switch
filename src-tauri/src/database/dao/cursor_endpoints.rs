@@ -54,6 +54,54 @@ impl Database {
         }
     }
 
+    pub fn delete_cursor_endpoint(&self, endpoint_id: &str) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut stmt = tx
+            .prepare("SELECT id, settings_config FROM providers WHERE app_type = 'cursor'")
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let mut provider_ids = Vec::new();
+        for row in rows {
+            let (id, raw_config) = row.map_err(|e| AppError::Database(e.to_string()))?;
+            let config: serde_json::Value =
+                serde_json::from_str(&raw_config).map_err(|e| AppError::Database(e.to_string()))?;
+            if config["endpointId"].as_str() == Some(endpoint_id) {
+                provider_ids.push(id);
+            }
+        }
+        drop(stmt);
+
+        for id in provider_ids {
+            tx.execute(
+                "DELETE FROM providers WHERE id = ?1 AND app_type = 'cursor'",
+                params![id],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+        let deleted = tx
+            .execute(
+                "DELETE FROM cursor_endpoints WHERE id = ?1",
+                params![endpoint_id],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if deleted == 0 {
+            return Err(AppError::Database(format!(
+                "Cursor Endpoint '{endpoint_id}' 不存在"
+            )));
+        }
+
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     pub fn save_cursor_endpoint_with_provider_changes(
         &self,
         endpoint: &CursorEndpoint,
@@ -142,6 +190,41 @@ mod tests {
             json!({ "endpointId": "endpoint-1", "modelID": id }),
             None,
         )
+    }
+
+    #[test]
+    fn deletes_endpoint_with_all_providers_and_api_keys() {
+        let db = Database::memory().expect("memory db");
+        db.save_cursor_endpoint_with_provider_changes(
+            &endpoint(),
+            &[provider("model-1"), provider("model-2")],
+            &[],
+        )
+        .expect("save endpoint and models");
+
+        db.delete_cursor_endpoint("endpoint-1")
+            .expect("delete endpoint");
+
+        assert!(db
+            .get_all_providers("cursor")
+            .expect("providers")
+            .is_empty());
+        assert!(db.get_cursor_endpoints().expect("endpoints").is_empty());
+        assert!(db
+            .get_cursor_endpoint("endpoint-1")
+            .expect("endpoint")
+            .is_none());
+    }
+
+    #[test]
+    fn rejects_deleting_a_missing_endpoint_without_touching_providers() {
+        let db = Database::memory().expect("memory db");
+        db.save_cursor_endpoint_with_provider_changes(&endpoint(), &[provider("model-1")], &[])
+            .expect("save endpoint and model");
+
+        assert!(db.delete_cursor_endpoint("missing").is_err());
+        assert_eq!(db.get_all_providers("cursor").expect("providers").len(), 1);
+        assert_eq!(db.get_cursor_endpoints().expect("endpoints").len(), 1);
     }
 
     #[test]

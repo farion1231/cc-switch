@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -16,6 +23,16 @@ let target =
     ? targetArg
     : process.env.TAURI_ENV_TARGET_TRIPLE;
 const baseName = "cursor-sidecar";
+const goproxyVersion = "v1.7.2";
+const goproxyReplacementSource = join(
+  sourceDir,
+  "build",
+  "overlays",
+  "goproxy",
+  "certs.go",
+);
+const patchedGoproxyDir = join(outputDir, ".goproxy-no-default-ca");
+const temporaryGoMod = join(outputDir, "cursor-sidecar-build.mod");
 
 const targets = new Map([
   [
@@ -95,9 +112,56 @@ function generateProto() {
   );
 }
 
+function preparePatchedDependencies() {
+  const moduleJson = run(
+    "go",
+    [
+      "mod",
+      "download",
+      "-json",
+      `github.com/elazarl/goproxy@${goproxyVersion}`,
+    ],
+    { cwd: sourceDir, capture: true },
+  );
+  const upstreamDir = JSON.parse(moduleJson ?? "{}").Dir;
+  if (!upstreamDir || !existsSync(goproxyReplacementSource)) {
+    fail("无法准备不含默认 CA 的 goproxy 构建副本");
+  }
+
+  rmSync(patchedGoproxyDir, { recursive: true, force: true });
+  cpSync(upstreamDir, patchedGoproxyDir, { recursive: true });
+  cpSync(goproxyReplacementSource, join(patchedGoproxyDir, "certs.go"));
+
+  const sourceGoMod = readFileSync(join(sourceDir, "go.mod"), "utf8");
+  const patchedModulePath = patchedGoproxyDir.replaceAll("\\", "/");
+  writeFileSync(
+    temporaryGoMod,
+    `${sourceGoMod}\nreplace github.com/elazarl/goproxy => ${JSON.stringify(patchedModulePath)}\n`,
+  );
+  cpSync(join(sourceDir, "go.sum"), `${temporaryGoMod.slice(0, -4)}.sum`);
+  return temporaryGoMod;
+}
+
+function findEmbeddedPrivateKey(binaryPath) {
+  const binaryText = readFileSync(binaryPath).toString("latin1");
+  const privateKeyBlock =
+    /-----BEGIN ((?:RSA |EC )?PRIVATE KEY)-----[\r\n]+((?:[A-Za-z0-9+/]{64}[\r\n]+)+(?:[A-Za-z0-9+/]{1,63}={0,2}[\r\n]+)?)-----END \1-----/g;
+  return [...binaryText.matchAll(privateKeyBlock)].find((match) => {
+    const der = Buffer.from(match[2].replace(/\s/g, ""), "base64");
+    return der.length > 0 && der[0] === 0x30;
+  });
+}
+
+function verifyNoEmbeddedPrivateKey(binaryPath) {
+  if (findEmbeddedPrivateKey(binaryPath)) {
+    fail(`sidecar 包含嵌入的有效 PEM 私钥: ${binaryPath}`);
+  }
+}
+
 function verifyBinary(targetTriple, binaryPath) {
   const platform = targets.get(targetTriple);
   if (!platform) fail(`无法验证未知 target: ${targetTriple}`);
+  verifyNoEmbeddedPrivateKey(binaryPath);
   const bytes = readFileSync(binaryPath);
 
   if (platform.format === "macho") {
@@ -129,10 +193,18 @@ function verifyBinary(targetTriple, binaryPath) {
   }
 }
 
-function testSidecarDependencies() {
+function testSidecarDependencies(goModPath) {
   const dependencies = run(
     "go",
-    ["list", "-deps", "-f", "{{.ImportPath}}", "./cmd/cc-switch-sidecar"],
+    [
+      "list",
+      "-modfile",
+      goModPath,
+      "-deps",
+      "-f",
+      "{{.ImportPath}}",
+      "./cmd/cc-switch-sidecar",
+    ],
     {
       cwd: sourceDir,
       env: { ...process.env, CGO_ENABLED: "0" },
@@ -144,7 +216,7 @@ function testSidecarDependencies() {
   }
   const packages = dependencies?.filter((name) => name.startsWith("cursor/"));
   if (!packages?.length) fail("未解析到 Cursor sidecar 的模块内依赖");
-  run("go", ["test", ...packages], {
+  run("go", ["test", "-modfile", goModPath, ...packages], {
     cwd: sourceDir,
     env: { ...process.env, CGO_ENABLED: "0" },
   });
@@ -155,7 +227,7 @@ function outputPath(targetTriple) {
   return join(outputDir, `${baseName}-${targetTriple}${extension}`);
 }
 
-function build(targetTriple, destination) {
+function build(targetTriple, destination, goModPath) {
   const platform = targets.get(targetTriple);
   if (!platform) fail(`不支持的 Cursor sidecar target: ${targetTriple}`);
 
@@ -163,6 +235,8 @@ function build(targetTriple, destination) {
     "go",
     [
       "build",
+      "-modfile",
+      goModPath,
       "-trimpath",
       "-ldflags=-s -w",
       "-o",
@@ -198,8 +272,9 @@ if (!existsSync(join(sourceDir, "go.mod"))) {
 }
 
 generateProto();
-if (testMode) testSidecarDependencies();
 mkdirSync(outputDir, { recursive: true });
+const goModPath = preparePatchedDependencies();
+if (testMode) testSidecarDependencies(goModPath);
 
 if (target === "universal-apple-darwin") {
   if (process.platform !== "darwin") {
@@ -207,14 +282,14 @@ if (target === "universal-apple-darwin") {
   }
   const arm64 = outputPath("aarch64-apple-darwin");
   const amd64 = outputPath("x86_64-apple-darwin");
-  build("aarch64-apple-darwin", arm64);
-  build("x86_64-apple-darwin", amd64);
+  build("aarch64-apple-darwin", arm64, goModPath);
+  build("x86_64-apple-darwin", amd64, goModPath);
   verifyBinary("aarch64-apple-darwin", arm64);
   verifyBinary("x86_64-apple-darwin", amd64);
   run("lipo", ["-create", "-output", outputPath(target), arm64, amd64]);
   run("lipo", [outputPath(target), "-verify_arch", "arm64", "x86_64"]);
 } else {
-  build(target, outputPath(target));
+  build(target, outputPath(target), goModPath);
   verifyBinary(target, outputPath(target));
 }
 

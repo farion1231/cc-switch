@@ -57,12 +57,11 @@ pub async fn save_cursor_provider(
     projector::project_single_model(&provider.id, &provider.name, config)
         .map_err(|error| error.to_string())?;
     state
-        .db
-        .save_provider(CURSOR_APP_TYPE, &provider)
-        .map_err(|error| error.to_string())?;
-    state
         .cursor_runtime
-        .sync_config()
+        .commit_config_change(
+            |db| projector::project_provider_changes(db, std::slice::from_ref(&provider), &[]),
+            || state.db.save_provider(CURSOR_APP_TYPE, &provider),
+        )
         .await
         .map_err(|error| error.to_string())?;
     Ok(true)
@@ -120,17 +119,52 @@ pub async fn save_cursor_providers(
     }
 
     state
-        .db
-        .save_cursor_endpoint_with_provider_changes(
-            &changes.endpoint,
-            &changes.upserts,
-            &changes.deleted_provider_ids,
+        .cursor_runtime
+        .commit_config_change(
+            |db| {
+                projector::project_provider_changes(
+                    db,
+                    &changes.upserts,
+                    &changes.deleted_provider_ids,
+                )
+            },
+            || {
+                state.db.save_cursor_endpoint_with_provider_changes(
+                    &changes.endpoint,
+                    &changes.upserts,
+                    &changes.deleted_provider_ids,
+                )
+            },
         )
+        .await
         .map_err(|error| error.to_string())?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn delete_cursor_endpoint(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<bool, String> {
+    let id = id.trim().to_string();
+    if id.is_empty() {
+        return Err("Cursor Endpoint ID 不能为空".to_string());
+    }
+    if state
+        .db
+        .get_cursor_endpoint(&id)
+        .map_err(|error| error.to_string())?
+        .is_none()
+    {
+        return Err(format!("Cursor Endpoint '{id}' 不存在"));
+    }
 
     state
         .cursor_runtime
-        .sync_config()
+        .commit_config_change(
+            |db| projector::project_without_endpoint(db, &id),
+            || state.db.delete_cursor_endpoint(&id),
+        )
         .await
         .map_err(|error| error.to_string())?;
     Ok(true)
@@ -142,12 +176,11 @@ pub async fn delete_cursor_provider(
     id: String,
 ) -> Result<bool, String> {
     state
-        .db
-        .delete_provider(CURSOR_APP_TYPE, &id)
-        .map_err(|error| error.to_string())?;
-    state
         .cursor_runtime
-        .sync_config()
+        .commit_config_change(
+            |db| projector::project_provider_changes(db, &[], std::slice::from_ref(&id)),
+            || state.db.delete_provider(CURSOR_APP_TYPE, &id),
+        )
         .await
         .map_err(|error| error.to_string())?;
     Ok(true)
@@ -164,20 +197,22 @@ pub async fn set_cursor_provider_enabled(
         .get_provider_by_id(&id, CURSOR_APP_TYPE)
         .map_err(|error| error.to_string())?
         .ok_or_else(|| format!("Cursor Provider '{id}' 不存在"))?;
-    let mut config: CursorModelConfig = serde_json::from_value(provider.settings_config)
+    let mut config: CursorModelConfig = serde_json::from_value(provider.settings_config.clone())
         .map_err(|error| format!("Cursor Provider 配置无效: {error}"))?;
     config.enabled = enabled;
-    state
-        .db
-        .update_provider_settings_config(
-            CURSOR_APP_TYPE,
-            &id,
-            &serde_json::to_value(config).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?;
+    let next_settings = serde_json::to_value(config).map_err(|error| error.to_string())?;
+    let mut next_provider = provider;
+    next_provider.settings_config = next_settings.clone();
     state
         .cursor_runtime
-        .sync_config()
+        .commit_config_change(
+            |db| projector::project_provider_changes(db, &[next_provider], &[]),
+            || {
+                state
+                    .db
+                    .update_provider_settings_config(CURSOR_APP_TYPE, &id, &next_settings)
+            },
+        )
         .await
         .map_err(|error| error.to_string())?;
     Ok(true)

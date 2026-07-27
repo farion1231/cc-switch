@@ -947,13 +947,15 @@
         "endpointAdded": "Endpoint added · {{count}} models",
         "testSucceeded": "Speed test completed for {{name}}",
         "testFailed": "Speed test failed for {{name}}",
-        "modelDeleted": "Cursor model deleted"
+        "modelDeleted": "Cursor model deleted",
+        "endpointDeleted": "Cursor Endpoint and its API Key deleted"
       },
       "error": {
         "modelSaveFailed": "Failed to save Cursor model",
         "endpointSaveFailed": "Failed to save Cursor Endpoint",
         "toggleFailed": "Failed to update model enabled state",
-        "modelDeleteFailed": "Failed to delete Cursor model"
+        "modelDeleteFailed": "Failed to delete Cursor model",
+        "endpointDeleteFailed": "Failed to delete Cursor Endpoint"
       },
       "loadingRuntime": "Loading Cursor runtime status…",
       "runtimeError": "Cursor runtime error",
@@ -967,7 +969,12 @@
         "toggleAriaLabel": "{{action}} the model list for {{name}}",
         "enabledCount": "{{enabled}}/{{total}} enabled",
         "editAriaLabel": "Edit {{name}} Endpoint",
+        "deleteAriaLabel": "Delete {{name}} Endpoint",
         "noModels": "No models. Edit the Endpoint to add them again."
+      },
+      "endpointDelete": {
+        "title": "Delete Cursor Endpoint",
+        "message": "Delete “{{name}}”? The Endpoint, all of its models, and its saved API Key will be permanently deleted."
       },
       "delete": {
         "title": "Delete Cursor Model",

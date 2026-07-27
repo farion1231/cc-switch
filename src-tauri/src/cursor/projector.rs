@@ -4,11 +4,52 @@ use crate::cursor::types::{
 };
 use crate::database::Database;
 use crate::error::AppError;
+use crate::provider::Provider;
+use indexmap::IndexMap;
 
 const CURSOR_APP_TYPE: &str = "cursor";
 
 pub fn project_enabled_models(db: &Database) -> Result<SidecarConfig, AppError> {
-    let providers = db.get_all_providers(CURSOR_APP_TYPE)?;
+    project_enabled_provider_map(&db.get_all_providers(CURSOR_APP_TYPE)?)
+}
+
+pub fn project_provider_changes(
+    db: &Database,
+    upserts: &[Provider],
+    deleted_provider_ids: &[String],
+) -> Result<SidecarConfig, AppError> {
+    let mut providers = db.get_all_providers(CURSOR_APP_TYPE)?;
+    for id in deleted_provider_ids {
+        providers.shift_remove(id);
+    }
+    for provider in upserts {
+        providers.insert(provider.id.clone(), provider.clone());
+    }
+    project_enabled_provider_map(&providers)
+}
+
+pub fn project_without_endpoint(
+    db: &Database,
+    endpoint_id: &str,
+) -> Result<SidecarConfig, AppError> {
+    let providers = db
+        .get_all_providers(CURSOR_APP_TYPE)?
+        .into_iter()
+        .filter_map(|(id, provider)| {
+            let config =
+                serde_json::from_value::<CursorModelConfig>(provider.settings_config.clone());
+            match config {
+                Ok(config) if config.endpoint_id == endpoint_id => None,
+                _ => Some((id, provider)),
+            }
+        })
+        .collect();
+    project_enabled_provider_map(&providers)
+}
+
+pub fn project_enabled_provider_map(
+    providers: &IndexMap<String, Provider>,
+) -> Result<SidecarConfig, AppError> {
     let mut adapters = Vec::new();
     for provider in providers.values() {
         let config: CursorModelConfig = serde_json::from_value(provider.settings_config.clone())

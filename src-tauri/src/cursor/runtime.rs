@@ -294,10 +294,41 @@ impl CursorRuntimeService {
     }
 
     pub async fn sync_config(&self) -> Result<(), AppError> {
+        self.commit_config_change(|db| projector::project_enabled_models(db), || Ok(()))
+            .await
+    }
+
+    pub async fn commit_config_change<P, F>(
+        &self,
+        project_next: P,
+        commit: F,
+    ) -> Result<(), AppError>
+    where
+        P: FnOnce(&Database) -> Result<SidecarConfig, AppError>,
+        F: FnOnce() -> Result<(), AppError>,
+    {
         let _lifecycle_guard = self.lifecycle.lock().await;
-        let config = projector::project_enabled_models(&self.db)?;
-        if self.inner.lock().await.base_url.is_some() {
-            self.put_config(&config).await?;
+        let running = self.inner.lock().await.base_url.is_some();
+        let previous_config = if running {
+            Some(projector::project_enabled_models(&self.db)?)
+        } else {
+            None
+        };
+        let next_config = project_next(&self.db)?;
+
+        if running {
+            self.put_config(&next_config).await?;
+        }
+
+        if let Err(commit_error) = commit() {
+            if let Some(previous_config) = previous_config {
+                if let Err(rollback_error) = self.put_config(&previous_config).await {
+                    return Err(AppError::Message(format!(
+                        "数据库更新失败: {commit_error}; Cursor sidecar 回滚失败: {rollback_error}"
+                    )));
+                }
+            }
+            return Err(commit_error);
         }
         Ok(())
     }
