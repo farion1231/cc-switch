@@ -52,24 +52,47 @@ describe("CursorEndpointDialog", () => {
       />,
     );
 
-    fireEvent.change(screen.getByPlaceholderText("例如 OpenRouter"), {
-      target: { value: "Local Gateway" },
-    });
-    fireEvent.change(screen.getByPlaceholderText("https://api.example.com"), {
-      target: { value: "http://127.0.0.1:20128/v1" },
-    });
-    fireEvent.change(screen.getByPlaceholderText("sk-..."), {
-      target: { value: "test-key" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "获取模型" }));
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        "cursor.endpointDialog.placeholders.providerName",
+      ),
+      {
+        target: { value: "Local Gateway" },
+      },
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        "cursor.endpointDialog.placeholders.apiEndpoint",
+      ),
+      {
+        target: { value: "http://127.0.0.1:20128/v1" },
+      },
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText("cursor.endpointDialog.placeholders.apiKey"),
+      {
+        target: { value: "test-key" },
+      },
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "cursor.endpointDialog.models.fetchAction",
+      }),
+    );
 
     await waitFor(() =>
       expect(modelFetchApiMock.fetchModelsForConfig).toHaveBeenCalled(),
     );
     fireEvent.click(
-      await screen.findByRole("button", { name: "添加选中项（1）" }),
+      await screen.findByRole("button", {
+        name: "cursor.endpointDialog.models.addSelected",
+      }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "添加 Endpoint" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "cursor.endpointDialog.addAction",
+      }),
+    );
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
     expect(onSave.mock.calls[0][0].upserts[0].settingsConfig).toMatchObject({
