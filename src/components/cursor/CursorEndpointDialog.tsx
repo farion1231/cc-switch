@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Download, Loader2, Plus, Trash2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -81,6 +82,7 @@ export function CursorEndpointDialog({
   onOpenChange,
   onSave,
 }: CursorEndpointDialogProps) {
+  const { t } = useTranslation();
   const [form, setForm] = useState<EndpointForm>(() =>
     createEndpointForm(endpoint, providers),
   );
@@ -144,7 +146,7 @@ export function CursorEndpointDialog({
     const baseURL = form.baseURL.trim();
     const apiKey = form.apiKey.trim();
     if (!baseURL || !apiKey) {
-      setError("请先填写 API 端点和 API Key");
+      setError(t("cursor.endpointDialog.error.credentialsRequired"));
       return;
     }
 
@@ -167,12 +169,19 @@ export function CursorEndpointDialog({
             .map((model) => model.id),
         ),
       );
-      if (result.length === 0) setError("提供商返回了空模型列表");
+      if (result.length === 0) {
+        setError(t("cursor.endpointDialog.error.emptyModelList"));
+      }
     } catch (fetchError) {
       setFetchedModels([]);
       setSelectedModelIds(new Set());
       setError(
-        `获取模型失败：${fetchError instanceof Error ? fetchError.message : String(fetchError)}`,
+        t("cursor.endpointDialog.error.fetchFailed", {
+          error:
+            fetchError instanceof Error
+              ? fetchError.message
+              : String(fetchError),
+        }),
       );
     } finally {
       setFetching(false);
@@ -207,19 +216,19 @@ export function CursorEndpointDialog({
 
     try {
       if (!providerGroup || !baseURL || !apiKey) {
-        throw new Error("提供商名称、API 端点和 API Key 不能为空");
+        throw new Error(t("cursor.endpointDialog.error.requiredFields"));
       }
       if (!endpoint && validModels.length === 0) {
-        throw new Error("请至少添加一个模型");
+        throw new Error(t("cursor.endpointDialog.error.modelRequired"));
       }
       if (validModels.some((model) => !model.name || !model.modelID)) {
-        throw new Error("模型显示名称和模型 ID 不能为空");
+        throw new Error(t("cursor.endpointDialog.error.modelFieldsRequired"));
       }
       if (
         new Set(validModels.map((model) => model.modelID)).size !==
         validModels.length
       ) {
-        throw new Error("同一 Endpoint 下不能添加重复的模型 ID");
+        throw new Error(t("cursor.endpointDialog.error.duplicateModelId"));
       }
 
       const endpointId = endpoint?.id ?? generateUUID();
@@ -283,18 +292,20 @@ export function CursorEndpointDialog({
   const footer = (
     <>
       <span className="mr-auto min-w-0 truncate text-xs text-muted-foreground">
-        保存时会统一更新该 Endpoint 下所有模型的连接配置。
+        {t("cursor.endpointDialog.footerHint")}
       </span>
       <Button
         variant="outline"
         onClick={() => onOpenChange(false)}
         disabled={saving}
       >
-        取消
+        {t("common.cancel")}
       </Button>
       <Button onClick={() => void handleSave()} disabled={saving}>
         {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-        {endpoint ? "保存 Endpoint" : "添加 Endpoint"}
+        {endpoint
+          ? t("cursor.endpointDialog.saveAction")
+          : t("cursor.endpointDialog.addAction")}
       </Button>
     </>
   );
@@ -302,7 +313,11 @@ export function CursorEndpointDialog({
   return (
     <FullScreenPanel
       isOpen={open}
-      title={endpoint ? "编辑 Cursor Endpoint" : "添加 Cursor Endpoint"}
+      title={
+        endpoint
+          ? t("cursor.endpointDialog.editTitle")
+          : t("cursor.endpointDialog.addTitle")
+      }
       onClose={() => onOpenChange(false)}
       footer={footer}
       contentClassName="pt-3"
@@ -310,9 +325,11 @@ export function CursorEndpointDialog({
       <div className="mx-auto w-full max-w-4xl space-y-6">
         <section className="glass space-y-5 rounded-xl border border-white/10 p-6">
           <div>
-            <h3 className="text-base font-semibold">Endpoint 配置</h3>
+            <h3 className="text-base font-semibold">
+              {t("cursor.endpointDialog.config.title")}
+            </h3>
             <p className="mt-1 text-sm text-muted-foreground">
-              连接信息由该 Endpoint 下的全部模型共享。
+              {t("cursor.endpointDialog.config.description")}
             </p>
           </div>
 
@@ -323,43 +340,50 @@ export function CursorEndpointDialog({
           )}
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="提供商名称">
+            <Field label={t("cursor.endpointDialog.fields.providerName")}>
               <Input
                 value={form.providerGroup}
                 onChange={(event) =>
                   setField("providerGroup", event.target.value)
                 }
-                placeholder="例如 OpenRouter"
+                placeholder={t(
+                  "cursor.endpointDialog.placeholders.providerName",
+                )}
               />
             </Field>
-            <Field label="API 协议">
+            <Field label={t("cursor.endpointDialog.fields.apiProtocol")}>
               <Select value={form.type} onValueChange={handleTypeChange}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="openai">OpenAI Compatible</SelectItem>
+                  <SelectItem value="openai">
+                    {t("cursor.protocol.openAICompatible")}
+                  </SelectItem>
                   <SelectItem value="anthropic">
-                    Anthropic Compatible
+                    {t("cursor.protocol.anthropicCompatible")}
                   </SelectItem>
                 </SelectContent>
               </Select>
             </Field>
           </div>
-          <Field label="API 端点">
+          <Field label={t("cursor.endpointDialog.fields.apiEndpoint")}>
             <Input
               value={form.baseURL}
               onChange={(event) => setField("baseURL", event.target.value)}
-              placeholder="https://api.example.com"
+              placeholder={t("cursor.endpointDialog.placeholders.apiEndpoint")}
             />
           </Field>
-          <Field label="API Key" hint="凭证仅存储在本机数据库中">
+          <Field
+            label={t("cursor.endpointDialog.fields.apiKey")}
+            hint={t("cursor.endpointDialog.fields.apiKeyHint")}
+          >
             <Input
               type="password"
               value={form.apiKey}
               onChange={(event) => setField("apiKey", event.target.value)}
               autoComplete="new-password"
-              placeholder="sk-..."
+              placeholder={t("cursor.endpointDialog.placeholders.apiKey")}
             />
           </Field>
         </section>
@@ -367,9 +391,11 @@ export function CursorEndpointDialog({
         <section className="glass space-y-5 rounded-xl border border-white/10 p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h3 className="text-base font-semibold">模型列表</h3>
+              <h3 className="text-base font-semibold">
+                {t("cursor.endpointDialog.models.title")}
+              </h3>
               <p className="mt-1 text-sm text-muted-foreground">
-                可以手动添加，也可以从提供商接口批量获取。
+                {t("cursor.endpointDialog.models.description")}
               </p>
             </div>
             <div className="flex gap-2">
@@ -385,7 +411,7 @@ export function CursorEndpointDialog({
                 ) : (
                   <Download className="mr-2 h-4 w-4" />
                 )}
-                获取模型
+                {t("cursor.endpointDialog.models.fetchAction")}
               </Button>
               <Button
                 type="button"
@@ -396,7 +422,7 @@ export function CursorEndpointDialog({
                 }
               >
                 <Plus className="mr-2 h-4 w-4" />
-                手动添加
+                {t("cursor.endpointDialog.models.addManually")}
               </Button>
             </div>
           </div>
@@ -404,14 +430,16 @@ export function CursorEndpointDialog({
           {availableFetchedModels.length > 0 && (
             <div className="rounded-lg border border-border-default bg-muted/20 p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
-                <Label>选择要添加的模型</Label>
+                <Label>{t("cursor.endpointDialog.models.selectLabel")}</Label>
                 <Button
                   type="button"
                   size="sm"
                   onClick={addSelectedModels}
                   disabled={selectedModelIds.size === 0}
                 >
-                  添加选中项（{selectedModelIds.size}）
+                  {t("cursor.endpointDialog.models.addSelected", {
+                    count: selectedModelIds.size,
+                  })}
                 </Button>
               </div>
               <div className="grid max-h-64 gap-2 overflow-y-auto sm:grid-cols-2">
@@ -442,7 +470,7 @@ export function CursorEndpointDialog({
 
           {models.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border-default px-6 py-10 text-center text-sm text-muted-foreground">
-              暂无模型，请获取模型或手动添加。
+              {t("cursor.endpointDialog.models.empty")}
             </div>
           ) : (
             <div className="space-y-3">
@@ -451,29 +479,34 @@ export function CursorEndpointDialog({
                   key={model.key}
                   className="grid gap-3 rounded-lg border border-border-default p-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
                 >
-                  <Field label="显示名称">
+                  <Field label={t("cursor.endpointDialog.fields.displayName")}>
                     <Input
                       value={model.name}
                       onChange={(event) =>
                         updateModel(model.key, "name", event.target.value)
                       }
-                      placeholder="例如 GPT-5 Coding"
+                      placeholder={t(
+                        "cursor.endpointDialog.placeholders.displayName",
+                      )}
                     />
                   </Field>
-                  <Field label="模型 ID">
+                  <Field label={t("cursor.endpointDialog.fields.modelId")}>
                     <Input
                       value={model.modelID}
                       onChange={(event) =>
                         updateModel(model.key, "modelID", event.target.value)
                       }
-                      placeholder="gpt-5.4"
+                      placeholder={t(
+                        "cursor.endpointDialog.placeholders.modelId",
+                      )}
                     />
                   </Field>
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
-                    title="移除模型"
+                    title={t("cursor.endpointDialog.models.removeAction")}
+                    aria-label={t("cursor.endpointDialog.models.removeAction")}
                     onClick={() =>
                       setModels((current) =>
                         current.filter((item) => item.key !== model.key),
