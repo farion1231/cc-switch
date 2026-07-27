@@ -25,6 +25,7 @@ jobs:
             bundles: msi
           - name: Windows ARM64
             os: windows-11-arm
+            arch: arm64
             sidecar_target: aarch64-pc-windows-msvc
             tauri_target: aarch64-pc-windows-msvc
             bundles: msi
@@ -79,12 +80,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ matrix.sidecar_target }}" = "universal-apple-darwin" ]; then
-            node scripts/build-cursor-sidecar.mjs aarch64-apple-darwin --test
-            node scripts/build-cursor-sidecar.mjs x86_64-apple-darwin --test
-          else
-            node scripts/build-cursor-sidecar.mjs ${{ matrix.sidecar_target }} --test
-          fi
+          node scripts/build-cursor-sidecar.mjs ${{ matrix.sidecar_target }} --test
+
+      - name: Verify macOS sidecar inputs
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in aarch64-apple-darwin x86_64-apple-darwin universal-apple-darwin; do
+            test -x "src-tauri/binaries/cursor-sidecar-$target"
+          done
+          lipo src-tauri/binaries/cursor-sidecar-universal-apple-darwin \
+            -verify_arch arm64 x86_64
 
       - name: Add Rust target
         if: matrix.rust_target != ''
@@ -103,7 +110,7 @@ jobs:
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config curl wget file patchelf libssl-dev rpm \
+            build-essential pkg-config curl wget file patchelf libssl-dev rpm xdg-utils \
             libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev \
             || sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.0-dev
@@ -111,31 +118,70 @@ jobs:
             || sudo apt-get install -y --no-install-recommends libsoup2.4-dev
 
       - name: Setup pnpm
+        if: runner.os != 'Windows' || matrix.arch != 'arm64'
         uses: pnpm/action-setup@v6
         with:
           version: 10.12.3
           run_install: false
 
+      - name: Setup pnpm (Windows ARM64)
+        if: runner.os == 'Windows' && matrix.arch == 'arm64'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          corepack enable
+          corepack prepare pnpm@10.12.3 --activate
+          node --version
+          pnpm --version
+
       - name: Get pnpm store directory
+        if: runner.os != 'Windows' || matrix.arch != 'arm64'
         id: pnpm-store
         shell: bash
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
       - name: Cache pnpm store
+        if: runner.os != 'Windows' || matrix.arch != 'arm64'
         uses: actions/cache@v5
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
 
+      - name: Setup LLVM for Windows ARM64
+        if: runner.os == 'Windows' && matrix.arch == 'arm64'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $llvmRoot = 'C:\Program Files\LLVM'
+          if (-not (Test-Path $llvmRoot)) {
+            throw "LLVM not found at $llvmRoot"
+          }
+          $llvmBin = Join-Path $llvmRoot 'bin'
+          "LIBCLANG_PATH=$llvmBin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CLANG_PATH=$(Join-Path $llvmBin 'clang.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Ensure VBScript for WiX validation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $capability = Get-WindowsCapability -Online |
+            Where-Object Name -Like 'VBSCRIPT*' |
+            Select-Object -First 1
+          if ($null -ne $capability -and $capability.State -ne 'Installed') {
+            Add-WindowsCapability -Online -Name $capability.Name
+          }
 
       - name: Build unsigned test packages
         shell: bash
         run: |
           set -euo pipefail
-          command=(pnpm tauri build --bundles "${{ matrix.bundles }}" --config '{"bundle":{"createUpdaterArtifacts":false}}')
+          command=(pnpm tauri build --verbose --bundles "${{ matrix.bundles }}" --config '{"bundle":{"createUpdaterArtifacts":false}}')
           if [ -n "${{ matrix.tauri_target }}" ]; then
             command+=(--target "${{ matrix.tauri_target }}")
           fi

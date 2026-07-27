@@ -1,11 +1,4 @@
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -212,19 +205,14 @@ if (target === "universal-apple-darwin") {
   if (process.platform !== "darwin") {
     fail("universal-apple-darwin 必须在 macOS 上使用 lipo 构建");
   }
-  const tempDir = mkdtempSync(join(tmpdir(), "cc-switch-cursor-sidecar-"));
-  try {
-    const arm64 = join(tempDir, "cursor-sidecar-arm64");
-    const amd64 = join(tempDir, "cursor-sidecar-amd64");
-    build("aarch64-apple-darwin", arm64);
-    build("x86_64-apple-darwin", amd64);
-    verifyBinary("aarch64-apple-darwin", arm64);
-    verifyBinary("x86_64-apple-darwin", amd64);
-    run("lipo", ["-create", "-output", outputPath(target), arm64, amd64]);
-    run("lipo", [outputPath(target), "-verify_arch", "arm64", "x86_64"]);
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
+  const arm64 = outputPath("aarch64-apple-darwin");
+  const amd64 = outputPath("x86_64-apple-darwin");
+  build("aarch64-apple-darwin", arm64);
+  build("x86_64-apple-darwin", amd64);
+  verifyBinary("aarch64-apple-darwin", arm64);
+  verifyBinary("x86_64-apple-darwin", amd64);
+  run("lipo", ["-create", "-output", outputPath(target), arm64, amd64]);
+  run("lipo", [outputPath(target), "-verify_arch", "arm64", "x86_64"]);
 } else {
   build(target, outputPath(target));
   verifyBinary(target, outputPath(target));
