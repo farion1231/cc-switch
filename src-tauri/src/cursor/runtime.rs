@@ -294,7 +294,7 @@ impl CursorRuntimeService {
     }
 
     pub async fn sync_config(&self) -> Result<(), AppError> {
-        self.commit_config_change(|db| projector::project_enabled_models(db), || Ok(()))
+        self.commit_config_change(projector::project_enabled_models, || Ok(()))
             .await
     }
 
