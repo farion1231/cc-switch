@@ -159,6 +159,18 @@ fn normalize_tool_search_history(body: &mut Value) -> Result<bool, ProxyError> {
         tools.push(tool);
         changed = true;
     }
+
+    // Codex may send `tool_choice: "none"` on the client follow-up because the
+    // deferred definitions were absent from its original request tool surface.
+    // Once a completed tool_search_output has supplied concrete callable tools,
+    // keeping that stale choice would make the promoted definitions impossible
+    // to invoke. Scope the override to this discovered-tool replay only; explicit
+    // no-tool requests without tool_search_output remain untouched.
+    if obj.get("tool_choice").and_then(Value::as_str) == Some("none") {
+        obj.insert("tool_choice".to_string(), json!("auto"));
+        changed = true;
+    }
+
     Ok(changed)
 }
 
@@ -818,6 +830,57 @@ mod tests {
         ));
         assert_eq!(response["output"][0]["name"], "automation_update");
         assert_eq!(response["output"][0]["namespace"], "codex_app");
+    }
+
+    #[test]
+    fn native_followup_activates_desktop_snake_case_tools_without_top_level_tools() {
+        let mut body = json!({
+            "model": "gpt-5.6-sol",
+            "tool_choice": "none",
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "search-1",
+                "execution": "client",
+                "status": "completed",
+                "tools": [{
+                    "type": "namespace",
+                    "name": "codex_app",
+                    "tools": [
+                        {
+                            "type": "function",
+                            "name": "list_projects",
+                            "description": "List projects",
+                            "strict": false,
+                            "defer_loading": true,
+                            "parameters": {
+                                "type": "object",
+                                "properties": {},
+                                "additionalProperties": false
+                            }
+                        },
+                        {
+                            "type": "function",
+                            "name": "create_thread",
+                            "description": "Create task",
+                            "strict": false,
+                            "defer_loading": true,
+                            "parameters": {"type": "object"}
+                        }
+                    ]
+                }]
+            }]
+        });
+
+        assert!(flatten_request_namespaces(&mut body).unwrap());
+        let tools = body["tools"].as_array().unwrap();
+        for name in ["codex_app__list_projects", "codex_app__create_thread"] {
+            let tool = tools.iter().find(|tool| tool["name"] == name).unwrap();
+            assert_eq!(tool["type"], "function");
+            assert!(tool.get("defer_loading").is_none());
+            assert!(tool.get("deferLoading").is_none());
+        }
+        assert_eq!(body["input"][0]["type"], "function_call_output");
+        assert_eq!(body["tool_choice"], "auto");
     }
 
     #[test]

@@ -57,6 +57,7 @@ pub(crate) enum ToolSearchShimStatus {
     ExistingNative,
     ExistingFunction,
     Injected,
+    SkippedNoTools,
     InvalidTools,
 }
 
@@ -66,6 +67,7 @@ impl ToolSearchShimStatus {
             Self::ExistingNative => "existing_native",
             Self::ExistingFunction => "existing_function",
             Self::Injected => "injected",
+            Self::SkippedNoTools => "skipped_no_tools",
             Self::InvalidTools => "invalid_tools",
         }
     }
@@ -304,6 +306,10 @@ pub(crate) fn ensure_responses_tool_search_shim(body: &mut Value) -> ToolSearchS
     let Some(tools) = tools_value.as_array_mut() else {
         return ToolSearchShimStatus::InvalidTools;
     };
+    if tools.is_empty() {
+        body.remove("tools");
+        return ToolSearchShimStatus::SkippedNoTools;
+    }
 
     for tool in tools.iter() {
         match tool.get("type").and_then(Value::as_str) {
@@ -2461,14 +2467,25 @@ mod tests {
 
     #[test]
     fn responses_tool_search_shim_uses_native_function_shape_and_is_idempotent() {
-        let mut missing = json!({"model": "gpt-5.4", "input": "hi"});
+        let mut empty = json!({"model": "gpt-5.4", "input": "hi"});
+        assert_eq!(
+            ensure_responses_tool_search_shim(&mut empty),
+            ToolSearchShimStatus::SkippedNoTools
+        );
+        assert!(empty.get("tools").is_none());
+
+        let mut missing = json!({
+            "model": "gpt-5.4",
+            "input": "hi",
+            "tools": [{"type": "function", "name": "shell", "parameters": {}}]
+        });
         assert_eq!(
             ensure_responses_tool_search_shim(&mut missing),
             ToolSearchShimStatus::Injected
         );
-        assert_eq!(missing["tools"][0]["type"], "function");
-        assert_eq!(missing["tools"][0]["name"], "tool_search");
-        assert_eq!(missing["tools"][0]["parameters"]["required"][0], "query");
+        assert_eq!(missing["tools"][1]["type"], "function");
+        assert_eq!(missing["tools"][1]["name"], "tool_search");
+        assert_eq!(missing["tools"][1]["parameters"]["required"][0], "query");
         assert_eq!(
             ensure_responses_tool_search_shim(&mut missing),
             ToolSearchShimStatus::ExistingFunction
