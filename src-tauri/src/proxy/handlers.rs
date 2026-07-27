@@ -872,7 +872,8 @@ async fn handle_responses_for_app(
     let restore_tool_search =
         super::providers::should_restore_codex_native_tool_search(&ctx.provider, &endpoint);
     let restore_namespaces =
-        super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)
+        (super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)
+            || restore_tool_search)
             && !namespace_restore_map.is_empty();
     if restore_tool_search || restore_namespaces {
         log::debug!(
@@ -1011,7 +1012,8 @@ async fn handle_responses_compact_for_app(
     let restore_tool_search =
         super::providers::should_restore_codex_native_tool_search(&ctx.provider, &endpoint);
     let restore_namespaces =
-        super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)
+        (super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)
+            || restore_tool_search)
             && !namespace_restore_map.is_empty();
     if restore_tool_search || restore_namespaces {
         log::debug!(

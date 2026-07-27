@@ -1552,17 +1552,17 @@ impl RequestForwarder {
             mapped_body
         };
 
-        // Native Responses passthrough to a strict third-party gateway (xAI):
-        // flatten Codex's private `namespace`/plugin tool declarations into
-        // top-level function tools so the upstream's strict serde parser does
-        // not 422 on `unknown variant "namespace"`. The Chat/Anthropic paths
-        // above already unwrap namespaces, so this only fires on the native
-        // passthrough. The response handler restores the flat names using a map
-        // re-derived from the same request tools.
+        // Native Responses passthrough to a third-party gateway: replay the
+        // synthetic tool-search exchange as ordinary function call/output items,
+        // promote tools returned by `tool_search_output`, and flatten private
+        // `namespace` declarations. The Chat/Anthropic adapters already perform
+        // the equivalent normalization. The response handler restores flat names
+        // using a map re-derived from the same request, including discovered tools.
         if matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
-            && super::providers::provider_needs_responses_namespace_flatten(provider)
+            && (super::providers::provider_needs_responses_namespace_flatten(provider)
+                || super::providers::should_inject_codex_tool_search_shim(provider, endpoint))
             && super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
                 &mut request_body,
             )?

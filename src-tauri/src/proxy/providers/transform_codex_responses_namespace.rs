@@ -35,6 +35,7 @@ use serde_json::{json, Value};
 
 use super::transform_codex_chat::{flatten_namespace_tool_name, tool_search_arguments_from_value};
 use crate::proxy::error::ProxyError;
+use crate::proxy::json_canonical::canonical_json_string;
 use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
 
 /// Reverse map entry: a flattened tool name resolves back to its original
@@ -50,10 +51,7 @@ pub(crate) struct NamespacedName {
 /// flatten; derives names exactly as [`flatten_request_namespaces`] does.
 pub(crate) fn namespace_restore_map(request_body: &Value) -> HashMap<String, NamespacedName> {
     let mut map = HashMap::new();
-    let Some(tools) = request_body.get("tools").and_then(Value::as_array) else {
-        return map;
-    };
-    for tool in tools {
+    for tool in request_declared_tools(request_body) {
         if tool.get("type").and_then(Value::as_str) != Some("namespace") {
             continue;
         }
@@ -64,7 +62,7 @@ pub(crate) fn namespace_restore_map(request_body: &Value) -> HashMap<String, Nam
         if namespace.is_empty() {
             continue;
         }
-        for child in namespace_children(tool) {
+        for child in namespace_children(&tool) {
             if child.get("type").and_then(Value::as_str) != Some("function") {
                 continue;
             }
@@ -85,6 +83,187 @@ pub(crate) fn namespace_restore_map(request_body: &Value) -> HashMap<String, Nam
     map
 }
 
+fn request_declared_tools(request_body: &Value) -> Vec<Value> {
+    let mut tools = request_body
+        .get("tools")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(input) = request_body.get("input") {
+        collect_tool_search_output_tools(input, &mut tools);
+    }
+    tools
+}
+
+fn collect_tool_search_output_tools(value: &Value, tools: &mut Vec<Value>) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_tool_search_output_tools(item, tools);
+            }
+        }
+        Value::Object(obj) => {
+            if obj.get("type").and_then(Value::as_str) == Some("tool_search_output") {
+                if let Some(discovered) = obj.get("tools").and_then(Value::as_array) {
+                    tools.extend(discovered.iter().cloned());
+                }
+            }
+            for child in obj.values() {
+                collect_tool_search_output_tools(child, tools);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn normalize_tool_search_history(body: &mut Value) -> Result<bool, ProxyError> {
+    let mut discovered = Vec::new();
+    let mut changed = false;
+    if let Some(input) = body.get_mut("input") {
+        changed |= rewrite_tool_search_history_items(input, &mut discovered)?;
+    }
+    if discovered.is_empty() {
+        return Ok(changed);
+    }
+
+    let Some(obj) = body.as_object_mut() else {
+        return Err(ProxyError::TransformError(
+            "native Responses request body must be an object".to_string(),
+        ));
+    };
+    let tools = obj
+        .entry("tools".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if tools.is_null() {
+        *tools = Value::Array(Vec::new());
+    }
+    let Some(tools) = tools.as_array_mut() else {
+        return Err(ProxyError::TransformError(
+            "native Responses tools must be an array".to_string(),
+        ));
+    };
+
+    let mut seen = std::collections::HashSet::new();
+    for tool in tools.iter() {
+        if let Some(identity) = response_tool_identity(tool) {
+            seen.insert(identity);
+        }
+    }
+    for mut tool in discovered {
+        normalize_response_function_tool(&mut tool);
+        if let Some(identity) = response_tool_identity(&tool) {
+            if !seen.insert(identity) {
+                continue;
+            }
+        }
+        tools.push(tool);
+        changed = true;
+    }
+    Ok(changed)
+}
+
+fn rewrite_tool_search_history_items(
+    value: &mut Value,
+    discovered: &mut Vec<Value>,
+) -> Result<bool, ProxyError> {
+    match value {
+        Value::Array(items) => {
+            let mut changed = false;
+            for item in items {
+                changed |= rewrite_tool_search_history_items(item, discovered)?;
+            }
+            Ok(changed)
+        }
+        Value::Object(obj) => match obj.get("type").and_then(Value::as_str) {
+            Some("tool_search_call") => {
+                let call_id = obj
+                    .get("call_id")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| {
+                        ProxyError::TransformError(
+                            "tool_search_call is missing call_id".to_string(),
+                        )
+                    })?
+                    .to_string();
+                let arguments = match obj.get("arguments") {
+                    Some(Value::String(value)) => value.clone(),
+                    Some(value) => canonical_json_string(value),
+                    None => "{}".to_string(),
+                };
+                *value = json!({
+                    "type": "function_call",
+                    "name": "tool_search",
+                    "call_id": call_id,
+                    "arguments": arguments
+                });
+                Ok(true)
+            }
+            Some("tool_search_output") => {
+                let call_id = obj
+                    .get("call_id")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| {
+                        ProxyError::TransformError(
+                            "tool_search_output is missing call_id".to_string(),
+                        )
+                    })?
+                    .to_string();
+                if let Some(tools) = obj.get("tools").and_then(Value::as_array) {
+                    discovered.extend(tools.iter().cloned());
+                }
+                let output = canonical_json_string(value);
+                *value = json!({
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": output
+                });
+                Ok(true)
+            }
+            _ => {
+                let mut changed = false;
+                for child in obj.values_mut() {
+                    changed |= rewrite_tool_search_history_items(child, discovered)?;
+                }
+                Ok(changed)
+            }
+        },
+        _ => Ok(false),
+    }
+}
+
+fn normalize_response_function_tool(tool: &mut Value) {
+    let Some(obj) = tool.as_object_mut() else {
+        return;
+    };
+    if obj.get("type").and_then(Value::as_str) != Some("function") {
+        return;
+    }
+    if !obj.contains_key("parameters") {
+        if let Some(schema) = obj
+            .remove("inputSchema")
+            .or_else(|| obj.remove("input_schema"))
+        {
+            obj.insert("parameters".to_string(), schema);
+        }
+    } else {
+        obj.remove("inputSchema");
+        obj.remove("input_schema");
+    }
+    obj.remove("deferLoading");
+    obj.remove("defer_loading");
+}
+
+fn response_tool_identity(tool: &Value) -> Option<String> {
+    let kind = tool.get("type").and_then(Value::as_str)?;
+    let name = tool
+        .get("name")
+        .or_else(|| tool.get("function").and_then(|value| value.get("name")))
+        .and_then(Value::as_str)?;
+    Some(format!("{kind}:{name}"))
+}
+
 /// Flatten Codex `namespace` tool declarations in a native Responses request
 /// body into top-level `function` tools, rewrite namespace-qualified calls in
 /// the `input` history, and neutralize a `namespace` `tool_choice`.
@@ -94,14 +273,15 @@ pub(crate) fn namespace_restore_map(request_body: &Value) -> HashMap<String, Nam
 /// collapse to the same flat name — the upstream could not disambiguate them,
 /// so failing loudly beats silently dropping a tool (matches sub2api).
 pub(crate) fn flatten_request_namespaces(body: &mut Value) -> Result<bool, ProxyError> {
+    let changed = normalize_tool_search_history(body)?;
     let Some(tools) = body.get("tools").and_then(Value::as_array) else {
-        return Ok(false);
+        return Ok(changed);
     };
     if !tools
         .iter()
         .any(|tool| tool.get("type").and_then(Value::as_str) == Some("namespace"))
     {
-        return Ok(false);
+        return Ok(changed);
     }
 
     // Names already occupied by top-level function/custom tools; a namespace
@@ -174,8 +354,9 @@ pub(crate) fn flatten_request_namespaces(body: &mut Value) -> Result<bool, Proxy
         .unwrap_or_default();
     let mut flattened: Vec<Value> = Vec::with_capacity(tools.len());
     let mut seen_flat = std::collections::HashSet::new();
-    for tool in tools {
+    for mut tool in tools {
         if tool.get("type").and_then(Value::as_str) != Some("namespace") {
+            normalize_response_function_tool(&mut tool);
             flattened.push(tool);
             continue;
         }
@@ -200,6 +381,7 @@ pub(crate) fn flatten_request_namespaces(body: &mut Value) -> Result<bool, Proxy
             if let Some(obj) = lifted.as_object_mut() {
                 obj.insert("name".to_string(), json!(flat));
             }
+            normalize_response_function_tool(&mut lifted);
             flattened.push(lifted);
         }
     }
@@ -522,6 +704,120 @@ mod tests {
             "tools": [ { "type": "function", "name": "plain", "parameters": {} } ]
         });
         assert!(!flatten_request_namespaces(&mut body).unwrap());
+    }
+
+    #[test]
+    fn native_followup_rewrites_tool_search_output_as_function_output() {
+        let mut body = json!({
+            "model": "gpt-5.6-sol",
+            "tools": [{
+                "type": "function",
+                "name": "tool_search",
+                "parameters": {"type": "object"}
+            }],
+            "input": [
+                {
+                    "type": "tool_search_call",
+                    "call_id": "search-1",
+                    "execution": "client",
+                    "status": "completed",
+                    "arguments": {"query": "automation_update", "limit": 8}
+                },
+                {
+                    "type": "tool_search_output",
+                    "call_id": "search-1",
+                    "execution": "client",
+                    "status": "completed",
+                    "tools": []
+                }
+            ]
+        });
+
+        assert!(flatten_request_namespaces(&mut body).unwrap());
+        let call = &body["input"][0];
+        assert_eq!(call["type"], "function_call");
+        assert_eq!(call["name"], "tool_search");
+        assert_eq!(call["call_id"], "search-1");
+        let arguments: Value = serde_json::from_str(call["arguments"].as_str().unwrap()).unwrap();
+        assert_eq!(arguments["query"], "automation_update");
+        assert_eq!(arguments["limit"], 8);
+
+        let output = &body["input"][1];
+        assert_eq!(output["type"], "function_call_output");
+        assert_eq!(output["call_id"], "search-1");
+        let payload: Value = serde_json::from_str(output["output"].as_str().unwrap()).unwrap();
+        assert_eq!(payload["type"], "tool_search_output");
+        assert_eq!(payload["tools"], json!([]));
+    }
+
+    #[test]
+    fn native_followup_promotes_discovered_namespace_tools_and_restores_identity() {
+        let mut body = json!({
+            "model": "gpt-5.6-sol",
+            "tools": [{
+                "type": "function",
+                "name": "tool_search",
+                "parameters": {"type": "object"}
+            }],
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "search-1",
+                "execution": "client",
+                "status": "completed",
+                "tools": [{
+                    "type": "namespace",
+                    "name": "codex_app",
+                    "tools": [{
+                        "type": "function",
+                        "name": "automation_update",
+                        "description": "Manage an automation",
+                        "inputSchema": {"type": "object"},
+                        "deferLoading": true
+                    }]
+                }]
+            }]
+        });
+
+        let restore_map = namespace_restore_map(&body);
+        let entry = restore_map.get("codex_app__automation_update").unwrap();
+        assert_eq!(entry.namespace, "codex_app");
+        assert_eq!(entry.name, "automation_update");
+
+        assert!(flatten_request_namespaces(&mut body).unwrap());
+        let names: Vec<&str> = body["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect();
+        assert!(names.contains(&"tool_search"));
+        assert!(names.contains(&"codex_app__automation_update"));
+        let automation = body["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "codex_app__automation_update")
+            .unwrap();
+        assert_eq!(automation["parameters"], json!({"type": "object"}));
+        assert!(automation.get("inputSchema").is_none());
+        assert!(automation.get("deferLoading").is_none());
+        assert_eq!(body["input"][0]["type"], "function_call_output");
+
+        let mut response = json!({
+            "output": [{
+                "type": "function_call",
+                "name": "codex_app__automation_update",
+                "call_id": "automation-1",
+                "arguments": "{}"
+            }]
+        });
+        assert!(restore_response_tool_calls(
+            &mut response,
+            &restore_map,
+            true
+        ));
+        assert_eq!(response["output"][0]["name"], "automation_update");
+        assert_eq!(response["output"][0]["namespace"], "codex_app");
     }
 
     #[test]
