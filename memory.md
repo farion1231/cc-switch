@@ -1,5 +1,13 @@
 # CC Switch Repository Memory
 
+## 2026-07-27 Codex 跨模型上下文压缩路由根修
+
+- 官方 Codex `95637f7056835fea66bdd0044414af480fc0fd74` 的 compact 选择只看 Codex 侧 `ModelProviderInfo::supports_remote_compaction()`；Responses provider 会发送 unary `POST /responses/compact`，请求继续携带当前 compact turn 的 `model/input/instructions/tools/reasoning` 以及 `x-codex-turn-metadata`。元数据 `request_kind=compaction`，并含 trigger/reason/implementation/phase；模型降档或上下文切换时 compact body 的 model 可能是前一模型或当前模型，CCSM 必须逐请求重新解析 route。
+- MultiRouter 对 Codex 暴露统一 Responses provider，但实际 effective route 可能是 official Responses、OpenAI Chat 或 Messages。因此“所有 `/responses/compact` 都原样透传”的未提交方案不完整：它会把 compact 直接打到 DeepSeek/Qwen 等不存在该端点的 Chat 上游。正确矩阵以本次 body model 解析出的 effective provider 为准：原生 Responses 路由保留 `/responses/compact`；Chat/Messages 路由转换 compact payload 并分别发往 `/chat/completions` 或 `/v1/messages`，再重建 Codex 需要的 `{output:[ResponseItem...]}` unary 响应。
+- 不能按 session 缓存 compact provider。相同 task 从 official 切到 Qwen，或者 Codex 因 model downshift 先尝试旧模型再尝试当前模型时，每个 compact 请求都必须按自身 `model` 命中 route、上游模型映射和协议转换。route 缺失且 fallback 指向本地代理时继续拒绝递归，不能悄悄沿用上一上下文的 provider。
+- `x-codex-turn-metadata` 只用于诊断和日志分类，不参与路由真值；优先读 header，非法/缺失时兼容 `client_metadata.x-codex-turn-metadata` 对象或 JSON 字符串。端点为 compact 但元数据缺失时归类为 `request_kind=compaction`。`request_prepared` 日志同时记录 `compaction_transport=responses_compact/chat_completions/messages`，便于区分“Codex 发起 remote compact”和“CCSM 对实际下游采用的 wire transport”。
+- 回归必须覆盖：compact query 保留、请求 instructions 与跨切换上下文不丢、Chat unary 响应恢复为 Compact API output、official/Chat 两条 route 按 compact body model 独立选择，以及 header 损坏时 body 元数据兜底。不要把普通 turn 的 `request_kind=compaction`（local summarization request）与 `/responses/compact` endpoint 混成同一个转发判断；协议转换仍由 endpoint + effective provider 决定。
+
 ## 2026-07-27 Codex 历史归类与结构化工具多模态根修
 
 - 官方 Codex `95637f7056835fea66bdd0044414af480fc0fd74` 的 Desktop 默认列表规则是 `INTERACTIVE_SESSION_SOURCES`，即 `SessionSource::Cli/VSCode`；`Exec/Mcp/Custom/Internal/SubAgent/Unknown` 不是默认用户任务。`thread_source` 是第二层标签：仅 `user` 或旧记录缺省值可作为主任务，`subagent`、`memory_consolidation` 和任意 feature 名均不能被普通历史修复顶进侧边栏。rollout `source` 既可能是字符串，也可能是外部标记对象（例如 `{"sub_agent":...}`），解析时必须先归一化来源类别。

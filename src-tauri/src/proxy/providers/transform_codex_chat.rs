@@ -3393,6 +3393,56 @@ mod tests {
     }
 
     #[test]
+    fn responses_compact_request_converts_to_unary_chat_without_losing_context() {
+        let input = json!({
+            "model": "route-model-before-switch",
+            "instructions": "Summarize the conversation for continuation.",
+            "input": [
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"old context"}]},
+                {"type":"message","role":"assistant","content":[{"type":"output_text","text":"old answer"}]},
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"new context after switch"}]}
+            ],
+            "stream": false
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        assert_eq!(result["model"], "route-model-before-switch");
+        assert_eq!(result["stream"], false);
+        assert_eq!(result["messages"][0]["role"], "system");
+        assert_eq!(
+            result["messages"][0]["content"],
+            "Summarize the conversation for continuation."
+        );
+        assert_eq!(result["messages"][1]["content"], "old context");
+        assert_eq!(result["messages"][2]["content"], "old answer");
+        assert_eq!(result["messages"][3]["content"], "new context after switch");
+    }
+
+    #[test]
+    fn unary_chat_compaction_response_has_compact_api_output_shape() {
+        let chat = json!({
+            "id": "chatcmpl_compact",
+            "model": "route-model-after-switch",
+            "choices": [{
+                "index": 0,
+                "message": {"role":"assistant","content":"bounded compact summary"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 20, "completion_tokens": 4, "total_tokens": 24}
+        });
+
+        let result = chat_completion_to_response_with_context(chat, &CodexToolContext::default())
+            .expect("chat response");
+        assert_eq!(result["output"][0]["type"], "message");
+        assert_eq!(result["output"][0]["role"], "assistant");
+        assert_eq!(
+            result["output"][0]["content"][0]["text"],
+            "bounded compact summary"
+        );
+        assert_eq!(result["model"], "route-model-after-switch");
+    }
+
+    #[test]
     fn responses_request_to_chat_attaches_reasoning_to_tool_call_message() {
         let input = json!({
             "model": "gpt-5.4",

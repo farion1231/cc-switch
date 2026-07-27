@@ -46,7 +46,6 @@ pub use claude::{
     normalize_anthropic_messages_for_provider, transform_claude_request_for_api_format,
     ClaudeAdapter,
 };
-pub(crate) use codex::is_codex_responses_endpoint;
 pub use codex::CodexAdapter;
 pub use codex::{
     apply_codex_chat_upstream_model, apply_codex_request_upstream_model,
@@ -58,6 +57,7 @@ pub use codex::{
     resolve_codex_model_routed_provider, should_convert_codex_responses_to_chat,
     should_convert_codex_responses_to_messages,
 };
+pub(crate) use codex::{is_codex_remote_compact_endpoint, is_codex_responses_endpoint};
 pub use gemini::GeminiAdapter;
 
 /// 供应商类型枚举

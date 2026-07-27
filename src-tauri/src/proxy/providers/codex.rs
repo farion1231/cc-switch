@@ -1803,6 +1803,13 @@ pub(crate) fn is_codex_responses_endpoint(endpoint: &str) -> bool {
     )
 }
 
+pub(crate) fn is_codex_remote_compact_endpoint(endpoint: &str) -> bool {
+    let path = endpoint
+        .split_once('?')
+        .map_or(endpoint, |(path, _query)| path);
+    matches!(path, "/responses/compact" | "/v1/responses/compact")
+}
+
 /// 判断是否为已知的 OpenAI Chat Completions-only 兼容上游。
 ///
 /// 用于兼容旧数据：一些 provider 曾经把 `wire_api` 误写成 `responses`，
@@ -3790,6 +3797,10 @@ wire_api = "responses"
         assert!(codex_provider_uses_chat_completions(&provider));
         assert!(should_convert_codex_responses_to_chat(
             &provider,
+            "/v1/responses"
+        ));
+        assert!(should_convert_codex_responses_to_chat(
+            &provider,
             "/v1/responses/compact"
         ));
     }
@@ -3818,7 +3829,7 @@ wire_api = "responses"
     }
 
     #[test]
-    fn test_codex_provider_uses_chat_completions_from_meta_api_format_for_compact() {
+    fn test_codex_provider_converts_remote_compact_for_chat_route() {
         let mut provider = create_provider(json!({
             "base_url": "https://example.com/v1"
         }));
@@ -3829,6 +3840,10 @@ wire_api = "responses"
 
         assert!(codex_provider_uses_chat_completions(&provider));
         assert!(should_convert_codex_responses_to_chat(
+            &provider,
+            "/responses/compact?stream=true"
+        ));
+        assert!(!should_convert_codex_responses_to_messages(
             &provider,
             "/responses/compact?stream=true"
         ));
@@ -4398,6 +4413,67 @@ wire_api = "chat"
         assert!(
             should_convert_codex_responses_to_chat(&materialized, "/v1/responses"),
             "materialized ShangTang provider must be detected as Chat Completions"
+        );
+    }
+
+    #[test]
+    fn compact_request_routes_by_its_own_model_after_context_switch() {
+        let router = create_provider(json!({
+            "codexRouting": {
+                "enabled": true,
+                "routes": [
+                    {
+                        "id": "official",
+                        "match": {"models": ["gpt-5.6-sol"]},
+                        "upstream": {
+                            "baseUrl": "https://chatgpt.com/backend-api/codex",
+                            "apiFormat": "openai_responses",
+                            "model": "gpt-5.6-sol"
+                        }
+                    },
+                    {
+                        "id": "qwen",
+                        "match": {"models": ["qwen3.6"]},
+                        "upstream": {
+                            "baseUrl": "https://example.test/v1",
+                            "apiFormat": "openai_chat",
+                            "model": "qwen3.6"
+                        }
+                    }
+                ]
+            }
+        }));
+
+        let previous_model_compact = resolve_codex_model_routed_provider(
+            &router,
+            &json!({"model":"gpt-5.6-sol","input":[]}),
+        )
+        .expect("official compact route");
+        let current_model_compact =
+            resolve_codex_model_routed_provider(&router, &json!({"model":"qwen3.6","input":[]}))
+                .expect("qwen compact route");
+
+        assert!(!should_convert_codex_responses_to_chat(
+            &previous_model_compact,
+            "/v1/responses/compact"
+        ));
+        assert!(should_convert_codex_responses_to_chat(
+            &current_model_compact,
+            "/v1/responses/compact"
+        ));
+        assert_eq!(
+            previous_model_compact
+                .settings_config
+                .get("codexResolvedRouteId")
+                .and_then(JsonValue::as_str),
+            Some("official")
+        );
+        assert_eq!(
+            current_model_compact
+                .settings_config
+                .get("codexResolvedRouteId")
+                .and_then(JsonValue::as_str),
+            Some("qwen")
         );
     }
 }

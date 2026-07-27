@@ -1456,6 +1456,8 @@ impl RequestForwarder {
             .and_then(|value| value.as_str())
             .unwrap_or("unknown")
             .to_string();
+        let codex_request_metadata =
+            CodexRequestMetadataSummary::from_request(app_type, endpoint, body, headers);
         let outer_provider_id = provider.id.clone();
         let outer_provider_name = provider.name.clone();
 
@@ -1521,6 +1523,10 @@ impl RequestForwarder {
                     ("session", self.session_id.clone()),
                     ("endpoint", endpoint.to_string()),
                     ("model", request_model_for_log.clone()),
+                    (
+                        "codex_request_kind",
+                        codex_request_metadata.request_kind.clone(),
+                    ),
                     ("outer_provider", outer_provider_id.clone()),
                     ("outer_name", outer_provider_name.clone()),
                     ("effective_provider", provider.id.clone()),
@@ -1944,6 +1950,10 @@ impl RequestForwarder {
                 ("endpoint", endpoint.to_string()),
                 ("effective_endpoint", effective_endpoint.clone()),
                 ("model", request_model_for_log.clone()),
+                (
+                    "codex_request_kind",
+                    codex_request_metadata.request_kind.clone(),
+                ),
                 ("provider", provider.id.clone()),
                 ("upstream_url", url.clone()),
                 ("responses_to_chat", codex_responses_to_chat.to_string()),
@@ -1957,6 +1967,29 @@ impl RequestForwarder {
                     request_prepare_started_at.elapsed().as_millis().to_string(),
                 ),
             ];
+            if let Some(trigger) = codex_request_metadata.compaction_trigger.as_ref() {
+                fields.push(("compaction_trigger", trigger.clone()));
+            }
+            if let Some(reason) = codex_request_metadata.compaction_reason.as_ref() {
+                fields.push(("compaction_reason", reason.clone()));
+            }
+            if let Some(implementation) = codex_request_metadata.compaction_implementation.as_ref()
+            {
+                fields.push(("compaction_implementation", implementation.clone()));
+            }
+            if let Some(phase) = codex_request_metadata.compaction_phase.as_ref() {
+                fields.push(("compaction_phase", phase.clone()));
+            }
+            if codex_request_metadata.request_kind == "compaction" {
+                let transport = if codex_responses_to_chat {
+                    "chat_completions"
+                } else if codex_responses_to_messages {
+                    "messages"
+                } else {
+                    "responses_compact"
+                };
+                fields.push(("compaction_transport", transport.to_string()));
+            }
             if let Some(shape) = codex_chat_request_shape.as_ref() {
                 fields.push(("request_shape", shape.clone()));
             }
@@ -3629,6 +3662,95 @@ fn rewrite_codex_responses_endpoint_to_messages(endpoint: &str) -> (String, Opti
     };
 
     (rewritten, passthrough_query)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CodexRequestMetadataSummary {
+    request_kind: String,
+    compaction_trigger: Option<String>,
+    compaction_reason: Option<String>,
+    compaction_implementation: Option<String>,
+    compaction_phase: Option<String>,
+}
+
+impl CodexRequestMetadataSummary {
+    fn from_request(
+        app_type: &AppType,
+        endpoint: &str,
+        body: &Value,
+        headers: &http::HeaderMap,
+    ) -> Self {
+        if !matches!(app_type, AppType::Codex) {
+            return Self::default_turn();
+        }
+
+        let metadata = codex_turn_metadata_from_headers(headers)
+            .or_else(|| codex_turn_metadata_from_body(body));
+        let mut summary = metadata
+            .as_ref()
+            .map(Self::from_metadata)
+            .unwrap_or_else(Self::default_turn);
+
+        if super::providers::is_codex_remote_compact_endpoint(endpoint)
+            && summary.request_kind == "turn"
+        {
+            summary.request_kind = "compaction".to_string();
+        }
+
+        summary
+    }
+
+    fn from_metadata(metadata: &Value) -> Self {
+        let request_kind = metadata
+            .get("request_kind")
+            .and_then(Value::as_str)
+            .unwrap_or("turn")
+            .to_string();
+        let compaction = metadata.get("compaction");
+
+        Self {
+            request_kind,
+            compaction_trigger: metadata_string_field(compaction, "trigger"),
+            compaction_reason: metadata_string_field(compaction, "reason"),
+            compaction_implementation: metadata_string_field(compaction, "implementation"),
+            compaction_phase: metadata_string_field(compaction, "phase"),
+        }
+    }
+
+    fn default_turn() -> Self {
+        Self {
+            request_kind: "turn".to_string(),
+            compaction_trigger: None,
+            compaction_reason: None,
+            compaction_implementation: None,
+            compaction_phase: None,
+        }
+    }
+}
+
+fn metadata_string_field(metadata: Option<&Value>, key: &str) -> Option<String> {
+    metadata?
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn codex_turn_metadata_from_headers(headers: &http::HeaderMap) -> Option<Value> {
+    headers
+        .get("x-codex-turn-metadata")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| serde_json::from_str::<Value>(value).ok())
+}
+
+fn codex_turn_metadata_from_body(body: &Value) -> Option<Value> {
+    body.get("client_metadata")
+        .and_then(|metadata| metadata.get("x-codex-turn-metadata"))
+        .and_then(|value| match value {
+            Value::String(raw) => serde_json::from_str::<Value>(raw).ok(),
+            Value::Object(_) => Some(value.clone()),
+            _ => None,
+        })
 }
 
 fn rewrite_claude_transform_endpoint(
@@ -5860,6 +5982,83 @@ mod tests {
 
         assert_eq!(endpoint, "/chat/completions?foo=bar");
         assert_eq!(passthrough_query.as_deref(), Some("foo=bar"));
+    }
+
+    #[test]
+    fn rewrite_codex_responses_compact_endpoint_to_messages_preserves_query() {
+        let (endpoint, passthrough_query) =
+            rewrite_codex_responses_endpoint_to_messages("/responses/compact?foo=bar");
+
+        assert_eq!(endpoint, "/v1/messages?foo=bar");
+        assert_eq!(passthrough_query.as_deref(), Some("foo=bar"));
+    }
+
+    #[test]
+    fn codex_metadata_summary_detects_local_compaction_from_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-codex-turn-metadata",
+            HeaderValue::from_static(
+                r#"{"request_kind":"compaction","compaction":{"trigger":"auto","reason":"token_limit","implementation":"responses","phase":"pre_turn"}}"#,
+            ),
+        );
+
+        let summary = CodexRequestMetadataSummary::from_request(
+            &AppType::Codex,
+            "/v1/responses",
+            &json!({"model":"gpt-5.5"}),
+            &headers,
+        );
+
+        assert_eq!(summary.request_kind, "compaction");
+        assert_eq!(summary.compaction_trigger.as_deref(), Some("auto"));
+        assert_eq!(summary.compaction_reason.as_deref(), Some("token_limit"));
+        assert_eq!(
+            summary.compaction_implementation.as_deref(),
+            Some("responses")
+        );
+        assert_eq!(summary.compaction_phase.as_deref(), Some("pre_turn"));
+    }
+
+    #[test]
+    fn codex_metadata_summary_marks_compaction_by_endpoint_without_metadata() {
+        let summary = CodexRequestMetadataSummary::from_request(
+            &AppType::Codex,
+            "/v1/responses/compact?conversation=1",
+            &json!({"model":"gpt-5.5"}),
+            &HeaderMap::new(),
+        );
+
+        assert_eq!(summary.request_kind, "compaction");
+    }
+
+    #[test]
+    fn codex_metadata_summary_falls_back_to_body_when_header_is_invalid() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-codex-turn-metadata",
+            HeaderValue::from_static("not-json"),
+        );
+        let summary = CodexRequestMetadataSummary::from_request(
+            &AppType::Codex,
+            "/v1/responses/compact",
+            &json!({
+                "client_metadata": {
+                    "x-codex-turn-metadata": {
+                        "request_kind": "compaction",
+                        "compaction": {"reason": "model_downshift", "phase": "post_turn"}
+                    }
+                }
+            }),
+            &headers,
+        );
+
+        assert_eq!(summary.request_kind, "compaction");
+        assert_eq!(
+            summary.compaction_reason.as_deref(),
+            Some("model_downshift")
+        );
+        assert_eq!(summary.compaction_phase.as_deref(), Some("post_turn"));
     }
 
     #[test]
