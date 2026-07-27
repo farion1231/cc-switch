@@ -48,8 +48,21 @@ enum CodexDesktopStatsigWrapperEncoding {
 #[derive(Debug, PartialEq, Eq)]
 enum CodexDesktopCacheRetryOutcome {
     Synced(usize),
+    Discovering(usize),
     Superseded,
     Failed(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CodexDesktopCachePathSyncResult {
+    updated_count: usize,
+    found_model_cache: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CodexDesktopCacheSyncResult {
+    updated_count: usize,
+    needs_discovery: bool,
 }
 
 const CODEX_PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
@@ -816,10 +829,10 @@ fn codex_desktop_local_storage_leveldb_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-fn sync_codex_desktop_available_models_cache_path(
+fn sync_codex_desktop_available_models_cache_path_with_status(
     leveldb_path: &Path,
     model_ids: &[String],
-) -> Result<usize, String> {
+) -> Result<CodexDesktopCachePathSyncResult, String> {
     let options = rusty_leveldb::Options {
         create_if_missing: false,
         ..Default::default()
@@ -869,6 +882,7 @@ fn sync_codex_desktop_available_models_cache_path(
     }
 
     let mut updates = Vec::new();
+    let mut found_model_cache = false;
     let mut pinned_cache_keys_by_origin: HashMap<String, HashSet<String>> = HashMap::new();
     let mut model_cache_keys_by_origin: HashMap<String, HashSet<String>> = HashMap::new();
     for (key, key_text, value) in cache_entries {
@@ -886,6 +900,7 @@ fn sync_codex_desktop_available_models_cache_path(
             continue;
         };
         if codex_desktop_statsig_available_model_ids(&wrapper).is_some() {
+            found_model_cache = true;
             model_cache_keys_by_origin
                 .entry(origin.clone())
                 .or_default()
@@ -947,21 +962,45 @@ fn sync_codex_desktop_available_models_cache_path(
     }
     db.close()
         .map_err(|err| format!("Failed to close Codex Desktop localStorage LevelDB: {err}"))?;
-    Ok(updated_count)
+    Ok(CodexDesktopCachePathSyncResult {
+        updated_count,
+        found_model_cache,
+    })
 }
 
-fn sync_codex_desktop_available_models_cache(model_ids: &[String]) -> Result<usize, String> {
+#[cfg(test)]
+fn sync_codex_desktop_available_models_cache_path(
+    leveldb_path: &Path,
+    model_ids: &[String],
+) -> Result<usize, String> {
+    sync_codex_desktop_available_models_cache_path_with_status(leveldb_path, model_ids)
+        .map(|result| result.updated_count)
+}
+
+fn sync_codex_desktop_available_models_cache_candidates(
+    candidates: &[PathBuf],
+    model_ids: &[String],
+) -> Result<CodexDesktopCacheSyncResult, String> {
     let mut seen = HashSet::new();
-    let paths = codex_desktop_local_storage_leveldb_candidates()
-        .into_iter()
+    let paths = candidates
+        .iter()
         .filter(|path| path.exists())
-        .filter(|path| seen.insert(path.clone()))
+        .filter(|path| seen.insert((*path).clone()))
         .collect::<Vec<_>>();
     let mut updated_count = 0;
+    let mut found_partitioned_model_cache = false;
     let mut errors = Vec::new();
     for path in paths {
-        match sync_codex_desktop_available_models_cache_path(&path, model_ids) {
-            Ok(count) => updated_count += count,
+        match sync_codex_desktop_available_models_cache_path_with_status(path, model_ids) {
+            Ok(result) => {
+                updated_count += result.updated_count;
+                if path
+                    .components()
+                    .any(|component| component.as_os_str() == "Partitions")
+                {
+                    found_partitioned_model_cache |= result.found_model_cache;
+                }
+            }
             Err(err) => errors.push(err),
         }
     }
@@ -977,8 +1016,20 @@ fn sync_codex_desktop_available_models_cache(model_ids: &[String]) -> Result<usi
                 errors.join("; ")
             );
         }
-        Ok(updated_count)
+        Ok(CodexDesktopCacheSyncResult {
+            updated_count,
+            needs_discovery: !model_ids.is_empty() && !found_partitioned_model_cache,
+        })
     }
+}
+
+fn sync_codex_desktop_available_models_cache(
+    model_ids: &[String],
+) -> Result<CodexDesktopCacheSyncResult, String> {
+    sync_codex_desktop_available_models_cache_candidates(
+        &codex_desktop_local_storage_leveldb_candidates(),
+        model_ids,
+    )
 }
 
 fn codex_desktop_cache_error_is_locked(err: &str) -> bool {
@@ -996,7 +1047,10 @@ fn attempt_codex_desktop_available_models_cache_retry(
         return CodexDesktopCacheRetryOutcome::Superseded;
     }
     match sync_codex_desktop_available_models_cache(model_ids) {
-        Ok(updated) => CodexDesktopCacheRetryOutcome::Synced(updated),
+        Ok(result) if result.needs_discovery => {
+            CodexDesktopCacheRetryOutcome::Discovering(result.updated_count)
+        }
+        Ok(result) => CodexDesktopCacheRetryOutcome::Synced(result.updated_count),
         Err(err) => CodexDesktopCacheRetryOutcome::Failed(err),
     }
 }
@@ -1009,13 +1063,13 @@ fn codex_desktop_cache_worker_next_delay(
     match outcome {
         CodexDesktopCacheRetryOutcome::Superseded => None,
         CodexDesktopCacheRetryOutcome::Synced(_) if !has_custom_catalog => None,
-        CodexDesktopCacheRetryOutcome::Synced(updated) if *updated > 0 => {
+        CodexDesktopCacheRetryOutcome::Synced(_) => {
             *retry_delay_secs = CODEX_DESKTOP_CACHE_RETRY_INITIAL_DELAY_SECS;
             Some(Duration::from_secs(
                 CODEX_DESKTOP_CACHE_RENEWAL_INTERVAL_SECS,
             ))
         }
-        CodexDesktopCacheRetryOutcome::Synced(_) => {
+        CodexDesktopCacheRetryOutcome::Discovering(_) => {
             let delay = Duration::from_secs(*retry_delay_secs);
             *retry_delay_secs = retry_delay_secs
                 .saturating_mul(2)
@@ -1077,7 +1131,10 @@ fn run_codex_desktop_available_models_cache_worker(
                             );
                         }
                         CodexDesktopCacheRetryOutcome::Synced(_) => log::debug!(
-                            "Codex Desktop model whitelist cache is not available yet; retrying discovery"
+                            "Codex Desktop model whitelist cache is synced; waiting for renewal"
+                        ),
+                        CodexDesktopCacheRetryOutcome::Discovering(updated) => log::debug!(
+                            "Synced {updated} legacy Codex Desktop model whitelist cache entries; retrying partition discovery"
                         ),
                         CodexDesktopCacheRetryOutcome::Superseded => log::debug!(
                             "Cancelled stale Codex Desktop model whitelist cache work after a provider change"
@@ -1209,7 +1266,9 @@ fn codex_model_reasoning_metadata(model: &str) -> Option<(&'static str, &'static
         .unwrap_or_default()
         .to_ascii_lowercase();
     match normalized_model.as_str() {
-        "gpt-5.6-sol" => Some(("low", &["low", "medium", "high", "xhigh", "max", "ultra"])),
+        "gpt-5.6" | "gpt-5.6-sol" => {
+            Some(("low", &["low", "medium", "high", "xhigh", "max", "ultra"]))
+        }
         "gpt-5.6-terra" => Some((
             "medium",
             &["low", "medium", "high", "xhigh", "max", "ultra"],
@@ -2116,19 +2175,20 @@ pub fn sync_codex_desktop_available_models_cache_from_settings(settings: &Value)
         )
     };
     match sync_result {
-        Ok(updated) => {
+        Ok(result) => {
+            let updated = result.updated_count;
             if updated > 0 {
                 log::info!("Synced {updated} Codex Desktop model whitelist cache entries");
             }
             let next_delay = if model_ids.is_empty() {
                 None
-            } else if updated > 0 {
+            } else if result.needs_discovery {
                 Some(Duration::from_secs(
-                    CODEX_DESKTOP_CACHE_RENEWAL_INTERVAL_SECS,
+                    CODEX_DESKTOP_CACHE_RETRY_INITIAL_DELAY_SECS,
                 ))
             } else {
                 Some(Duration::from_secs(
-                    CODEX_DESKTOP_CACHE_RETRY_INITIAL_DELAY_SECS,
+                    CODEX_DESKTOP_CACHE_RENEWAL_INTERVAL_SECS,
                 ))
             };
             schedule_codex_desktop_available_models_cache_worker(generation, model_ids, next_delay);
@@ -3837,6 +3897,7 @@ base_url = "https://production.api/v1"
             "modelCatalog": {
                 "models": [
                     { "model": "openai/gpt-5.6-sol" },
+                    { "model": "gpt-5.6" },
                     { "model": "gpt-5.6-terra" },
                     { "model": "gpt-5.6-luna" },
                     { "model": "gpt-5.5" }
@@ -3865,13 +3926,17 @@ base_url = "https://production.api/v1"
             efforts(1),
             vec!["low", "medium", "high", "xhigh", "max", "ultra"]
         );
-        assert_eq!(efforts(2), vec!["low", "medium", "high", "xhigh", "max"]);
-        assert_eq!(efforts(3), vec!["low", "medium", "high", "xhigh"]);
+        assert_eq!(
+            efforts(2),
+            vec!["low", "medium", "high", "xhigh", "max", "ultra"]
+        );
+        assert_eq!(efforts(3), vec!["low", "medium", "high", "xhigh", "max"]);
+        assert_eq!(efforts(4), vec!["low", "medium", "high", "xhigh"]);
         let defaults = models
             .iter()
             .map(|model| model["default_reasoning_level"].as_str().unwrap())
             .collect::<Vec<_>>();
-        assert_eq!(defaults, vec!["low", "medium", "medium", "medium"]);
+        assert_eq!(defaults, vec!["low", "low", "medium", "medium", "medium"]);
     }
 
     #[test]
@@ -4042,7 +4107,7 @@ base_url = "https://production.api/v1"
 
         assert_eq!(
             codex_desktop_cache_worker_next_delay(
-                &CodexDesktopCacheRetryOutcome::Synced(0),
+                &CodexDesktopCacheRetryOutcome::Discovering(0),
                 true,
                 &mut retry_delay_secs,
             ),
@@ -4051,7 +4116,7 @@ base_url = "https://production.api/v1"
         assert_eq!(retry_delay_secs, 2);
         assert_eq!(
             codex_desktop_cache_worker_next_delay(
-                &CodexDesktopCacheRetryOutcome::Synced(0),
+                &CodexDesktopCacheRetryOutcome::Discovering(0),
                 true,
                 &mut retry_delay_secs,
             ),
@@ -4237,6 +4302,57 @@ base_url = "https://production.api/v1"
             "an unrelated LocalStorage origin must not be future-pinned"
         );
         db.close().expect("close leveldb");
+    }
+
+    #[test]
+    fn codex_desktop_cache_sync_keeps_discovering_after_only_legacy_layout_updates() {
+        let temp_dir = tempfile::tempdir().expect("create temp root");
+        let candidates = codex_desktop_leveldb_candidates_for_root(temp_dir.path());
+        let legacy_path = &candidates[0];
+        std::fs::create_dir_all(legacy_path).expect("create legacy leveldb path");
+        let options = rusty_leveldb::Options {
+            create_if_missing: true,
+            ..Default::default()
+        };
+        let mut db = rusty_leveldb::DB::open(legacy_path, options).expect("open legacy leveldb");
+        let cache_key = b"_https://codex\x00statsig.cached.evaluations.active".to_vec();
+        let last_modified_key =
+            b"_https://codex\x00statsig.last_modified_time.evaluations".to_vec();
+        let data = json!({
+            "dynamic_configs": {
+                CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID: {
+                    "value": { "available_models": ["gpt-5.5"] }
+                }
+            }
+        });
+        let cache_value = encode_codex_desktop_statsig_wrapper(
+            Some(1),
+            CodexDesktopStatsigWrapperEncoding::Utf8,
+            &json!({ "source": "Network", "data": data.to_string() }),
+        )
+        .unwrap();
+        db.put(&cache_key, &cache_value).expect("seed legacy cache");
+        let last_modified_value = encode_codex_desktop_statsig_wrapper(
+            Some(1),
+            CodexDesktopStatsigWrapperEncoding::Utf8,
+            &json!({ "statsig.cached.evaluations.active": 1_000 }),
+        )
+        .unwrap();
+        db.put(&last_modified_key, &last_modified_value)
+            .expect("seed legacy last modified cache");
+        db.close().expect("close legacy leveldb");
+
+        let result = sync_codex_desktop_available_models_cache_candidates(
+            &candidates,
+            &["gpt-5.6-sol".to_string()],
+        )
+        .expect("sync candidate layouts");
+
+        assert_eq!(result.updated_count, 2);
+        assert!(
+            result.needs_discovery,
+            "updating only a legacy layout must keep short discovery active for the partitioned layout"
+        );
     }
 
     #[test]
