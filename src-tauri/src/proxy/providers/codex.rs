@@ -228,7 +228,7 @@ pub fn is_codex_official_provider(provider: &Provider) -> bool {
 /// that points at an upstream directly never reaches this routing layer and
 /// therefore cannot be changed by CC-Switch.
 pub fn should_inject_codex_tool_search_shim(provider: &Provider, endpoint: &str) -> bool {
-    is_codex_responses_endpoint(endpoint) && provider.category.as_deref() != Some("official")
+    is_codex_responses_endpoint(endpoint) && !is_codex_official_provider(provider)
 }
 
 /// Native Responses upstreams return the synthetic shim as a regular
@@ -1379,7 +1379,7 @@ wire_api = "anthropic"
         ));
 
         let mut official = create_provider(json!({}));
-        official.id = crate::codex_config::CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID.to_string();
+        official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
         official.category = Some("official".to_string());
         assert!(!should_inject_codex_tool_search_shim(
             &official,
@@ -1387,6 +1387,22 @@ wire_api = "anthropic"
         ));
         assert!(!should_restore_codex_native_tool_search(
             &official,
+            "/responses"
+        ));
+    }
+
+    #[test]
+    fn tool_search_shim_supports_third_party_provider_with_stale_official_category() {
+        let mut provider = create_provider(json!({"base_url": "https://api.deepseek.com/v1"}));
+        provider.id = "deepseek-responses".to_string();
+        provider.category = Some("official".to_string());
+
+        assert!(should_inject_codex_tool_search_shim(
+            &provider,
+            "/responses"
+        ));
+        assert!(should_restore_codex_native_tool_search(
+            &provider,
             "/responses"
         ));
     }
