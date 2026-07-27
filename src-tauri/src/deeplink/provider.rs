@@ -1593,7 +1593,9 @@ requires_openai_auth = false
             ..Default::default()
         };
         let settings = build_grokbuild_settings(&request);
-        let toml = settings["config"].as_str().expect("config is a toml string");
+        let toml = settings["config"]
+            .as_str()
+            .expect("config is a toml string");
         assert!(toml.contains("api_backend"));
         assert!(toml.contains("sk-g"));
         assert!(toml.contains("https://g.example.com/v1"));

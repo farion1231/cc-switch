@@ -8,12 +8,13 @@
 //! - Skills
 //!
 
+mod export;
 mod mcp;
 mod parser;
 mod prompt;
-mod provider;
+pub(crate) mod provider;
 mod skill;
-mod utils;
+pub(crate) mod utils;
 
 #[cfg(test)]
 mod tests;
@@ -21,6 +22,7 @@ mod tests;
 use serde::{Deserialize, Serialize};
 
 // Re-export public API
+pub use export::build_provider_share_url;
 pub use mcp::import_mcp_from_deeplink;
 pub use parser::parse_deeplink_url;
 pub use prompt::import_prompt_from_deeplink;
