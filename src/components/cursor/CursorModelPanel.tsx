@@ -314,25 +314,6 @@ export const CursorModelPanel = forwardRef<ProviderCatalogHandle>(
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 shrink-0 p-1 opacity-0 pointer-events-none transition-opacity duration-200 group-hover/endpoint:opacity-100 group-hover/endpoint:pointer-events-auto group-focus-within/endpoint:opacity-100 group-focus-within/endpoint:pointer-events-auto"
-                          title={t("cursor.panel.endpoint.deleteAriaLabel", {
-                            name: endpoint.name,
-                          })}
-                          aria-label={t(
-                            "cursor.panel.endpoint.deleteAriaLabel",
-                            {
-                              name: endpoint.name,
-                            },
-                          )}
-                          disabled={busy}
-                          onClick={() => setDeleteEndpointTarget(endpoint)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 shrink-0 p-1 opacity-0 pointer-events-none transition-opacity duration-200 group-hover/endpoint:opacity-100 group-hover/endpoint:pointer-events-auto group-focus-within/endpoint:opacity-100 group-focus-within/endpoint:pointer-events-auto"
                           title={t("cursor.panel.endpoint.editAriaLabel", {
                             name: endpoint.name,
                           })}
@@ -346,6 +327,25 @@ export const CursorModelPanel = forwardRef<ProviderCatalogHandle>(
                           }}
                         >
                           <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0 p-1 opacity-0 pointer-events-none transition-opacity duration-200 group-hover/endpoint:opacity-100 group-hover/endpoint:pointer-events-auto group-focus-within/endpoint:opacity-100 group-focus-within/endpoint:pointer-events-auto"
+                          title={t("cursor.panel.endpoint.deleteAriaLabel", {
+                            name: endpoint.name,
+                          })}
+                          aria-label={t(
+                            "cursor.panel.endpoint.deleteAriaLabel",
+                            {
+                              name: endpoint.name,
+                            },
+                          )}
+                          disabled={busy}
+                          onClick={() => setDeleteEndpointTarget(endpoint)}
+                        >
+                          <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
                       <CollapsibleContent>
