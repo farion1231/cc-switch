@@ -1073,7 +1073,7 @@ function App() {
                       compact={isToolbarCompact}
                     />
 
-                    {hasProviderToolbarActions ? (
+                    {hasProviderToolbarActions && (
                       <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
                         <AnimatePresence mode="wait">
                           <motion.div
@@ -1236,12 +1236,6 @@ function App() {
                           </motion.div>
                         </AnimatePresence>
                       </div>
-                    ) : (
-                      <div
-                        data-testid="provider-toolbar-placeholder"
-                        aria-hidden="true"
-                        className="h-10 w-36 shrink-0 rounded-xl bg-muted"
-                      />
                     )}
 
                     {capabilities.providerCatalog && (

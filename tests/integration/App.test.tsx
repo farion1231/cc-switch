@@ -269,10 +269,9 @@ describe("App integration with MSW", () => {
       screen.queryByTestId("generic-proxy-toggle"),
     ).not.toBeInTheDocument();
     expect(screen.queryByTestId("profile-switcher")).not.toBeInTheDocument();
-    expect(screen.getByTestId("provider-toolbar-placeholder")).toHaveAttribute(
-      "aria-hidden",
-      "true",
-    );
+    expect(
+      screen.queryByTestId("provider-toolbar-placeholder"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByTitle("Skills")).not.toBeInTheDocument();
     expect(screen.queryByTitle("提示词")).not.toBeInTheDocument();
     expect(screen.queryByTitle("MCP 服务器")).not.toBeInTheDocument();
