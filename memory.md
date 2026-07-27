@@ -7,6 +7,7 @@
 - 不能按 session 缓存 compact provider。相同 task 从 official 切到 Qwen，或者 Codex 因 model downshift 先尝试旧模型再尝试当前模型时，每个 compact 请求都必须按自身 `model` 命中 route、上游模型映射和协议转换。route 缺失且 fallback 指向本地代理时继续拒绝递归，不能悄悄沿用上一上下文的 provider。
 - `x-codex-turn-metadata` 只用于诊断和日志分类，不参与路由真值；优先读 header，非法/缺失时兼容 `client_metadata.x-codex-turn-metadata` 对象或 JSON 字符串。端点为 compact 但元数据缺失时归类为 `request_kind=compaction`。`request_prepared` 日志同时记录 `compaction_transport=responses_compact/chat_completions/messages`，便于区分“Codex 发起 remote compact”和“CCSM 对实际下游采用的 wire transport”。
 - 回归必须覆盖：compact query 保留、请求 instructions 与跨切换上下文不丢、Chat unary 响应恢复为 Compact API output、official/Chat 两条 route 按 compact body model 独立选择，以及 header 损坏时 body 元数据兜底。不要把普通 turn 的 `request_kind=compaction`（local summarization request）与 `/responses/compact` endpoint 混成同一个转发判断；协议转换仍由 endpoint + effective provider 决定。
+- 上述历史归类、多模态工具上下文和跨模型压缩修复已随 `v3.16.5-22` 正式发布：`https://github.com/BigStrongSun/ccswitchmulti/releases/tag/v3.16.5-22`。Release workflow run `30284418362` 全部成功，Windows x64/ARM64、macOS universal、Linux x64/ARM64、Publish Release 和 Assemble latest.json 均为 success；Release 非 draft/非 prerelease，共 19 个资产。远端 `latest.json` 已核验 `version=3.16.5-22`，包含 `darwin-aarch64/darwin-x86_64/windows-x86_64/windows-aarch64/linux-x86_64/linux-aarch64`。
 
 ## 2026-07-27 Codex 历史归类与结构化工具多模态根修
 
