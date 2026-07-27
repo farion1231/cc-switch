@@ -62,6 +62,12 @@ struct CodexDesktopCachePathSyncResult {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexDesktopCachePinPolicy {
+    Reconcile,
+    Preserve,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CodexDesktopCacheSyncResult {
     updated_count: usize,
     needs_discovery: bool,
@@ -889,9 +895,10 @@ fn codex_desktop_local_storage_leveldb_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-fn sync_codex_desktop_available_models_cache_path_with_status(
+fn sync_codex_desktop_available_models_cache_path_with_mode(
     leveldb_path: &Path,
     model_ids: &[String],
+    pin_policy: CodexDesktopCachePinPolicy,
 ) -> Result<CodexDesktopCachePathSyncResult, String> {
     let options = rusty_leveldb::Options {
         create_if_missing: false,
@@ -943,7 +950,7 @@ fn sync_codex_desktop_available_models_cache_path_with_status(
 
     let mut updates = Vec::new();
     let mut requires_short_retry = false;
-    let mut statsig_cache_origins = HashSet::new();
+    let mut model_cache_origins = HashSet::new();
     let mut ready_model_cache_origins = HashSet::new();
     let mut pinned_cache_keys_by_origin: HashMap<String, HashSet<String>> = HashMap::new();
     let mut unpinned_cache_keys_by_origin: HashMap<String, HashSet<String>> = HashMap::new();
@@ -955,7 +962,6 @@ fn sync_codex_desktop_available_models_cache_path_with_status(
         ) else {
             continue;
         };
-        statsig_cache_origins.insert(origin.clone());
         let Some(cache_key) = codex_desktop_statsig_cache_key_from_leveldb_key(&key_text) else {
             continue;
         };
@@ -967,6 +973,7 @@ fn sync_codex_desktop_available_models_cache_path_with_status(
         let models_config_isolated =
             has_models_config && codex_desktop_statsig_has_only_models_config(&wrapper);
         if has_models_config {
+            model_cache_origins.insert(origin.clone());
             model_cache_keys_by_origin
                 .entry(origin.clone())
                 .or_default()
@@ -999,6 +1006,9 @@ fn sync_codex_desktop_available_models_cache_path_with_status(
 
     let now_millis = codex_desktop_now_millis();
     for (key, origin, prefix, encoding, mut last_modified) in last_modified_entries {
+        if pin_policy == CodexDesktopCachePinPolicy::Preserve {
+            continue;
+        }
         let unpinned_cache_keys = if model_ids.is_empty() {
             model_cache_keys_by_origin.get(&origin)
         } else {
@@ -1049,8 +1059,8 @@ fn sync_codex_desktop_available_models_cache_path_with_status(
 
     let updated_count = updates.len();
 
-    let ready_model_cache = !statsig_cache_origins.is_empty()
-        && statsig_cache_origins
+    let ready_model_cache = !model_cache_origins.is_empty()
+        && model_cache_origins
             .iter()
             .all(|origin| ready_model_cache_origins.contains(origin));
     for (key, value) in updates {
@@ -1064,6 +1074,18 @@ fn sync_codex_desktop_available_models_cache_path_with_status(
         ready_model_cache,
         requires_short_retry,
     })
+}
+
+#[cfg(test)]
+fn sync_codex_desktop_available_models_cache_path_with_status(
+    leveldb_path: &Path,
+    model_ids: &[String],
+) -> Result<CodexDesktopCachePathSyncResult, String> {
+    sync_codex_desktop_available_models_cache_path_with_mode(
+        leveldb_path,
+        model_ids,
+        CodexDesktopCachePinPolicy::Reconcile,
+    )
 }
 
 #[cfg(test)]
@@ -1102,9 +1124,10 @@ fn codex_desktop_leveldb_candidate_is_active_layout(path: &Path) -> bool {
         cfg!(any(target_os = "macos", target_os = "linux")),
     )
 }
-fn sync_codex_desktop_available_models_cache_candidates(
+fn sync_codex_desktop_available_models_cache_candidates_with_mode(
     candidates: &[PathBuf],
     model_ids: &[String],
+    pin_policy: CodexDesktopCachePinPolicy,
 ) -> Result<CodexDesktopCacheSyncResult, String> {
     let mut seen = HashSet::new();
     let paths = candidates
@@ -1117,7 +1140,8 @@ fn sync_codex_desktop_available_models_cache_candidates(
     let mut found_active_short_retry = false;
     let mut errors = Vec::new();
     for path in paths {
-        match sync_codex_desktop_available_models_cache_path_with_status(path, model_ids) {
+        match sync_codex_desktop_available_models_cache_path_with_mode(path, model_ids, pin_policy)
+        {
             Ok(result) => {
                 updated_count += result.updated_count;
                 if codex_desktop_leveldb_candidate_is_active_layout(path) {
@@ -1149,12 +1173,26 @@ fn sync_codex_desktop_available_models_cache_candidates(
     }
 }
 
-fn sync_codex_desktop_available_models_cache(
+fn sync_codex_desktop_available_models_cache_with_mode(
     model_ids: &[String],
+    pin_policy: CodexDesktopCachePinPolicy,
 ) -> Result<CodexDesktopCacheSyncResult, String> {
-    sync_codex_desktop_available_models_cache_candidates(
+    sync_codex_desktop_available_models_cache_candidates_with_mode(
         &codex_desktop_local_storage_leveldb_candidates(),
         model_ids,
+        pin_policy,
+    )
+}
+
+#[cfg(test)]
+fn sync_codex_desktop_available_models_cache_candidates(
+    candidates: &[PathBuf],
+    model_ids: &[String],
+) -> Result<CodexDesktopCacheSyncResult, String> {
+    sync_codex_desktop_available_models_cache_candidates_with_mode(
+        candidates,
+        model_ids,
+        CodexDesktopCachePinPolicy::Reconcile,
     )
 }
 
@@ -1165,6 +1203,7 @@ fn codex_desktop_cache_error_is_locked(err: &str) -> bool {
 fn attempt_codex_desktop_available_models_cache_retry(
     generation: u64,
     model_ids: &[String],
+    pin_policy: CodexDesktopCachePinPolicy,
 ) -> CodexDesktopCacheRetryOutcome {
     let _guard = CODEX_DESKTOP_CACHE_SYNC_LOCK
         .lock()
@@ -1172,7 +1211,7 @@ fn attempt_codex_desktop_available_models_cache_retry(
     if CODEX_DESKTOP_CACHE_SYNC_GENERATION.load(Ordering::Acquire) != generation {
         return CodexDesktopCacheRetryOutcome::Superseded;
     }
-    match sync_codex_desktop_available_models_cache(model_ids) {
+    match sync_codex_desktop_available_models_cache_with_mode(model_ids, pin_policy) {
         Ok(result) if result.needs_discovery => {
             CodexDesktopCacheRetryOutcome::Discovering(result.updated_count)
         }
@@ -1210,6 +1249,7 @@ fn codex_desktop_cache_worker_next_delay(
 struct CodexDesktopCacheWorkerTask {
     generation: u64,
     model_ids: Vec<String>,
+    pin_policy: CodexDesktopCachePinPolicy,
     next_delay: Duration,
     retry_delay_secs: u64,
 }
@@ -1219,6 +1259,7 @@ enum CodexDesktopCacheWorkerUpdate {
     Schedule {
         generation: u64,
         model_ids: Vec<String>,
+        pin_policy: CodexDesktopCachePinPolicy,
         next_delay: Duration,
     },
     Cancel {
@@ -1240,6 +1281,7 @@ fn run_codex_desktop_available_models_cache_worker(
                     let outcome = attempt_codex_desktop_available_models_cache_retry(
                         active_task.generation,
                         &active_task.model_ids,
+                        active_task.pin_policy,
                     );
                     match &outcome {
                         CodexDesktopCacheRetryOutcome::Synced(updated) if *updated > 0 => {
@@ -1283,11 +1325,13 @@ fn run_codex_desktop_available_models_cache_worker(
                 CodexDesktopCacheWorkerUpdate::Schedule {
                     generation,
                     model_ids,
+                    pin_policy,
                     next_delay,
                 } if CODEX_DESKTOP_CACHE_SYNC_GENERATION.load(Ordering::Acquire) == generation => {
                     task = Some(CodexDesktopCacheWorkerTask {
                         generation,
                         model_ids,
+                        pin_policy,
                         next_delay,
                         retry_delay_secs: CODEX_DESKTOP_CACHE_RETRY_INITIAL_DELAY_SECS,
                     });
@@ -1326,12 +1370,14 @@ fn codex_desktop_available_models_cache_worker_sender(
 fn schedule_codex_desktop_available_models_cache_worker(
     generation: u64,
     model_ids: Vec<String>,
+    pin_policy: CodexDesktopCachePinPolicy,
     next_delay: Option<Duration>,
 ) {
     let update = match next_delay {
         Some(next_delay) => CodexDesktopCacheWorkerUpdate::Schedule {
             generation,
             model_ids,
+            pin_policy,
             next_delay,
         },
         None => CodexDesktopCacheWorkerUpdate::Cancel { generation },
@@ -1350,6 +1396,7 @@ fn schedule_codex_desktop_available_models_cache_worker(
 fn schedule_codex_desktop_available_models_cache_worker(
     _generation: u64,
     _model_ids: Vec<String>,
+    _pin_policy: CodexDesktopCachePinPolicy,
     _next_delay: Option<Duration>,
 ) {
 }
@@ -2288,14 +2335,22 @@ fn invalidate_codex_desktop_available_models_cache_worker() {
             .fetch_add(1, Ordering::AcqRel)
             .wrapping_add(1)
     };
-    schedule_codex_desktop_available_models_cache_worker(generation, Vec::new(), None);
+    schedule_codex_desktop_available_models_cache_worker(
+        generation,
+        Vec::new(),
+        CodexDesktopCachePinPolicy::Reconcile,
+        None,
+    );
 }
 
 pub fn sync_codex_desktop_available_models_cache_from_settings(settings: &Value) {
     sync_codex_desktop_available_models_cache_model_ids(codex_model_ids_from_settings(settings));
 }
 
-fn sync_codex_desktop_available_models_cache_model_ids(model_ids: Vec<String>) {
+fn sync_codex_desktop_available_models_cache_model_ids_with_policy(
+    model_ids: Vec<String>,
+    pin_policy: CodexDesktopCachePinPolicy,
+) {
     let (generation, sync_result) = {
         let _guard = CODEX_DESKTOP_CACHE_SYNC_LOCK
             .lock()
@@ -2305,7 +2360,7 @@ fn sync_codex_desktop_available_models_cache_model_ids(model_ids: Vec<String>) {
             .wrapping_add(1);
         (
             generation,
-            sync_codex_desktop_available_models_cache(&model_ids),
+            sync_codex_desktop_available_models_cache_with_mode(&model_ids, pin_policy),
         )
     };
     match sync_result {
@@ -2325,7 +2380,9 @@ fn sync_codex_desktop_available_models_cache_model_ids(model_ids: Vec<String>) {
                     CODEX_DESKTOP_CACHE_RENEWAL_INTERVAL_SECS,
                 ))
             };
-            schedule_codex_desktop_available_models_cache_worker(generation, model_ids, next_delay);
+            schedule_codex_desktop_available_models_cache_worker(
+                generation, model_ids, pin_policy, next_delay,
+            );
         }
         Err(err) if codex_desktop_cache_error_is_locked(&err) => {
             log::warn!(
@@ -2334,6 +2391,7 @@ fn sync_codex_desktop_available_models_cache_model_ids(model_ids: Vec<String>) {
             schedule_codex_desktop_available_models_cache_worker(
                 generation,
                 model_ids,
+                pin_policy,
                 Some(Duration::from_secs(
                     CODEX_DESKTOP_CACHE_RETRY_INITIAL_DELAY_SECS,
                 )),
@@ -2346,9 +2404,25 @@ fn sync_codex_desktop_available_models_cache_model_ids(model_ids: Vec<String>) {
             let next_delay = Some(Duration::from_secs(
                 CODEX_DESKTOP_CACHE_RETRY_INITIAL_DELAY_SECS,
             ));
-            schedule_codex_desktop_available_models_cache_worker(generation, model_ids, next_delay);
+            schedule_codex_desktop_available_models_cache_worker(
+                generation, model_ids, pin_policy, next_delay,
+            );
         }
     }
+}
+
+fn sync_codex_desktop_available_models_cache_model_ids(model_ids: Vec<String>) {
+    sync_codex_desktop_available_models_cache_model_ids_with_policy(
+        model_ids,
+        CodexDesktopCachePinPolicy::Reconcile,
+    );
+}
+
+fn remove_codex_desktop_owned_models_preserving_cache_pins() {
+    sync_codex_desktop_available_models_cache_model_ids_with_policy(
+        Vec::new(),
+        CodexDesktopCachePinPolicy::Preserve,
+    );
 }
 
 fn codex_desktop_available_models_cache_ids_after_restored_catalog_reload(
@@ -2379,7 +2453,7 @@ fn sync_codex_desktop_available_models_cache_after_restored_catalog_reload(
 /// Official snapshots without a catalog clear any stale custom future pin.
 /// Raw snapshots that point at the cc-switch-owned catalog reload its model IDs
 /// and repin them; user-managed external catalog pointers keep their cache
-/// untouched while cancelling stale cc-switch background work.
+/// free of cc-switch-owned additions without changing their existing pins.
 pub fn sync_codex_desktop_available_models_cache_after_live_restore(settings: &Value) {
     if settings.get("modelCatalog").is_some() {
         sync_codex_desktop_available_models_cache_from_settings(settings);
@@ -2417,7 +2491,7 @@ pub fn sync_codex_desktop_available_models_cache_after_live_restore(settings: &V
         codex_config_has_external_model_catalog_pointer(config_text, &generated_path);
 
     if has_external_catalog_pointer {
-        invalidate_codex_desktop_available_models_cache_worker();
+        remove_codex_desktop_owned_models_preserving_cache_pins();
     } else {
         sync_codex_desktop_available_models_cache_from_settings(settings);
     }
@@ -2426,16 +2500,16 @@ pub fn sync_codex_desktop_available_models_cache_after_live_restore(settings: &V
 fn codex_desktop_available_models_cache_ids_after_provider_write(
     settings: &Value,
     config_text: Option<&str>,
-) -> Vec<String> {
+) -> Option<Vec<String>> {
     let generated_path = get_codex_model_catalog_path();
     let preserves_external_catalog = settings.get("modelCatalog").is_none()
         && config_text.is_some_and(|text| {
             codex_config_has_external_model_catalog_pointer(text, &generated_path)
         });
     if preserves_external_catalog {
-        Vec::new()
+        None
     } else {
-        codex_model_ids_from_settings(settings)
+        Some(codex_model_ids_from_settings(settings))
     }
 }
 
@@ -2443,9 +2517,10 @@ pub(crate) fn sync_codex_desktop_available_models_cache_after_provider_write(
     settings: &Value,
     config_text: Option<&str>,
 ) {
-    sync_codex_desktop_available_models_cache_model_ids(
-        codex_desktop_available_models_cache_ids_after_provider_write(settings, config_text),
-    );
+    match codex_desktop_available_models_cache_ids_after_provider_write(settings, config_text) {
+        Some(model_ids) => sync_codex_desktop_available_models_cache_model_ids(model_ids),
+        None => remove_codex_desktop_owned_models_preserving_cache_pins(),
+    }
 }
 
 pub fn write_codex_provider_live_with_catalog(
@@ -4497,7 +4572,7 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
-    fn codex_desktop_statsig_sync_scopes_pins_and_readiness_to_leveldb_origin() {
+    fn codex_desktop_statsig_sync_excludes_unrelated_origins_from_readiness() {
         let temp_dir = tempfile::tempdir().expect("create temp leveldb");
         let options = rusty_leveldb::Options {
             create_if_missing: true,
@@ -4559,8 +4634,33 @@ base_url = "https://production.api/v1"
             "only the Codex cache and its matching last-modified entry should change"
         );
         assert!(
+            result.ready_model_cache,
+            "an origin without the models evaluation must not block cache readiness"
+        );
+
+        let options = rusty_leveldb::Options {
+            create_if_missing: false,
+            ..Default::default()
+        };
+        let mut db = rusty_leveldb::DB::open(temp_dir.path(), options).expect("reopen leveldb");
+        let missing_pin_cache_key =
+            b"_https://missing\x00statsig.cached.evaluations.active".to_vec();
+        db.put(&missing_pin_cache_key, &cache_value)
+            .expect("seed models cache without matching pin metadata");
+        db.close().expect("close leveldb");
+
+        let result = sync_codex_desktop_available_models_cache_path_with_status(
+            temp_dir.path(),
+            &["gpt-5.6-sol".to_string()],
+        )
+        .expect("resync temp leveldb");
+        assert_eq!(
+            result.updated_count, 2,
+            "the new cache entry and the existing valid origin pin are renewed"
+        );
+        assert!(
             !result.ready_model_cache,
-            "one pinned origin must not hide another origin whose models cache is not ready"
+            "a second origin with the models evaluation must remain unready until its pin metadata exists"
         );
 
         let options = rusty_leveldb::Options {
@@ -4814,6 +4914,80 @@ base_url = "https://production.api/v1"
                 .as_i64()
                 .unwrap()
                 < future_pin
+        );
+        db.close().expect("close leveldb");
+    }
+
+    #[test]
+    fn codex_desktop_owned_cleanup_preserves_external_cache_pin() {
+        let temp_dir = tempfile::tempdir().expect("create temp leveldb");
+        let options = rusty_leveldb::Options {
+            create_if_missing: true,
+            ..Default::default()
+        };
+        let mut db = rusty_leveldb::DB::open(temp_dir.path(), options).expect("open temp leveldb");
+        let key = b"_https://codex\x00statsig.cached.evaluations.active".to_vec();
+        let last_modified_key =
+            b"_https://codex\x00statsig.last_modified_time.evaluations".to_vec();
+        let data = json!({
+            "dynamic_configs": {
+                CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID: {
+                    "value": { "available_models": ["external-model", "gpt-5.6-sol"] }
+                }
+            }
+        });
+        let value = encode_codex_desktop_statsig_wrapper(
+            Some(1),
+            CodexDesktopStatsigWrapperEncoding::Utf8,
+            &json!({
+                "source": "Network",
+                "data": data.to_string(),
+                CODEX_DESKTOP_STATSIG_OWNED_MODELS_KEY: ["gpt-5.6-sol"]
+            }),
+        )
+        .unwrap();
+        db.put(&key, &value).expect("seed cache");
+        let future_pin = codex_desktop_now_millis() + CODEX_DESKTOP_STATSIG_PIN_HORIZON_MILLIS;
+        let last_modified_value = encode_codex_desktop_statsig_wrapper(
+            Some(1),
+            CodexDesktopStatsigWrapperEncoding::Utf8,
+            &json!({ "statsig.cached.evaluations.active": future_pin }),
+        )
+        .unwrap();
+        db.put(&last_modified_key, &last_modified_value)
+            .expect("seed last modified cache");
+        db.close().expect("close seeded leveldb");
+
+        let result = sync_codex_desktop_available_models_cache_path_with_mode(
+            temp_dir.path(),
+            &[],
+            CodexDesktopCachePinPolicy::Preserve,
+        )
+        .expect("remove owned models while preserving external pin");
+        assert_eq!(result.updated_count, 1);
+
+        let options = rusty_leveldb::Options {
+            create_if_missing: false,
+            ..Default::default()
+        };
+        let mut db = rusty_leveldb::DB::open(temp_dir.path(), options).expect("reopen leveldb");
+        let value = db.get(&key).expect("read cleaned cache");
+        let (_, _, wrapper) = decode_codex_desktop_statsig_wrapper(&value).unwrap();
+        assert_eq!(
+            codex_desktop_statsig_available_model_ids(&wrapper),
+            Some(HashSet::from(["external-model".to_string()]))
+        );
+        assert!(wrapper
+            .get(CODEX_DESKTOP_STATSIG_OWNED_MODELS_KEY)
+            .is_none());
+        let last_modified_value = db
+            .get(&last_modified_key)
+            .expect("read preserved last modified cache");
+        let (_, _, last_modified) =
+            decode_codex_desktop_statsig_wrapper(&last_modified_value).unwrap();
+        assert_eq!(
+            last_modified["statsig.cached.evaluations.active"].as_i64(),
+            Some(future_pin)
         );
         db.close().expect("close leveldb");
     }
@@ -5362,14 +5536,14 @@ web_search = "disabled"
     }
 
     #[test]
-    fn codex_provider_write_external_catalog_selects_owned_cache_cleanup() {
+    fn codex_provider_write_external_catalog_selects_pin_preserving_cleanup() {
         let model_ids = codex_desktop_available_models_cache_ids_after_provider_write(
             &json!({}),
             Some(r#"model_catalog_json = "C:/Users/me/.codex/custom-models.json""#),
         );
-        assert!(
-            model_ids.is_empty(),
-            "preserving an external catalog must reconcile the cache with an empty cc-switch model set"
+        assert_eq!(
+            model_ids, None,
+            "preserving an external catalog must select pin-preserving owned-model cleanup"
         );
 
         assert_eq!(
@@ -5381,7 +5555,7 @@ web_search = "disabled"
                 }),
                 Some("model_provider = \"custom\""),
             ),
-            vec!["gpt-5.6-sol".to_string()],
+            Some(vec!["gpt-5.6-sol".to_string()]),
             "inline cc-switch catalogs must still sync their provider model IDs"
         );
     }
