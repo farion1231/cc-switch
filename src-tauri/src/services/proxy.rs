@@ -760,26 +760,24 @@ impl ProxyService {
     }
 
     /// Reproject an already-taken-over official Codex route after the unified
-    /// history setting changes. Backup and live must move together: the backup
-    /// is the restore source, while live controls the provider bucket used now.
-    pub(crate) async fn reproject_codex_official_live_for_history_toggle(
+    /// history setting changes. The caller must already own the Codex switch
+    /// lock so provider identity, backup state, and Live state share one
+    /// transaction boundary.
+    pub(crate) async fn reproject_codex_official_live_for_history_toggle_locked(
         &self,
         provider: &Provider,
     ) -> Result<(), String> {
-        let app_type = AppType::Codex;
-        let app_type_str = app_type.as_str();
-        let _guard = self.switch_locks.lock_for_app(app_type_str).await;
+        let app_type_str = AppType::Codex.as_str();
         let previous_backup = self
             .db
             .get_live_backup(app_type_str)
             .await
             .map_err(|e| format!("读取 Codex 原备份失败: {e}"))?;
-        let previous_live = self
-            .read_codex_live()
-            .map_err(|e| format!("读取 Codex 原 Live 配置失败: {e}"))?;
+        let previous_live = crate::codex_config::CodexLiveStateSnapshot::capture()
+            .map_err(|e| format!("捕获 Codex 原 Live 状态失败: {e}"))?;
 
         let projection_result: Result<(), String> = async {
-            self.update_live_backup_from_provider_inner(app_type_str, provider)
+            self.update_live_backup_from_provider_inner(app_type_str, provider, None)
                 .await?;
             self.sync_codex_live_from_provider_while_proxy_active(provider)
                 .await
@@ -795,13 +793,15 @@ impl ProxyService {
                 }
                 None => self.db.delete_live_backup(app_type_str).await,
             };
-            let live_rollback = self.write_codex_live_verbatim(&previous_live);
+            let live_rollback = previous_live
+                .restore_preserving_newer_same_account_auth()
+                .map_err(|e| e.to_string());
             let mut rollback_errors = Vec::new();
             if let Err(rollback_error) = backup_rollback {
                 rollback_errors.push(format!("恢复 Codex 原备份失败: {rollback_error}"));
             }
             if let Err(rollback_error) = live_rollback {
-                rollback_errors.push(format!("恢复 Codex 原 Live 配置失败: {rollback_error}"));
+                rollback_errors.push(format!("恢复 Codex 原 Live 状态失败: {rollback_error}"));
             }
 
             if rollback_errors.is_empty() {
@@ -5158,8 +5158,9 @@ supports_websockets = false
         );
         official.category = Some("official".to_string());
 
+        let _guard = service.lock_switch_for_app(AppType::Codex.as_str()).await;
         let error = service
-            .reproject_codex_official_live_for_history_toggle(&official)
+            .reproject_codex_official_live_for_history_toggle_locked(&official)
             .await
             .expect_err("unresolved proxy port must fail live reprojection");
         assert!(
@@ -5175,6 +5176,56 @@ supports_websockets = false
         assert_eq!(restored_backup.original_config, previous_backup_json);
         let restored_live = service.read_codex_live().expect("read restored live");
         assert_eq!(restored_live, previous_live);
+    }
+
+    #[test]
+    #[serial]
+    fn codex_history_reprojection_rollback_preserves_rotated_live_oauth() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let stale_oauth = json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": "oauth-access-stale",
+                "refresh_token": "oauth-refresh-stale",
+                "account_id": "acct-1"
+            },
+            "last_refresh": "2026-08-17T00:00:00Z"
+        });
+        crate::codex_config::write_codex_live_atomic(&stale_oauth, Some("model = \"gpt-5.4\"\n"))
+            .expect("seed original OAuth and config");
+        let stale_snapshot = crate::codex_config::CodexLiveStateSnapshot::capture()
+            .expect("capture original Live state");
+
+        let rotated_oauth = json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": "oauth-access-rotated",
+                "refresh_token": "oauth-refresh-rotated",
+                "account_id": "acct-1"
+            },
+            "last_refresh": "2026-08-17T01:00:00Z"
+        });
+        crate::codex_config::write_codex_live_atomic(
+            &rotated_oauth,
+            Some("model = \"gpt-5.4-mini\"\n"),
+        )
+        .expect("seed rotated OAuth and newer config");
+
+        stale_snapshot
+            .restore_preserving_newer_same_account_auth()
+            .expect("restore previous Live state while preserving newer same-account OAuth");
+
+        let live_auth: Value =
+            crate::config::read_json_file(&crate::codex_config::get_codex_auth_path())
+                .expect("read live auth");
+        assert_eq!(
+            live_auth, rotated_oauth,
+            "config rollback must not overwrite OAuth rotated after the snapshot"
+        );
+        let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read restored config");
+        assert_eq!(live_config, "model = \"gpt-5.4\"\n");
     }
 
     #[tokio::test]
