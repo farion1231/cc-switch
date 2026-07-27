@@ -1109,24 +1109,46 @@ impl RequestForwarder {
 
     fn inject_system_prompt(app_type: &AppType, body: &mut serde_json::Value) {
         let toggle = crate::settings::get_injection_toggle(app_type.as_str());
-        if !toggle.enabled { return; }
+        if !toggle.enabled {
+            return;
+        }
         let mut parts = Vec::new();
         if let Some(ref p) = toggle.custom_file_path {
             let path = std::path::PathBuf::from(p);
             if path.exists() {
-                if let Ok(c) = std::fs::read_to_string(&path) { let t = c.trim(); if !t.is_empty() { parts.push(t.to_string()); } }
+                if let Ok(c) = std::fs::read_to_string(&path) {
+                    let t = c.trim();
+                    if !t.is_empty() {
+                        parts.push(t.to_string());
+                    }
+                }
             }
         } else if let Ok(path) = crate::prompt_files::prompt_file_path(app_type) {
             if path.exists() {
-                if let Ok(c) = std::fs::read_to_string(&path) { let t = c.trim(); if !t.is_empty() { parts.push(t.to_string()); } }
+                if let Ok(c) = std::fs::read_to_string(&path) {
+                    let t = c.trim();
+                    if !t.is_empty() {
+                        parts.push(t.to_string());
+                    }
+                }
             }
         }
         if toggle.receive_shared {
-            let s = crate::settings::load_shared_prompt(); let t = s.trim(); if !t.is_empty() { parts.push(t.to_string()); }
+            let s = crate::settings::load_shared_prompt();
+            let t = s.trim();
+            if !t.is_empty() {
+                parts.push(t.to_string());
+            }
         }
-        if parts.is_empty() { return; }
+        if parts.is_empty() {
+            return;
+        }
         let extra = parts.join("\n\n---\n\n");
-        log::info!("[{}] System 注入已生效, {} chars", app_type.as_str(), extra.len());
+        log::info!(
+            "[{}] System 注入已生效, {} chars",
+            app_type.as_str(),
+            extra.len()
+        );
 
         // Chat Completions 格式 (OpenAI): message[0].role="system"
         if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
@@ -1148,13 +1170,21 @@ impl RequestForwarder {
         if let Some(system) = body.get("system") {
             let mut val = system.clone();
             match &mut val {
-                serde_json::Value::String(s) => { s.push_str("\n\n---\n\n"); s.push_str(&extra); }
-                serde_json::Value::Array(arr) => { arr.push(serde_json::json!({"type":"text","text":extra})); }
-                _ => { val = serde_json::Value::String(extra); }
+                serde_json::Value::String(s) => {
+                    s.push_str("\n\n---\n\n");
+                    s.push_str(&extra);
+                }
+                serde_json::Value::Array(arr) => {
+                    arr.push(serde_json::json!({"type":"text","text":extra}));
+                }
+                _ => {
+                    val = serde_json::Value::String(extra);
+                }
             }
             body.as_object_mut().map(|o| o.insert("system".into(), val));
         } else {
-            body.as_object_mut().map(|o| o.insert("system".into(), serde_json::Value::String(extra)));
+            body.as_object_mut()
+                .map(|o| o.insert("system".into(), serde_json::Value::String(extra)));
         }
     }
 

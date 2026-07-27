@@ -336,7 +336,7 @@ pub struct CodexOfficialHistoryUnifyMigration {
 }
 
 /// System Prompt 注入开关配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InjectionToggle {
     /// 是否启用注入
@@ -348,16 +348,6 @@ pub struct InjectionToggle {
     /// 自定义提示词文件路径（为空则使用默认的 CLAUDE.md/AGENTS.md/GEMINI.md）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_file_path: Option<String>,
-}
-
-impl Default for InjectionToggle {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            receive_shared: false,
-            custom_file_path: None,
-        }
-    }
 }
 
 /// 应用设置结构
@@ -1212,11 +1202,7 @@ pub fn load_shared_prompt() -> String {
 
 /// 保存共享规则内容
 pub fn save_shared_prompt(content: &str) -> Result<(), AppError> {
-    let path = shared_prompt_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
-    }
-    std::fs::write(&path, content).map_err(|e| AppError::io(&path, e))
+    crate::config::write_text_file(&shared_prompt_path(), content)
 }
 
 #[cfg(test)]
