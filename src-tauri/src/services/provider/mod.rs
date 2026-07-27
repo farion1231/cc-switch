@@ -2667,17 +2667,74 @@ impl ProviderService {
             }
         }
 
-        // Additive mode apps skip setting is_current (no such concept)
-        if !app_type.is_additive_mode() {
-            // Update local settings (device-level, takes priority)
-            crate::settings::set_current_provider(&app_type, Some(id))?;
+        if matches!(app_type, AppType::GrokBuild) {
+            let previous_local_provider = crate::settings::get_current_provider(&app_type);
+            let previous_db_provider = state.db.get_current_provider(app_type.as_str())?;
+            let mut effective_provider = provider.clone();
+            effective_provider.settings_config = build_effective_settings_with_common_config(
+                state.db.as_ref(),
+                &app_type,
+                provider,
+            )?;
+            let prepared = crate::grok_config::prepare_grok_provider_live(&effective_provider)?;
+            let live_snapshot = crate::grok_config::write_prepared_grok_live(&prepared)?;
 
-            // Update database is_current (as default for new devices)
-            state.db.set_current_provider(app_type.as_str(), id)?;
+            if let Err(error) = crate::settings::set_current_provider(&app_type, Some(id)) {
+                let rollback_error = live_snapshot.restore().err();
+                return Err(match rollback_error {
+                    Some(rollback_error) => AppError::Message(format!(
+                        "{error}; additionally failed to restore the previous Grok Build live files: {rollback_error}"
+                    )),
+                    None => error,
+                });
+            }
+
+            if let Err(error) = state.db.set_current_provider(app_type.as_str(), id) {
+                let mut rollback_errors = Vec::new();
+                if let Err(rollback_error) = crate::settings::set_current_provider(
+                    &app_type,
+                    previous_local_provider.as_deref(),
+                ) {
+                    rollback_errors
+                        .push(format!("restore local current provider: {rollback_error}"));
+                }
+                if let Some(previous_db_provider) = previous_db_provider.as_deref() {
+                    if let Err(rollback_error) = state
+                        .db
+                        .set_current_provider(app_type.as_str(), previous_db_provider)
+                    {
+                        rollback_errors.push(format!(
+                            "restore database current provider: {rollback_error}"
+                        ));
+                    }
+                }
+                if let Err(rollback_error) = live_snapshot.restore() {
+                    rollback_errors
+                        .push(format!("restore Grok Build live files: {rollback_error}"));
+                }
+
+                return Err(if rollback_errors.is_empty() {
+                    error
+                } else {
+                    AppError::Message(format!(
+                        "{error}; additionally failed to {}",
+                        rollback_errors.join("; ")
+                    ))
+                });
+            }
+        } else {
+            // Additive mode apps skip setting is_current (no such concept)
+            if !app_type.is_additive_mode() {
+                // Update local settings (device-level, takes priority)
+                crate::settings::set_current_provider(&app_type, Some(id))?;
+
+                // Update database is_current (as default for new devices)
+                state.db.set_current_provider(app_type.as_str(), id)?;
+            }
+
+            // Sync to live (write_gemini_live handles security flag internally for Gemini)
+            write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
         }
-
-        // Sync to live (write_gemini_live handles security flag internally for Gemini)
-        write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
 
         // Hermes is additive, so "switching" doesn't overwrite a live config file
         // — we instead update the top-level `model:` section to point at this
