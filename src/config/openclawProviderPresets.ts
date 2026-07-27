@@ -300,10 +300,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "AICodeMirror",
-    websiteUrl: "https://www.aicodemirror.com",
-    apiKeyUrl: "https://www.aicodemirror.com/register?invitecode=9915W3",
+    websiteUrl: "https://www.aicodemirror.ai",
+    apiKeyUrl: "https://www.aicodemirror.ai/register?invitecode=9915W3",
     settingsConfig: {
-      baseUrl: "https://api.aicodemirror.com/api/claudecode",
+      baseUrl: "https://api.aicodemirror.ai/api/claudecode",
       apiKey: "",
       api: "anthropic-messages",
       models: [
@@ -560,10 +560,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   },
   {
     name: "AICoding",
-    websiteUrl: "https://aicoding.sh",
-    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
+    websiteUrl: "https://aicoding.inc",
+    apiKeyUrl: "https://aicoding.inc/i/CCSWITCH",
     settingsConfig: {
-      baseUrl: "https://api.aicoding.sh",
+      baseUrl: "https://api.aicoding.inc",
       apiKey: "",
       api: "anthropic-messages",
       models: [

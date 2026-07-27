@@ -444,13 +444,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "AICodeMirror",
-    websiteUrl: "https://www.aicodemirror.com",
-    apiKeyUrl: "https://www.aicodemirror.com/register?invitecode=9915W3",
+    websiteUrl: "https://www.aicodemirror.ai",
+    apiKeyUrl: "https://www.aicodemirror.ai/register?invitecode=9915W3",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "AICodeMirror",
       options: {
-        baseURL: "https://api.aicodemirror.com/api/claudecode",
+        baseURL: "https://api.aicodemirror.ai/api/claudecode",
         apiKey: "",
         setCacheKey: true,
       },
@@ -621,13 +621,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "AICoding",
-    websiteUrl: "https://aicoding.sh",
-    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
+    websiteUrl: "https://aicoding.inc",
+    apiKeyUrl: "https://aicoding.inc/i/CCSWITCH",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "AICoding",
       options: {
-        baseURL: "https://api.aicoding.sh",
+        baseURL: "https://api.aicoding.inc",
         apiKey: "",
         setCacheKey: true,
       },
