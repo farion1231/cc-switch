@@ -151,6 +151,17 @@ fn normalize_tool_search_history(body: &mut Value) -> Result<bool, ProxyError> {
     }
     for mut tool in discovered {
         normalize_response_function_tool(&mut tool);
+        if tool.get("type").and_then(Value::as_str) == Some("namespace") {
+            if let Some(namespace) = tool.get("name").and_then(Value::as_str) {
+                if let Some(existing) = tools.iter_mut().find(|candidate| {
+                    candidate.get("type").and_then(Value::as_str) == Some("namespace")
+                        && candidate.get("name").and_then(Value::as_str) == Some(namespace)
+                }) {
+                    changed |= merge_namespace_children(existing, &tool);
+                    continue;
+                }
+            }
+        }
         if let Some(identity) = response_tool_identity(&tool) {
             if !seen.insert(identity) {
                 continue;
@@ -265,6 +276,63 @@ fn normalize_response_function_tool(tool: &mut Value) {
     }
     obj.remove("deferLoading");
     obj.remove("defer_loading");
+}
+
+fn merge_namespace_children(existing: &mut Value, discovered: &Value) -> bool {
+    let mut discovered_children = namespace_children(discovered);
+    if discovered_children.is_empty() {
+        return false;
+    }
+    for child in &mut discovered_children {
+        normalize_response_function_tool(child);
+    }
+
+    let Some(existing_obj) = existing.as_object_mut() else {
+        return false;
+    };
+    let child_key = if existing_obj
+        .get("tools")
+        .and_then(Value::as_array)
+        .is_some()
+    {
+        "tools"
+    } else if existing_obj
+        .get("children")
+        .and_then(Value::as_array)
+        .is_some()
+    {
+        "children"
+    } else {
+        existing_obj.insert("tools".to_string(), Value::Array(Vec::new()));
+        "tools"
+    };
+    let Some(existing_children) = existing_obj
+        .get_mut(child_key)
+        .and_then(Value::as_array_mut)
+    else {
+        return false;
+    };
+
+    let mut seen = std::collections::HashSet::new();
+    for child in existing_children.iter() {
+        if let Some(identity) = response_tool_identity(child) {
+            seen.insert(identity);
+        }
+    }
+
+    let mut changed = false;
+    for child in discovered_children {
+        if let Some(identity) = response_tool_identity(&child) {
+            if !seen.insert(identity) {
+                continue;
+            }
+        } else if existing_children.contains(&child) {
+            continue;
+        }
+        existing_children.push(child);
+        changed = true;
+    }
+    changed
 }
 
 fn response_tool_identity(tool: &Value) -> Option<String> {
@@ -830,6 +898,64 @@ mod tests {
         ));
         assert_eq!(response["output"][0]["name"], "automation_update");
         assert_eq!(response["output"][0]["namespace"], "codex_app");
+    }
+
+    #[test]
+    fn native_followup_merges_discovered_children_into_existing_namespace() {
+        let mut body = json!({
+            "model": "gpt-5.6-sol",
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "tool_search",
+                    "parameters": {"type": "object"}
+                },
+                {
+                    "type": "namespace",
+                    "name": "codex_app",
+                    "description": "Tools provided by the Codex app.",
+                    "tools": [{
+                        "type": "function",
+                        "name": "read_thread",
+                        "parameters": {"type": "object"}
+                    }]
+                }
+            ],
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "search-1",
+                "execution": "client",
+                "status": "completed",
+                "tools": [{
+                    "type": "namespace",
+                    "name": "codex_app",
+                    "description": "Tools provided by the Codex app.",
+                    "tools": [{
+                        "type": "function",
+                        "name": "list_projects",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": false
+                        },
+                        "defer_loading": true
+                    }]
+                }]
+            }]
+        });
+
+        assert!(flatten_request_namespaces(&mut body).unwrap());
+        let names: Vec<&str> = body["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect();
+        assert!(names.contains(&"codex_app__read_thread"));
+        assert!(
+            names.contains(&"codex_app__list_projects"),
+            "discovered children from an existing namespace must be merged: {names:?}"
+        );
     }
 
     #[test]
