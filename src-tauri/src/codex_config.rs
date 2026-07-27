@@ -1775,39 +1775,142 @@ pub fn strip_codex_mcp_servers_from_settings(settings: &mut Value) -> Result<(),
     Ok(())
 }
 
+fn codex_provider_definition_is_routable(item: &toml_edit::Item) -> bool {
+    item.as_table_like()
+        .and_then(|table| table.get("base_url"))
+        .and_then(|value| value.as_str())
+        .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn preserve_inactive_codex_provider_definitions(
+    target_config: &str,
+    live_config: &str,
+) -> Result<String, AppError> {
+    let mut target = target_config
+        .parse::<DocumentMut>()
+        .map_err(|error| AppError::Message(format!("Invalid Codex config.toml: {error}")))?;
+    let live = match live_config.parse::<DocumentMut>() {
+        Ok(live) => live,
+        Err(error) => {
+            log::warn!("Skipping inactive Codex provider preservation: {error}");
+            return Ok(target_config.to_string());
+        }
+    };
+
+    let Some(live_providers) = live
+        .get("model_providers")
+        .and_then(|item| item.as_table_like())
+    else {
+        return Ok(target_config.to_string());
+    };
+    let target_active = target
+        .get("model_provider")
+        .and_then(|item| item.as_str())
+        .map(str::to_string);
+
+    if target.get("model_providers").is_none() {
+        let mut providers = toml_edit::Table::new();
+        providers.set_implicit(true);
+        target["model_providers"] = toml_edit::Item::Table(providers);
+    }
+    let target_providers = target
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_like_mut())
+        .ok_or_else(|| {
+            AppError::Message(
+                "Invalid Codex config.toml: model_providers must be a table".to_string(),
+            )
+        })?;
+
+    for (provider_id, live_definition) in live_providers.iter() {
+        if !codex_provider_definition_is_routable(live_definition) {
+            continue;
+        }
+        let target_is_routable = target_providers
+            .get(provider_id)
+            .is_some_and(codex_provider_definition_is_routable);
+        let is_target_active = target_active.as_deref() == Some(provider_id);
+        if target_is_routable || is_target_active {
+            continue;
+        }
+        target_providers.insert(provider_id, live_definition.clone());
+    }
+
+    Ok(target.to_string())
+}
+
+fn codex_config_uses_custom_provider(config_text: &str) -> bool {
+    config_text
+        .parse::<DocumentMut>()
+        .ok()
+        .and_then(|doc| active_codex_model_provider_id(&doc))
+        .is_some_and(|provider_id| is_custom_codex_model_provider_id(&provider_id))
+}
+
+fn sanitize_codex_global_auth(auth: &Value, active_config: &str) -> Value {
+    if !codex_config_uses_custom_provider(active_config) {
+        return auth.clone();
+    }
+
+    let mut sanitized = auth.clone();
+    let has_third_party_key = sanitized
+        .get("OPENAI_API_KEY")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|key| !key.is_empty());
+    if has_third_party_key {
+        if let Some(object) = sanitized.as_object_mut() {
+            object.remove("OPENAI_API_KEY");
+        }
+        if !codex_auth_has_oauth_login_material(&sanitized) {
+            if let Some(object) = sanitized.as_object_mut() {
+                object.remove("auth_mode");
+            }
+        }
+    }
+    sanitized
+}
+
 /// Route a Codex live write between full auth+config or config-only.
 ///
-/// Official providers with usable login material own `auth.json`. Third-party
-/// providers only touch `config.toml` when the compatibility setting is enabled
-/// so the user's ChatGPT login cache survives provider switches.
-///
-/// 统一会话开关开启时，官方配置在落盘前注入共享的 `custom` 路由
-/// （见 `inject_codex_unified_session_bucket`）。
+/// Official providers own global `auth.json`. Third-party keys are always scoped
+/// to their model-provider table, leaving official auth available to stale
+/// `openai` threads during a switch.
 pub fn write_codex_live_for_provider(
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
-    let unified_official_config =
-        if category == Some("official") && crate::settings::unify_codex_session_history() {
-            Some(inject_codex_unified_session_bucket(
-                config_text.unwrap_or(""),
-            )?)
-        } else {
-            None
-        };
-    let config_text = unified_official_config.as_deref().or(config_text);
-
-    let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
-        || (category != Some("official")
-            && !crate::settings::preserve_codex_official_auth_on_switch());
-
-    if should_write_auth {
-        write_codex_live_atomic(auth, config_text)
+    let live_config = read_codex_config_text()?;
+    let auth_path = get_codex_auth_path();
+    let live_auth = if auth_path.exists() {
+        read_json_file(&auth_path)?
     } else {
-        let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
-        write_codex_live_config_atomic(Some(&live_config))
-    }
+        json!({})
+    };
+
+    let safe_live_config = if codex_config_uses_custom_provider(&live_config)
+        && extract_codex_auth_api_key(&live_auth).is_some()
+    {
+        prepare_codex_provider_live_config(&live_auth, &live_config)?
+    } else {
+        live_config.clone()
+    };
+    let target_config = if category == Some("official") {
+        strip_codex_unified_session_bucket(config_text.unwrap_or(""))?
+    } else {
+        prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?
+    };
+    let target_config =
+        preserve_inactive_codex_provider_definitions(&target_config, &safe_live_config)?;
+
+    let safe_live_auth = sanitize_codex_global_auth(&live_auth, &live_config);
+    let target_auth = if category == Some("official") && codex_auth_has_login_material(auth) {
+        auth
+    } else {
+        &safe_live_auth
+    };
+    write_codex_live_atomic(target_auth, Some(&target_config))
 }
 
 /// Build the live Codex config for provider switching.
@@ -2333,6 +2436,137 @@ base_url = "https://single.example.com/v1"
             err.to_string().contains("config.toml"),
             "error should explain missing config.toml, got: {err}"
         );
+    }
+
+    #[test]
+    fn preservation_copies_routable_inactive_provider() {
+        let target = r#"model_provider = "openai"
+model = "gpt-5.4"
+"#;
+        let live = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Third Party"
+base_url = "https://third.example/v1"
+wire_api = "responses"
+experimental_bearer_token = "third-party-key"
+"#;
+
+        let output = preserve_inactive_codex_provider_definitions(target, live)
+            .expect("preserve inactive provider");
+
+        let parsed: toml::Value = toml::from_str(&output).expect("parse output");
+        assert_eq!(
+            parsed["model_providers"]["custom"]["base_url"].as_str(),
+            Some("https://third.example/v1")
+        );
+        assert_eq!(
+            parsed["model_providers"]["custom"]["experimental_bearer_token"].as_str(),
+            Some("third-party-key")
+        );
+    }
+
+    #[test]
+    fn preservation_replaces_incomplete_custom_placeholder() {
+        let target = r#"model_provider = "openai"
+
+[model_providers.custom]
+name = "OpenAI"
+"#;
+        let live = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Third Party"
+base_url = "https://third.example/v1"
+wire_api = "responses"
+"#;
+
+        let output = preserve_inactive_codex_provider_definitions(target, live)
+            .expect("replace incomplete placeholder");
+
+        let parsed: toml::Value = toml::from_str(&output).expect("parse output");
+        assert_eq!(
+            parsed["model_providers"]["custom"]["name"].as_str(),
+            Some("Third Party")
+        );
+        assert_eq!(
+            parsed["model_providers"]["custom"]["base_url"].as_str(),
+            Some("https://third.example/v1")
+        );
+    }
+
+    #[test]
+    fn preservation_keeps_complete_target_provider_definition() {
+        let target = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Target"
+base_url = "https://target.example/v1"
+wire_api = "responses"
+"#;
+        let live = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Previous"
+base_url = "https://previous.example/v1"
+wire_api = "responses"
+"#;
+
+        let output = preserve_inactive_codex_provider_definitions(target, live)
+            .expect("keep target provider");
+
+        let parsed: toml::Value = toml::from_str(&output).expect("parse output");
+        assert_eq!(
+            parsed["model_providers"]["custom"]["base_url"].as_str(),
+            Some("https://target.example/v1")
+        );
+    }
+
+    #[test]
+    fn sanitize_global_auth_removes_custom_provider_key() {
+        let auth = json!({
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "third-party-key"
+        });
+        let config = r#"model_provider = "custom"
+
+[model_providers.custom]
+base_url = "https://third.example/v1"
+"#;
+
+        let sanitized = sanitize_codex_global_auth(&auth, config);
+
+        assert_eq!(sanitized, json!({}));
+    }
+
+    #[test]
+    fn sanitize_global_auth_keeps_official_api_key() {
+        let auth = json!({
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "official-openai-key"
+        });
+
+        let sanitized = sanitize_codex_global_auth(&auth, "model_provider = \"openai\"\n");
+
+        assert_eq!(sanitized, auth);
+    }
+
+    #[test]
+    fn sanitize_global_auth_keeps_oauth_when_custom_is_active() {
+        let auth = json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": {"access_token": "official-oauth-token"}
+        });
+        let config = r#"model_provider = "custom"
+
+[model_providers.custom]
+base_url = "https://third.example/v1"
+"#;
+
+        let sanitized = sanitize_codex_global_auth(&auth, config);
+
+        assert_eq!(sanitized, auth);
     }
 
     #[test]

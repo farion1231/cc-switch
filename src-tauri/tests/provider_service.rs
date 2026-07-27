@@ -706,13 +706,9 @@ wire_api = "responses"
 }
 
 #[test]
-fn provider_service_switch_codex_default_overwrites_official_auth_when_preservation_off() {
+fn provider_service_switch_codex_keeps_official_auth_and_scopes_third_party_key() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
-    // Intentionally do NOT enable preservation: this locks the default opt-out
-    // behavior where switching to a third-party provider rewrites auth.json,
-    // discarding the user's ChatGPT OAuth login. It is the dual of
-    // `provider_service_switch_codex_preserves_oauth_and_backfills_api_key_from_live_token`.
     let _home = ensure_test_home();
 
     let live_auth = json!({
@@ -783,13 +779,27 @@ requires_openai_auth = true
     let auth_value: serde_json::Value =
         read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
     assert_eq!(
-        auth_value.get("OPENAI_API_KEY").and_then(|v| v.as_str()),
-        Some("third-party-key"),
-        "default (preservation off) should overwrite auth.json with the third-party API key"
+        auth_value
+            .pointer("/tokens/access_token")
+            .and_then(|value| value.as_str()),
+        Some("official-oauth-token"),
+        "third-party switches must keep the official OAuth login"
     );
-    assert!(
-        auth_value.pointer("/tokens/access_token").is_none(),
-        "default switch must clear the official ChatGPT OAuth token from live auth.json"
+    assert_ne!(
+        auth_value
+            .get("OPENAI_API_KEY")
+            .and_then(|value| value.as_str()),
+        Some("third-party-key"),
+        "third-party keys must not be written to global auth.json"
+    );
+
+    let config =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    let parsed: toml::Value = toml::from_str(&config).expect("parse config.toml");
+    assert_eq!(
+        parsed["model_providers"]["aihubmix"]["experimental_bearer_token"].as_str(),
+        Some("third-party-key"),
+        "the selected third-party provider owns its bearer token"
     );
 }
 
