@@ -69,14 +69,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ matrix.sidecar_target }}" = "universal-apple-darwin" ]; then
-            # Tauri invokes Cargo once per architecture for a universal build and
-            # resolves externalBin using each concrete target triple.
-            node scripts/build-cursor-sidecar.mjs aarch64-apple-darwin --test
-            node scripts/build-cursor-sidecar.mjs x86_64-apple-darwin --test
-          else
-            node scripts/build-cursor-sidecar.mjs ${{ matrix.sidecar_target }} --test
-          fi
+          node scripts/build-cursor-sidecar.mjs ${{ matrix.sidecar_target }} --test
+
+      - name: Verify macOS sidecar inputs
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in aarch64-apple-darwin x86_64-apple-darwin universal-apple-darwin; do
+            test -x "src-tauri/binaries/cursor-sidecar-$target"
+          done
+          lipo src-tauri/binaries/cursor-sidecar-universal-apple-darwin \
+            -verify_arch arm64 x86_64
 
       - name: Add Windows ARM64 target
         if: runner.os == 'Windows' && matrix.arch == 'arm64'
@@ -167,6 +171,18 @@ jobs:
 
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
+
+      - name: Ensure VBScript for WiX validation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $capability = Get-WindowsCapability -Online |
+            Where-Object Name -Like 'VBSCRIPT*' |
+            Select-Object -First 1
+          if ($null -ne $capability -and $capability.State -ne 'Installed') {
+            Add-WindowsCapability -Online -Name $capability.Name
+          }
 
       - name: Prepare Tauri signing key
         shell: bash
@@ -291,9 +307,9 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:WINDOWS_RELEASE_ARCH -eq 'arm64') {
-            pnpm tauri build --target aarch64-pc-windows-msvc --bundles msi
+            pnpm tauri build --verbose --target aarch64-pc-windows-msvc --bundles msi
           } else {
-            pnpm tauri build
+            pnpm tauri build --verbose
           }
 
       - name: Build Tauri App (Linux)
