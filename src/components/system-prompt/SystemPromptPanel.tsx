@@ -52,9 +52,9 @@ const SUPPORTED_APPS: {
 type PanelTab = "per-app" | "shared";
 
 const SystemPromptPanel = React.forwardRef<unknown, SystemPromptPanelProps>(
-  ({ open, onOpenChange }, _ref) => {
+  ({ open, onOpenChange, appId }, _ref) => {
     const [activeTab, setActiveTab] = useState<PanelTab>("per-app");
-    const [selectedApp, setSelectedApp] = useState<AppId>("claude");
+    const [selectedApp, setSelectedApp] = useState<AppId>(appId);
     const queryClient = useQueryClient();
 
     // 专属配置
