@@ -1136,7 +1136,8 @@ fn sync_codex_desktop_available_models_cache_candidates_with_mode(
         .filter(|path| seen.insert((*path).clone()))
         .collect::<Vec<_>>();
     let mut updated_count = 0;
-    let mut found_active_model_cache = false;
+    let mut found_active_layout = false;
+    let mut all_active_model_caches_ready = true;
     let mut found_active_short_retry = false;
     let mut errors = Vec::new();
     for path in paths {
@@ -1145,7 +1146,8 @@ fn sync_codex_desktop_available_models_cache_candidates_with_mode(
             Ok(result) => {
                 updated_count += result.updated_count;
                 if codex_desktop_leveldb_candidate_is_active_layout(path) {
-                    found_active_model_cache |= result.ready_model_cache;
+                    found_active_layout = true;
+                    all_active_model_caches_ready &= result.ready_model_cache;
                     found_active_short_retry |= result.requires_short_retry;
                 }
             }
@@ -1168,7 +1170,9 @@ fn sync_codex_desktop_available_models_cache_candidates_with_mode(
             updated_count,
             needs_discovery: !errors.is_empty()
                 || (!model_ids.is_empty()
-                    && (!found_active_model_cache || found_active_short_retry)),
+                    && (!found_active_layout
+                        || !all_active_model_caches_ready
+                        || found_active_short_retry)),
         })
     }
 }
@@ -4791,6 +4795,74 @@ base_url = "https://production.api/v1"
         assert!(
             !result.needs_discovery,
             "a pinned web/Codex nonpartitioned cache is an active supported layout"
+        );
+    }
+
+    #[test]
+    fn codex_desktop_cache_sync_requires_every_present_active_layout_to_be_ready() {
+        let temp_dir = tempfile::tempdir().expect("create temp root");
+        let ready_root = temp_dir.path().join("web").join("Codex");
+        let ready_path = codex_desktop_leveldb_candidates_for_root(&ready_root)[0].clone();
+        let missing_path = temp_dir
+            .path()
+            .join("Partitions")
+            .join("codex-browser-app")
+            .join("Local Storage")
+            .join("leveldb");
+        std::fs::create_dir_all(&ready_path).expect("create ready active layout");
+        std::fs::create_dir_all(&missing_path).expect("create missing active layout");
+
+        let options = rusty_leveldb::Options {
+            create_if_missing: true,
+            ..Default::default()
+        };
+        let mut db = rusty_leveldb::DB::open(&ready_path, options).expect("open ready leveldb");
+        let cache_key = b"_https://codex\x00statsig.cached.evaluations.active".to_vec();
+        let last_modified_key =
+            b"_https://codex\x00statsig.last_modified_time.evaluations".to_vec();
+        let data = json!({
+            "dynamic_configs": {
+                CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID: {
+                    "value": { "available_models": ["gpt-5.5"] }
+                }
+            }
+        });
+        let cache_value = encode_codex_desktop_statsig_wrapper(
+            Some(1),
+            CodexDesktopStatsigWrapperEncoding::Utf8,
+            &json!({ "source": "Network", "data": data.to_string() }),
+        )
+        .unwrap();
+        db.put(&cache_key, &cache_value).expect("seed ready cache");
+        let last_modified_value = encode_codex_desktop_statsig_wrapper(
+            Some(1),
+            CodexDesktopStatsigWrapperEncoding::Utf8,
+            &json!({ "statsig.cached.evaluations.active": 1_000 }),
+        )
+        .unwrap();
+        db.put(&last_modified_key, &last_modified_value)
+            .expect("seed ready pin metadata");
+        db.close().expect("close ready leveldb");
+
+        let options = rusty_leveldb::Options {
+            create_if_missing: true,
+            ..Default::default()
+        };
+        rusty_leveldb::DB::open(&missing_path, options)
+            .expect("open active layout without models cache")
+            .close()
+            .expect("close missing leveldb");
+
+        let result = sync_codex_desktop_available_models_cache_candidates(
+            &[ready_path, missing_path],
+            &["gpt-5.6-sol".to_string()],
+        )
+        .expect("sync active layouts");
+
+        assert_eq!(result.updated_count, 2);
+        assert!(
+            result.needs_discovery,
+            "one ready active layout must not hide another present active layout without a models cache"
         );
     }
 
