@@ -1,6 +1,7 @@
 import { createRef } from "react";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { toast } from "sonner";
 
 import UnifiedSkillsPanel, {
   type UnifiedSkillsPanelHandle,
@@ -13,6 +14,7 @@ const importSkillsMock = vi.fn();
 const installFromZipMock = vi.fn();
 const deleteSkillBackupMock = vi.fn();
 const restoreSkillBackupMock = vi.fn();
+const checkUpdatesMock = vi.fn();
 
 vi.mock("sonner", () => ({
   toast: {
@@ -65,8 +67,8 @@ vi.mock("@/hooks/useSkills", () => ({
     mutateAsync: installFromZipMock,
   }),
   useCheckSkillUpdates: () => ({
-    data: [],
-    refetch: vi.fn(),
+    data: { updates: [], failures: [] },
+    refetch: checkUpdatesMock,
     isFetching: false,
   }),
   useUpdateSkill: () => ({
@@ -77,6 +79,7 @@ vi.mock("@/hooks/useSkills", () => ({
 
 describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
+    vi.resetAllMocks();
     scanUnmanagedMock.mockResolvedValue({
       data: [
         {
@@ -88,12 +91,6 @@ describe("UnifiedSkillsPanel", () => {
         },
       ],
     });
-    toggleSkillAppMock.mockReset();
-    uninstallSkillMock.mockReset();
-    importSkillsMock.mockReset();
-    installFromZipMock.mockReset();
-    deleteSkillBackupMock.mockReset();
-    restoreSkillBackupMock.mockReset();
   });
 
   it("opens the import dialog without crashing when app toggles render", async () => {
@@ -129,5 +126,42 @@ describe("UnifiedSkillsPanel", () => {
         },
       ]);
     });
+  });
+
+  it("does not report all skills up to date when a repository check fails", async () => {
+    checkUpdatesMock.mockResolvedValue({
+      data: {
+        updates: [],
+        failures: [
+          {
+            owner: "owner",
+            name: "repo",
+            branch: "main",
+            error: '{"code":"DOWNLOAD_TIMEOUT","context":{"timeout":"60"}}',
+          },
+        ],
+      },
+    });
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+      />,
+    );
+
+    await act(async () => {
+      await ref.current?.checkUpdates();
+    });
+
+    expect(toast.error).toHaveBeenCalledWith(
+      "skills.updateCheckIncomplete",
+      expect.objectContaining({ duration: Infinity }),
+    );
+    expect(toast.success).not.toHaveBeenCalledWith(
+      "skills.noUpdates",
+      expect.anything(),
+    );
   });
 });

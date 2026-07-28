@@ -8,7 +8,7 @@ use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
 use crate::error::format_skill_error;
 use crate::services::skill::{
     DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillBackupEntry, SkillRepo,
-    SkillService, SkillStorageLocation, SkillUninstallResult, SkillUpdateInfo,
+    SkillService, SkillStorageLocation, SkillUninstallResult, SkillUpdateCheckResult,
     SkillsShSearchResult,
 };
 use crate::store::AppState;
@@ -135,7 +135,7 @@ pub async fn discover_available_skills(
 pub async fn check_skill_updates(
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
-) -> Result<Vec<SkillUpdateInfo>, String> {
+) -> Result<SkillUpdateCheckResult, String> {
     service
         .0
         .check_updates(&app_state.db)

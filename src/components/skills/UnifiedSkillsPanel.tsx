@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   Sparkles,
   Trash2,
@@ -28,10 +29,12 @@ import {
   type SkillUpdateInfo,
 } from "@/hooks/useSkills";
 import type { AppId } from "@/lib/api/types";
+import type { SkillRepoCheckFailure } from "@/lib/api/skills";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
 import { SKILLS_APP_IDS } from "@/config/appConfig";
+import { formatSkillError } from "@/lib/errors/skillErrorParser";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
@@ -62,6 +65,16 @@ function formatSkillBackupDate(unixSeconds: number): string {
   return Number.isNaN(date.getTime())
     ? String(unixSeconds)
     : date.toLocaleString();
+}
+
+function formatUpdateFailures(failures: SkillRepoCheckFailure[], t: TFunction) {
+  return failures
+    .slice(0, 3)
+    .map((failure) => {
+      const reason = formatSkillError(failure.error, t).description;
+      return `${failure.owner}/${failure.name}@${failure.branch}: ${reason}`;
+    })
+    .join("\n");
 }
 
 const UnifiedSkillsPanel = React.forwardRef<
@@ -96,19 +109,18 @@ const UnifiedSkillsPanel = React.forwardRef<
   const importMutation = useImportSkillsFromApps();
   const installFromZipMutation = useInstallSkillsFromZip();
   const {
-    data: skillUpdates,
+    data: updateCheckResult,
     refetch: checkUpdates,
     isFetching: isCheckingUpdates,
   } = useCheckSkillUpdates();
+  const skillUpdates = updateCheckResult?.updates ?? [];
   const updateSkillMutation = useUpdateSkill();
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
 
   const updatesMap = useMemo(() => {
     const map: Record<string, SkillUpdateInfo> = {};
-    if (skillUpdates) {
-      for (const u of skillUpdates) {
-        map[u.id] = u;
-      }
+    for (const update of skillUpdates) {
+      map[update.id] = update;
     }
     return map;
   }, [skillUpdates]);
@@ -231,11 +243,24 @@ const UnifiedSkillsPanel = React.forwardRef<
 
   const handleCheckUpdates = async () => {
     try {
-      const result = await checkUpdates();
-      const updates = result.data || [];
-      if (updates.length === 0) {
+      const result = await checkUpdates({ throwOnError: true });
+      const { updates, failures } = result.data ?? {
+        updates: [],
+        failures: [],
+      };
+      if (failures.length > 0) {
+        toast.error(
+          t("skills.updateCheckIncomplete", { count: failures.length }),
+          {
+            description: formatUpdateFailures(failures, t),
+            duration: Infinity,
+            closeButton: true,
+          },
+        );
+      }
+      if (updates.length === 0 && failures.length === 0) {
         toast.success(t("skills.noUpdates"), { closeButton: true });
-      } else {
+      } else if (updates.length > 0) {
         toast.info(t("skills.updatesFound", { count: updates.length }), {
           closeButton: true,
         });
@@ -257,7 +282,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   };
 
   const handleUpdateAll = async () => {
-    if (!skillUpdates || skillUpdates.length === 0) return;
+    if (skillUpdates.length === 0) return;
     setIsUpdatingAll(true);
     let successCount = 0;
     for (const update of skillUpdates) {

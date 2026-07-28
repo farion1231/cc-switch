@@ -11,6 +11,7 @@ import {
   type ImportSkillSelection,
   type InstalledSkill,
   type SkillUpdateInfo,
+  type SkillUpdateCheckResult,
   type SkillsShSearchResult,
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
@@ -321,11 +322,14 @@ export function useUpdateSkill() {
           );
         },
       );
-      queryClient.setQueryData<SkillUpdateInfo[]>(
+      queryClient.setQueryData<SkillUpdateCheckResult>(
         ["skills", "updates"],
         (oldData) => {
           if (!oldData) return oldData;
-          return oldData.filter((u) => u.id !== updatedSkill.id);
+          return {
+            ...oldData,
+            updates: oldData.updates.filter((u) => u.id !== updatedSkill.id),
+          };
         },
       );
     },
