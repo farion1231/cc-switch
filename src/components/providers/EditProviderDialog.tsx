@@ -137,6 +137,49 @@ export function EditProviderDialog({
       unknown
     >;
 
+    const storedClaudeEnv =
+      provider?.settingsConfig?.env &&
+      typeof provider.settingsConfig.env === "object"
+        ? (provider.settingsConfig.env as Record<string, unknown>)
+        : undefined;
+    const isKimiCodingProvider =
+      appId === "claude" &&
+      typeof storedClaudeEnv?.ANTHROPIC_BASE_URL === "string" &&
+      storedClaudeEnv.ANTHROPIC_BASE_URL.trim().replace(/\/+$/, "") ===
+        "https://api.kimi.com/coding";
+
+    // Kimi context defaults may be injected only into Claude's live settings.
+    // They are provider-owned values, so the DB remains the SSOT in the editor:
+    // preserve an explicit stored override, and remove an injected-only live
+    // value when the provider did not store the key.
+    if (
+      isKimiCodingProvider &&
+      liveSettings &&
+      provider?.settingsConfig &&
+      typeof provider.settingsConfig === "object"
+    ) {
+      const merged = { ...base };
+      const liveEnv =
+        base.env && typeof base.env === "object"
+          ? { ...(base.env as Record<string, unknown>) }
+          : {};
+      const storedEnv = storedClaudeEnv ?? {};
+
+      for (const key of [
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+      ]) {
+        if (Object.prototype.hasOwnProperty.call(storedEnv, key)) {
+          liveEnv[key] = storedEnv[key];
+        } else {
+          delete liveEnv[key];
+        }
+      }
+
+      merged.env = liveEnv;
+      return merged;
+    }
+
     // Codex 的 modelCatalog 是 cc-switch 私有字段，SSOT 在数据库。Live 的 config.toml
     // 仅在写入时投影出 model_catalog_json 指针；Codex.app 改写配置、代理接管/恢复周期、
     // 来回切换供应商都可能让 Live 丢失该投影，从而 read_live_settings 反解为空。
