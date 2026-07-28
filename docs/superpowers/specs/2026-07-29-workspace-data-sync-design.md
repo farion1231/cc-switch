@@ -292,11 +292,11 @@ Manifest 包含：
 
 ```text
 plaintextHash = SHA256(content)
-objectId = HMAC(ObjectIdKey, plaintextHash)
+objectId = HMAC(ObjectIdKey, protocolVersion || profileId || providerId || dataKind || plaintextHash)
 blobKey = HKDF(BlobEncryptionKey, objectId)
 ```
 
-相同 profile 中的相同内容得到相同 object ID，以支持增量上传和 Blob 去重。远端无法直接获得原文 SHA-256。
+相同 profile、Provider 和数据类型中的相同内容得到相同 object ID，以支持增量上传和 Blob 去重。Provider/数据类型参与域分离，避免同一密文对象在不同认证上下文中复用；远端无法直接获得原文 SHA-256。
 
 ### 8.4 云端 Head 并发更新
 
