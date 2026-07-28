@@ -2,7 +2,6 @@ use std::fmt::Display;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::Duration;
 
 use rusqlite::Connection;
 
@@ -10,7 +9,6 @@ use crate::error::AppError;
 
 const SCHEMA_VERSION: i32 = 1;
 const APPLICATION_ID: i32 = 0x5753_594e; // "WSYN"
-const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 const SCHEMA_V1: &str = r#"
     CREATE TABLE sync_transactions (
@@ -95,100 +93,154 @@ const SCHEMA_V1: &str = r#"
     );
 "#;
 
-const REQUIRED_SCHEMA: &[(&str, &[&str])] = &[
-    (
-        "sync_transactions",
-        &[
-            "id",
-            "operation",
-            "state",
-            "base_snapshot_id",
-            "remote_snapshot_id",
-            "result_snapshot_id",
-            "started_at",
-            "updated_at",
-            "error_code",
-            "error_detail",
+#[derive(Debug)]
+struct ColumnDefinition {
+    name: &'static str,
+    declared_type: &'static str,
+    not_null: bool,
+    default_value: Option<&'static str>,
+    primary_key_position: i32,
+}
+
+impl ColumnDefinition {
+    const fn new(
+        name: &'static str,
+        declared_type: &'static str,
+        not_null: bool,
+        default_value: Option<&'static str>,
+        primary_key_position: i32,
+    ) -> Self {
+        Self {
+            name,
+            declared_type,
+            not_null,
+            default_value,
+            primary_key_position,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct TableDefinition {
+    name: &'static str,
+    columns: &'static [ColumnDefinition],
+}
+
+#[derive(Debug)]
+struct ActualColumnDefinition {
+    name: String,
+    declared_type: String,
+    not_null: bool,
+    default_value: Option<String>,
+    primary_key_position: i32,
+}
+
+impl ActualColumnDefinition {
+    fn matches(&self, expected: &ColumnDefinition) -> bool {
+        self.name == expected.name
+            && self
+                .declared_type
+                .eq_ignore_ascii_case(expected.declared_type)
+            && self.not_null == expected.not_null
+            && self.default_value.as_deref() == expected.default_value
+            && self.primary_key_position == expected.primary_key_position
+    }
+}
+
+const REQUIRED_SCHEMA: &[TableDefinition] = &[
+    TableDefinition {
+        name: "sync_transactions",
+        columns: &[
+            ColumnDefinition::new("id", "TEXT", false, None, 1),
+            ColumnDefinition::new("operation", "TEXT", true, None, 0),
+            ColumnDefinition::new("state", "TEXT", true, None, 0),
+            ColumnDefinition::new("base_snapshot_id", "TEXT", false, None, 0),
+            ColumnDefinition::new("remote_snapshot_id", "TEXT", false, None, 0),
+            ColumnDefinition::new("result_snapshot_id", "TEXT", false, None, 0),
+            ColumnDefinition::new("started_at", "INTEGER", true, None, 0),
+            ColumnDefinition::new("updated_at", "INTEGER", true, None, 0),
+            ColumnDefinition::new("error_code", "TEXT", false, None, 0),
+            ColumnDefinition::new("error_detail", "TEXT", false, None, 0),
         ],
-    ),
-    (
-        "provider_results",
-        &[
-            "transaction_id",
-            "provider_id",
-            "state",
-            "added_count",
-            "updated_count",
-            "deleted_count",
-            "conflict_count",
+    },
+    TableDefinition {
+        name: "provider_results",
+        columns: &[
+            ColumnDefinition::new("transaction_id", "TEXT", true, None, 1),
+            ColumnDefinition::new("provider_id", "TEXT", true, None, 2),
+            ColumnDefinition::new("state", "TEXT", true, None, 0),
+            ColumnDefinition::new("added_count", "INTEGER", true, Some("0"), 0),
+            ColumnDefinition::new("updated_count", "INTEGER", true, Some("0"), 0),
+            ColumnDefinition::new("deleted_count", "INTEGER", true, Some("0"), 0),
+            ColumnDefinition::new("conflict_count", "INTEGER", true, Some("0"), 0),
         ],
-    ),
-    (
-        "conflicts",
-        &[
-            "id",
-            "provider_id",
-            "kind",
-            "logical_id",
-            "state",
-            "reason",
-            "metadata",
-            "created_at",
-            "resolved_at",
+    },
+    TableDefinition {
+        name: "conflicts",
+        columns: &[
+            ColumnDefinition::new("id", "TEXT", false, None, 1),
+            ColumnDefinition::new("provider_id", "TEXT", true, None, 0),
+            ColumnDefinition::new("kind", "TEXT", true, None, 0),
+            ColumnDefinition::new("logical_id", "TEXT", true, None, 0),
+            ColumnDefinition::new("state", "TEXT", true, None, 0),
+            ColumnDefinition::new("reason", "TEXT", true, None, 0),
+            ColumnDefinition::new("metadata", "TEXT", true, None, 0),
+            ColumnDefinition::new("created_at", "INTEGER", true, None, 0),
+            ColumnDefinition::new("resolved_at", "INTEGER", false, None, 0),
         ],
-    ),
-    (
-        "tombstones",
-        &[
-            "provider_id",
-            "kind",
-            "logical_id",
-            "last_known_hash",
-            "deleted_at",
-            "deleted_by",
+    },
+    TableDefinition {
+        name: "tombstones",
+        columns: &[
+            ColumnDefinition::new("provider_id", "TEXT", true, None, 1),
+            ColumnDefinition::new("kind", "TEXT", true, None, 2),
+            ColumnDefinition::new("logical_id", "TEXT", true, None, 3),
+            ColumnDefinition::new("last_known_hash", "TEXT", false, None, 0),
+            ColumnDefinition::new("deleted_at", "INTEGER", true, None, 0),
+            ColumnDefinition::new("deleted_by", "TEXT", true, None, 0),
         ],
-    ),
-    (
-        "devices",
-        &[
-            "device_id",
-            "device_name",
-            "last_snapshot_id",
-            "last_seen_at",
-            "removed_at",
+    },
+    TableDefinition {
+        name: "devices",
+        columns: &[
+            ColumnDefinition::new("device_id", "TEXT", false, None, 1),
+            ColumnDefinition::new("device_name", "TEXT", true, None, 0),
+            ColumnDefinition::new("last_snapshot_id", "TEXT", false, None, 0),
+            ColumnDefinition::new("last_seen_at", "INTEGER", true, None, 0),
+            ColumnDefinition::new("removed_at", "INTEGER", false, None, 0),
         ],
-    ),
-    (
-        "snapshot_cache",
-        &[
-            "snapshot_id",
-            "parent_ids",
-            "manifest_hash",
-            "created_at",
-            "created_by",
+    },
+    TableDefinition {
+        name: "snapshot_cache",
+        columns: &[
+            ColumnDefinition::new("snapshot_id", "TEXT", false, None, 1),
+            ColumnDefinition::new("parent_ids", "TEXT", true, None, 0),
+            ColumnDefinition::new("manifest_hash", "TEXT", true, None, 0),
+            ColumnDefinition::new("created_at", "INTEGER", true, None, 0),
+            ColumnDefinition::new("created_by", "TEXT", true, None, 0),
         ],
-    ),
-    (
-        "blob_refs",
-        &[
-            "object_id",
-            "local_cache_path",
-            "plain_size",
-            "stored_size",
-            "ref_count",
-            "last_accessed_at",
+    },
+    TableDefinition {
+        name: "blob_refs",
+        columns: &[
+            ColumnDefinition::new("object_id", "TEXT", false, None, 1),
+            ColumnDefinition::new("local_cache_path", "TEXT", false, None, 0),
+            ColumnDefinition::new("plain_size", "INTEGER", true, None, 0),
+            ColumnDefinition::new("stored_size", "INTEGER", true, None, 0),
+            ColumnDefinition::new("ref_count", "INTEGER", true, None, 0),
+            ColumnDefinition::new("last_accessed_at", "INTEGER", true, None, 0),
         ],
-    ),
-    (
-        "provider_schema_cache",
-        &[
-            "provider_id",
-            "native_version",
-            "schema_fingerprint",
-            "capabilities",
-            "checked_at",
+    },
+    TableDefinition {
+        name: "provider_schema_cache",
+        columns: &[
+            ColumnDefinition::new("provider_id", "TEXT", true, None, 1),
+            ColumnDefinition::new("native_version", "TEXT", true, None, 0),
+            ColumnDefinition::new("schema_fingerprint", "TEXT", true, None, 2),
+            ColumnDefinition::new("capabilities", "TEXT", true, None, 0),
+            ColumnDefinition::new("checked_at", "INTEGER", true, None, 0),
         ],
-    ),
+    },
 ];
 
 enum OpenAction {
@@ -214,10 +266,6 @@ impl WorkspaceSyncDb {
         Self::prepare(conn, path, true)
     }
 
-    pub fn open_default(data_dir: &Path) -> Result<Self, AppError> {
-        Self::open(&data_dir.join("workspace-sync").join("workspace-sync.db"))
-    }
-
     pub fn memory() -> Result<Self, AppError> {
         Self::initialize(
             Connection::open_in_memory()
@@ -239,22 +287,6 @@ impl WorkspaceSyncDb {
     }
 
     fn prepare(mut conn: Connection, path: &Path, use_wal: bool) -> Result<Self, AppError> {
-        conn.busy_timeout(BUSY_TIMEOUT)
-            .map_err(|error| database_error(path, "open", error))?;
-        let configured_timeout: i64 = conn
-            .pragma_query_value(None, "busy_timeout", |row| row.get(0))
-            .map_err(|error| database_error(path, "open", error))?;
-        if configured_timeout != BUSY_TIMEOUT.as_millis() as i64 {
-            return Err(database_error(
-                path,
-                "open",
-                format!(
-                    "busy_timeout is {configured_timeout}ms, expected {}ms",
-                    BUSY_TIMEOUT.as_millis()
-                ),
-            ));
-        }
-
         let action = Self::inspect_identity(&conn, path)?;
         Self::enable_foreign_keys(&conn, path)?;
 
@@ -414,19 +446,21 @@ impl WorkspaceSyncDb {
             ));
         }
 
-        for (table, expected_columns) in REQUIRED_SCHEMA {
-            let actual_columns = Self::raw_table_columns(conn, table)
+        for table in REQUIRED_SCHEMA {
+            let actual_columns = Self::raw_table_columns(conn, table.name)
                 .map_err(|error| database_error(path, "verify", error))?;
-            if !actual_columns
-                .iter()
-                .map(String::as_str)
-                .eq(expected_columns.iter().copied())
-            {
+            let columns_match = actual_columns.len() == table.columns.len()
+                && actual_columns
+                    .iter()
+                    .zip(table.columns)
+                    .all(|(actual, expected)| actual.matches(expected));
+            if !columns_match {
                 return Err(database_error(
                     path,
                     "verify",
                     format!(
-                        "table {table} columns mismatch: actual={actual_columns:?}, expected={expected_columns:?}"
+                        "table {} columns mismatch: actual={actual_columns:?}, expected={:?}",
+                        table.name, table.columns
                     ),
                 ));
             }
@@ -441,33 +475,55 @@ impl WorkspaceSyncDb {
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
                     row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
                     row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
                 ))
             })
             .map_err(|error| database_error(path, "verify", error))?;
         let foreign_keys = foreign_keys
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| database_error(path, "verify", error))?;
-        let has_required_cascade = foreign_keys.iter().any(|(table, from, to, on_delete)| {
-            table == "sync_transactions"
-                && from == "transaction_id"
-                && to == "id"
-                && on_delete.eq_ignore_ascii_case("cascade")
-        });
-        if !has_required_cascade {
+        let has_exact_foreign_key = matches!(
+            foreign_keys.as_slice(),
+            [(table, from, to, on_update, on_delete, match_clause)]
+                if table == "sync_transactions"
+                    && from == "transaction_id"
+                    && to == "id"
+                    && on_update.eq_ignore_ascii_case("no action")
+                    && on_delete.eq_ignore_ascii_case("cascade")
+                    && match_clause.eq_ignore_ascii_case("none")
+        );
+        if !has_exact_foreign_key {
             return Err(database_error(
                 path,
                 "verify",
-                "provider_results is missing transaction_id -> sync_transactions(id) ON DELETE CASCADE",
+                format!(
+                    "provider_results foreign keys mismatch: actual={foreign_keys:?}, expected transaction_id -> sync_transactions(id) ON UPDATE NO ACTION ON DELETE CASCADE MATCH NONE"
+                ),
             ));
         }
 
         Ok(())
     }
 
-    fn raw_table_columns(conn: &Connection, table: &str) -> rusqlite::Result<Vec<String>> {
-        let mut statement = conn.prepare("SELECT name FROM pragma_table_info(?1) ORDER BY cid")?;
-        let rows = statement.query_map([table], |row| row.get(0))?;
+    fn raw_table_columns(
+        conn: &Connection,
+        table: &str,
+    ) -> rusqlite::Result<Vec<ActualColumnDefinition>> {
+        let mut statement = conn.prepare(
+            r#"SELECT name, type, "notnull", dflt_value, pk
+               FROM pragma_table_info(?1) ORDER BY cid"#,
+        )?;
+        let rows = statement.query_map([table], |row| {
+            Ok(ActualColumnDefinition {
+                name: row.get(0)?,
+                declared_type: row.get(1)?,
+                not_null: row.get::<_, i32>(2)? != 0,
+                default_value: row.get(3)?,
+                primary_key_position: row.get(4)?,
+            })
+        })?;
         rows.collect()
     }
 
@@ -504,7 +560,7 @@ mod tests {
 
     use rusqlite::Connection;
 
-    use super::{WorkspaceSyncDb, APPLICATION_ID, SCHEMA_VERSION};
+    use super::{WorkspaceSyncDb, APPLICATION_ID, SCHEMA_V1, SCHEMA_VERSION};
     use crate::error::AppError;
 
     fn temp_db_path(name: &str) -> Result<(tempfile::TempDir, PathBuf), AppError> {
@@ -702,9 +758,6 @@ mod tests {
         let journal_mode: String =
             conn.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
         assert_eq!(journal_mode, "wal");
-        let busy_timeout: i64 = conn.pragma_query_value(None, "busy_timeout", |row| row.get(0))?;
-        assert_eq!(busy_timeout, 5_000);
-
         Ok(())
     }
 
@@ -721,19 +774,6 @@ mod tests {
         assert!(path.is_file());
         assert_eq!(db.user_version()?, SCHEMA_VERSION);
 
-        Ok(())
-    }
-
-    #[test]
-    fn open_default_uses_workspace_sync_subdirectory() -> Result<(), AppError> {
-        let temp =
-            tempfile::tempdir().map_err(|error| AppError::io("workspace-sync-test", error))?;
-        let expected = temp.path().join("workspace-sync").join("workspace-sync.db");
-
-        let db = WorkspaceSyncDb::open_default(temp.path())?;
-
-        assert!(expected.is_file());
-        assert_eq!(db.user_version()?, SCHEMA_VERSION);
         Ok(())
     }
 
@@ -835,6 +875,38 @@ mod tests {
         let journal_mode: String =
             conn.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
         assert_ne!(journal_mode.to_ascii_lowercase(), "wal");
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_schema_v1_with_inexact_column_metadata() -> Result<(), AppError> {
+        let (_temp, path) = temp_db_path("inexact-columns-v1.db")?;
+        let conn = Connection::open(&path)?;
+        conn.execute_batch(SCHEMA_V1)?;
+        conn.execute_batch(
+            "DROP TABLE provider_results;
+             CREATE TABLE provider_results (
+                 transaction_id TEXT NOT NULL,
+                 provider_id TEXT NOT NULL,
+                 state TEXT NOT NULL,
+                 added_count TEXT NOT NULL DEFAULT 1,
+                 updated_count INTEGER DEFAULT 0,
+                 deleted_count INTEGER NOT NULL DEFAULT 0,
+                 conflict_count INTEGER NOT NULL DEFAULT 0,
+                 PRIMARY KEY (provider_id, transaction_id),
+                 FOREIGN KEY (transaction_id)
+                     REFERENCES sync_transactions(id) ON DELETE CASCADE
+             );",
+        )?;
+        conn.pragma_update(None, "application_id", APPLICATION_ID)?;
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        drop(conn);
+
+        let error = rejected_open(&path)?;
+        assert!(error.contains(&path.display().to_string()));
+        assert!(error.contains("stage=verify"));
+        assert!(error.contains("provider_results"), "{error}");
+        assert!(error.contains("columns mismatch"), "{error}");
         Ok(())
     }
 
