@@ -4,7 +4,7 @@ use crate::provider::OpenCodeProviderConfig;
 use crate::settings::get_opencode_override_dir;
 use indexmap::IndexMap;
 use serde_json::{json, Map, Value};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const STANDARD_OMO_PLUGIN_PREFIXES: [&str; 2] = ["oh-my-openagent", "oh-my-opencode"];
 const SLIM_OMO_PLUGIN_PREFIXES: [&str; 1] = ["oh-my-opencode-slim"];
@@ -47,9 +47,14 @@ pub fn get_opencode_config_path() -> PathBuf {
 }
 
 /// 获取 OpenCode SQLite 数据库路径
-/// 优先级: OPENCODE_DB 环境变量 > XDG_DATA_HOME > ~/.local/share/opencode
+///
+/// 优先级：
+/// 1. `OPENCODE_DB` 环境变量（直接指定 DB 文件）
+/// 2. `settings.opencode_config_dir` 派生（从配置目录派生数据目录）
+/// 3. `XDG_DATA_HOME` 环境变量
+/// 4. `~/.local/share/opencode`（默认）
 pub fn get_opencode_db_path() -> PathBuf {
-    // 支持 OPENCODE_DB 环境变量覆盖（忽略空字符串）
+    // 1. 支持 OPENCODE_DB 环境变量覆盖（忽略空字符串）
     if let Ok(custom_path) = std::env::var("OPENCODE_DB") {
         if !custom_path.is_empty() {
             let path = PathBuf::from(&custom_path);
@@ -61,7 +66,51 @@ pub fn get_opencode_db_path() -> PathBuf {
         }
     }
 
+    // 2. 从 settings.opencode_config_dir 派生数据目录
+    if let Some(config_dir) = get_opencode_override_dir() {
+        if let Some(data_dir) = derive_data_dir_from_config_dir(&config_dir) {
+            return data_dir.join("opencode.db");
+        }
+    }
+
+    // 3 + 4. XDG_DATA_HOME > ~/.local/share/opencode
     get_opencode_data_dir().join("opencode.db")
+}
+
+/// 从 OpenCode 配置目录派生数据目录。
+///
+/// OpenCode 的配置和数据分属两个目录：
+///   配置：`~/.config/opencode/`
+///   数据：`~/.local/share/opencode/`
+///
+/// 当用户在设置中填入配置目录 override（如 WSL UNC 路径）时，
+/// 将路径末尾的 `.config/opencode` 替换为 `.local/share/opencode`
+/// 来定位数据目录。
+///
+/// 路径不以 `.config/opencode` 结尾时返回 `None`（不派生，走默认逻辑）。
+/// 这与 Claude/Codex 不同：它们的配置和数据在同一目录，无需派生。
+pub fn derive_data_dir_from_config_dir(config_dir: &Path) -> Option<PathBuf> {
+    let s = config_dir.to_string_lossy().replace('\\', "/");
+
+    // 精确匹配末尾的 .config/opencode（允许末尾有或无 /）
+    let trimmed = s.trim_end_matches('/');
+    let suffix = ".config/opencode";
+    if !trimmed.ends_with(suffix) {
+        return None;
+    }
+
+    let prefix = &trimmed[..trimmed.len() - suffix.len()];
+    let data_path = format!("{prefix}.local/share/opencode");
+
+    // 在 Windows 上保留反斜杠风格，与 UNC 路径一致
+    #[cfg(windows)]
+    {
+        Some(PathBuf::from(data_path.replace('/', "\\")))
+    }
+    #[cfg(not(windows))]
+    {
+        Some(PathBuf::from(data_path))
+    }
 }
 
 fn get_opencode_data_dir() -> PathBuf {
@@ -264,4 +313,115 @@ pub fn remove_plugins_by_prefixes(prefixes: &[&str]) -> Result<(), AppError> {
     }
 
     write_opencode_config(&config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::derive_data_dir_from_config_dir;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn test_derive_data_dir_wsl_localhost() {
+        let config_dir = Path::new(r"\\wsl.localhost\archlinux\home\user\.config\opencode");
+        let data_dir = derive_data_dir_from_config_dir(config_dir);
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                data_dir,
+                Some(PathBuf::from(
+                    r"\\wsl.localhost\archlinux\home\user\.local\share\opencode"
+                ))
+            );
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(
+                data_dir,
+                Some(PathBuf::from(
+                    "/wsl.localhost/archlinux/home/user/.local/share/opencode"
+                ))
+            );
+        }
+    }
+
+    #[test]
+    fn test_derive_data_dir_wsl_dollar() {
+        let config_dir = Path::new(r"\\wsl$\Ubuntu\home\user\.config\opencode");
+        let data_dir = derive_data_dir_from_config_dir(config_dir);
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                data_dir,
+                Some(PathBuf::from(
+                    r"\\wsl$\Ubuntu\home\user\.local\share\opencode"
+                ))
+            );
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(
+                data_dir,
+                Some(PathBuf::from(
+                    "/wsl$/Ubuntu/home/user/.local/share/opencode"
+                ))
+            );
+        }
+    }
+
+    #[test]
+    fn test_derive_data_dir_linux() {
+        let config_dir = Path::new("/home/user/.config/opencode");
+        let data_dir = derive_data_dir_from_config_dir(config_dir);
+        assert_eq!(
+            data_dir,
+            Some(PathBuf::from("/home/user/.local/share/opencode"))
+        );
+    }
+
+    #[test]
+    fn test_derive_data_dir_trailing_slash() {
+        let config_dir = Path::new("/home/user/.config/opencode/");
+        let data_dir = derive_data_dir_from_config_dir(config_dir);
+        assert_eq!(
+            data_dir,
+            Some(PathBuf::from("/home/user/.local/share/opencode"))
+        );
+    }
+
+    #[test]
+    fn test_derive_data_dir_trailing_backslash() {
+        let config_dir = Path::new(r"\\wsl.localhost\archlinux\home\user\.config\opencode\");
+        let data_dir = derive_data_dir_from_config_dir(config_dir);
+        assert!(data_dir.is_some(), "末尾反斜杠应被 trim 后匹配");
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                data_dir,
+                Some(PathBuf::from(
+                    r"\\wsl.localhost\archlinux\home\user\.local\share\opencode"
+                ))
+            );
+        }
+    }
+
+    #[test]
+    fn test_derive_data_dir_no_match_home_only() {
+        let config_dir = Path::new(r"\\wsl.localhost\archlinux\home\user");
+        let data_dir = derive_data_dir_from_config_dir(config_dir);
+        assert_eq!(data_dir, None, "home 目录不匹配后缀，不应派生");
+    }
+
+    #[test]
+    fn test_derive_data_dir_no_match_wrong_suffix() {
+        let config_dir = Path::new("/home/user/.config/opencode-backup");
+        let data_dir = derive_data_dir_from_config_dir(config_dir);
+        assert_eq!(data_dir, None, "后缀不完全匹配，不应派生");
+    }
+
+    #[test]
+    fn test_derive_data_dir_no_match_empty() {
+        let config_dir = Path::new("");
+        let data_dir = derive_data_dir_from_config_dir(config_dir);
+        assert_eq!(data_dir, None);
+    }
 }
