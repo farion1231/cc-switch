@@ -967,9 +967,15 @@ fn test_grokbuild_passthrough_applies_url_overrides() {
     assert_eq!(cfg.base_url, "https://new.example.com/v1");
     assert_eq!(cfg.model, "grok-6");
     // Unrelated custom key preserved (toml_edit keeps comments/ordering/keys)
-    assert!(toml_out.contains("custom_field = \"keep\""), "toml: {toml_out}");
+    assert!(
+        toml_out.contains("custom_field = \"keep\""),
+        "toml: {toml_out}"
+    );
     // default profile name unchanged (only the model field was overridden)
-    assert!(toml_out.contains("default = \"grok-5\""), "toml: {toml_out}");
+    assert!(
+        toml_out.contains("default = \"grok-5\""),
+        "toml: {toml_out}"
+    );
 }
 
 #[test]
@@ -1000,5 +1006,8 @@ fn test_grokbuild_passthrough_no_override_is_verbatim() {
         .get("config")
         .and_then(|v| v.as_str())
         .expect("config string");
-    assert_eq!(toml_out, toml_str, "TOML must be verbatim with no overrides");
+    assert_eq!(
+        toml_out, toml_str,
+        "TOML must be verbatim with no overrides"
+    );
 }

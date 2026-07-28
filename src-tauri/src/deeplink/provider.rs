@@ -237,7 +237,11 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
     // `UsageScript` (templateType, codingPlanProvider, Volcengine AK/SK, Zhipu
     // org/project, ...) verbatim, restoring native usage templates the
     // scattered `usage_*` params would drop. Authoritative when present.
-    if let Some(blob_b64) = request.usage_script_config.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(blob_b64) = request
+        .usage_script_config
+        .as_deref()
+        .filter(|s| !s.is_empty())
+    {
         let decoded = decode_base64_param("usage_script_config", blob_b64)?;
         let usage_script: UsageScript = serde_json::from_slice(&decoded).map_err(|e| {
             AppError::InvalidInput(format!("Invalid usage_script_config JSON: {e}"))
@@ -334,14 +338,16 @@ fn build_claude_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     // spurious second key and break the verbatim round-trip. Default to
     // `ANTHROPIC_AUTH_TOKEN` (the canonical Claude Code field) when the base
     // env doesn't already pin a credential field.
-    let cred_field = if env.contains_key("ANTHROPIC_API_KEY")
-        && !env.contains_key("ANTHROPIC_AUTH_TOKEN")
-    {
-        "ANTHROPIC_API_KEY"
-    } else {
-        "ANTHROPIC_AUTH_TOKEN"
-    };
-    env.insert(cred_field.to_string(), json!(request.api_key.clone().unwrap_or_default()));
+    let cred_field =
+        if env.contains_key("ANTHROPIC_API_KEY") && !env.contains_key("ANTHROPIC_AUTH_TOKEN") {
+            "ANTHROPIC_API_KEY"
+        } else {
+            "ANTHROPIC_AUTH_TOKEN"
+        };
+    env.insert(
+        cred_field.to_string(),
+        json!(request.api_key.clone().unwrap_or_default()),
+    );
     env.insert(
         "ANTHROPIC_BASE_URL".to_string(),
         json!(get_primary_endpoint(request)),
