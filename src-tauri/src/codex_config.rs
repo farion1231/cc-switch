@@ -1908,25 +1908,53 @@ pub fn update_codex_toml_field(toml_str: &str, field: &str, value: &str) -> Resu
 
             if let Some(provider_key) = model_provider {
                 // Ensure [model_providers] table exists
-                if doc.get("model_providers").is_none() {
+                //
+                // 用 as_table_like_mut 而非 as_table_mut：用户把配置写成 inline table
+                // （`model_providers = { foo = {...} }`，TOML 合法）时 as_table_mut
+                // 返回 None，会一路掉进下面的顶层 fallback——用户改的 base_url 被写到
+                // 了错误层级且毫无提示。
+                if doc
+                    .get("model_providers")
+                    .is_none_or(|item| item.as_table_like().is_none())
+                {
+                    // 键存在但不是表（`model_providers = 42`）时，下面这行会把用户
+                    // 手写的值替换掉。旧代码在这种形状下会掉进顶层 fallback 而不动
+                    // 它，所以归一化必须留痕——与 mcp/codex.rs、mcp/grokbuild.rs、
+                    // opencode_config.rs 的同款处理保持一致。
+                    if doc
+                        .get("model_providers")
+                        .is_some_and(|item| !item.is_none())
+                    {
+                        log::warn!("config.toml 的 model_providers 不是表，已重置为空表");
+                    }
                     doc["model_providers"] = toml_edit::table();
                 }
 
-                if let Some(model_providers) = doc["model_providers"].as_table_mut() {
+                if let Some(model_providers) = doc
+                    .get_mut("model_providers")
+                    .and_then(toml_edit::Item::as_table_like_mut)
+                {
                     // Ensure [model_providers.<provider_key>] table exists
                     if !model_providers.contains_key(&provider_key) {
-                        model_providers[&provider_key] = toml_edit::table();
+                        model_providers.insert(&provider_key, toml_edit::table());
                     }
 
-                    if let Some(provider_table) = model_providers[&provider_key].as_table_mut() {
+                    if let Some(provider_table) = model_providers
+                        .get_mut(&provider_key)
+                        .and_then(toml_edit::Item::as_table_like_mut)
+                    {
                         if trimmed.is_empty() {
                             provider_table.remove(field);
                         } else {
-                            provider_table[field] = toml_edit::value(trimmed);
+                            provider_table.insert(field, toml_edit::value(trimmed));
                         }
                         return Ok(doc.to_string());
                     }
                 }
+
+                log::warn!(
+                    "config.toml 的 [model_providers.{provider_key}] 结构异常，{field} 改写为顶层字段"
+                );
             }
 
             // Fallback: no model_provider or structure mismatch → top-level field
@@ -2583,6 +2611,34 @@ model = "gpt-4"
             .and_then(|v| v.as_str())
             .expect("should set top-level base_url");
         assert_eq!(base_url, "https://fallback.api/v1");
+    }
+
+    #[test]
+    fn base_url_writes_into_inline_table_provider_section() {
+        // inline table 是合法 TOML，但 as_table_mut() 对它返回 None。旧代码会因此
+        // 掉进「写顶层字段」的 fallback：用户改的 base_url 落在错误层级，
+        // Codex 读不到，且界面毫无提示。
+        let input = r#"model_provider = "any"
+model_providers = { any = { name = "any", base_url = "https://old.api/v1", wire_api = "responses" } }
+"#;
+
+        let result = update_codex_toml_field(input, "base_url", "https://new.api/v1").unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed["model_providers"]["any"]["base_url"].as_str(),
+            Some("https://new.api/v1"),
+            "must update the provider section, not a top-level field"
+        );
+        assert!(
+            parsed.get("base_url").is_none(),
+            "must not leak a top-level base_url fallback"
+        );
+        assert_eq!(
+            parsed["model_providers"]["any"]["wire_api"].as_str(),
+            Some("responses"),
+            "sibling fields must survive"
+        );
     }
 
     #[test]
