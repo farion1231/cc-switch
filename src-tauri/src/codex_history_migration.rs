@@ -143,9 +143,9 @@ pub fn maybe_migrate_codex_third_party_history_provider_bucket(
     let backup_root = migration_backup_root(MIGRATION_NAME);
     let codex_dir = get_codex_config_dir();
     let migrated_jsonl_files =
-        migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root)?;
+        migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root, CC_SWITCH_CODEX_MODEL_PROVIDER_ID)?;
     let migrated_state_rows =
-        migrate_codex_state_dbs(&codex_dir, &source_provider_ids, &backup_root)?;
+        migrate_codex_state_dbs(&codex_dir, &source_provider_ids, &backup_root, CC_SWITCH_CODEX_MODEL_PROVIDER_ID)?;
 
     let source_provider_ids_vec: Vec<String> = source_provider_ids.iter().cloned().collect();
     crate::settings::mark_codex_third_party_history_provider_bucket_migrated(
@@ -237,9 +237,9 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
         std::iter::once(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string()).collect();
     let backup_root = migration_backup_root(OFFICIAL_UNIFY_MIGRATION_NAME);
     let migrated_jsonl_files =
-        migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root)?;
+        migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root, CC_SWITCH_CODEX_MODEL_PROVIDER_ID)?;
     let migrated_state_rows =
-        migrate_codex_state_dbs(&codex_dir, &source_provider_ids, &backup_root)?;
+        migrate_codex_state_dbs(&codex_dir, &source_provider_ids, &backup_root, CC_SWITCH_CODEX_MODEL_PROVIDER_ID)?;
     // 备份代际记录来源目录，restore 据此只取当前目录的账本。
     write_backup_generation_meta(&backup_root, &codex_dir_key)?;
 
@@ -962,6 +962,7 @@ fn migrate_codex_jsonl_files(
     codex_dir: &Path,
     source_provider_ids: &BTreeSet<String>,
     backup_root: &Path,
+    target_provider_id: &str,
 ) -> Result<usize, AppError> {
     let mut files = Vec::new();
     collect_jsonl_files(&codex_dir.join("sessions"), &mut files, 0, 8);
@@ -975,6 +976,7 @@ fn migrate_codex_jsonl_files(
             codex_dir,
             &source_provider_ids,
             backup_root,
+            target_provider_id,
         )? {
             migrated += 1;
         }
@@ -1013,9 +1015,10 @@ fn rewrite_codex_session_file_for_provider_bucket(
     codex_dir: &Path,
     source_provider_ids: &HashSet<String>,
     backup_root: &Path,
+    target_provider_id: &str,
 ) -> Result<bool, AppError> {
     rewrite_codex_session_file_lines(path, codex_dir, backup_root, |line| {
-        rewrite_codex_session_meta_line(line, source_provider_ids)
+        rewrite_codex_session_meta_line(line, source_provider_ids, target_provider_id)
     })
 }
 
@@ -1075,6 +1078,7 @@ fn ensure_codex_session_file_unchanged(
 fn rewrite_codex_session_meta_line(
     line: &str,
     source_provider_ids: &HashSet<String>,
+    target_provider_id: &str,
 ) -> Option<String> {
     if !line.contains("\"session_meta\"") || !line.contains("\"model_provider\"") {
         return None;
@@ -1093,7 +1097,7 @@ fn rewrite_codex_session_meta_line(
 
     payload.insert(
         "model_provider".to_string(),
-        Value::String(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string()),
+        Value::String(target_provider_id.to_string()),
     );
     serde_json::to_string(&value).ok()
 }
@@ -1102,6 +1106,7 @@ fn migrate_codex_state_dbs(
     codex_dir: &Path,
     source_provider_ids: &BTreeSet<String>,
     backup_root: &Path,
+    target_provider_id: &str,
 ) -> Result<usize, AppError> {
     let config_text = read_codex_config_text().unwrap_or_default();
     let mut migrated = 0;
@@ -1111,6 +1116,7 @@ fn migrate_codex_state_dbs(
             codex_dir,
             source_provider_ids,
             backup_root,
+            target_provider_id,
         )?;
     }
     Ok(migrated)
@@ -1121,6 +1127,7 @@ fn migrate_codex_state_db_provider_bucket(
     codex_dir: &Path,
     source_provider_ids: &BTreeSet<String>,
     backup_root: &Path,
+    target_provider_id: &str,
 ) -> Result<usize, AppError> {
     if !db_path.exists() || source_provider_ids.is_empty() {
         return Ok(0);
@@ -1156,7 +1163,7 @@ fn migrate_codex_state_db_provider_bucket(
     let update_sql =
         format!("UPDATE threads SET model_provider = ? WHERE model_provider IN ({placeholders})");
     let mut values = Vec::with_capacity(source_provider_ids.len() + 1);
-    values.push(CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
+    values.push(target_provider_id.to_string());
     values.extend(source_provider_ids.iter().cloned());
     let tx = conn
         .transaction()
@@ -1260,6 +1267,53 @@ fn copy_existing_file(source: &Path, target: &Path) -> Result<(), AppError> {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
     copy_file(source, target)
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CodexProviderSwitchSyncOutcome {
+    pub synced_jsonl_files: usize,
+    pub synced_state_rows: usize,
+    pub target_provider: String,
+    pub skipped_reason: Option<String>,
+}
+
+pub fn sync_codex_sessions_for_provider_switch(
+    provider_is_official: bool,
+) -> Result<CodexProviderSwitchSyncOutcome, AppError> {
+    if !crate::settings::unify_codex_session_history() {
+        return Ok(CodexProviderSwitchSyncOutcome {
+            skipped_reason: Some("unify_disabled".to_string()),
+            ..Default::default()
+        });
+    }
+
+    let target = if provider_is_official {
+        OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID
+    } else {
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID
+    };
+    let source = if provider_is_official {
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID
+    } else {
+        OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID
+    };
+
+    let codex_dir = get_codex_config_dir();
+    let source_provider_ids: BTreeSet<String> =
+        std::iter::once(source.to_string()).collect();
+
+    let backup_root = migration_backup_root("codex-session-sync-on-switch");
+    let synced_jsonl_files =
+        migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root, target)?;
+    let synced_state_rows =
+        migrate_codex_state_dbs(&codex_dir, &source_provider_ids, &backup_root, target)?;
+
+    Ok(CodexProviderSwitchSyncOutcome {
+        synced_jsonl_files,
+        synced_state_rows,
+        target_provider: target.to_string(),
+        skipped_reason: None,
+    })
 }
 
 fn relative_backup_path(path: &Path, root: &Path) -> PathBuf {
@@ -1474,7 +1528,7 @@ base_url = "https://proxy.example/v1"
         .expect("write session");
 
         let migrated_jsonl =
-            migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root)
+            migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root, CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
                 .expect("migrate jsonl");
         assert_eq!(migrated_jsonl, 1);
         let session_text = fs::read_to_string(&session_path).expect("read session");
@@ -1513,6 +1567,7 @@ base_url = "https://proxy.example/v1"
             &codex_dir,
             &source_provider_ids,
             &backup_root,
+            CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
         )
         .expect("migrate state db");
         assert_eq!(migrated_state_rows, 3);
@@ -1642,7 +1697,7 @@ base_url = "https://proxy.example/v1"
         .expect("write session");
 
         let migrated_jsonl =
-            migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root)
+            migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root, CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
                 .expect("migrate jsonl");
         assert_eq!(migrated_jsonl, 1);
         let session_text = fs::read_to_string(&session_path).expect("read session");
@@ -1662,7 +1717,7 @@ base_url = "https://proxy.example/v1"
             .exists());
 
         // 第二次执行应当无事可做（幂等）
-        let rerun = migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root)
+        let rerun = migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root, CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
             .expect("rerun migrate jsonl");
         assert_eq!(rerun, 0);
 
@@ -1686,6 +1741,7 @@ base_url = "https://proxy.example/v1"
             &codex_dir,
             &source_provider_ids,
             &backup_root,
+            CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
         )
         .expect("migrate state db");
         assert_eq!(migrated_state_rows, 1);
@@ -1967,6 +2023,7 @@ base_url = "https://proxy.example/v1"
             &codex_dir,
             &HashSet::from(["rightcode".to_string()]),
             &backup_root,
+            CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
         )
         .expect("rewrite");
 
@@ -1999,6 +2056,7 @@ base_url = "https://proxy.example/v1"
             &codex_dir,
             &source_ids(&["some-trusted-provider"]),
             &backup_root,
+            CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
         )
         .expect("migrate jsonl");
 
@@ -2034,6 +2092,7 @@ base_url = "https://proxy.example/v1"
             &codex_dir,
             &source_ids(&["rightcode"]),
             &backup_root,
+            CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
         )
         .expect("migrate state db");
 
@@ -2076,6 +2135,7 @@ base_url = "https://proxy.example/v1"
             &codex_dir,
             &source_ids(&["rightcode", "aihubmix"]),
             &backup_root,
+            CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
         )
         .expect("migrate state db");
 
