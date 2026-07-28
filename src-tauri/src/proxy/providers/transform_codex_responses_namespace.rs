@@ -102,13 +102,14 @@ fn collect_tool_search_output_tools(value: &Value, tools: &mut Vec<Value>) {
                 collect_tool_search_output_tools(item, tools);
             }
         }
-        Value::Object(obj) => {
-            if obj.get("type").and_then(Value::as_str) == Some("tool_search_output") {
-                if let Some(discovered) = obj.get("tools").and_then(Value::as_array) {
-                    tools.extend(discovered.iter().cloned());
-                }
+        Value::Object(obj)
+            if obj.get("type").and_then(Value::as_str) == Some("tool_search_output") =>
+        {
+            if let Some(discovered) = obj.get("tools").and_then(Value::as_array) {
+                tools.extend(discovered.iter().cloned());
             }
         }
+        Value::Object(_) => {}
         _ => {}
     }
 }
