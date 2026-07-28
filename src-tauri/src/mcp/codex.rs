@@ -364,6 +364,11 @@ fn upsert_mcp_server_table(
         .and_then(toml_edit::Item::as_table_like_mut)
         .is_none()
     {
+        // 键存在但不是表时，归一化会丢掉用户手写的那个值——必须留痕，
+        // 否则用户只会看到自己的改动凭空消失。
+        if doc.get("mcp_servers").is_some_and(|item| !item.is_none()) {
+            log::warn!("config.toml 的 mcp_servers 不是表，已重置为空表");
+        }
         doc["mcp_servers"] = toml_edit::table();
     }
     let servers = doc
@@ -372,6 +377,43 @@ fn upsert_mcp_server_table(
         .ok_or_else(|| AppError::McpValidation("config.toml 的 mcp_servers 不是表".to_string()))?;
     servers.insert(id, toml_edit::Item::Table(table));
     Ok(())
+}
+
+/// 从 `[mcp_servers]`（以及历史错误格式 `[mcp.servers]`）中删除单个 MCP server。
+///
+/// 与 `upsert_mcp_server_table` 对称地使用 `as_table_like_mut`：用户若把配置写成
+/// inline table（`mcp_servers = { foo = {...} }`，TOML 合法），`as_table_mut` 会返回
+/// None 导致删除**静默失效**——界面提示已移除，条目却还在文件里，Codex 下次启动照样
+/// 加载。这比 panic 更隐蔽，因为用户往往正是发现某个 MCP 有问题才来关它的。
+///
+/// 与写入分离成纯 doc 级函数，使守卫可脱离真实 `~/.codex/config.toml` 单测。
+fn remove_mcp_server_from_doc(doc: &mut toml_edit::DocumentMut, id: &str) {
+    if let Some(item) = doc.get_mut("mcp_servers") {
+        // `Item::None` 是 toml_edit 的占位形态，不是用户写下的值——对它告警是噪音。
+        // 必须在取可变借用之前算出来。
+        let user_authored = !item.is_none();
+        match item.as_table_like_mut() {
+            Some(mcp_servers) => {
+                mcp_servers.remove(id);
+            }
+            None if user_authored => {
+                log::warn!("config.toml 的 mcp_servers 不是表，无法删除服务器 '{id}'");
+            }
+            None => {}
+        }
+    }
+
+    // 同时清理可能存在于错误位置的数据：[mcp.servers]（如果存在）
+    if let Some(mcp_table) = doc.get_mut("mcp").and_then(|t| t.as_table_like_mut()) {
+        if let Some(servers) = mcp_table
+            .get_mut("servers")
+            .and_then(|s| s.as_table_like_mut())
+        {
+            if servers.remove(id).is_some() {
+                log::warn!("从错误的 MCP 格式 [mcp.servers] 中清理了服务器 '{id}'");
+            }
+        }
+    }
 }
 
 pub fn sync_single_server_to_codex(
@@ -443,19 +485,7 @@ pub fn remove_server_from_codex(id: &str) -> Result<(), AppError> {
         }
     };
 
-    // 从正确的位置删除：[mcp_servers]
-    if let Some(mcp_servers) = doc.get_mut("mcp_servers").and_then(|s| s.as_table_mut()) {
-        mcp_servers.remove(id);
-    }
-
-    // 同时清理可能存在于错误位置的数据：[mcp.servers]（如果存在）
-    if let Some(mcp_table) = doc.get_mut("mcp").and_then(|t| t.as_table_mut()) {
-        if let Some(servers) = mcp_table.get_mut("servers").and_then(|s| s.as_table_mut()) {
-            if servers.remove(id).is_some() {
-                log::warn!("从错误的 MCP 格式 [mcp.servers] 中清理了服务器 '{id}'");
-            }
-        }
-    }
+    remove_mcp_server_from_doc(&mut doc, id);
 
     // 写回文件
     let new_text = doc.to_string();
@@ -749,6 +779,39 @@ mod tests {
             .expect("table");
         assert!(servers.contains_key("keep"), "existing server must survive");
         assert!(servers.contains_key("added"));
+    }
+
+    #[test]
+    fn remove_deletes_from_inline_table_form_too() {
+        // inline table 是合法 TOML，但 as_table_mut() 对它返回 None——用它做守卫
+        // 会让删除静默失效：界面说移除成功，条目却还在，Codex 下次启动照样加载。
+        let mut doc = "mcp_servers = { drop = { command = \"x\" }, keep = { command = \"y\" } }\n"
+            .parse::<toml_edit::DocumentMut>()
+            .expect("fixture parses");
+
+        remove_mcp_server_from_doc(&mut doc, "drop");
+
+        let servers = doc
+            .get("mcp_servers")
+            .and_then(|item| item.as_table_like())
+            .expect("mcp_servers must still be table-like");
+        assert!(
+            !servers.contains_key("drop"),
+            "removal must work on the inline-table form"
+        );
+        assert!(servers.contains_key("keep"), "siblings must survive");
+    }
+
+    #[test]
+    fn remove_is_a_noop_on_non_table_mcp_servers() {
+        // 既不能 panic，也不能把用户手写的值悄悄抹掉
+        let mut doc = "mcp_servers = 42\n"
+            .parse::<toml_edit::DocumentMut>()
+            .expect("fixture parses");
+
+        remove_mcp_server_from_doc(&mut doc, "whatever");
+
+        assert_eq!(doc.to_string(), "mcp_servers = 42\n");
     }
 
     #[test]
