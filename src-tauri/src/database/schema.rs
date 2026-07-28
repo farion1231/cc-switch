@@ -296,7 +296,38 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 18. Session Log Sync 表 (会话日志同步状态)
+        // 18. Usage Daily Activity Rollups 表 (年度热力图统计)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_daily_activity_rollups (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                request_count INTEGER NOT NULL DEFAULT 0,
+                session_count INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                input_token_semantics INTEGER NOT NULL DEFAULT 0,
+                total_cost_usd TEXT NOT NULL DEFAULT '0',
+                PRIMARY KEY (date, app_type)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 19. Usage Daily Activity Session Rollups 表 (年度热力图 session 去重)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_daily_activity_session_rollups (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                session_key TEXT NOT NULL,
+                PRIMARY KEY (date, app_type, session_key)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 20. Session Log Sync 表 (会话日志同步状态)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS session_log_sync (
                 file_path TEXT PRIMARY KEY,
@@ -322,6 +353,9 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 21. Codex quota history (used for local 5h -> 7d runway forecasts)
+        Self::ensure_codex_quota_history_table(conn)?;
 
         // 修复跑过未发布开发版的库：current 标记曾是全局 key，现按应用分组
         // （随 v12 定稿为 current_profile_id_<scope>，不单独 bump 版本）
@@ -482,27 +516,31 @@ impl Database {
                         Self::set_user_version(conn, 10)?;
                     }
                     10 => {
-                        log::info!("迁移数据库从 v10 到 v11（usage_daily_rollups 保留 request_model 维度）");
+                        log::info!(
+                            "迁移数据库从 v10 到 v11（usage_daily_rollups 保留 request_model/pricing_model 维度）"
+                        );
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
                     }
                     11 => {
-                        log::info!("迁移数据库从 v11 到 v12（添加项目 Profiles 表）");
+                        log::info!("迁移数据库从 v11 到 v12（添加年度活跃热力图聚合表）");
                         Self::migrate_v11_to_v12(conn)?;
                         Self::set_user_version(conn, 12)?;
                     }
                     12 => {
-                        log::info!("迁移数据库从 v12 到 v13（记录输入 token 缓存语义）");
+                        log::info!(
+                            "迁移数据库从 v12 到 v13（补齐年度活跃 session 去重与输入 token 缓存语义）"
+                        );
                         Self::migrate_v12_to_v13(conn)?;
                         Self::set_user_version(conn, 13)?;
                     }
                     13 => {
-                        log::info!("迁移数据库从 v13 到 v14（添加 Grok Build 代理配置）");
+                        log::info!("迁移数据库从 v13 到 v14（兼容补齐 Profiles、活跃统计、输入 token 缓存语义与 Grok Build 代理配置）");
                         Self::migrate_v13_to_v14(conn)?;
                         Self::set_user_version(conn, 14)?;
                     }
                     14 => {
-                        log::info!("迁移数据库从 v14 到 v15（Skills/MCP 添加 Grok Build 支持）");
+                        log::info!("迁移数据库从 v14 到 v15（合并 fork 与上游 schema，并为 Skills/MCP 添加 Grok Build 支持）");
                         Self::migrate_v14_to_v15(conn)?;
                         Self::set_user_version(conn, 15)?;
                     }
@@ -510,6 +548,11 @@ impl Database {
                         log::info!("迁移数据库从 v15 到 v16（重建 Codex 会话用量）");
                         Self::migrate_v15_to_v16(conn)?;
                         Self::set_user_version(conn, 16)?;
+                    }
+                    16 => {
+                        log::info!("迁移数据库从 v16 到 v17（补齐额度预测并兼容重建 Codex 用量）");
+                        Self::migrate_v16_to_v17(conn)?;
+                        Self::set_user_version(conn, 17)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1295,13 +1338,183 @@ impl Database {
         Ok(())
     }
 
-    /// v10 -> v11：usage_daily_rollups 增加 request_model 维度（进入主键），
+    /// v10 -> v11：usage_daily_rollups 增加 request_model/pricing_model 维度。
+    fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
+        Self::ensure_usage_rollup_request_pricing_dimensions(conn, "v10 -> v11")
+    }
+
+    /// v11 -> v12 迁移：添加年度活跃热力图聚合表
+    fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_daily_activity_rollups (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                request_count INTEGER NOT NULL DEFAULT 0,
+                session_count INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                input_token_semantics INTEGER NOT NULL DEFAULT 0,
+                total_cost_usd TEXT NOT NULL DEFAULT '0',
+                PRIMARY KEY (date, app_type)
+            )",
+            [],
+        )
+        .map_err(|e| {
+            AppError::Database(format!("创建 usage_daily_activity_rollups 表失败: {e}"))
+        })?;
+
+        log::info!("v11 -> v12 迁移完成：已添加年度活跃热力图聚合表");
+        Ok(())
+    }
+
+    /// v12 -> v13 迁移：添加年度活跃 session 去重表，并兼容已经跑过旧 fork v12 的数据库。
+    fn migrate_v12_to_v13(conn: &Connection) -> Result<(), AppError> {
+        Self::ensure_usage_rollup_request_pricing_dimensions(conn, "v12 -> v13")?;
+        Self::migrate_v11_to_v12(conn)?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_daily_activity_session_rollups (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                session_key TEXT NOT NULL,
+                PRIMARY KEY (date, app_type, session_key)
+            )",
+            [],
+        )
+        .map_err(|e| {
+            AppError::Database(format!(
+                "创建 usage_daily_activity_session_rollups 表失败: {e}"
+            ))
+        })?;
+
+        Self::ensure_input_token_semantics(conn)?;
+        Self::ensure_legacy_input_token_semantics(conn)?;
+
+        log::info!("v12 -> v13 迁移完成：已添加年度活跃 session 去重表和输入 token 缓存语义");
+        Ok(())
+    }
+
+    /// v13 -> v14 迁移：添加项目 Profiles 表，并兼容 fork/upstream 的同版本异构 schema。
+    fn migrate_v13_to_v14(conn: &Connection) -> Result<(), AppError> {
+        Self::migrate_v12_to_v13(conn)?;
+        Self::ensure_profiles_table(conn)?;
+        Self::ensure_grokbuild_proxy_config(conn)?;
+        Ok(())
+    }
+
+    /// v14 -> v15：合并 fork 与 upstream 的 schema 演进。
+    ///
+    /// fork v14 已有活跃统计与 Profiles，但缺少 input_token_semantics；
+    /// upstream 数据库最高为 v13。所有子迁移均幂等，因而可以统一补齐。
+    fn migrate_v14_to_v15(conn: &Connection) -> Result<(), AppError> {
+        Self::migrate_v13_to_v14(conn)?;
+        Self::ensure_grokbuild_skill_mcp_flags(conn)
+    }
+
+    fn migrate_v16_to_v17(conn: &Connection) -> Result<(), AppError> {
+        // Local v3.17.1 and upstream v3.18.0 both used schema v16 for
+        // different migrations. Reapply the upstream reset idempotently so
+        // either database lineage reaches the same v17 state.
+        Self::migrate_v15_to_v16(conn)?;
+        Self::ensure_codex_quota_history_table(conn)
+    }
+
+    fn ensure_codex_quota_history_table(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_quota_history (
+                account_key TEXT NOT NULL,
+                captured_at INTEGER NOT NULL,
+                five_hour_utilization REAL NOT NULL,
+                five_hour_resets_at INTEGER NOT NULL,
+                seven_day_utilization REAL NOT NULL,
+                seven_day_resets_at INTEGER NOT NULL,
+                PRIMARY KEY (account_key, captured_at)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 codex_quota_history 表失败: {e}")))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_codex_quota_history_account_time
+             ON codex_quota_history(account_key, captured_at)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 Codex 额度历史索引失败: {e}")))?;
+        Ok(())
+    }
+
+    fn ensure_input_token_semantics(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "proxy_request_logs")? {
+            Self::add_column_if_missing(
+                conn,
+                "proxy_request_logs",
+                "input_token_semantics",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
+        if Self::table_exists(conn, "usage_daily_rollups")? {
+            Self::add_column_if_missing(
+                conn,
+                "usage_daily_rollups",
+                "input_token_semantics",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
+        if Self::table_exists(conn, "usage_daily_activity_rollups")? {
+            Self::add_column_if_missing(
+                conn,
+                "usage_daily_activity_rollups",
+                "input_token_semantics",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
+        Ok(())
+    }
+
+    fn usage_daily_rollups_has_request_pricing_pk(conn: &Connection) -> Result<bool, AppError> {
+        if !Self::table_exists(conn, "usage_daily_rollups")? {
+            return Ok(true);
+        }
+
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(\"usage_daily_rollups\");")
+            .map_err(|e| AppError::Database(format!("读取 usage_daily_rollups 表结构失败: {e}")))?;
+        let mut rows = stmt
+            .query([])
+            .map_err(|e| AppError::Database(format!("查询 usage_daily_rollups 表结构失败: {e}")))?;
+        let mut has_request_model_pk = false;
+        let mut has_pricing_model_pk = false;
+
+        while let Some(row) = rows.next().map_err(|e| AppError::Database(e.to_string()))? {
+            let name: String = row.get(1).map_err(|e| {
+                AppError::Database(format!("读取 usage_daily_rollups 列名失败: {e}"))
+            })?;
+            let pk: i32 = row.get(5).map_err(|e| {
+                AppError::Database(format!("读取 usage_daily_rollups 主键信息失败: {e}"))
+            })?;
+            if name.eq_ignore_ascii_case("request_model") && pk > 0 {
+                has_request_model_pk = true;
+            }
+            if name.eq_ignore_ascii_case("pricing_model") && pk > 0 {
+                has_pricing_model_pk = true;
+            }
+        }
+
+        Ok(has_request_model_pk && has_pricing_model_pk)
+    }
+
+    /// usage_daily_rollups 增加 request_model/pricing_model 维度（进入主键），
     /// proxy_request_logs 增加 pricing_model 列（写入时的计价基准，回填依据）。
     ///
     /// 路由接管下 model（真实上游模型）≠ request_model（客户端别名），
     /// 旧 rollup 只按 model 聚合，明细 prune 后映射关系永久丢失、计费不可审计。
-    /// SQLite 改主键必须重建表；历史行的 request_model 已不可知，填 ''。
-    fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
+    /// 这个 helper 故意幂等：旧 fork 已经把 user_version 推到 12，但还没有
+    /// 上游 v11 的主键变更，v12 -> v13 需要补跑同一结构修复。
+    fn ensure_usage_rollup_request_pricing_dimensions(
+        conn: &Connection,
+        migration_label: &str,
+    ) -> Result<(), AppError> {
         // proxy_request_logs.pricing_model：NULL = v11 前的历史行（回填走
         // model → 占位符回退 request_model 的旧逻辑），'' = 未计价的错误行
         if Self::table_exists(conn, "proxy_request_logs")? {
@@ -1309,12 +1522,31 @@ impl Database {
         }
 
         if !Self::table_exists(conn, "usage_daily_rollups")? {
-            log::info!("v10 -> v11：usage_daily_rollups 不存在，跳过重建");
+            log::info!("{migration_label}：usage_daily_rollups 不存在，跳过重建");
             return Ok(());
         }
 
-        conn.execute_batch(
-            "ALTER TABLE usage_daily_rollups RENAME TO usage_daily_rollups_v10;
+        if Self::usage_daily_rollups_has_request_pricing_pk(conn)? {
+            log::info!("{migration_label}：usage_daily_rollups 已具备 request_model/pricing_model 主键维度");
+            return Ok(());
+        }
+
+        let request_model_expr = if Self::has_column(conn, "usage_daily_rollups", "request_model")?
+        {
+            "COALESCE(request_model, '')"
+        } else {
+            "''"
+        };
+        let pricing_model_expr = if Self::has_column(conn, "usage_daily_rollups", "pricing_model")?
+        {
+            "COALESCE(pricing_model, '')"
+        } else {
+            "''"
+        };
+
+        let sql = format!(
+            "DROP TABLE IF EXISTS usage_daily_rollups_v10;
+             ALTER TABLE usage_daily_rollups RENAME TO usage_daily_rollups_v10;
              CREATE TABLE usage_daily_rollups (
                  date TEXT NOT NULL,
                  app_type TEXT NOT NULL,
@@ -1336,25 +1568,28 @@ impl Database {
                  (date, app_type, provider_id, model, request_model, pricing_model,
                   request_count, success_count, input_tokens, output_tokens,
                   cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms)
-             SELECT date, app_type, provider_id, model, '', '',
+             SELECT date, app_type, provider_id, model, {request_model_expr}, {pricing_model_expr},
                   request_count, success_count, input_tokens, output_tokens,
                   cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms
              FROM usage_daily_rollups_v10;
-             DROP TABLE usage_daily_rollups_v10;",
-        )
-        .map_err(|e| {
-            AppError::Database(format!("v10 -> v11 重建 usage_daily_rollups 失败: {e}"))
+             DROP TABLE usage_daily_rollups_v10;"
+        );
+
+        conn.execute_batch(&sql).map_err(|e| {
+            AppError::Database(format!(
+                "{migration_label} 重建 usage_daily_rollups 失败: {e}"
+            ))
         })?;
 
         log::info!(
-            "v10 -> v11 迁移完成：usage_daily_rollups 已保留 request_model/pricing_model 维度"
+            "{migration_label} 迁移完成：usage_daily_rollups 已保留 request_model/pricing_model 维度"
         );
         Ok(())
     }
 
     /// v11 -> v12 迁移：添加项目 Profiles 表
     /// 与 create_tables_on_conn 中的建表语句保持一致（IF NOT EXISTS 保证幂等）
-    fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+    fn ensure_profiles_table(conn: &Connection) -> Result<(), AppError> {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS profiles (
                 id TEXT PRIMARY KEY,
@@ -1374,7 +1609,7 @@ impl Database {
     ///
     /// 默认 0 表示旧版/未知语义；旧 Codex 行只包含 cache read，不包含
     /// cache creation。新代理行会显式写入 1(total-inclusive) 或 2(fresh)。
-    fn migrate_v12_to_v13(conn: &Connection) -> Result<(), AppError> {
+    fn ensure_legacy_input_token_semantics(conn: &Connection) -> Result<(), AppError> {
         if Self::table_exists(conn, "proxy_request_logs")? {
             Self::add_column_if_missing(
                 conn,
@@ -1395,7 +1630,7 @@ impl Database {
     }
 
     /// v13 -> v14: allow Grok Build to own an independent proxy configuration row.
-    fn migrate_v13_to_v14(conn: &Connection) -> Result<(), AppError> {
+    fn ensure_grokbuild_proxy_config(conn: &Connection) -> Result<(), AppError> {
         if !Self::table_exists(conn, "proxy_config")? {
             return Ok(());
         }
@@ -1495,7 +1730,7 @@ impl Database {
     }
 
     /// v14 -> v15: persist Grok Build enablement for unified Skills and MCP.
-    fn migrate_v14_to_v15(conn: &Connection) -> Result<(), AppError> {
+    fn ensure_grokbuild_skill_mcp_flags(conn: &Connection) -> Result<(), AppError> {
         if Self::table_exists(conn, "mcp_servers")? {
             Self::add_column_if_missing(
                 conn,
@@ -2940,7 +3175,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn migrate_v12_to_v13_adds_input_token_semantics_columns() -> Result<(), AppError> {
+    fn ensure_input_token_semantics_adds_columns() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         conn.execute(
             "CREATE TABLE proxy_request_logs (request_id TEXT PRIMARY KEY)",
@@ -2950,11 +3185,13 @@ mod tests {
             "CREATE TABLE usage_daily_rollups (date TEXT PRIMARY KEY)",
             [],
         )?;
-        Database::set_user_version(&conn, 12)?;
+        conn.execute(
+            "CREATE TABLE usage_daily_activity_rollups (date TEXT PRIMARY KEY)",
+            [],
+        )?;
 
-        Database::apply_schema_migrations_on_conn(&conn)?;
+        Database::ensure_input_token_semantics(&conn)?;
 
-        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         assert!(Database::has_column(
             &conn,
             "proxy_request_logs",
@@ -2963,6 +3200,11 @@ mod tests {
         assert!(Database::has_column(
             &conn,
             "usage_daily_rollups",
+            "input_token_semantics"
+        )?);
+        assert!(Database::has_column(
+            &conn,
+            "usage_daily_activity_rollups",
             "input_token_semantics"
         )?);
         let log_default: i64 = conn.query_row(
@@ -3055,7 +3297,7 @@ mod tests {
     }
 
     #[test]
-    fn migrate_v15_to_v16_resets_only_codex_session_usage() -> Result<(), AppError> {
+    fn migrate_v15_to_v17_resets_only_codex_session_usage() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         Database::create_tables_on_conn(&conn)?;
         conn.execute_batch(
@@ -3080,7 +3322,7 @@ mod tests {
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
-        assert_eq!(Database::get_user_version(&conn)?, 16);
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         let counts: (i64, i64, i64, i64) = conn.query_row(
             "SELECT
                 (SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'),
@@ -3091,6 +3333,35 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
         assert_eq!(counts, (0, 1, 0, 1));
+        assert!(Database::table_exists(&conn, "codex_quota_history")?);
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v16_to_v17_reconciles_local_and_upstream_schema() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute("DROP TABLE codex_quota_history", [])?;
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, input_tokens,
+                output_tokens, cache_read_tokens, latency_ms, status_code,
+                created_at, data_source
+             ) VALUES ('codex-row', '_codex_session', 'codex', 'gpt', 1, 1, 0, 0, 200, 1, 'codex_session')",
+            [],
+        )?;
+        Database::set_user_version(&conn, 16)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::table_exists(&conn, "codex_quota_history")?);
+        let codex_rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(codex_rows, 0);
         Ok(())
     }
 }

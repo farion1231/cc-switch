@@ -31,26 +31,26 @@ vi.mock("@/components/providers/ProviderList", () => ({
     onConfigureUsage,
     onOpenWebsite,
     onCreate,
-  }: any) => (
-    <div>
-      <div data-testid="provider-list">{JSON.stringify(providers)}</div>
-      <div data-testid="current-provider">{currentProviderId}</div>
-      <button onClick={() => onSwitch(providers[currentProviderId])}>
-        switch
-      </button>
-      <button onClick={() => onEdit(providers[currentProviderId])}>edit</button>
-      <button onClick={() => onDuplicate(providers[currentProviderId])}>
-        duplicate
-      </button>
-      <button onClick={() => onConfigureUsage(providers[currentProviderId])}>
-        usage
-      </button>
-      <button onClick={() => onOpenWebsite("https://example.com")}>
-        open-website
-      </button>
-      <button onClick={() => onCreate?.()}>create</button>
-    </div>
-  ),
+  }: any) => {
+    const currentProvider = Array.isArray(providers)
+      ? providers.find((provider: any) => provider.id === currentProviderId)
+      : providers[currentProviderId];
+
+    return (
+      <div>
+        <div data-testid="provider-list">{JSON.stringify(providers)}</div>
+        <div data-testid="current-provider">{currentProviderId}</div>
+        <button onClick={() => onSwitch(currentProvider)}>switch</button>
+        <button onClick={() => onEdit(currentProvider)}>edit</button>
+        <button onClick={() => onDuplicate(currentProvider)}>duplicate</button>
+        <button onClick={() => onConfigureUsage(currentProvider)}>usage</button>
+        <button onClick={() => onOpenWebsite("https://example.com")}>
+          open-website
+        </button>
+        <button onClick={() => onCreate?.()}>create</button>
+      </div>
+    );
+  },
 }));
 
 vi.mock("@/components/providers/AddProviderDialog", () => ({

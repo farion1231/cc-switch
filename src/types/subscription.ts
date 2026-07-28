@@ -31,3 +31,13 @@ export interface SubscriptionQuota {
   error: string | null;
   queriedAt: number | null;
 }
+
+export interface CodexQuotaForecast {
+  sampleCount: number;
+  minimumSampleCount: number;
+  weeklyPercentPerFiveHour: number | null;
+  estimatedFiveHourWindowsRemaining: number | null;
+  availableFiveHourWindowsUntilReset: number | null;
+  willExhaustBeforeReset: boolean | null;
+  weeklyResetsAt: string | null;
+}

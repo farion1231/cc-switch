@@ -14,7 +14,33 @@ const REFETCH_INTERVAL = 5 * 60 * 1000; // 5 minutes
 export const subscriptionKeys = {
   all: ["subscription"] as const,
   quota: (appId: AppId) => [...subscriptionKeys.all, "quota", appId] as const,
+  allCodexQuotas: () =>
+    [...subscriptionKeys.all, "codex", "all-quotas"] as const,
+  codexAll: () => subscriptionKeys.allCodexQuotas(),
+  codexForecasts: () =>
+    [...subscriptionKeys.all, "codex", "quota-forecasts"] as const,
 };
+
+interface CodexAllQuotasQueryOptions {
+  enabled: boolean;
+  refetchInterval: number | false;
+  refetchIntervalInBackground: boolean;
+  refetchOnWindowFocus: boolean;
+  staleTime: number;
+}
+
+function useCodexAllQuotasQuery(options: CodexAllQuotasQueryOptions) {
+  return useQuery({
+    queryKey: subscriptionKeys.allCodexQuotas(),
+    queryFn: () => subscriptionApi.getAllCodexQuotas(),
+    enabled: options.enabled,
+    refetchInterval: options.refetchInterval,
+    refetchIntervalInBackground: options.refetchIntervalInBackground,
+    refetchOnWindowFocus: options.refetchOnWindowFocus,
+    staleTime: options.staleTime,
+    retry: 1,
+  });
+}
 
 /**
  * reject 且无可展示值时的失败占位：首次查询就失败（data 为 undefined），或
@@ -103,6 +129,41 @@ export function useSubscriptionQuota(
   });
 
   return useQuotaKeepLastGood(query, appId);
+}
+
+export interface UseCodexAllQuotasOptions {
+  enabled?: boolean;
+  /** 是否启用自动轮询（与 settings 中的 usage_refresh_interval_secs 同步） */
+  autoQuery?: boolean;
+  /** 刷新间隔（毫秒，默认 60 秒） */
+  intervalMs?: number;
+}
+
+/**
+ * 查询所有 Codex 账号的用量
+ *
+ * 与 `useUsageCacheBridge` 共享同一个 query key，所以托盘触发的后端刷新
+ * 可以通过 React Query 缓存立刻反映到主界面。
+ */
+export function useCodexAllQuotas(options: UseCodexAllQuotasOptions = {}) {
+  const { enabled = true, autoQuery = false, intervalMs = 60_000 } = options;
+
+  return useCodexAllQuotasQuery({
+    enabled,
+    refetchInterval: autoQuery ? intervalMs : false,
+    refetchIntervalInBackground: autoQuery,
+    refetchOnWindowFocus: autoQuery,
+    staleTime: intervalMs,
+  });
+}
+
+export function useCodexQuotaForecasts(enabled = true) {
+  return useQuery({
+    queryKey: subscriptionKeys.codexForecasts(),
+    queryFn: () => subscriptionApi.getCodexQuotaForecasts(),
+    enabled,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
 }
 
 export interface UseCodexOauthQuotaOptions {

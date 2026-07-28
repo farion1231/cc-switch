@@ -216,6 +216,32 @@ fn schema_migration_rejects_future_version() {
 }
 
 #[test]
+fn schema_migration_v10_to_v11_creates_activity_rollup_table() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute("DROP TABLE usage_daily_activity_rollups", [])
+        .expect("drop v11 table");
+    Database::set_user_version(&conn, 10).expect("set user_version=10");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    assert!(
+        Database::table_exists(&conn, "usage_daily_activity_rollups")
+            .expect("check activity table"),
+        "usage_daily_activity_rollups should exist after v11 migration"
+    );
+    assert!(
+        Database::has_column(&conn, "usage_daily_activity_rollups", "session_count")
+            .expect("check session_count"),
+        "activity rollup should store session_count"
+    );
+    assert_eq!(
+        Database::get_user_version(&conn).expect("read version after"),
+        SCHEMA_VERSION
+    );
+}
+
+#[test]
 fn schema_migration_adds_missing_columns_for_providers() {
     let conn = Connection::open_in_memory().expect("open memory db");
 
@@ -829,6 +855,39 @@ fn schema_model_pricing_is_seeded_on_init() {
         "应该包含 Gemini 模型定价，实际数量: {}",
         gemini_count
     );
+}
+
+#[test]
+fn schema_seeds_gpt_5_6_family_pricing() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    for (model_id, expected) in [
+        ("gpt-5.6-sol", ("5", "30", "0.50", "6.25")),
+        ("gpt-5.6-terra", ("2.50", "15", "0.25", "3.125")),
+        ("gpt-5.6-luna", ("1", "6", "0.10", "1.25")),
+    ] {
+        let actual: (String, String, String, String) = conn
+            .query_row(
+                "SELECT input_cost_per_million, output_cost_per_million,
+                        cache_read_cost_per_million, cache_creation_cost_per_million
+                 FROM model_pricing WHERE model_id = ?1",
+                [model_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap_or_else(|error| panic!("query {model_id} pricing: {error}"));
+
+        assert_eq!(
+            actual,
+            (
+                expected.0.to_string(),
+                expected.1.to_string(),
+                expected.2.to_string(),
+                expected.3.to_string(),
+            ),
+            "unexpected pricing for {model_id}",
+        );
+    }
 }
 
 #[test]

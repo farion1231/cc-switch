@@ -97,6 +97,14 @@ export interface DailyStats {
   totalCacheReadTokens: number;
 }
 
+export interface UsageActivityDay {
+  date: string;
+  realTotalTokens: number;
+  sessionCount: number;
+  requestCount: number;
+  totalCost: string;
+}
+
 export interface ProviderStats {
   providerId: string;
   providerName: string;
@@ -113,6 +121,13 @@ export interface ModelStats {
   totalTokens: number;
   totalCost: string;
   avgCostPerRequest: string;
+}
+
+export interface TrayUsageOverview {
+  summaryByApp: UsageSummaryByApp[];
+  providers: ProviderStats[];
+  models: ModelStats[];
+  trends: DailyStats[];
 }
 
 export interface LogFilters {

@@ -13,6 +13,8 @@ use crate::services::subscription::SubscriptionQuota;
 #[derive(Default)]
 pub struct UsageCache {
     subscription: RwLock<HashMap<AppType, SubscriptionQuota>>,
+    /// Codex 多账号用量缓存：account_key -> SubscriptionQuota
+    codex_accounts: RwLock<HashMap<String, SubscriptionQuota>>,
     script: RwLock<HashMap<(AppType, String), UsageResult>>,
 }
 
@@ -31,6 +33,40 @@ impl UsageCache {
         if let Ok(mut w) = self.script.write() {
             w.insert((app_type, provider_id), result);
         }
+    }
+
+    // ── Codex 多账号缓存 ────────────────────────────────────
+
+    pub fn put_codex_account(&self, account_key: String, quota: SubscriptionQuota) {
+        if let Ok(mut w) = self.codex_accounts.write() {
+            w.insert(account_key, quota);
+        }
+    }
+
+    pub fn get_codex_account(&self, account_key: &str) -> Option<SubscriptionQuota> {
+        self.codex_accounts
+            .read()
+            .ok()
+            .and_then(|r| r.get(account_key).cloned())
+    }
+
+    pub fn with_codex_account<R>(
+        &self,
+        account_key: &str,
+        f: impl FnOnce(&SubscriptionQuota) -> R,
+    ) -> Option<R> {
+        self.codex_accounts
+            .read()
+            .ok()
+            .and_then(|r| r.get(account_key).map(f))
+    }
+
+    pub fn get_all_codex_accounts(&self) -> HashMap<String, SubscriptionQuota> {
+        self.codex_accounts
+            .read()
+            .ok()
+            .map(|r| r.clone())
+            .unwrap_or_default()
     }
 
     /// 以借用形式暴露订阅快照，避免托盘每次重建时深拷贝整个 `SubscriptionQuota`。

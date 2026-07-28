@@ -593,12 +593,26 @@ fn parse_codex_file(
     let mut line_offset = 0i64;
     let mut has_billable_tokens = false;
 
-    for line_result in reader.lines() {
-        line_offset += 1;
-        let line = match line_result {
-            Ok(line) => line,
-            Err(_) => continue,
+    let mut reader = reader;
+    let mut line_buffer = String::new();
+    loop {
+        line_buffer.clear();
+        let bytes_read = match std::io::BufRead::read_line(&mut reader, &mut line_buffer) {
+            Ok(bytes_read) => bytes_read,
+            Err(_) => break,
         };
+        if bytes_read == 0 {
+            break;
+        }
+        // Codex may still be writing the final JSONL record. Keep the cursor on
+        // the last complete line so the finished record is retried next sync.
+        if !line_buffer.ends_with('\n')
+            && serde_json::from_str::<serde_json::Value>(line_buffer.trim()).is_err()
+        {
+            break;
+        }
+        line_offset += 1;
+        let line = line_buffer.trim_end_matches(['\r', '\n']);
         if line.trim().is_empty() {
             continue;
         }
@@ -613,7 +627,7 @@ fn parse_codex_file(
             continue;
         }
 
-        let value: serde_json::Value = match serde_json::from_str(&line) {
+        let value: serde_json::Value = match serde_json::from_str(line) {
             Ok(value) => value,
             Err(_) => continue,
         };
@@ -940,7 +954,9 @@ fn sync_single_codex_file(
                         });
                     }
                     PendingReason::Retryable(_) => {
-                        caches.pending.remove(file_path);
+                        // Keep the entry while retrying. If the parent is still
+                        // incomplete, mark_deferred can suppress the identical
+                        // warning without preventing the next retry.
                     }
                     _ => {
                         caches.pending.remove(file_path);
@@ -1708,6 +1724,70 @@ mod tests {
                 format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{CHILD_B_ID}:1")
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_incomplete_active_jsonl_tail_is_retried_after_append() -> Result<(), AppError> {
+        use std::io::Write;
+
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let active = rollout_path(temp.path(), PARENT_ID);
+        let complete_values = [
+            session_meta(PARENT_ID),
+            turn_context(),
+            token_count(100, 50, 10),
+        ];
+        let prefix = complete_values
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        let appended = token_count(180, 90, 25).to_string();
+        let split = appended.len() / 2;
+        fs::write(&active, format!("{prefix}{}", &appended[..split])).unwrap();
+
+        let first = sync_test_file(&db, &active, &[&active])?;
+        assert_eq!(
+            (first.imported, first.skipped, first.deferred),
+            (1, 0, false)
+        );
+        let (_, offset) = get_codex_sync_state(&db, &active)?;
+        assert_eq!(offset, 3, "partial tail must not advance the line cursor");
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let mut file = fs::OpenOptions::new().append(true).open(&active).unwrap();
+        writeln!(file, "{}", &appended[split..]).unwrap();
+
+        let second = sync_test_file(&db, &active, &[&active])?;
+        assert_eq!(
+            (second.imported, second.skipped, second.deferred),
+            (1, 0, false)
+        );
+        let unchanged = sync_test_file(&db, &active, &[&active])?;
+        assert_eq!(
+            (unchanged.imported, unchanged.skipped, unchanged.deferred),
+            (0, 0, false)
+        );
+
+        let conn = lock_conn!(db.conn);
+        let deltas = conn
+            .prepare(
+                "SELECT input_tokens, cache_read_tokens, output_tokens
+                 FROM proxy_request_logs WHERE session_id = ?1 ORDER BY request_id",
+            )?
+            .query_map([PARENT_ID], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(deltas, vec![(100, 50, 10), (80, 40, 15)]);
+
         Ok(())
     }
 

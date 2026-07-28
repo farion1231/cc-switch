@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { DatabaseUpgrade } from "./components/DatabaseUpgrade";
+import { TrayUsagePanel } from "@/components/usage/TrayUsagePanel";
 import { UpdateProvider } from "./contexts/UpdateContext";
 import "./index.css";
 // 导入国际化配置
@@ -21,6 +22,11 @@ import {
 } from "./lib/frontendLogger";
 
 installGlobalErrorHandlers();
+
+const isTrayUsageWindow = window.location.hash.startsWith("#/tray-usage");
+if (isTrayUsageWindow) {
+  document.documentElement.classList.add("tray-usage-window");
+}
 
 // 根据平台添加 body class，便于平台特定样式
 try {
@@ -116,7 +122,7 @@ async function bootstrap() {
         <QueryClientProvider client={queryClient}>
           <ThemeProvider defaultTheme="system" storageKey="cc-switch-theme">
             <UpdateProvider>
-              <App />
+              {isTrayUsageWindow ? <TrayUsagePanel /> : <App />}
               <Toaster />
             </UpdateProvider>
           </ThemeProvider>
