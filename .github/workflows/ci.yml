@@ -74,7 +74,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config libssl-dev \
+            build-essential pkg-config libssl-dev zsh \
             libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev \
             || sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.0-dev
