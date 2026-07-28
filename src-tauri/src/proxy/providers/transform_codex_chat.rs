@@ -366,6 +366,36 @@ pub(crate) fn ensure_responses_tool_search_shim(
     ToolSearchShimStatus::Injected
 }
 
+pub(crate) fn request_uses_responses_tool_search_shim(body: &Value) -> bool {
+    let has_tool_search_history = body.get("input").is_some_and(contains_tool_search_history);
+    let Some(tools_value) = body.get("tools") else {
+        return has_tool_search_history;
+    };
+    if tools_value.is_null() {
+        return has_tool_search_history;
+    }
+    let Some(tools) = tools_value.as_array() else {
+        return false;
+    };
+    if tools.is_empty() {
+        return has_tool_search_history;
+    }
+
+    for tool in tools {
+        match tool.get("type").and_then(Value::as_str) {
+            Some("tool_search") => return false,
+            Some("function")
+                if responses_tool_name(tool).as_deref() == Some(TOOL_SEARCH_PROXY_NAME) =>
+            {
+                return is_proxy_tool_search_function(tool);
+            }
+            _ => {}
+        }
+    }
+
+    true
+}
+
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request.
 #[allow(dead_code)]
 pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
@@ -2582,6 +2612,28 @@ mod tests {
             .unwrap()
             .iter()
             .any(|tool| { tool["type"] == "function" && tool["name"] == TOOL_SEARCH_PROXY_NAME }));
+    }
+
+    #[test]
+    fn ordinary_tool_search_function_does_not_enable_native_shim_restore() {
+        let ordinary = json!({
+            "tools": [{
+                "type": "function",
+                "name": TOOL_SEARCH_PROXY_NAME,
+                "description": "An application-owned search function",
+                "parameters": {"type": "object"}
+            }]
+        });
+        assert!(!request_uses_responses_tool_search_shim(&ordinary));
+
+        let missing = json!({
+            "tools": [{
+                "type": "function",
+                "name": "shell",
+                "parameters": {"type": "object"}
+            }]
+        });
+        assert!(request_uses_responses_tool_search_shim(&missing));
     }
 
     #[test]
