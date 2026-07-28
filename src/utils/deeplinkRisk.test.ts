@@ -3,6 +3,7 @@ import {
   classifyCommand,
   classifyEndpoint,
   classifyEnvKey,
+  decodeDeeplinkPayload,
   maskValue,
 } from "./deeplinkRisk";
 
@@ -155,6 +156,38 @@ describe("classifyCommand", () => {
     );
     // 不含 c 的短开关串不算
     expect(classifyCommand("bash", ["-l", "script.sh"])).toBeNull();
+  });
+});
+
+describe("decodeDeeplinkPayload", () => {
+  const ok = (v: string) => `decoded:${v}`;
+  const boom = () => {
+    throw new Error("bad base64");
+  };
+
+  it("returns the decoded payload on success", () => {
+    expect(decodeDeeplinkPayload("abc", ok)).toBe("decoded:abc");
+  });
+
+  it("falls back to the raw string when decoding throws", () => {
+    // 确认框必须展示即将写入的东西。解不开也要原样显示——返回空串会让整块
+    // 内容消失，界面看起来像"没有脚本"，那正是攻击者要的效果。
+    expect(decodeDeeplinkPayload("!!!not-base64!!!", boom)).toBe(
+      "!!!not-base64!!!",
+    );
+  });
+
+  it("falls back to the raw string when decoding yields empty", () => {
+    // 解出空串同样可疑：不能让 payload 静默消失
+    expect(decodeDeeplinkPayload("d293", () => "")).toBe("d293");
+  });
+
+  it("returns empty for a non-string field instead of throwing", () => {
+    // 该字段来自解码后的任意 JSON，形状不可信；抛错会让确认框整个渲染失败
+    for (const hostile of [42, null, undefined, { a: 1 }, ["x"]]) {
+      expect(() => decodeDeeplinkPayload(hostile, ok)).not.toThrow();
+      expect(decodeDeeplinkPayload(hostile, ok)).toBe("");
+    }
   });
 });
 

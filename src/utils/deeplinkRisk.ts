@@ -211,3 +211,24 @@ export function maskValue(key: string, value: string): string {
 export function riskI18nKey(kind: RiskKind): string {
   return `deeplink.risk.${kind}`;
 }
+
+/**
+ * 解码 deeplink 携带的 base64 载荷，供确认框展示。
+ *
+ * 解码失败时**回落到原始串，绝不返回空串**。确认框的职责是让用户看见即将写入
+ * 什么；一段解不开的 payload 也必须以原样出现。返回空会让整块内容凭空消失，
+ * 界面上看起来就像"没有脚本"——那正是攻击者想要的效果。
+ */
+export function decodeDeeplinkPayload(
+  encoded: unknown,
+  decode: (value: string) => string,
+): string {
+  if (typeof encoded !== "string") return "";
+  try {
+    const decoded = decode(encoded);
+    // 解出空串同样可疑：宁可显示原始 base64，也不显示"什么都没有"。
+    return decoded === "" ? encoded : decoded;
+  } catch {
+    return encoded;
+  }
+}

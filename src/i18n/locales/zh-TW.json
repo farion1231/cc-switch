@@ -2480,6 +2480,8 @@
     "usageScript": "用量查詢",
     "usageScriptEnabled": "已啟用",
     "usageScriptDisabled": "未啟用",
+    "usageScriptCode": "指令碼程式碼",
+    "usageScriptWarning": "這是一段 JavaScript 程式碼，啟用後會在查詢用量時執行。請確認來源可信後再匯入。",
     "usageApiKey": "用量 API Key",
     "usageBaseUrl": "用量查詢位址",
     "usageAutoInterval": "自動查詢",

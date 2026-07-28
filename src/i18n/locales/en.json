@@ -2509,6 +2509,8 @@
     "usageScript": "Usage Query",
     "usageScriptEnabled": "Enabled",
     "usageScriptDisabled": "Disabled",
+    "usageScriptCode": "Script code",
+    "usageScriptWarning": "This is JavaScript that runs when usage is queried, once enabled. Import it only if you trust the source.",
     "usageApiKey": "Usage API Key",
     "usageBaseUrl": "Usage Query URL",
     "usageAutoInterval": "Auto Query",
