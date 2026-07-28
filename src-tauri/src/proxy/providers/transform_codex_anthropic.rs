@@ -1429,14 +1429,28 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
                 if let Some(index) = value.get("index").and_then(|v| v.as_u64()) {
                     // Sanitize to an object: any later index-assignment (`["text"]`,
                     // `["signature"]`, `["input"]`) requires a JSON object, so a
-                    // malformed non-object block from the upstream is replaced with
-                    // an empty object instead of being stored verbatim (which would
-                    // panic on the next delta).
-                    let block = value
-                        .get("content_block")
-                        .filter(|b| b.is_object())
-                        .cloned()
-                        .unwrap_or(json!({}));
+                    // malformed non-object block from the upstream cannot be stored
+                    // verbatim (it would panic on the next delta).
+                    //
+                    // The replacement carries `type: "text"` rather than being empty:
+                    // the deltas that follow are usually well-formed, and a block with
+                    // no `type` is silently dropped by the final Responses conversion,
+                    // which turns a garbled block header into a `completed` response
+                    // with empty output — the client sees the model saying nothing and
+                    // has no way to tell that data was discarded. A text block recovers
+                    // the common case; a tool-use block still yields nothing, exactly as
+                    // it did before.
+                    let block = match value.get("content_block") {
+                        Some(block) if block.is_object() => block.clone(),
+                        malformed => {
+                            if malformed.is_some() {
+                                log::warn!(
+                                    "Anthropic upstream sent a non-object content_block at index {index}; recovering it as a text block"
+                                );
+                            }
+                            json!({ "type": "text" })
+                        }
+                    };
                     blocks.insert(index, block);
                     json_accum.entry(index).or_default();
                 }
@@ -2979,6 +2993,18 @@ data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":
         let msg = anthropic_sse_to_message_value(sse)
             .expect("aggregation must not panic on a non-object content_block");
         assert_eq!(msg["content"][0]["text"], json!("x"));
+
+        // Not panicking is only half of it: the sanitized block must still carry a
+        // `type`, because the final conversion matches on it and silently drops
+        // anything it does not recognise. Asserting only on the intermediate value
+        // would pass while the client receives a `completed` response with empty
+        // output and no indication that the text was thrown away.
+        let response = anthropic_response_to_responses(msg).expect("final conversion must succeed");
+        assert_eq!(
+            response["output"][0]["content"][0]["text"],
+            json!("x"),
+            "text recovered from a malformed block must survive to the Responses output: {response}"
+        );
     }
 
     #[test]
