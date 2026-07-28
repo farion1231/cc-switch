@@ -83,8 +83,8 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://aigocode.com/invite/CC-SWITCH"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></a></td>
-<td>本プロジェクトは AIGoCode のスポンサー提供でお届けしています。AIGoCode は、Claude Code・Codex・最新の Gemini モデルを統合したオールインワンのAIコーディングプラットフォームで、安定性・高速性・コストパフォーマンスに優れた開発サービスを提供します。柔軟なサブスクリプションプランを備え、レスポンスも非常に高速です。さらに、CC Switch ユーザー向けの特典として、<a href="https://aigocode.com/invite/CC-SWITCH">このリンク</a>から登録すると、初回チャージ時に10％分のボーナスクレジットが付与されます！</td>
+<td width="180"><a href="https://aigocode.app/invite/CC-SWITCH"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></a></td>
+<td>本プロジェクトは AIGoCode のスポンサー提供でお届けしています。AIGoCode は、Claude Code・Codex・最新の Gemini モデルを統合したオールインワンのAIコーディングプラットフォームで、安定性・高速性・コストパフォーマンスに優れた開発サービスを提供します。柔軟なサブスクリプションプランを備え、レスポンスも非常に高速です。さらに、CC Switch ユーザー向けの特典として、<a href="https://aigocode.app/invite/CC-SWITCH">このリンク</a>から登録すると、初回チャージ時に10％分のボーナスクレジットが付与されます！</td>
 </tr>
 
 <tr>

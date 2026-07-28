@@ -83,8 +83,8 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
-<td width="180"><a href="https://aigocode.com/invite/CC-SWITCH"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></a></td>
-<td>Danke an AIGoCode für die Unterstützung dieses Projekts! AIGoCode ist eine All-in-One-Plattform, die Claude Code, Codex und die neuesten Gemini-Modelle integriert und Ihnen stabile, effiziente und äußerst kostengünstige KI-Coding-Dienste bietet. Die Plattform stellt flexible Abonnementpläne bereit, birgt kein Risiko einer Kontosperrung, ermöglicht Direktzugriff ohne VPN und reagiert blitzschnell. AIGoCode hat ein besonderes Angebot für CC-Switch-Nutzer vorbereitet: Wenn Sie sich über <a href="https://aigocode.com/invite/CC-SWITCH">diesen Link</a> registrieren, erhalten Sie bei Ihrer ersten Aufladung zusätzliche 10 % Bonusguthaben!</td>
+<td width="180"><a href="https://aigocode.app/invite/CC-SWITCH"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></a></td>
+<td>Danke an AIGoCode für die Unterstützung dieses Projekts! AIGoCode ist eine All-in-One-Plattform, die Claude Code, Codex und die neuesten Gemini-Modelle integriert und Ihnen stabile, effiziente und äußerst kostengünstige KI-Coding-Dienste bietet. Die Plattform stellt flexible Abonnementpläne bereit, birgt kein Risiko einer Kontosperrung, ermöglicht Direktzugriff ohne VPN und reagiert blitzschnell. AIGoCode hat ein besonderes Angebot für CC-Switch-Nutzer vorbereitet: Wenn Sie sich über <a href="https://aigocode.app/invite/CC-SWITCH">diesen Link</a> registrieren, erhalten Sie bei Ihrer ersten Aufladung zusätzliche 10 % Bonusguthaben!</td>
 </tr>
 
 <tr>
