@@ -75,29 +75,25 @@ export function usePromptActions(appId: AppId) {
 
   const toggleEnabled = useCallback(
     async (id: string, enabled: boolean) => {
-      // Optimistic update
+      // Snapshot for rollback (captured from current closure)
       const previousPrompts = prompts;
 
-      // 如果要启用当前提示词，先禁用其他所有提示词
+      // Optimistic update: use functional updater for both branches
       if (enabled) {
-        const updatedPrompts = Object.keys(prompts).reduce(
-          (acc, key) => {
-            acc[key] = {
-              ...prompts[key],
-              enabled: key === id,
-            };
-            return acc;
-          },
-          {} as Record<string, Prompt>,
+        // 启用当前提示词，先禁用其他所有提示词
+        setPrompts((prev) =>
+          Object.keys(prev).reduce(
+            (acc, key) => {
+              acc[key] = { ...prev[key], enabled: key === id };
+              return acc;
+            },
+            {} as Record<string, Prompt>,
+          ),
         );
-        setPrompts(updatedPrompts);
       } else {
         setPrompts((prev) => ({
           ...prev,
-          [id]: {
-            ...prev[id],
-            enabled: false,
-          },
+          [id]: { ...prev[id], enabled: false },
         }));
       }
 
@@ -106,7 +102,6 @@ export function usePromptActions(appId: AppId) {
           await promptsApi.enablePrompt(appId, id);
           toast.success(t("prompts.enableSuccess"), { closeButton: true });
         } else {
-          // 禁用提示词 - 需要后端支持
           await promptsApi.upsertPrompt(appId, id, {
             ...prompts[id],
             enabled: false,
@@ -115,7 +110,6 @@ export function usePromptActions(appId: AppId) {
         }
         await reload();
       } catch (error) {
-        // Rollback on failure
         setPrompts(previousPrompts);
         toast.error(
           enabled ? t("prompts.enableFailed") : t("prompts.disableFailed"),

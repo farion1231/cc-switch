@@ -316,12 +316,21 @@ fn build_shell_command(command: &str, cwd: Option<&str>) -> String {
 }
 
 fn shell_escape(value: &str) -> String {
-    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{escaped}\"")
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    // Single-quote wrapping prevents all shell metacharacter expansion ($, `, !, etc.)
+    // Embedded single quotes are escaped by closing, adding escaped quote, reopening: '\''
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn escape_osascript(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
 }
 
 #[cfg(test)]
@@ -377,6 +386,26 @@ mod tests {
         );
 
         // Verify shell_escape works correctly for paths with spaces
-        assert_eq!(shell_escape(cwd), "\"/tmp/project dir\"");
+        assert_eq!(shell_escape(cwd), "'/tmp/project dir'");
+    }
+
+    #[test]
+    fn shell_escape_handles_special_characters() {
+        assert_eq!(shell_escape("simple"), "'simple'");
+        assert_eq!(shell_escape("has space"), "'has space'");
+        assert_eq!(shell_escape("has$dollar"), "'has$dollar'");
+        assert_eq!(shell_escape("has`backtick"), "'has`backtick'");
+        assert_eq!(shell_escape("has!bang"), "'has!bang'");
+        assert_eq!(shell_escape("has'single"), "'has'\\''single'");
+        assert_eq!(shell_escape(""), "''");
+    }
+
+    #[test]
+    fn escape_osascript_handles_control_characters() {
+        assert_eq!(escape_osascript("simple"), "simple");
+        assert_eq!(escape_osascript("has\\back"), "has\\\\back");
+        assert_eq!(escape_osascript("has\"quote"), "has\\\"quote");
+        assert_eq!(escape_osascript("has\nnewline"), "has\\nnewline");
+        assert_eq!(escape_osascript("has\ttab"), "has\\ttab");
     }
 }
