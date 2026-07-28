@@ -225,6 +225,17 @@
       }
     }
   },
+  "claudeOffice": {
+    "title": "Claude for Office",
+    "description": "Paste the following into the Office add-in under \"Connect another way → Gateway\"",
+    "proxyNotRunning": "Local proxy is not running. Start the proxy service first.",
+    "loadFailed": "Connection info unavailable. Start the proxy service first.",
+    "gatewayUrl": "Gateway URL",
+    "token": "Token",
+    "copied": "{{label}} copied",
+    "copyFailed": "Copy failed",
+    "hint": "Shares provider config and failover queue with Claude Desktop; switching providers applies to both."
+  },
   "notifications": {
     "providerAdded": "Provider added",
     "providerSaved": "Provider configuration saved",

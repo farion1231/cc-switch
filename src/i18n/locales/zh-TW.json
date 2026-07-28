@@ -225,6 +225,17 @@
       }
     }
   },
+  "claudeOffice": {
+    "title": "Claude for Office",
+    "description": "在 Office 增益集的「Connect another way → Gateway」中填入以下資訊",
+    "proxyNotRunning": "本機代理服務未執行，請先啟動代理服務",
+    "loadFailed": "連線資訊暫不可用，請先啟動代理服務",
+    "gatewayUrl": "Gateway URL",
+    "token": "Token",
+    "copied": "{{label}} 已複製",
+    "copyFailed": "複製失敗",
+    "hint": "與 Claude Desktop 共用供應商設定與故障轉移佇列，切換供應商對兩者同時生效"
+  },
   "notifications": {
     "providerAdded": "供應商已新增",
     "providerSaved": "供應商設定已儲存",

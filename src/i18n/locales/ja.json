@@ -225,6 +225,17 @@
       }
     }
   },
+  "claudeOffice": {
+    "title": "Claude for Office",
+    "description": "Office アドインの「Connect another way → Gateway」に以下の情報を入力してください",
+    "proxyNotRunning": "ローカルプロキシが起動していません。先にプロキシサービスを開始してください",
+    "loadFailed": "接続情報を取得できません。先にプロキシサービスを開始してください",
+    "gatewayUrl": "Gateway URL",
+    "token": "Token",
+    "copied": "{{label}} をコピーしました",
+    "copyFailed": "コピーに失敗しました",
+    "hint": "Claude Desktop とプロバイダー設定・フェイルオーバーキューを共有します。切り替えは両方に適用されます。"
+  },
   "notifications": {
     "providerAdded": "プロバイダーを追加しました",
     "providerSaved": "プロバイダー設定を保存しました",
