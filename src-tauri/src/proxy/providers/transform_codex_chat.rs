@@ -97,6 +97,10 @@ fn tool_search_responses_function_tool() -> Value {
     })
 }
 
+fn is_proxy_tool_search_function(tool: &Value) -> bool {
+    tool == &tool_search_responses_function_tool()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CodexToolKind {
     Function,
@@ -179,7 +183,7 @@ impl CodexToolContext {
         let spec = CodexToolSpec {
             kind: if namespace.is_some() {
                 CodexToolKind::Namespace
-            } else if original_name == TOOL_SEARCH_PROXY_NAME {
+            } else if is_proxy_tool_search_function(tool) {
                 CodexToolKind::ToolSearch
             } else {
                 CodexToolKind::Function
@@ -324,11 +328,13 @@ pub(crate) fn ensure_responses_tool_search_shim(
         return ToolSearchShimStatus::SkippedNoTools;
     }
 
+    let mut replaced_native = false;
     for tool in tools.iter_mut() {
         match tool.get("type").and_then(Value::as_str) {
             Some("tool_search") if replace_native_tool_search => {
                 *tool = tool_search_responses_function_tool();
-                return ToolSearchShimStatus::ReplacedNative;
+                replaced_native = true;
+                break;
             }
             Some("tool_search") => {
                 return ToolSearchShimStatus::ExistingNative;
@@ -340,6 +346,20 @@ pub(crate) fn ensure_responses_tool_search_shim(
             }
             _ => {}
         }
+    }
+
+    if replaced_native {
+        if body
+            .get("tool_choice")
+            .and_then(Value::as_object)
+            .is_some_and(|choice| choice.get("type").and_then(Value::as_str) == Some("tool_search"))
+        {
+            body.insert(
+                "tool_choice".to_string(),
+                json!({"type": "function", "name": TOOL_SEARCH_PROXY_NAME}),
+            );
+        }
+        return ToolSearchShimStatus::ReplacedNative;
     }
 
     tools.push(tool_search_responses_function_tool());
@@ -2540,6 +2560,7 @@ mod tests {
     fn xai_native_tool_search_is_converted_before_sanitization() {
         let mut body = json!({
             "model": "grok-4.5",
+            "tool_choice": {"type": "tool_search"},
             "tools": [
                 {"type": "tool_search"},
                 {"type": "function", "name": "shell", "parameters": {}}
@@ -2549,6 +2570,10 @@ mod tests {
         assert_eq!(
             ensure_responses_tool_search_shim(&mut body, true),
             ToolSearchShimStatus::ReplacedNative
+        );
+        assert_eq!(
+            body["tool_choice"],
+            json!({"type": "function", "name": TOOL_SEARCH_PROXY_NAME})
         );
         crate::proxy::providers::transform_codex_responses_xai_sanitize::sanitize_xai_responses_request(&mut body);
 
@@ -4246,7 +4271,7 @@ mod tests {
     }
 
     #[test]
-    fn chat_response_to_responses_treats_existing_function_tool_search_as_native() {
+    fn chat_response_to_responses_preserves_ordinary_function_named_tool_search() {
         let request = json!({
             "model": "gpt-5.4",
             "tools": [{
@@ -4279,7 +4304,8 @@ mod tests {
         });
 
         let result = chat_completion_to_response_with_context(chat, &context).unwrap();
-        assert_eq!(result["output"][0]["type"], "tool_search_call");
+        assert_eq!(result["output"][0]["type"], "function_call");
+        assert_eq!(result["output"][0]["name"], "tool_search");
     }
 
     #[test]
