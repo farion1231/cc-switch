@@ -1211,7 +1211,8 @@ fn migrate_codex_state_db_legacy_thread_names(
             .execute(
                 "UPDATE threads SET name = ?1
                  WHERE id = ?2 AND COALESCE(name, '') = ''
-                   AND title = ?1 AND first_user_message <> ?1",
+                   AND title = ?1
+                   AND (first_user_message IS NULL OR first_user_message <> ?1)",
                 (thread_name, thread_id),
             )
             .map_err(|e| AppError::Database(format!("迁移 Codex thread rename 失败: {e}")))?;
@@ -1262,26 +1263,24 @@ fn codex_legacy_thread_name_candidates(
     }
 
     let mut candidates = Vec::new();
+    // Keep the first-user-message comparison in SQLite: Codex permits it to
+    // be very large, so decoding it just to compare a title can exhaust memory.
     let mut stmt = conn
-        .prepare("SELECT name, title, first_user_message FROM threads WHERE id = ?1")
+        .prepare(
+            "SELECT name FROM threads
+             WHERE id = ?1 AND title = ?2
+               AND (first_user_message IS NULL OR first_user_message <> ?2)",
+        )
         .map_err(|e| AppError::Database(format!("读取 Codex thread rename 元数据失败: {e}")))?;
     for (thread_id, thread_name) in legacy_names {
         if thread_name.trim().is_empty() {
             continue;
         }
-        let row = stmt.query_row([&thread_id], |row| {
-            Ok((
-                row.get::<_, Option<String>>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-            ))
+        let row = stmt.query_row((&thread_id, &thread_name), |row| {
+            row.get::<_, Option<String>>(0)
         });
         match row {
-            Ok((name, title, first_user_message))
-                if name.as_deref().unwrap_or("").trim().is_empty()
-                    && title == thread_name
-                    && first_user_message != thread_name =>
-            {
+            Ok(name) if name.as_deref().unwrap_or("").trim().is_empty() => {
                 candidates.push((thread_id, thread_name));
             }
             Ok(_) | Err(rusqlite::Error::QueryReturnedNoRows) => {}
@@ -2248,7 +2247,8 @@ base_url = "https://proxy.example/v1"
                 "{\"id\":\"renamed\",\"thread_name\":\"old name\"}\n",
                 "{\"id\":\"renamed\",\"thread_name\":\"my project\"}\n",
                 "{\"id\":\"generated\",\"thread_name\":\"generated title\"}\n",
-                "{\"id\":\"existing\",\"thread_name\":\"legacy name\"}\n"
+                "{\"id\":\"existing\",\"thread_name\":\"legacy name\"}\n",
+                "{\"id\":\"nullable\",\"thread_name\":\"nullable name\"}\n"
             ),
         )
         .expect("write session index");
@@ -2261,12 +2261,13 @@ base_url = "https://proxy.example/v1"
                 model_provider TEXT NOT NULL,
                 name TEXT,
                 title TEXT NOT NULL,
-                first_user_message TEXT NOT NULL
+                first_user_message TEXT
             );
             INSERT INTO threads VALUES
                 ('renamed', 'openai', NULL, 'my project', 'help me'),
                 ('generated', 'openai', NULL, 'generated title', 'generated title'),
-                ('existing', 'openai', 'keep me', 'legacy name', 'help me');",
+                ('existing', 'openai', 'keep me', 'legacy name', 'help me'),
+                ('nullable', 'openai', NULL, 'nullable name', NULL);",
         )
         .expect("seed state db");
         drop(conn);
@@ -2276,7 +2277,7 @@ base_url = "https://proxy.example/v1"
             migrate_codex_state_db_legacy_thread_names(&db_path, &codex_dir, &backup_root)
                 .expect("migrate thread names");
 
-        assert_eq!(changed, 1);
+        assert_eq!(changed, 2);
         let conn = Connection::open(&db_path).expect("reopen db");
         let thread_name = |id: &str| -> Option<String> {
             conn.query_row("SELECT name FROM threads WHERE id = ?1", [id], |row| {
@@ -2287,6 +2288,7 @@ base_url = "https://proxy.example/v1"
         assert_eq!(thread_name("renamed").as_deref(), Some("my project"));
         assert_eq!(thread_name("generated"), None);
         assert_eq!(thread_name("existing").as_deref(), Some("keep me"));
+        assert_eq!(thread_name("nullable").as_deref(), Some("nullable name"));
         assert!(backup_root
             .join("state")
             .join(CODEX_STATE_DB_FILENAME)
