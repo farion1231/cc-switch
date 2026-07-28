@@ -770,6 +770,16 @@ pub fn run() {
                         }
                     }
 
+                    match crate::codex_history_migration::maybe_migrate_codex_legacy_thread_names() {
+                        Ok(0) => {}
+                        Ok(count) => log::info!(
+                            "✓ Codex legacy thread name migration completed: names={count}"
+                        ),
+                        Err(e) => {
+                            log::warn!("✗ Codex legacy thread name migration failed: {e}");
+                        }
+                    }
+
                     // 统一会话开关的官方历史迁移：开关开启但上次未完成（如文件被占用
                     // 中途失败）时在启动期重试；函数内部自门控，开关关闭时直接跳过。
                     match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {

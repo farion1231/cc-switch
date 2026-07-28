@@ -18,14 +18,16 @@ use chrono::{Local, Utc};
 use rusqlite::{backup::Backup, params_from_iter, Connection};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use toml_edit::DocumentMut;
 
 const MIGRATION_NAME: &str = "codex-history-provider-migration-v1";
+const THREAD_NAME_MIGRATION_NAME: &str = "codex-legacy-thread-name-migration-v1";
 const OFFICIAL_UNIFY_MIGRATION_NAME: &str = "codex-official-history-unify-v1";
 /// 还原操作自身的备份目录（与迁移备份分开，保持迁移账本目录纯净）。
 const OFFICIAL_UNIFY_RESTORE_BACKUP_NAME: &str = "codex-official-history-unify-restore-v1";
@@ -1169,6 +1171,131 @@ fn migrate_codex_state_db_provider_bucket(
     Ok(changed)
 }
 
+pub fn maybe_migrate_codex_legacy_thread_names() -> Result<usize, AppError> {
+    let codex_dir = get_codex_config_dir();
+    let config_text = read_codex_config_text().unwrap_or_default();
+    let backup_root = migration_backup_root(THREAD_NAME_MIGRATION_NAME);
+    let mut migrated = 0;
+    for db_path in codex_state_db_paths(&codex_dir, &config_text) {
+        migrated += migrate_codex_state_db_legacy_thread_names(&db_path, &codex_dir, &backup_root)?;
+    }
+    Ok(migrated)
+}
+
+fn migrate_codex_state_db_legacy_thread_names(
+    db_path: &Path,
+    codex_dir: &Path,
+    backup_root: &Path,
+) -> Result<usize, AppError> {
+    if !db_path.exists() {
+        return Ok(0);
+    }
+    let mut conn = Connection::open(db_path)
+        .map_err(|e| AppError::Database(format!("打开 Codex state DB 失败: {e}")))?;
+    conn.busy_timeout(Duration::from_secs(5))
+        .map_err(|e| AppError::Database(format!("设置 Codex state DB busy_timeout 失败: {e}")))?;
+    if !Database::table_exists(&conn, "threads")? {
+        return Ok(0);
+    }
+    let candidates = codex_legacy_thread_name_candidates(&conn, codex_dir)?;
+    if candidates.is_empty() {
+        return Ok(0);
+    }
+
+    backup_codex_state_db(db_path, codex_dir, backup_root, &conn)?;
+    let tx = conn
+        .transaction()
+        .map_err(|e| AppError::Database(format!("开启 Codex thread rename 迁移事务失败: {e}")))?;
+    for (thread_id, thread_name) in &candidates {
+        let changed = tx
+            .execute(
+                "UPDATE threads SET name = ?1
+                 WHERE id = ?2 AND COALESCE(name, '') = ''
+                   AND title = ?1 AND first_user_message <> ?1",
+                (thread_name, thread_id),
+            )
+            .map_err(|e| AppError::Database(format!("迁移 Codex thread rename 失败: {e}")))?;
+        if changed != 1 {
+            return Err(AppError::Database(format!(
+                "Codex thread rename changed during migration: {thread_id}"
+            )));
+        }
+    }
+    tx.commit()
+        .map_err(|e| AppError::Database(format!("提交 Codex thread rename 迁移事务失败: {e}")))?;
+    Ok(candidates.len())
+}
+
+fn codex_legacy_thread_name_candidates(
+    conn: &Connection,
+    codex_dir: &Path,
+) -> Result<Vec<(String, String)>, AppError> {
+    for column in ["name", "title", "first_user_message"] {
+        if !Database::has_column(conn, "threads", column)? {
+            return Ok(Vec::new());
+        }
+    }
+    let index_path = codex_dir.join("session_index.jsonl");
+    if !index_path.is_file() {
+        return Ok(Vec::new());
+    }
+
+    let file = fs::File::open(&index_path).map_err(|e| AppError::io(&index_path, e))?;
+    let mut legacy_names = HashMap::new();
+    for (line_index, line) in BufReader::new(file).lines().enumerate() {
+        let line = line.map_err(|e| AppError::io(&index_path, e))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: Value = serde_json::from_str(&line).map_err(|e| {
+            AppError::Message(format!(
+                "Invalid Codex session_index.jsonl line {}: {e}",
+                line_index + 1
+            ))
+        })?;
+        if let (Some(id), Some(name)) = (
+            value.get("id").and_then(Value::as_str),
+            value.get("thread_name").and_then(Value::as_str),
+        ) {
+            legacy_names.insert(id.to_string(), name.to_string());
+        }
+    }
+
+    let mut candidates = Vec::new();
+    let mut stmt = conn
+        .prepare("SELECT name, title, first_user_message FROM threads WHERE id = ?1")
+        .map_err(|e| AppError::Database(format!("读取 Codex thread rename 元数据失败: {e}")))?;
+    for (thread_id, thread_name) in legacy_names {
+        if thread_name.trim().is_empty() {
+            continue;
+        }
+        let row = stmt.query_row([&thread_id], |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        });
+        match row {
+            Ok((name, title, first_user_message))
+                if name.as_deref().unwrap_or("").trim().is_empty()
+                    && title == thread_name
+                    && first_user_message != thread_name =>
+            {
+                candidates.push((thread_id, thread_name));
+            }
+            Ok(_) | Err(rusqlite::Error::QueryReturnedNoRows) => {}
+            Err(e) => {
+                return Err(AppError::Database(format!(
+                    "读取 Codex thread rename 元数据失败: {e}"
+                )));
+            }
+        }
+    }
+    candidates.sort_unstable();
+    Ok(candidates)
+}
+
 fn placeholders(count: usize) -> String {
     std::iter::repeat_n("?", count)
         .collect::<Vec<_>>()
@@ -2108,6 +2235,62 @@ base_url = "https://proxy.example/v1"
             )
             .expect("count backed up source providers");
         assert_eq!(backed_up_source_count, 2);
+    }
+
+    #[test]
+    fn restores_strict_legacy_thread_names_during_state_migration() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        fs::write(
+            codex_dir.join("session_index.jsonl"),
+            concat!(
+                "{\"id\":\"renamed\",\"thread_name\":\"old name\"}\n",
+                "{\"id\":\"renamed\",\"thread_name\":\"my project\"}\n",
+                "{\"id\":\"generated\",\"thread_name\":\"generated title\"}\n",
+                "{\"id\":\"existing\",\"thread_name\":\"legacy name\"}\n"
+            ),
+        )
+        .expect("write session index");
+
+        let db_path = codex_dir.join(CODEX_STATE_DB_FILENAME);
+        let conn = Connection::open(&db_path).expect("open db");
+        conn.execute_batch(
+            "CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                model_provider TEXT NOT NULL,
+                name TEXT,
+                title TEXT NOT NULL,
+                first_user_message TEXT NOT NULL
+            );
+            INSERT INTO threads VALUES
+                ('renamed', 'openai', NULL, 'my project', 'help me'),
+                ('generated', 'openai', NULL, 'generated title', 'generated title'),
+                ('existing', 'openai', 'keep me', 'legacy name', 'help me');",
+        )
+        .expect("seed state db");
+        drop(conn);
+
+        let backup_root = dir.path().join("backup");
+        let changed =
+            migrate_codex_state_db_legacy_thread_names(&db_path, &codex_dir, &backup_root)
+                .expect("migrate thread names");
+
+        assert_eq!(changed, 1);
+        let conn = Connection::open(&db_path).expect("reopen db");
+        let thread_name = |id: &str| -> Option<String> {
+            conn.query_row("SELECT name FROM threads WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })
+            .expect("read thread name")
+        };
+        assert_eq!(thread_name("renamed").as_deref(), Some("my project"));
+        assert_eq!(thread_name("generated"), None);
+        assert_eq!(thread_name("existing").as_deref(), Some("keep me"));
+        assert!(backup_root
+            .join("state")
+            .join(CODEX_STATE_DB_FILENAME)
+            .exists());
     }
 
     #[test]
