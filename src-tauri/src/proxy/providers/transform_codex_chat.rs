@@ -383,7 +383,7 @@ pub(crate) fn request_uses_responses_tool_search_shim(body: &Value) -> bool {
 
     for tool in tools {
         match tool.get("type").and_then(Value::as_str) {
-            Some("tool_search") => return false,
+            Some("tool_search") => return true,
             Some("function")
                 if responses_tool_name(tool).as_deref() == Some(TOOL_SEARCH_PROXY_NAME) =>
             {
@@ -2634,6 +2634,11 @@ mod tests {
             }]
         });
         assert!(request_uses_responses_tool_search_shim(&missing));
+
+        let native = json!({
+            "tools": [{"type": "tool_search"}]
+        });
+        assert!(request_uses_responses_tool_search_shim(&native));
     }
 
     #[test]
