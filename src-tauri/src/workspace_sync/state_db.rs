@@ -147,6 +147,27 @@ impl ActualColumnDefinition {
     }
 }
 
+#[derive(Debug)]
+struct ActualForeignKeyDefinition {
+    target_table: String,
+    source_column: String,
+    target_column: String,
+    on_update: String,
+    on_delete: String,
+    match_clause: String,
+}
+
+impl ActualForeignKeyDefinition {
+    fn matches_provider_results_cascade(&self) -> bool {
+        self.target_table == "sync_transactions"
+            && self.source_column == "transaction_id"
+            && self.target_column == "id"
+            && self.on_update.eq_ignore_ascii_case("no action")
+            && self.on_delete.eq_ignore_ascii_case("cascade")
+            && self.match_clause.eq_ignore_ascii_case("none")
+    }
+}
+
 const REQUIRED_SCHEMA: &[TableDefinition] = &[
     TableDefinition {
         name: "sync_transactions",
@@ -446,6 +467,8 @@ impl WorkspaceSyncDb {
             ));
         }
 
+        // Only the eight target tables are constrained. Extra user tables and SQLite internal
+        // tables are intentionally allowed and are not included in this validation loop.
         for table in REQUIRED_SCHEMA {
             let actual_columns = Self::raw_table_columns(conn, table.name)
                 .map_err(|error| database_error(path, "verify", error))?;
@@ -464,44 +487,33 @@ impl WorkspaceSyncDb {
                     ),
                 ));
             }
-        }
 
-        let mut statement = conn
-            .prepare("PRAGMA foreign_key_list(provider_results)")
-            .map_err(|error| database_error(path, "verify", error))?;
-        let foreign_keys = statement
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, String>(5)?,
-                    row.get::<_, String>(6)?,
-                    row.get::<_, String>(7)?,
-                ))
-            })
-            .map_err(|error| database_error(path, "verify", error))?;
-        let foreign_keys = foreign_keys
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| database_error(path, "verify", error))?;
-        let has_exact_foreign_key = matches!(
-            foreign_keys.as_slice(),
-            [(table, from, to, on_update, on_delete, match_clause)]
-                if table == "sync_transactions"
-                    && from == "transaction_id"
-                    && to == "id"
-                    && on_update.eq_ignore_ascii_case("no action")
-                    && on_delete.eq_ignore_ascii_case("cascade")
-                    && match_clause.eq_ignore_ascii_case("none")
-        );
-        if !has_exact_foreign_key {
-            return Err(database_error(
-                path,
-                "verify",
-                format!(
-                    "provider_results foreign keys mismatch: actual={foreign_keys:?}, expected transaction_id -> sync_transactions(id) ON UPDATE NO ACTION ON DELETE CASCADE MATCH NONE"
-                ),
-            ));
+            let foreign_keys = Self::raw_foreign_keys(conn, table.name)
+                .map_err(|error| database_error(path, "verify", error))?;
+            if table.name == "provider_results" {
+                let has_exact_foreign_key = matches!(
+                    foreign_keys.as_slice(),
+                    [foreign_key] if foreign_key.matches_provider_results_cascade()
+                );
+                if !has_exact_foreign_key {
+                    return Err(database_error(
+                        path,
+                        "verify",
+                        format!(
+                            "provider_results foreign keys mismatch: actual={foreign_keys:?}, expected transaction_id -> sync_transactions(id) ON UPDATE NO ACTION ON DELETE CASCADE MATCH NONE"
+                        ),
+                    ));
+                }
+            } else if !foreign_keys.is_empty() {
+                return Err(database_error(
+                    path,
+                    "verify",
+                    format!(
+                        "table {} foreign keys must be empty: actual={foreign_keys:?}",
+                        table.name
+                    ),
+                ));
+            }
         }
 
         Ok(())
@@ -522,6 +534,27 @@ impl WorkspaceSyncDb {
                 not_null: row.get::<_, i32>(2)? != 0,
                 default_value: row.get(3)?,
                 primary_key_position: row.get(4)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    fn raw_foreign_keys(
+        conn: &Connection,
+        table: &str,
+    ) -> rusqlite::Result<Vec<ActualForeignKeyDefinition>> {
+        let mut statement = conn.prepare(
+            r#"SELECT "table", "from", "to", on_update, on_delete, "match"
+               FROM pragma_foreign_key_list(?1) ORDER BY id, seq"#,
+        )?;
+        let rows = statement.query_map([table], |row| {
+            Ok(ActualForeignKeyDefinition {
+                target_table: row.get(0)?,
+                source_column: row.get(1)?,
+                target_column: row.get(2)?,
+                on_update: row.get(3)?,
+                on_delete: row.get(4)?,
+                match_clause: row.get(5)?,
             })
         })?;
         rows.collect()
@@ -907,6 +940,66 @@ mod tests {
         assert!(error.contains("stage=verify"));
         assert!(error.contains("provider_results"), "{error}");
         assert!(error.contains("columns mismatch"), "{error}");
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_schema_v1_with_extra_foreign_key_on_other_target_table() -> Result<(), AppError> {
+        let (_temp, path) = temp_db_path("extra-target-fk-v1.db")?;
+        let conn = Connection::open(&path)?;
+        conn.execute_batch(SCHEMA_V1)?;
+        conn.execute_batch(
+            "DROP TABLE conflicts;
+             CREATE TABLE conflicts (
+                 id TEXT PRIMARY KEY,
+                 provider_id TEXT NOT NULL,
+                 kind TEXT NOT NULL,
+                 logical_id TEXT NOT NULL,
+                 state TEXT NOT NULL,
+                 reason TEXT NOT NULL,
+                 metadata TEXT NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 resolved_at INTEGER,
+                 FOREIGN KEY (provider_id) REFERENCES devices(device_id)
+             );",
+        )?;
+        conn.pragma_update(None, "application_id", APPLICATION_ID)?;
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        drop(conn);
+
+        let error = rejected_open(&path)?;
+        assert!(error.contains(&path.display().to_string()));
+        assert!(error.contains("stage=verify"));
+        assert!(error.contains("conflicts"));
+        assert!(error.contains("foreign keys"));
+        Ok(())
+    }
+
+    #[test]
+    fn allows_extra_user_tables_when_target_schema_is_exact() -> Result<(), AppError> {
+        let (_temp, path) = temp_db_path("extra-user-table.db")?;
+        let db = WorkspaceSyncDb::open(&path)?;
+        {
+            let conn = db.conn.lock()?;
+            conn.execute_batch(
+                "CREATE TABLE plugin_owned_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                 );
+                 INSERT INTO plugin_owned_state (key, value) VALUES ('sentinel', 'preserved');",
+            )?;
+        }
+        drop(db);
+
+        // Extra user/internal tables are allowed; only the eight target schemas are constrained.
+        let reopened = WorkspaceSyncDb::open(&path)?;
+        let conn = reopened.conn.lock()?;
+        let value: String = conn.query_row(
+            "SELECT value FROM plugin_owned_state WHERE key = 'sentinel'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(value, "preserved");
         Ok(())
     }
 
