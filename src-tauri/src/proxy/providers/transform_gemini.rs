@@ -7,6 +7,9 @@
 use super::gemini_schema::build_gemini_function_declaration;
 use super::gemini_shadow::{GeminiAssistantTurn, GeminiShadowStore, GeminiToolCallMeta};
 use crate::proxy::error::ProxyError;
+use crate::proxy::tool_media::{
+    strip_and_clamp_media_from_tool_value, ToolMediaScope, TOOL_RESULT_MEDIA_ATTACHED_MARKER,
+};
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 
@@ -61,6 +64,10 @@ pub fn anthropic_to_gemini_with_shadow(
         .and_then(|((store, provider_id), session_id)| store.get_session(provider_id, session_id))
         .map(|snapshot| snapshot.turns)
         .unwrap_or_default();
+    let supports_multimodal_function_response = body
+        .get("model")
+        .and_then(Value::as_str)
+        .is_some_and(is_gemini_3_series);
 
     let messages = body.get("messages").and_then(|value| value.as_array());
 
@@ -73,7 +80,11 @@ pub fn anthropic_to_gemini_with_shadow(
     }
 
     if let Some(messages) = messages {
-        result["contents"] = json!(convert_messages_to_contents(messages, &shadow_turns)?);
+        result["contents"] = json!(convert_messages_to_contents(
+            messages,
+            &shadow_turns,
+            supports_multimodal_function_response,
+        )?);
     }
 
     if let Some(generation_config) = build_generation_config(&body) {
@@ -361,6 +372,7 @@ fn build_generation_config(body: &Value) -> Option<Value> {
 fn convert_messages_to_contents(
     messages: &[Value],
     shadow_turns: &[GeminiAssistantTurn],
+    supports_multimodal_function_response: bool,
 ) -> Result<Vec<Value>, ProxyError> {
     let mut contents = Vec::new();
     let mut used_shadow_indices = HashSet::new();
@@ -446,6 +458,7 @@ fn convert_messages_to_contents(
                         role,
                         &mut tool_name_by_id,
                         &thought_signature_by_id,
+                        supports_multimodal_function_response,
                     )?
                 }
             } else {
@@ -454,6 +467,7 @@ fn convert_messages_to_contents(
                     role,
                     &mut tool_name_by_id,
                     &thought_signature_by_id,
+                    supports_multimodal_function_response,
                 )?
             }
         } else {
@@ -462,6 +476,7 @@ fn convert_messages_to_contents(
                 role,
                 &mut tool_name_by_id,
                 &thought_signature_by_id,
+                supports_multimodal_function_response,
             )?
         };
 
@@ -560,6 +575,7 @@ fn convert_message_content_to_parts(
     role: &str,
     tool_name_by_id: &mut std::collections::HashMap<String, String>,
     thought_signature_by_id: &std::collections::HashMap<String, String>,
+    supports_multimodal_function_response: bool,
 ) -> Result<Vec<Value>, ProxyError> {
     let Some(content) = content else {
         return Ok(Vec::new());
@@ -705,16 +721,31 @@ fn convert_message_content_to_parts(
                         ))
                     })?;
 
+                let (response, media_parts) = plan_gemini_tool_result(block.get("content"));
+
                 // See `tool_use` above: synthesized ids must not leak upstream.
                 let mut function_response = json!({
                     "name": name,
-                    "response": normalize_tool_result_response(block.get("content"))
+                    "response": response
                 });
                 if !tool_use_id.is_empty() && !is_synthesized_tool_call_id(tool_use_id) {
                     function_response["id"] = json!(tool_use_id);
                 }
 
-                parts.push(json!({ "functionResponse": function_response }));
+                if supports_multimodal_function_response && !media_parts.is_empty() {
+                    function_response["parts"] = Value::Array(media_parts);
+                    parts.push(json!({ "functionResponse": function_response }));
+                } else {
+                    parts.push(json!({ "functionResponse": function_response }));
+                    if !media_parts.is_empty() {
+                        parts.push(json!({
+                            "text": format!(
+                                "[cc-switch: media output of tool call {tool_use_id}]"
+                            )
+                        }));
+                        parts.extend(media_parts);
+                    }
+                }
             }
             "thinking" | "redacted_thinking" => {}
             _ => {}
@@ -743,6 +774,74 @@ fn normalize_tool_result_response(content: Option<&Value>) -> Value {
         Some(value) => json!({ "content": value.clone() }),
         None => json!({ "content": "" }),
     }
+}
+
+fn plan_gemini_tool_result(content: Option<&Value>) -> (Value, Vec<Value>) {
+    let Some(content) = content else {
+        return (normalize_tool_result_response(None), Vec::new());
+    };
+
+    let mut cleaned = content.clone();
+    let replacement_block = json!({
+        "type":"text",
+        "text":TOOL_RESULT_MEDIA_ATTACHED_MARKER
+    });
+    let mut chat_media_parts = Vec::new();
+    let replaced = strip_and_clamp_media_from_tool_value(
+        &mut cleaned,
+        &mut chat_media_parts,
+        ToolMediaScope::InlineImagesOnly,
+        &replacement_block,
+        TOOL_RESULT_MEDIA_ATTACHED_MARKER,
+    );
+    if replaced == 0 {
+        return (normalize_tool_result_response(Some(content)), Vec::new());
+    }
+
+    let mut gemini_parts = Vec::new();
+    gemini_parts.extend(
+        chat_media_parts
+            .iter()
+            .filter_map(gemini_part_from_chat_image),
+    );
+
+    (normalize_tool_result_response(Some(&cleaned)), gemini_parts)
+}
+
+fn is_gemini_3_series(model: &str) -> bool {
+    let normalized = model.trim().to_ascii_lowercase();
+    normalized.starts_with("gemini-3")
+        || normalized
+            .rsplit('/')
+            .next()
+            .is_some_and(|tail| tail.starts_with("gemini-3"))
+}
+
+fn gemini_part_from_chat_image(part: &Value) -> Option<Value> {
+    let image_url = part
+        .pointer("/image_url/url")
+        .and_then(Value::as_str)
+        .filter(|url| !url.trim().is_empty())?;
+
+    if image_url
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"))
+    {
+        let rest = &image_url[5..];
+        let (meta, data) = rest.split_once(',')?;
+        if data.is_empty() || !meta.to_ascii_lowercase().contains(";base64") {
+            return None;
+        }
+        let mime_type = meta.split(';').next().unwrap_or("image/png");
+        return Some(json!({
+            "inlineData": {
+                "mimeType": mime_type,
+                "data": data
+            }
+        }));
+    }
+
+    None
 }
 
 fn shadow_parts(content: &Value) -> Option<Vec<Value>> {
@@ -1264,6 +1363,290 @@ mod tests {
             result["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"][0],
             "get_weather"
         );
+    }
+
+    #[test]
+    fn anthropic_to_gemini_moves_mixed_tool_result_image_to_native_part() {
+        let input = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "call_image",
+                        "name": "inspect",
+                        "input": {}
+                    }]
+                },
+                {
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "call_image",
+                        "content": [
+                            {"type": "text", "text": "caption"},
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/png",
+                                    "data": "GEMINI_TOOL_IMAGE_SENTINEL"
+                                }
+                            }
+                        ]
+                    }]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+        let parts = result["contents"][1]["parts"].as_array().unwrap();
+        let response = &parts[0]["functionResponse"]["response"]["content"];
+
+        assert!(response.as_str().unwrap().contains("caption"));
+        assert!(response
+            .as_str()
+            .unwrap()
+            .contains("tool result media attached"));
+        assert!(!response
+            .as_str()
+            .unwrap()
+            .contains("GEMINI_TOOL_IMAGE_SENTINEL"));
+        assert_eq!(
+            parts[1]["text"],
+            "[cc-switch: media output of tool call call_image]"
+        );
+        assert_eq!(parts[2]["inlineData"]["mimeType"], "image/png");
+        assert_eq!(parts[2]["inlineData"]["data"], "GEMINI_TOOL_IMAGE_SENTINEL");
+    }
+
+    #[test]
+    fn anthropic_to_gemini_clamps_json_string_residual_base64_before_serializing() {
+        let residual_base64 = "A".repeat(20_000);
+        let encoded = json!({
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "data:image/png;base64,GEMINI_STRING_IMAGE_SENTINEL"
+                    }
+                },
+                {"type": "video", "data": residual_base64}
+            ]
+        })
+        .to_string();
+        let input = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "call_string",
+                        "name": "inspect",
+                        "input": {}
+                    }]
+                },
+                {
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "call_string",
+                        "content": encoded
+                    }]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+        let serialized = result.to_string();
+
+        assert!(serialized.contains("[cc-switch: omitted 20000 bytes]"));
+        assert!(!serialized.contains(&"A".repeat(64)));
+        assert_eq!(
+            result["contents"][1]["parts"][2]["inlineData"]["data"],
+            "GEMINI_STRING_IMAGE_SENTINEL"
+        );
+    }
+
+    #[test]
+    fn anthropic_to_gemini_keeps_remote_tool_image_in_legacy_response() {
+        let remote_image = json!({
+            "type": "image",
+            "source": {
+                "type": "url",
+                "url": "https://example.com/tool-image.png"
+            }
+        });
+        let input = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "call_remote",
+                        "name": "inspect",
+                        "input": {}
+                    }]
+                },
+                {
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "call_remote",
+                        "content": [remote_image.clone()]
+                    }]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+        let parts = result["contents"][1]["parts"].as_array().unwrap();
+
+        assert_eq!(parts.len(), 1);
+        assert_eq!(
+            parts[0]["functionResponse"]["response"]["content"][0],
+            remote_image
+        );
+        assert!(!result.to_string().contains("fileData"));
+        assert!(!result
+            .to_string()
+            .contains(TOOL_RESULT_MEDIA_ATTACHED_MARKER));
+    }
+
+    #[test]
+    fn anthropic_to_gemini_does_not_strip_unconvertible_tool_data_url() {
+        let malformed_image = json!({
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/png,NOT_BASE64"
+            }
+        });
+        let input = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "call_malformed",
+                        "name": "inspect",
+                        "input": {}
+                    }]
+                },
+                {
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "call_malformed",
+                        "content": [malformed_image.clone()]
+                    }]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+        let parts = result["contents"][1]["parts"].as_array().unwrap();
+
+        assert_eq!(parts.len(), 1);
+        assert_eq!(
+            parts[0]["functionResponse"]["response"]["content"][0],
+            malformed_image
+        );
+        assert!(!result.to_string().contains("inlineData"));
+        assert!(!result
+            .to_string()
+            .contains(TOOL_RESULT_MEDIA_ATTACHED_MARKER));
+    }
+
+    #[test]
+    fn anthropic_to_gemini_does_not_embed_image_only_tool_result_as_json() {
+        let input = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "call_image",
+                        "name": "inspect",
+                        "input": {}
+                    }]
+                },
+                {
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "call_image",
+                        "content": [{
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/webp",
+                                "data": "IMAGE_ONLY_SENTINEL"
+                            }
+                        }]
+                    }]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+        let parts = result["contents"][1]["parts"].as_array().unwrap();
+        let response = &parts[0]["functionResponse"]["response"]["content"];
+
+        assert!(response.is_string());
+        assert!(!response.as_str().unwrap().contains("IMAGE_ONLY_SENTINEL"));
+        assert_eq!(parts[2]["inlineData"]["mimeType"], "image/webp");
+        assert_eq!(parts[2]["inlineData"]["data"], "IMAGE_ONLY_SENTINEL");
+    }
+
+    #[test]
+    fn anthropic_to_gemini_3_uses_multimodal_function_response_parts() {
+        let input = json!({
+            "model": "gemini-3-pro-preview",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "call_image",
+                        "name": "inspect",
+                        "input": {}
+                    }]
+                },
+                {
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "call_image",
+                        "content": [{
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/jpeg",
+                                "data": "GEMINI_3_IMAGE_SENTINEL"
+                            }
+                        }]
+                    }]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini(input).unwrap();
+        let parts = result["contents"][1]["parts"].as_array().unwrap();
+        let function_response = &parts[0]["functionResponse"];
+
+        assert_eq!(parts.len(), 1);
+        assert_eq!(
+            function_response["parts"][0]["inlineData"]["mimeType"],
+            "image/jpeg"
+        );
+        assert_eq!(
+            function_response["parts"][0]["inlineData"]["data"],
+            "GEMINI_3_IMAGE_SENTINEL"
+        );
+        assert!(!function_response["response"]["content"]
+            .as_str()
+            .unwrap()
+            .contains("GEMINI_3_IMAGE_SENTINEL"));
     }
 
     #[test]
