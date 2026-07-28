@@ -248,7 +248,7 @@ fn rewrite_tool_search_history_items(
     }
 }
 
-fn normalize_response_function_tool(tool: &mut Value) {
+pub(crate) fn normalize_response_function_tool(tool: &mut Value) {
     let Some(obj) = tool.as_object_mut() else {
         return;
     };

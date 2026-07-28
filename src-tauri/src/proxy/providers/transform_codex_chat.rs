@@ -1323,7 +1323,9 @@ fn collect_tool_search_output_item_tools(value: &Value, context: &mut CodexToolC
         return;
     };
     for tool in tools {
-        context.add_response_tool(tool);
+        let mut tool = tool.clone();
+        super::transform_codex_responses_namespace::normalize_response_function_tool(&mut tool);
+        context.add_response_tool(&tool);
     }
 }
 
@@ -1331,13 +1333,10 @@ fn is_tool_search_history_item(value: &Value) -> bool {
     let Some(obj) = value.as_object() else {
         return false;
     };
-    match obj.get("type").and_then(Value::as_str) {
-        Some("tool_search_call" | "tool_search_output") => true,
-        Some("function_call") => {
-            obj.get("name").and_then(Value::as_str) == Some(TOOL_SEARCH_PROXY_NAME)
-        }
-        _ => false,
-    }
+    matches!(
+        obj.get("type").and_then(Value::as_str),
+        Some("tool_search_call" | "tool_search_output")
+    )
 }
 
 fn contains_loaded_tool_search_output(value: &Value) -> bool {
@@ -2687,6 +2686,22 @@ mod tests {
 
         assert!(!request_uses_responses_tool_search_shim(&nested));
         let context = build_codex_tool_context_from_request(&nested);
+        assert!(context.chat_tools().is_empty());
+    }
+
+    #[test]
+    fn ordinary_historical_tool_search_function_call_does_not_enable_shim() {
+        let historical = json!({
+            "input": [{
+                "type": "function_call",
+                "name": TOOL_SEARCH_PROXY_NAME,
+                "call_id": "ordinary-search-1",
+                "arguments": "{\"query\":\"application data\"}"
+            }]
+        });
+
+        assert!(!request_uses_responses_tool_search_shim(&historical));
+        let context = build_codex_tool_context_from_request(&historical);
         assert!(context.chat_tools().is_empty());
     }
 
@@ -4820,9 +4835,10 @@ mod tests {
                     "type": "function",
                     "name": "automation_update",
                     "description": "Manage a task automation.",
-                    "parameters": {
+                    "inputSchema": {
                         "type": "object",
-                        "properties": {"title": {"type": "string"}}
+                        "properties": {"title": {"type": "string"}},
+                        "required": ["title"]
                     }
                 }]
             }]
@@ -4837,6 +4853,20 @@ mod tests {
             .collect();
         assert!(names.contains(&"automation_update"));
         assert!(names.contains(&"tool_search"));
+        let automation = result["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| {
+                tool.pointer("/function/name").and_then(Value::as_str) == Some("automation_update")
+            })
+            .unwrap();
+        assert_eq!(automation["function"]["parameters"]["type"], "object");
+        assert_eq!(automation["function"]["parameters"]["required"][0], "title");
+        assert_eq!(
+            automation["function"]["parameters"]["properties"]["title"]["type"],
+            "string"
+        );
     }
 
     #[test]
