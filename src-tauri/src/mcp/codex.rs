@@ -71,11 +71,18 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                 continue;
             };
 
-            // type 缺省为 stdio
+            // Codex omits `type` and infers transport from `command` or `url`.
+            // Preserve explicit legacy values, otherwise mirror that inference.
             let typ = entry_tbl
                 .get("type")
                 .and_then(|v| v.as_str())
-                .unwrap_or("stdio");
+                .unwrap_or_else(|| {
+                    if entry_tbl.contains_key("url") {
+                        "http"
+                    } else {
+                        "stdio"
+                    }
+                });
 
             // 构建 JSON 规范
             let mut spec = serde_json::Map::new();
@@ -556,7 +563,7 @@ fn json_value_to_toml_item(value: &Value, field_name: &str) -> Option<toml_edit:
 /// Helper: 将 JSON MCP 服务器规范转换为 toml_edit::Table
 ///
 /// 策略：
-/// 1. 核心字段（type, command, args, url, headers, env, cwd）使用强类型处理
+/// 1. 传输字段（command, args, url, headers, env, cwd）使用强类型处理；type 仅供内部判别
 /// 2. 扩展字段（timeout、retry 等）通过白名单列表自动转换
 /// 3. 其他未知字段使用通用转换器尝试转换
 pub(super) fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError> {
@@ -564,7 +571,9 @@ pub(super) fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table
 
     let mut t = Table::new();
     let typ = spec.get("type").and_then(|v| v.as_str()).unwrap_or("stdio");
-    t["type"] = toml_edit::value(typ);
+    // `type` is CC Switch's internal transport discriminator. Codex infers
+    // STDIO from `command` and Streamable HTTP from `url`; emitting the
+    // discriminator makes current Codex reject the generated config.toml.
 
     // 定义核心字段（已在下方处理，跳过通用转换）
     let core_fields = match typ {

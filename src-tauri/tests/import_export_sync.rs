@@ -322,6 +322,17 @@ fn sync_enabled_to_codex_writes_enabled_servers() {
             }
         }),
     );
+    config.mcp.codex.servers.insert(
+        "http-enabled".into(),
+        json!({
+            "id": "http-enabled",
+            "enabled": true,
+            "server": {
+                "type": "http",
+                "url": "https://mcp.example.com",
+            }
+        }),
+    );
 
     cc_switch_lib::sync_enabled_to_codex(&config).expect("sync codex");
 
@@ -330,6 +341,53 @@ fn sync_enabled_to_codex_writes_enabled_servers() {
     assert!(
         text.contains("mcp_servers") && text.contains("stdio-enabled"),
         "enabled servers should be serialized"
+    );
+
+    let parsed: toml::Value = toml::from_str(&text).expect("parse generated config.toml");
+    let server = parsed
+        .get("mcp_servers")
+        .and_then(|servers| servers.get("stdio-enabled"))
+        .expect("generated stdio server");
+    assert_eq!(
+        server.get("command").and_then(toml::Value::as_str),
+        Some("echo"),
+        "Codex stdio servers must retain their command"
+    );
+    assert!(
+        server.get("type").is_none(),
+        "Codex infers stdio transport from command; emitting type = \"stdio\" makes current Codex reject config.toml"
+    );
+
+    let server = parsed
+        .get("mcp_servers")
+        .and_then(|servers| servers.get("http-enabled"))
+        .expect("generated streamable HTTP server");
+    assert_eq!(
+        server.get("url").and_then(toml::Value::as_str),
+        Some("https://mcp.example.com"),
+        "Codex streamable HTTP servers must retain their URL"
+    );
+    assert!(
+        server.get("type").is_none(),
+        "Codex infers streamable HTTP transport from url; internal transport metadata must not leak into config.toml"
+    );
+
+    let mut imported = MultiAppConfig::default();
+    let changed = cc_switch_lib::import_from_codex(&mut imported).expect("re-import codex");
+    assert_eq!(changed, 2, "both generated servers should round-trip");
+
+    let imported_servers = imported
+        .mcp
+        .servers
+        .as_ref()
+        .expect("re-imported unified servers");
+    assert_eq!(
+        imported_servers["stdio-enabled"].server["type"], "stdio",
+        "command-only entries should re-import as stdio"
+    );
+    assert_eq!(
+        imported_servers["http-enabled"].server["type"], "http",
+        "url-only entries should re-import as HTTP"
     );
 }
 
