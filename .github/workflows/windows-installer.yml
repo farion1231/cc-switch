@@ -1,0 +1,82 @@
+name: Windows Installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing GitHub release tag to receive the MSI
+        required: true
+        default: v3.17.0-ajia.2
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-installer:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.12.3
+          run_install: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build unsigned x64 MSI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pnpm tauri build --bundles msi --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Prepare installer
+        id: installer
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msi = Get-ChildItem 'src-tauri/target/release/bundle/msi' -Filter '*.msi' -Recurse | Select-Object -First 1
+          if ($null -eq $msi) {
+            throw 'Windows MSI installer was not generated'
+          }
+
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          $name = "CC-Switch-$env:RELEASE_TAG-Windows-x64.msi"
+          $destination = Join-Path release-assets $name
+          Copy-Item $msi.FullName $destination
+          $sha256 = (Get-FileHash $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText("$destination.sha256", "$sha256  $name`n", [Text.UTF8Encoding]::new($false))
+          "name=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "sha256=$sha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-x64-installer
+          path: release-assets/*
+          if-no-files-found: error
+
+      - name: Upload installer to release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY | Out-Null
+          gh release upload $env:RELEASE_TAG release-assets/* --clobber --repo $env:GITHUB_REPOSITORY
+          Write-Host "Uploaded ${{ steps.installer.outputs.name }}"
+          Write-Host "SHA-256 ${{ steps.installer.outputs.sha256 }}"

@@ -122,7 +122,10 @@ pub fn import_provider_from_deeplink(
                 &provider_id,
                 normalized.clone(),
             ) {
-                log::warn!("Failed to add custom endpoint '{normalized}': {e}");
+                log::warn!(
+                    "Failed to add custom endpoint '{}': {e}",
+                    crate::url_for_log(&normalized)
+                );
             }
         }
     }

@@ -3,6 +3,7 @@ import type {
   UsageSummary,
   UsageSummaryByApp,
   DailyStats,
+  UsageActivityDay,
   ProviderStats,
   ModelStats,
   RequestLog,
@@ -12,6 +13,7 @@ import type {
   PaginatedLogs,
   SessionSyncResult,
   DataSourceSummary,
+  TrayUsageOverview,
 } from "@/types/usage";
 import type { UsageResult } from "@/types";
 import type { AppId } from "./types";
@@ -78,6 +80,20 @@ export const usageApi = {
     });
   },
 
+  getTrayUsageOverview: async (
+    startDate?: number,
+    endDate?: number,
+    providerName?: string,
+    model?: string,
+  ): Promise<TrayUsageOverview> => {
+    return invoke("get_tray_usage_overview", {
+      startDate,
+      endDate,
+      providerName,
+      model,
+    });
+  },
+
   getUsageTrends: async (
     startDate?: number,
     endDate?: number,
@@ -91,6 +107,18 @@ export const usageApi = {
       appType,
       providerName,
       model,
+    });
+  },
+
+  getUsageActivityHeatmap: async (
+    startDate?: number,
+    endDate?: number,
+    appType?: string,
+  ): Promise<UsageActivityDay[]> => {
+    return invoke("get_usage_activity_heatmap", {
+      startDate,
+      endDate,
+      appType,
     });
   },
 
@@ -178,6 +206,10 @@ export const usageApi = {
   // Session usage sync
   syncSessionUsage: async (): Promise<SessionSyncResult> => {
     return invoke("sync_session_usage");
+  },
+
+  rebuildCodexUsage: async (): Promise<SessionSyncResult> => {
+    return invoke("rebuild_codex_usage");
   },
 
   getDataSourceBreakdown: async (): Promise<DataSourceSummary[]> => {

@@ -185,6 +185,72 @@
     "officialRouting": "公式アカウントルーティング",
     "nativeLogin": "Codex ログイン"
   },
+  "codexAccounts": {
+    "title": "Codex 公式アカウント",
+    "subtitle": "~/.codex/auth.json の公式ログインスナップショットを保存・切り替えし、各アカウントのクォータも確認できます。",
+    "openModule": "アカウント管理",
+    "captureSuccess": "現在の Codex アカウントを保存しました",
+    "captureFailed": "アカウントの保存に失敗しました: {{error}}",
+    "switchSuccessRestart": "アカウントを切り替えました。Codex App の再起動をおすすめします。",
+    "switchSuccess": "このアカウントはすでに使用中です",
+    "switchFailed": "アカウントの切り替えに失敗しました: {{error}}",
+    "rollbackSuccess": "前回の Codex アカウントへ戻しました",
+    "rollbackFailed": "ロールバックに失敗しました: {{error}}",
+    "restartSuccess": "Codex App を再起動しました",
+    "restartFailed": "Codex App の再起動に失敗しました: {{error}}",
+    "scanSuccess": "{{count}} 個の Codex アカウントスナップショットを検出しました",
+    "scanFailed": "アカウントスナップショットのスキャンに失敗しました: {{error}}",
+    "scanAccounts": "アカウントをスキャン",
+    "rollback": "戻す",
+    "restart": "Codex を再起動",
+    "refreshNow": "今すぐ更新",
+    "refreshInterval": "更新",
+    "intervalSaved": "更新間隔を保存しました",
+    "labelPlaceholder": "このアカウント名を入力（例: Personal Plus）",
+    "captureCurrent": "現在のアカウントを保存",
+    "renameAccount": "アカウント名を変更",
+    "saveName": "名前を保存",
+    "renameSuccess": "アカウント名を更新しました",
+    "renameFailed": "名前の変更に失敗しました: {{error}}",
+    "empty": "保存済みの Codex アカウントはまだありません。Codex にログインしてから「現在のアカウントを保存」をクリックしてください。",
+    "resetSoon": "まもなくリセット",
+    "resetInDays": "{{count}}日後にリセット",
+    "resetInHours": "{{count}}時間後にリセット",
+    "fiveHourRemaining": "5h 残り:",
+    "sevenDayRemaining": "7d 残り:",
+    "quotaUnavailable": "利用状況を取得できません",
+    "switchTo": "切り替え"
+  },
+  "codexQuota": {
+    "title": "Codex 利用状況",
+    "subtitle": "保存済み公式アカウントの 5h / 7d クォータをまとめ、アカウント管理へすぐ移動できます。",
+    "collapsedSubtitle": "保存済み公式アカウントのクォータ概要です。展開するとアカウントスナップショットを管理できます。",
+    "accountCount": "{{count}} アカウント",
+    "manageAccounts": "アカウント管理",
+    "expandManagement": "アカウント管理を展開",
+    "collapseManagement": "閉じる",
+    "remainingPercent": "残り {{percent}}%",
+    "empty": "クォータデータはまだありません。先に Codex 公式アカウントのスナップショットを保存してください。",
+    "available": "利用可",
+    "unavailable": "利用不可",
+    "apiKeyAccount": "API Key アカウント",
+    "unnamedAccount": "Codex アカウント {{index}}",
+    "accountSnapshot": "アカウントスナップショット",
+    "fiveHourRemaining": "5h 残り:",
+    "sevenDayRemaining": "7d 残り:",
+    "usageUnavailable": "利用状況を取得できません",
+    "resetSoon": "まもなくリセット",
+    "resetInDays": "{{count}}日後にリセット",
+    "resetInHours": "{{count}}時間後にリセット",
+    "resetInMinutes": "{{count}}分後にリセット",
+    "forecastLearning": "予測を学習中 {{current}}/{{required}}",
+    "forecastAtRisk": "週次リセット前に使い切る可能性があります",
+    "forecastWindows": "完全な5時間枠を約{{windows}}回利用可能",
+    "renameAccount": "アカウント名を変更",
+    "saveName": "名前を保存",
+    "renameSuccess": "アカウント名を更新しました",
+    "renameFailed": "名前の変更に失敗しました: {{error}}"
+  },
   "claudeDesktop": {
     "officialNotice": "Claude Desktop の公式プロバイダーは内蔵の 1P サインインを使用します。API キーやエンドポイントの設定は不要です。",
     "mode": "モデル処理方式",
@@ -259,6 +325,8 @@
     "proxyReasonOpenAIResponses": "OpenAI Responses API フォーマットを使用しており",
     "proxyReasonAnthropicMessages": "Anthropic Messages API フォーマットを使用しており",
     "proxyReasonFullUrl": "完全 URL 接続モードが有効になっており",
+    "proxyReasonManagedOAuth": "マネージド OAuth ログイン（トークンはローカルルーティングが注入）を使用しており",
+    "proxyReasonRoutingRequired": "リクエスト処理にローカルルーティングが必要であり",
     "openAIFormatHint": "このプロバイダーは OpenAI 互換フォーマットを使用しており、ルーティングサービスの有効化が必要です",
     "copilotProxyHint": "GitHub Copilot を Claude プロバイダーとして使用する場合、ローカルルーティングが常に必要です。ルーティングは現在のモデルに応じて Chat Completions または Responses を自動的に選択します。",
     "openLinkFailed": "リンクを開けませんでした",
@@ -321,12 +389,22 @@
     "tabAuth": "認証",
     "tabAdvanced": "詳細",
     "tabProxy": "ルーティング",
+    "usageQuery": "利用状況クエリ",
+    "usageAutoRefresh": "利用状況を自動更新",
+    "usageAutoRefreshDescription": "Codex アカウントの利用状況をバックグラウンドで更新します。",
+    "usageAdaptiveRefresh": "適応型更新",
+    "usageAdaptiveRefreshDescription": "Codex の利用中は更新を速め、アイドル時は頻度を下げます。",
+    "usageRefreshInterval": "更新間隔",
+    "usageRefreshIntervalDescription": "バックグラウンドとトレイの利用状況更新で使用します。",
+    "usageShowAllAccounts": "すべての Codex アカウントを表示",
+    "usageShowAllAccountsDescription": "Codex ページに複数アカウントのクォータパネルを表示します。",
     "authCenter": {
       "title": "OAuth 認証センター",
       "description": "Claude Code で他のサブスクリプションをご利用いただけます。コンプライアンスリスクにご注意ください。",
       "beta": "Beta",
       "copilotDescription": "GitHub Copilot アカウントを管理します",
-      "codexOauthDescription": "ChatGPT アカウントを管理します"
+      "codexOauthDescription": "ChatGPT アカウントを管理します",
+      "xaiOauthDescription": "xAI / Grok アカウントを管理します"
     },
     "advanced": {
       "configDir": {
@@ -397,10 +475,10 @@
         "cacheInjectionDescription": "リクエストの重要な位置に標準の 5 分間 Cache ブレークポイントを自動注入し、重複トークンの課金を削減"
       },
       "logConfig": {
-        "title": "ログ管理",
-        "description": "ログ出力レベルを制御",
-        "enabled": "ログを有効化",
-        "enabledDescription": "マスタースイッチ、オフにするとすべてのログが無効になります",
+        "title": "アプリ診断ログ",
+        "description": "アプリ診断ログの出力レベルを制御",
+        "enabled": "診断ログを有効化",
+        "enabledDescription": "cc-switch.log を制御します。リクエスト使用量記録と crash.log には影響しません",
         "level": "ログレベル",
         "levelDescription": "出力する最小ログレベルを設定",
         "levels": {
@@ -1014,9 +1092,10 @@
     "customApiKeyHint": "💡 カスタム設定では必要な項目をすべて手動で入力してください",
     "omoHint": "💡 OMO 設定は Agent のモデル割り当てを管理し、oh-my-openagent.jsonc / oh-my-opencode.jsonc の両方に対応します",
     "officialHint": "💡 公式プロバイダーはブラウザログインで、API Key は不要です",
+    "providerKeyStatusLoading": "プロバイダー識別子の状態を読み込んでいます。しばらくしてからもう一度お試しください",
     "getApiKey": "API Key を取得",
     "partnerPromotion": {
-      "sudocode": "SudoCode の1つのキーで、Claude Code と Claude Desktop では Claude Opus 4.8、Codex では GPT-5.6 を利用できます。登録後 QQ グループ 726213516 に参加し、管理者へ連絡すると CNY ¥10 のトライアルクレジットを受け取れます。",
+      "sudocode": "SudoCode の1つのキーで、Claude Code と Claude Desktop では Claude Opus 5、Codex では GPT-5.6 を利用できます。登録後 QQ グループ 726213516 に参加し、管理者へ連絡すると CNY ¥10 のトライアルクレジットを受け取れます。",
       "code0": "code0.ai は開発者向けの AI コーディングサービスプラットフォームで、Claude Code、Codex、Gemini に対応。CC Switch ユーザー限定特典：公式サイトからサポートに連絡してテストクレジットを受け取れます！",
       "nekocode": "NekoCode は Claude や Codex などの AI モデルに対応した、安定・高効率で信頼性の高い API 中継サービスを提供します。明瞭な従量課金制。CC Switch ユーザー限定 10%オフ：上のリンクから登録し、チャージ時にクーポンコード cc-switch を入力すると 10%オフ！",
       "packycode": "PackyCode は CC Switch の公式パートナーです。登録後チャージ時に \"cc-switch\" を入力すると 10% オフ",
@@ -1035,6 +1114,7 @@
       "aigocode": "AIGoCode は CC Switch の公式パートナーです。このリンクから登録すると、初回チャージ時に 10% のボーナスクレジットがもらえます！",
       "rightcode": "RightCode は CC Switch の公式パートナーです。このリンクから登録すると、毎回のチャージに 5% のボーナスクレジットがもらえます！",
       "aicodemirror": "AICodeMirror は CC Switch の公式パートナーです。このリンクから登録すると20%オフ！",
+      "aicoding": "AI Coding は CC Switch ユーザー向けに特別割引を提供しています。初回チャージが 10% オフ！",
       "crazyrouter": "CrazyRouter は CC Switch ユーザー向けに特別ボーナスを提供しています。初回チャージで 30% の追加クレジットがもらえます！",
       "sssaicode": "SSAI Code は CC Switch ユーザー向けに特別ボーナスを提供しています。チャージごとに $10 の追加クレジットがもらえます！",
       "siliconflow": "SiliconFlow は CC Switch の公式パートナーです",
@@ -1222,6 +1302,31 @@
     "fastMode": "FAST モード",
     "fastModeDescription": "低遅延のため service_tier=\"priority\" を送信します。既定ではオフ——オンにすると ChatGPT のクォータがより速く消費されます。"
   },
+  "xaiOauth": {
+    "authStatus": "xAI OAuth 認証",
+    "accountCount": "利用可能なアカウント: {{count}} 件",
+    "reauthRequired": "再ログインが必要です",
+    "notAuthenticated": "未認証",
+    "selectAccount": "アカウントを選択",
+    "selectAccountPlaceholder": "xAI アカウントを選択",
+    "useDefaultAccount": "デフォルトアカウントを使用",
+    "accounts": "xAI アカウント",
+    "defaultAccount": "デフォルト",
+    "expired": "認証情報が失効しました",
+    "setAsDefault": "デフォルトに設定",
+    "removeAccount": "アカウントを削除",
+    "addOrReauth": "アカウントを追加または再ログイン",
+    "login": "xAI でログイン",
+    "waitingForAuth": "xAI の認証を待っています…",
+    "enterCode": "ブラウザに自動入力されていない場合は、次を入力してください：",
+    "retry": "再試行",
+    "logoutAll": "すべての xAI アカウントを削除",
+    "loginRequired": "先に xAI アカウントへログインしてください"
+  },
+  "managedAuth": {
+    "selectedAccountNeedsReauth": "リンクされたアカウントが存在しないか、再ログインが必要です",
+    "selectedAccountUnavailable": "リンクされたアカウントが存在しないか、再ログインが必要です。別のアカウントを選択してください"
+  },
   "endpointTest": {
     "title": "API エンドポイント管理",
     "endpoints": "エンドポイント",
@@ -1315,7 +1420,7 @@
     "modelMetadataAdvanced": "モデルメタデータ詳細オプション",
     "modelMetadataAdvancedHint": "未知のモデル向けに Codex メタデータを上書きします。空にすると対応する config.toml 設定を削除します。",
     "defaultModelLabel": "デフォルトモデル",
-    "defaultModelPlaceholder": "例: gpt-5.6",
+    "defaultModelPlaceholder": "例: gpt-5.6-sol",
     "defaultModelHint": "Codex がデフォルトでリクエストするモデルです。プリセットの更新を待たずにいつでも変更できます。空欄のままモデルマッピングを設定している場合は、マッピングの先頭行が使われます。",
     "defaultModelNotInCatalog": "このモデルはモデルマッピングにないため、Codex の /model メニューには表示されません（直接リクエストは有効です）。",
     "addToModelMapping": "マッピングに追加",
@@ -1423,6 +1528,18 @@
   "usage": {
     "title": "利用統計",
     "subtitle": "AI モデルの利用状況とコスト統計を表示",
+    "trayPanel": {
+      "title": "使用量",
+      "day": "日",
+      "week": "週",
+      "month": "月",
+      "apps": "アプリ",
+      "models": "モデル",
+      "sources": "ソース",
+      "success": "成功率",
+      "themeNative": "ネイティブテーマ",
+      "themeCard": "カードテーマ"
+    },
     "today": "24時間",
     "last7days": "7日間",
     "last30days": "30日間",
@@ -1472,7 +1589,22 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "grokbuild": "Grok Build"
+    },
+    "activityHeatmap": {
+      "title": "過去 365 日のアクティビティ",
+      "loading": "アクティビティヒートマップを読み込み中",
+      "error": "アクティビティヒートマップの読み込みに失敗しました",
+      "summary": "{{activeDays}} 日アクティブ · {{sessions}} セッション · {{tokens}} tokens",
+      "less": "少ない",
+      "more": "多い",
+      "tooltipDate": "日付",
+      "tooltipApp": "アプリ",
+      "tooltipTokens": "実消費トークン",
+      "tooltipSessions": "セッション数",
+      "tooltipRequests": "リクエスト数",
+      "tooltipCost": "コスト"
     },
     "rawInputLabel": "原始",
     "dataSources": "データソース",
@@ -1482,7 +1614,8 @@
       "codex_db": "Codex DB",
       "codex_session": "Codex セッション",
       "gemini_session": "Gemini セッション",
-      "opencode_session": "OpenCode セッション"
+      "opencode_session": "OpenCode セッション",
+      "grok_session": "Grok Build セッション"
     },
     "sessionSync": {
       "trigger": "セッションログを同期",
@@ -1491,6 +1624,17 @@
       "imported": "セッションログから {{count}} 件のレコードをインポートしました",
       "upToDate": "セッションログは最新です",
       "failed": "セッション同期に失敗しました"
+    },
+    "rebuildCodex": {
+      "title": "Codex 使用量メンテナンス",
+      "description": "ローカルの rollout ログから Codex セッション使用量を再構築します",
+      "warning": "最初にデータベースを自動バックアップします。元の JSONL が削除済みの履歴は再インポートできません。",
+      "action": "Codex 使用量を再構築",
+      "confirmTitle": "Codex 使用量を再構築しますか？",
+      "confirmMessage": "既存の Codex セッション明細と集計を削除し、ローカルの Codex ログから再インポートします。\n\n削除済みログの履歴は失われます。親 rollout がない fork は保留されます。",
+      "confirmAction": "バックアップして再構築",
+      "completed": "再構築完了：{{imported}} 件インポート、{{errors}} 件エラー、重複候補 {{suspected}} 件、保留ファイル {{deferred}} 件",
+      "failed": "Codex 使用量の再構築に失敗しました：{{error}}"
     },
     "totalRecords": "全 {{total}} 件",
     "goToPage": "移動",
@@ -1701,7 +1845,10 @@
   "errors": {
     "usage_query_failed": "利用状況の取得に失敗しました",
     "configLoadFailedTitle": "設定の読み込みに失敗しました",
-    "configLoadFailedMessage": "設定ファイルを読み込めません:\n{{path}}\n\nエラー詳細:\n{{detail}}\n\nJSON が正しいか確認するか、同じディレクトリのバックアップファイル（config.json.bak など）から復元してください。\n\nアプリを終了して修正してください。"
+    "configLoadFailedMessage": "設定ファイルを読み込めません:\n{{path}}\n\nエラー詳細:\n{{detail}}\n\nJSON が正しいか確認するか、同じディレクトリのバックアップファイル（config.json.bak など）から復元してください。\n\nアプリを終了して修正してください。",
+    "frontendCrashTitle": "画面で問題が発生しました",
+    "frontendCrashMessage": "エラー情報をアプリ診断ログに保存しようとしました。画面を再読み込みし、問題が続く場合は Issue にログを添付してください。",
+    "reloadInterface": "画面を再読み込み"
   },
   "presetSelector": {
     "title": "設定タイプを選択",
@@ -2114,9 +2261,9 @@
       "addModel": "モデルを追加",
       "noModels": "モデル未設定。このプロバイダーに切り替えてもデフォルトモデルは更新されません。",
       "modelId": "モデル ID",
-      "modelIdPlaceholder": "anthropic/claude-opus-4-8",
+      "modelIdPlaceholder": "anthropic/claude-opus-5",
       "modelName": "表示名",
-      "modelNamePlaceholder": "Claude Opus 4.8",
+      "modelNamePlaceholder": "Claude Opus 5",
       "contextLength": "コンテキスト長",
       "advancedOptions": "詳細オプション",
       "modelsHint": "切り替え時、最初のモデルが model.default に書き込まれます。",
@@ -2533,8 +2680,8 @@
           "description": "単一リクエストの最大待機時間（0 = 無制限、または 10 ~ 600 秒）"
         },
         "enableLogging": {
-          "label": "ログ記録を有効化",
-          "description": "トラブルシューティングのためにすべてのルーティングリクエストを記録"
+          "label": "リクエスト使用量を記録",
+          "description": "ルーティングリクエストの使用量と状態をローカル統計データベースに保存"
         },
         "streamingFirstByteTimeout": {
           "label": "ストリーミング初回バイトタイムアウト（秒）",
@@ -2894,13 +3041,13 @@
       "writing": "ライティング"
     },
     "categoryTooltip": {
-      "visualEngineering": "フロントエンドとビジュアルエンジニアリングカテゴリ。UI/UX デザイン、スタイリング、アニメーション、インターフェース実装に特化。デフォルトで Gemini 3.5 Flash モデルを使用。",
+      "visualEngineering": "フロントエンドとビジュアルエンジニアリングカテゴリ。UI/UX デザイン、スタイリング、アニメーション、インターフェース実装に特化。デフォルトで Gemini 3.6 Flash モデルを使用。",
       "ultrabrain": "ディープロジック推論カテゴリ。広範な分析が必要な複雑なアーキテクチャ決定に使用。デフォルトで GPT-5.3 Codex の超高推論バリアントを使用。",
       "deep": "ディープ自律問題解決カテゴリ。目標指向の実行で、行動前に徹底的な調査を実施。深い理解が必要な難問に適しています。",
-      "artistry": "高度にクリエイティブで芸術的なタスクカテゴリ。斬新なアイデアとクリエイティブなソリューションを促進。デフォルトで Gemini 3.5 Flash の高推論バリアントを使用。",
+      "artistry": "高度にクリエイティブで芸術的なタスクカテゴリ。斬新なアイデアとクリエイティブなソリューションを促進。デフォルトで Gemini 3.6 Flash の高推論バリアントを使用。",
       "quick": "軽量タスクカテゴリ。単一ファイルの修正、タイポ修正、簡単な調整などの些細な作業に使用。デフォルトで Claude Haiku 4.5 高速モデルを使用。",
       "unspecifiedLow": "未分類の低作業量タスクカテゴリ。他のカテゴリに該当せず作業量が小さいタスクに適用。デフォルトで Claude Sonnet 4.5 を使用。",
-      "unspecifiedHigh": "未分類の高作業量タスクカテゴリ。他のカテゴリに該当せず作業量が大きいタスクに適用。デフォルトで Claude Opus 4.8 の max バリアントを使用。",
+      "unspecifiedHigh": "未分類の高作業量タスクカテゴリ。他のカテゴリに該当せず作業量が大きいタスクに適用。デフォルトで Claude Opus 5 の max バリアントを使用。",
       "writing": "ライティングカテゴリ。ドキュメント、散文、技術文書に特化。デフォルトで Kimi K2.5 モデルを使用。"
     },
     "slimAgentDesc": {
@@ -2963,6 +3110,7 @@
     "geminiFlashLite": "Flash Lite",
     "weeklyLimit": "週間",
     "monthly": "月間",
+    "credits": "クレジット",
     "copilotPremium": "プレミアム",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}}後にリセット",

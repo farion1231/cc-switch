@@ -2,6 +2,7 @@
 
 mod auth;
 mod balance;
+mod codex_accounts;
 mod codex_oauth;
 mod coding_plan;
 mod config;
@@ -28,6 +29,7 @@ pub mod skill;
 mod stream_check;
 mod subscription;
 mod sync_support;
+mod xai_oauth;
 
 mod lightweight;
 mod s3_sync;
@@ -37,6 +39,7 @@ mod workspace;
 
 pub use auth::*;
 pub use balance::*;
+pub use codex_accounts::*;
 pub use codex_oauth::*;
 pub use coding_plan::*;
 pub use config::*;
@@ -62,6 +65,7 @@ pub use settings::*;
 pub use skill::*;
 pub use stream_check::*;
 pub use subscription::*;
+pub use xai_oauth::*;
 
 pub use lightweight::*;
 pub use s3_sync::*;

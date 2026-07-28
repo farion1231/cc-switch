@@ -84,7 +84,9 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
             // 核心字段（需要手动处理的字段）
             let core_fields = match typ {
                 "stdio" => vec!["type", "command", "args", "env", "cwd"],
-                "http" | "sse" => vec!["type", "url", "http_headers"],
+                // DB 中的统一规范使用 headers，Codex TOML 使用 http_headers。
+                // 两者都必须视为核心字段，避免鉴权值落入通用日志路径。
+                "http" | "sse" => vec!["type", "url", "headers", "http_headers"],
                 _ => vec!["type"],
             };
 
@@ -204,7 +206,7 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
 
                 if let Some(val) = json_val {
                     spec.insert(key.clone(), val);
-                    log::debug!("导入扩展字段 '{key}' = {toml_val:?}");
+                    log::debug!("导入扩展字段 '{key}'（值已省略）");
                 }
             }
 
@@ -567,7 +569,7 @@ pub(super) fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table
     // 定义核心字段（已在下方处理，跳过通用转换）
     let core_fields = match typ {
         "stdio" => vec!["type", "command", "args", "env", "cwd"],
-        "http" | "sse" => vec!["type", "url", "http_headers"],
+        "http" | "sse" => vec!["type", "url", "headers", "http_headers"],
         _ => vec!["type"],
     };
 
@@ -664,15 +666,51 @@ pub(super) fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table
             if let Some(toml_item) = json_value_to_toml_item(value, key) {
                 t[&key[..]] = toml_item;
 
-                // 记录扩展字段的处理
+                // 只记录字段名：未知字段同样可能携带 token / secret。
                 if extended_fields.contains(&key.as_str()) {
-                    log::debug!("已转换扩展字段 '{key}' = {value:?}");
+                    log::debug!("已转换扩展字段 '{key}'（值已省略）");
                 } else {
-                    log::info!("已转换自定义字段 '{key}' = {value:?}");
+                    log::debug!("已转换自定义字段 '{key}'（值已省略）");
                 }
             }
         }
     }
 
     Ok(t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn http_headers_are_only_written_to_codex_http_headers() {
+        let table = json_server_to_toml_table(&json!({
+            "type": "http",
+            "url": "https://mcp.example.com",
+            "headers": {
+                "Authorization": "Bearer top-secret",
+                "X-Api-Key": "also-secret"
+            },
+            "timeout": 30
+        }))
+        .unwrap();
+
+        let headers = table
+            .get("http_headers")
+            .and_then(|item| item.as_table())
+            .expect("Codex http_headers table should be written");
+        assert_eq!(
+            headers.get("Authorization").and_then(|item| item.as_str()),
+            Some("Bearer top-secret")
+        );
+        assert!(
+            table.get("headers").is_none(),
+            "legacy headers must not be emitted a second time"
+        );
+        assert_eq!(
+            table.get("timeout").and_then(|item| item.as_integer()),
+            Some(30)
+        );
+    }
 }

@@ -1459,6 +1459,16 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         AppType::Codex => crate::codex_config::read_codex_live_settings()?,
         AppType::GrokBuild => {
             let mut settings = crate::grok_config::read_grok_live_settings()?;
+            let config = settings
+                .get("config")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            // 官方登录态（无自定义模型表）在这里必须报错：本函数也被启动
+            // 自动导入调用，而全项目惯例是"启动自动导入只产出 default，
+            // 从不产出官方条目"——否则删掉的官方条目每次重启都会复活。
+            // 官方态的成功导入（补官方条目并激活）只挂在手动导入的命令层
+            // （`import_default_config_internal`）。
+            crate::grok_config::validate_config_toml(config)?;
             crate::grok_config::strip_grok_mcp_servers_from_settings(&mut settings)?;
             settings
         }
@@ -1559,6 +1569,20 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         .db
         .set_current_provider(app_type.as_str(), &provider.id)?;
     crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
+
+    // 初次导入已有配置时随手补出官方入口，对齐其它应用"首启动 = 导入 default
+    // + 播种官方条目"的观感。grokbuild 种子晚于 `official_providers_seeded`
+    // flag 引入，存量库的主播种不会再跑，只能挂在导入动作上补。
+    // 只在导入成功时执行；live 完全不可导入（文件缺失/语法错误/残缺配置）
+    // 不会到达这里。失败只 warn。
+    if matches!(app_type, AppType::GrokBuild) {
+        if let Err(e) = state.db.ensure_official_seed_by_id(
+            crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
+            AppType::GrokBuild,
+        ) {
+            log::warn!("Failed to ensure grokbuild-official seed after import: {e}");
+        }
+    }
 
     Ok(true) // 真正导入了
 }

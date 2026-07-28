@@ -1,7 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
 import type { AppId } from "@/lib/api/types";
 import type { UsageResult } from "@/types";
-import type { SubscriptionQuota } from "@/types/subscription";
+import type {
+  CodexQuotaForecast,
+  SubscriptionQuota,
+} from "@/types/subscription";
 import { usageKeys } from "@/lib/query/usage";
 import { subscriptionKeys } from "@/lib/query/subscription";
 import { useTauriEvent } from "./useTauriEvent";
@@ -18,6 +21,12 @@ type UsageCacheUpdatedPayload =
       appType: AppId;
       data: SubscriptionQuota;
     };
+
+type CodexAccountQuotasPayload = {
+  kind: "codex-all";
+  accounts: Array<{ accountKey: string; quota: SubscriptionQuota }>;
+  forecasts?: Record<string, CodexQuotaForecast>;
+};
 
 /**
  * 后端 `UsageCache` 写入后会 emit `usage-cache-updated`，本 hook 把 payload 同步到
@@ -40,4 +49,23 @@ export function useUsageCacheBridge() {
       );
     }
   });
+
+  useTauriEvent<CodexAccountQuotasPayload>(
+    "codex-account-quotas-updated",
+    ({ accounts, forecasts }) => {
+      const quotas = Object.fromEntries(
+        accounts.map(({ accountKey, quota }) => [accountKey, quota]),
+      );
+      queryClient.setQueryData<Record<string, SubscriptionQuota>>(
+        subscriptionKeys.allCodexQuotas(),
+        quotas,
+      );
+      if (forecasts) {
+        queryClient.setQueryData<Record<string, CodexQuotaForecast>>(
+          subscriptionKeys.codexForecasts(),
+          forecasts,
+        );
+      }
+    },
+  );
 }

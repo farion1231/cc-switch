@@ -18,6 +18,9 @@ use super::transform_responses::{sanitize_anthropic_tool_use_input, TOOL_RESULT_
 use crate::proxy::error::ProxyError;
 use crate::proxy::json_canonical::canonical_json_string;
 use crate::proxy::sse::{strip_sse_field, take_sse_block};
+use crate::proxy::tool_media::{
+    strip_and_clamp_media_from_tool_value, ToolMediaScope, TOOL_RESULT_MEDIA_ATTACHED_MARKER,
+};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
@@ -440,14 +443,17 @@ fn chat_tool_to_anthropic_tool(chat_tool: &Value) -> Option<Value> {
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
-    let mut tool = json!({
-        "name": name,
-        "input_schema": function
-            .get("parameters")
-            .cloned()
-            .filter(|value| value.as_object().is_some_and(|object| !object.is_empty()))
-            .unwrap_or_else(|| json!({ "type": "object", "properties": {} }))
-    });
+    let mut input_schema = function
+        .get("parameters")
+        .cloned()
+        .filter(|value| value.as_object().is_some_and(|object| !object.is_empty()))
+        .unwrap_or_else(|| json!({ "type": "object", "properties": {} }));
+    if let Some(schema) = input_schema.as_object_mut() {
+        if schema.get("type").and_then(Value::as_str) != Some("object") {
+            schema.insert("type".to_string(), json!("object"));
+        }
+    }
+    let mut tool = json!({ "name": name, "input_schema": input_schema });
     if let Some(description) = function.get("description").and_then(|value| value.as_str()) {
         tool["description"] = json!(description);
     }
@@ -720,10 +726,12 @@ struct ToolResultContent {
 
 fn tool_result_content_from_responses_item(item: &Value) -> ToolResultContent {
     match item.get("output") {
-        Some(Value::String(text)) => ToolResultContent {
-            content: json!(text),
-            is_error: false,
-        },
+        Some(text @ Value::String(_)) => {
+            alternate_image_tool_result_content(text).unwrap_or_else(|| ToolResultContent {
+                content: text.clone(),
+                is_error: false,
+            })
+        }
         Some(Value::Array(parts)) => {
             let mut content = Vec::new();
             let mut is_error = false;
@@ -758,10 +766,26 @@ fn tool_result_content_from_responses_item(item: &Value) -> ToolResultContent {
                             }));
                         }
                     }
-                    _ => content.push(json!({
-                        "type":"text",
-                        "text":canonical_json_string(part)
-                    })),
+                    _ => {
+                        if let Some(alternate) = alternate_image_tool_result_content(part) {
+                            is_error |= alternate.is_error;
+                            match alternate.content {
+                                Value::Array(mut blocks) => content.append(&mut blocks),
+                                Value::String(text) => {
+                                    content.push(json!({"type":"text","text":text}))
+                                }
+                                other => content.push(json!({
+                                    "type":"text",
+                                    "text":canonical_json_string(&other)
+                                })),
+                            }
+                        } else {
+                            content.push(json!({
+                                "type":"text",
+                                "text":canonical_json_string(part)
+                            }));
+                        }
+                    }
                 }
             }
             ToolResultContent {
@@ -769,14 +793,106 @@ fn tool_result_content_from_responses_item(item: &Value) -> ToolResultContent {
                 is_error,
             }
         }
-        Some(value) => ToolResultContent {
-            content: json!(canonical_json_string(value)),
-            is_error: false,
-        },
+        Some(value) => {
+            alternate_image_tool_result_content(value).unwrap_or_else(|| ToolResultContent {
+                content: json!(canonical_json_string(value)),
+                is_error: false,
+            })
+        }
         None => ToolResultContent {
             content: json!(canonical_json_string(item)),
             is_error: false,
         },
+    }
+}
+
+/// Convert image-bearing tool-output variants that are not native Responses
+/// content blocks. The shared traversal recognizes JSON strings, MCP image
+/// blocks, Anthropic image blocks, Chat image_url blocks, nested `content`
+/// wrappers, and whole image data URLs.
+fn alternate_image_tool_result_content(value: &Value) -> Option<ToolResultContent> {
+    let mut cleaned = value.clone();
+    let replacement_block = json!({
+        "type":"input_text",
+        "text":TOOL_RESULT_MEDIA_ATTACHED_MARKER
+    });
+    let mut chat_media_parts = Vec::new();
+    let replaced = strip_and_clamp_media_from_tool_value(
+        &mut cleaned,
+        &mut chat_media_parts,
+        ToolMediaScope::ImagesOnly,
+        &replacement_block,
+        TOOL_RESULT_MEDIA_ATTACHED_MARKER,
+    );
+    if replaced == 0 {
+        return None;
+    }
+
+    let mut content = Vec::new();
+    let mut is_error = false;
+    append_sanitized_tool_result_value(&cleaned, &mut content, &mut is_error);
+    content.extend(
+        chat_media_parts
+            .iter()
+            .filter_map(image_block_from_input_image),
+    );
+
+    Some(ToolResultContent {
+        content: Value::Array(content),
+        is_error,
+    })
+}
+
+fn append_sanitized_tool_result_value(
+    value: &Value,
+    content: &mut Vec<Value>,
+    is_error: &mut bool,
+) {
+    match value {
+        Value::String(text) => {
+            if text == TOOL_RESULT_ERROR_MARKER {
+                *is_error = true;
+            } else if !text.is_empty() {
+                content.push(json!({"type":"text","text":text}));
+            }
+        }
+        Value::Array(parts) => {
+            for part in parts {
+                match part.get("type").and_then(Value::as_str) {
+                    Some("input_text" | "output_text" | "text") => {
+                        if let Some(text) = part.get("text").and_then(Value::as_str) {
+                            if text == TOOL_RESULT_ERROR_MARKER {
+                                *is_error = true;
+                            } else {
+                                content.push(json!({"type":"text","text":text}));
+                            }
+                        }
+                    }
+                    _ => content.push(json!({
+                        "type":"text",
+                        "text":canonical_json_string(part)
+                    })),
+                }
+            }
+        }
+        Value::Object(object)
+            if matches!(
+                object.get("type").and_then(Value::as_str),
+                Some("input_text" | "output_text" | "text")
+            ) =>
+        {
+            if let Some(text) = object.get("text").and_then(Value::as_str) {
+                if text == TOOL_RESULT_ERROR_MARKER {
+                    *is_error = true;
+                } else {
+                    content.push(json!({"type":"text","text":text}));
+                }
+            }
+        }
+        other => content.push(json!({
+            "type":"text",
+            "text":canonical_json_string(other)
+        })),
     }
 }
 
@@ -1068,8 +1184,12 @@ fn image_block_from_input_image(part: &Value) -> Option<Value> {
             .or_else(|| v.get("url").and_then(|u| u.as_str()).map(str::to_string))
     })?;
 
-    if let Some(rest) = url.strip_prefix("data:") {
+    if url
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"))
+    {
         // data:<media_type>;base64,<data>
+        let rest = &url[5..];
         let (meta, data) = rest.split_once(',')?;
         let media_type = meta.split(';').next().unwrap_or("image/png");
         Some(json!({
@@ -1080,7 +1200,13 @@ fn image_block_from_input_image(part: &Value) -> Option<Value> {
                 "data": data
             }
         }))
-    } else if url.starts_with("http://") || url.starts_with("https://") {
+    } else if url
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
+        || url
+            .get(..8)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
+    {
         Some(json!({
             "type": "image",
             "source": { "type": "url", "url": url }
@@ -1543,6 +1669,44 @@ mod tests {
         assert_eq!(tools[0]["input_schema"]["type"], "object");
         assert!(tools[0].get("parameters").is_none());
         assert_eq!(tools[1]["name"], "apply_patch");
+    }
+
+    #[test]
+    fn test_request_tool_search_output_schema_defaults_root_type_to_object() {
+        let input = json!({
+            "model": "claude",
+            "max_output_tokens": 100,
+            "input": [
+                { "role": "user", "content": "hi" },
+                {
+                    "type": "tool_search_output",
+                    "call_id": "tool_demo123",
+                    "tools": [{
+                        "type": "function",
+                        "name": "demo_union_tool",
+                        "parameters": {
+                            "oneOf": [
+                                { "type": "object", "properties": { "mode": { "type": "string" } } },
+                                { "type": "object", "properties": { "name": { "type": "string" } } }
+                            ]
+                        }
+                    }]
+                }
+            ]
+        });
+
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        let input_schema = &result["tools"][0]["input_schema"];
+
+        assert_eq!(input_schema["type"], "object");
+        assert_eq!(
+            input_schema["oneOf"][0]["properties"]["mode"]["type"],
+            "string"
+        );
+        assert_eq!(
+            input_schema["oneOf"][1]["properties"]["name"]["type"],
+            "string"
+        );
     }
 
     #[test]
@@ -2512,6 +2676,80 @@ mod tests {
         let content = &response["messages"][2]["content"][0]["content"];
         assert_eq!(content[0]["type"], "text");
         assert_eq!(content[1]["type"], "image");
+    }
+
+    #[test]
+    fn test_alternate_mcp_tool_image_is_not_stringified_for_anthropic() {
+        let response = responses_request_to_anthropic(
+            json!({
+                "model": "c",
+                "input": [
+                    {"type": "function_call", "call_id": "c1", "name": "inspect", "arguments": "{}"},
+                    {"type": "function_call_output", "call_id": "c1", "output": [{
+                        "type": "image",
+                        "mimeType": "image/webp",
+                        "data": "MCP_ANTHROPIC_IMAGE_SENTINEL"
+                    }]}
+                ]
+            }),
+            4096,
+        )
+        .unwrap();
+        let content = &response["messages"][2]["content"][0]["content"];
+
+        assert_eq!(content[0]["type"], "text");
+        assert!(!content[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("MCP_ANTHROPIC_IMAGE_SENTINEL"));
+        assert_eq!(content[1]["type"], "image");
+        assert_eq!(content[1]["source"]["media_type"], "image/webp");
+        assert_eq!(content[1]["source"]["data"], "MCP_ANTHROPIC_IMAGE_SENTINEL");
+    }
+
+    #[test]
+    fn test_json_string_nested_tool_image_is_not_text_for_anthropic() {
+        let residual_base64 = "A".repeat(20_000);
+        let encoded_output = json!({
+            "content": [
+                {"type": "input_text", "text": "caption"},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "data:image/png;base64,STRING_IMAGE_SENTINEL"
+                    }
+                },
+                {"type": "video", "data": residual_base64}
+            ]
+        })
+        .to_string();
+        let response = responses_request_to_anthropic(
+            json!({
+                "model": "c",
+                "input": [
+                    {"type": "function_call", "call_id": "c1", "name": "inspect", "arguments": "{}"},
+                    {"type": "function_call_output", "call_id": "c1", "output": encoded_output}
+                ]
+            }),
+            4096,
+        )
+        .unwrap();
+        let content = response["messages"][2]["content"][0]["content"]
+            .as_array()
+            .unwrap();
+        let image = content
+            .iter()
+            .find(|block| block["type"] == "image")
+            .expect("stringified tool image should become an Anthropic image block");
+
+        assert_eq!(image["source"]["data"], "STRING_IMAGE_SENTINEL");
+        assert!(content
+            .iter()
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .all(|text| !text.contains("STRING_IMAGE_SENTINEL")));
+        let serialized = response.to_string();
+        assert!(serialized.contains("[cc-switch: omitted 20000 bytes]"));
+        assert!(!serialized.contains(&"A".repeat(64)));
     }
 
     #[test]

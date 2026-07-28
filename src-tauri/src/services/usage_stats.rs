@@ -74,6 +74,17 @@ pub struct DailyStats {
     pub total_cache_read_tokens: u64,
 }
 
+/// Daily activity data for the GitHub-style rolling-year heatmap.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageActivityDay {
+    pub date: String,
+    pub real_total_tokens: u64,
+    pub session_count: u64,
+    pub request_count: u64,
+    pub total_cost: String,
+}
+
 /// Provider 统计
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -214,6 +225,7 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_codex_session' THEN 'Codex (Session)' \
          WHEN '_gemini_session' THEN 'Gemini (Session)' \
          WHEN '_opencode_session' THEN 'OpenCode (Session)' \
+         WHEN '_grok_session' THEN 'Grok Build (Session)' \
          ELSE {log_alias}.provider_id END)"
     )
 }
@@ -416,6 +428,76 @@ pub(crate) fn has_matching_proxy_usage_log(
     .map_err(|e| AppError::Database(format!("查询重复代理用量日志失败: {e}")))
 }
 
+/// grokbuild 会话导入的接管活动守卫：给定时刻 ±窗口内存在任何 grokbuild
+/// 代理直录行，即认为当时处于代理接管态，会话事件应整体跳过——同一请求
+/// 已由代理逐请求记账，会话侧再入账必双算。
+///
+/// 不复用 [`has_matching_proxy_usage_log`] 的指纹匹配：Grok 会话事件是
+/// 逐轮聚合值，与代理逐请求行的 token 值结构性不相等，指纹永不命中。
+/// 这里按"接管态检测"而非"行匹配"设计，故不过滤 status_code——失败的
+/// 代理请求同样证明流量正走代理。
+///
+/// 已知局限（有意取舍，方向保守只漏不双）：窗口不含 session 维度，任一
+/// grokbuild 代理行会给 ±窗口内的全部会话事件投下阴影——接管/官方两态在
+/// 十分钟内交替或并行使用时，官方侧轮次会被跳过（漏记而非双算）。
+pub(crate) fn has_recent_grokbuild_proxy_activity(
+    conn: &Connection,
+    created_at: i64,
+) -> Result<bool, AppError> {
+    let l_data_source = data_source_expr("l");
+    let sql = format!(
+        "SELECT EXISTS (
+            SELECT 1
+            FROM proxy_request_logs l
+            WHERE {l_data_source} = 'proxy'
+              AND l.app_type = 'grokbuild'
+              AND l.created_at BETWEEN ?1 - ?2 AND ?1 + ?2
+        )"
+    );
+    conn.query_row(
+        &sql,
+        params![created_at, SESSION_PROXY_DEDUP_WINDOW_SECONDS],
+        |row| row.get::<_, bool>(0),
+    )
+    .map_err(|e| AppError::Database(format!("查询 Grok 接管活动失败: {e}")))
+}
+
+pub(crate) fn has_suspected_codex_session_duplicate(
+    conn: &Connection,
+    request_id: &str,
+    key: &DedupKey,
+) -> Result<bool, AppError> {
+    let data_source = data_source_expr("l");
+    let sql = format!(
+        "SELECT EXISTS (
+            SELECT 1
+            FROM proxy_request_logs l
+            WHERE l.app_type = 'codex'
+              AND {data_source} = 'codex_session'
+              AND l.request_id <> ?1
+              AND LOWER(l.model) = LOWER(?2)
+              AND l.input_tokens = ?3
+              AND l.output_tokens = ?4
+              AND l.cache_read_tokens = ?5
+              AND l.created_at BETWEEN ?6 - ?7 AND ?6 + ?7
+        )"
+    );
+    conn.query_row(
+        &sql,
+        params![
+            request_id,
+            key.model,
+            key.input_tokens as i64,
+            key.output_tokens as i64,
+            key.cache_read_tokens as i64,
+            key.created_at,
+            SESSION_PROXY_DEDUP_WINDOW_SECONDS,
+        ],
+        |row| row.get::<_, bool>(0),
+    )
+    .map_err(|error| AppError::Database(format!("查询疑似重复 Codex 会话用量失败: {error}")))
+}
+
 #[derive(Debug, Clone, Default)]
 struct RollupDateBounds {
     start: Option<String>,
@@ -504,6 +586,28 @@ fn local_day_start_rfc3339(day: NaiveDate) -> String {
         .unwrap_or_else(Local::now);
 
     local_midnight.to_rfc3339()
+}
+
+fn merge_activity_day(
+    map: &mut HashMap<NaiveDate, UsageActivityDay>,
+    date: NaiveDate,
+    request_count: u64,
+    session_count: u64,
+    real_total_tokens: u64,
+    total_cost: f64,
+) {
+    let entry = map.entry(date).or_insert_with(|| UsageActivityDay {
+        date: date.format("%Y-%m-%d").to_string(),
+        real_total_tokens: 0,
+        session_count: 0,
+        request_count: 0,
+        total_cost: "0.000000".to_string(),
+    });
+    entry.request_count += request_count;
+    entry.session_count += session_count;
+    entry.real_total_tokens += real_total_tokens;
+    let current_cost = entry.total_cost.parse::<f64>().unwrap_or(0.0);
+    entry.total_cost = format!("{:.6}", current_cost + total_cost);
 }
 
 impl Database {
@@ -1171,6 +1275,206 @@ impl Database {
         Ok(stats)
     }
 
+    /// 获取滚动年度活跃热力图数据，按本地日期补齐空天。
+    pub fn get_usage_activity_heatmap(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        app_type: Option<&str>,
+    ) -> Result<Vec<UsageActivityDay>, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        let end_ts = end_date.unwrap_or_else(|| Local::now().timestamp());
+        let mut start_ts = start_date.unwrap_or_else(|| end_ts - 364 * 24 * 60 * 60);
+        if start_ts > end_ts {
+            start_ts = end_ts;
+        }
+
+        let start_day = local_datetime_from_timestamp(start_ts)?.date_naive();
+        let end_day = local_datetime_from_timestamp(end_ts)?.date_naive();
+        let day_count = (end_day.signed_duration_since(start_day).num_days() + 1).max(1) as usize;
+
+        let mut detail_conditions = vec![
+            "l.created_at >= ?".to_string(),
+            "l.created_at <= ?".to_string(),
+            effective_usage_log_filter("l"),
+        ];
+        let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> =
+            vec![Box::new(start_ts), Box::new(end_ts)];
+        if let Some(at) = app_type {
+            detail_conditions.push("l.app_type = ?".to_string());
+            detail_params.push(Box::new(at.to_string()));
+        }
+        let detail_where = format!("WHERE {}", detail_conditions.join(" AND "));
+        let fresh_input_detail = fresh_input_sql("l");
+        let session_key_detail = "CASE
+            WHEN l.session_id IS NULL OR l.session_id = '' THEN NULL
+            ELSE l.app_type || ':' || l.session_id
+        END";
+        let detail_sql = format!(
+            "SELECT
+                date(l.created_at, 'unixepoch', 'localtime') as bucket_date,
+                COUNT(*) as request_count,
+                COUNT(DISTINCT {session_key_detail}) as session_count,
+                COALESCE(SUM({fresh_input_detail} + l.output_tokens + l.cache_creation_tokens + l.cache_read_tokens), 0) as real_total_tokens,
+                COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost
+            FROM proxy_request_logs l
+            {detail_where}
+            GROUP BY bucket_date"
+        );
+
+        let mut map: HashMap<NaiveDate, UsageActivityDay> = HashMap::new();
+        let detail_param_refs: Vec<&dyn rusqlite::ToSql> =
+            detail_params.iter().map(|p| p.as_ref()).collect();
+        let mut detail_stmt = conn.prepare(&detail_sql)?;
+        let detail_rows = detail_stmt.query_map(detail_param_refs.as_slice(), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)? as u64,
+                row.get::<_, i64>(2)? as u64,
+                row.get::<_, i64>(3)? as u64,
+                row.get::<_, f64>(4)?,
+            ))
+        })?;
+
+        for row in detail_rows {
+            let (bucket_date, requests, sessions, tokens, cost) = row?;
+            let date = NaiveDate::parse_from_str(&bucket_date, "%Y-%m-%d")
+                .map_err(|err| AppError::Database(format!("解析活跃日期失败: {err}")))?;
+            merge_activity_day(&mut map, date, requests, sessions, tokens, cost);
+        }
+
+        let rollup_bounds = compute_rollup_date_bounds(Some(start_ts), Some(end_ts))?;
+        let mut rollup_conditions = Vec::new();
+        let mut rollup_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        push_rollup_date_filters(
+            &mut rollup_conditions,
+            &mut rollup_params,
+            "r.date",
+            &rollup_bounds,
+        );
+        if let Some(at) = app_type {
+            rollup_conditions.push("r.app_type = ?".to_string());
+            rollup_params.push(Box::new(at.to_string()));
+        }
+        let rollup_where = if rollup_conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", rollup_conditions.join(" AND "))
+        };
+        let fresh_input_rollup = fresh_input_sql("r");
+        let rollup_sql = format!(
+            "SELECT
+                r.date,
+                COALESCE(SUM(r.request_count), 0),
+                COALESCE(SUM(r.session_count), 0),
+                COALESCE(SUM({fresh_input_rollup} + r.output_tokens + r.cache_creation_tokens + r.cache_read_tokens), 0),
+                COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0)
+            FROM usage_daily_activity_rollups r
+            {rollup_where}
+            GROUP BY r.date"
+        );
+
+        let rollup_param_refs: Vec<&dyn rusqlite::ToSql> =
+            rollup_params.iter().map(|p| p.as_ref()).collect();
+        let mut rollup_stmt = conn.prepare(&rollup_sql)?;
+        let rollup_rows = rollup_stmt.query_map(rollup_param_refs.as_slice(), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)? as u64,
+                row.get::<_, i64>(2)? as u64,
+                row.get::<_, i64>(3)? as u64,
+                row.get::<_, f64>(4)?,
+            ))
+        })?;
+
+        for row in rollup_rows {
+            let (bucket_date, requests, sessions, tokens, cost) = row?;
+            let date = NaiveDate::parse_from_str(&bucket_date, "%Y-%m-%d")
+                .map_err(|err| AppError::Database(format!("解析活跃 rollup 日期失败: {err}")))?;
+            merge_activity_day(&mut map, date, requests, sessions, tokens, cost);
+        }
+
+        let mut legacy_rollup_conditions = Vec::new();
+        let mut legacy_rollup_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        push_rollup_date_filters(
+            &mut legacy_rollup_conditions,
+            &mut legacy_rollup_params,
+            "r.date",
+            &rollup_bounds,
+        );
+        if let Some(at) = app_type {
+            legacy_rollup_conditions.push("r.app_type = ?".to_string());
+            legacy_rollup_params.push(Box::new(at.to_string()));
+        }
+        let legacy_rollup_where = if legacy_rollup_conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", legacy_rollup_conditions.join(" AND "))
+        };
+        let fresh_input_legacy_rollup = fresh_input_sql("r");
+        let legacy_rollup_sql = format!(
+            "SELECT
+                r.date,
+                COALESCE(SUM(r.request_count), 0),
+                COALESCE(SUM({fresh_input_legacy_rollup} + r.output_tokens + r.cache_creation_tokens + r.cache_read_tokens), 0),
+                COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0)
+            FROM usage_daily_rollups r
+            {legacy_rollup_where}
+              {legacy_and} NOT EXISTS (
+                SELECT 1
+                FROM usage_daily_activity_rollups a
+                WHERE a.date = r.date AND a.app_type = r.app_type
+              )
+            GROUP BY r.date",
+            legacy_and = if legacy_rollup_conditions.is_empty() {
+                "WHERE"
+            } else {
+                "AND"
+            }
+        );
+
+        let legacy_rollup_param_refs: Vec<&dyn rusqlite::ToSql> =
+            legacy_rollup_params.iter().map(|p| p.as_ref()).collect();
+        let mut legacy_rollup_stmt = conn.prepare(&legacy_rollup_sql)?;
+        let legacy_rollup_rows =
+            legacy_rollup_stmt.query_map(legacy_rollup_param_refs.as_slice(), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)? as u64,
+                    row.get::<_, i64>(2)? as u64,
+                    row.get::<_, f64>(3)?,
+                ))
+            })?;
+
+        for row in legacy_rollup_rows {
+            let (bucket_date, requests, tokens, cost) = row?;
+            let date = NaiveDate::parse_from_str(&bucket_date, "%Y-%m-%d")
+                .map_err(|err| AppError::Database(format!("解析旧活跃 rollup 日期失败: {err}")))?;
+            merge_activity_day(&mut map, date, requests, 0, tokens, cost);
+        }
+
+        let mut days = Vec::with_capacity(day_count);
+        let mut current_day = start_day;
+        for _ in 0..day_count {
+            if let Some(mut day) = map.remove(&current_day) {
+                day.date = current_day.format("%Y-%m-%d").to_string();
+                days.push(day);
+            } else {
+                days.push(UsageActivityDay {
+                    date: current_day.format("%Y-%m-%d").to_string(),
+                    real_total_tokens: 0,
+                    session_count: 0,
+                    request_count: 0,
+                    total_cost: "0.000000".to_string(),
+                });
+            }
+            current_day = current_day.succ_opt().unwrap_or(current_day);
+        }
+
+        Ok(days)
+    }
+
     /// 获取 Provider 统计
     pub fn get_provider_stats(
         &self,
@@ -1256,7 +1560,7 @@ impl Database {
                 SELECT l.provider_id, l.app_type,
                     {detail_pname} as provider_name,
                     COUNT(*) as request_count,
-                    COALESCE(SUM({fresh_input_detail} + l.output_tokens), 0) as total_tokens,
+                    COALESCE(SUM({fresh_input_detail} + l.output_tokens + l.cache_creation_tokens + l.cache_read_tokens), 0) as total_tokens,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
                     COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) as success_count,
                     COALESCE(SUM(l.latency_ms), 0) as latency_sum
@@ -1268,7 +1572,7 @@ impl Database {
                 SELECT r.provider_id, r.app_type,
                     {rollup_pname} as provider_name,
                     COALESCE(SUM(r.request_count), 0),
-                    COALESCE(SUM({fresh_input_rollup} + r.output_tokens), 0),
+                    COALESCE(SUM({fresh_input_rollup} + r.output_tokens + r.cache_creation_tokens + r.cache_read_tokens), 0),
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
                     COALESCE(SUM(r.success_count), 0),
                     COALESCE(SUM(r.avg_latency_ms * r.request_count), 0)
@@ -1410,7 +1714,7 @@ impl Database {
             FROM (
                 SELECT {detail_model} as model,
                     COUNT(*) as request_count,
-                    COALESCE(SUM({fresh_input_detail} + l.output_tokens), 0) as total_tokens,
+                    COALESCE(SUM({fresh_input_detail} + l.output_tokens + l.cache_creation_tokens + l.cache_read_tokens), 0) as total_tokens,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost
                 FROM proxy_request_logs l
                 {detail_join}
@@ -1419,7 +1723,7 @@ impl Database {
                 UNION ALL
                 SELECT {rollup_model},
                     COALESCE(SUM(r.request_count), 0),
-                    COALESCE(SUM({fresh_input_rollup} + r.output_tokens), 0),
+                    COALESCE(SUM({fresh_input_rollup} + r.output_tokens + r.cache_creation_tokens + r.cache_read_tokens), 0),
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0)
                 FROM usage_daily_rollups r
                 {rollup_join}
@@ -1814,10 +2118,11 @@ impl Database {
         let million = rust_decimal::Decimal::from(1_000_000u64);
 
         // 与 CostCalculator::calculate_for_app 保持一致的计算逻辑：
-        // 1. 历史 Codex/Gemini 行只包含 cache read；新 total 行还包含 cache write。
+        // 1. 历史 cache-inclusive 行只包含 cache read；新 total 行还包含 cache write。
         // 2. Claude/Anthropic 的 input_tokens 已经是 fresh input，不能再次扣减
         // 3. 各项成本是基础成本（不含倍率），倍率只作用于最终总价
-        let cache_inclusive_app = matches!(log.app_type.as_str(), "codex" | "gemini");
+        let cache_inclusive_app =
+            crate::services::sql_helpers::is_cache_inclusive_app(log.app_type.as_str());
         let billable_input_tokens =
             if !cache_inclusive_app || log.input_token_semantics == INPUT_TOKEN_SEMANTICS_FRESH {
                 log.input_tokens as u64
@@ -2634,6 +2939,53 @@ mod tests {
     }
 
     #[test]
+    fn test_backfill_deducts_cache_read_for_grokbuild_total_rows() -> Result<(), AppError> {
+        // 回归：回填侧的 cache-inclusive 判定曾硬编码 codex|gemini 漏掉
+        // grokbuild，导致 TOTAL 行按全量 input 计价、cache_read 双算。
+        // 判定收敛到 sql_helpers::is_cache_inclusive_app 后按 450 fresh 计价。
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "grokbuild-total-backfill",
+                "grokbuild",
+                "_grok_session",
+                "grok-4.5",
+                "grok_session",
+                1000,
+                700,
+                100,
+                250,
+                0,
+                200,
+                "0",
+            )?;
+            conn.execute(
+                "UPDATE proxy_request_logs
+                 SET input_token_semantics = ?1
+                 WHERE request_id = 'grokbuild-total-backfill'",
+                [INPUT_TOKEN_SEMANTICS_TOTAL],
+            )?;
+        }
+
+        assert_eq!(db.backfill_missing_usage_costs()?, 1);
+
+        let conn = lock_conn!(db.conn);
+        let (input_cost, cache_read_cost, total_cost): (String, String, String) = conn.query_row(
+            "SELECT input_cost_usd, cache_read_cost_usd, total_cost_usd
+             FROM proxy_request_logs WHERE request_id = 'grokbuild-total-backfill'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        // grok-4.5 定价 2/6/0.50：input = (700-250)×2/1M，cache_read = 250×0.5/1M
+        assert_eq!(input_cost, "0.000900");
+        assert_eq!(cache_read_cost, "0.000125");
+        assert_eq!(total_cost, "0.001625");
+        Ok(())
+    }
+
+    #[test]
     fn test_backfill_missing_usage_costs_uses_stored_multiplier() -> Result<(), AppError> {
         let db = Database::memory()?;
 
@@ -2952,6 +3304,120 @@ mod tests {
         let summary = db.get_usage_summary(None, None, None, None, None)?;
         assert_eq!(summary.total_requests, 2);
         assert_eq!(summary.success_rate, 100.0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_usage_activity_heatmap_fills_days_and_combines_rollups() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let start = local_ts(2024, 1, 1, 0, 0, 0);
+        let detail_day = local_ts(2024, 1, 2, 12, 0, 0);
+        let end = local_ts(2024, 1, 3, 23, 59, 0);
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
+                    total_cost_usd, latency_ms, status_code, session_id, created_at, data_source
+                ) VALUES (
+                    'activity-claude-a', 'p1', 'claude', 'claude-3', 'claude-3',
+                    100, 20, 5, 7, '0', '0', '0', '0', '0.01', 100, 200, 'shared-session', ?1, 'proxy'
+                )",
+                [detail_day],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
+                    total_cost_usd, latency_ms, status_code, session_id, created_at, data_source
+                ) VALUES (
+                    'activity-claude-b', 'p1', 'claude', 'claude-3', 'claude-3',
+                    30, 10, 0, 0, '0', '0', '0', '0', '0.02', 100, 200, 'shared-session', ?1, 'proxy'
+                )",
+                [detail_day + 60],
+            )?;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
+                    total_cost_usd, latency_ms, status_code, session_id, created_at, data_source
+                ) VALUES (
+                    'activity-codex', 'p2', 'codex', 'gpt-5.5', 'gpt-5.5',
+                    100, 20, 40, 0, '0', '0', '0', '0', '0.03', 100, 200, 'shared-session', ?1, 'proxy'
+                )",
+                [detail_day + 120],
+            )?;
+            conn.execute(
+                "INSERT INTO usage_daily_activity_rollups (
+                    date, app_type, request_count, session_count,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_cost_usd
+                ) VALUES (
+                    '2024-01-03', 'claude', 4, 3, 50, 10, 5, 6, '0.04'
+                )",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model, request_count, success_count,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, avg_latency_ms
+                ) VALUES (
+                    '2024-01-01', 'codex', 'old-provider', 'gpt-5', 2, 2,
+                    100, 20, 40, 5, '0.05', 100
+                )",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model, request_count, success_count,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, avg_latency_ms
+                ) VALUES (
+                    '2024-01-03', 'claude', 'old-provider', 'claude-3', 99, 99,
+                    9000, 9000, 0, 0, '9.00', 100
+                )",
+                [],
+            )?;
+        }
+
+        let all_days = db.get_usage_activity_heatmap(Some(start), Some(end), None)?;
+        assert_eq!(all_days.len(), 3);
+        assert_eq!(all_days[0].date, "2024-01-01");
+        assert_eq!(all_days[0].request_count, 2);
+        assert_eq!(all_days[0].session_count, 0);
+        assert_eq!(all_days[0].real_total_tokens, 125);
+        assert_eq!(all_days[0].total_cost, "0.050000");
+        assert_eq!(all_days[1].date, "2024-01-02");
+        assert_eq!(all_days[1].request_count, 3);
+        assert_eq!(all_days[1].session_count, 2);
+        assert_eq!(all_days[1].real_total_tokens, 292);
+        assert_eq!(all_days[1].total_cost, "0.060000");
+        assert_eq!(all_days[2].date, "2024-01-03");
+        assert_eq!(all_days[2].request_count, 4);
+        assert_eq!(all_days[2].session_count, 3);
+        assert_eq!(all_days[2].real_total_tokens, 71);
+
+        let claude_days = db.get_usage_activity_heatmap(Some(start), Some(end), Some("claude"))?;
+        assert_eq!(claude_days[0].real_total_tokens, 0);
+        assert_eq!(claude_days[1].request_count, 2);
+        assert_eq!(claude_days[1].session_count, 1);
+        assert_eq!(claude_days[1].real_total_tokens, 172);
+        assert_eq!(claude_days[2].real_total_tokens, 71);
+
+        let codex_days = db.get_usage_activity_heatmap(Some(start), Some(end), Some("codex"))?;
+        assert_eq!(codex_days[0].request_count, 2);
+        assert_eq!(codex_days[0].session_count, 0);
+        assert_eq!(codex_days[0].real_total_tokens, 125);
+        assert_eq!(codex_days[1].request_count, 1);
+        assert_eq!(codex_days[1].session_count, 1);
+        assert_eq!(codex_days[1].real_total_tokens, 120);
+        assert_eq!(codex_days[2].real_total_tokens, 0);
 
         Ok(())
     }
@@ -3414,6 +3880,13 @@ mod tests {
         assert!(!provider_stats
             .iter()
             .any(|stat| stat.provider_id == "_session"));
+        assert_eq!(
+            provider_stats
+                .iter()
+                .map(|stat| stat.total_tokens)
+                .sum::<u64>(),
+            summary.real_total_tokens
+        );
 
         let model_stats = db.get_model_stats(None, None, None, None, None)?;
         assert_eq!(
@@ -3422,6 +3895,13 @@ mod tests {
                 .map(|stat| stat.request_count)
                 .sum::<u64>(),
             4
+        );
+        assert_eq!(
+            model_stats
+                .iter()
+                .map(|stat| stat.total_tokens)
+                .sum::<u64>(),
+            summary.real_total_tokens
         );
 
         let logs = db.get_request_logs(&LogFilters::default(), 0, 10)?;
