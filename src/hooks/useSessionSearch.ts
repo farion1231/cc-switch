@@ -47,16 +47,20 @@ export function useSessionSearch({
     return nextIndex;
   }, [filteredByProvider]);
 
+  const sortedDefaultSessions = useMemo(() => {
+    return [...filteredByProvider].sort((a, b) => {
+      const aTs = a.lastActiveAt ?? a.createdAt ?? 0;
+      const bTs = b.lastActiveAt ?? b.createdAt ?? 0;
+      return bTs - aTs;
+    });
+  }, [filteredByProvider]);
+
   const search = useCallback(
     (query: string): SessionMeta[] => {
       const needle = query.trim();
 
       if (!needle) {
-        return [...filteredByProvider].sort((a, b) => {
-          const aTs = a.lastActiveAt ?? a.createdAt ?? 0;
-          const bTs = b.lastActiveAt ?? b.createdAt ?? 0;
-          return bTs - aTs;
-        });
+        return sortedDefaultSessions;
       }
 
       const results = index.search(needle, {
@@ -65,7 +69,7 @@ export function useSessionSearch({
 
       return results.map((idx) => filteredByProvider[idx]);
     },
-    [index, filteredByProvider],
+    [index, filteredByProvider, sortedDefaultSessions],
   );
 
   return { search };

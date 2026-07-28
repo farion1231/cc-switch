@@ -16,6 +16,23 @@ use crate::store::AppState;
 
 // ─── File import/export ──────────────────────────────────────
 
+fn validate_sql_file_path(file_path: &str) -> Result<PathBuf, AppError> {
+    if file_path.trim().is_empty() {
+        return Err(AppError::InvalidInput("File path cannot be empty".to_string()));
+    }
+    if !file_path.to_lowercase().ends_with(".sql") {
+        return Err(AppError::InvalidInput("Only .sql files are allowed for import/export".to_string()));
+    }
+    if file_path.contains("..") {
+        return Err(AppError::InvalidInput("Path traversal ('..') is not allowed in file path".to_string()));
+    }
+    let path = PathBuf::from(file_path);
+    if path.file_name().is_none() {
+        return Err(AppError::InvalidInput("Invalid file name".to_string()));
+    }
+    Ok(path)
+}
+
 /// 导出数据库为 SQL 备份
 #[tauri::command]
 pub async fn export_config_to_file(
@@ -24,7 +41,7 @@ pub async fn export_config_to_file(
 ) -> Result<Value, String> {
     let db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let target_path = PathBuf::from(&filePath);
+        let target_path = validate_sql_file_path(&filePath)?;
         db.export_sql(&target_path)?;
         Ok::<_, AppError>(json!({
             "success": true,
@@ -46,7 +63,7 @@ pub async fn import_config_from_file(
     let db = state.db.clone();
     let db_for_sync = db.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let path_buf = PathBuf::from(&filePath);
+        let path_buf = validate_sql_file_path(&filePath)?;
         let backup_id = db.import_sql(&path_buf)?;
         let warning = post_sync_warning_from_result(Ok(run_post_import_sync(db_for_sync)));
         if let Some(msg) = warning.as_ref() {
