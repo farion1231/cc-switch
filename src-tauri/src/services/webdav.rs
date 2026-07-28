@@ -175,15 +175,15 @@ pub async fn ensure_remote_directories(
     for depth in 1..=segments.len() {
         let prefix = &segments[..depth];
         let url = build_remote_url(base_url, prefix)?;
-        let dir_url = if url.ends_with('/') {
-            url
+        let propfind_url = if url.ends_with('/') {
+            url.clone()
         } else {
             format!("{url}/")
         };
 
         let resp = apply_auth(
             client
-                .request(method_mkcol(), &dir_url)
+                .request(method_mkcol(), &url)
                 .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
             auth,
         )
@@ -194,7 +194,7 @@ pub async fn ensure_remote_directories(
                 "webdav.mkcol_failed",
                 "MKCOL 请求",
                 "MKCOL request",
-                &dir_url,
+                &url,
                 &e,
             )
         })?;
@@ -202,19 +202,19 @@ pub async fn ensure_remote_directories(
         let status = resp.status();
         match status {
             s if s == StatusCode::CREATED || s.is_success() => {
-                log::info!("[WebDAV] MKCOL ok: {}", redact_url(&dir_url));
+                log::info!("[WebDAV] MKCOL ok: {}", redact_url(&url));
             }
             // Ambiguous — verify directory actually exists via PROPFIND
             s if s == StatusCode::METHOD_NOT_ALLOWED
                 || s == StatusCode::CONFLICT
                 || s.is_redirection() =>
             {
-                if !propfind_exists(&client, &dir_url, auth).await? {
-                    return Err(webdav_status_error("MKCOL", status, &dir_url));
+                if !propfind_exists(&client, &propfind_url, auth).await? {
+                    return Err(webdav_status_error("MKCOL", status, &url));
                 }
             }
             _ => {
-                return Err(webdav_status_error("MKCOL", status, &dir_url));
+                return Err(webdav_status_error("MKCOL", status, &url));
             }
         }
     }

@@ -15,6 +15,7 @@ import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -38,6 +39,7 @@ import type { SettingsFormState } from "@/hooks/useSettings";
 import type {
   RemoteSnapshotInfo,
   S3SyncSettings,
+  WebDavSyncModules,
   WebDavSyncSettings,
 } from "@/types";
 
@@ -185,6 +187,56 @@ type SyncType = "webdav" | "s3";
 
 type DialogType = "upload" | "download" | "mutual_exclusion" | null;
 
+const DEFAULT_SYNC_MODULES: WebDavSyncModules = {
+  api: true,
+  mcp: false,
+  prompts: false,
+  skills: false,
+};
+
+const DEFAULT_DOWNLOAD_SYNC_MODULES: WebDavSyncModules = {
+  api: true,
+  mcp: true,
+  prompts: true,
+  skills: true,
+};
+
+const MODULE_KEYS = ["api", "mcp", "prompts", "skills"] as const;
+
+function hasAnyModuleField(
+  value: Partial<WebDavSyncModules> | null | undefined,
+): value is Partial<WebDavSyncModules> {
+  return MODULE_KEYS.some((key) => value?.[key] !== undefined);
+}
+
+function normalizeModules(
+  value: Partial<WebDavSyncModules> | null | undefined,
+  defaults: WebDavSyncModules,
+): WebDavSyncModules {
+  if (!hasAnyModuleField(value)) {
+    return defaults;
+  }
+  return {
+    api: value.api ?? true,
+    mcp: value.mcp ?? true,
+    prompts: value.prompts ?? true,
+    skills: value.skills ?? true,
+  };
+}
+
+function hasEnabledModule(modules: WebDavSyncModules): boolean {
+  return MODULE_KEYS.some((key) => modules[key]);
+}
+
+function listModuleLabels(
+  modules: WebDavSyncModules,
+  t: (key: string) => string,
+): string[] {
+  return MODULE_KEYS.filter((key) => modules[key]).map((key) =>
+    t(`settings.webdavSync.modules.${key}`),
+  );
+}
+
 interface WebdavSyncSectionProps {
   config?: WebDavSyncSettings;
   s3Config?: S3SyncSettings;
@@ -270,6 +322,14 @@ export function WebdavSyncSection({
     remoteRoot: config?.remoteRoot ?? "cc-switch-sync",
     profile: config?.profile ?? "default",
     autoSync: config?.autoSync ?? false,
+    uploadModules: normalizeModules(
+      config?.uploadModules,
+      DEFAULT_SYNC_MODULES,
+    ),
+    downloadModules: normalizeModules(
+      config?.downloadModules,
+      DEFAULT_DOWNLOAD_SYNC_MODULES,
+    ),
   }));
 
   // ─── S3 form state ─────────────────────────────────────────
@@ -366,6 +426,14 @@ export function WebdavSyncSection({
         remoteRoot: nextRemoteRoot,
         profile: nextProfile,
         autoSync: config.autoSync ?? false,
+        uploadModules: normalizeModules(
+          config.uploadModules,
+          DEFAULT_SYNC_MODULES,
+        ),
+        downloadModules: normalizeModules(
+          config.downloadModules,
+          DEFAULT_DOWNLOAD_SYNC_MODULES,
+        ),
       };
     });
     setPasswordTouched(false);
@@ -399,6 +467,29 @@ export function WebdavSyncSection({
       justSavedTimerRef.current = null;
     }
   }, []);
+
+  const updateModuleSelection = useCallback(
+    (
+      group: "uploadModules" | "downloadModules",
+      key: keyof WebDavSyncModules,
+      checked: boolean,
+    ) => {
+      setForm((prev) => ({
+        ...prev,
+        [group]: {
+          ...prev[group],
+          [key]: checked,
+        },
+      }));
+      setDirty(true);
+      setJustSaved(false);
+      if (justSavedTimerRef.current) {
+        clearTimeout(justSavedTimerRef.current);
+        justSavedTimerRef.current = null;
+      }
+    },
+    [],
+  );
 
   const handlePresetChange = useCallback((id: string) => {
     setPresetId(id);
@@ -464,6 +555,11 @@ export function WebdavSyncSection({
       remoteRoot: form.remoteRoot.trim() || "cc-switch-sync",
       profile: form.profile.trim() || "default",
       autoSync: form.autoSync,
+      uploadModules: normalizeModules(form.uploadModules, DEFAULT_SYNC_MODULES),
+      downloadModules: normalizeModules(
+        form.downloadModules,
+        DEFAULT_DOWNLOAD_SYNC_MODULES,
+      ),
     };
   }, [form, passwordTouched]);
 
@@ -473,6 +569,14 @@ export function WebdavSyncSection({
     const settings = buildSettings();
     if (!settings) {
       toast.error(t("settings.webdavSync.missingUrl"));
+      return;
+    }
+    if (!hasEnabledModule(settings.uploadModules ?? DEFAULT_SYNC_MODULES)) {
+      toast.error(t("settings.webdavSync.noUploadModules"));
+      return;
+    }
+    if (!hasEnabledModule(settings.downloadModules ?? DEFAULT_SYNC_MODULES)) {
+      toast.error(t("settings.webdavSync.noDownloadModules"));
       return;
     }
     setActionState("testing");
@@ -494,6 +598,14 @@ export function WebdavSyncSection({
     const settings = buildSettings();
     if (!settings) {
       toast.error(t("settings.webdavSync.missingUrl"));
+      return;
+    }
+    if (!hasEnabledModule(settings.uploadModules ?? DEFAULT_SYNC_MODULES)) {
+      toast.error(t("settings.webdavSync.noUploadModules"));
+      return;
+    }
+    if (!hasEnabledModule(settings.downloadModules ?? DEFAULT_SYNC_MODULES)) {
+      toast.error(t("settings.webdavSync.noDownloadModules"));
       return;
     }
     setActionState("saving");
@@ -548,6 +660,10 @@ export function WebdavSyncSection({
       toast.error(t("settings.webdavSync.unsavedChanges"));
       return;
     }
+    if (!hasEnabledModule(form.uploadModules)) {
+      toast.error(t("settings.webdavSync.noUploadModules"));
+      return;
+    }
     setActionState("fetching_remote");
     try {
       const info = await settingsApi.webdavSyncFetchRemoteInfo();
@@ -564,7 +680,7 @@ export function WebdavSyncSection({
       return;
     }
     setActionState("idle");
-  }, [dirty, t]);
+  }, [dirty, form.uploadModules, t]);
 
   /** Actually perform the upload after user confirms. */
   const handleUploadConfirm = useCallback(async () => {
@@ -593,6 +709,10 @@ export function WebdavSyncSection({
   const handleDownloadClick = useCallback(async () => {
     if (dirty) {
       toast.error(t("settings.webdavSync.unsavedChanges"));
+      return;
+    }
+    if (!hasEnabledModule(form.downloadModules)) {
+      toast.error(t("settings.webdavSync.noDownloadModules"));
       return;
     }
     setActionState("fetching_remote");
@@ -624,7 +744,7 @@ export function WebdavSyncSection({
     } finally {
       setActionState("idle");
     }
-  }, [dirty, t]);
+  }, [dirty, form.downloadModules, t]);
 
   /** Actually perform the download after user confirms. */
   const handleDownloadConfirm = useCallback(async () => {
@@ -933,6 +1053,17 @@ export function WebdavSyncSection({
   const hasS3SavedConfig = Boolean(
     s3Config?.bucket?.trim() && s3Config?.accessKeyId?.trim(),
   );
+  const hasUploadSelection = hasEnabledModule(form.uploadModules);
+  const hasDownloadSelection = hasEnabledModule(form.downloadModules);
+  const uploadModuleLabels = listModuleLabels(form.uploadModules, t);
+  const downloadModuleLabels = listModuleLabels(form.downloadModules, t);
+  const remoteAvailableModules = normalizeModules(
+    remoteInfo?.availableModules,
+    DEFAULT_DOWNLOAD_SYNC_MODULES,
+  );
+  const remoteAvailableModuleLabels = remoteInfo
+    ? listModuleLabels(remoteAvailableModules, t)
+    : [];
 
   const lastSyncAt = config?.status?.lastSyncAt;
   const lastSyncDisplay = lastSyncAt
@@ -941,7 +1072,7 @@ export function WebdavSyncSection({
   const lastError = config?.status?.lastError?.trim();
   const showAutoSyncError =
     !!lastError && config?.status?.lastErrorSource === "auto";
-  const currentRemotePath = `/${form.remoteRoot.trim() || "cc-switch-sync"}/v2/db-v6/${form.profile.trim() || "default"}`;
+  const currentRemotePath = `/${form.remoteRoot.trim() || "cc-switch-sync"}/v3/db-v6/${form.profile.trim() || "default"}`;
   const currentS3RemotePath = `${s3Bucket.trim() || "bucket"}/${s3RemoteRoot.trim() || "cc-switch-sync"}/v2/db-v6/${s3Profile.trim() || "default"}`;
   const remoteDbCompatDisplay = formatDbCompatVersion(
     remoteInfo?.dbCompatVersion,
@@ -1124,6 +1255,70 @@ export function WebdavSyncSection({
             </div>
           </div>
 
+          <div className="flex items-start gap-4">
+            <label className="w-40 text-xs font-medium text-foreground shrink-0">
+              {t("settings.webdavSync.uploadModulesTitle")}
+            </label>
+            <div className="grid flex-1 grid-cols-4 gap-2">
+              {MODULE_KEYS.map((key) => (
+                <label
+                  key={`upload-${key}`}
+                  className="flex items-center gap-2 rounded-md border border-border bg-background/70 px-3 py-2 text-xs"
+                >
+                  <Checkbox
+                    checked={form.uploadModules[key]}
+                    onCheckedChange={(checked) =>
+                      updateModuleSelection(
+                        "uploadModules",
+                        key,
+                        checked === true,
+                      )
+                    }
+                    disabled={isLoading}
+                  />
+                  <span>{t(`settings.webdavSync.modules.${key}`)}</span>
+                </label>
+              ))}
+              {!hasUploadSelection && (
+                <p className="col-span-4 text-xs text-destructive">
+                  {t("settings.webdavSync.noUploadModules")}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-start gap-4">
+            <label className="w-40 text-xs font-medium text-foreground shrink-0">
+              {t("settings.webdavSync.downloadModulesTitle")}
+            </label>
+            <div className="grid flex-1 grid-cols-4 gap-2">
+              {MODULE_KEYS.map((key) => (
+                <label
+                  key={`download-${key}`}
+                  className="flex items-center gap-2 rounded-md border border-border bg-background/70 px-3 py-2 text-xs"
+                >
+                  <Checkbox
+                    checked={form.downloadModules[key]}
+                    onCheckedChange={(checked) =>
+                      updateModuleSelection(
+                        "downloadModules",
+                        key,
+                        checked === true,
+                      )
+                    }
+                    disabled={isLoading}
+                  />
+                  <span>{t(`settings.webdavSync.modules.${key}`)}</span>
+                </label>
+              ))}
+              {!hasDownloadSelection && (
+                <p className="col-span-4 text-xs text-destructive">
+                  {t("settings.webdavSync.noDownloadModules")}
+                </p>
+              )}
+            </div>
+          </div>
+
           {/* Last sync time */}
           {lastSyncDisplay && (
             <p className="text-xs text-muted-foreground">
@@ -1188,7 +1383,7 @@ export function WebdavSyncSection({
               type="button"
               size="sm"
               onClick={handleUploadClick}
-              disabled={!hasSavedConfig}
+              disabled={!hasSavedConfig || !hasUploadSelection}
               actionState={actionState}
               targetState="uploading"
               alsoActiveFor={["fetching_remote"]}
@@ -1205,7 +1400,7 @@ export function WebdavSyncSection({
               variant="secondary"
               size="sm"
               onClick={handleDownloadClick}
-              disabled={!hasSavedConfig}
+              disabled={!hasSavedConfig || !hasDownloadSelection}
               actionState={actionState}
               targetState="downloading"
               alsoActiveFor={["fetching_remote"]}
@@ -1556,8 +1751,9 @@ export function WebdavSyncSection({
               <div className="space-y-3 text-sm leading-relaxed">
                 <p>{t("settings.webdavSync.confirmUpload.content")}</p>
                 <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
-                  <li>{t("settings.webdavSync.confirmUpload.dbItem")}</li>
-                  <li>{t("settings.webdavSync.confirmUpload.skillsItem")}</li>
+                  {uploadModuleLabels.map((label) => (
+                    <li key={label}>{label}</li>
+                  ))}
                 </ul>
                 <p className="text-muted-foreground">
                   {t("settings.webdavSync.confirmUpload.targetPath")}
@@ -1567,40 +1763,65 @@ export function WebdavSyncSection({
                   </code>
                 </p>
                 {remoteInfo && (
-                  <div className="rounded-lg border border-border bg-muted/50 p-3 space-y-2">
-                    <p className="text-xs font-medium text-foreground">
-                      {t("settings.webdavSync.confirmUpload.existingData")}
-                    </p>
-                    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
-                      <dt className="font-medium text-foreground">
-                        {t("settings.webdavSync.confirmUpload.deviceName")}
-                      </dt>
-                      <dd>
-                        <code className="bg-muted px-1.5 py-0.5 rounded">
-                          {remoteInfo.deviceName}
-                        </code>
-                      </dd>
-                      <dt className="font-medium text-foreground">
-                        {t("settings.webdavSync.confirmUpload.createdAt")}
-                      </dt>
-                      <dd>{formatDate(remoteInfo.createdAt)}</dd>
-                      <dt className="font-medium text-foreground">
-                        {t("settings.webdavSync.confirmUpload.path")}
-                      </dt>
-                      <dd>
-                        <code className="bg-muted px-1.5 py-0.5 rounded">
-                          {remoteInfo.remotePath}
-                        </code>
-                      </dd>
-                      {remoteDbCompatDisplay && (
-                        <>
-                          <dt className="font-medium text-foreground">
-                            {t("settings.webdavSync.confirmUpload.dbCompat")}
-                          </dt>
-                          <dd>{remoteDbCompatDisplay}</dd>
-                        </>
-                      )}
-                    </dl>
+                  <div className="space-y-3">
+                    <div className="rounded-lg border border-cyan-300/70 bg-cyan-50/80 p-3 text-xs text-cyan-950 dark:border-cyan-500/40 dark:bg-cyan-950/30 dark:text-cyan-100">
+                      <p className="font-medium">
+                        {t(
+                          "settings.webdavSync.confirmUpload.availableModules",
+                        )}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {remoteAvailableModuleLabels.length > 0 ? (
+                          remoteAvailableModuleLabels.map((label) => (
+                            <span
+                              key={label}
+                              className="rounded-full border border-cyan-300/70 bg-background/80 px-2.5 py-1 text-[11px] font-medium text-cyan-900 dark:border-cyan-400/40 dark:bg-cyan-900/40 dark:text-cyan-50"
+                            >
+                              {label}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-[11px] text-cyan-800/80 dark:text-cyan-100/80">
+                            -
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-border bg-muted/50 p-3 space-y-2">
+                      <p className="text-xs font-medium text-foreground">
+                        {t("settings.webdavSync.confirmUpload.existingData")}
+                      </p>
+                      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
+                        <dt className="font-medium text-foreground">
+                          {t("settings.webdavSync.confirmUpload.deviceName")}
+                        </dt>
+                        <dd>
+                          <code className="bg-muted px-1.5 py-0.5 rounded">
+                            {remoteInfo.deviceName}
+                          </code>
+                        </dd>
+                        <dt className="font-medium text-foreground">
+                          {t("settings.webdavSync.confirmUpload.createdAt")}
+                        </dt>
+                        <dd>{formatDate(remoteInfo.createdAt)}</dd>
+                        <dt className="font-medium text-foreground">
+                          {t("settings.webdavSync.confirmUpload.path")}
+                        </dt>
+                        <dd>
+                          <code className="bg-muted px-1.5 py-0.5 rounded">
+                            {remoteInfo.remotePath}
+                          </code>
+                        </dd>
+                        {remoteDbCompatDisplay && (
+                          <>
+                            <dt className="font-medium text-foreground">
+                              {t("settings.webdavSync.confirmUpload.dbCompat")}
+                            </dt>
+                            <dd>{remoteDbCompatDisplay}</dd>
+                          </>
+                        )}
+                      </dl>
+                    </div>
                   </div>
                 )}
                 {remoteInfo && !remoteIsLegacy && (
@@ -1643,40 +1864,71 @@ export function WebdavSyncSection({
             <DialogDescription asChild>
               <div className="space-y-3 text-sm leading-relaxed">
                 {remoteInfo && (
-                  <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-muted-foreground">
-                    <dt className="font-medium text-foreground">
-                      {t("settings.webdavSync.confirmDownload.deviceName")}
-                    </dt>
-                    <dd>
-                      <code className="text-xs bg-muted px-1.5 py-0.5 rounded">
-                        {remoteInfo.deviceName}
-                      </code>
-                    </dd>
-                    <dt className="font-medium text-foreground">
-                      {t("settings.webdavSync.confirmDownload.createdAt")}
-                    </dt>
-                    <dd>{formatDate(remoteInfo.createdAt)}</dd>
-                    <dt className="font-medium text-foreground">
-                      {t("settings.webdavSync.confirmDownload.path")}
-                    </dt>
-                    <dd>
-                      <code className="text-xs bg-muted px-1.5 py-0.5 rounded">
-                        {remoteInfo.remotePath}
-                      </code>
-                    </dd>
-                    {remoteDbCompatDisplay && (
-                      <>
-                        <dt className="font-medium text-foreground">
-                          {t("settings.webdavSync.confirmDownload.dbCompat")}
-                        </dt>
-                        <dd>{remoteDbCompatDisplay}</dd>
-                      </>
-                    )}
-                    <dt className="font-medium text-foreground">
-                      {t("settings.webdavSync.confirmDownload.artifacts")}
-                    </dt>
-                    <dd>{remoteInfo.artifacts.join(", ")}</dd>
-                  </dl>
+                  <div className="space-y-3">
+                    <div className="rounded-lg border border-cyan-300/70 bg-cyan-50/80 p-3 text-xs text-cyan-950 dark:border-cyan-500/40 dark:bg-cyan-950/30 dark:text-cyan-100">
+                      <p className="font-medium">
+                        {t(
+                          "settings.webdavSync.confirmDownload.availableModules",
+                        )}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {remoteAvailableModuleLabels.length > 0 ? (
+                          remoteAvailableModuleLabels.map((label) => (
+                            <span
+                              key={label}
+                              className="rounded-full border border-cyan-300/70 bg-background/80 px-2.5 py-1 text-[11px] font-medium text-cyan-900 dark:border-cyan-400/40 dark:bg-cyan-900/40 dark:text-cyan-50"
+                            >
+                              {label}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-[11px] text-cyan-800/80 dark:text-cyan-100/80">
+                            -
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-muted-foreground">
+                      <dt className="font-medium text-foreground">
+                        {t("settings.webdavSync.confirmDownload.deviceName")}
+                      </dt>
+                      <dd>
+                        <code className="text-xs bg-muted px-1.5 py-0.5 rounded">
+                          {remoteInfo.deviceName}
+                        </code>
+                      </dd>
+                      <dt className="font-medium text-foreground">
+                        {t("settings.webdavSync.confirmDownload.createdAt")}
+                      </dt>
+                      <dd>{formatDate(remoteInfo.createdAt)}</dd>
+                      <dt className="font-medium text-foreground">
+                        {t("settings.webdavSync.confirmDownload.path")}
+                      </dt>
+                      <dd>
+                        <code className="text-xs bg-muted px-1.5 py-0.5 rounded">
+                          {remoteInfo.remotePath}
+                        </code>
+                      </dd>
+                      {remoteDbCompatDisplay && (
+                        <>
+                          <dt className="font-medium text-foreground">
+                            {t("settings.webdavSync.confirmDownload.dbCompat")}
+                          </dt>
+                          <dd>{remoteDbCompatDisplay}</dd>
+                        </>
+                      )}
+                      <dt className="font-medium text-foreground">
+                        {t("settings.webdavSync.confirmDownload.artifacts")}
+                      </dt>
+                      <dd>{remoteInfo.artifacts.join(", ")}</dd>
+                      <dt className="font-medium text-foreground">
+                        {t(
+                          "settings.webdavSync.confirmDownload.selectedModules",
+                        )}
+                      </dt>
+                      <dd>{downloadModuleLabels.join(", ")}</dd>
+                    </dl>
+                  </div>
                 )}
                 {remoteInfo?.layout === "legacy" && (
                   <p className="font-medium text-amber-600 dark:text-amber-400">
