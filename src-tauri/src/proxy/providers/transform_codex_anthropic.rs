@@ -1712,6 +1712,34 @@ mod tests {
     }
 
     #[test]
+    fn test_tool_search_output_resets_stale_none_choice_before_anthropic_mapping() {
+        let mut input = json!({
+            "model": "claude",
+            "max_output_tokens": 100,
+            "tool_choice": "none",
+            "input": [
+            {"role": "user", "content": "Find the documentation."}, {
+                "type": "tool_search_output",
+                "call_id": "tool_none_1",
+                "tools": [{
+                    "type": "function",
+                    "name": "search_docs",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}}
+                    }
+                }]
+            }]
+        });
+
+        super::super::transform_codex_chat::ensure_responses_tool_search_shim(&mut input, false);
+        assert_eq!(input["tool_choice"], "auto");
+
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        assert_eq!(result["tool_choice"], json!({"type": "auto"}));
+    }
+
+    #[test]
     fn test_request_tool_choice_mapping() {
         // A function tool must be present, else tool_choice is (correctly) dropped.
         let base = |tc: Value| {

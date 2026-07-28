@@ -313,6 +313,14 @@ pub(crate) fn ensure_responses_tool_search_shim(
     let Some(body) = body.as_object_mut() else {
         return ToolSearchShimStatus::InvalidTools;
     };
+    let has_loaded_tool_search_output = body
+        .get("input")
+        .is_some_and(contains_loaded_tool_search_output);
+    if has_loaded_tool_search_output
+        && body.get("tool_choice").and_then(Value::as_str) == Some("none")
+    {
+        body.insert("tool_choice".to_string(), json!("auto"));
+    }
     let has_tool_search_history = body.get("input").is_some_and(contains_tool_search_history);
     let tools_value = body
         .entry("tools".to_string())
@@ -1289,19 +1297,8 @@ fn responses_input_file_to_chat_file(part: &Value) -> Option<Value> {
 
 fn contains_tool_search_history(value: &Value) -> bool {
     match value {
-        Value::Array(items) => items.iter().any(contains_tool_search_history),
-        Value::Object(obj) => {
-            match obj.get("type").and_then(Value::as_str) {
-                Some("tool_search_call" | "tool_search_output") => return true,
-                Some("function_call")
-                    if obj.get("name").and_then(Value::as_str) == Some(TOOL_SEARCH_PROXY_NAME) =>
-                {
-                    return true;
-                }
-                _ => {}
-            }
-            obj.values().any(contains_tool_search_history)
-        }
+        Value::Array(items) => items.iter().any(is_tool_search_history_item),
+        Value::Object(_) => is_tool_search_history_item(value),
         _ => false,
     }
 }
@@ -1310,23 +1307,53 @@ fn collect_tool_search_output_tools(value: &Value, context: &mut CodexToolContex
     match value {
         Value::Array(items) => {
             for item in items {
-                collect_tool_search_output_tools(item, context);
+                collect_tool_search_output_item_tools(item, context);
             }
         }
-        Value::Object(obj) => {
-            if obj.get("type").and_then(|v| v.as_str()) == Some("tool_search_output") {
-                if let Some(tools) = obj.get("tools").and_then(|v| v.as_array()) {
-                    for tool in tools {
-                        context.add_response_tool(tool);
-                    }
-                }
-            }
-            for value in obj.values() {
-                collect_tool_search_output_tools(value, context);
-            }
-        }
+        Value::Object(_) => collect_tool_search_output_item_tools(value, context),
         _ => {}
     }
+}
+
+fn collect_tool_search_output_item_tools(value: &Value, context: &mut CodexToolContext) {
+    if value.get("type").and_then(Value::as_str) != Some("tool_search_output") {
+        return;
+    }
+    let Some(tools) = value.get("tools").and_then(Value::as_array) else {
+        return;
+    };
+    for tool in tools {
+        context.add_response_tool(tool);
+    }
+}
+
+fn is_tool_search_history_item(value: &Value) -> bool {
+    let Some(obj) = value.as_object() else {
+        return false;
+    };
+    match obj.get("type").and_then(Value::as_str) {
+        Some("tool_search_call" | "tool_search_output") => true,
+        Some("function_call") => {
+            obj.get("name").and_then(Value::as_str) == Some(TOOL_SEARCH_PROXY_NAME)
+        }
+        _ => false,
+    }
+}
+
+fn contains_loaded_tool_search_output(value: &Value) -> bool {
+    match value {
+        Value::Array(items) => items.iter().any(is_loaded_tool_search_output_item),
+        Value::Object(_) => is_loaded_tool_search_output_item(value),
+        _ => false,
+    }
+}
+
+fn is_loaded_tool_search_output_item(value: &Value) -> bool {
+    value.get("type").and_then(Value::as_str) == Some("tool_search_output")
+        && value
+            .get("tools")
+            .and_then(Value::as_array)
+            .is_some_and(|tools| !tools.is_empty())
 }
 
 pub(crate) fn flatten_namespace_tool_name(namespace: &str, name: &str) -> String {
@@ -2639,6 +2666,28 @@ mod tests {
             "tools": [{"type": "tool_search"}]
         });
         assert!(request_uses_responses_tool_search_shim(&native));
+    }
+
+    #[test]
+    fn nested_tool_search_markers_in_function_output_do_not_enable_shim() {
+        let nested = json!({
+            "input": [{
+                "type": "function_call_output",
+                "call_id": "ordinary-1",
+                "output": {
+                    "type": "tool_search_output",
+                    "tools": [{
+                        "type": "function",
+                        "name": "nested_only",
+                        "parameters": {"type": "object"}
+                    }]
+                }
+            }]
+        });
+
+        assert!(!request_uses_responses_tool_search_shim(&nested));
+        let context = build_codex_tool_context_from_request(&nested);
+        assert!(context.chat_tools().is_empty());
     }
 
     #[test]
@@ -4788,6 +4837,38 @@ mod tests {
             .collect();
         assert!(names.contains(&"automation_update"));
         assert!(names.contains(&"tool_search"));
+    }
+
+    #[test]
+    fn tool_search_output_resets_stale_none_choice_before_chat_mapping() {
+        let mut input = json!({
+            "model": "gpt-5.4",
+            "tool_choice": "none",
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "call_ts_none",
+                "status": "completed",
+                "execution": "client",
+                "tools": [{
+                    "type": "function",
+                    "name": "search_docs",
+                    "description": "Search documentation.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}}
+                    }
+                }]
+            }]
+        });
+
+        assert_eq!(
+            ensure_responses_tool_search_shim(&mut input, false),
+            ToolSearchShimStatus::Injected
+        );
+        assert_eq!(input["tool_choice"], "auto");
+
+        let result = responses_to_chat_completions(input).unwrap();
+        assert_eq!(result["tool_choice"], "auto");
     }
 
     #[test]
