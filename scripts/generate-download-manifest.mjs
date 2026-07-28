@@ -4,15 +4,23 @@
 // schema is mirrored in cc-switch-website/src/lib/downloads.ts — keep both in
 // sync when changing fields or classification rules.
 //
-// Usage: node scripts/generate-download-manifest.mjs <assets-dir> <tag> <base-url> [output]
+// Usage: node scripts/generate-download-manifest.mjs <assets-dir> <tag> <base-url> [output] [pub-date]
 
-import { readdirSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const [assetsDir, tag, baseUrl, output = 'manifest.json'] = process.argv.slice(2);
+const [assetsDir, tag, baseUrl, output = 'manifest.json', pubDateArg] = process.argv.slice(2);
 
 if (!assetsDir || !tag || !baseUrl) {
-  console.error('Usage: node scripts/generate-download-manifest.mjs <assets-dir> <tag> <base-url> [output]');
+  console.error('Usage: node scripts/generate-download-manifest.mjs <assets-dir> <tag> <base-url> [output] [pub-date]');
+  process.exit(1);
+}
+
+// Prefer the release's real publishedAt (passed by CI) over generation time.
+const pubDate = pubDateArg ? new Date(pubDateArg) : new Date();
+if (Number.isNaN(pubDate.getTime())) {
+  console.error(`Invalid pub-date: ${pubDateArg}`);
   process.exit(1);
 }
 
@@ -41,12 +49,14 @@ for (const name of readdirSync(assetsDir).sort()) {
   // deliberately skipped — they are not user-facing downloads.
   const rule = RULES.find((entry) => name.endsWith(entry.suffix));
   if (!rule) continue;
+  const path = join(assetsDir, name);
   files.push({
     platform: rule.platform,
     kind: rule.kind,
     arch: rule.arch,
     name,
-    size: statSync(join(assetsDir, name)).size,
+    size: statSync(path).size,
+    sha256: createHash('sha256').update(readFileSync(path)).digest('hex'),
     url: `${normalizedBase}/${tag}/${encodeURIComponent(name)}`,
   });
 }
@@ -59,7 +69,7 @@ if (files.length === 0) {
 const manifest = {
   version: tag.replace(/^v/, ''),
   tag,
-  pubDate: new Date().toISOString(),
+  pubDate: pubDate.toISOString(),
   files,
 };
 
