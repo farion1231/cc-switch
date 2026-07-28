@@ -1251,8 +1251,8 @@ impl RequestForwarder {
             // strip+`context-1m` beta detection. The marker is stripped later, on the
             // final anthropic_body.
             if matches!(app_type, AppType::ClaudeDesktop) {
-               claude_desktop_one_m =
-                   resolve_claude_desktop_one_m(claude_desktop_requested_one_m, &mut mapped_body);
+              claude_desktop_one_m =
+    resolve_claude_desktop_one_m(claude_desktop_requested_one_m, &mut mapped_body);
             } else {
                 mapped_body =
                     super::model_mapper::strip_one_m_suffix_for_upstream_from_body(mapped_body);
