@@ -19,6 +19,7 @@ import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { toast } from "sonner";
 import { useFailoverQueue } from "@/lib/query/failover";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
+import { ClaudeOfficeConnectionCard } from "@/components/proxy/ClaudeOfficeConnectionCard";
 import { useProviderHealth } from "@/lib/query/failover";
 import {
   useProxyTakeoverStatus,
@@ -414,6 +415,9 @@ export function ProxyPanel({
                   />
                 </div>
               </div>
+
+              {/* [5.5] Claude for Office 连接信息 */}
+              <ClaudeOfficeConnectionCard />
 
               {/* [6] Provider queues */}
               {(claudeQueue.length > 0 ||

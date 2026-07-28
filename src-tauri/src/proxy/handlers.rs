@@ -153,6 +153,45 @@ pub async fn handle_claude_desktop_models(
     Ok(Json(response))
 }
 
+/// Claude for Office 的 /v1/messages
+///
+/// 与 Claude Desktop 共用 provider namespace、模型路由和故障转移队列，
+/// 区别只在鉴权方式：Office 连接界面固定发送 `x-api-key`。
+pub async fn handle_claude_office_messages(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    validate_claude_office_gateway_auth(&state, request.headers())?;
+    handle_messages_for_app(
+        state,
+        request,
+        AppType::ClaudeDesktop,
+        "Claude for Office",
+        "claude-desktop",
+        Some("/claude-office"),
+    )
+    .await
+}
+
+/// Claude for Office 的 /v1/models（连通性检查）
+pub async fn handle_claude_office_models(
+    State(state): State<ProxyState>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<Value>, ProxyError> {
+    validate_claude_office_gateway_auth(&state, &headers)?;
+    let providers = state
+        .provider_router
+        .select_providers("claude-desktop")
+        .await
+        .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+    let provider = providers.first().ok_or(ProxyError::NoAvailableProvider)?;
+    // Office 客户端校验模型 id 命名规范（claude-* 风格），与 Desktop 共用
+    // route id 版本；labelOverride（真实模型名）版本会被客户端拒绝
+    let response = crate::claude_desktop_config::model_list_response(provider)
+        .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
+    Ok(Json(response))
+}
+
 async fn handle_messages_for_app(
     state: ProxyState,
     request: axum::extract::Request,
@@ -278,6 +317,50 @@ fn validate_claude_desktop_gateway_auth(
         ));
     }
     Ok(())
+}
+
+/// Claude for Office gateway 鉴权
+///
+/// Office 连接界面只支持 x-api-key（无 bearer 选项），此处两种头都接受：
+/// `x-api-key` 优先，`Authorization: Bearer` 兜底（便于 curl 等工具调试）。
+fn validate_claude_office_gateway_auth(
+    state: &ProxyState,
+    headers: &axum::http::HeaderMap,
+) -> Result<(), ProxyError> {
+    let expected = crate::claude_desktop_config::get_or_create_gateway_token(state.db.as_ref())
+        .map_err(|e| ProxyError::AuthError(e.to_string()))?;
+    match extract_claude_office_gateway_token(headers) {
+        Some(token) if token == expected => Ok(()),
+        Some(_) => Err(ProxyError::AuthError(
+            "Claude for Office gateway token 无效".to_string(),
+        )),
+        None => Err(ProxyError::AuthError(
+            "Claude for Office gateway 缺少 x-api-key 头".to_string(),
+        )),
+    }
+}
+
+/// 从请求头提取 Claude for Office gateway token：x-api-key 优先，Bearer 兜底
+fn extract_claude_office_gateway_token(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers
+        .get("x-api-key")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| {
+                    value
+                        .strip_prefix("Bearer ")
+                        .or_else(|| value.strip_prefix("bearer "))
+                })
+                .map(str::trim)
+                .filter(|token| !token.is_empty())
+                .map(str::to_string)
+        })
 }
 
 /// Claude 格式转换处理（独有逻辑）
@@ -2657,10 +2740,68 @@ async fn log_usage(
 mod tests {
     use super::{
         body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
-        codex_proxy_error_json, responses_sse_to_response_value,
-        should_use_claude_transform_streaming, transform, upstream_body_parse_error,
+        codex_proxy_error_json, extract_claude_office_gateway_token,
+        responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
+        upstream_body_parse_error,
     };
     use crate::proxy::ProxyError;
+
+    #[test]
+    fn claude_office_token_prefers_x_api_key() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-api-key", "office-token".parse().unwrap());
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer other-token".parse().unwrap(),
+        );
+        assert_eq!(
+            extract_claude_office_gateway_token(&headers),
+            Some("office-token".to_string())
+        );
+    }
+
+    #[test]
+    fn claude_office_token_falls_back_to_bearer() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer bearer-token".parse().unwrap(),
+        );
+        assert_eq!(
+            extract_claude_office_gateway_token(&headers),
+            Some("bearer-token".to_string())
+        );
+    }
+
+    #[test]
+    fn claude_office_token_accepts_lowercase_bearer() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "bearer lower-token".parse().unwrap(),
+        );
+        assert_eq!(
+            extract_claude_office_gateway_token(&headers),
+            Some("lower-token".to_string())
+        );
+    }
+
+    #[test]
+    fn claude_office_token_rejects_empty_and_missing() {
+        let headers = axum::http::HeaderMap::new();
+        assert_eq!(extract_claude_office_gateway_token(&headers), None);
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-api-key", "   ".parse().unwrap());
+        assert_eq!(extract_claude_office_gateway_token(&headers), None);
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            "Basic dXNlcjpwYXNz".parse().unwrap(),
+        );
+        assert_eq!(extract_claude_office_gateway_token(&headers), None);
+    }
 
     #[test]
     fn body_looks_like_sse_detects_unlabeled_sse_prefixes() {
