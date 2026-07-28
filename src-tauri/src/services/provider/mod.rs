@@ -703,6 +703,469 @@ mod tests {
     }
 
     #[test]
+    fn extract_gemini_common_config_strips_credentials_keeps_shareable() {
+        // Gemini 的共享片段会被 deep-merge 回**其它** Gemini 供应商的 env
+        // (live.rs::apply_common_config_to_settings)，因此任何凭据都不得进入片段。
+        // 之前这里只硬编码跳过 GEMINI_API_KEY/GOOGLE_GEMINI_BASE_URL，而
+        // GOOGLE_API_KEY 是 provider.rs 认可的一等 Gemini 凭据 → 会泄露到别的供应商。
+        let settings = json!({
+            "env": {
+                "GEMINI_API_KEY": "g-gem",
+                "GOOGLE_API_KEY": "g-legacy-real-key",
+                "GOOGLE_GEMINI_BASE_URL": "https://gemini.example",
+                "GOOGLE_APPLICATION_CREDENTIALS": "/path/creds.json",
+                "SOME_PROXY_AUTH_TOKEN": "tok-proxy",
+                // 可共享的非机密配置必须保留
+                "GEMINI_TIMEOUT_MS": "30000"
+            }
+        });
+
+        let snippet =
+            ProviderService::extract_gemini_common_config(&settings).expect("extract should work");
+        let value: Value = serde_json::from_str(&snippet).expect("snippet is valid JSON");
+
+        for leaked in [
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "SOME_PROXY_AUTH_TOKEN",
+        ] {
+            assert!(
+                value.get(leaked).is_none(),
+                "credential {leaked} must not leak into the shared Gemini snippet"
+            );
+        }
+        assert_eq!(
+            value.get("GEMINI_TIMEOUT_MS").and_then(|v| v.as_str()),
+            Some("30000"),
+            "shareable non-secret config must be preserved"
+        );
+    }
+
+    /// 造一个「已被污染」的现场：片段里带 A 账号的凭据 + 一个合法可共享键。
+    #[test]
+    fn sensitive_key_matcher_covers_common_credential_namings() {
+        for key in [
+            // 裸 `_KEY`：最常见的写法，却曾被"只枚举 `_API_KEY` 这些子类"漏在外面
+            "OPENAI_KEY",
+            "GROQ_KEY",
+            "XAI_KEY",
+            // 不带分隔符的复合写法
+            "VOLC_ACCESSKEY",
+            "ALIYUN_SECRETKEY",
+            "SOME_APITOKEN",
+            // personal access token：既不含 TOKEN 也不含 KEY
+            "GITHUB_PAT",
+            "gitlab_pat",
+            // 口令类缩写
+            "MYSQL_PWD",
+            "DB_PASS",
+            "GPG_PASSPHRASE",
+            "AWS_CREDS",
+        ] {
+            assert!(
+                ProviderService::is_sensitive_config_key(key),
+                "{key} must be treated as a credential"
+            );
+        }
+
+        // 后缀必须带下划线，不能把正常配置一起卷进来
+        for key in [
+            "PATH",
+            "OLDPWD",
+            "GEMINI_COMPAT",
+            "SSL_BYPASS",
+            "GEMINI_TIMEOUT_MS",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+        ] {
+            assert!(
+                !ProviderService::is_sensitive_config_key(key),
+                "{key} is ordinary shareable config and must not be stripped"
+            );
+        }
+    }
+
+    fn seed_leaked_gemini_state(db: &Arc<Database>) {
+        db.set_config_snippet(
+            "gemini",
+            Some(
+                json!({
+                    "GOOGLE_API_KEY": "key-A-leaked",
+                    "SOME_PROXY_AUTH_TOKEN": "tok-A-leaked",
+                    "GEMINI_TIMEOUT_MS": "30000"
+                })
+                .to_string(),
+            ),
+        )
+        .expect("seed snippet");
+
+        // 受害者 B：泄漏的密钥已经被合并进它的 env
+        let victim = Provider::with_id(
+            "b".into(),
+            "Relay B".into(),
+            json!({ "env": {
+                "GOOGLE_GEMINI_BASE_URL": "https://relay-b.example",
+                "GOOGLE_API_KEY": "key-A-leaked",
+                "GEMINI_TIMEOUT_MS": "30000"
+            }}),
+            None,
+        );
+        db.save_provider("gemini", &victim).expect("save victim");
+
+        // 供应商 C：自己写了同名键但值不同，不能被误删
+        let unrelated = Provider::with_id(
+            "c".into(),
+            "Own Key C".into(),
+            json!({ "env": {
+                "GOOGLE_GEMINI_BASE_URL": "https://c.example",
+                "GOOGLE_API_KEY": "key-C-owned"
+            }}),
+            None,
+        );
+        db.save_provider("gemini", &unrelated).expect("save c");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scrub_gemini_removes_leaked_credentials_from_snippet_and_providers() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        seed_leaked_gemini_state(&db);
+
+        ProviderService::scrub_leaked_gemini_common_config(&state)
+            .await
+            .expect("scrub must succeed");
+
+        // 片段：凭据清掉，可共享配置保留
+        let snippet = db
+            .get_config_snippet("gemini")
+            .expect("read snippet")
+            .expect("snippet must still exist");
+        let snippet: Value = serde_json::from_str(&snippet).expect("valid json");
+        assert!(snippet.get("GOOGLE_API_KEY").is_none());
+        assert!(snippet.get("SOME_PROXY_AUTH_TOKEN").is_none());
+        assert_eq!(
+            snippet.get("GEMINI_TIMEOUT_MS").and_then(Value::as_str),
+            Some("30000"),
+            "shareable config must survive the scrub"
+        );
+
+        // 受害者 B：扩散过去的那一份被清掉
+        let providers = db.get_all_providers("gemini").expect("providers");
+        let victim_env = &providers["b"].settings_config["env"];
+        assert!(
+            victim_env.get("GOOGLE_API_KEY").is_none(),
+            "leaked key must be removed from the victim provider"
+        );
+        assert_eq!(
+            victim_env.get("GEMINI_TIMEOUT_MS").and_then(Value::as_str),
+            Some("30000"),
+            "non-credential config must not be touched"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scrub_gemini_keeps_a_providers_own_differently_valued_key() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        seed_leaked_gemini_state(&db);
+
+        ProviderService::scrub_leaked_gemini_common_config(&state)
+            .await
+            .expect("scrub must succeed");
+
+        // 这条最容易写错成「按键名一刀切」：C 自己的密钥值与片段不同，是它自己的凭据
+        let providers = db.get_all_providers("gemini").expect("providers");
+        assert_eq!(
+            providers["c"].settings_config["env"]
+                .get("GOOGLE_API_KEY")
+                .and_then(Value::as_str),
+            Some("key-C-owned"),
+            "a provider's own key must not be deleted by name matching"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scrub_gemini_audit_records_key_names_but_never_values() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        seed_leaked_gemini_state(&db);
+
+        ProviderService::scrub_leaked_gemini_common_config(&state)
+            .await
+            .expect("scrub must succeed");
+
+        let audit_text = db
+            .get_setting("gemini_common_config_scrub_audit_v1")
+            .expect("read audit")
+            .expect("an audit record must exist so the deletion is not silent");
+
+        // 值绝不能进这条记录：`settings` 会随 WebDAV/S3 同步上传，留值等于把一次
+        // 清除换成一份跨设备扩散、没有界面入口、永不过期的明文副本。
+        assert!(
+            !audit_text.contains("key-A-leaked") && !audit_text.contains("tok-A-leaked"),
+            "the audit record must never carry credential values: {audit_text}"
+        );
+
+        // 但必须说清楚删了什么、从哪删的，否则用户只能靠翻日志
+        let audit: Value = serde_json::from_str(&audit_text).expect("audit is JSON");
+        let removed: Vec<&str> = audit["removedFromSnippet"]
+            .as_array()
+            .expect("removedFromSnippet array")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(
+            removed.contains(&"GOOGLE_API_KEY") && removed.contains(&"SOME_PROXY_AUTH_TOKEN"),
+            "every key removed from the snippet must be named: {audit}"
+        );
+        let victim = audit["providers"]
+            .as_array()
+            .expect("providers array")
+            .iter()
+            .find(|entry| entry["id"] == json!("b"))
+            .expect("every provider whose config gets rewritten must be recorded");
+        assert_eq!(
+            victim["removedKeys"],
+            json!(["GOOGLE_API_KEY"]),
+            "the record must name what was taken from each provider: {audit}"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scrub_gemini_never_overwrites_an_existing_audit_record() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        seed_leaked_gemini_state(&db);
+
+        // 上一轮改到一半就中止的情形：完成标记没置位，下次启动会重跑，但那时
+        // 读到的"原始状态"已经残缺。无条件覆盖会拿残缺记录盖掉第一轮那份完整的。
+        db.set_setting(
+            "gemini_common_config_scrub_audit_v1",
+            "{\"from\":\"an earlier, complete run\"}",
+        )
+        .expect("seed an existing audit record");
+
+        ProviderService::scrub_leaked_gemini_common_config(&state)
+            .await
+            .expect("scrub must succeed");
+
+        assert_eq!(
+            db.get_setting("gemini_common_config_scrub_audit_v1")
+                .expect("read audit")
+                .as_deref(),
+            Some("{\"from\":\"an earlier, complete run\"}"),
+            "an audit record from an earlier run must survive a retry"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scrub_gemini_cleans_the_live_env_without_a_current_provider() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        seed_leaked_gemini_state(&db);
+
+        // 没有当前供应商——这正是 sync_current_provider_for_app 直接返回 Ok 而
+        // 根本不写文件的分支。此时 live 若清不掉，片段又已被清空，下次切换的
+        // backfill 就会把残留永久写进受害供应商的配置。
+        crate::gemini_config::write_gemini_env_atomic(&HashMap::from([
+            ("GOOGLE_API_KEY".to_string(), "key-A-leaked".to_string()),
+            ("GEMINI_TIMEOUT_MS".to_string(), "30000".to_string()),
+            // 只存在于 live 的手工修改：定向删除必须保住它，全量重投影会抹掉
+            (
+                "HTTPS_PROXY".to_string(),
+                "http://127.0.0.1:7890".to_string(),
+            ),
+        ]))
+        .expect("seed live env");
+
+        ProviderService::scrub_leaked_gemini_common_config(&state)
+            .await
+            .expect("scrub must succeed");
+
+        let live = crate::gemini_config::read_gemini_env().expect("read live env");
+        assert!(
+            !live.contains_key("GOOGLE_API_KEY"),
+            "the leaked credential must be gone from ~/.gemini/.env: {live:?}"
+        );
+        assert_eq!(
+            live.get("HTTPS_PROXY").map(String::as_str),
+            Some("http://127.0.0.1:7890"),
+            "a hand-added live-only var must survive targeted removal: {live:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scrub_gemini_live_cleanup_preserves_the_rest_of_the_env_file() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        seed_leaked_gemini_state(&db);
+
+        // 这是一次用户没主动触发的启动期清理，不该顺手重写与泄漏无关的内容。
+        // read→HashMap→write 的往返会把注释、空行、无法识别的行全丢掉并按键名重排。
+        let original = "\
+# my own notes
+GOOGLE_API_KEY=key-C-owned
+
+GOOGLE_API_KEY=key-A-leaked
+this line is not KEY=VALUE at all
+GEMINI_TIMEOUT_MS=30000
+";
+        crate::gemini_config::write_gemini_env_text_atomic(original).expect("seed live env");
+
+        ProviderService::scrub_leaked_gemini_common_config(&state)
+            .await
+            .expect("scrub must succeed");
+
+        let raw = std::fs::read_to_string(crate::gemini_config::get_gemini_env_path())
+            .expect("read live env");
+        assert!(
+            !raw.contains("key-A-leaked"),
+            "the leaked line must be gone: {raw:?}"
+        );
+        assert!(
+            raw.contains("# my own notes"),
+            "comments must survive a targeted removal: {raw:?}"
+        );
+        assert!(
+            raw.contains("this line is not KEY=VALUE at all"),
+            "unparseable lines must survive a targeted removal: {raw:?}"
+        );
+        // 被泄漏值遮住的那条重新生效——正是想要的结果，遮住它的恰恰是泄漏值
+        assert_eq!(
+            crate::gemini_config::read_gemini_env()
+                .expect("read live env")
+                .get("GOOGLE_API_KEY")
+                .map(String::as_str),
+            Some("key-C-owned"),
+            "only the matching line may be dropped: {raw:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scrub_gemini_aborts_before_clearing_the_snippet_when_the_live_backup_fails() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        seed_leaked_gemini_state(&db);
+
+        // 关代理时这份快照会被原样写回 live。若清不动它却照样清了片段、置了完成标记，
+        // 代理一停凭据就复活，而一次性标记保证不会再清第二次。
+        db.save_live_backup("gemini", "}not json{")
+            .await
+            .expect("seed backup");
+
+        let result = ProviderService::scrub_leaked_gemini_common_config(&state).await;
+        assert!(
+            result.is_err(),
+            "a backup that cannot be cleaned must abort the scrub"
+        );
+
+        // 片段是「该剥哪些键」的唯一知识来源，中止后必须原样留着，否则下次重试
+        // 会因为 poison 为空而直接短路，反倒把标记置上
+        let snippet = db
+            .get_config_snippet("gemini")
+            .expect("read snippet")
+            .expect("snippet must still exist");
+        assert!(
+            snippet.contains("key-A-leaked"),
+            "the snippet must be left intact so the next boot can retry: {snippet}"
+        );
+        assert!(
+            db.get_setting("gemini_common_config_credentials_scrubbed_v1")
+                .expect("read flag")
+                .is_none(),
+            "the one-shot flag must not be set when the scrub aborted"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scrub_gemini_leaves_no_residue_for_backfill_to_persist() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        seed_leaked_gemini_state(&db);
+
+        ProviderService::scrub_leaked_gemini_common_config(&state)
+            .await
+            .expect("scrub must succeed");
+
+        // 顺序陷阱回归：如果只清了片段，切走供应商时 remove_common_config_from_settings
+        // 就不再认识这个键，live 里的残留会被 backfill 永久写进供应商配置。
+        // 清理必须是原子的——清完之后，任何地方都不该再有那个值。
+        let snippet = db
+            .get_config_snippet("gemini")
+            .expect("read snippet")
+            .unwrap_or_default();
+        assert!(!snippet.contains("key-A-leaked"));
+
+        for (id, provider) in db.get_all_providers("gemini").expect("providers") {
+            assert!(
+                !provider
+                    .settings_config
+                    .to_string()
+                    .contains("key-A-leaked"),
+                "provider '{id}' still carries the leaked value"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scrub_gemini_is_idempotent_and_skips_on_second_run() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        seed_leaked_gemini_state(&db);
+
+        ProviderService::scrub_leaked_gemini_common_config(&state)
+            .await
+            .expect("first run");
+
+        // 第二次必须是 no-op：用户清理后重新填的凭据不能被再抹一遍
+        db.set_config_snippet(
+            "gemini",
+            Some(json!({"GOOGLE_API_KEY": "restored"}).to_string()),
+        )
+        .expect("user re-adds a value");
+
+        ProviderService::scrub_leaked_gemini_common_config(&state)
+            .await
+            .expect("second run");
+
+        let snippet = db
+            .get_config_snippet("gemini")
+            .expect("read snippet")
+            .expect("snippet exists");
+        assert!(
+            snippet.contains("restored"),
+            "the one-shot flag must prevent a second scrub: {snippet}"
+        );
+    }
+
+    #[test]
     fn extract_claude_common_config_strips_all_credentials_keeps_shareable() {
         // env 混入多种凭据（Anthropic/OpenRouter/Google/OpenAI/Gemini + AWS/Vertex）
         // 与可共享配置；顶层混入非标准的 apiKey/api_key 凭据与正常设置。
@@ -3029,20 +3492,39 @@ impl ProviderService {
     /// `OPENROUTER_API_KEY` / `GOOGLE_API_KEY` 等回退）、各类 `*_AUTH_TOKEN` /
     /// 单数 `*_TOKEN`、AWS Bedrock / Vertex 凭据、以及通用 secret / password /
     /// 私钥命名。
-    fn is_sensitive_config_key(name: &str) -> bool {
+    pub(crate) fn is_sensitive_config_key(name: &str) -> bool {
         let upper = name.to_ascii_uppercase();
 
         // 单数 `_TOKEN` 命中 AWS_SESSION_TOKEN 等，但**不**误伤复数 `_TOKENS`
         // （CLAUDE_CODE_MAX_OUTPUT_TOKENS / MAX_THINKING_TOKENS 是正常可共享配置）。
         const SENSITIVE_SUFFIXES: &[&str] = &[
+            // 裸 `_KEY` 是最常见的凭据写法（OPENAI_KEY / GROQ_KEY / XAI_KEY…），
+            // 必须单列：只枚举 `_API_KEY` / `_ACCESS_KEY` 这些子类，等于把最普通
+            // 的那一种漏在外面。下面几条 `_*_KEY` 被它蕴含，保留是为了说明覆盖面。
+            "_KEY",
             "_API_KEY",
-            "_APIKEY",
-            "_AUTH_TOKEN",
-            "_TOKEN",
             "_ACCESS_KEY",
             "_ACCESS_KEY_ID",
             "_KEY_ID",
             "_PRIVATE_KEY",
+            // 不带分隔符的复合写法各走各的后缀：`_KEY` 够不着 `..._APIKEY`
+            // （倒数第四个字符是 I 不是下划线）。VOLC_ACCESSKEY 是火山引擎文档
+            // 里的正式变量名，本仓库就实现了火山 AK/SK 用量查询。
+            "_APIKEY",
+            "_ACCESSKEY",
+            "_SECRETKEY",
+            "_APITOKEN",
+            "_AUTH_TOKEN",
+            "_TOKEN",
+            // GITHUB_PAT / GITLAB_PAT 等 personal access token 的惯用写法，
+            // 既不含 TOKEN 也不含 KEY，前面每一条规则都够不着。
+            "_PAT",
+            // 口令类的常见缩写。`_PASS` 不会误伤 `*_BYPASS`（那个以 `_BYPASS`
+            // 结尾），`_PWD` 也不会误伤 shell 的 PWD / OLDPWD。
+            "_PWD",
+            "_PASS",
+            "_PASSPHRASE",
+            "_CREDS",
         ];
         const SENSITIVE_EXACT: &[&str] = &[
             "APIKEY",
@@ -3242,7 +3724,13 @@ impl ProviderService {
         let mut snippet = serde_json::Map::new();
         if let Some(env) = env {
             for (key, value) in env {
-                if key == "GOOGLE_GEMINI_BASE_URL" || key == "GEMINI_API_KEY" {
+                // 端点按名剥离（它不是凭据，模式匹配够不着）；凭据全部交给
+                // `is_sensitive_config_key` 统一模式匹配（与 Claude 提取器一致）。
+                // 只列固定名单会漏掉下一个 `*_API_KEY` —— 例如 `GOOGLE_API_KEY`
+                // （provider.rs 认可的一等 Gemini 凭据），而共享片段会被 deep-merge
+                // 回其它 Gemini 供应商，漏剥即等于把 A 账号的密钥写进 B 供应商并
+                // 发往 B 的 base_url。`GEMINI_API_KEY` 不必单列：`_KEY` 后缀已覆盖。
+                if key == "GOOGLE_GEMINI_BASE_URL" || Self::is_sensitive_config_key(key) {
                     continue;
                 }
                 let Value::String(v) = value else {
@@ -3261,6 +3749,221 @@ impl ProviderService {
 
         serde_json::to_string_pretty(&Value::Object(snippet))
             .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
+    }
+
+    /// 一次性清理：把历史泄漏进 Gemini 共享片段的凭据从所有存储位置抹掉。
+    ///
+    /// 背景：`extract_gemini_common_config` 曾只剥离两个固定键名，`GOOGLE_API_KEY`
+    /// 等一等凭据会进入共享片段，再被 `apply_common_config_to_settings` 深合并进
+    /// **其它** Gemini 供应商的 env，随请求发往对方的 base_url。
+    ///
+    /// 光修提取器不够：Gemini 的片段一旦生成就**永不自动重提取**（启动期
+    /// auto-extract 与导入后补提取都要求 `snippet.is_none()`，切换时的回写又只对
+    /// Claude / Codex 生效），所以存量片段会一直带着密钥继续注入。
+    ///
+    /// 两个关键约束：
+    ///
+    /// 1. **不能只清片段**。合并与剥离是一对靠「值相等」严格抵消的操作：切走供应商时
+    ///    `remove_common_config_from_settings` 依据片段内容把注入的键删掉。片段里一旦
+    ///    没了这个键，backfill 就会把 live 中残留的密钥原样写进受害供应商的
+    ///    `settings_config`——泄漏从瞬时污染变成永久污染。所以片段、各供应商配置、
+    ///    live 文件必须一起清。
+    /// 2. **按值相等定向删除，不按键名一刀切**。复用 `remove_common_config_from_settings`
+    ///    可以只清掉扩散出去的那一份，保留某个供应商自己写的、值不同的同名键。
+    ///
+    /// 步骤顺序本身是安全属性的一部分：**清片段必须排在最后**。片段是
+    /// `remove_common_config_from_settings` 唯一的"该剥哪些键"来源，一旦清空，任何
+    /// 残留（live 文件里的、下一轮重试要处理的）都再也无法被识别和剥离。所以所有
+    /// 可能失败的步骤都排在它前面，失败即带错返回，让下次启动能原样重来。
+    ///
+    /// 清理后部分供应商会显示缺少 API Key，需用户重填——这是正确行为：那把密钥本就
+    /// 不属于它们。（受害者原有的同名键在合并时已被覆盖，无法恢复。）动手前会往
+    /// settings 的 `gemini_common_config_scrub_audit_v1` 写一条审计记录，内容是
+    /// **键名与受影响的供应商 id，不含值**：`settings` 会随 WebDAV/S3 同步上传，
+    /// 而这里处理的正是必须销毁的凭据，留值等于把一次清除换成一份跨设备扩散、
+    /// 没有界面入口、永不过期的明文副本。
+    pub async fn scrub_leaked_gemini_common_config(state: &AppState) -> Result<(), AppError> {
+        const FLAG: &str = "gemini_common_config_credentials_scrubbed_v1";
+        const AUDIT_KEY: &str = "gemini_common_config_scrub_audit_v1";
+        let app = AppType::Gemini;
+
+        if state.db.get_bool_flag(FLAG).unwrap_or(false) {
+            return Ok(());
+        }
+
+        let Some(snippet_text) = state.db.get_config_snippet(app.as_str())? else {
+            state.db.set_setting(FLAG, "true")?;
+            return Ok(());
+        };
+
+        // 片段解析不了就不动它，只标记完成——乱改用户数据比留着更糟
+        let Ok(Value::Object(entries)) = serde_json::from_str::<Value>(&snippet_text) else {
+            state.db.set_setting(FLAG, "true")?;
+            return Ok(());
+        };
+
+        let mut poison = serde_json::Map::new();
+        let mut clean = serde_json::Map::new();
+        for (key, value) in entries {
+            if Self::is_sensitive_config_key(&key) {
+                poison.insert(key, value);
+            } else {
+                clean.insert(key, value);
+            }
+        }
+
+        if poison.is_empty() {
+            state.db.set_setting(FLAG, "true")?;
+            return Ok(());
+        }
+
+        log::warn!(
+            "检测到 {} 个凭据键残留在 Gemini 通用配置片段中，开始一次性清理",
+            poison.len()
+        );
+
+        let poison_keys: Vec<String> = poison.keys().cloned().collect();
+        let poison_value = Value::Object(poison);
+        let poison_text = serde_json::to_string(&poison_value)
+            .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))?;
+
+        // 1) 先算出各供应商清理后的配置，但**先不落库**
+        let providers = state.db.get_all_providers(app.as_str())?;
+        let mut pending: Vec<(String, Provider, Value)> = Vec::new();
+        for (id, provider) in providers {
+            let cleaned = match live::remove_common_config_from_settings(
+                &app,
+                &provider.settings_config,
+                &poison_text,
+            ) {
+                Ok(cleaned) => cleaned,
+                Err(err) => {
+                    log::warn!("清理供应商 '{id}' 的泄漏凭据失败: {err}");
+                    continue;
+                }
+            };
+            if cleaned != provider.settings_config {
+                pending.push((id, provider, cleaned));
+            }
+        }
+
+        // 2) 落库前留一份审计记录：**只记键名与受影响的供应商，不记值**。
+        //
+        //    「按值相等定向删除」在一种合法场景下也会命中：用户有意在多个供应商里
+        //    复用同一把 key。所以必须留下"删了什么、从哪删的"，否则用户只能靠翻
+        //    日志。但不能留值——`settings` 表不在 `SYNC_SKIP_TABLES` 里，会随
+        //    WebDAV/S3 同步上传，而这里处理的恰恰是必须销毁的泄漏凭据：留值等于
+        //    把一次清除换成一份没有界面入口、永不过期、还会跨设备扩散的明文副本。
+        //    密钥本来就该轮换，可恢复性不值这个代价。
+        let removed_env_keys = |before: &Value, after: &Value| -> Vec<String> {
+            let before_env = before.get("env").and_then(Value::as_object);
+            let after_env = after.get("env").and_then(Value::as_object);
+            match (before_env, after_env) {
+                (Some(before_env), Some(after_env)) => before_env
+                    .keys()
+                    .filter(|key| !after_env.contains_key(*key))
+                    .cloned()
+                    .collect(),
+                (Some(before_env), None) => before_env.keys().cloned().collect(),
+                _ => Vec::new(),
+            }
+        };
+        let audit = serde_json::json!({
+            "removedFromSnippet": poison_keys,
+            "providers": pending
+                .iter()
+                .map(|(id, provider, cleaned)| serde_json::json!({
+                    "id": id,
+                    "removedKeys": removed_env_keys(&provider.settings_config, cleaned),
+                }))
+                .collect::<Vec<_>>(),
+        });
+        let audit_text = serde_json::to_string(&audit)
+            .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))?;
+        // 只在没有记录时写。provider 的写入不是一个事务（每次 save_provider 各自
+        // 提交），上一轮可能改到一半就中止；此时完成标记没置位，下次启动会重跑，
+        // 而重跑看到的"原始状态"已经残缺。无条件 INSERT OR REPLACE 会拿这份残缺
+        // 记录盖掉第一轮那份完整的。
+        if state.db.get_setting(AUDIT_KEY)?.is_none() {
+            state.db.set_setting(AUDIT_KEY, &audit_text)?;
+        }
+
+        // 3) 各供应商 settings_config：按值相等定向删除扩散出去的副本
+        for (id, provider, cleaned) in pending {
+            let mut updated = provider;
+            updated.settings_config = cleaned;
+            state.db.save_provider(app.as_str(), &updated)?;
+            log::info!("已从 Gemini 供应商 '{id}' 中清除泄漏的共享凭据");
+        }
+
+        // 4) 代理接管中的 live 快照里也可能有一份副本。这一步的失败**必须传播**：
+        //
+        //    关代理时 `restore_live_config_for_app_with_fallback_inner`（proxy.rs:869）
+        //    会把这份快照原样写回 `~/.gemini/.env`。若它仍带毒而我们照样清了片段、置了
+        //    完成标记，那么代理一停凭据就当场复活，而一次性标记又保证不会再清第二次；
+        //    此后片段里已没有这个键，下一次切换的 backfill 就把它永久写进受害供应商的
+        //    配置——还是本函数开头那个顺序陷阱，只是换了扇门进来。
+        //
+        //    带错返回是安全的失败方式：调用方（lib.rs:1189）只记 warn 不中断启动，
+        //    片段和标记都原样留着，下次启动照原样重来。
+        if let Some(backup) = state.db.get_live_backup(app.as_str()).await? {
+            let original: Value = serde_json::from_str(&backup.original_config)
+                .map_err(|e| AppError::Message(format!("解析 Gemini 代理接管备份失败: {e}")))?;
+            let cleaned = live::remove_common_config_from_settings(&app, &original, &poison_text)?;
+            if cleaned != original {
+                let text = serde_json::to_string(&cleaned)
+                    .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))?;
+                state.db.save_live_backup(app.as_str(), &text).await?;
+                log::info!("已从 Gemini 代理接管备份中清除泄漏的共享凭据");
+            }
+        }
+
+        // 5) `~/.gemini/.env`：**定向**删除，且必须在清片段之前做，失败即中止。
+        //
+        //    为什么不用 `sync_current_provider_for_app` 重投影：它在没有当前供应商
+        //    时直接返回 Ok 而根本不写文件，泄漏值会原样留在 live 里；等片段被清空
+        //    之后，下次切换时 `remove_common_config_from_settings` 再也认不出这个
+        //    键，backfill 就把它永久写进受害供应商的配置——正是本函数开头说的那个
+        //    顺序陷阱，只是由"没修"变成"修了一半更糟"。定向删除还顺带保住了只存在
+        //    于 live、与供应商无关的手工 env（重投影会把它们抹掉）。
+        //
+        //    删除走 `remove_gemini_env_entries` 的**保序**实现而不是 read→HashMap→
+        //    write 往返：后者会顺手抹掉注释、空行和无法识别的行，并按键名重排整个
+        //    文件。全量投影时那无所谓，但这里是一次用户没主动触发的启动期清理，不该
+        //    连带改写与泄漏无关的内容。
+        //
+        //    失败就带着错误返回：片段此刻还留着毒键，完成标记也没置位，下次启动能
+        //    照原样重来。清片段是不可逆的一步，必须排在所有会失败的步骤之后。
+        let poison_env: HashMap<String, String> = poison_value
+            .as_object()
+            .map(|map| {
+                map.iter()
+                    .filter_map(|(key, value)| {
+                        value.as_str().map(|text| (key.clone(), text.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if crate::gemini_config::remove_gemini_env_entries(&poison_env)? {
+            log::info!("已从 ~/.gemini/.env 中清除泄漏的共享凭据");
+        }
+
+        // 6) 片段本身：保留可共享的部分。全部清空时删行而不是写 "{}"——留着空行会让
+        //    should_auto_extract_config_snippet 永远为 false，用户的合法共享配置再也
+        //    重建不回来。同理绝不置 cleared 标记。
+        if clean.is_empty() {
+            state.db.set_config_snippet(app.as_str(), None)?;
+        } else {
+            let cleaned_snippet = serde_json::to_string_pretty(&Value::Object(clean))
+                .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))?;
+            state
+                .db
+                .set_config_snippet(app.as_str(), Some(cleaned_snippet))?;
+        }
+
+        state.db.set_setting(FLAG, "true")?;
+        log::info!("Gemini 通用配置凭据清理完成");
+        Ok(())
     }
 
     /// Extract common config for OpenCode (JSON format)

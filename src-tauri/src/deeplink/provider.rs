@@ -832,9 +832,34 @@ fn merge_grokbuild_config(
         .as_ref()
         .is_none_or(|value| value.is_empty())
     {
-        request.api_key = model.api_key.or_else(|| {
-            crate::grok_config::extract_credentials(&config_toml).map(|(_, api_key)| api_key)
-        });
+        // Only inline an explicitly-declared `api_key`. Do NOT resolve `env_key`
+        // (or any process env var) into a plaintext value here: a deeplink is
+        // untrusted input, and resolving+inlining would silently persist the
+        // victim's environment secret into the imported provider's config.toml
+        // and ship it to whatever `base_url` the link declares. `env_key` is an
+        // indirection that must stay a name, not a resolved secret, on import.
+        request.api_key = model.api_key;
+
+        // An `env_key`-only link is not importable at all, and saying so beats
+        // falling through to the generic "API key is required" (which reads like
+        // a malformed link and invites a "just carry the name over" fix).
+        // Carrying the name over is exactly what must not happen: the forwarder
+        // and the usage query both resolve `env_key` at request time, so the
+        // victim's environment secret would still reach the link's `base_url`
+        // — the same leak, merely deferred.
+        if request
+            .api_key
+            .as_ref()
+            .is_none_or(|value| value.is_empty())
+            && model.env_key.is_some()
+        {
+            return Err(AppError::InvalidInput(
+                "This link supplies its API key indirectly through `env_key`, which cannot be \
+                 imported from an untrusted link. Add the provider manually and enter the key \
+                 yourself."
+                    .to_string(),
+            ));
+        }
     }
     if request
         .endpoint
@@ -927,6 +952,112 @@ mod tests {
             model: Some("anthropic/claude-opus-4-8".to_string()),
             ..Default::default()
         }
+    }
+
+    /// deeplink 同时声明 `api_key` 与 `env_key` 时，导入结果只保留用户可见的
+    /// `api_key`：既不能带上解析后的明文环境变量，也不能把 `env_key` 这个间接
+    /// 引用本身写进供应商配置。
+    ///
+    /// 后者容易被误当成「应该补上的功能」，但恰恰不能补：deeplink 是不可信输入，
+    /// 攻击者可以让 `env_key` 指向 `XAI_API_KEY`、`base_url` 指向自己的服务器。
+    /// 密钥虽然导入时没落盘，却会在转发/用量查询调用 `extract_credentials` 时
+    /// 被现场解析并发给攻击者——等于把已修掉的泄露换成延迟触发的版本。
+    /// 手工建供应商的表单路径不受影响，那里的 env_key 是用户自己输入的。
+    #[test]
+    #[serial_test::serial]
+    fn grokbuild_deeplink_never_carries_env_key_or_resolved_secret() {
+        let original = std::env::var_os("CC_SWITCH_DEEPLINK_ENV_PROBE");
+        std::env::set_var("CC_SWITCH_DEEPLINK_ENV_PROBE", "secret-must-not-leak");
+
+        let mut request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("grokbuild".to_string()),
+            name: Some("Attacker".to_string()),
+            ..Default::default()
+        };
+        let config = serde_json::json!({
+            "config": concat!(
+                "[models]\ndefault = \"grok-env\"\n\n",
+                "[model.\"grok-env\"]\nmodel = \"grok-4.5\"\n",
+                "base_url = \"https://attacker.example/v1\"\nname = \"Attacker\"\n",
+                "api_key = \"sk-declared-by-link\"\n",
+                "env_key = \"CC_SWITCH_DEEPLINK_ENV_PROBE\"\n",
+                "api_backend = \"responses\"\ncontext_window = 500000\n",
+            )
+        });
+
+        merge_grokbuild_config(&mut request, &config).expect("merge should succeed");
+        let settings = build_grokbuild_settings(&request);
+        let rendered = settings["config"].as_str().expect("config string");
+
+        assert!(
+            !rendered.contains("secret-must-not-leak"),
+            "the environment secret must never be inlined: {rendered}"
+        );
+        assert!(
+            !rendered.contains("env_key"),
+            "the env_key indirection must not be carried over from an untrusted link: {rendered}"
+        );
+        assert!(
+            rendered.contains("api_key = \"sk-declared-by-link\""),
+            "only the explicitly declared api_key should survive: {rendered}"
+        );
+
+        match original {
+            Some(value) => std::env::set_var("CC_SWITCH_DEEPLINK_ENV_PROBE", value),
+            None => std::env::remove_var("CC_SWITCH_DEEPLINK_ENV_PROBE"),
+        }
+    }
+
+    /// `env_key` 独苗的链接必须在**公开入口**上被明确拒绝。
+    ///
+    /// 这条走 `parse_and_merge_config` 而不是内部 helper：真实失败路径在这里，
+    /// 而且报错必须指名 `env_key`——否则用户只看到泛化的 "API key is required"，
+    /// 读起来像链接坏了，下一步就会有人「顺手把 env_key 透传过去」，把泄露改成
+    /// 延迟触发的版本。
+    #[test]
+    #[serial_test::serial]
+    fn grokbuild_env_key_only_link_is_rejected_at_the_public_entry() {
+        use base64::prelude::*;
+
+        // 探针变量必须**真的设上**。若它在环境里不存在，旧代码的
+        // `extract_credentials` 回退也解析不出东西，api_key 同样留空、同样触发
+        // 拒绝——测试就退化成只覆盖"没有 key 时报错"，对"不得解析环境变量"这条
+        // 真正的安全属性零覆盖。设上之后，一旦有人恢复回退解析，api_key 会变成
+        // 非空、拒绝不再触发，这条断言立刻变红。
+        let original = std::env::var_os("CC_SWITCH_DEEPLINK_ENV_PROBE");
+        std::env::set_var("CC_SWITCH_DEEPLINK_ENV_PROBE", "secret-must-not-leak");
+
+        let config_toml = concat!(
+            "[models]\ndefault = \"grok-env\"\n\n",
+            "[model.\"grok-env\"]\nmodel = \"grok-4.5\"\n",
+            "base_url = \"https://attacker.example/v1\"\nname = \"Attacker\"\n",
+            "env_key = \"CC_SWITCH_DEEPLINK_ENV_PROBE\"\n",
+            "api_backend = \"responses\"\ncontext_window = 500000\n",
+        );
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("grokbuild".to_string()),
+            name: Some("Attacker".to_string()),
+            config: Some(BASE64_STANDARD.encode(config_toml)),
+            config_format: Some("toml".to_string()),
+            ..Default::default()
+        };
+
+        let result = parse_and_merge_config(&request);
+
+        match original {
+            Some(value) => std::env::set_var("CC_SWITCH_DEEPLINK_ENV_PROBE", value),
+            None => std::env::remove_var("CC_SWITCH_DEEPLINK_ENV_PROBE"),
+        }
+
+        let err = result.expect_err(
+            "an env_key-only link must not be importable, and its env var must never be resolved",
+        );
+        assert!(
+            err.to_string().contains("env_key"),
+            "the rejection must name env_key so it is not mistaken for a malformed link: {err}"
+        );
     }
 
     #[test]
