@@ -871,7 +871,8 @@ async fn handle_responses_for_app(
         .await;
     }
 
-    let restore_tool_search = request_uses_tool_search_shim
+    let restore_tool_search = super::supports_codex_tool_search_compat(&app_type)
+        && request_uses_tool_search_shim
         && super::providers::should_restore_codex_native_tool_search(&ctx.provider, &endpoint);
     let restore_namespaces =
         (super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)
@@ -1013,7 +1014,8 @@ async fn handle_responses_compact_for_app(
         .await;
     }
 
-    let restore_tool_search = request_uses_tool_search_shim
+    let restore_tool_search = super::supports_codex_tool_search_compat(&app_type)
+        && request_uses_tool_search_shim
         && super::providers::should_restore_codex_native_tool_search(&ctx.provider, &endpoint);
     let restore_namespaces =
         (super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)

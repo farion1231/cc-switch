@@ -1418,7 +1418,7 @@ impl RequestForwarder {
         // the actual third-party provider. Direct/non-takeover Codex routing
         // bypasses this forwarder, while official ChatGPT/OAuth providers are
         // explicitly excluded by the provider gate.
-        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+        if super::supports_codex_tool_search_compat(app_type)
             && super::providers::should_inject_codex_tool_search_shim(provider, endpoint)
         {
             let action = super::providers::transform_codex_chat::ensure_responses_tool_search_shim(
@@ -1566,7 +1566,8 @@ impl RequestForwarder {
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
             && (super::providers::provider_needs_responses_namespace_flatten(provider)
-                || super::providers::should_inject_codex_tool_search_shim(provider, endpoint))
+                || (super::supports_codex_tool_search_compat(app_type)
+                    && super::providers::should_inject_codex_tool_search_shim(provider, endpoint)))
             && super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
                 &mut request_body,
             )?
