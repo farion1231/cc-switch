@@ -3889,6 +3889,15 @@ wire_api = "responses"
             live_config.contains(PROXY_TOKEN_PLACEHOLDER),
             "live config should carry the proxy placeholder token"
         );
+        let parsed_live: toml::Value =
+            toml::from_str(&live_config).expect("parse third-party live config");
+        assert_eq!(
+            parsed_live["model_providers"]["rightcode"]
+                .get("requires_openai_auth")
+                .and_then(toml::Value::as_bool),
+            Some(false),
+            "takeover bearer auth must not select the preserved ChatGPT login"
+        );
 
         crate::settings::update_settings(crate::settings::AppSettings::default())
             .expect("reset settings");
