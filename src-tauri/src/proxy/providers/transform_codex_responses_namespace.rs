@@ -108,9 +108,6 @@ fn collect_tool_search_output_tools(value: &Value, tools: &mut Vec<Value>) {
                     tools.extend(discovered.iter().cloned());
                 }
             }
-            for child in obj.values() {
-                collect_tool_search_output_tools(child, tools);
-            }
         }
         _ => {}
     }
@@ -244,13 +241,7 @@ fn rewrite_tool_search_history_items(
                 });
                 Ok(true)
             }
-            _ => {
-                let mut changed = false;
-                for child in obj.values_mut() {
-                    changed |= rewrite_tool_search_history_items(child, discovered)?;
-                }
-                Ok(changed)
-            }
+            _ => Ok(false),
         },
         _ => Ok(false),
     }
@@ -1007,6 +998,26 @@ mod tests {
         }
         assert_eq!(body["input"][0]["type"], "function_call_output");
         assert_eq!(body["tool_choice"], "auto");
+    }
+
+    #[test]
+    fn nested_tool_search_output_in_function_payload_is_not_rewritten() {
+        let nested = json!({
+            "type": "tool_search_output",
+            "tools": [{"type": "function", "name": "loaded", "parameters": {}}]
+        });
+        let mut body = json!({
+            "tools": [{"type": "function", "name": "shell", "parameters": {}}],
+            "input": [{"type": "function_call_output", "call_id": "call-1", "output": nested.clone()}]
+        });
+
+        assert!(!flatten_request_namespaces(&mut body).unwrap());
+        assert_eq!(body["input"][0]["output"], nested);
+        assert!(body["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|tool| tool["name"] != "loaded"));
     }
 
     #[test]

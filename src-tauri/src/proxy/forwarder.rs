@@ -1423,9 +1423,10 @@ impl RequestForwarder {
         {
             let action = super::providers::transform_codex_chat::ensure_responses_tool_search_shim(
                 &mut mapped_body,
-                !codex_responses_to_chat
-                    && !codex_responses_to_anthropic
-                    && super::providers::provider_needs_responses_namespace_flatten(provider),
+                should_replace_native_tool_search(
+                    codex_responses_to_chat,
+                    codex_responses_to_anthropic,
+                ),
             );
             let provider_type = provider
                 .meta
@@ -3626,6 +3627,14 @@ fn value_for_log(value: &Value) -> String {
         Value::Object(values) => format!("object(len={})", values.len()),
     }
 }
+/// Native Responses routes use the function shim because third-party gateways
+/// cannot be assumed to implement Codex's private native tool_search carrier.
+fn should_replace_native_tool_search(
+    codex_responses_to_chat: bool,
+    codex_responses_to_anthropic: bool,
+) -> bool {
+    !codex_responses_to_chat && !codex_responses_to_anthropic
+}
 
 #[cfg(test)]
 mod tests {
@@ -3658,6 +3667,18 @@ mod tests {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    #[test]
+    fn native_tool_search_replacement_is_not_xai_only() {
+        assert!(!should_replace_native_tool_search(true, false));
+        assert!(!should_replace_native_tool_search(false, true));
+        let replace_native = should_replace_native_tool_search(false, false);
+
+        assert!(
+            replace_native,
+            "every shimmed native Responses route needs replacement"
+        );
     }
 
     fn test_forwarder(
