@@ -161,6 +161,31 @@ html.dark {
     overflow-x: hidden;
   }
 
+  /* Header toolbar: allow horizontal pan when app icons/actions overflow.
+     Global styles hide scrollbars; this opts the toolbar back into a thin
+     horizontal bar so narrow/non-maximized windows can still reach all actions. */
+  .toolbar-x-scroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+    -ms-overflow-style: auto;
+  }
+
+  .toolbar-x-scroll::-webkit-scrollbar {
+    display: block;
+    height: 4px;
+  }
+
+  .toolbar-x-scroll::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 9999px;
+  }
+
+  .toolbar-x-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
   .border-default {
     border-width: 1px;
     border-color: hsl(var(--border));

@@ -1273,7 +1273,7 @@ function App() {
                   <ProfileSwitcher activeApp={activeApp} />
                 </div>
               )}
-            <div className="flex flex-1 min-w-0 overflow-x-hidden items-center py-4 pr-2">
+            <div className="toolbar-x-scroll flex flex-1 min-w-0 items-center py-4 pr-2">
               <div
                 className="flex shrink-0 items-center gap-1.5 ml-auto"
                 style={{ WebkitAppRegion: "no-drag" } as any}
@@ -1554,18 +1554,25 @@ function App() {
                         </motion.div>
                       </AnimatePresence>
                     </div>
-
-                    <Button
-                      onClick={() => setIsAddOpen(true)}
-                      size="icon"
-                      className={`ml-2 ${addActionButtonClass}`}
-                    >
-                      <Plus className="w-5 h-5" />
-                    </Button>
                   </>
                 )}
               </div>
             </div>
+            {currentView === "providers" && (
+              <div
+                className="flex shrink-0 items-center"
+                style={{ WebkitAppRegion: "no-drag" } as any}
+              >
+                <Button
+                  onClick={() => setIsAddOpen(true)}
+                  size="icon"
+                  className={addActionButtonClass}
+                  title={t("header.addProvider")}
+                >
+                  <Plus className="w-5 h-5" />
+                </Button>
+              </div>
+            )}
           </div>
         </div>
       </header>
