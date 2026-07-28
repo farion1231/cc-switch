@@ -117,16 +117,15 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "AICodeMirror",
-    websiteUrl: "https://www.aicodemirror.com",
-    apiKeyUrl: "https://www.aicodemirror.com/register?invitecode=9915W3",
+    websiteUrl: "https://www.aicodemirror.ai",
+    apiKeyUrl: "https://www.aicodemirror.ai/register?invitecode=9915W3",
     auth: grokAuth(),
     config: grokPresetConfig(
       "AICodeMirror",
-      "https://api.aicodemirror.com/api/codex/backend-api/codex",
+      "https://api.aicodemirror.ai/api/codex/backend-api/codex",
     ),
     endpointCandidates: [
-      "https://api.aicodemirror.com/api/codex/backend-api/codex",
-      "https://api.claudecode.net.cn/api/codex/backend-api/codex",
+      "https://api.aicodemirror.ai/api/codex/backend-api/codex",
     ],
     isPartner: true,
     partnerPromotionKey: "aicodemirror",
