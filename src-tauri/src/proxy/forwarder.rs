@@ -286,6 +286,7 @@ impl RequestForwarder {
         provider: &Provider,
         app_type_str: &str,
         used_half_open_permit: bool,
+        has_failover_candidates: bool,
         rectifier_label: &str,
         last_error: &mut Option<ProxyError>,
         last_provider: &mut Option<Provider>,
@@ -294,7 +295,9 @@ impl RequestForwarder {
         // 客户端错误：整流后请求仍违法，下一家也修不好 → 直接返回。
         let is_provider_error = match &retry_err {
             ProxyError::Timeout(_) | ProxyError::ForwardFailed(_) => true,
-            ProxyError::UpstreamError { status, .. } => *status >= 500,
+            ProxyError::UpstreamError { status, .. } => {
+                *status >= 500 || should_fail_over_upstream_4xx(&retry_err, has_failover_candidates)
+            }
             _ => false,
         };
 
@@ -409,8 +412,13 @@ impl RequestForwarder {
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
 
+        // ProviderRouter returns multiple entries only when automatic failover is enabled.
+        // Derive this from the selected request context instead of re-reading mutable
+        // proxy configuration while an attempt is already in progress.
+        let has_failover_candidates = providers.len() > 1;
+
         // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
-        let bypass_circuit_breaker = providers.len() == 1;
+        let bypass_circuit_breaker = !has_failover_candidates;
 
         // 依次尝试每个供应商
         for provider in providers.iter() {
@@ -655,6 +663,7 @@ impl RequestForwarder {
                                             provider,
                                             app_type_str,
                                             used_half_open_permit,
+                                            has_failover_candidates,
                                             "media 降级",
                                             &mut last_error,
                                             &mut last_provider,
@@ -804,6 +813,7 @@ impl RequestForwarder {
                                                 provider,
                                                 app_type_str,
                                                 used_half_open_permit,
+                                                has_failover_candidates,
                                                 "整流",
                                                 &mut last_error,
                                                 &mut last_provider,
@@ -964,6 +974,7 @@ impl RequestForwarder {
                                             provider,
                                             app_type_str,
                                             used_half_open_permit,
+                                            has_failover_candidates,
                                             "budget 整流",
                                             &mut last_error,
                                             &mut last_provider,
@@ -1003,7 +1014,8 @@ impl RequestForwarder {
                     // 先分类错误，决定是否计入 provider 健康度
                     // —— NonRetryable / ClientAbort 是客户端层错误，无论换哪家 provider 都会被拒绝，
                     //    不应污染熔断器和数据库健康度（与 release_permit_neutral 同语义）。
-                    let category = self.categorize_proxy_error(&e, provider);
+                    let category =
+                        self.categorize_proxy_error(&e, provider, has_failover_candidates);
 
                     match category {
                         ErrorCategory::Retryable => {
@@ -2633,7 +2645,12 @@ impl RequestForwarder {
         }
     }
 
-    fn categorize_proxy_error(&self, error: &ProxyError, provider: &Provider) -> ErrorCategory {
+    fn categorize_proxy_error(
+        &self,
+        error: &ProxyError,
+        provider: &Provider,
+        has_failover_candidates: bool,
+    ) -> ErrorCategory {
         // Authentication belongs to the Codex client for the built-in official
         // route. Retrying another provider would silently move the conversation
         // away from the selected official account and poison its health state.
@@ -2665,18 +2682,13 @@ impl RequestForwarder {
             ProxyError::ProviderUnhealthy(_) => ErrorCategory::Retryable,
             // 上游 HTTP 错误：按状态码分桶。
             //
-            // 客户端请求自身有问题的状态码无论换哪个 provider 都会被拒绝，
-            // 继续轮询只会放大错误率、污染熔断器健康度、浪费配额：
-            //   400 Bad Request / 422 Unprocessable Entity   ← 请求体格式或语义错误
-            //   405 Method Not Allowed / 406 Not Acceptable  ← 方法或 Accept 错误
-            //   413 Payload Too Large / 414 URI Too Long     ← 客户端构造超限
-            //   415 Unsupported Media Type                    ← Content-Type 错误
-            //   501 Not Implemented                           ← 上游协议确实不支持
-            //
-            // 其他 4xx（401/403/404/408/409/429/451 等）和全部 5xx 都保留
-            // Retryable —— 换一家 provider 可能持有不同的 key、配额、地域或模型映射。
+            // 客户端本地校验错误不会进入 UpstreamError。只要当前请求确实来自
+            // 自动故障转移队列，并且还有其他候选，所有上游 4xx 都先尝试下一家：
+            // 不同供应商可能有不同 key、配额、地域、模型映射或网关兼容性。
+            // 没有候选时仍按原始 4xx 返回，避免单供应商模式下无意义重试。
             ProxyError::UpstreamError { status, .. } => match *status {
-                400 | 405 | 406 | 413 | 414 | 415 | 422 | 501 => ErrorCategory::NonRetryable,
+                400..=499 if has_failover_candidates => ErrorCategory::Retryable,
+                400..=499 => ErrorCategory::NonRetryable,
                 _ => ErrorCategory::Retryable,
             },
             // Provider 级配置/转换问题：换一个 Provider 可能就能成功
@@ -2690,6 +2702,21 @@ impl RequestForwarder {
             _ => ErrorCategory::NonRetryable,
         }
     }
+}
+
+/// An upstream 4xx can be provider-specific (gateway compatibility, model
+/// mapping, quota, auth key, or vendor request validation). Only a selected
+/// failover queue has another provider to try; locally generated request errors
+/// never reach this branch.
+fn should_fail_over_upstream_4xx(error: &ProxyError, has_failover_candidates: bool) -> bool {
+    has_failover_candidates
+        && matches!(
+            error,
+            ProxyError::UpstreamError {
+                status: 400..=499,
+                ..
+            }
+        )
 }
 
 /// 从 ProxyError 中提取错误消息
@@ -4356,6 +4383,33 @@ mod tests {
     }
 
     #[test]
+    fn upstream_http_4xx_retries_only_with_another_failover_candidate() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let provider = test_provider_with_type(None);
+        for status in [400, 403, 404, 413, 422, 429] {
+            let error = ProxyError::UpstreamError {
+                status,
+                body: Some("gateway rejected this provider route".to_string()),
+            };
+
+            assert!(should_fail_over_upstream_4xx(&error, true));
+            assert_eq!(
+                forwarder.categorize_proxy_error(&error, &provider, true),
+                ErrorCategory::Retryable
+            );
+
+            assert!(!should_fail_over_upstream_4xx(&error, false));
+            assert_eq!(
+                forwarder.categorize_proxy_error(&error, &provider, false),
+                ErrorCategory::NonRetryable
+            );
+        }
+
+        let local_error = ProxyError::InvalidRequest("invalid local request".to_string());
+        assert!(!should_fail_over_upstream_4xx(&local_error, true));
+    }
+
+    #[test]
     fn invalid_client_history_is_not_retryable() {
         let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
         let provider = test_provider_with_type(None);
@@ -4363,6 +4417,7 @@ mod tests {
             forwarder.categorize_proxy_error(
                 &ProxyError::InvalidRequest("invalid historical tool arguments".to_string()),
                 &provider,
+                true,
             ),
             ErrorCategory::NonRetryable
         );
@@ -4387,7 +4442,7 @@ mod tests {
             },
         ] {
             assert_eq!(
-                forwarder.categorize_proxy_error(&error, &provider),
+                forwarder.categorize_proxy_error(&error, &provider, true),
                 ErrorCategory::NonRetryable
             );
         }

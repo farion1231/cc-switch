@@ -9,9 +9,11 @@ import {
   Play,
   Plus,
   Terminal,
+  TestTube2,
   Trash2,
   Zap,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -28,6 +30,7 @@ interface ProviderActionsProps {
   onEdit: () => void;
   onDuplicate: () => void;
   onTest?: () => void;
+  onTestModels?: () => void;
   onConfigureUsage?: () => void;
   onDelete: () => void;
   onRemoveFromConfig?: () => void;
@@ -42,6 +45,8 @@ interface ProviderActionsProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  isTestingModels?: boolean;
+  groupMenu?: ReactNode;
 }
 
 // 主按钮的呈现状态。title 用于 disabled 态向用户解释为何不可点击；
@@ -67,6 +72,7 @@ export function ProviderActions({
   onEdit,
   onDuplicate,
   onTest,
+  onTestModels,
   onConfigureUsage,
   onDelete,
   onRemoveFromConfig,
@@ -80,6 +86,8 @@ export function ProviderActions({
   // OpenClaw: default model
   isDefaultModel = false,
   onSetAsDefault,
+  isTestingModels = false,
+  groupMenu,
 }: ProviderActionsProps) {
   const { t } = useTranslation();
   const iconButtonClass = "h-8 w-8 p-1";
@@ -295,6 +303,8 @@ export function ProviderActions({
           <Edit className="h-4 w-4" />
         </Button>
 
+        {groupMenu}
+
         <Button
           size="icon"
           variant="ghost"
@@ -320,6 +330,25 @@ export function ProviderActions({
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
             <Activity className="h-4 w-4" />
+          )}
+        </Button>
+
+        <Button
+          size="icon"
+          variant="ghost"
+          onClick={onTestModels || undefined}
+          disabled={isTestingModels}
+          title={t("provider.testModels", { defaultValue: "测试模型" })}
+          className={cn(
+            iconButtonClass,
+            !onTestModels &&
+              "opacity-40 cursor-not-allowed text-muted-foreground",
+          )}
+        >
+          {isTestingModels ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <TestTube2 className="h-4 w-4" />
           )}
         </Button>
 

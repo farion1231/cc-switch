@@ -16,8 +16,11 @@ import {
   FileText,
   X,
   CheckSquare,
+  Eraser,
   ListTree,
   List,
+  Pin,
+  PinOff,
   ChevronDown,
   ChevronRight,
   ChevronsDownUp,
@@ -27,7 +30,7 @@ import {
   useSessionMessagesQuery,
   useSessionsQuery,
 } from "@/lib/query";
-import { sessionsApi } from "@/lib/api";
+import { sessionsApi, settingsApi } from "@/lib/api";
 import type { SessionMeta } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -79,6 +82,7 @@ const SESSION_LIST_VIEW_MODE_STORAGE_KEY =
   "cc-switch.sessionManager.listViewMode";
 const SESSION_GROUP_EXPANSION_STORAGE_KEY =
   "cc-switch.sessionManager.groupExpansionState";
+const PINNED_SESSIONS_STORAGE_KEY = "cc-switch.sessionManager.pinnedSessions";
 
 type ProviderFilter =
   | "all"
@@ -103,6 +107,23 @@ type SessionGroupExpansionState = {
   expandedProviderIds: Set<string>;
   expandedDirectoryKeys: Set<string>;
 };
+
+const readInitialPinnedSessionKeys = (): Set<string> => {
+  if (typeof window === "undefined") return new Set();
+
+  try {
+    const stored = window.localStorage.getItem(PINNED_SESSIONS_STORAGE_KEY);
+    const parsed = stored ? JSON.parse(stored) : [];
+    return new Set(normalizePinnedSessionKeys(parsed));
+  } catch {
+    return new Set();
+  }
+};
+
+const normalizePinnedSessionKeys = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 
 const readInitialSessionListViewMode = (): SessionListViewMode => {
   if (typeof window === "undefined") return "flat";
@@ -206,6 +227,19 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   );
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
+  const [pinnedSessionKeys, setPinnedSessionKeys] = useState<Set<string>>(
+    readInitialPinnedSessionKeys,
+  );
+  const [pinnedSettingsHydrated, setPinnedSettingsHydrated] = useState(false);
+  const pinnedSettingsPersistQueueRef = useRef<Promise<void>>(
+    Promise.resolve(),
+  );
+  const [cleanupMaxMessages, setCleanupMaxMessages] = useState(20);
+  const [includePinnedInCleanup, setIncludePinnedInCleanup] = useState(false);
+  const [cleanupTargets, setCleanupTargets] = useState<SessionMeta[] | null>(
+    null,
+  );
+  const [isScanningCleanup, setIsScanningCleanup] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const [search, setSearch] = useState("");
@@ -236,15 +270,24 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     return searchSessions(search);
   }, [searchSessions, search]);
 
+  const orderedFilteredSessions = useMemo(() => {
+    return [...filteredSessions].sort((a, b) => {
+      const aPinned = pinnedSessionKeys.has(getSessionKey(a));
+      const bPinned = pinnedSessionKeys.has(getSessionKey(b));
+      if (aPinned !== bPinned) return aPinned ? -1 : 1;
+      return 0;
+    });
+  }, [filteredSessions, pinnedSessionKeys]);
+
   const groupedSessions = useMemo(
     () =>
       groupSessionsByProviderAndDirectory(
-        filteredSessions,
+        orderedFilteredSessions,
         t("sessionManager.unknownDirectory", {
           defaultValue: "未知目录",
         }),
       ),
-    [filteredSessions, t],
+    [orderedFilteredSessions, t],
   );
 
   const validGroupExpansionKeys = useMemo(
@@ -277,6 +320,64 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   }, [expandedDirectoryGroups, expandedProviderGroups]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const settings = await settingsApi.get();
+        if (cancelled) return;
+
+        const settingsKeys = normalizePinnedSessionKeys(
+          settings.sessionManagerPinnedSessions,
+        );
+        const localKeys = Array.from(readInitialPinnedSessionKeys());
+        setPinnedSessionKeys(new Set([...settingsKeys, ...localKeys]));
+      } catch (error) {
+        console.warn("Failed to load pinned session settings", error);
+      } finally {
+        if (!cancelled) {
+          setPinnedSettingsHydrated(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const persistPinnedSessionKeys = useCallback(
+    (keys: Set<string>) => {
+      const serializedKeys = Array.from(keys).sort();
+      window.localStorage.setItem(
+        PINNED_SESSIONS_STORAGE_KEY,
+        JSON.stringify(serializedKeys),
+      );
+
+      if (!pinnedSettingsHydrated) return;
+
+      pinnedSettingsPersistQueueRef.current =
+        pinnedSettingsPersistQueueRef.current
+          .catch(() => undefined)
+          .then(async () => {
+            const settings = await settingsApi.get();
+            await settingsApi.save({
+              ...settings,
+              sessionManagerPinnedSessions: serializedKeys,
+            });
+          })
+          .catch((error) => {
+            console.warn("Failed to save pinned session settings", error);
+          });
+    },
+    [pinnedSettingsHydrated],
+  );
+
+  useEffect(() => {
+    persistPinnedSessionKeys(pinnedSessionKeys);
+  }, [persistPinnedSessionKeys, pinnedSessionKeys]);
+
+  useEffect(() => {
     if (isLoading) return;
 
     setExpandedProviderGroups((current) =>
@@ -288,28 +389,28 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   }, [isLoading, validGroupExpansionKeys]);
 
   useEffect(() => {
-    if (filteredSessions.length === 0) {
+    if (orderedFilteredSessions.length === 0) {
       setSelectedKey(null);
       return;
     }
     const exists = selectedKey
-      ? filteredSessions.some(
+      ? orderedFilteredSessions.some(
           (session) => getSessionKey(session) === selectedKey,
         )
       : false;
     if (!exists) {
-      setSelectedKey(getSessionKey(filteredSessions[0]));
+      setSelectedKey(getSessionKey(orderedFilteredSessions[0]));
     }
-  }, [filteredSessions, selectedKey]);
+  }, [orderedFilteredSessions, selectedKey]);
 
   const selectedSession = useMemo(() => {
     if (!selectedKey) return null;
     return (
-      filteredSessions.find(
+      orderedFilteredSessions.find(
         (session) => getSessionKey(session) === selectedKey,
       ) || null
     );
-  }, [filteredSessions, selectedKey]);
+  }, [orderedFilteredSessions, selectedKey]);
 
   const listViewModeLabel =
     listViewMode === "grouped"
@@ -545,8 +646,9 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   };
 
   const deletableFilteredSessions = useMemo(
-    () => filteredSessions.filter((session) => Boolean(session.sourcePath)),
-    [filteredSessions],
+    () =>
+      orderedFilteredSessions.filter((session) => Boolean(session.sourcePath)),
+    [orderedFilteredSessions],
   );
 
   const selectedSessions = useMemo(
@@ -627,6 +729,89 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     });
   };
 
+  const toggleSessionPinned = (session: SessionMeta) => {
+    const key = getSessionKey(session);
+    setPinnedSessionKeys((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const scanCleanupTargets = async () => {
+    if (isScanningCleanup || isDeleting) return;
+
+    const threshold = Math.max(0, Math.floor(cleanupMaxMessages));
+    const candidates = orderedFilteredSessions.filter((session) => {
+      if (!session.sourcePath) return false;
+      if (
+        !includePinnedInCleanup &&
+        pinnedSessionKeys.has(getSessionKey(session))
+      ) {
+        return false;
+      }
+      return true;
+    });
+
+    if (candidates.length === 0) {
+      toast.info(
+        t("sessionManager.cleanupNoCandidates", {
+          defaultValue: "当前筛选范围内没有可清理的会话",
+        }),
+      );
+      return;
+    }
+
+    setIsScanningCleanup(true);
+    try {
+      const matched: SessionMeta[] = [];
+
+      for (const session of candidates) {
+        try {
+          const sessionMessages = await sessionsApi.getMessages(
+            session.providerId,
+            session.sourcePath!,
+          );
+          if (sessionMessages.length < threshold) {
+            matched.push(session);
+          }
+        } catch (error) {
+          console.warn("Failed to read session messages for cleanup", error);
+        }
+      }
+
+      if (matched.length === 0) {
+        toast.info(
+          t("sessionManager.cleanupNoMatches", {
+            defaultValue: "没有找到符合清理规则的会话",
+          }),
+        );
+        return;
+      }
+
+      setCleanupTargets(matched);
+    } catch (error) {
+      toast.error(
+        extractErrorMessage(error) ||
+          t("sessionManager.cleanupScanFailed", {
+            defaultValue: "清理扫描失败",
+          }),
+      );
+    } finally {
+      setIsScanningCleanup(false);
+    }
+  };
+
+  const confirmCleanupTargets = () => {
+    if (!cleanupTargets || cleanupTargets.length === 0) return;
+    setDeleteTargets(cleanupTargets);
+    setCleanupTargets(null);
+  };
+
   const toggleSessionGroupChecked = (
     groupSessions: SessionMeta[],
     checked: boolean,
@@ -692,8 +877,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
         searchQuery={search}
         isChecked={selectedSessionKeys.has(sessionKey)}
         isCheckDisabled={!session.sourcePath}
+        isPinned={pinnedSessionKeys.has(sessionKey)}
         onSelect={setSelectedKey}
         onToggleChecked={(checked) => toggleSessionChecked(session, checked)}
+        onTogglePinned={() => toggleSessionPinned(session)}
       />
     );
   };
@@ -1144,6 +1331,41 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                           </TooltipTrigger>
                           <TooltipContent>{t("common.refresh")}</TooltipContent>
                         </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-7"
+                              onClick={() =>
+                                selectedSession &&
+                                toggleSessionPinned(selectedSession)
+                              }
+                              disabled={!selectedSession}
+                            >
+                              {selectedSession &&
+                              pinnedSessionKeys.has(
+                                getSessionKey(selectedSession),
+                              ) ? (
+                                <PinOff className="size-3.5" />
+                              ) : (
+                                <Pin className="size-3.5" />
+                              )}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {selectedSession &&
+                            pinnedSessionKeys.has(
+                              getSessionKey(selectedSession),
+                            )
+                              ? t("sessionManager.unpinSession", {
+                                  defaultValue: "取消置顶",
+                                })
+                              : t("sessionManager.pinSession", {
+                                  defaultValue: "置顶会话",
+                                })}
+                          </TooltipContent>
+                        </Tooltip>
                       </div>
                     </div>
                     {selectionMode && (
@@ -1214,6 +1436,74 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                         </div>
                       </div>
                     )}
+                    <div className="mt-3 grid gap-3 rounded-md border bg-muted/20 px-3 py-2.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Eraser className="size-4 text-muted-foreground" />
+                        <span className="text-sm font-medium">
+                          {t("sessionManager.cleanupTitle", {
+                            defaultValue: "会话清理",
+                          })}
+                        </span>
+                        <Badge variant="secondary" className="text-xs">
+                          {t("sessionManager.cleanupThreshold", {
+                            defaultValue: "少于 {{count}} 条",
+                            count: cleanupMaxMessages,
+                          })}
+                        </Badge>
+                      </div>
+                      <div className="grid gap-3 min-[560px]:grid-cols-[minmax(0,1fr)_auto] min-[560px]:items-center">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <span>
+                              {t("sessionManager.cleanupThresholdLabel", {
+                                defaultValue: "消息阈值",
+                              })}
+                            </span>
+                            <Input
+                              type="number"
+                              min={0}
+                              value={cleanupMaxMessages}
+                              onChange={(event) =>
+                                setCleanupMaxMessages(
+                                  Number(event.target.value) || 0,
+                                )
+                              }
+                              className="h-8 w-20"
+                            />
+                          </label>
+                          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <Checkbox
+                              checked={includePinnedInCleanup}
+                              onCheckedChange={(checked) =>
+                                setIncludePinnedInCleanup(Boolean(checked))
+                              }
+                            />
+                            <span>
+                              {t("sessionManager.includePinnedInCleanup", {
+                                defaultValue: "包含已置顶",
+                              })}
+                            </span>
+                          </label>
+                        </div>
+                        <div className="flex items-center gap-2 justify-self-start min-[560px]:justify-self-end">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            className="h-7 px-2.5 text-xs whitespace-nowrap"
+                            onClick={() => void scanCleanupTargets()}
+                            disabled={isScanningCleanup}
+                          >
+                            {isScanningCleanup
+                              ? t("sessionManager.scanningCleanup", {
+                                  defaultValue: "扫描中...",
+                                })
+                              : t("sessionManager.scanCleanup", {
+                                  defaultValue: "扫描可清理会话",
+                                })}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
               </CardHeader>
@@ -1224,7 +1514,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                       <div className="flex items-center justify-center py-12">
                         <RefreshCw className="size-5 animate-spin text-muted-foreground" />
                       </div>
-                    ) : filteredSessions.length === 0 ? (
+                    ) : orderedFilteredSessions.length === 0 ? (
                       <div className="flex flex-col items-center justify-center py-12 text-center">
                         <MessageSquare className="size-8 text-muted-foreground/50 mb-2" />
                         <p className="text-sm text-muted-foreground">
@@ -1389,7 +1679,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                       </div>
                     ) : (
                       <div className="space-y-1">
-                        {filteredSessions.map((session) =>
+                        {orderedFilteredSessions.map((session) =>
                           renderSessionItem(session),
                         )}
                       </div>
@@ -1518,6 +1808,48 @@ export function SessionManagerPage({ appId }: { appId: string }) {
 
                       {/* 右侧：操作按钮组 */}
                       <div className="flex items-center gap-2 shrink-0">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="gap-1.5"
+                              onClick={() =>
+                                toggleSessionPinned(selectedSession)
+                              }
+                            >
+                              {pinnedSessionKeys.has(
+                                getSessionKey(selectedSession),
+                              ) ? (
+                                <PinOff className="size-3.5" />
+                              ) : (
+                                <Pin className="size-3.5" />
+                              )}
+                              <span className="hidden sm:inline">
+                                {pinnedSessionKeys.has(
+                                  getSessionKey(selectedSession),
+                                )
+                                  ? t("sessionManager.unpinSession", {
+                                      defaultValue: "取消置顶",
+                                    })
+                                  : t("sessionManager.pinSession", {
+                                      defaultValue: "置顶",
+                                    })}
+                              </span>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {pinnedSessionKeys.has(
+                              getSessionKey(selectedSession),
+                            )
+                              ? t("sessionManager.unpinSession", {
+                                  defaultValue: "取消置顶",
+                                })
+                              : t("sessionManager.pinSession", {
+                                  defaultValue: "置顶会话",
+                                })}
+                          </TooltipContent>
+                        </Tooltip>
                         {isMac() && (
                           <Tooltip>
                             <TooltipTrigger asChild>
@@ -1747,6 +2079,30 @@ export function SessionManagerPage({ appId }: { appId: string }) {
             setDeleteTargets(null);
           }
         }}
+      />
+      <ConfirmDialog
+        isOpen={Boolean(cleanupTargets)}
+        title={t("sessionManager.cleanupConfirmTitle", {
+          defaultValue: "确认清理会话",
+        })}
+        message={
+          cleanupTargets
+            ? t("sessionManager.cleanupConfirmMessage", {
+                defaultValue:
+                  "当前筛选范围内有 {{count}} 个会话的消息总条数少于 {{threshold}}。\n\n已置顶会话{{pinnedMode}}。\n\n确认后会进入删除确认流程。",
+                count: cleanupTargets.length,
+                threshold: Math.max(0, Math.floor(cleanupMaxMessages)),
+                pinnedMode: includePinnedInCleanup ? "会被包含" : "已跳过",
+              })
+            : ""
+        }
+        confirmText={t("sessionManager.cleanupConfirmAction", {
+          defaultValue: "继续清理",
+        })}
+        cancelText={t("common.cancel", { defaultValue: "取消" })}
+        variant="destructive"
+        onConfirm={confirmCleanupTargets}
+        onCancel={() => setCleanupTargets(null)}
       />
     </TooltipProvider>
   );

@@ -1,3 +1,5 @@
+> Unofficial fork notice: this repository is a personal modified build based on [farion1231/cc-switch](https://github.com/farion1231/cc-switch). It is not an official CC Switch release. Main changes are described in [UNOFFICIAL_FORK_ZH.md](UNOFFICIAL_FORK_ZH.md).
+
 <div align="center">
 
 # CC Switch

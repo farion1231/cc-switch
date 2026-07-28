@@ -111,6 +111,21 @@ export interface UsageResult {
   error?: string;
 }
 
+// 供应商单独的连通检测配置（覆盖全局配置）
+export interface ProviderTestConfig {
+  // 是否启用单独配置（false 时使用全局配置）
+  enabled: boolean;
+  // 超时时间（秒）
+  timeoutSecs?: number;
+  // 降级阈值（毫秒）
+  degradedThresholdMs?: number;
+  // 最大重试次数
+  maxRetries?: number;
+  // 真实模型测试使用的模型；留空时使用全局默认
+  testModel?: string;
+  // 真实模型测试使用的提示词；留空时使用全局默认
+  testPrompt?: string;
+}
 export type AuthBindingSource = "provider_config" | "managed_account";
 
 export interface AuthBinding {
@@ -186,6 +201,8 @@ export interface ProviderMeta {
   isPartner?: boolean;
   // 合作伙伴促销 key（用于后端识别 PackyCode 等）
   partnerPromotionKey?: string;
+  // 供应商单独的连通检测/模型测试配置
+  testConfig?: ProviderTestConfig;
   // 供应商成本倍率
   costMultiplier?: string;
   // 供应商计费模式来源
@@ -227,6 +244,10 @@ export interface ProviderMeta {
   customUserAgent?: string;
   // Local proxy request overrides. Only applied by the local proxy after route transforms.
   localProxyRequestOverrides?: LocalProxyRequestOverrides;
+  // UI-only provider grouping metadata. Persisted with the provider record.
+  providerGroupId?: string;
+  providerGroupName?: string;
+  providerGroupSortIndex?: number;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
@@ -387,6 +408,10 @@ export interface Settings {
 
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;
+
+  // Session manager pinned history entries. Kept in app settings so pins
+  // survive full app exit and WebView storage resets.
+  sessionManagerPinnedSessions?: string[];
 
   // ===== 设备级目录覆盖 =====
   // 覆盖 Claude Code 配置目录（可选）

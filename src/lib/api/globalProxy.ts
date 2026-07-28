@@ -32,6 +32,22 @@ export interface DetectedProxy {
   port: number;
 }
 
+export type ProxyWatchdogMode = "auto" | "manualOn" | "manualOff";
+
+export interface ProxyWatchdogConfig {
+  mode: ProxyWatchdogMode;
+  proxyUrl: string;
+}
+
+export interface ProxyWatchdogStatus {
+  config: ProxyWatchdogConfig;
+  effectiveProxyUrl: string | null;
+  isProxying: boolean;
+  lastProbeSuccess: boolean | null;
+  lastCheckedAt: string | null;
+  lastError: string | null;
+}
+
 /**
  * 获取全局代理 URL
  *
@@ -52,6 +68,34 @@ export async function setGlobalProxyUrl(url: string): Promise<void> {
     return await invoke("set_global_proxy_url", { url });
   } catch (error) {
     // Tauri invoke 错误可能是字符串
+    throw new Error(typeof error === "string" ? error : String(error));
+  }
+}
+
+export async function getProxyWatchdogConfig(): Promise<ProxyWatchdogConfig> {
+  return invoke<ProxyWatchdogConfig>("get_proxy_watchdog_config");
+}
+
+export async function setProxyWatchdogConfig(
+  config: ProxyWatchdogConfig,
+): Promise<ProxyWatchdogStatus> {
+  try {
+    return await invoke<ProxyWatchdogStatus>("set_proxy_watchdog_config", {
+      config,
+    });
+  } catch (error) {
+    throw new Error(typeof error === "string" ? error : String(error));
+  }
+}
+
+export async function getProxyWatchdogStatus(): Promise<ProxyWatchdogStatus> {
+  return invoke<ProxyWatchdogStatus>("get_proxy_watchdog_status");
+}
+
+export async function refreshProxyWatchdog(): Promise<ProxyWatchdogStatus> {
+  try {
+    return await invoke<ProxyWatchdogStatus>("refresh_proxy_watchdog");
+  } catch (error) {
     throw new Error(typeof error === "string" ? error : String(error));
   }
 }

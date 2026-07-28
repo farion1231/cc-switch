@@ -5,6 +5,15 @@ release/
 *.log
 .env
 .env.local
+*.db
+*.sqlite
+*.sqlite3
+*.exe
+*.msi
+*.pem
+*.key
+cc-switch-build-*/
+cc-switch-preserve-backup-*/
 *.tsbuildinfo
 .npmrc
 CLAUDE.md

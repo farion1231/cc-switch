@@ -4,9 +4,275 @@
 
 use crate::proxy::http_client;
 use crate::store::AppState;
-use serde::Serialize;
+use crate::{database::Database, error::AppError};
+use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::time::{Duration, Instant};
+
+const DEFAULT_WATCHDOG_PROXY_URL: &str = "http://127.0.0.1:7890";
+const WATCHDOG_INTERVAL_SECS: u64 = 30;
+const WATCHDOG_TEST_URLS: &[&str] = &[
+    "https://www.gstatic.com/generate_204",
+    "https://www.google.com/generate_204",
+    "https://www.cloudflare.com/cdn-cgi/trace",
+    "https://www.bing.com/",
+];
+
+static WATCHDOG_STARTED: AtomicBool = AtomicBool::new(false);
+static WATCHDOG_RUNTIME: Lazy<Mutex<ProxyWatchdogRuntime>> =
+    Lazy::new(|| Mutex::new(ProxyWatchdogRuntime::default()));
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ProxyWatchdogMode {
+    Auto,
+    ManualOn,
+    ManualOff,
+}
+
+impl ProxyWatchdogMode {
+    fn as_setting(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::ManualOn => "manual_on",
+            Self::ManualOff => "manual_off",
+        }
+    }
+
+    fn from_setting(value: &str) -> Self {
+        match value {
+            "auto" => Self::Auto,
+            "manual_off" | "manualOff" | "off" => Self::ManualOff,
+            _ => Self::ManualOn,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyWatchdogConfig {
+    pub mode: ProxyWatchdogMode,
+    pub proxy_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyWatchdogStatus {
+    pub config: ProxyWatchdogConfig,
+    pub effective_proxy_url: Option<String>,
+    pub is_proxying: bool,
+    pub last_probe_success: Option<bool>,
+    pub last_checked_at: Option<String>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ProxyWatchdogRuntime {
+    last_probe_success: Option<bool>,
+    last_checked_at: Option<String>,
+    last_error: Option<String>,
+}
+
+fn read_watchdog_config(db: &Database) -> Result<ProxyWatchdogConfig, AppError> {
+    let mode = ProxyWatchdogMode::from_setting(&db.get_proxy_watchdog_mode()?);
+    let proxy_url = db
+        .get_proxy_watchdog_proxy_url()?
+        .filter(|url| !url.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_WATCHDOG_PROXY_URL.to_string());
+
+    Ok(ProxyWatchdogConfig { mode, proxy_url })
+}
+
+fn write_watchdog_config(db: &Database, config: &ProxyWatchdogConfig) -> Result<(), AppError> {
+    db.set_proxy_watchdog_mode(config.mode.as_setting())?;
+    db.set_proxy_watchdog_proxy_url(Some(&config.proxy_url))?;
+    Ok(())
+}
+
+fn runtime_snapshot() -> ProxyWatchdogRuntime {
+    WATCHDOG_RUNTIME
+        .lock()
+        .map(|guard| guard.clone())
+        .unwrap_or_default()
+}
+
+fn update_runtime(success: Option<bool>, error: Option<String>) {
+    if let Ok(mut guard) = WATCHDOG_RUNTIME.lock() {
+        guard.last_probe_success = success;
+        guard.last_error = error;
+        guard.last_checked_at = Some(chrono::Utc::now().to_rfc3339());
+    }
+}
+
+fn make_watchdog_status(db: &Database) -> Result<ProxyWatchdogStatus, AppError> {
+    let config = read_watchdog_config(db)?;
+    let runtime = runtime_snapshot();
+    let effective_proxy_url = db.get_global_proxy_url()?;
+    let is_proxying = effective_proxy_url.is_some();
+    Ok(ProxyWatchdogStatus {
+        config,
+        effective_proxy_url,
+        is_proxying,
+        last_probe_success: runtime.last_probe_success,
+        last_checked_at: runtime.last_checked_at,
+        last_error: runtime.last_error,
+    })
+}
+
+fn apply_effective_proxy(db: &Database, proxy_url: Option<&str>) -> Result<(), String> {
+    db.set_global_proxy_url(proxy_url)
+        .map_err(|e| e.to_string())?;
+    http_client::apply_proxy(proxy_url)
+}
+
+async fn request_path_usable(client: &reqwest::Client, url: &str) -> Result<bool, String> {
+    match client.get(url).send().await {
+        Ok(resp) => Ok(resp.status().as_u16() < 500),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+async fn probe_watchdog_proxy(proxy_url: &str) -> (Option<bool>, Option<String>) {
+    let proxy = match reqwest::Proxy::all(proxy_url) {
+        Ok(proxy) => proxy,
+        Err(e) => return (Some(false), Some(format!("Invalid proxy URL: {e}"))),
+    };
+
+    let proxied_client = match reqwest::Client::builder()
+        .proxy(proxy)
+        .timeout(Duration::from_secs(12))
+        .connect_timeout(Duration::from_secs(8))
+        .build()
+    {
+        Ok(client) => client,
+        Err(e) => {
+            return (
+                Some(false),
+                Some(format!("Failed to build proxy client: {e}")),
+            )
+        }
+    };
+
+    let direct_client = match reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(12))
+        .connect_timeout(Duration::from_secs(8))
+        .build()
+    {
+        Ok(client) => client,
+        Err(e) => return (None, Some(format!("Failed to build direct client: {e}"))),
+    };
+
+    let mut saw_direct_success = false;
+    let mut errors = Vec::new();
+
+    for url in WATCHDOG_TEST_URLS {
+        match request_path_usable(&proxied_client, url).await {
+            Ok(true) => return (Some(true), None),
+            Ok(false) => errors.push(format!("{url} via proxy returned 5xx")),
+            Err(e) => errors.push(format!("{url} via proxy failed: {e}")),
+        }
+
+        if let Ok(true) = request_path_usable(&direct_client, url).await {
+            saw_direct_success = true;
+        }
+    }
+
+    if saw_direct_success {
+        (Some(false), Some(errors.join(" | ")))
+    } else {
+        (None, Some(errors.join(" | ")))
+    }
+}
+
+async fn apply_watchdog_config(
+    db: Arc<Database>,
+    config: ProxyWatchdogConfig,
+) -> Result<(), String> {
+    match config.mode {
+        ProxyWatchdogMode::ManualOn => {
+            http_client::validate_proxy(Some(&config.proxy_url))?;
+            apply_effective_proxy(&db, Some(&config.proxy_url))?;
+            update_runtime(None, Some("manual_on".to_string()));
+        }
+        ProxyWatchdogMode::ManualOff => {
+            apply_effective_proxy(&db, None)?;
+            update_runtime(None, Some("manual_off".to_string()));
+        }
+        ProxyWatchdogMode::Auto => {
+            run_watchdog_step(db).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn run_watchdog_step(db: Arc<Database>) -> Result<(), String> {
+    let config = read_watchdog_config(&db).map_err(|e| e.to_string())?;
+    if config.mode != ProxyWatchdogMode::Auto {
+        return Ok(());
+    }
+
+    let (probe, error) = probe_watchdog_proxy(&config.proxy_url).await;
+    update_runtime(probe, error.clone());
+
+    match probe {
+        Some(true) => {
+            if db
+                .get_global_proxy_url()
+                .map_err(|e| e.to_string())?
+                .as_deref()
+                != Some(config.proxy_url.as_str())
+            {
+                apply_effective_proxy(&db, Some(&config.proxy_url))?;
+                log::info!(
+                    "[ProxyWatchdog] proxy usable; enabled {}",
+                    http_client::mask_url(&config.proxy_url)
+                );
+            }
+        }
+        Some(false) => {
+            if db
+                .get_global_proxy_url()
+                .map_err(|e| e.to_string())?
+                .is_some()
+            {
+                apply_effective_proxy(&db, None)?;
+                log::info!("[ProxyWatchdog] proxy unavailable; switched to direct connection");
+            }
+        }
+        None => {
+            log::warn!(
+                "[ProxyWatchdog] proxy state unknown; keeping current global proxy. {}",
+                error.unwrap_or_else(|| "no details".to_string())
+            );
+        }
+    }
+
+    Ok(())
+}
+
+pub fn start_proxy_watchdog(db: Arc<Database>) {
+    if WATCHDOG_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    tauri::async_runtime::spawn(async move {
+        log::info!("[ProxyWatchdog] started");
+        let mut interval = tokio::time::interval(Duration::from_secs(WATCHDOG_INTERVAL_SECS));
+        loop {
+            interval.tick().await;
+            if let Err(e) = run_watchdog_step(db.clone()).await {
+                update_runtime(None, Some(e.clone()));
+                log::warn!("[ProxyWatchdog] step failed: {e}");
+            }
+        }
+    });
+}
 
 /// 获取全局代理 URL
 ///
@@ -56,6 +322,22 @@ pub fn set_global_proxy_url(state: tauri::State<'_, AppState>, url: String) -> R
         .set_global_proxy_url(url_opt)
         .map_err(|e| e.to_string())?;
 
+    let mode = if url_opt.is_some() {
+        ProxyWatchdogMode::ManualOn
+    } else {
+        ProxyWatchdogMode::ManualOff
+    };
+    state
+        .db
+        .set_proxy_watchdog_mode(mode.as_setting())
+        .map_err(|e| e.to_string())?;
+    if let Some(url) = url_opt {
+        state
+            .db
+            .set_proxy_watchdog_proxy_url(Some(url))
+            .map_err(|e| e.to_string())?;
+    }
+
     // 3. DB 写入成功后再应用到运行态
     http_client::apply_proxy(url_opt)?;
 
@@ -67,6 +349,59 @@ pub fn set_global_proxy_url(state: tauri::State<'_, AppState>, url: String) -> R
     );
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_proxy_watchdog_config(
+    state: tauri::State<'_, AppState>,
+) -> Result<ProxyWatchdogConfig, String> {
+    read_watchdog_config(&state.db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_proxy_watchdog_config(
+    state: tauri::State<'_, AppState>,
+    config: ProxyWatchdogConfig,
+) -> Result<ProxyWatchdogStatus, String> {
+    if config.proxy_url.trim().is_empty() && config.mode != ProxyWatchdogMode::ManualOff {
+        return Err("Proxy URL is required unless manual off is selected".to_string());
+    }
+
+    let normalized = ProxyWatchdogConfig {
+        mode: config.mode,
+        proxy_url: if config.proxy_url.trim().is_empty() {
+            DEFAULT_WATCHDOG_PROXY_URL.to_string()
+        } else {
+            config.proxy_url.trim().to_string()
+        },
+    };
+
+    if normalized.mode != ProxyWatchdogMode::ManualOff {
+        http_client::validate_proxy(Some(&normalized.proxy_url))?;
+    }
+
+    write_watchdog_config(&state.db, &normalized).map_err(|e| e.to_string())?;
+    apply_watchdog_config(state.db.clone(), normalized).await?;
+    make_watchdog_status(&state.db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_proxy_watchdog_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<ProxyWatchdogStatus, String> {
+    make_watchdog_status(&state.db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn refresh_proxy_watchdog(
+    state: tauri::State<'_, AppState>,
+) -> Result<ProxyWatchdogStatus, String> {
+    let config = read_watchdog_config(&state.db).map_err(|e| e.to_string())?;
+    if config.mode != ProxyWatchdogMode::Auto {
+        return make_watchdog_status(&state.db).map_err(|e| e.to_string());
+    }
+    apply_watchdog_config(state.db.clone(), config).await?;
+    make_watchdog_status(&state.db).map_err(|e| e.to_string())
 }
 
 /// 代理测试结果

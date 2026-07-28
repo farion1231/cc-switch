@@ -139,6 +139,8 @@ impl Database {
 
     /// 全局代理 URL 的存储键名
     const GLOBAL_PROXY_URL_KEY: &'static str = "global_proxy_url";
+    const PROXY_WATCHDOG_MODE_KEY: &'static str = "proxy_watchdog_mode";
+    const PROXY_WATCHDOG_URL_KEY: &'static str = "proxy_watchdog_proxy_url";
 
     /// 获取全局出站代理 URL
     ///
@@ -163,6 +165,37 @@ impl Database {
                 conn.execute(
                     "DELETE FROM settings WHERE key = ?1",
                     params![Self::GLOBAL_PROXY_URL_KEY],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+                Ok(())
+            }
+        }
+    }
+
+    pub fn get_proxy_watchdog_mode(&self) -> Result<String, AppError> {
+        Ok(self
+            .get_setting(Self::PROXY_WATCHDOG_MODE_KEY)?
+            .unwrap_or_else(|| "manual_on".to_string()))
+    }
+
+    pub fn set_proxy_watchdog_mode(&self, mode: &str) -> Result<(), AppError> {
+        self.set_setting(Self::PROXY_WATCHDOG_MODE_KEY, mode)
+    }
+
+    pub fn get_proxy_watchdog_proxy_url(&self) -> Result<Option<String>, AppError> {
+        self.get_setting(Self::PROXY_WATCHDOG_URL_KEY)
+    }
+
+    pub fn set_proxy_watchdog_proxy_url(&self, url: Option<&str>) -> Result<(), AppError> {
+        match url {
+            Some(u) if !u.trim().is_empty() => {
+                self.set_setting(Self::PROXY_WATCHDOG_URL_KEY, u.trim())
+            }
+            _ => {
+                let conn = lock_conn!(self.conn);
+                conn.execute(
+                    "DELETE FROM settings WHERE key = ?1",
+                    params![Self::PROXY_WATCHDOG_URL_KEY],
                 )
                 .map_err(|e| AppError::Database(e.to_string()))?;
                 Ok(())

@@ -47,6 +47,10 @@ fn merge_settings_for_save(
     // 无条件取现有值。若按 incoming 透传：后端清掉 marker（如关闭统一会话
     // 开关）后、前端 query 缓存刷新前的一次全量保存会把旧 marker 重放回来，
     // 重新开启时被"复活"的标记挡住而漏迁。
+    if incoming.session_manager_pinned_sessions.is_none() {
+        incoming.session_manager_pinned_sessions =
+            existing.session_manager_pinned_sessions.clone();
+    }
     incoming.local_migrations = existing.local_migrations.clone();
     incoming
 }
@@ -196,6 +200,12 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
 /// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
 #[tauri::command]
 pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> {
+    let _ = &app;
+    return Err(
+        "This is a custom cc-switch build. Official in-app updates are disabled so the proxy watchdog and model-test UI are not overwritten. Build updates from the senvev47/cc-switch fork instead."
+            .to_string(),
+    );
+
     let updater = app
         .updater_builder()
         .build()
@@ -273,6 +283,9 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
 /// 升级无法解决，而不是让其反复尝试。
 #[tauri::command]
 pub async fn check_app_update_available(app: AppHandle) -> Result<Option<String>, String> {
+    let _ = &app;
+    return Ok(None);
+
     let updater = app
         .updater_builder()
         .build()
@@ -320,6 +333,44 @@ mod tests {
         CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
         WebDavSyncSettings,
     };
+
+    #[test]
+    fn save_settings_should_preserve_existing_pinned_sessions_when_payload_omits_it() {
+        let existing = AppSettings {
+            session_manager_pinned_sessions: Some(vec![
+                "codex:session-a".to_string(),
+                "claude:session-b".to_string(),
+            ]),
+            ..AppSettings::default()
+        };
+
+        let incoming = AppSettings::default();
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert_eq!(
+            merged.session_manager_pinned_sessions,
+            Some(vec![
+                "codex:session-a".to_string(),
+                "claude:session-b".to_string(),
+            ]),
+        );
+    }
+
+    #[test]
+    fn save_settings_should_allow_clearing_pinned_sessions() {
+        let existing = AppSettings {
+            session_manager_pinned_sessions: Some(vec!["codex:session-a".to_string()]),
+            ..AppSettings::default()
+        };
+
+        let incoming = AppSettings {
+            session_manager_pinned_sessions: Some(Vec::new()),
+            ..AppSettings::default()
+        };
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert_eq!(merged.session_manager_pinned_sessions, Some(Vec::new()));
+    }
 
     #[test]
     fn save_settings_should_preserve_existing_webdav_when_payload_omits_it() {

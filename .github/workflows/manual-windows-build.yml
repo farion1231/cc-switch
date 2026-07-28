@@ -1,0 +1,62 @@
+﻿name: Manual Windows Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-x64:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.12.3
+          run_install: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: TypeScript type check
+        run: pnpm typecheck
+
+      - name: Build Windows bundle
+        shell: pwsh
+        run: |
+          pnpm tauri build --bundles msi
+          $buildExitCode = $LASTEXITCODE
+
+          if (-not (Test-Path "src-tauri/target/release/cc-switch.exe")) {
+            exit $buildExitCode
+          }
+
+          if (-not (Get-ChildItem "src-tauri/target/release/bundle/msi" -Filter "*.msi" -ErrorAction SilentlyContinue)) {
+            exit $buildExitCode
+          }
+
+          if ($buildExitCode -ne 0) {
+            Write-Warning "Tauri returned exit code $buildExitCode after producing the Windows artifacts. Continuing so the unsigned build can be downloaded."
+          }
+
+          exit 0
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v5
+        with:
+          name: cc-switch-windows-x64-proxy-watchdog-gui
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/cc-switch.exe

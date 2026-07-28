@@ -18,6 +18,8 @@ const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
 const GROUP_EXPANSION_STORAGE_KEY =
   "cc-switch.sessionManager.groupExpansionState";
+const PINNED_SESSIONS_STORAGE_KEY =
+  "cc-switch.sessionManager.pinnedSessions";
 
 vi.mock("sonner", () => ({
   toast: {
@@ -156,6 +158,7 @@ describe("SessionManagerPage", () => {
     Element.prototype.scrollIntoView = vi.fn();
     window.localStorage.removeItem("cc-switch.sessionManager.listViewMode");
     window.localStorage.removeItem(GROUP_EXPANSION_STORAGE_KEY);
+    window.localStorage.removeItem(PINNED_SESSIONS_STORAGE_KEY);
 
     const sessions: SessionMeta[] = [
       {
@@ -247,6 +250,83 @@ describe("SessionManagerPage", () => {
     expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument();
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
+  });
+
+  it("keeps persisted pins while the session list is still loading", async () => {
+    const pinnedSession: SessionMeta = {
+      providerId: "codex",
+      sessionId: "pinned-session",
+      title: "Pinned Session",
+      summary: "Pinned summary",
+      projectDir: "/mock/codex",
+      createdAt: 1,
+      lastActiveAt: 1,
+      sourcePath: "/mock/codex/pinned.jsonl",
+      resumeCommand: "codex resume pinned-session",
+    };
+    const pinnedKey = "codex:pinned-session:/mock/codex/pinned.jsonl";
+    let resolveSessions: ((sessions: SessionMeta[]) => void) | undefined;
+    const listSpy = vi
+      .spyOn(sessionsApi, "list")
+      .mockImplementation(
+        () =>
+          new Promise<SessionMeta[]>((resolve) => {
+            resolveSessions = resolve;
+          }),
+      );
+
+    window.localStorage.setItem(
+      PINNED_SESSIONS_STORAGE_KEY,
+      JSON.stringify([pinnedKey]),
+    );
+
+    renderPage();
+
+    await waitFor(() => expect(resolveSessions).toBeDefined());
+    expect(
+      JSON.parse(
+        window.localStorage.getItem(PINNED_SESSIONS_STORAGE_KEY) ?? "[]",
+      ),
+    ).toEqual([pinnedKey]);
+
+    await act(async () => {
+      resolveSessions?.([pinnedSession]);
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Pinned Session" }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      JSON.parse(
+        window.localStorage.getItem(PINNED_SESSIONS_STORAGE_KEY) ?? "[]",
+      ),
+    ).toEqual([pinnedKey]);
+
+    listSpy.mockRestore();
+  });
+
+  it("keeps persisted pins when a startup scan returns an empty list", async () => {
+    const pinnedKey = "codex:pinned-session:/mock/codex/pinned.jsonl";
+    const listSpy = vi.spyOn(sessionsApi, "list").mockResolvedValue([]);
+
+    window.localStorage.setItem(
+      PINNED_SESSIONS_STORAGE_KEY,
+      JSON.stringify([pinnedKey]),
+    );
+
+    renderPage();
+
+    await waitFor(() => expect(listSpy).toHaveBeenCalled());
+
+    expect(
+      JSON.parse(
+        window.localStorage.getItem(PINNED_SESSIONS_STORAGE_KEY) ?? "[]",
+      ),
+    ).toEqual([pinnedKey]);
+
+    listSpy.mockRestore();
   });
 
   it("removes a deleted session from filtered search results", async () => {
@@ -679,5 +759,44 @@ describe("SessionManagerPage", () => {
     ).toBeInTheDocument();
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
+  });
+
+  it("persists a pinned session and excludes it from the default cleanup scan", async () => {
+    renderPage();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Alpha Session" }),
+      ).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getAllByTitle("置顶会话")[0]);
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          window.localStorage.getItem(PINNED_SESSIONS_STORAGE_KEY)!,
+        ),
+      ).toHaveLength(1),
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "扫描可清理会话" }),
+    );
+
+    const cleanupDialog = await screen.findByTestId("confirm-dialog");
+    expect(cleanupDialog).toHaveTextContent("2");
+    expect(cleanupDialog).toHaveTextContent("已跳过");
+
+    fireEvent.click(
+      within(cleanupDialog).getByRole("button", { name: "继续清理" }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("confirm-dialog")).toHaveTextContent(
+        "批量删除会话",
+      ),
+    );
+    expect(screen.getByText("Alpha Session")).toBeInTheDocument();
   });
 });

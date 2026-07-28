@@ -45,6 +45,30 @@ pub struct StreamCheckConfig {
     pub max_retries: u32,
     /// 降级阈值（毫秒）：可达但 TTFB 超过该值判定为"较慢"
     pub degraded_threshold_ms: u64,
+    #[serde(default = "default_claude_model")]
+    pub claude_model: String,
+    #[serde(default = "default_codex_model")]
+    pub codex_model: String,
+    #[serde(default = "default_gemini_model")]
+    pub gemini_model: String,
+    #[serde(default = "default_test_prompt")]
+    pub test_prompt: String,
+}
+
+fn default_claude_model() -> String {
+    "claude-haiku-4-5-20251001".to_string()
+}
+
+fn default_codex_model() -> String {
+    "gpt-5.5@low".to_string()
+}
+
+fn default_gemini_model() -> String {
+    "gemini-3.5-flash".to_string()
+}
+
+fn default_test_prompt() -> String {
+    "Who are you?".to_string()
 }
 
 impl Default for StreamCheckConfig {
@@ -56,6 +80,10 @@ impl Default for StreamCheckConfig {
             timeout_secs: 8,
             max_retries: 1,
             degraded_threshold_ms: 6000,
+            claude_model: default_claude_model(),
+            codex_model: default_codex_model(),
+            gemini_model: default_gemini_model(),
+            test_prompt: default_test_prompt(),
         }
     }
 }
@@ -130,6 +158,29 @@ impl StreamCheckService {
         }))
     }
 
+    /// 合并供应商单独配置（`meta.testConfig`，仅当 `enabled`）与全局配置。
+    fn merge_provider_config(provider: &Provider, global: &StreamCheckConfig) -> StreamCheckConfig {
+        let tc = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.test_config.as_ref())
+            .filter(|tc| tc.enabled);
+
+        match tc {
+            Some(tc) => StreamCheckConfig {
+                timeout_secs: tc.timeout_secs.unwrap_or(global.timeout_secs),
+                max_retries: tc.max_retries.unwrap_or(global.max_retries),
+                degraded_threshold_ms: tc
+                    .degraded_threshold_ms
+                    .unwrap_or(global.degraded_threshold_ms),
+                claude_model: global.claude_model.clone(),
+                codex_model: global.codex_model.clone(),
+                gemini_model: global.gemini_model.clone(),
+                test_prompt: global.test_prompt.clone(),
+            },
+            None => global.clone(),
+        }
+    }
     /// 单次连通性探测。
     async fn check_once(
         app_type: &AppType,

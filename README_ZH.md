@@ -1,3 +1,5 @@
+> 非官方修改版说明：本仓库是基于 [farion1231/cc-switch](https://github.com/farion1231/cc-switch) 的个人修改版，不是 CC Switch 官方发布版本，也不代表原项目维护者。主要改动见 [UNOFFICIAL_FORK_ZH.md](UNOFFICIAL_FORK_ZH.md)。
+
 <div align="center">
 
 # CC Switch

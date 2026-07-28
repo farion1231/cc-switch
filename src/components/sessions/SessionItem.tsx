@@ -1,4 +1,4 @@
-import { ChevronRight, Clock } from "lucide-react";
+import { ChevronRight, Clock, Pin, PinOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -24,9 +24,11 @@ interface SessionItemProps {
   selectionMode: boolean;
   isChecked: boolean;
   isCheckDisabled?: boolean;
+  isPinned?: boolean;
   searchQuery?: string;
   onSelect: (key: string) => void;
   onToggleChecked: (checked: boolean) => void;
+  onTogglePinned?: () => void;
 }
 
 export function SessionItem({
@@ -35,9 +37,11 @@ export function SessionItem({
   selectionMode,
   isChecked,
   isCheckDisabled = false,
+  isPinned = false,
   searchQuery,
   onSelect,
   onToggleChecked,
+  onTogglePinned,
 }: SessionItemProps) {
   const { t } = useTranslation();
   const title = formatSessionTitle(session);
@@ -88,6 +92,9 @@ export function SessionItem({
           <span className="text-sm font-medium line-clamp-2 flex-1">
             {searchQuery ? highlightText(title, searchQuery) : title}
           </span>
+          {isPinned && (
+            <Pin className="size-3.5 shrink-0 fill-amber-400 text-amber-500" />
+          )}
           <ChevronRight
             className={cn(
               "size-4 text-muted-foreground/50 shrink-0 transition-transform",
@@ -105,6 +112,34 @@ export function SessionItem({
           </span>
         </div>
       </button>
+      {onTogglePinned && (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onTogglePinned();
+          }}
+          className={cn(
+            "mt-0.5 rounded-md p-1.5 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground group-hover:opacity-100 focus:opacity-100",
+            isPinned && "opacity-100 text-amber-500 hover:text-amber-600",
+          )}
+          title={
+            isPinned
+              ? t("sessionManager.unpinSession", {
+                  defaultValue: "取消置顶",
+                })
+              : t("sessionManager.pinSession", {
+                  defaultValue: "置顶会话",
+                })
+          }
+        >
+          {isPinned ? (
+            <PinOff className="size-3.5" />
+          ) : (
+            <Pin className="size-3.5" />
+          )}
+        </button>
+      )}
     </div>
   );
 }

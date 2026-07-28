@@ -266,30 +266,8 @@ impl Database {
             }
         }
 
-        // Periodic maintenance is always enabled, regardless of auto-backup settings.
-        let mut reclaimed_rows = 0u64;
-        match self.cleanup_old_stream_check_logs(7) {
-            Ok(deleted) => {
-                reclaimed_rows += deleted;
-            }
-            Err(e) => {
-                log::warn!("Periodic stream_check_logs cleanup failed: {e}");
-            }
-        }
-        match self.rollup_and_prune(30) {
-            Ok(deleted) => {
-                reclaimed_rows += deleted;
-            }
-            Err(e) => {
-                log::warn!("Periodic rollup_and_prune failed: {e}");
-            }
-        }
-        if reclaimed_rows > 0 {
-            let conn = lock_conn!(self.conn);
-            if let Err(e) = conn.execute_batch("PRAGMA incremental_vacuum;") {
-                log::warn!("Periodic incremental vacuum failed: {e}");
-            }
-        }
+        // Scheduled backups are snapshots only. They must not delete or roll up
+        // request and connectivity history as a side effect.
 
         Ok(())
     }
@@ -783,7 +761,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn periodic_maintenance_runs_even_when_auto_backup_disabled() -> Result<(), AppError> {
+    fn periodic_backup_preserves_history_when_auto_backup_is_disabled() -> Result<(), AppError> {
         let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
         let test_home =
             std::env::temp_dir().join("cc-switch-periodic-maintenance-backup-disabled-test");
@@ -841,14 +819,17 @@ mod tests {
         };
 
         assert_eq!(
-            remaining_request_logs, 0,
-            "old request logs should still be pruned when auto backup is disabled"
+            remaining_request_logs, 1,
+            "scheduled backups must not prune request history"
         );
         assert_eq!(
-            stream_logs, 0,
-            "old stream check logs should still be pruned when auto backup is disabled"
+            stream_logs, 1,
+            "scheduled backups must not prune connectivity history"
         );
-        assert_eq!(rollups, 1, "old request logs should be rolled up");
+        assert_eq!(
+            rollups, 0,
+            "scheduled backups must not roll up request history"
+        );
 
         match old_test_home {
             Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),

@@ -1,23 +1,27 @@
-/**
- * 全局出站代理设置组件
- *
- * 提供配置全局代理的输入界面，支持用户名密码认证。
- */
-
-import { useState, useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Loader2, TestTube2, Search, Eye, EyeOff, X } from "lucide-react";
 import {
-  useGlobalProxyUrl,
-  useSetGlobalProxyUrl,
-  useTestProxy,
+  Eye,
+  EyeOff,
+  Loader2,
+  RefreshCw,
+  Search,
+  TestTube2,
+  X,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  useProxyWatchdogConfig,
+  useProxyWatchdogStatus,
+  useRefreshProxyWatchdog,
   useScanProxies,
+  useSetProxyWatchdogConfig,
+  useTestProxy,
   type DetectedProxy,
 } from "@/hooks/useGlobalProxy";
+import type { ProxyWatchdogMode } from "@/lib/api/globalProxy";
 
-/** 从完整 URL 提取认证信息 */
 function extractAuth(url: string): {
   baseUrl: string;
   username: string;
@@ -29,7 +33,6 @@ function extractAuth(url: string): {
     const parsed = new URL(url);
     const username = decodeURIComponent(parsed.username || "");
     const password = decodeURIComponent(parsed.password || "");
-    // 移除认证信息，获取基础 URL
     parsed.username = "";
     parsed.password = "";
     return { baseUrl: parsed.toString(), username, password };
@@ -38,7 +41,6 @@ function extractAuth(url: string): {
   }
 }
 
-/** 将认证信息合并到 URL */
 function mergeAuth(
   baseUrl: string,
   username: string,
@@ -49,15 +51,12 @@ function mergeAuth(
 
   try {
     const parsed = new URL(baseUrl);
-    // URL 对象的 username/password setter 会自动进行 percent-encoding
-    // 不要使用 encodeURIComponent，否则会导致双重编码
     parsed.username = username.trim();
     if (password) {
       parsed.password = password;
     }
     return parsed.toString();
   } catch {
-    // URL 解析失败，尝试手动插入（此时需要手动编码）
     const match = baseUrl.match(/^(\w+:\/\/)(.+)$/);
     if (match) {
       const auth = password
@@ -71,11 +70,14 @@ function mergeAuth(
 
 export function GlobalProxySettings() {
   const { t } = useTranslation();
-  const { data: savedUrl, isLoading } = useGlobalProxyUrl();
-  const setMutation = useSetGlobalProxyUrl();
+  const { data: watchdogConfig, isLoading } = useProxyWatchdogConfig();
+  const { data: watchdogStatus } = useProxyWatchdogStatus();
+  const setMutation = useSetProxyWatchdogConfig();
+  const refreshMutation = useRefreshProxyWatchdog();
   const testMutation = useTestProxy();
   const scanMutation = useScanProxies();
 
+  const [mode, setMode] = useState<ProxyWatchdogMode>("manualOn");
   const [url, setUrl] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -83,25 +85,28 @@ export function GlobalProxySettings() {
   const [dirty, setDirty] = useState(false);
   const [detected, setDetected] = useState<DetectedProxy[]>([]);
 
-  // 计算完整 URL（含认证信息）
   const fullUrl = useMemo(
     () => mergeAuth(url, username, password),
     [url, username, password],
   );
 
-  // 同步远程配置
   useEffect(() => {
-    if (savedUrl !== undefined) {
-      const { baseUrl, username: u, password: p } = extractAuth(savedUrl || "");
+    if (watchdogConfig !== undefined) {
+      const {
+        baseUrl,
+        username: u,
+        password: p,
+      } = extractAuth(watchdogConfig.proxyUrl || "");
+      setMode(watchdogConfig.mode);
       setUrl(baseUrl);
       setUsername(u);
       setPassword(p);
       setDirty(false);
     }
-  }, [savedUrl]);
+  }, [watchdogConfig]);
 
   const handleSave = async () => {
-    await setMutation.mutateAsync(fullUrl);
+    await setMutation.mutateAsync({ mode, proxyUrl: fullUrl });
     setDirty(false);
   };
 
@@ -132,14 +137,23 @@ export function GlobalProxySettings() {
     setDirty(true);
   };
 
+  const handleModeChange = (nextMode: ProxyWatchdogMode) => {
+    setMode(nextMode);
+    setDirty(true);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && dirty && !setMutation.isPending) {
+    if (
+      e.key === "Enter" &&
+      dirty &&
+      !setMutation.isPending &&
+      (mode === "manualOff" || fullUrl)
+    ) {
       handleSave();
     }
   };
 
-  // 只在首次加载且无数据时显示加载状态
-  if (isLoading && savedUrl === undefined) {
+  if (isLoading && watchdogConfig === undefined) {
     return (
       <div className="flex items-center justify-center p-4">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -147,14 +161,91 @@ export function GlobalProxySettings() {
     );
   }
 
+  const modeOptions: Array<{ value: ProxyWatchdogMode; label: string }> = [
+    {
+      value: "auto",
+      label: t("settings.globalProxy.watchdogAuto", {
+        defaultValue: "自动",
+      }),
+    },
+    {
+      value: "manualOn",
+      label: t("settings.globalProxy.watchdogManualOn", {
+        defaultValue: "手动开启",
+      }),
+    },
+    {
+      value: "manualOff",
+      label: t("settings.globalProxy.watchdogManualOff", {
+        defaultValue: "手动关闭",
+      }),
+    },
+  ];
+
+  const probeText =
+    watchdogStatus?.lastProbeSuccess === null ||
+    watchdogStatus?.lastProbeSuccess === undefined
+      ? t("settings.globalProxy.notChecked", { defaultValue: "未检测" })
+      : watchdogStatus.lastProbeSuccess
+        ? t("settings.globalProxy.available", { defaultValue: "可用" })
+        : t("settings.globalProxy.unavailable", { defaultValue: "不可用" });
+
+  const effectiveText =
+    watchdogStatus?.effectiveProxyUrl ||
+    t("settings.globalProxy.direct", { defaultValue: "直连" });
+  const routeText = watchdogStatus?.isProxying
+    ? t("settings.globalProxy.proxying", { defaultValue: "代理中" })
+    : t("settings.globalProxy.directing", { defaultValue: "直连中" });
+  const canRefreshWatchdog = mode === "auto";
+
   return (
     <div className="space-y-3">
-      {/* 描述 */}
       <p className="text-sm text-muted-foreground">
         {t("settings.globalProxy.hint")}
       </p>
 
-      {/* 代理地址输入框和按钮 */}
+      <div className="flex flex-wrap items-center gap-2">
+        {modeOptions.map((option) => (
+          <Button
+            key={option.value}
+            type="button"
+            size="sm"
+            variant={mode === option.value ? "default" : "outline"}
+            onClick={() => handleModeChange(option.value)}
+          >
+            {option.label}
+          </Button>
+        ))}
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          disabled={!canRefreshWatchdog || refreshMutation.isPending}
+          onClick={() => refreshMutation.mutate()}
+          title={t("settings.globalProxy.watchdogRefresh", {
+            defaultValue: canRefreshWatchdog ? "立即检测" : "仅自动模式可检测",
+          })}
+        >
+          {refreshMutation.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <RefreshCw className="h-4 w-4" />
+          )}
+        </Button>
+      </div>
+
+      {watchdogStatus && (
+        <p className="text-xs text-muted-foreground">
+          {t("settings.globalProxy.watchdogStatus", {
+            defaultValue:
+              "当前状态：{{route}}；当前生效：{{effective}}；最近检测：{{probe}}",
+            route: routeText,
+            effective: effectiveText,
+            probe: probeText,
+          })}
+        </p>
+      )}
+
       <div className="flex gap-2">
         <Input
           placeholder="http://127.0.0.1:7890 / socks5://127.0.0.1:1080"
@@ -203,7 +294,11 @@ export function GlobalProxySettings() {
         </Button>
         <Button
           onClick={handleSave}
-          disabled={!dirty || setMutation.isPending}
+          disabled={
+            !dirty ||
+            setMutation.isPending ||
+            (mode !== "manualOff" && !fullUrl)
+          }
           size="sm"
         >
           {setMutation.isPending && (
@@ -213,7 +308,6 @@ export function GlobalProxySettings() {
         </Button>
       </div>
 
-      {/* 认证信息：用户名 + 密码（可选） */}
       <div className="flex gap-2">
         <Input
           placeholder={t("settings.globalProxy.username")}
@@ -254,7 +348,6 @@ export function GlobalProxySettings() {
         </div>
       </div>
 
-      {/* 扫描结果 */}
       {detected.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {detected.map((p) => (

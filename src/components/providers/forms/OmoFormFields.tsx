@@ -846,8 +846,7 @@ export function OmoFormFields({
         {};
       const importedCategories =
         (data.categories as
-          | Record<string, Record<string, unknown>>
-          | undefined) || {};
+          Record<string, Record<string, unknown>> | undefined) || {};
 
       onAgentsChange(importedAgents);
       if (!isSlim && onCategoriesChange) {

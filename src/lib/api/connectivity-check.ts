@@ -13,6 +13,10 @@ export interface StreamCheckConfig {
   maxRetries: number;
   /** 降级阈值（毫秒）：可达但 TTFB 超过该值判定为"较慢" */
   degradedThresholdMs: number;
+  claudeModel?: string;
+  codexModel?: string;
+  geminiModel?: string;
+  testPrompt?: string;
 }
 
 export interface StreamCheckResult {
@@ -21,8 +25,10 @@ export interface StreamCheckResult {
   message: string;
   responseTimeMs?: number;
   httpStatus?: number;
+  modelUsed?: string;
   testedAt: number;
   retryCount: number;
+  errorCategory?: string;
 }
 
 // ===== 连通性检查 API =====
@@ -35,6 +41,13 @@ export async function streamCheckProvider(
   providerId: string,
 ): Promise<StreamCheckResult> {
   return invoke("stream_check_provider", { appType, providerId });
+}
+
+export async function modelTestProvider(
+  appType: AppId,
+  providerId: string,
+): Promise<StreamCheckResult> {
+  return invoke("model_test_provider", { appType, providerId });
 }
 
 /**

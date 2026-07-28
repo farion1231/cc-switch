@@ -13,9 +13,15 @@ import {
   testProxyUrl,
   getUpstreamProxyStatus,
   scanLocalProxies,
+  getProxyWatchdogConfig,
+  setProxyWatchdogConfig,
+  getProxyWatchdogStatus,
+  refreshProxyWatchdog,
   type ProxyTestResult,
   type UpstreamProxyStatus,
   type DetectedProxy,
+  type ProxyWatchdogConfig,
+  type ProxyWatchdogStatus,
 } from "@/lib/api/globalProxy";
 
 /**
@@ -42,6 +48,8 @@ export function useSetGlobalProxyUrl() {
       toast.success(t("settings.globalProxy.saved"));
       queryClient.invalidateQueries({ queryKey: ["globalProxyUrl"] });
       queryClient.invalidateQueries({ queryKey: ["upstreamProxyStatus"] });
+      queryClient.invalidateQueries({ queryKey: ["proxyWatchdogConfig"] });
+      queryClient.invalidateQueries({ queryKey: ["proxyWatchdogStatus"] });
     },
     onError: (error: unknown) => {
       const message =
@@ -102,6 +110,63 @@ export function useScanProxies() {
       toast.error(
         t("settings.globalProxy.scanFailed", { error: error.message }),
       );
+    },
+  });
+}
+
+export function useProxyWatchdogConfig() {
+  return useQuery<ProxyWatchdogConfig>({
+    queryKey: ["proxyWatchdogConfig"],
+    queryFn: getProxyWatchdogConfig,
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useSetProxyWatchdogConfig() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: setProxyWatchdogConfig,
+    onSuccess: () => {
+      toast.success(t("settings.globalProxy.saved"));
+      queryClient.invalidateQueries({ queryKey: ["globalProxyUrl"] });
+      queryClient.invalidateQueries({ queryKey: ["upstreamProxyStatus"] });
+      queryClient.invalidateQueries({ queryKey: ["proxyWatchdogConfig"] });
+      queryClient.invalidateQueries({ queryKey: ["proxyWatchdogStatus"] });
+    },
+    onError: (error: unknown) => {
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : "Unknown error";
+      toast.error(t("settings.globalProxy.saveFailed", { error: message }));
+    },
+  });
+}
+
+export function useProxyWatchdogStatus() {
+  return useQuery<ProxyWatchdogStatus>({
+    queryKey: ["proxyWatchdogStatus"],
+    queryFn: getProxyWatchdogStatus,
+    refetchInterval: 30 * 1000,
+  });
+}
+
+export function useRefreshProxyWatchdog() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: refreshProxyWatchdog,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["globalProxyUrl"] });
+      queryClient.invalidateQueries({ queryKey: ["upstreamProxyStatus"] });
+      queryClient.invalidateQueries({ queryKey: ["proxyWatchdogStatus"] });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
     },
   });
 }
