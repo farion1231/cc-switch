@@ -252,6 +252,16 @@ pub(crate) fn normalize_response_function_tool(tool: &mut Value) {
     let Some(obj) = tool.as_object_mut() else {
         return;
     };
+    if obj.get("type").and_then(Value::as_str) == Some("namespace") {
+        for key in ["tools", "children"] {
+            if let Some(children) = obj.get_mut(key).and_then(Value::as_array_mut) {
+                for child in children {
+                    normalize_response_function_tool(child);
+                }
+            }
+        }
+        return;
+    }
     if obj.get("type").and_then(Value::as_str) != Some("function") {
         return;
     }

@@ -4870,6 +4870,51 @@ mod tests {
     }
 
     #[test]
+    fn tool_search_output_normalizes_dynamic_desktop_namespace_child_schema() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [{
+                "type": "tool_search_output",
+                "call_id": "call_ts_namespace",
+                "status": "completed",
+                "execution": "client",
+                "tools": [{
+                    "type": "namespace",
+                    "name": "codex",
+                    "tools": [{
+                        "type": "function",
+                        "name": "automation_update",
+                        "description": "Manage a task automation.",
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {"title": {"type": "string"}},
+                            "required": ["title"]
+                        }
+                    }]
+                }]
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let expected_name = flatten_namespace_tool_name("codex", "automation_update");
+        let automation = result["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| {
+                tool.pointer("/function/name").and_then(Value::as_str)
+                    == Some(expected_name.as_str())
+            })
+            .unwrap();
+        assert_eq!(automation["function"]["parameters"]["type"], "object");
+        assert_eq!(automation["function"]["parameters"]["required"][0], "title");
+        assert_eq!(
+            automation["function"]["parameters"]["properties"]["title"]["type"],
+            "string"
+        );
+    }
+
+    #[test]
     fn tool_search_output_resets_stale_none_choice_before_chat_mapping() {
         let mut input = json!({
             "model": "gpt-5.4",
