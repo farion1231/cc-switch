@@ -18,6 +18,7 @@ export interface ModelsDevSyncResult {
 export const MODELS_DEV_SYNC_CONFIG_QUERY_KEY = [
   "models-dev-sync-config",
 ] as const;
+export const MODELS_DEV_STARTUP_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 const errorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -27,7 +28,11 @@ export async function syncModelsDevPricing(
   force = false,
 ): Promise<ModelsDevSyncResult> {
   const initialState = state ?? (await usageApi.getModelsDevSyncConfig());
-  if (!force && !initialState.config.autoSyncEnabled) {
+  const recentlySynced =
+    initialState.config.lastSyncAt !== null &&
+    Date.now() - initialState.config.lastSyncAt <
+      MODELS_DEV_STARTUP_SYNC_INTERVAL_MS;
+  if (!force && (!initialState.config.autoSyncEnabled || recentlySynced)) {
     return {
       skipped: true,
       selected: 0,
@@ -81,7 +86,7 @@ export async function syncModelsDevPricing(
 
 let startupSync: Promise<ModelsDevSyncResult> | null = null;
 
-/** Run at most once per renderer lifetime, including React StrictMode. */
+/** Run once per renderer and at most once per interval across WebView rebuilds. */
 export function syncModelsDevPricingOnStartup(): Promise<ModelsDevSyncResult> {
   startupSync ??= syncModelsDevPricing();
   return startupSync;

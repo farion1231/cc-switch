@@ -1,7 +1,7 @@
 use crate::config::{atomic_write, get_app_config_dir};
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use rusqlite::{params, Connection, Transaction};
+use rusqlite::{params, Transaction};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -224,37 +224,15 @@ fn write_file_unlocked(file: &ModelPricingFile) -> Result<(), AppError> {
     atomic_write(&path, &data)
 }
 
-fn query_all_pricing(conn: &Connection) -> Result<Vec<ModelPricingInfo>, AppError> {
-    let mut statement = conn.prepare(
-        "SELECT model_id, display_name, input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million
-         FROM model_pricing
-         ORDER BY model_id",
-    )?;
-    let rows = statement.query_map([], |row| {
-        Ok(ModelPricingInfo {
-            model_id: row.get(0)?,
-            display_name: row.get(1)?,
-            input_cost_per_million: row.get(2)?,
-            output_cost_per_million: row.get(3)?,
-            cache_read_cost_per_million: row.get(4)?,
-            cache_creation_cost_per_million: row.get(5)?,
-        })
-    })?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
-}
-
-fn load_or_create_file_unlocked(db: &Database) -> Result<ModelPricingFile, AppError> {
+fn load_or_create_file_unlocked() -> Result<ModelPricingFile, AppError> {
     if let Some(file) = read_file_unlocked()? {
         return Ok(file);
     }
 
-    let conn = lock_conn!(db.conn);
-    let file = ModelPricingFile {
-        models: query_all_pricing(&conn)?,
-        ..ModelPricingFile::default()
-    };
-    drop(conn);
+    // The local file stores user/models.dev overrides only. Exporting the
+    // complete seeded table here would turn built-in prices into overrides and
+    // roll back future repair_current_model_pricing corrections on startup.
+    let file = ModelPricingFile::default();
     write_file_unlocked(&file)?;
     Ok(file)
 }
@@ -292,50 +270,48 @@ fn upsert_pricing(
         .map_err(|error| AppError::Database(format!("更新模型定价失败: {error}")))
 }
 
-fn apply_file_to_database(db: &Database, file: &ModelPricingFile) -> Result<usize, AppError> {
+fn apply_file_to_database(
+    db: &Database,
+    file: &ModelPricingFile,
+) -> Result<(usize, usize), AppError> {
     let mut conn = lock_conn!(db.conn);
     let transaction = conn.transaction()?;
-    let mut changed = 0;
+    let mut upserted = 0;
     for entry in &file.models {
-        changed += upsert_pricing(&transaction, entry)?;
+        upserted += upsert_pricing(&transaction, entry)?;
     }
+    let mut deleted = 0;
     for model_id in &file.deleted_model_ids {
-        changed += transaction.execute(
+        deleted += transaction.execute(
             "DELETE FROM model_pricing WHERE model_id = ?1",
             params![model_id],
         )?;
     }
     transaction.commit()?;
-    Ok(changed)
+    Ok((upserted, deleted))
 }
 
 /// Load user-maintained overrides from `~/.cc-switch/model-pricing.json`.
-/// Missing built-in rows are merged back into the file so upgrades can add new
-/// defaults without overwriting user edits or explicit deletion tombstones.
+/// Built-in rows remain database-owned so application updates can repair them;
+/// the file contains only explicit overrides and deletion tombstones.
 pub fn sync_local_model_pricing(db: &Database) -> Result<usize, AppError> {
-    let changed = {
+    let (upserted, deleted) = {
         let _file_guard = file_lock()
             .lock()
             .map_err(|error| AppError::Config(format!("模型定价文件锁失败: {error}")))?;
-        let mut file = load_or_create_file_unlocked(db)?;
-        let changed = apply_file_to_database(db, &file)?;
-
-        let conn = lock_conn!(db.conn);
-        let current_models = query_all_pricing(&conn)?;
-        drop(conn);
-        if file.models != current_models {
-            file.models = current_models;
-            write_file_unlocked(&file)?;
-        }
-        changed
+        let file = load_or_create_file_unlocked()?;
+        apply_file_to_database(db, &file)?
     };
 
-    if changed > 0 {
+    // Deleting pricing cannot make a zero-cost usage row calculable. In
+    // particular, seeded rows covered by tombstones may be reinserted and
+    // deleted on every startup; they must not trigger a full-table backfill.
+    if upserted > 0 {
         if let Err(error) = db.backfill_missing_usage_costs() {
             log::warn!("本地模型定价同步后回填历史用量成本失败: {error}");
         }
     }
-    Ok(changed)
+    Ok(upserted + deleted)
 }
 
 pub fn get_models_dev_sync_state(db: &Database) -> Result<ModelsDevSyncState, AppError> {
@@ -343,7 +319,7 @@ pub fn get_models_dev_sync_state(db: &Database) -> Result<ModelsDevSyncState, Ap
     let _file_guard = file_lock()
         .lock()
         .map_err(|error| AppError::Config(format!("模型定价文件锁失败: {error}")))?;
-    let file = load_or_create_file_unlocked(db)?;
+    let file = load_or_create_file_unlocked()?;
     Ok(ModelsDevSyncState {
         config: file.models_dev_sync,
         config_path: model_pricing_file_path().display().to_string(),
@@ -358,7 +334,7 @@ pub fn save_models_dev_sync_config(
     let _file_guard = file_lock()
         .lock()
         .map_err(|error| AppError::Config(format!("模型定价文件锁失败: {error}")))?;
-    let mut file = load_or_create_file_unlocked(db)?;
+    let mut file = load_or_create_file_unlocked()?;
     file.models_dev_sync = normalize_sync_config(config);
     write_file_unlocked(&file)
 }
@@ -375,7 +351,7 @@ pub fn record_models_dev_sync_result(
     let _file_guard = file_lock()
         .lock()
         .map_err(|lock_error| AppError::Config(format!("模型定价文件锁失败: {lock_error}")))?;
-    let mut file = load_or_create_file_unlocked(db)?;
+    let mut file = load_or_create_file_unlocked()?;
     if let Some(synced_at) = synced_at {
         file.models_dev_sync.last_sync_at = Some(synced_at);
     }
@@ -408,7 +384,7 @@ fn update_model_pricing_batch_inner(
         let _file_guard = file_lock()
             .lock()
             .map_err(|error| AppError::Config(format!("模型定价文件锁失败: {error}")))?;
-        let mut file = load_or_create_file_unlocked(db)?;
+        let mut file = load_or_create_file_unlocked()?;
         let mut file_models = file
             .models
             .into_iter()
@@ -477,7 +453,7 @@ pub fn delete_model_pricing(db: &Database, model_id: &str) -> Result<(), AppErro
     let _file_guard = file_lock()
         .lock()
         .map_err(|error| AppError::Config(format!("模型定价文件锁失败: {error}")))?;
-    let mut file = load_or_create_file_unlocked(db)?;
+    let mut file = load_or_create_file_unlocked()?;
     file.models.retain(|entry| entry.model_id != model_id);
     if !file.deleted_model_ids.iter().any(|entry| entry == model_id) {
         file.deleted_model_ids.push(model_id.to_string());
@@ -535,6 +511,49 @@ mod tests {
             assert!(!state.config.auto_sync_enabled);
             assert!(state.config.include_common_models);
             assert_eq!(state.config_path, path.display().to_string());
+
+            let content = fs::read_to_string(path).expect("read pricing file");
+            let file: ModelPricingFile = serde_json::from_str(&content).expect("parse file");
+            assert!(file.models.is_empty());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn empty_override_file_does_not_roll_back_builtin_pricing_repairs() {
+        with_test_home(|db, path| {
+            get_models_dev_sync_state(db).expect("create override file");
+            {
+                let conn = db.conn.lock().expect("lock test database");
+                assert_eq!(
+                    conn.execute(
+                        "UPDATE model_pricing
+                         SET input_cost_per_million = '99'
+                         WHERE model_id = 'claude-sonnet-5'",
+                        [],
+                    )
+                    .expect("simulate built-in pricing repair"),
+                    1
+                );
+            }
+
+            assert_eq!(sync_local_model_pricing(db).expect("reload overrides"), 0);
+
+            let conn = db.conn.lock().expect("lock test database");
+            let input: String = conn
+                .query_row(
+                    "SELECT input_cost_per_million
+                     FROM model_pricing WHERE model_id = 'claude-sonnet-5'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("query repaired pricing");
+            drop(conn);
+            assert_eq!(input, "99");
+
+            let content = fs::read_to_string(path).expect("read override file");
+            let file: ModelPricingFile = serde_json::from_str(&content).expect("parse file");
+            assert!(file.models.is_empty());
         });
     }
 
@@ -650,6 +669,56 @@ mod tests {
                 )
                 .expect("query deleted pricing");
             assert_eq!(count, 0);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn repeated_seeded_tombstone_deletion_does_not_backfill_unrelated_usage() {
+        with_test_home(|db, _path| {
+            get_models_dev_sync_state(db).expect("create override file");
+            {
+                let conn = db.conn.lock().expect("lock test database");
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model, request_model,
+                        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                        input_cost_usd, output_cost_usd, cache_read_cost_usd,
+                        cache_creation_cost_usd, total_cost_usd, latency_ms,
+                        status_code, created_at, data_source
+                    ) VALUES (
+                        'pending-cost', 'test-provider', 'codex', 'gpt-5', 'gpt-5',
+                        1000000, 0, 0, 0, '0', '0', '0', '0', '0', 100, 200, 1, 'proxy'
+                    )",
+                    [],
+                )
+                .expect("insert zero-cost usage");
+            }
+
+            delete_model_pricing(db, "claude-sonnet-5").expect("create tombstone");
+            db.ensure_model_pricing_seeded()
+                .expect("reseed built-in pricing");
+            assert_eq!(sync_local_model_pricing(db).expect("apply tombstone"), 1);
+
+            let conn = db.conn.lock().expect("lock test database");
+            let deleted_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM model_pricing
+                     WHERE model_id = 'claude-sonnet-5'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("query tombstoned pricing");
+            let total_cost: f64 = conn
+                .query_row(
+                    "SELECT CAST(total_cost_usd AS REAL)
+                     FROM proxy_request_logs WHERE request_id = 'pending-cost'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("query pending usage cost");
+            assert_eq!(deleted_count, 0);
+            assert_eq!(total_cost, 0.0);
         });
     }
 

@@ -18,7 +18,10 @@ vi.mock("@/lib/api/usage", () => ({
   },
 }));
 
-import { syncModelsDevPricing } from "@/lib/modelsDevAutoSync";
+import {
+  MODELS_DEV_STARTUP_SYNC_INTERVAL_MS,
+  syncModelsDevPricing,
+} from "@/lib/modelsDevAutoSync";
 
 const state = {
   configPath: "C:/Users/test/.cc-switch/model-pricing.json",
@@ -74,6 +77,26 @@ describe("syncModelsDevPricing", () => {
     const result = await syncModelsDevPricing();
 
     expect(result.skipped).toBe(true);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(updateModelPricingBatch).not.toHaveBeenCalled();
+  });
+
+  it("skips startup network access when pricing synced within the interval", async () => {
+    const lastSyncAt = Date.now() - MODELS_DEV_STARTUP_SYNC_INTERVAL_MS + 1;
+    getModelsDevSyncConfig.mockResolvedValue({
+      ...state,
+      config: { ...state.config, lastSyncAt },
+    });
+
+    const result = await syncModelsDevPricing();
+
+    expect(result).toEqual({
+      skipped: true,
+      selected: 0,
+      imported: 0,
+      changed: 0,
+      syncedAt: lastSyncAt,
+    });
     expect(fetch).not.toHaveBeenCalled();
     expect(updateModelPricingBatch).not.toHaveBeenCalled();
   });
@@ -150,6 +173,7 @@ describe("syncModelsDevPricing", () => {
         autoSyncEnabled: false,
         includeCommonModels: false,
         selectedModelKeys: ["relay/custom-model"],
+        lastSyncAt: Date.now(),
       },
     });
 

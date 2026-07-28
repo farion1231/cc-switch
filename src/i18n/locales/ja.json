@@ -1634,11 +1634,11 @@
     "modelsDevDefaultHint": "最新リリース順に {{shown}} 件を表示しています（全 {{total}} 件）。キーワード入力で全件検索できます",
     "modelsDevAutoSync": {
       "title": "models.dev 料金の自動同期",
-      "description": "有効にすると、CC Switch の起動時に選択したモデルの最新料金を取得し、ローカル料金ファイルに保存します。",
+      "description": "有効にすると、CC Switch の起動時に選択したモデルの最新料金を定期的に取得し、ローカル料金ファイルに保存します。",
       "enabled": "有効",
       "disabled": "無効",
       "enableConfirmTitle": "料金の自動同期を有効にしますか？",
-      "enableConfirmMessage": "有効にすると、CC Switch の起動時に models.dev から選択したモデルの料金を更新します。同じモデル ID の内蔵料金と手動設定した料金は上書きされます。",
+      "enableConfirmMessage": "有効にすると、CC Switch の起動時に models.dev から選択したモデルの料金を定期的に更新します（最大 6 時間に 1 回）。同じモデル ID の内蔵料金と手動設定した料金は上書きされます。",
       "enableConfirmAction": "自動同期を有効にする",
       "configure": "モデルを選択",
       "configureTitle": "料金を自動同期するモデルを選択",
