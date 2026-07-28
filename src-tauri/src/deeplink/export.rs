@@ -81,10 +81,12 @@ pub fn build_provider_share_url(
             // Volcengine AK/SK, Zhipu org/project, ...) as a single base64
             // JSON blob. The scattered usage_* params would drop native
             // template fields and leave the receiver running an empty script.
-            let script_json = serde_json::to_string(script).map_err(|e| {
-                AppError::Message(format!("Failed to serialize usage_script: {e}"))
-            })?;
-            qp.append_pair("usageScriptConfig", &BASE64_STANDARD.encode(script_json.as_bytes()));
+            let script_json = serde_json::to_string(script)
+                .map_err(|e| AppError::Message(format!("Failed to serialize usage_script: {e}")))?;
+            qp.append_pair(
+                "usageScriptConfig",
+                &BASE64_STANDARD.encode(script_json.as_bytes()),
+            );
         }
     }
     let share_url = url.to_string();
@@ -172,16 +174,28 @@ fn unsupported_claude_routing_meta(meta: &crate::provider::ProviderMeta) -> Opti
     if meta.is_full_url == Some(true) {
         return Some("isFullUrl");
     }
-    if meta.custom_user_agent.as_deref().is_some_and(|s| !s.is_empty()) {
+    if meta
+        .custom_user_agent
+        .as_deref()
+        .is_some_and(|s| !s.is_empty())
+    {
         return Some("customUserAgent");
     }
     if meta.impersonate_claude_code == Some(true) {
         return Some("impersonateClaudeCode");
     }
-    if meta.prompt_cache_key.as_deref().is_some_and(|s| !s.is_empty()) {
+    if meta
+        .prompt_cache_key
+        .as_deref()
+        .is_some_and(|s| !s.is_empty())
+    {
         return Some("promptCacheKey");
     }
-    if meta.prompt_cache_routing.as_deref().is_some_and(|s| !s.is_empty()) {
+    if meta
+        .prompt_cache_routing
+        .as_deref()
+        .is_some_and(|s| !s.is_empty())
+    {
         return Some("promptCacheRouting");
     }
     if meta
