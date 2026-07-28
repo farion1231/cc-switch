@@ -17,6 +17,10 @@ impl McpService {
 
     /// 添加或更新 MCP 服务器
     pub fn upsert_server(state: &AppState, server: McpServer) -> Result<(), AppError> {
+        // Validate app-specific compatibility before persisting or touching any
+        // live config, so a rejected multi-app update cannot partially commit.
+        Self::validate_server_for_enabled_apps(&server)?;
+
         // 读取旧状态：用于处理“编辑时取消勾选某个应用”的场景（需要从对应 live 配置中移除）
         let prev_apps = state
             .db
@@ -78,6 +82,10 @@ impl McpService {
         let mut servers = state.db.get_all_mcp_servers()?;
 
         if let Some(server) = servers.get_mut(server_id) {
+            if enabled && app == AppType::Codex {
+                mcp::validate_codex_server_spec(&server.server)?;
+            }
+
             server.apps.set_enabled_for(&app, enabled);
             state.db.save_mcp_server(server)?;
 
@@ -87,6 +95,14 @@ impl McpService {
             } else {
                 Self::remove_server_from_app(state, server_id, &app)?;
             }
+        }
+
+        Ok(())
+    }
+
+    fn validate_server_for_enabled_apps(server: &McpServer) -> Result<(), AppError> {
+        if server.apps.codex {
+            mcp::validate_codex_server_spec(&server.server)?;
         }
 
         Ok(())
@@ -231,15 +247,50 @@ impl McpService {
             return Ok(());
         }
 
+        let mut failures = Vec::new();
         for server in servers.values() {
-            if server.apps.is_enabled_for(app) {
-                Self::sync_server_to_app(state, server, app)?;
-            } else {
-                Self::remove_server_from_app(state, &server.id, app)?;
+            let result = Self::project_server_to_app(state, server, app);
+
+            if let Err(error) = result {
+                log::warn!(
+                    "同步 MCP 服务器 '{}' 到 {} 失败: {error}",
+                    server.id,
+                    app.as_str()
+                );
+                failures.push(format!("{}: {error}", server.id));
             }
         }
 
-        Ok(())
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(AppError::Message(format!(
+                "部分 MCP 服务器同步到 {} 失败: {}",
+                app.as_str(),
+                failures.join("; ")
+            )))
+        }
+    }
+
+    fn project_server_to_app(
+        state: &AppState,
+        server: &McpServer,
+        app: &AppType,
+    ) -> Result<(), AppError> {
+        if !server.apps.is_enabled_for(app) {
+            return Self::remove_server_from_app(state, &server.id, app);
+        }
+
+        if app == &AppType::Codex {
+            if let Err(error) = mcp::validate_codex_server_spec(&server.server) {
+                // Remove output left by older versions before reporting the
+                // incompatibility, then continue reconciling other servers.
+                Self::remove_server_from_app(state, &server.id, app)?;
+                return Err(error);
+            }
+        }
+
+        Self::sync_server_to_app(state, server, app)
     }
 
     // ========================================================================
@@ -342,6 +393,7 @@ impl McpService {
         if count > 0 {
             if let Some(servers) = &temp_config.mcp.servers {
                 let mut existing = state.db.get_all_mcp_servers()?;
+                let mut pending = Vec::new();
                 for server in servers.values() {
                     // 已存在：仅启用 Codex，不覆盖其他字段（与导入模块语义保持一致）
                     let to_save = if let Some(existing_server) = existing.get(&server.id) {
@@ -354,8 +406,21 @@ impl McpService {
                         server.clone()
                     };
 
-                    state.db.save_mcp_server(&to_save)?;
+                    Self::validate_server_for_enabled_apps(&to_save).map_err(|error| {
+                        AppError::McpValidation(format!(
+                            "无法从 Codex 导入 MCP 服务器 '{}': {error}",
+                            to_save.id
+                        ))
+                    })?;
+
                     existing.insert(to_save.id.clone(), to_save.clone());
+                    pending.push(to_save);
+                }
+
+                // Preflight every candidate before committing any Codex import,
+                // so an incompatible same-ID merge cannot partially persist.
+                for server in pending {
+                    state.db.save_mcp_server(&server)?;
 
                     // 导入是读取已有配置，不应反向写回任何应用的 live 配置。
                     // 显式编辑、启用/禁用或手动同步时再执行写回。

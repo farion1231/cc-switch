@@ -219,6 +219,13 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
 
             let spec_v = serde_json::Value::Object(spec);
 
+            // Current Codex cannot represent legacy SSE. Do not import an
+            // explicit stale discriminator as a Codex-enabled unified server.
+            if let Err(e) = validate_codex_server_spec(&spec_v) {
+                log::warn!("跳过不受 Codex 支持的 MCP 项 '{id}': {e}");
+                continue;
+            }
+
             // 校验：单项失败继续处理
             if let Err(e) = validate_server_spec(&spec_v) {
                 log::warn!("跳过无效 Codex MCP 项 '{id}': {e}");
@@ -228,6 +235,10 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
             if let Some(existing) = servers.get_mut(id) {
                 // 已存在：仅启用 Codex 应用
                 if !existing.apps.codex {
+                    if let Err(e) = validate_codex_server_spec(&existing.server) {
+                        log::warn!("跳过与现有同名服务器不兼容的 Codex MCP 项 '{id}': {e}");
+                        continue;
+                    }
                     existing.apps.codex = true;
                     changed += 1;
                     log::info!("MCP 服务器 '{id}' 已启用 Codex 应用");
@@ -332,15 +343,8 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
         ids.sort();
         for id in ids {
             let spec = enabled.get(&id).expect("spec must exist");
-            // 复用通用转换函数（已包含扩展字段支持）
-            match json_server_to_toml_table(spec) {
-                Ok(table) => {
-                    servers_tbl[&id[..]] = Item::Table(table);
-                }
-                Err(err) => {
-                    log::error!("跳过无效的 MCP 服务器 '{id}': {err}");
-                }
-            }
+            let table = codex_server_to_toml_table(spec)?;
+            servers_tbl[&id[..]] = Item::Table(table);
         }
         // 使用唯一正确的格式：[mcp_servers]
         doc["mcp_servers"] = Item::Table(servers_tbl);
@@ -396,7 +400,7 @@ pub fn sync_single_server_to_codex(
     }
 
     // 将 JSON 服务器规范转换为 TOML 表
-    let toml_table = json_server_to_toml_table(server_spec)?;
+    let toml_table = codex_server_to_toml_table(server_spec)?;
 
     // 使用唯一正确的格式：[mcp_servers]
     doc["mcp_servers"][id] = Item::Table(toml_table);
@@ -560,6 +564,28 @@ fn json_value_to_toml_item(value: &Value, field_name: &str) -> Option<toml_edit:
     }
 }
 
+/// Validate that a unified MCP server can be represented by Codex without
+/// changing its transport semantics.
+///
+/// Codex treats every URL-based entry as Streamable HTTP and has no legacy SSE
+/// transport.
+pub(crate) fn validate_codex_server_spec(spec: &Value) -> Result<(), AppError> {
+    if spec.get("type").and_then(Value::as_str) == Some("sse") {
+        return Err(AppError::McpValidation(
+            "Codex 不支持 SSE MCP 传输；仅当端点支持 Streamable HTTP 时，才能将类型改为 'http'"
+                .into(),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Convert a server spec for Codex after enforcing transport compatibility.
+fn codex_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError> {
+    validate_codex_server_spec(spec)?;
+    json_server_to_toml_table(spec)
+}
+
 /// Helper: 将 JSON MCP 服务器规范转换为 toml_edit::Table
 ///
 /// 策略：
@@ -694,7 +720,7 @@ mod tests {
 
     #[test]
     fn http_headers_are_only_written_to_codex_http_headers() {
-        let table = json_server_to_toml_table(&json!({
+        let table = codex_server_to_toml_table(&json!({
             "type": "http",
             "url": "https://mcp.example.com",
             "headers": {
@@ -721,5 +747,22 @@ mod tests {
             table.get("timeout").and_then(|item| item.as_integer()),
             Some(30)
         );
+    }
+
+    #[test]
+    fn rejects_sse_instead_of_serializing_it_as_streamable_http() {
+        let error = codex_server_to_toml_table(&json!({
+            "type": "sse",
+            "url": "https://mcp.example.com/sse"
+        }))
+        .expect_err("Codex must reject legacy SSE transport");
+
+        match error {
+            AppError::McpValidation(message) => {
+                assert!(message.contains("SSE"));
+                assert!(message.contains("Streamable HTTP"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 }
