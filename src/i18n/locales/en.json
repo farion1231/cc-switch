@@ -385,6 +385,8 @@
         "thinkingSignatureDescription": "When an Anthropic-type provider returns thinking signature incompatibility or illegal request errors, automatically removes incompatible thinking-related blocks and retries once with the same provider",
         "thinkingBudget": "Thinking Budget Rectification",
         "thinkingBudgetDescription": "When an Anthropic-type provider returns budget_tokens constraint errors (such as at least 1024), automatically normalizes thinking to enabled, sets thinking budget to 32000, and raises max_tokens to 64000 if needed, then retries once",
+        "thinkingMode": "Thinking Shape Rectification",
+        "thinkingModeDescription": "When an upstream rejects the thinking shape currently in use, learns the correct shape from the error and retries once, in both directions (\"thinking.type.enabled\" is not supported ⇄ Input tag 'adaptive' does not match expected tags). The learned result is remembered per provider and model, so a newly released model self-heals after a single failed request instead of requiring an app update",
         "mediaFallback": "Unsupported Image Fallback",
         "mediaFallbackDescription": "When a provider does not support image input (it declares text-only capability, or the upstream returns an unsupported-image error), automatically replaces image blocks with an [Unsupported Image] marker so the conversation is not interrupted",
         "mediaHeuristic": "Text-Only Model Preflight",

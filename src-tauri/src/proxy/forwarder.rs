@@ -16,9 +16,12 @@ use super::{
         AuthInfo, AuthStrategy, ProviderAdapter, ProviderType,
     },
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
-    thinking_rectifier::{
-        normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
+    thinking_capability::ThinkingCapabilityStore,
+    thinking_mode_rectifier::{
+        client_model_from_body, detect_thinking_mode_error, normalize_thinking_shape,
+        rectify_thinking_mode,
     },
+    thinking_rectifier::{rectify_anthropic_request, should_rectify_thinking_signature},
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
@@ -120,6 +123,8 @@ pub struct RequestForwarder {
     current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
     gemini_shadow: Arc<GeminiShadowStore>,
     codex_chat_history: Arc<CodexChatHistoryStore>,
+    /// 从上游报错学到的 thinking 形状（跨请求保持）
+    thinking_capability: Arc<ThinkingCapabilityStore>,
     /// 故障转移切换管理器
     failover_manager: Arc<FailoverSwitchManager>,
     /// AppHandle，用于发射事件和更新托盘
@@ -202,6 +207,7 @@ impl RequestForwarder {
         current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
         gemini_shadow: Arc<GeminiShadowStore>,
         codex_chat_history: Arc<CodexChatHistoryStore>,
+        thinking_capability: Arc<ThinkingCapabilityStore>,
         failover_manager: Arc<FailoverSwitchManager>,
         app_handle: Option<tauri::AppHandle>,
         current_provider_id_at_start: String,
@@ -223,6 +229,7 @@ impl RequestForwarder {
             current_providers,
             gemini_shadow,
             codex_chat_history,
+            thinking_capability,
             failover_manager,
             app_handle,
             current_provider_id_at_start,
@@ -418,6 +425,7 @@ impl RequestForwarder {
             // —— 首家 provider 整流后被 5xx/timeout 击落时，下家仍能用整流后的请求体走整流流程
             let mut rectifier_retried = false;
             let mut budget_rectifier_retried = false;
+            let mut mode_rectifier_retried = false;
             let mut media_rectifier_retried = false;
 
             // 上限检查：尊重用户在 AppProxyConfig.max_retries 上配置的「重试次数」。
@@ -453,7 +461,36 @@ impl RequestForwarder {
                 if self.optimizer_config.enabled && is_bedrock_provider(provider) {
                     let mut b = body.clone();
                     if self.optimizer_config.thinking_optimizer {
-                        super::thinking_optimizer::optimize(&mut b, &self.optimizer_config);
+                        // 走 store 解析：吃到上一次上游报错学到的形状修正。
+                        //
+                        // 启发式必须按「真正发往上游的模型名」算，与其它发送端及重试
+                        // 循环里的整流器同一视角 —— 模型映射（ANTHROPIC_DEFAULT_*_MODEL）
+                        // 与 Bedrock 开关读的是同一个 settings_config.env，所以一个
+                        // Bedrock provider 完全可能同时配了映射（如 claude-sonnet-4-5 →
+                        // claude-sonnet-5）。此处若按客户端模型名解析，首次就会注入错误
+                        // 形状，且重试时与整流器结论不一致（整流器按映射后模型名判，会
+                        // 误认为「已是目标形状」而跳过学习）。
+                        let upstream_model = upstream_model_for_thinking_resolution(
+                            provider,
+                            app_type,
+                            &b,
+                            super::providers::should_convert_codex_responses_to_anthropic(
+                                provider, endpoint,
+                            ),
+                        );
+                        let mode = self
+                            .thinking_capability
+                            .resolve_mapped(
+                                &provider.id,
+                                client_model_from_body(&b).unwrap_or_default(),
+                                upstream_model.as_deref().unwrap_or_default(),
+                            )
+                            .mode;
+                        super::thinking_optimizer::optimize_with_mode(
+                            &mut b,
+                            &self.optimizer_config,
+                            mode,
+                        );
                     }
                     if self.optimizer_config.cache_injection {
                         super::cache_injector::inject(&mut b, &self.optimizer_config);
@@ -978,6 +1015,202 @@ impl RequestForwarder {
                         }
                     }
 
+                    // 检测是否需要触发 thinking 形状整流器。
+                    //
+                    // 门禁不能沿用 is_anthropic_provider —— AppType::Codex 一律被
+                    // ProviderType::from_app_type_and_config 映射成 Codex，于是
+                    // Codex→Anthropic 桥接链路上其它整流器全都不生效。这里按「出站
+                    // 请求体是 Anthropic 形状」判断，把那条链路一并纳入。
+                    if is_anthropic_provider
+                        || super::providers::should_convert_codex_responses_to_anthropic(
+                            provider, endpoint,
+                        )
+                    {
+                        let error_message = extract_error_message(&e);
+                        if let Some(direction) = detect_thinking_mode_error(
+                            error_message.as_deref(),
+                            &self.rectifier_config,
+                        ) {
+                            // 已经重试过：直接返回错误（不可重试客户端错误）
+                            if mode_rectifier_retried {
+                                log::warn!(
+                                    "[{app_type_str}] [RECT-023] thinking 形状整流器已触发过，不再重试"
+                                );
+                                self.router
+                                    .release_permit_neutral(
+                                        &provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
+                                let mut status = self.status.write().await;
+                                status.failed_requests += 1;
+                                status.last_error = Some(e.to_string());
+                                if status.total_requests > 0 {
+                                    status.success_rate = (status.success_requests as f32
+                                        / status.total_requests as f32)
+                                        * 100.0;
+                                }
+                                return Err(ForwardError {
+                                    error: e,
+                                    provider: Some(provider.clone()),
+                                });
+                            }
+
+                            // 请求体里没有可用的模型名就无法定位缓存条目，重试也只会
+                            // 产出同一个请求 —— 不做无意义重试。
+                            //
+                            // 解析当前形状必须用「真正发往上游的模型名」，与发送端同一
+                            // 视角；否则模型映射生效时双方结论不一致，整流器会误判成
+                            // 「已是目标形状」而永不学习。
+                            let upstream_model = upstream_model_for_thinking_resolution(
+                                provider,
+                                app_type,
+                                &provider_body,
+                                super::providers::should_convert_codex_responses_to_anthropic(
+                                    provider, endpoint,
+                                ),
+                            );
+                            let mode_rectified = client_model_from_body(&provider_body)
+                                .map(|client_model| {
+                                    rectify_thinking_mode(
+                                        &self.thinking_capability,
+                                        &provider.id,
+                                        client_model,
+                                        upstream_model.as_deref().unwrap_or(client_model),
+                                        direction,
+                                    )
+                                })
+                                .unwrap_or_default();
+
+                            // 解析结论已经是目标形状（例如上一个请求刚学到），重试只会
+                            // 产出同一个请求。这说明报文虽然长得像 thinking 形状问题，
+                            // 实际另有原因 —— 不能在这里吃掉错误，否则本可以故障转移到
+                            // 别的供应商的请求会变成硬失败。只告警，继续走下面的正常错误
+                            // 分类与故障转移。
+                            if !mode_rectified.applied {
+                                log::warn!(
+                                    "[{app_type_str}] [RECT-024] thinking 形状整流器触发但已是目标形状，交回正常错误处理"
+                                );
+                            } else {
+                                // Bedrock 优化器是在 forward() 之外把 thinking 写进
+                                // provider_body 的（见循环开头的 PRE-SEND 优化器），重试
+                                // 时那段不会重算，所以这里得把已定型的 body 一并纠正，
+                                // 否则 Bedrock 链路上重试还是发旧形状、自愈失效。
+                                //
+                                // 对另两条链路是安全的：Codex Responses body 没有顶层
+                                // thinking（no-op），Claude 直通 body 会被 forward() 里的
+                                // 归一化改成同一形状（幂等）。
+                                if let Some(target) = mode_rectified.after {
+                                    normalize_thinking_shape(&mut provider_body, target);
+                                }
+
+                                log::info!(
+                                "[{}] [RECT-020] thinking 形状整流器触发, before={:?}, after={:?}",
+                                app_type_str,
+                                mode_rectified.before,
+                                mode_rectified.after
+                            );
+
+                                let _ = std::mem::replace(&mut mode_rectifier_retried, true);
+
+                                // 使用同一供应商重试（不计入熔断器）。请求体不用改 ——
+                                // forward() 会重新走一遍转换，发送端查 store 就能拿到刚
+                                // 学到的形状。
+                                match self
+                                    .forward(
+                                        app_type,
+                                        &method,
+                                        provider,
+                                        endpoint,
+                                        &provider_body,
+                                        &headers,
+                                        &extensions,
+                                        adapter.as_ref(),
+                                    )
+                                    .await
+                                {
+                                    Ok((response, claude_api_format, outbound_model)) => {
+                                        log::info!(
+                                            "[{app_type_str}] [RECT-021] thinking 形状整流重试成功"
+                                        );
+                                        self.record_success_result(
+                                            &provider.id,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                        )
+                                        .await;
+
+                                        {
+                                            let mut current_providers =
+                                                self.current_providers.write().await;
+                                            current_providers.insert(
+                                                app_type_str.to_string(),
+                                                (provider.id.clone(), provider.name.clone()),
+                                            );
+                                        }
+
+                                        {
+                                            let mut status = self.status.write().await;
+                                            status.success_requests += 1;
+                                            status.last_error = None;
+                                            let should_switch =
+                                                self.current_provider_id_at_start.as_str()
+                                                    != provider.id.as_str();
+                                            if should_switch {
+                                                status.failover_count += 1;
+                                                let fm = self.failover_manager.clone();
+                                                let ah = self.app_handle.clone();
+                                                let pid = provider.id.clone();
+                                                let pname = provider.name.clone();
+                                                let at = app_type_str.to_string();
+                                                tokio::spawn(async move {
+                                                    let _ = fm
+                                                        .try_switch(ah.as_ref(), &at, &pid, &pname)
+                                                        .await;
+                                                });
+                                            }
+                                            if status.total_requests > 0 {
+                                                status.success_rate = (status.success_requests
+                                                    as f32
+                                                    / status.total_requests as f32)
+                                                    * 100.0;
+                                            }
+                                        }
+
+                                        return Ok(ForwardResult {
+                                            response,
+                                            provider: provider.clone(),
+                                            claude_api_format,
+                                            outbound_model,
+                                            connection_guard: None,
+                                        });
+                                    }
+                                    Err(retry_err) => {
+                                        log::warn!(
+                                        "[{app_type_str}] [RECT-022] thinking 形状整流重试仍失败: {retry_err}"
+                                    );
+                                        if let Some(err) = self
+                                            .handle_rectifier_retry_failure(
+                                                retry_err,
+                                                provider,
+                                                app_type_str,
+                                                used_half_open_permit,
+                                                "thinking 形状整流",
+                                                &mut last_error,
+                                                &mut last_provider,
+                                            )
+                                            .await
+                                        {
+                                            return Err(err);
+                                        }
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     if signature_rectifier_non_retryable_client_error {
                         self.router
                             .release_permit_neutral(
@@ -1168,8 +1401,10 @@ impl RequestForwarder {
             mapped_body
         };
 
-        // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
-        let mut mapped_body = normalize_thinking_type(mapped_body);
+        // thinking 形状的发送端归一化在下面 adapter.name() == "Claude" 的分支里做，
+        // 那里 api_format 已解析出来，可以只在「Anthropic 请求体发往 Anthropic 上游」
+        // 时改写。此处 body 还可能是 Codex Responses / Gemini 形状。
+        let mut mapped_body = mapped_body;
 
         // Grok Build exposes a stable client-side model profile in config.toml.
         // Route requests to the provider's real upstream model before applying
@@ -1338,6 +1573,35 @@ impl RequestForwarder {
                     provider,
                     api_format,
                 );
+                // Anthropic 直通：客户端可能自己发了 thinking（例如 Claude Code 对着
+                // Opus 5 发 enabled + budget_tokens），按解析出的模型能力改写形状。
+                // 只在 api_format == "anthropic" 时做 —— 其它格式会被下游 transform
+                // 重新映射（如 transform_responses 把 budget_tokens 折算成 reasoning
+                // effort），在这里改写会造成行为漂移。Codex→Anthropic 桥接不经过本
+                // 分支（那是 Codex adapter），由 transform 自己按 capability 产出。
+                if api_format == "anthropic" {
+                    // 启发式按发往上游的模型名算（mapped_body 已应用模型映射），
+                    // 学习缓存仍按客户端模型名查 —— 失败重试循环只拿得到后者。
+                    let capability = self.thinking_capability.resolve_mapped(
+                        &provider.id,
+                        client_model_from_body(body).unwrap_or_default(),
+                        client_model_from_body(&mapped_body).unwrap_or_default(),
+                    );
+                    // api_format 默认就是 "anthropic"，所以这里也会流过大量「第三方模型
+                    // 经 Anthropic 兼容端点」的 provider（DeepSeek / GLM / Kimi / MiniMax
+                    // 预设）。那些模型名解析不出 Claude 身份，没有依据说明它该用哪种形状 ——
+                    // 客户端自己发的 thinking 一个字都不动，免得把本来能用的请求改坏。
+                    if capability.grounded
+                        && normalize_thinking_shape(&mut mapped_body, capability.mode)
+                    {
+                        log::info!(
+                            "[{}] thinking 形状归一化为 {:?}: provider={}",
+                            app_type.as_str(),
+                            capability.mode,
+                            provider.id
+                        );
+                    }
+                }
                 self.apply_media_prevention(&mut mapped_body, provider);
             }
         }
@@ -1471,10 +1735,20 @@ impl RequestForwarder {
             // accepted by every current Claude model and virtually all gateways. The
             // transform clamps any thinking budget below this value.
             const DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS: u64 = 8192;
+            // thinking 形状解析：缓存键用客户端模型名（失败重试循环只拿得到它），
+            // 启发式按 mapped_body 里真正发往上游的模型名算 —— apply_model_mapping /
+            // apply_codex_upstream_model 可能刚把它改写成一个完全不同的模型。
+            // 学到的修正优先于启发式。
+            let thinking_capability = self.thinking_capability.resolve_mapped(
+                &provider.id,
+                client_model_from_body(body).unwrap_or_default(),
+                client_model_from_body(&mapped_body).unwrap_or_default(),
+            );
             let mut anthropic_body =
-                super::providers::transform_codex_anthropic::responses_request_to_anthropic(
+                super::providers::transform_codex_anthropic::responses_request_to_anthropic_with_capability(
                     mapped_body,
                     DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS,
+                    thinking_capability,
                 )?;
             // Handle the 1M-context marker [1m]: strip the model-name suffix (the
             // gateway doesn't recognize it) and set the flag so the beta header is
@@ -3414,6 +3688,37 @@ fn apply_local_proxy_header_overrides(
     }
 }
 
+/// 算出「真正发往上游的模型名」，供 thinking 形状整流器解析当前形状。
+///
+/// 必须与 `forward()` 里发送端喂给
+/// [`ThinkingCapabilityStore::resolve_mapped`] 的模型名保持一致：发送端拿的是
+/// `mapped_body` 里的 `model`，而失败重试循环只持有客户端原始请求体，所以这里按
+/// 同样的顺序把模型映射重放一遍。两边取值一旦不一致，整流器就会算出与发送端不同的
+/// `before`，得出「已经是目标形状」的错误结论而永不学习（自愈死锁）。
+///
+/// 只重放会改写 `model` 的那几步；copilot 归一化与 `[1m]` 后缀剥离不影响
+/// Claude 家族判定（`normalize_model_name` 本就会吃掉 `[1m]`），故不参与。
+/// 返回 `None` 表示拿不到上游模型名，调用方回落到客户端模型名。
+fn upstream_model_for_thinking_resolution(
+    provider: &Provider,
+    app_type: &AppType,
+    body: &Value,
+    codex_responses_to_anthropic: bool,
+) -> Option<String> {
+    let mut mapped = if matches!(app_type, AppType::ClaudeDesktop) {
+        crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider).ok()?
+    } else {
+        super::model_mapper::apply_model_mapping(body.clone(), provider).0
+    };
+
+    // 与发送端一致：GrokBuild 与 Codex→Anthropic 桥接会再套一层上游模型改写
+    if codex_responses_to_anthropic || matches!(app_type, AppType::GrokBuild) {
+        super::providers::apply_codex_upstream_model(provider, &mut mapped);
+    }
+
+    client_model_from_body(&mapped).map(str::to_string)
+}
+
 fn is_protected_local_proxy_override_header(name: &http::HeaderName) -> bool {
     matches!(
         name.as_str(),
@@ -3598,6 +3903,76 @@ mod tests {
         }
     }
 
+    /// 一个既开了 Bedrock 又配了模型映射的 provider —— 两者读的是同一个
+    /// `settings_config.env`，所以这种组合真实存在。
+    fn bedrock_provider_with_sonnet_mapping() -> Provider {
+        let mut provider = test_provider_with_type(None);
+        provider.settings_config = json!({
+            "env": {
+                "CLAUDE_CODE_USE_BEDROCK": "1",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5"
+            }
+        });
+        provider
+    }
+
+    #[test]
+    fn upstream_model_resolution_replays_model_mapping() {
+        // 客户端发 claude-sonnet-4-5（启发式 Legacy），provider 把 sonnet 档映射到
+        // claude-sonnet-5（启发式 Adaptive）。thinking 形状必须按后者判。
+        let provider = bedrock_provider_with_sonnet_mapping();
+        let body = json!({ "model": "claude-sonnet-4-5" });
+
+        let upstream =
+            upstream_model_for_thinking_resolution(&provider, &AppType::Claude, &body, false);
+
+        assert_eq!(upstream.as_deref(), Some("claude-sonnet-5"));
+    }
+
+    #[test]
+    fn bedrock_pre_send_optimizer_and_rectifier_agree_under_model_mapping() {
+        // 回归：PRE-SEND 优化器曾用客户端模型名解析形状，与发送端/整流器（按映射后
+        // 模型名解析）不一致 —— 首次注入错形状，重试时整流器还会误判「已是目标形状」
+        // 而跳过学习。两边现在必须给出同一个 mode。
+        let provider = bedrock_provider_with_sonnet_mapping();
+        let body = json!({ "model": "claude-sonnet-4-5" });
+        let store = ThinkingCapabilityStore::new();
+
+        let client_model = client_model_from_body(&body).unwrap_or_default();
+        let upstream_model =
+            upstream_model_for_thinking_resolution(&provider, &AppType::Claude, &body, false);
+
+        // 优化器视角（修复后）
+        let optimizer_mode = store
+            .resolve_mapped(
+                &provider.id,
+                client_model,
+                upstream_model.as_deref().unwrap_or_default(),
+            )
+            .mode;
+        // 整流器视角
+        let rectifier_mode = store
+            .resolve_mapped(
+                &provider.id,
+                client_model,
+                upstream_model.as_deref().unwrap_or(client_model),
+            )
+            .mode;
+
+        assert_eq!(
+            optimizer_mode,
+            super::super::thinking_capability::ThinkingMode::Adaptive
+        );
+        assert_eq!(optimizer_mode, rectifier_mode);
+
+        // 旧实现用的就是这个表达式（启发式跑客户端模型名），结论相反 —— 保留断言，
+        // 一旦有人把上面改回 `resolve(..)` 就会被这条测试抓住。
+        assert_eq!(
+            store.resolve(&provider.id, client_model).mode,
+            super::super::thinking_capability::ThinkingMode::Legacy
+        );
+    }
+
     fn test_forwarder(
         non_streaming_timeout: Duration,
         streaming_first_byte_timeout: Duration,
@@ -3610,6 +3985,7 @@ mod tests {
             current_providers: Arc::new(RwLock::new(HashMap::new())),
             gemini_shadow: Arc::new(GeminiShadowStore::new()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+            thinking_capability: Arc::new(ThinkingCapabilityStore::new()),
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
             app_handle: None,
             current_provider_id_at_start: String::new(),

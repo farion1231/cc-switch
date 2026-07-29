@@ -214,6 +214,13 @@ pub struct RectifierConfig {
     /// 处理错误：budget_tokens + thinking 相关约束
     #[serde(default = "default_true")]
     pub request_thinking_budget: bool,
+    /// 请求整流：启用 thinking 形状整流器（默认开启）
+    ///
+    /// 处理错误：上游拒绝当前 thinking 形状，双向自愈
+    /// （`"thinking.type.enabled" is not supported` ⇄ `Input tag 'adaptive' ... does not match expected tags`）。
+    /// 关闭后遇到新模型只能靠内置的版本序启发式判断，判错即硬失败。
+    #[serde(default = "default_true")]
+    pub request_thinking_mode: bool,
     /// 请求整流：不支持的图片降级（默认开启）
     ///
     /// 上游拒绝图片输入时，把图片块替换为 [Unsupported Image] 标记，
@@ -243,6 +250,7 @@ impl Default for RectifierConfig {
             enabled: true,
             request_thinking_signature: true,
             request_thinking_budget: true,
+            request_thinking_mode: true,
             request_media_fallback: true,
             request_media_heuristic: true,
         }
