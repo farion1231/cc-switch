@@ -184,18 +184,15 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "AICodeMirror",
-    websiteUrl: "https://www.aicodemirror.com",
-    apiKeyUrl: "https://www.aicodemirror.com/register?invitecode=9915W3",
+    websiteUrl: "https://www.aicodemirror.ai",
+    apiKeyUrl: "https://www.aicodemirror.ai/register?invitecode=9915W3",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.aicodemirror.com/api/claudecode",
+        ANTHROPIC_BASE_URL: "https://api.aicodemirror.ai/api/claudecode",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
-    endpointCandidates: [
-      "https://api.aicodemirror.com/api/claudecode",
-      "https://api.claudecode.net.cn/api/claudecode",
-    ],
+    endpointCandidates: ["https://api.aicodemirror.ai/api/claudecode"],
     category: "third_party",
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "aicodemirror", // 促销信息 i18n key
@@ -286,16 +283,16 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.com",
-    apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.app",
+    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.aigocode.com",
+        ANTHROPIC_BASE_URL: "https://api.aigocode.app",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
     // 请求地址候选（用于地址管理/测速）
-    endpointCandidates: ["https://api.aigocode.com"],
+    endpointCandidates: ["https://api.aigocode.app"],
     category: "third_party",
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "aigocode", // 促销信息 i18n key
@@ -304,15 +301,15 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "AICoding",
-    websiteUrl: "https://aicoding.sh",
-    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
+    websiteUrl: "https://aicoding.inc",
+    apiKeyUrl: "https://aicoding.inc/i/CCSWITCH",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.aicoding.sh",
+        ANTHROPIC_BASE_URL: "https://api.aicoding.inc",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
-    endpointCandidates: ["https://api.aicoding.sh"],
+    endpointCandidates: ["https://api.aicoding.inc"],
     category: "third_party",
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "aicoding", // 促销信息 i18n key

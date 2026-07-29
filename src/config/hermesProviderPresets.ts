@@ -237,11 +237,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "AICodeMirror",
-    websiteUrl: "https://www.aicodemirror.com",
-    apiKeyUrl: "https://www.aicodemirror.com/register?invitecode=9915W3",
+    websiteUrl: "https://www.aicodemirror.ai",
+    apiKeyUrl: "https://www.aicodemirror.ai/register?invitecode=9915W3",
     settingsConfig: {
       name: "aicodemirror",
-      base_url: "https://api.aicodemirror.com/api/claudecode",
+      base_url: "https://api.aicodemirror.ai/api/claudecode",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -356,11 +356,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "AIGoCode",
-    websiteUrl: "https://aigocode.com",
-    apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
+    websiteUrl: "https://aigocode.app",
+    apiKeyUrl: "https://aigocode.app/invite/CC-SWITCH",
     settingsConfig: {
       name: "aigocode",
-      base_url: "https://api.aigocode.com",
+      base_url: "https://api.aigocode.app",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [
@@ -380,11 +380,11 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "AICoding",
-    websiteUrl: "https://aicoding.sh",
-    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
+    websiteUrl: "https://aicoding.inc",
+    apiKeyUrl: "https://aicoding.inc/i/CCSWITCH",
     settingsConfig: {
       name: "aicoding",
-      base_url: "https://api.aicoding.sh",
+      base_url: "https://api.aicoding.inc",
       api_key: "",
       api_mode: "anthropic_messages",
       models: [

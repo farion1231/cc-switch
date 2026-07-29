@@ -148,10 +148,30 @@ pub fn sync_single_server_to_grokbuild(
             AppError::McpValidation(format!("解析 Grok Build config.toml 失败: {e}"))
         })?
     };
-    if !doc.contains_key("mcp_servers") {
+    // 若 mcp_servers 缺失或存在但不是 table（如 `mcp_servers = "x"` / `[]`），
+    // 用空 table 归一化，避免后续 `doc["mcp_servers"][id] = …` 对非 table 索引
+    // 触发 toml_edit 的 IndexMut panic。用户手写的 config.toml 不可信。
+    // 判定走不可变的 `as_table_like`：借可变引用只为判空，会逼着下面再 get_mut 一次。
+    if doc
+        .get("mcp_servers")
+        .is_none_or(|item| item.as_table_like().is_none())
+    {
+        // 归一化会丢掉用户手写的那个非表值，必须留痕。
+        if doc.get("mcp_servers").is_some_and(|item| !item.is_none()) {
+            log::warn!("Grok Build config.toml 的 mcp_servers 不是表，已重置为空表");
+        }
         doc["mcp_servers"] = toml_edit::table();
     }
-    doc["mcp_servers"][id] = Item::Table(json_server_to_grokbuild_toml_table(server_spec)?);
+    let servers = doc
+        .get_mut("mcp_servers")
+        .and_then(toml_edit::Item::as_table_like_mut)
+        .ok_or_else(|| {
+            AppError::McpValidation("Grok Build config.toml 的 mcp_servers 不是表".to_string())
+        })?;
+    servers.insert(
+        id,
+        Item::Table(json_server_to_grokbuild_toml_table(server_spec)?),
+    );
     crate::config::write_text_file(&path, &doc.to_string())
 }
 
@@ -171,11 +191,21 @@ pub fn remove_server_from_grokbuild(id: &str) -> Result<(), AppError> {
             return Ok(());
         }
     };
-    if let Some(servers) = doc
-        .get_mut("mcp_servers")
-        .and_then(toml_edit::Item::as_table_mut)
-    {
-        servers.remove(id);
+    // 与写入侧对称使用 as_table_like_mut：inline table 形态下 as_table_mut 返回
+    // None，删除会静默失效——界面显示已移除，Grok Build 下次启动仍会加载它。
+    if let Some(item) = doc.get_mut("mcp_servers") {
+        // `Item::None` 是 toml_edit 的占位形态，不是用户写下的值——对它告警是噪音。
+        // 必须在取可变借用之前算出来。
+        let user_authored = !item.is_none();
+        match item.as_table_like_mut() {
+            Some(servers) => {
+                servers.remove(id);
+            }
+            None if user_authored => {
+                log::warn!("Grok Build config.toml 的 mcp_servers 不是表，无法删除服务器 '{id}'");
+            }
+            None => {}
+        }
     }
     crate::config::write_text_file(&path, &doc.to_string())
 }
