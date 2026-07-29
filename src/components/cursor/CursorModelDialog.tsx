@@ -56,6 +56,23 @@ const parsePositiveInteger = (value: string) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 };
 
+const preserveEndpointConfig = (
+  config: CursorModelConfig,
+  provider: CursorProvider | null,
+): CursorModelConfig => {
+  if (!provider) return config;
+
+  const endpointConfig = provider.settingsConfig;
+  return {
+    ...config,
+    providerGroup: endpointConfig.providerGroup,
+    endpointId: endpointConfig.endpointId,
+    type: endpointConfig.type,
+    baseURL: endpointConfig.baseURL,
+    apiKey: endpointConfig.apiKey,
+  };
+};
+
 export function CursorModelDialog({
   open,
   provider,
@@ -196,17 +213,20 @@ export function CursorModelDialog({
 
   const handleSave = async () => {
     const name = form.name.trim();
-    const config = {
-      ...form.config,
-      providerGroup: form.config.providerGroup.trim(),
-      baseURL: form.config.baseURL.trim(),
-      apiKey: form.config.apiKey.trim(),
-      modelID: form.config.modelID.trim(),
-      pricingModel: form.config.pricingModel.trim(),
-      tooltipData:
-        form.config.tooltipData.trim() ||
-        t("cursor.modelDialog.defaults.tooltipData"),
-    };
+    const config = preserveEndpointConfig(
+      {
+        ...form.config,
+        providerGroup: form.config.providerGroup.trim(),
+        baseURL: form.config.baseURL.trim(),
+        apiKey: form.config.apiKey.trim(),
+        modelID: form.config.modelID.trim(),
+        pricingModel: form.config.pricingModel.trim(),
+        tooltipData:
+          form.config.tooltipData.trim() ||
+          t("cursor.modelDialog.defaults.tooltipData"),
+      },
+      provider,
+    );
     try {
       if (!name || !config.baseURL || !config.apiKey || !config.modelID) {
         throw new Error(t("cursor.modelDialog.error.requiredFields"));
@@ -307,6 +327,7 @@ export function CursorModelDialog({
               >
                 <Input
                   value={config.providerGroup}
+                  disabled={Boolean(provider)}
                   onChange={(event) =>
                     setConfig("providerGroup", event.target.value)
                   }
@@ -318,6 +339,7 @@ export function CursorModelDialog({
               <Field label={t("cursor.modelDialog.fields.apiProtocol")}>
                 <Select
                   value={config.type}
+                  disabled={Boolean(provider)}
                   onValueChange={(value) =>
                     handleTypeChange(value as CursorProviderType)
                   }
@@ -343,6 +365,7 @@ export function CursorModelDialog({
             >
               <Input
                 value={config.baseURL}
+                disabled={Boolean(provider)}
                 onChange={(event) => setConfig("baseURL", event.target.value)}
                 placeholder={t("cursor.modelDialog.placeholders.apiEndpoint")}
               />
@@ -355,6 +378,7 @@ export function CursorModelDialog({
               <Input
                 type="password"
                 value={config.apiKey}
+                disabled={Boolean(provider)}
                 onChange={(event) => setConfig("apiKey", event.target.value)}
                 autoComplete="new-password"
                 placeholder={t("cursor.modelDialog.placeholders.apiKey")}
