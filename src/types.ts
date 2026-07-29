@@ -352,6 +352,9 @@ export interface Settings {
   enableClaudePluginIntegration?: boolean;
   // 跳过 Claude Code 初次安装确认（写入 ~/.claude.json 的 hasCompletedOnboarding）
   skipClaudeOnboarding?: boolean;
+  // 精简 Claude Code 上下文：写 live 配置时默认关闭内置技能（含约 23 万 token
+  // 的 claude-api）与内置 anthropic-skills 插件，并开启 MCP tool search 按需发现
+  slimClaudeContext?: boolean;
   // 是否开机自启
   launchOnStartup?: boolean;
   // 静默启动（程序启动时不显示主窗口）

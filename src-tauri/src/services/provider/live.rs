@@ -163,6 +163,101 @@ fn apply_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provi
     }
 }
 
+/// Claude Code 精简上下文注入的键值。内置 claude-api skill（经 inline 插件
+/// `anthropic-skills` 随 CLI 分发，约 867KB/23 万 token）的触发式描述会引导
+/// 模型在提示词提到 Claude/Anthropic/`[1m]` 等任意字样时把全文载入上下文
+/// （含子代理）；第三方中转场景下这会烧掉大量 token 甚至直接触发
+/// "Prompt is too long"。同时非官方 `ANTHROPIC_BASE_URL` 下 Claude Code
+/// 默认不启用 MCP tool search，需要显式写 `true` 才能让工具按需发现。
+pub(crate) const CLAUDE_SLIM_DISABLE_BUNDLED_SKILLS_KEY: &str = "disableBundledSkills";
+pub(crate) const CLAUDE_SLIM_ENABLED_PLUGINS_KEY: &str = "enabledPlugins";
+pub(crate) const CLAUDE_SLIM_INLINE_SKILLS_PLUGIN: &str = "anthropic-skills@inline";
+pub(crate) const CLAUDE_SLIM_TOOL_SEARCH_ENV_KEY: &str = "ENABLE_TOOL_SEARCH";
+pub(crate) const CLAUDE_SLIM_TOOL_SEARCH_ENV_VALUE: &str = "true";
+
+/// 按"精简 Claude Code 上下文"开关向 effective 设置注入默认值。
+/// 只在键**不存在**时注入：供应商存储配置和通用配置片段先于本函数合并进
+/// effective，因此二者显式写过的同名键（含显式 false/"false"）始终优先。
+pub(crate) fn apply_claude_slim_context_defaults(settings: &mut Value) {
+    let Some(root) = settings.as_object_mut() else {
+        return;
+    };
+
+    root.entry(CLAUDE_SLIM_DISABLE_BUNDLED_SKILLS_KEY.to_string())
+        .or_insert(Value::Bool(true));
+
+    let plugins = root
+        .entry(CLAUDE_SLIM_ENABLED_PLUGINS_KEY.to_string())
+        .or_insert_with(|| json!({}));
+    if let Some(plugins) = plugins.as_object_mut() {
+        plugins
+            .entry(CLAUDE_SLIM_INLINE_SKILLS_PLUGIN.to_string())
+            .or_insert(Value::Bool(false));
+    }
+
+    let env = root.entry("env".to_string()).or_insert_with(|| json!({}));
+    if let Some(env) = env.as_object_mut() {
+        env.entry(CLAUDE_SLIM_TOOL_SEARCH_ENV_KEY.to_string())
+            .or_insert(Value::String(CLAUDE_SLIM_TOOL_SEARCH_ENV_VALUE.to_string()));
+    }
+}
+
+/// 与 `apply_claude_slim_context_defaults` 对称：切走回填时剥掉注入产物，
+/// 否则默认值会固化成供应商的"用户显式值"，关闭开关后永远压住新行为
+/// （同 `strip_injected_codex_oauth_context_defaults` 的理由）。不看开关
+/// 状态、始终执行：开关中途关闭时 live 里可能仍残留注入键。仅当"值恰好
+/// 等于注入默认、且存储配置本来没有该键"时才剥；用户显式存储的值和手改
+/// live 成其他值的都保留。通用配置片段携带的同名键在本函数之前已由
+/// `remove_common_config_from_settings` 移除。
+pub(crate) fn strip_injected_claude_slim_context_defaults(
+    settings: &mut Value,
+    provider: &Provider,
+) {
+    let stored = &provider.settings_config;
+    let Some(root) = settings.as_object_mut() else {
+        return;
+    };
+
+    if stored.get(CLAUDE_SLIM_DISABLE_BUNDLED_SKILLS_KEY).is_none()
+        && root.get(CLAUDE_SLIM_DISABLE_BUNDLED_SKILLS_KEY) == Some(&Value::Bool(true))
+    {
+        root.remove(CLAUDE_SLIM_DISABLE_BUNDLED_SKILLS_KEY);
+    }
+
+    let stored_has_plugins_obj = stored.get(CLAUDE_SLIM_ENABLED_PLUGINS_KEY).is_some();
+    let stored_has_inline_entry = stored
+        .get(CLAUDE_SLIM_ENABLED_PLUGINS_KEY)
+        .and_then(Value::as_object)
+        .is_some_and(|plugins| plugins.contains_key(CLAUDE_SLIM_INLINE_SKILLS_PLUGIN));
+    if let Some(plugins) = root
+        .get_mut(CLAUDE_SLIM_ENABLED_PLUGINS_KEY)
+        .and_then(Value::as_object_mut)
+    {
+        if !stored_has_inline_entry
+            && plugins.get(CLAUDE_SLIM_INLINE_SKILLS_PLUGIN) == Some(&Value::Bool(false))
+        {
+            plugins.remove(CLAUDE_SLIM_INLINE_SKILLS_PLUGIN);
+        }
+        if plugins.is_empty() && !stored_has_plugins_obj {
+            root.remove(CLAUDE_SLIM_ENABLED_PLUGINS_KEY);
+        }
+    }
+
+    let stored_has_tool_search = stored
+        .pointer(&format!("/env/{CLAUDE_SLIM_TOOL_SEARCH_ENV_KEY}"))
+        .is_some();
+    if let Some(env) = root.get_mut("env").and_then(Value::as_object_mut) {
+        if !stored_has_tool_search
+            && env
+                .get(CLAUDE_SLIM_TOOL_SEARCH_ENV_KEY)
+                .and_then(Value::as_str)
+                == Some(CLAUDE_SLIM_TOOL_SEARCH_ENV_VALUE)
+        {
+            env.remove(CLAUDE_SLIM_TOOL_SEARCH_ENV_KEY);
+        }
+    }
+}
+
 pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     let mut v = settings.clone();
     if let Some(obj) = v.as_object_mut() {
@@ -690,6 +785,9 @@ pub(crate) fn build_effective_settings_with_common_config(
     if matches!(app_type, AppType::Claude) {
         apply_codex_oauth_claude_context_defaults(&mut effective_settings, provider);
         apply_kimi_for_coding_context_defaults(&mut effective_settings, provider);
+        if crate::settings::get_settings().slim_claude_context {
+            apply_claude_slim_context_defaults(&mut effective_settings);
+        }
     }
 
     Ok(effective_settings)
@@ -831,6 +929,7 @@ fn restore_live_settings_for_provider_backfill(
         let mut settings = live_settings;
         strip_injected_codex_oauth_context_defaults(&mut settings, provider);
         strip_injected_kimi_for_coding_context_defaults(&mut settings, provider);
+        strip_injected_claude_slim_context_defaults(&mut settings, provider);
         return settings;
     }
     if matches!(app_type, AppType::GrokBuild) {
@@ -2034,6 +2133,112 @@ mod tests {
             effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
             json!("250000")
         );
+    }
+
+    #[test]
+    fn slim_context_defaults_injected_only_when_absent() {
+        let mut settings = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://relay.example.com"
+            }
+        });
+        apply_claude_slim_context_defaults(&mut settings);
+        assert_eq!(settings["disableBundledSkills"], json!(true));
+        assert_eq!(
+            settings["enabledPlugins"]["anthropic-skills@inline"],
+            json!(false)
+        );
+        assert_eq!(settings["env"]["ENABLE_TOOL_SEARCH"], json!("true"));
+
+        // 显式值（含显式"反向"值）一律不被覆盖
+        let mut explicit = json!({
+            "disableBundledSkills": false,
+            "enabledPlugins": { "anthropic-skills@inline": true },
+            "env": { "ENABLE_TOOL_SEARCH": "auto" }
+        });
+        apply_claude_slim_context_defaults(&mut explicit);
+        assert_eq!(explicit["disableBundledSkills"], json!(false));
+        assert_eq!(
+            explicit["enabledPlugins"]["anthropic-skills@inline"],
+            json!(true)
+        );
+        assert_eq!(explicit["env"]["ENABLE_TOOL_SEARCH"], json!("auto"));
+    }
+
+    #[test]
+    fn slim_context_strip_removes_only_injected_defaults() {
+        let provider = Provider::with_id(
+            "relay".to_string(),
+            "Relay".to_string(),
+            json!({
+                "env": { "ANTHROPIC_BASE_URL": "https://relay.example.com" }
+            }),
+            None,
+        );
+
+        // 注入后原样回填：三个键全部剥掉，空 enabledPlugins 对象一并移除
+        let mut injected = json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://relay.example.com" }
+        });
+        apply_claude_slim_context_defaults(&mut injected);
+        strip_injected_claude_slim_context_defaults(&mut injected, &provider);
+        assert!(injected.get("disableBundledSkills").is_none());
+        assert!(injected.get("enabledPlugins").is_none());
+        assert!(injected["env"].get("ENABLE_TOOL_SEARCH").is_none());
+        assert_eq!(
+            injected["env"]["ANTHROPIC_BASE_URL"],
+            json!("https://relay.example.com")
+        );
+
+        // 用户手改 live 成非默认值：保留
+        let mut hand_edited = json!({
+            "disableBundledSkills": false,
+            "enabledPlugins": { "anthropic-skills@inline": true, "my-plugin@repo": true },
+            "env": { "ENABLE_TOOL_SEARCH": "auto" }
+        });
+        strip_injected_claude_slim_context_defaults(&mut hand_edited, &provider);
+        assert_eq!(hand_edited["disableBundledSkills"], json!(false));
+        assert_eq!(
+            hand_edited["enabledPlugins"]["anthropic-skills@inline"],
+            json!(true)
+        );
+        assert_eq!(hand_edited["env"]["ENABLE_TOOL_SEARCH"], json!("auto"));
+
+        // 非注入的插件条目保留，容器对象不删
+        let mut mixed = json!({
+            "enabledPlugins": { "anthropic-skills@inline": false, "my-plugin@repo": true }
+        });
+        strip_injected_claude_slim_context_defaults(&mut mixed, &provider);
+        assert!(mixed["enabledPlugins"]
+            .get("anthropic-skills@inline")
+            .is_none());
+        assert_eq!(mixed["enabledPlugins"]["my-plugin@repo"], json!(true));
+    }
+
+    #[test]
+    fn slim_context_strip_keeps_provider_owned_values() {
+        // 供应商存储配置里显式带这三个键（值恰与注入默认相同）：全部保留
+        let provider = Provider::with_id(
+            "relay".to_string(),
+            "Relay".to_string(),
+            json!({
+                "disableBundledSkills": true,
+                "enabledPlugins": { "anthropic-skills@inline": false },
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://relay.example.com",
+                    "ENABLE_TOOL_SEARCH": "true"
+                }
+            }),
+            None,
+        );
+        let mut live = provider.settings_config.clone();
+        strip_injected_claude_slim_context_defaults(&mut live, &provider);
+        assert_eq!(live["disableBundledSkills"], json!(true));
+        assert_eq!(
+            live["enabledPlugins"]["anthropic-skills@inline"],
+            json!(false)
+        );
+        assert_eq!(live["env"]["ENABLE_TOOL_SEARCH"], json!("true"));
     }
 
     #[test]

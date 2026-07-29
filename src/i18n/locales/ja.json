@@ -681,6 +681,8 @@
     "enableClaudePluginIntegrationDescription": "オンにすると VS Code の Claude Code 拡張のプロバイダーも同期します",
     "skipClaudeOnboarding": "Claude Code の初回確認をスキップ",
     "skipClaudeOnboardingDescription": "オンにすると Claude Code の初回インストール確認をスキップします",
+    "slimClaudeContext": "Claude Code コンテキストのスリム化",
+    "slimClaudeContextDescription": "プロバイダー適用時に Claude Code の内蔵スキル（約 23 万トークンの claude-api を含む）と内蔵 anthropic-skills プラグインを無効化し、MCP tool search によるオンデマンド発見を有効にします。プロバイダーや共通設定で明示的に設定したキーが常に優先されます",
     "codexAuth": "Codex アプリ拡張",
     "preserveCodexOfficialAuthOnSwitch": "直接切替時に公式ログインを保持",
     "preserveCodexOfficialAuthOnSwitchDescription": "ローカルルーティングが無効な場合のサードパーティ切替を制御します。ルーティング接管中は常に Codex の公式ログインを保持します。",

@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { SettingsFormState } from "@/hooks/useSettings";
-import { AppWindow, MonitorUp, Power, EyeOff } from "lucide-react";
+import { AppWindow, MonitorUp, Power, EyeOff, Feather } from "lucide-react";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { AnimatePresence, motion } from "framer-motion";
 import { isLinux } from "@/lib/platform";
@@ -65,6 +65,14 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
           description={t("settings.skipClaudeOnboardingDescription")}
           checked={!!settings.skipClaudeOnboarding}
           onCheckedChange={(value) => onChange({ skipClaudeOnboarding: value })}
+        />
+
+        <ToggleRow
+          icon={<Feather className="h-4 w-4 text-emerald-500" />}
+          title={t("settings.slimClaudeContext")}
+          description={t("settings.slimClaudeContextDescription")}
+          checked={settings.slimClaudeContext ?? true}
+          onCheckedChange={(value) => onChange({ slimClaudeContext: value })}
         />
 
         <ToggleRow

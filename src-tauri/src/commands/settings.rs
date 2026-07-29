@@ -68,6 +68,7 @@ pub async fn save_settings(
     let unify_codex_changed =
         merged.unify_codex_session_history != existing.unify_codex_session_history;
     let unify_codex_enabled = merged.unify_codex_session_history;
+    let slim_claude_changed = merged.slim_claude_context != existing.slim_claude_context;
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
 
     // 统一会话开关变更时立即重写当前官方 Codex 供应商的 live 配置，
@@ -121,6 +122,23 @@ pub async fn save_settings(
             if let Err(err) = crate::settings::clear_codex_unify_migrate_existing() {
                 log::warn!("清除统一会话迁移意愿失败: {err}");
             }
+        }
+    }
+
+    // 精简 Claude Code 上下文开关变更时立即重写当前 Claude 供应商的 live
+    // 配置，不必等下一次切换才生效。失败时只回滚本开关字段并整体报失败：
+    // 设置若保持已切换状态而 live 未重写，开关会呈现"已开/关但不生效"。
+    if slim_claude_changed {
+        if let Err(err) = crate::services::provider::reapply_current_claude_live(state.inner()) {
+            log::warn!("精简 Claude 上下文开关变更后重写 live 配置失败，回滚设置: {err}");
+            let mut rollback = crate::settings::get_settings();
+            rollback.slim_claude_context = existing.slim_claude_context;
+            if let Err(rollback_err) = crate::settings::update_settings(rollback) {
+                log::error!("回滚精简 Claude 上下文开关设置失败: {rollback_err}");
+            }
+            return Err(format!(
+                "精简 Claude Code 上下文开关未生效（live 配置重写失败）: {err}"
+            ));
         }
     }
     Ok(true)

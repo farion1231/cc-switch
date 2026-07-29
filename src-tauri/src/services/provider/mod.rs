@@ -105,6 +105,44 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     Ok(true)
 }
 
+/// "精简 Claude Code 上下文"开关变更后，立即按新开关状态重写当前 Claude
+/// 供应商的 live 配置，使开关即时生效（无需等下一次切换）。当前供应商不
+/// 存在时为 no-op。settings.json 与 MCP 所在的 ~/.claude.json 是两个文件，
+/// 重写前者不影响后者，无需重投影 MCP。
+pub fn reapply_current_claude_live(state: &AppState) -> Result<bool, AppError> {
+    let current_id = ProviderService::current(state, AppType::Claude)?;
+    if current_id.is_empty() {
+        return Ok(false);
+    }
+    let providers = state.db.get_all_providers(AppType::Claude.as_str())?;
+    let Some(provider) = providers.get(&current_id) else {
+        return Ok(false);
+    };
+
+    // 代理接管期间 live 归代理所有：与切换/保存路径一致，以 backup/占位符
+    // 为所有权信号，只更新备份，注入后的配置由接管释放时的恢复路径落盘。
+    let has_live_backup =
+        futures::executor::block_on(state.db.get_live_backup(AppType::Claude.as_str()))
+            .ok()
+            .flatten()
+            .is_some();
+    let live_taken_over = state
+        .proxy_service
+        .detect_takeover_in_live_config_for_app(&AppType::Claude);
+    if has_live_backup || live_taken_over {
+        futures::executor::block_on(
+            state
+                .proxy_service
+                .update_live_backup_from_provider(AppType::Claude.as_str(), provider),
+        )
+        .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+        return Ok(true);
+    }
+
+    live::write_live_with_common_config(&state.db, &AppType::Claude, provider)?;
+    Ok(true)
+}
+
 /// Provider business logic service
 pub struct ProviderService;
 
@@ -1197,7 +1235,7 @@ GEMINI_TIMEOUT_MS=30000
             "includeCoAuthoredBy": false
         });
 
-        let snippet = ProviderService::extract_claude_common_config(&settings)
+        let snippet = ProviderService::extract_claude_common_config(&settings, false)
             .expect("extract should succeed");
         let value: Value = serde_json::from_str(&snippet).expect("snippet is valid JSON");
 
@@ -1274,7 +1312,7 @@ GEMINI_TIMEOUT_MS=30000
             "theme": "dark"
         });
 
-        let snippet = ProviderService::extract_claude_common_config(&settings)
+        let snippet = ProviderService::extract_claude_common_config(&settings, false)
             .expect("extract should succeed");
         let value: Value = serde_json::from_str(&snippet).expect("snippet is valid JSON");
         let env = value.get("env");
@@ -1302,6 +1340,60 @@ GEMINI_TIMEOUT_MS=30000
             Some("true")
         );
         assert_eq!(value.get("theme").and_then(|v| v.as_str()), Some("dark"));
+    }
+
+    /// 精简上下文开关开启时，注入产物不得被回收进共享片段（否则关闭开关后
+    /// 片段仍把这些键合并回每个供应商，开关失效）；ENABLE_TOOL_SEARCH 归
+    /// 通用配置编辑器的快捷开关所有，不剥。开关关闭时全部按普通共享键保留。
+    #[test]
+    fn extract_claude_common_config_strips_slim_injected_keys_only_when_enabled() {
+        let settings = json!({
+            "disableBundledSkills": true,
+            "enabledPlugins": { "anthropic-skills@inline": false },
+            "env": { "ENABLE_TOOL_SEARCH": "true" },
+            "theme": "dark"
+        });
+
+        let snippet = ProviderService::extract_claude_common_config(&settings, true)
+            .expect("extract should succeed");
+        let value: Value = serde_json::from_str(&snippet).expect("snippet is valid JSON");
+        assert!(value.get("disableBundledSkills").is_none());
+        assert!(value.get("enabledPlugins").is_none());
+        assert_eq!(
+            value
+                .pointer("/env/ENABLE_TOOL_SEARCH")
+                .and_then(|v| v.as_str()),
+            Some("true"),
+            "quick-toggle-owned ENABLE_TOOL_SEARCH must survive extraction"
+        );
+        assert_eq!(value.get("theme").and_then(|v| v.as_str()), Some("dark"));
+
+        // 非注入默认值（用户显式反向配置）不剥；用户自装插件条目保留
+        let user_settings = json!({
+            "disableBundledSkills": false,
+            "enabledPlugins": { "anthropic-skills@inline": false, "my-plugin@repo": true }
+        });
+        let snippet = ProviderService::extract_claude_common_config(&user_settings, true)
+            .expect("extract should succeed");
+        let value: Value = serde_json::from_str(&snippet).expect("snippet is valid JSON");
+        assert_eq!(value.get("disableBundledSkills"), Some(&json!(false)));
+        assert!(value
+            .pointer("/enabledPlugins/anthropic-skills@inline")
+            .is_none());
+        assert_eq!(
+            value.pointer("/enabledPlugins/my-plugin@repo"),
+            Some(&json!(true))
+        );
+
+        // 开关关闭：一切照旧进入片段
+        let snippet = ProviderService::extract_claude_common_config(&settings, false)
+            .expect("extract should succeed");
+        let value: Value = serde_json::from_str(&snippet).expect("snippet is valid JSON");
+        assert_eq!(value.get("disableBundledSkills"), Some(&json!(true)));
+        assert_eq!(
+            value.pointer("/enabledPlugins/anthropic-skills@inline"),
+            Some(&json!(false))
+        );
     }
 
     #[test]
@@ -3454,7 +3546,10 @@ impl ProviderService {
             .ok_or_else(|| AppError::Message(format!("Provider {current_id} not found")))?;
 
         match app_type {
-            AppType::Claude => Self::extract_claude_common_config(&provider.settings_config),
+            AppType::Claude => Self::extract_claude_common_config(
+                &provider.settings_config,
+                crate::settings::get_settings().slim_claude_context,
+            ),
             AppType::ClaudeDesktop => Ok(String::new()),
             AppType::Codex => Self::extract_codex_common_config(&provider.settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
@@ -3471,7 +3566,10 @@ impl ProviderService {
         settings_config: &Value,
     ) -> Result<String, AppError> {
         match app_type {
-            AppType::Claude => Self::extract_claude_common_config(settings_config),
+            AppType::Claude => Self::extract_claude_common_config(
+                settings_config,
+                crate::settings::get_settings().slim_claude_context,
+            ),
             AppType::ClaudeDesktop => Ok(String::new()),
             AppType::Codex => Self::extract_codex_common_config(settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
@@ -3551,7 +3649,18 @@ impl ProviderService {
     }
 
     /// Extract common config for Claude (JSON format)
-    fn extract_claude_common_config(settings: &Value) -> Result<String, AppError> {
+    ///
+    /// `slim_context_enabled` 为"精简 Claude Code 上下文"开关状态：开启时
+    /// live 里的 `disableBundledSkills: true` 与
+    /// `enabledPlugins["anthropic-skills@inline"]: false` 大概率是
+    /// `apply_claude_slim_context_defaults` 的注入产物，须从共享片段剥离
+    /// （同 Codex 提取器"注入内容不进共享片段"的处理），否则关闭开关后
+    /// 片段仍会把这两个键合并回每个供应商，开关失效。`ENABLE_TOOL_SEARCH`
+    /// 不在此剥：它归通用配置编辑器的快捷开关所有，剥掉会静默丢用户勾选。
+    fn extract_claude_common_config(
+        settings: &Value,
+        slim_context_enabled: bool,
+    ) -> Result<String, AppError> {
         let mut config = settings.clone();
 
         // 供应商专属的**非机密**字段（模型 + 端点），不应共享。凭据/机密不在此列举，
@@ -3618,6 +3727,32 @@ impl ProviderService {
             }
             for key in &sensitive {
                 obj.remove(key);
+            }
+        }
+
+        // 精简上下文开关开启时，剥离其注入产物（仅剥与注入默认完全一致的值，
+        // 用户显式改成其他值的保留）。
+        if slim_context_enabled {
+            if let Some(obj) = config.as_object_mut() {
+                if obj.get(live::CLAUDE_SLIM_DISABLE_BUNDLED_SKILLS_KEY) == Some(&Value::Bool(true))
+                {
+                    obj.remove(live::CLAUDE_SLIM_DISABLE_BUNDLED_SKILLS_KEY);
+                }
+                let mut remove_plugins_obj = false;
+                if let Some(plugins) = obj
+                    .get_mut(live::CLAUDE_SLIM_ENABLED_PLUGINS_KEY)
+                    .and_then(|v| v.as_object_mut())
+                {
+                    if plugins.get(live::CLAUDE_SLIM_INLINE_SKILLS_PLUGIN)
+                        == Some(&Value::Bool(false))
+                    {
+                        plugins.remove(live::CLAUDE_SLIM_INLINE_SKILLS_PLUGIN);
+                    }
+                    remove_plugins_obj = plugins.is_empty();
+                }
+                if remove_plugins_obj {
+                    obj.remove(live::CLAUDE_SLIM_ENABLED_PLUGINS_KEY);
+                }
             }
         }
 
