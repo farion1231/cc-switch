@@ -338,15 +338,18 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       // 按搜索关键词筛选
       if (!searchQuery.trim()) return byStatus;
 
-      const query = searchQuery.toLowerCase();
+      const query = searchQuery.trim().toLowerCase();
       return byStatus.filter((skill) => {
         const name = skill.name?.toLowerCase() || "";
+        const desc = skill.description?.toLowerCase() || "";
         const repo =
           skill.repoOwner && skill.repoName
             ? `${skill.repoOwner}/${skill.repoName}`.toLowerCase()
             : "";
 
-        return name.includes(query) || repo.includes(query);
+        return (
+          name.includes(query) || desc.includes(query) || repo.includes(query)
+        );
       });
     }, [skills, searchQuery, filterRepo, filterStatus]);
 

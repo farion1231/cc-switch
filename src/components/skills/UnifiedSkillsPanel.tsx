@@ -1,13 +1,23 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Sparkles,
   Trash2,
   ExternalLink,
   RefreshCw,
+  Search,
   Loader2,
+  RotateCcw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
@@ -81,6 +91,9 @@ const UnifiedSkillsPanel = React.forwardRef<
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
 
   const { data: skills, isLoading } = useInstalledSkills();
+  const [filterKeyword, setFilterKeyword] = useState("");
+  const [filterAuthor, setFilterAuthor] = useState<string | null>(null);
+  const [filterRepo, setFilterRepo] = useState<string | null>(null);
   const {
     data: skillBackups = [],
     refetch: refetchSkillBackups,
@@ -112,6 +125,60 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
     return map;
   }, [skillUpdates]);
+
+  // 从已安装技能中提取所有作者选项
+  const authorOptions = useMemo(() => {
+    if (!skills) return [];
+    const set = new Set<string>();
+    skills.forEach((s) => {
+      if (s.repoOwner) set.add(s.repoOwner);
+    });
+    return Array.from(set).sort();
+  }, [skills]);
+
+  // 从已安装技能中提取所有仓库选项
+  const repoOptions = useMemo(() => {
+    if (!skills) return [];
+    const set = new Set<string>();
+    skills.forEach((s) => {
+      if (s.repoOwner && s.repoName) set.add(`${s.repoOwner}/${s.repoName}`);
+    });
+    return Array.from(set).sort();
+  }, [skills]);
+
+  // 清除已不在选项中的筛选值，避免筛选条件不可见却生效
+  useEffect(() => {
+    if (filterAuthor && !authorOptions.includes(filterAuthor))
+      setFilterAuthor(null);
+    if (filterRepo && !repoOptions.includes(filterRepo)) setFilterRepo(null);
+  }, [authorOptions, repoOptions, filterAuthor, filterRepo]);
+
+  // 过滤后的技能列表
+  const filteredSkills = useMemo(() => {
+    if (!skills) return [];
+    return skills.filter((skill) => {
+      // 作者筛选
+      if (filterAuthor && skill.repoOwner !== filterAuthor) return false;
+      // 仓库筛选
+      if (filterRepo) {
+        const repo = `${skill.repoOwner || ""}/${skill.repoName || ""}`;
+        if (repo !== filterRepo) return false;
+      }
+      // 关键词筛选（名称、描述、仓库）
+      if (filterKeyword.trim()) {
+        const q = filterKeyword.trim().toLowerCase();
+        const name = skill.name?.toLowerCase() || "";
+        const desc = skill.description?.toLowerCase() || "";
+        const repo =
+          skill.repoOwner && skill.repoName
+            ? `${skill.repoOwner}/${skill.repoName}`.toLowerCase()
+            : "";
+        if (!name.includes(q) && !desc.includes(q) && !repo.includes(q))
+          return false;
+      }
+      return true;
+    });
+  }, [skills, filterKeyword, filterAuthor, filterRepo]);
 
   const enabledCounts = useMemo(() => {
     const counts = {
@@ -349,11 +416,13 @@ const UnifiedSkillsPanel = React.forwardRef<
   return (
     <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
       <div className="flex items-center justify-between">
-        <AppCountBar
-          totalLabel={t("skills.installed", { count: skills?.length || 0 })}
-          counts={enabledCounts}
-          appIds={SKILLS_APP_IDS}
-        />
+        <div className="mb-1 overflow-hidden">
+          <AppCountBar
+            totalLabel={t("skills.installed", { count: skills?.length || 0 })}
+            counts={enabledCounts}
+            appIds={SKILLS_APP_IDS}
+          />
+        </div>
         <div className="flex items-center gap-1.5">
           <div
             className="transition-all duration-300 ease-out overflow-hidden"
@@ -401,6 +470,87 @@ const UnifiedSkillsPanel = React.forwardRef<
         </div>
       </div>
 
+      {/* 筛选栏 */}
+      {skills && skills.length > 0 && (
+        <div className="flex flex-wrap gap-2 items-center pt-1 pb-4">
+          <div className="relative flex-1 min-w-[160px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              type="text"
+              placeholder={t("skills.searchPlaceholder")}
+              aria-label={t("skills.searchPlaceholder")}
+              value={filterKeyword}
+              onChange={(e) => setFilterKeyword(e.target.value)}
+              className="pl-9 h-8 text-sm"
+            />
+          </div>
+          <div className="w-[140px]">
+            <Select
+              value={filterAuthor ?? "__all__"}
+              onValueChange={(v) => setFilterAuthor(v === "__all__" ? null : v)}
+            >
+              <SelectTrigger
+                className="h-8 text-sm bg-card border shadow-sm"
+                aria-label={t("skills.filter.author")}
+              >
+                <SelectValue placeholder={t("skills.filter.author")} />
+              </SelectTrigger>
+              <SelectContent className="bg-card shadow-lg max-h-64">
+                <SelectItem value="__all__">
+                  {t("skills.filter.allAuthors")}
+                </SelectItem>
+                {authorOptions.map((author) => (
+                  <SelectItem key={author} value={author} title={author}>
+                    <span className="truncate block max-w-[110px]">
+                      {author}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="w-[160px]">
+            <Select
+              value={filterRepo ?? "__all__"}
+              onValueChange={(v) => setFilterRepo(v === "__all__" ? null : v)}
+            >
+              <SelectTrigger
+                className="h-8 text-sm bg-card border shadow-sm"
+                aria-label={t("skills.filter.repo")}
+              >
+                <SelectValue placeholder={t("skills.filter.repo")} />
+              </SelectTrigger>
+              <SelectContent className="bg-card shadow-lg max-h-64">
+                <SelectItem value="__all__">
+                  {t("skills.filter.allRepos")}
+                </SelectItem>
+                {repoOptions.map((repo) => (
+                  <SelectItem key={repo} value={repo} title={repo}>
+                    <span className="truncate block max-w-[130px]">{repo}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {(filterKeyword || filterAuthor || filterRepo) && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs gap-1 text-muted-foreground hover:text-foreground"
+              onClick={() => {
+                setFilterKeyword("");
+                setFilterAuthor(null);
+                setFilterRepo(null);
+              }}
+            >
+              <RotateCcw size={13} />
+              {t("skills.filter.clearFilter")}
+            </Button>
+          )}
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
         {isLoading ? (
           <div className="text-center py-12 text-muted-foreground">
@@ -418,10 +568,16 @@ const UnifiedSkillsPanel = React.forwardRef<
               {t("skills.noInstalledDescription")}
             </p>
           </div>
+        ) : filteredSkills.length === 0 ? (
+          <div className="text-center py-12">
+            <p className="text-lg font-medium text-foreground">
+              {t("skills.noResults")}
+            </p>
+          </div>
         ) : (
           <TooltipProvider delayDuration={300}>
             <div className="rounded-xl border border-border-default overflow-hidden">
-              {skills.map((skill, index) => (
+              {filteredSkills.map((skill, index) => (
                 <InstalledSkillListItem
                   key={skill.id}
                   skill={skill}
@@ -433,7 +589,7 @@ const UnifiedSkillsPanel = React.forwardRef<
                   onToggleApp={handleToggleApp}
                   onUninstall={() => handleUninstall(skill)}
                   onUpdate={() => handleUpdateSkill(skill)}
-                  isLast={index === skills.length - 1}
+                  isLast={index === filteredSkills.length - 1}
                 />
               ))}
             </div>

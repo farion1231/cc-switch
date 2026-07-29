@@ -2363,7 +2363,7 @@
       "skillCount": "识别到 {{count}} 个技能"
     },
     "search": "搜索技能",
-    "searchPlaceholder": "搜索技能名称或仓库名称...",
+    "searchPlaceholder": "搜索名称、描述或仓库...",
     "searchSource": {
       "repos": "仓库",
       "skillssh": "skills.sh"
@@ -2383,7 +2383,10 @@
       "installed": "已安装",
       "uninstalled": "未安装",
       "repo": "仓库筛选",
-      "allRepos": "全部仓库"
+      "allRepos": "全部仓库",
+      "author": "作者筛选",
+      "allAuthors": "全部作者",
+      "clearFilter": "清除筛选"
     },
     "noResults": "未找到匹配的技能",
     "noInstalled": "暂无已安装的技能",

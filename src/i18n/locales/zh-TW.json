@@ -2334,7 +2334,7 @@
       "skillCount": "識別到 {{count}} 個技能"
     },
     "search": "搜尋技能",
-    "searchPlaceholder": "搜尋技能名稱或儲存庫名稱...",
+    "searchPlaceholder": "搜尋名稱、描述或儲存庫...",
     "searchSource": {
       "repos": "儲存庫",
       "skillssh": "skills.sh"
@@ -2354,7 +2354,10 @@
       "installed": "已安裝",
       "uninstalled": "未安裝",
       "repo": "儲存庫篩選",
-      "allRepos": "全部儲存庫"
+      "allRepos": "全部儲存庫",
+      "author": "作者篩選",
+      "allAuthors": "全部作者",
+      "clearFilter": "清除篩選"
     },
     "noResults": "未找到相符的技能",
     "noInstalled": "暫無已安裝的技能",

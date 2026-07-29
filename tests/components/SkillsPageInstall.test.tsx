@@ -337,3 +337,76 @@ describe("SkillsPage - skills.sh install (regression)", () => {
     ).toEqual(["manage-repos"]);
   });
 });
+
+describe("SkillsPage - repo search by description (regression)", () => {
+  beforeEach(() => {
+    installMutateAsyncMock.mockReset();
+    installMutateAsyncMock.mockResolvedValue({});
+    discoverableSkillsMock = [];
+    skillReposMock = [];
+    refetchDiscoverableMock.mockReset();
+    searchCache.clear();
+  });
+
+  it("matches skills by description keyword, not only name or repo", async () => {
+    discoverableSkillsMock = [
+      makeDiscoverableSkill({
+        key: "ci-helper:octocat:ci-helper",
+        name: "CI Helper",
+        description: "Automates CI pipelines",
+        directory: "ci-helper",
+        repoOwner: "octocat",
+        repoName: "ci-helper",
+      }),
+      makeDiscoverableSkill({
+        key: "code-review:octocat:code-review",
+        name: "Code Review",
+        description: "Reviews pull requests",
+        directory: "code-review",
+        repoOwner: "octocat",
+        repoName: "code-review",
+      }),
+    ];
+    skillReposMock = [makeSkillRepo()];
+
+    const user = userEvent.setup();
+    render(<SkillsPage initialApp="claude" />);
+
+    // Wait for the repo source to be active
+    const input = await screen.findByPlaceholderText(
+      "skills.searchPlaceholder",
+    );
+    await user.type(input, "pipelines");
+
+    await waitFor(() => {
+      expect(screen.getByText("CI Helper")).toBeInTheDocument();
+      expect(screen.queryByText("Code Review")).not.toBeInTheDocument();
+    });
+  });
+
+  it("trims whitespace before matching description", async () => {
+    discoverableSkillsMock = [
+      makeDiscoverableSkill({
+        key: "ci-helper:octocat:ci-helper",
+        name: "CI Helper",
+        description: "Automates CI pipelines",
+        directory: "ci-helper",
+        repoOwner: "octocat",
+        repoName: "ci-helper",
+      }),
+    ];
+    skillReposMock = [makeSkillRepo()];
+
+    const user = userEvent.setup();
+    render(<SkillsPage initialApp="claude" />);
+
+    const input = await screen.findByPlaceholderText(
+      "skills.searchPlaceholder",
+    );
+    await user.type(input, "  pipelines  ");
+
+    await waitFor(() => {
+      expect(screen.getByText("CI Helper")).toBeInTheDocument();
+    });
+  });
+});

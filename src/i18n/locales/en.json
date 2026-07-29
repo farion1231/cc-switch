@@ -2363,7 +2363,7 @@
       "skillCount": "{{count}} skills detected"
     },
     "search": "Search Skills",
-    "searchPlaceholder": "Search skill name or repo...",
+    "searchPlaceholder": "Search name, description or repo...",
     "searchSource": {
       "repos": "Repos",
       "skillssh": "skills.sh"
@@ -2383,7 +2383,10 @@
       "installed": "Installed",
       "uninstalled": "Not installed",
       "repo": "Filter by repo",
-      "allRepos": "All repos"
+      "allRepos": "All repos",
+      "author": "Filter by author",
+      "allAuthors": "All authors",
+      "clearFilter": "Clear filters"
     },
     "noResults": "No matching skills found",
     "noInstalled": "No skills installed",

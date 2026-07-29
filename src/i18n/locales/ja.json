@@ -2363,7 +2363,7 @@
       "skillCount": "{{count}} 件のスキルを検出"
     },
     "search": "スキルを検索",
-    "searchPlaceholder": "スキル名またはリポジトリで検索...",
+    "searchPlaceholder": "名前・説明・リポジトリで検索...",
     "searchSource": {
       "repos": "リポジトリ",
       "skillssh": "skills.sh"
@@ -2383,7 +2383,10 @@
       "installed": "インストール済み",
       "uninstalled": "未インストール",
       "repo": "リポジトリで絞り込み",
-      "allRepos": "すべてのリポジトリ"
+      "allRepos": "すべてのリポジトリ",
+      "author": "作成者で絞り込み",
+      "allAuthors": "すべての作成者",
+      "clearFilter": "フィルターをクリア"
     },
     "noResults": "一致するスキルが見つかりませんでした",
     "noInstalled": "インストールされたスキルがありません",
