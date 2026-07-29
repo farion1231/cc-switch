@@ -16,9 +16,10 @@ const SUBKEY_LEN: usize = 32;
 const XNONCE_LEN: usize = 24;
 const MIN_SALT_LEN: usize = 16;
 const MAX_SALT_LEN: usize = 64;
-const MAX_KDF_MEMORY_KIB: u32 = 1_048_576;
-const MAX_KDF_ITERATIONS: u32 = 10;
-const MAX_KDF_PARALLELISM: u32 = 16;
+const MAX_MEMORY_KIB: u32 = 262_144;
+const MAX_ITERATIONS: u32 = 5;
+const MAX_PARALLELISM: u32 = 4;
+const MAX_KIB_PASSES: u64 = 524_288;
 const MAX_DOMAIN_LEN: usize = 1_024;
 const KEY_CHECK_LABEL: &[u8] = b"cc-switch/workspace-sync/key-check/v1";
 
@@ -52,12 +53,14 @@ impl KdfParams {
     }
 
     fn to_argon2_params(self) -> Result<Params, AppError> {
+        let kib_passes = u64::from(self.memory_kib) * u64::from(self.iterations);
         if self.memory_kib == 0
-            || self.memory_kib > MAX_KDF_MEMORY_KIB
+            || self.memory_kib > MAX_MEMORY_KIB
             || self.iterations == 0
-            || self.iterations > MAX_KDF_ITERATIONS
+            || self.iterations > MAX_ITERATIONS
             || self.parallelism == 0
-            || self.parallelism > MAX_KDF_PARALLELISM
+            || self.parallelism > MAX_PARALLELISM
+            || kib_passes > MAX_KIB_PASSES
         {
             return Err(invalid_input("invalid workspace sync KDF parameters"));
         }
@@ -443,6 +446,7 @@ mod tests {
                 parallelism: 1,
             }
         );
+        assert!(KdfParams::default().to_argon2_params().is_ok());
 
         let password = password("password");
         assert!(KeyMaterial::derive(&password, b"too-short", KdfParams::test()).is_err());
@@ -459,26 +463,68 @@ mod tests {
     }
 
     #[test]
-    fn kdf_rejects_resource_limits_before_argon2_allocation() {
+    fn kdf_accepts_single_field_limits_without_running_the_kdf() {
         for params in [
             KdfParams {
-                memory_kib: 1_048_577,
+                memory_kib: 262_144,
                 iterations: 1,
                 parallelism: 1,
             },
             KdfParams {
                 memory_kib: 8,
-                iterations: 11,
+                iterations: 5,
                 parallelism: 1,
             },
             KdfParams {
-                memory_kib: 128,
+                memory_kib: 32,
                 iterations: 1,
-                parallelism: 17,
+                parallelism: 4,
+            },
+        ] {
+            assert!(params.to_argon2_params().is_ok());
+        }
+    }
+
+    #[test]
+    fn kdf_rejects_single_field_limits_before_argon2_allocation() {
+        for params in [
+            KdfParams {
+                memory_kib: 262_145,
+                iterations: 1,
+                parallelism: 1,
+            },
+            KdfParams {
+                memory_kib: 8,
+                iterations: 6,
+                parallelism: 1,
+            },
+            KdfParams {
+                memory_kib: 40,
+                iterations: 1,
+                parallelism: 5,
             },
         ] {
             assert!(params.to_argon2_params().is_err());
         }
+    }
+
+    #[test]
+    fn kdf_enforces_aggregate_kib_pass_budget_before_allocation() {
+        assert!(KdfParams {
+            memory_kib: 262_144,
+            iterations: 2,
+            parallelism: 1,
+        }
+        .to_argon2_params()
+        .is_ok());
+
+        assert!(KdfParams {
+            memory_kib: 262_144,
+            iterations: 3,
+            parallelism: 1,
+        }
+        .to_argon2_params()
+        .is_err());
     }
 
     #[test]
