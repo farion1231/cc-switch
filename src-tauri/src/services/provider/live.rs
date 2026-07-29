@@ -186,6 +186,7 @@ pub(crate) fn provider_exists_in_live_config(
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::Pi => crate::pi_config::pi_provider_exists(provider_id),
         _ => Ok(false),
     }
 }
@@ -1166,7 +1167,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
         AppType::Pi => {
-            crate::pi_config::write_pi_live_provider(provider)?;
+            crate::pi_config::upsert_pi_live_provider(provider, true)?;
             log::debug!("Pi provider '{}' written to live config", provider.id);
         }
     }
@@ -1206,11 +1207,36 @@ fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<()
     Ok(())
 }
 
+fn sync_pi_providers_to_live(state: &AppState) -> Result<(), AppError> {
+    let app_type = AppType::Pi;
+    let providers = state.db.get_all_providers(app_type.as_str())?;
+    let managed = providers
+        .values()
+        .filter(|provider| {
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.live_config_managed)
+                != Some(false)
+        })
+        .collect::<Vec<_>>();
+    let current_id = crate::settings::get_effective_current_provider(&state.db, &app_type)?;
+    let active = current_id.as_deref().and_then(|id| {
+        managed
+            .iter()
+            .copied()
+            .find(|provider| provider.id.as_str() == id)
+    });
+    crate::pi_config::sync_pi_live_providers(&managed, active)
+}
+
 pub(crate) fn sync_current_provider_for_app_to_live(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<(), AppError> {
-    if app_type.is_additive_mode() {
+    if matches!(app_type, AppType::Pi) {
+        sync_pi_providers_to_live(state)?;
+    } else if app_type.is_additive_mode() {
         sync_all_providers_to_live(state, app_type)?;
     } else {
         let current_id = match crate::settings::get_effective_current_provider(&state.db, app_type)?
@@ -1285,7 +1311,9 @@ fn sync_current_provider_for_app_respecting_takeover(
 pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     // Sync providers based on mode
     for app_type in AppType::all() {
-        if app_type.is_additive_mode() {
+        if matches!(app_type, AppType::Pi) {
+            sync_pi_providers_to_live(state)?;
+        } else if app_type.is_additive_mode() {
             // Additive mode: sync ALL providers
             sync_all_providers_to_live(state, &app_type)?;
         } else {
@@ -1598,6 +1626,12 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         }
         .to_string(),
     );
+    if matches!(app_type, AppType::Pi) {
+        provider
+            .meta
+            .get_or_insert_with(Default::default)
+            .live_config_managed = Some(true);
+    }
 
     state.db.save_provider(app_type.as_str(), &provider)?;
     state
