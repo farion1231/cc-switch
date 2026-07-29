@@ -17,7 +17,7 @@ import { AlertTriangle, Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import type { Provider } from "@/types";
+import type { OpenClawProviderConfig, Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { useDragSort } from "@/hooks/useDragSort";
@@ -46,7 +46,6 @@ import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { isTextEditableTarget } from "@/utils/domUtils";
-import { matchesOpenClawPrimaryModel } from "@/utils/openClawDefaultModel";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -141,7 +140,13 @@ export function ProviderList({
   const isProviderDefaultModel = useCallback(
     (provider: Provider): boolean => {
       if (appId !== "openclaw" || !openclawDefaultModel?.primary) return false;
-      return matchesOpenClawPrimaryModel(openclawDefaultModel, provider);
+
+      const config = provider.settingsConfig as OpenClawProviderConfig;
+      return (config.models ?? []).some(
+        (model) =>
+          Boolean(model.id) &&
+          openclawDefaultModel.primary === `${provider.id}/${model.id}`,
+      );
     },
     [appId, openclawDefaultModel],
   );
