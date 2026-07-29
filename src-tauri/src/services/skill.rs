@@ -3121,6 +3121,13 @@ impl SkillService {
     /// 磁盘上。守卫交给调用方持有，清理就变成作用域结束时自动发生，不再依赖每条
     /// 出口都记得手写 `remove_dir_all`（实测漏了不止一条）。
     fn extract_local_zip(zip_path: &Path) -> Result<tempfile::TempDir> {
+        Self::extract_local_zip_in(zip_path, &std::env::temp_dir())
+    }
+
+    /// 与 [`Self::extract_local_zip`] 相同，但临时目录的落点由调用方指定。
+    /// 测试用它把解压根钉在私有目录里，而不是劫持进程级 `TMPDIR`——后者会把
+    /// 并发测试的临时目录一起吸进被观测目录，"目录必须为空"的断言就会随机失败。
+    fn extract_local_zip_in(zip_path: &Path, base_dir: &Path) -> Result<tempfile::TempDir> {
         let file = fs::File::open(zip_path)
             .with_context(|| format!("Failed to open ZIP file: {}", zip_path.display()))?;
 
@@ -3149,7 +3156,7 @@ impl SkillService {
 
         // 守卫持有到解压全部成功为止：中途任何 `?` 都会让它清掉半成品目录。
         // 原来在这里就 keep()，超限或解压出错都会留下永久残留。
-        let temp_dir = tempfile::tempdir()?;
+        let temp_dir = tempfile::tempdir_in(base_dir)?;
         let temp_path = temp_dir.path().to_path_buf();
 
         let mut symlinks: Vec<(PathBuf, String)> = Vec::new();
@@ -3965,12 +3972,12 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
     fn extract_local_zip_leaves_no_partial_directory_when_it_fails() {
         use std::io::Write;
         use zip::write::SimpleFileOptions;
 
-        // TMPDIR 要在建这两个目录之后再改，否则它们自己就落进被观测的目录里
+        // scratch 只喂给这一次解压：并发测试的临时目录不会落进来，
+        // 所以"必须为空"的断言观测到的恰好就是这次解压的残留
         let holder = tempdir().expect("tempdir");
         let scratch = tempdir().expect("tempdir");
 
@@ -3989,13 +3996,7 @@ mod tests {
         let zip_path = holder.path().join("collide.zip");
         fs::write(&zip_path, &buf).expect("write zip");
 
-        let original = std::env::var_os("TMPDIR");
-        std::env::set_var("TMPDIR", scratch.path());
-        let result = SkillService::extract_local_zip(&zip_path);
-        match original {
-            Some(value) => std::env::set_var("TMPDIR", value),
-            None => std::env::remove_var("TMPDIR"),
-        }
+        let result = SkillService::extract_local_zip_in(&zip_path, scratch.path());
 
         assert!(
             result.is_err(),
@@ -4013,7 +4014,6 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
     fn extract_local_zip_hands_back_a_guard_that_owns_the_tree() {
         use std::io::Write;
         use zip::write::SimpleFileOptions;
@@ -4036,15 +4036,8 @@ mod tests {
         let zip_path = holder.path().join("ok.zip");
         fs::write(&zip_path, &buf).expect("write zip");
 
-        let original = std::env::var_os("TMPDIR");
-        std::env::set_var("TMPDIR", scratch.path());
-        let extracted = SkillService::extract_local_zip(&zip_path);
-        match original {
-            Some(value) => std::env::set_var("TMPDIR", value),
-            None => std::env::remove_var("TMPDIR"),
-        }
-
-        let extracted = extracted.expect("extract must succeed");
+        let extracted = SkillService::extract_local_zip_in(&zip_path, scratch.path())
+            .expect("extract must succeed");
         assert!(
             extracted.path().join("s").join("SKILL.md").exists(),
             "the fixture must actually extract something worth cleaning up"
