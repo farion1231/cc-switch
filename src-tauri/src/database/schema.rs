@@ -124,7 +124,7 @@ impl Database {
 
         // 8. Proxy Config 表（三行结构，app_type 主键）
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_config (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','claude-science','codex','gemini','grokbuild')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -153,6 +153,10 @@ impl Database {
                 [],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
+            // 注意：这里不要 seed 'claude-science' 行。全新数据库在 create_tables
+            // 之后还要跑 v0→v17 的完整迁移链，历史迁移（如 v13→v14）重建
+            // proxy_config 时 CHECK 不含 'claude-science'，提前 seed 会导致
+            // 拷贝违反 CHECK。该行由 migrate_v16_to_v17 负责补种。
             conn.execute(
                 "INSERT OR IGNORE INTO proxy_config (app_type, max_retries,
                 streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
@@ -510,6 +514,11 @@ impl Database {
                         log::info!("迁移数据库从 v15 到 v16（重建 Codex 会话用量）");
                         Self::migrate_v15_to_v16(conn)?;
                         Self::set_user_version(conn, 16)?;
+                    }
+                    16 => {
+                        log::info!("迁移数据库从 v16 到 v17（添加 Claude Science 代理配置）");
+                        Self::migrate_v16_to_v17(conn)?;
+                        Self::set_user_version(conn, 17)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1521,6 +1530,112 @@ impl Database {
     fn migrate_v15_to_v16(conn: &Connection) -> Result<(), AppError> {
         let codex_dir = crate::codex_config::get_codex_config_dir();
         crate::services::session_usage_codex::reset_codex_usage_on_conn(conn, &codex_dir)
+    }
+
+    /// v16 -> v17: 扩展 proxy_config 的 app_type CHECK 以容纳 'claude-science'
+    /// 并补种其配置行（Messages 协议，默认值与 claude 相同）。
+    fn migrate_v16_to_v17(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "proxy_config")? {
+            return Ok(());
+        }
+
+        conn.execute("DROP TABLE IF EXISTS proxy_config_v17", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE TABLE proxy_config_v17 (
+                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','claude-science','codex','gemini','grokbuild')),
+                proxy_enabled INTEGER NOT NULL DEFAULT 0,
+                listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                listen_port INTEGER NOT NULL DEFAULT 15721,
+                enable_logging INTEGER NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+                max_retries INTEGER NOT NULL DEFAULT 3,
+                streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+                streaming_idle_timeout INTEGER NOT NULL DEFAULT 120,
+                non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+                circuit_failure_threshold INTEGER NOT NULL DEFAULT 4,
+                circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+                circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60,
+                circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+                circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                live_takeover_active INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let copied_columns = [
+            ("app_type", "'claude'"),
+            ("proxy_enabled", "0"),
+            ("listen_address", "'127.0.0.1'"),
+            ("listen_port", "15721"),
+            ("enable_logging", "1"),
+            ("enabled", "0"),
+            ("auto_failover_enabled", "0"),
+            ("max_retries", "3"),
+            ("streaming_first_byte_timeout", "60"),
+            ("streaming_idle_timeout", "120"),
+            ("non_streaming_timeout", "600"),
+            ("circuit_failure_threshold", "4"),
+            ("circuit_success_threshold", "2"),
+            ("circuit_timeout_seconds", "60"),
+            ("circuit_error_rate_threshold", "0.6"),
+            ("circuit_min_requests", "10"),
+            ("default_cost_multiplier", "'1'"),
+            ("pricing_model_source", "'response'"),
+            ("live_takeover_active", "0"),
+            ("created_at", "datetime('now')"),
+            ("updated_at", "datetime('now')"),
+        ]
+        .into_iter()
+        .map(|(column, fallback)| {
+            Self::has_column(conn, "proxy_config", column).map(|exists| {
+                if exists {
+                    format!("\"{column}\"")
+                } else {
+                    fallback.into()
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, AppError>>()?
+        .join(", ");
+
+        let copy_sql = format!(
+            "INSERT INTO proxy_config_v17 (
+                app_type, proxy_enabled, listen_address, listen_port, enable_logging,
+                enabled, auto_failover_enabled, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests,
+                default_cost_multiplier, pricing_model_source, live_takeover_active,
+                created_at, updated_at
+            )
+            SELECT {copied_columns} FROM proxy_config"
+        );
+        conn.execute(&copy_sql, [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        conn.execute("DROP TABLE proxy_config", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute("ALTER TABLE proxy_config_v17 RENAME TO proxy_config", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        // claude-science: Messages 协议，与 claude 相同的重试/超时默认值
+        conn.execute(
+            "INSERT OR IGNORE INTO proxy_config (app_type, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests)
+                VALUES ('claude-science', 6, 90, 180, 600, 8, 3, 90, 0.7, 15)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(())
     }
 
     /// 插入默认模型定价数据
@@ -3223,7 +3338,7 @@ mod tests {
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
-        assert_eq!(Database::get_user_version(&conn)?, 16);
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         let counts: (i64, i64, i64, i64) = conn.query_row(
             "SELECT
                 (SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'),
@@ -3234,6 +3349,39 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
         assert_eq!(counts, (0, 1, 0, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v16_to_v17_adds_claude_science_proxy_row_and_preserves_values(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute("DELETE FROM proxy_config WHERE app_type = 'claude-science'", [])?;
+        conn.execute(
+            "UPDATE proxy_config SET enabled = 1, max_retries = 9 WHERE app_type = 'claude'",
+            [],
+        )?;
+        Database::set_user_version(&conn, 16)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let science_row: (i64, i64, i64) = conn.query_row(
+            "SELECT COUNT(*), COALESCE(MAX(max_retries), -1), COALESCE(MAX(streaming_first_byte_timeout), -1)
+             FROM proxy_config WHERE app_type = 'claude-science'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        // claude-science 行被补种，且默认值与 claude 相同（6 次重试 / 90s 首字节超时）
+        assert_eq!(science_row, (1, 6, 90));
+        let claude_values: (i64, i64) = conn.query_row(
+            "SELECT enabled, max_retries FROM proxy_config WHERE app_type = 'claude'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(claude_values, (1, 9));
+
         Ok(())
     }
 }

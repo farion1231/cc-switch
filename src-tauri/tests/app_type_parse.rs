@@ -11,6 +11,18 @@ fn parse_known_apps_case_insensitive_and_trim() {
         Ok(AppType::GrokBuild)
     ));
     assert!(matches!(
+        AppType::from_str("claude-science"),
+        Ok(AppType::ClaudeScience)
+    ));
+    assert!(matches!(
+        AppType::from_str("claude_science"),
+        Ok(AppType::ClaudeScience)
+    ));
+    assert!(matches!(
+        AppType::from_str("ClaudeScience"),
+        Ok(AppType::ClaudeScience)
+    ));
+    assert!(matches!(
         AppType::from_str("Grok-Build"),
         Ok(AppType::GrokBuild)
     ));

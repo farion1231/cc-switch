@@ -5,6 +5,8 @@ import type { AppId } from "@/lib/api/types";
 export type AppType =
   | "claude"
   | "claude-desktop"
+  // 后端不对 claude-science 做 Skill 同步（恒为 false），仅作类型枚举同步
+  | "claude-science"
   | "codex"
   | "gemini"
   | "grokbuild"

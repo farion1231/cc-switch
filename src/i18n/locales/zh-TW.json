@@ -885,7 +885,9 @@
     "claude": "Claude",
     "claudeCode": "Claude Code",
     "claudeDesktop": "Claude Desktop",
+    "claudeScience": "Claude Science",
     "claude-desktop": "Claude Desktop",
+    "claude-science": "Claude Science",
     "codex": "Codex",
     "gemini": "Gemini",
     "grokbuild": "Grok Build",
@@ -1515,7 +1517,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "grokbuild": "Grok Build"
+      "grokbuild": "Grok Build",
+      "claude-science": "Claude Science"
     },
     "rawInputLabel": "原始",
     "rebuildCodex": {

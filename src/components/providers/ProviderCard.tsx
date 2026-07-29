@@ -76,7 +76,7 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
   }
 
   const config = provider.settingsConfig as Record<string, any>;
-  if (appId === "claude") {
+  if (appId === "claude" || appId === "claude-science") {
     const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
     return !baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === "");
   }
@@ -377,13 +377,14 @@ export function ProviderCard({
                   </span>
                 )}
 
-              {appId === "claude" && providerNeedsRouting(appId, provider) && (
-                <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                  {t("claudeCode.needsRouting", {
-                    defaultValue: "需要路由",
-                  })}
-                </span>
-              )}
+              {(appId === "claude" || appId === "claude-science") &&
+                providerNeedsRouting(appId, provider) && (
+                  <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                    {t("claudeCode.needsRouting", {
+                      defaultValue: "需要路由",
+                    })}
+                  </span>
+                )}
 
               {codexNeedsRouting && (
                 <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">

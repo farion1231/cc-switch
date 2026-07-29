@@ -116,6 +116,9 @@ impl McpService {
             AppType::ClaudeDesktop => {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
             }
+            AppType::ClaudeScience => {
+                log::debug!("Claude Science 的 MCP 配置在加密 SQLite 中，跳过 CC Switch MCP 同步");
+            }
             AppType::Codex => {
                 // Codex uses TOML format, must use the correct function
                 mcp::sync_single_server_to_codex(&Default::default(), &server.id, &server.server)?;
@@ -167,6 +170,9 @@ impl McpService {
             AppType::Claude => mcp::remove_server_from_claude(id)?,
             AppType::ClaudeDesktop => {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
+            }
+            AppType::ClaudeScience => {
+                log::debug!("Claude Science 的 MCP 配置在加密 SQLite 中，跳过 CC Switch MCP 移除");
             }
             AppType::Codex => mcp::remove_server_from_codex(id)?,
             AppType::Gemini => mcp::remove_server_from_gemini(id)?,
@@ -225,7 +231,11 @@ impl McpService {
         servers: &IndexMap<String, McpServer>,
         app: &AppType,
     ) -> Result<(), AppError> {
-        if matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop) {
+        if matches!(
+            app,
+            AppType::OpenClaw | AppType::ClaudeDesktop | AppType::ClaudeScience
+        ) {
+            // Claude Science 的 MCP 配置在加密 SQLite 中，不参与投影
             return Ok(());
         }
 

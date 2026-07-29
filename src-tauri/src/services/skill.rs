@@ -535,6 +535,7 @@ impl SkillService {
                 }
             }
             AppType::ClaudeDesktop => {}
+            AppType::ClaudeScience => {} // Claude Science 无目录覆盖设置
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
                     return Ok(custom.join("skills"));
@@ -575,6 +576,8 @@ impl SkillService {
         Ok(match app {
             AppType::Claude => home.join(".claude").join("skills"),
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
+            // Claude Science 无 live 配置文件，Skill 同步对其无意义，仅给出占位路径
+            AppType::ClaudeScience => home.join(".claude-science").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),
             AppType::Gemini => home.join(".gemini").join("skills"),
             AppType::GrokBuild => home.join(".grok").join("skills"),
@@ -1695,7 +1698,8 @@ impl SkillService {
     /// - Symlink: 仅使用 symlink
     /// - Copy: 仅使用文件复制
     pub fn sync_to_app_dir(directory: &str, app: &AppType) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop) {
+        if matches!(app, AppType::ClaudeDesktop | AppType::ClaudeScience) {
+            // Claude Science 无 live 配置目录，Skill 同步不适用
             return Ok(());
         }
 

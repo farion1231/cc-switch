@@ -325,7 +325,8 @@ impl Database {
         // 根据 app_type 使用不同的默认值（与 schema.rs seed 保持一致）
         let (retries, fb_timeout, idle_timeout, cb_fail, cb_succ, cb_timeout, cb_rate, cb_min) =
             match app_type {
-                "claude" => (6, 90, 180, 8, 3, 90, 0.7, 15),
+                // claude-science 与 claude 同为 Messages 协议，共用更激进的重试/超时配置
+                "claude" | "claude-science" => (6, 90, 180, 8, 3, 90, 0.7, 15),
                 "codex" => (3, 60, 120, 4, 2, 60, 0.6, 10),
                 "gemini" => (5, 60, 120, 4, 2, 60, 0.6, 10),
                 "grokbuild" => (3, 60, 120, 4, 2, 60, 0.6, 10),
@@ -407,6 +408,18 @@ impl Database {
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                 circuit_error_rate_threshold, circuit_min_requests
             ) VALUES ('grokbuild', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // claude-science: Messages 协议，与 claude 相同的重试/超时默认值
+        conn.execute(
+            "INSERT OR IGNORE INTO proxy_config (
+                app_type, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests
+            ) VALUES ('claude-science', 6, 90, 180, 600, 8, 3, 90, 0.7, 15)",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

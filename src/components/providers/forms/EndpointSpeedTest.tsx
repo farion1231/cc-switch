@@ -13,6 +13,7 @@ const ENDPOINT_TIMEOUT_SECS: Record<AppId, number> = {
   codex: 12,
   claude: 8,
   "claude-desktop": 8,
+  "claude-science": 8,
   gemini: 8,
   grokbuild: 12,
   opencode: 8,

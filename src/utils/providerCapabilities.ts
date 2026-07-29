@@ -48,14 +48,14 @@ export function providerNeedsRouting(
     return isManagedOAuth || provider.meta?.claudeDesktopMode === "proxy";
   }
 
-  if (appId !== "claude" && appId !== "codex" && appId !== "grokbuild") {
+  if (appId !== "claude" && appId !== "claude-science" && appId !== "codex" && appId !== "grokbuild") {
     return false;
   }
 
   // 托管 OAuth：凭据由代理注入，与 apiFormat 无关，必须接管。
   if (isManagedOAuth) return true;
 
-  if (appId === "claude") {
+  if (appId === "claude" || appId === "claude-science") {
     const fmt = provider.meta?.apiFormat;
     // Claude 原生是 Anthropic 格式，任何非 anthropic 格式都需要代理转换。
     return provider.meta?.isFullUrl === true || (!!fmt && fmt !== "anthropic");

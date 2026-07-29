@@ -142,6 +142,26 @@ pub async fn handle_claude_desktop_messages(
     .await
 }
 
+/// 处理 /claude-science/v1/messages 请求（Claude Science）
+///
+/// Claude Science 与 Claude 同为 Anthropic Messages 协议，但拥有独立的
+/// provider namespace 与故障转移队列（配置在加密 SQLite 中，无 live 文件可写），
+/// 因此复用 Claude 的消息处理器并覆盖 app 命名空间。
+pub async fn handle_claude_science_messages(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_messages_for_app(
+        state,
+        request,
+        AppType::ClaudeScience,
+        "Claude Science",
+        "claude-science",
+        Some("/claude-science"),
+    )
+    .await
+}
+
 pub async fn handle_claude_desktop_models(
     State(state): State<ProxyState>,
     headers: axum::http::HeaderMap,

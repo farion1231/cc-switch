@@ -26,6 +26,7 @@ export function ClaudeDesktopRouteToggle({
   const isBusy = isStarting || isStoppingServer;
   const otherTakeoverActive = Boolean(
     takeoverStatus?.claude ||
+      takeoverStatus?.["claude-science"] ||
       takeoverStatus?.codex ||
       takeoverStatus?.gemini ||
       takeoverStatus?.grokbuild,

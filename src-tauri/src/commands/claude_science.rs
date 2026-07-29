@@ -343,14 +343,31 @@ fn read_science_url(bin: &Path, profile: &ScienceProfilePaths) -> Result<String,
         .ok_or_else(|| "Claude Science URL lookup did not return a URL".to_string())
 }
 
-fn proxy_launch_env(proxy_base_url: &str) -> [(&'static str, &str); 3] {
+fn proxy_launch_env(proxy_base_url: &str) -> [(&'static str, String); 3] {
     // Claude Science does not currently document a stable config key for
     // Anthropic client routing. Keep the proxy handoff scoped to this managed
     // daemon launch instead of writing it into the user's default profile.
+    //
+    // Provider switching for Claude Science happens through the proxy's
+    // independent route namespace: point ANTHROPIC_BASE_URL at
+    // `{proxy}/claude-science` so the proxy routes `/claude-science/v1/messages`
+    // to the claude-science provider namespace and failover queue (the CLI's
+    // own config lives in an encrypted SQLite, so there is no live config
+    // file for cc-switch to write).
+    let science_base_url = format!(
+        "{}/claude-science",
+        proxy_base_url.trim_end_matches('/')
+    );
     [
-        ("ANTHROPIC_BASE_URL", proxy_base_url),
-        ("ANTHROPIC_AUTH_TOKEN", PROXY_TOKEN_PLACEHOLDER),
-        ("ANTHROPIC_API_KEY", PROXY_TOKEN_PLACEHOLDER),
+        ("ANTHROPIC_BASE_URL", science_base_url),
+        (
+            "ANTHROPIC_AUTH_TOKEN",
+            PROXY_TOKEN_PLACEHOLDER.to_string(),
+        ),
+        (
+            "ANTHROPIC_API_KEY",
+            PROXY_TOKEN_PLACEHOLDER.to_string(),
+        ),
     ]
 }
 
@@ -363,16 +380,20 @@ fn run_cli(
     run_cli_with_env(bin, args, envs, profile)
 }
 
-fn run_cli_with_env(
+fn run_cli_with_env<K, V>(
     bin: &Path,
     args: &[&str],
-    envs: &[(&str, &str)],
+    envs: &[(K, V)],
     profile: Option<&ScienceProfilePaths>,
-) -> Result<Output, String> {
+) -> Result<Output, String>
+where
+    K: AsRef<std::ffi::OsStr>,
+    V: AsRef<std::ffi::OsStr>,
+{
     let mut command = Command::new(bin);
     command
         .args(args)
-        .envs(envs.iter().copied())
+        .envs(envs.iter().map(|(k, v)| (k.as_ref(), v.as_ref())))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     for key in SCIENCE_MODEL_ENV_KEYS_TO_CLEAR {
@@ -1075,9 +1096,37 @@ mod tests {
     fn proxy_launch_env_points_science_at_local_proxy() {
         let env = proxy_launch_env("http://127.0.0.1:15721");
 
-        assert_eq!(env[0], ("ANTHROPIC_BASE_URL", "http://127.0.0.1:15721"));
-        assert_eq!(env[1], ("ANTHROPIC_AUTH_TOKEN", PROXY_TOKEN_PLACEHOLDER));
-        assert_eq!(env[2], ("ANTHROPIC_API_KEY", PROXY_TOKEN_PLACEHOLDER));
+        assert_eq!(
+            env[0],
+            (
+                "ANTHROPIC_BASE_URL",
+                "http://127.0.0.1:15721/claude-science".to_string()
+            )
+        );
+        assert_eq!(
+            env[1],
+            (
+                "ANTHROPIC_AUTH_TOKEN",
+                PROXY_TOKEN_PLACEHOLDER.to_string()
+            )
+        );
+        assert_eq!(
+            env[2],
+            ("ANTHROPIC_API_KEY", PROXY_TOKEN_PLACEHOLDER.to_string())
+        );
+    }
+
+    #[test]
+    fn proxy_launch_env_trims_trailing_slash_before_namespace() {
+        let env = proxy_launch_env("http://127.0.0.1:15721/");
+
+        assert_eq!(
+            env[0],
+            (
+                "ANTHROPIC_BASE_URL",
+                "http://127.0.0.1:15721/claude-science".to_string()
+            )
+        );
     }
 
     #[test]
@@ -1163,7 +1212,7 @@ printf 'sonnet_name=%s\n' "${ANTHROPIC_DEFAULT_SONNET_MODEL_NAME-}"
 
         assert!(output.status.success());
         let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-        assert!(stdout.contains("base=http://127.0.0.1:15721\n"));
+        assert!(stdout.contains("base=http://127.0.0.1:15721/claude-science\n"));
         assert!(stdout.contains(&format!("auth={PROXY_TOKEN_PLACEHOLDER}\n")));
         assert!(stdout.contains(&format!("api={PROXY_TOKEN_PLACEHOLDER}\n")));
         assert!(stdout.contains("model=\n"));

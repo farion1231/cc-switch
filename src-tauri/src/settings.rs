@@ -34,6 +34,13 @@ pub struct VisibleApps {
         default = "default_true"
     )]
     pub claude_desktop: bool,
+    #[serde(
+        rename = "claude-science",
+        alias = "claudeScience",
+        alias = "claude_science",
+        default
+    )]
+    pub claude_science: bool,
     #[serde(default = "default_true")]
     pub codex: bool,
     #[serde(default = "default_true")]
@@ -53,6 +60,7 @@ impl Default for VisibleApps {
         Self {
             claude: true,
             claude_desktop: true,
+            claude_science: false, // 默认不显示，需用户手动启用
             codex: true,
             gemini: true,
             grokbuild: true,
@@ -69,6 +77,7 @@ impl VisibleApps {
         match app {
             AppType::Claude => self.claude,
             AppType::ClaudeDesktop => self.claude_desktop,
+            AppType::ClaudeScience => self.claude_science,
             AppType::Codex => self.codex,
             AppType::Gemini => self.gemini,
             AppType::GrokBuild => self.grokbuild,
@@ -430,6 +439,9 @@ pub struct AppSettings {
     /// 当前 Claude Desktop 供应商 ID（本地存储，优先于数据库 is_current）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_claude_desktop: Option<String>,
+    /// 当前 Claude Science 供应商 ID（本地存储，优先于数据库 is_current）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_claude_science: Option<String>,
     /// 当前 Codex 供应商 ID（本地存储，优先于数据库 is_current）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_codex: Option<String>,
@@ -535,6 +547,7 @@ impl Default for AppSettings {
             hermes_config_dir: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
+            current_provider_claude_science: None,
             current_provider_codex: None,
             current_provider_gemini: None,
             current_provider_grokbuild: None,
@@ -964,6 +977,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
     match app_type {
         AppType::Claude => settings.current_provider_claude.clone(),
         AppType::ClaudeDesktop => settings.current_provider_claude_desktop.clone(),
+        AppType::ClaudeScience => settings.current_provider_claude_science.clone(),
         AppType::Codex => settings.current_provider_codex.clone(),
         AppType::Gemini => settings.current_provider_gemini.clone(),
         AppType::GrokBuild => settings.current_provider_grokbuild.clone(),
@@ -982,6 +996,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
     mutate_settings(|settings| match app_type {
         AppType::Claude => settings.current_provider_claude = id_owned.clone(),
         AppType::ClaudeDesktop => settings.current_provider_claude_desktop = id_owned.clone(),
+        AppType::ClaudeScience => settings.current_provider_claude_science = id_owned.clone(),
         AppType::Codex => settings.current_provider_codex = id_owned.clone(),
         AppType::Gemini => settings.current_provider_gemini = id_owned.clone(),
         AppType::GrokBuild => settings.current_provider_grokbuild = id_owned.clone(),
@@ -1177,5 +1192,45 @@ mod tests {
         .expect("visible apps");
 
         assert!(!visible.is_visible(&AppType::ClaudeDesktop));
+    }
+
+    #[test]
+    fn visible_apps_default_hides_claude_science() {
+        let visible = VisibleApps::default();
+
+        assert!(!visible.is_visible(&AppType::ClaudeScience));
+        assert!(visible.is_visible(&AppType::Claude));
+    }
+
+    #[test]
+    fn visible_apps_old_settings_default_claude_science_hidden() {
+        // 旧设置文件没有 claude-science 键：默认不显示（opt-in，与 hermes 一致）
+        let visible: VisibleApps = serde_json::from_value(serde_json::json!({
+            "claude": true,
+            "codex": true,
+            "gemini": true,
+            "opencode": true,
+            "openclaw": true,
+            "hermes": true
+        }))
+        .expect("visible apps");
+
+        assert!(!visible.is_visible(&AppType::ClaudeScience));
+    }
+
+    #[test]
+    fn visible_apps_accepts_claude_science_aliases() {
+        let visible: VisibleApps = serde_json::from_value(serde_json::json!({
+            "claude": true,
+            "claudeScience": true,
+            "codex": true,
+            "gemini": true,
+            "opencode": true,
+            "openclaw": true,
+            "hermes": true
+        }))
+        .expect("visible apps");
+
+        assert!(visible.is_visible(&AppType::ClaudeScience));
     }
 }

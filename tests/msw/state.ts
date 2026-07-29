@@ -36,6 +36,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
     },
   },
   "claude-desktop": {},
+  "claude-science": {},
   codex: {
     "codex-1": {
       id: "codex-1",
@@ -78,6 +79,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
 const createDefaultCurrent = (): CurrentProviderState => ({
   claude: "claude-1",
   "claude-desktop": "",
+  "claude-science": "",
   codex: "codex-1",
   gemini: "gemini-1",
   grokbuild: "",
@@ -173,6 +175,7 @@ let mcpConfigs: McpConfigState = {
     },
   },
   "claude-desktop": {},
+  "claude-science": {},
   codex: {
     httpServer: {
       id: "httpServer",
@@ -242,6 +245,7 @@ export const resetProviderState = () => {
       },
     },
     "claude-desktop": {},
+    "claude-science": {},
     codex: {
       httpServer: {
         id: "httpServer",

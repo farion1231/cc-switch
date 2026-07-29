@@ -93,6 +93,44 @@ describe("providerNeedsRouting", () => {
     });
   });
 
+  describe("Claude Science 与 Claude 判定一致", () => {
+    it("anthropic 原生直连不需要路由", () => {
+      expect(
+        providerNeedsRouting(
+          "claude-science",
+          mkProvider({ meta: { apiFormat: "anthropic" } }),
+        ),
+      ).toBe(false);
+    });
+
+    it("openai_chat 需要路由", () => {
+      expect(
+        providerNeedsRouting(
+          "claude-science",
+          mkProvider({ meta: { apiFormat: "openai_chat" } }),
+        ),
+      ).toBe(true);
+    });
+
+    it("托管 OAuth 恒需路由", () => {
+      expect(
+        providerNeedsRouting(
+          "claude-science",
+          mkProvider({ meta: { providerType: "github_copilot" } }),
+        ),
+      ).toBe(true);
+    });
+
+    it("完整 URL 模式需要路由", () => {
+      expect(
+        providerNeedsRouting(
+          "claude-science",
+          mkProvider({ meta: { isFullUrl: true } }),
+        ),
+      ).toBe(true);
+    });
+  });
+
   describe("Claude 非 OAuth 按格式判定", () => {
     it("anthropic 原生直连不需要路由", () => {
       expect(

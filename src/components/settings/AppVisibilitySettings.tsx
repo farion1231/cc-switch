@@ -24,6 +24,7 @@ const APP_CONFIG: Array<{
     icon: "claude",
     nameKey: "apps.claudeDesktop",
   },
+  { id: "claude-science", icon: "claudescience", nameKey: "apps.claudeScience" },
   { id: "codex", icon: "openai", nameKey: "apps.codex" },
   { id: "gemini", icon: "gemini", nameKey: "apps.gemini" },
   { id: "grokbuild", icon: "grok", nameKey: "apps.grokbuild" },
@@ -41,6 +42,7 @@ export function AppVisibilitySettings({
   const visibleApps: VisibleApps = settings.visibleApps ?? {
     claude: true,
     "claude-desktop": true,
+    "claude-science": false,
     codex: true,
     gemini: true,
     grokbuild: true,

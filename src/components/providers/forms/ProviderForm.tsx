@@ -248,6 +248,11 @@ export function ProviderForm(props: ProviderFormProps) {
   if (props.appId === "grokbuild") {
     return <GrokBuildProviderForm {...props} />;
   }
+  // Claude Science 复用 Claude 的表单与预设（同为 Claude settings.json 结构；
+  // 供应商数据仍按 claude-science 命名空间存储，由外层传入的 appId 决定）
+  if (props.appId === "claude-science") {
+    return <ProviderFormFull {...props} appId="claude" />;
+  }
 
   return <ProviderFormFull {...props} />;
 }
