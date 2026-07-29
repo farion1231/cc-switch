@@ -13,7 +13,7 @@ use super::{
     provider_router::ProviderRouter,
     providers::{
         codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
-        AuthInfo, AuthStrategy, ProviderAdapter, ProviderType,
+        streaming_retry::StreamReconnector, AuthInfo, AuthStrategy, ProviderAdapter, ProviderType,
     },
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
@@ -68,6 +68,9 @@ pub struct ForwardResult {
     /// 活跃连接 RAII guard：随响应一起流转到 response_processor / handle_claude_transform，
     /// 最终被 move 进流式 body future（或非流式响应作用域），覆盖整个响应生命周期。
     pub(crate) connection_guard: Option<ActiveConnectionGuard>,
+    /// 流式 Responses 请求的上游重连工厂：下游转换层在流中断且尚未向客户端
+    /// 转发实质内容时用它做有界自动重连（见 providers::streaming_retry）。
+    pub(crate) stream_reconnect: Option<StreamReconnector>,
 }
 
 pub struct ForwardError {
@@ -490,7 +493,7 @@ impl RequestForwarder {
                 )
                 .await
             {
-                Ok((response, claude_api_format, outbound_model)) => {
+                Ok((response, claude_api_format, outbound_model, stream_reconnect)) => {
                     // 成功：普通闭合熔断状态异步记录，避免阻塞流式首包返回；
                     // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
                     self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
@@ -540,6 +543,7 @@ impl RequestForwarder {
                         claude_api_format,
                         outbound_model,
                         connection_guard: None,
+                        stream_reconnect,
                     });
                 }
                 Err(e) => {
@@ -589,7 +593,12 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok((response, claude_api_format, outbound_model)) => {
+                                Ok((
+                                    response,
+                                    claude_api_format,
+                                    outbound_model,
+                                    stream_reconnect,
+                                )) => {
                                     log::info!(
                                         "[{app_type_str}] [Media] Unsupported-image retry succeeded"
                                     );
@@ -643,6 +652,7 @@ impl RequestForwarder {
                                         claude_api_format,
                                         outbound_model,
                                         connection_guard: None,
+                                        stream_reconnect,
                                     });
                                 }
                                 Err(retry_err) => {
@@ -735,7 +745,12 @@ impl RequestForwarder {
                                     )
                                     .await
                                 {
-                                    Ok((response, claude_api_format, outbound_model)) => {
+                                    Ok((
+                                        response,
+                                        claude_api_format,
+                                        outbound_model,
+                                        stream_reconnect,
+                                    )) => {
                                         log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
                                         self.record_success_result(
                                             &provider.id,
@@ -792,6 +807,7 @@ impl RequestForwarder {
                                             claude_api_format,
                                             outbound_model,
                                             connection_guard: None,
+                                            stream_reconnect,
                                         });
                                     }
                                     Err(retry_err) => {
@@ -901,7 +917,12 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok((response, claude_api_format, outbound_model)) => {
+                                Ok((
+                                    response,
+                                    claude_api_format,
+                                    outbound_model,
+                                    stream_reconnect,
+                                )) => {
                                     log::info!("[{app_type_str}] [RECT-011] budget 整流重试成功");
                                     self.record_success_result(
                                         &provider.id,
@@ -952,6 +973,7 @@ impl RequestForwarder {
                                         claude_api_format,
                                         outbound_model,
                                         connection_guard: None,
+                                        stream_reconnect,
                                     });
                                 }
                                 Err(retry_err) => {
@@ -1109,8 +1131,9 @@ impl RequestForwarder {
 
     /// 转发单个请求（使用适配器）
     ///
-    /// 成功时返回 `(response, claude_api_format, outbound_model)`，其中
-    /// `outbound_model` 是最终发往上游的模型名（所有映射/改写之后）。
+    /// 成功时返回 `(response, claude_api_format, outbound_model, stream_reconnect)`，其中
+    /// `outbound_model` 是最终发往上游的模型名（所有映射/改写之后），
+    /// `stream_reconnect` 是流式 Responses 请求的上游重连工厂（供中断重试用）。
     #[allow(clippy::too_many_arguments)]
     async fn forward(
         &self,
@@ -1122,7 +1145,15 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
-    ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+    ) -> Result<
+        (
+            ProxyResponse,
+            Option<String>,
+            Option<String>,
+            Option<StreamReconnector>,
+        ),
+        ProxyError,
+    > {
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
@@ -2212,6 +2243,88 @@ impl RequestForwarder {
             is_copilot,
         );
 
+        // 流式 Responses 请求提交给下游后，上游仍可能中途掐断 SSE。
+        // 在 headers/body 被移动之前捕获一份重放工厂，交给下游转换层做
+        // 有界重连（见 providers::streaming_retry）。工厂只是重放同一
+        // HTTP 请求；是否重试、重试多少次由转换层根据下游状态决定。
+        let stream_reconnect = if request_is_streaming
+            && matches!(
+                resolved_claude_api_format.as_deref(),
+                Some("openai_responses")
+            ) {
+            let first_byte_timeout = if self.streaming_first_byte_timeout.is_zero() {
+                timeout
+            } else {
+                self.streaming_first_byte_timeout
+            };
+            let connect: super::providers::streaming_retry::ConnectFn =
+                if is_socks_proxy || !preserve_exact_header_case {
+                    let url = url.clone();
+                    let method = method.clone();
+                    let headers = ordered_headers.clone();
+                    let body = body_bytes.clone();
+                    Box::new(move || {
+                        let url = url.clone();
+                        let method = method.clone();
+                        let headers = headers.clone();
+                        let body = body.clone();
+                        Box::pin(async move {
+                            let client = super::http_client::get();
+                            let mut request = client
+                                .request(method, &url)
+                                .timeout(std::time::Duration::from_secs(24 * 60 * 60));
+                            for (key, value) in &headers {
+                                request = request.header(key, value);
+                            }
+                            let response = request
+                                .body(body)
+                                .send()
+                                .await
+                                .map_err(map_reqwest_send_error)?;
+                            Ok(ProxyResponse::Reqwest(response))
+                        })
+                    })
+                } else {
+                    let url = url.clone();
+                    let target_for_log = target_for_log.clone();
+                    let method = method.clone();
+                    let headers = ordered_headers.clone();
+                    let extensions = extensions.clone();
+                    let body = body_bytes.clone();
+                    let upstream_proxy_url = upstream_proxy_url.clone();
+                    Box::new(move || {
+                        let url = url.clone();
+                        let target_for_log = target_for_log.clone();
+                        let method = method.clone();
+                        let headers = headers.clone();
+                        let extensions = extensions.clone();
+                        let body = body.clone();
+                        let upstream_proxy_url = upstream_proxy_url.clone();
+                        Box::pin(async move {
+                            let uri: http::Uri = url.parse().map_err(|e| {
+                                ProxyError::ForwardFailed(format!(
+                                    "Invalid upstream URL ({target_for_log}): {e}"
+                                ))
+                            })?;
+                            super::hyper_client::send_request(
+                                uri,
+                                &target_for_log,
+                                method,
+                                headers,
+                                extensions,
+                                body,
+                                timeout,
+                                upstream_proxy_url.as_deref(),
+                            )
+                            .await
+                        })
+                    })
+                };
+            Some(StreamReconnector::new(connect, first_byte_timeout))
+        } else {
+            None
+        };
+
         // 发送请求
         let response = if is_socks_proxy || !preserve_exact_header_case {
             // OpenAI / Copilot / Codex 类后端不依赖原始 header 大小写；走 reqwest
@@ -2301,7 +2414,12 @@ impl RequestForwarder {
                     response = self.validate_responses_stream_start(response).await?;
                 }
             }
-            Ok((response, resolved_claude_api_format, outbound_model))
+            Ok((
+                response,
+                resolved_claude_api_format,
+                outbound_model,
+                stream_reconnect,
+            ))
         } else {
             let status_code = status.as_u16();
             // 错误响应同样可能被上游压缩（content-encoding）。reqwest 未启用任何

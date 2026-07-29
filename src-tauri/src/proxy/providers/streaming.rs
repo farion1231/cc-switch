@@ -627,13 +627,14 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                     }
                 }
                 Err(e) => {
-                    log::error!("Stream error: {e}");
+                    let chain = crate::proxy::error::error_chain_message(&e);
+                    log::error!("Stream error: {chain}");
                     stream_ended_with_error = true;
                     let error_event = json!({
                         "type": "error",
                         "error": {
                             "type": "stream_error",
-                            "message": format!("Stream error: {e}")
+                            "message": format!("Stream error: {chain}")
                         }
                     });
                     let sse_data = format!("event: error\ndata: {}\n\n",

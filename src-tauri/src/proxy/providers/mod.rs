@@ -31,6 +31,7 @@ pub mod streaming_codex_anthropic;
 pub mod streaming_codex_chat;
 pub mod streaming_gemini;
 pub mod streaming_responses;
+pub(crate) mod streaming_retry;
 pub mod transform;
 pub mod transform_codex_anthropic;
 pub mod transform_codex_chat;
