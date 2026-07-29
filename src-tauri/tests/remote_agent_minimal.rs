@@ -172,3 +172,46 @@ fn cross_workflows_accept_and_log_static_pie_artifacts() {
         );
     }
 }
+
+#[test]
+fn cross_workflows_inspect_elf_headers_instead_of_ldd_exit_status() {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("src-tauri 应位于仓库根目录下")
+        .to_path_buf();
+
+    // ldd 对 static PIE 可能返回成功，返回码不能证明存在动态加载器。直接检查 ELF 的
+    // INTERP 与 NEEDED 项既适用于 static PIE，也能在 x86_64 主机上验证 aarch64 产物。
+    for workflow in ["ci.yml", "release.yml"] {
+        let path = workspace_root
+            .join(".github")
+            .join("workflows")
+            .join(workflow);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("读取 {} 失败: {error}", path.display()));
+
+        assert!(
+            source.contains("verify_static_elf() {"),
+            "{workflow} 必须提供结构化 ELF 静态检查"
+        );
+        assert!(
+            source.contains("program_headers=$(readelf -l \"$binary\")")
+                && source.contains("dynamic_section=$(readelf -d \"$binary\")"),
+            "{workflow} 必须读取程序头和动态节"
+        );
+        assert!(
+            source.contains("grep -F 'INTERP' <<<\"$program_headers\"")
+                && source.contains("grep -F '(NEEDED)' <<<\"$dynamic_section\""),
+            "{workflow} 必须拒绝解释器与共享库依赖"
+        );
+        assert_eq!(
+            source.matches("verify_static_elf \"$").count(),
+            2,
+            "{workflow} 必须检查两个架构的 Agent"
+        );
+        assert!(
+            !source.contains("if ldd \"$X86\""),
+            "{workflow} 不得再用 ldd 返回码判断 static PIE"
+        );
+    }
+}

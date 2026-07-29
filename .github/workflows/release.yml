@@ -50,11 +50,24 @@ jobs:
           printf '%s\n%s\n' "$X86_FILE" "$ARM_FILE"
           grep -Eq "$STATIC_LINK_PATTERN" <<<"$X86_FILE"
           grep -Eq "$STATIC_LINK_PATTERN" <<<"$ARM_FILE"
-          if ldd "$X86" > /tmp/agent-ldd.txt 2>&1; then
-            echo 'x86_64 Agent unexpectedly has a dynamic loader' >&2
-            exit 1
-          fi
-          grep -Eq 'not a dynamic executable|statically linked' /tmp/agent-ldd.txt
+          # ldd 对 static PIE 可能返回 0；直接检查 ELF 结构，并覆盖无法在本机执行的 aarch64 产物。
+          verify_static_elf() {
+            local binary=$1
+            local program_headers
+            local dynamic_section
+            program_headers=$(readelf -l "$binary")
+            dynamic_section=$(readelf -d "$binary")
+            if grep -F 'INTERP' <<<"$program_headers" >/dev/null; then
+              echo "$binary unexpectedly has a program interpreter" >&2
+              exit 1
+            fi
+            if grep -F '(NEEDED)' <<<"$dynamic_section" >/dev/null; then
+              echo "$binary unexpectedly depends on shared libraries" >&2
+              exit 1
+            fi
+          }
+          verify_static_elf "$X86"
+          verify_static_elf "$ARM"
           mkdir -p agent-artifacts/linux-x86_64 agent-artifacts/linux-aarch64
           cp "$X86" agent-artifacts/linux-x86_64/cc-switch-agent
           cp "$ARM" agent-artifacts/linux-aarch64/cc-switch-agent
