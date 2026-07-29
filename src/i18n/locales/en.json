@@ -321,6 +321,7 @@
     "general": "General",
     "tabGeneral": "General",
     "tabAuth": "Auth",
+    "tabRemote": "Remote",
     "tabAdvanced": "Advanced",
     "tabProxy": "Routing",
     "authCenter": {
@@ -2996,6 +2997,42 @@
     },
     "suggestedDefaults": "Apply Suggested Defaults",
     "suggestedDefaultsHint": "Use this preset's recommended default model configuration"
+  },
+  "remote": {
+    "local": "Local",
+    "manage": "Manage servers",
+    "title": "Remote servers",
+    "description": "Connect to remote CC Switch installations using local OpenSSH configuration, keys, and ssh-agent.",
+    "add": "Add server",
+    "edit": "Edit server",
+    "empty": "No remote servers",
+    "emptyHint": "Add an SSH Host from ~/.ssh/config or provide connection overrides.",
+    "active": "Active",
+    "connect": "Connect",
+    "connectNamed": "Connect {{name}}",
+    "editNamed": "Edit {{name}}",
+    "deleteNamed": "Delete {{name}}",
+    "saved": "Server saved",
+    "test": "Test connection",
+    "testSucceeded": "Connected: {{os}} {{architecture}}",
+    "advanced": "Advanced options",
+    "formDescription": "Connection details stay on this computer and use OpenSSH authentication.",
+    "discovery": {
+      "title": "Servers in SSH config",
+      "empty": "No other configured servers found.",
+      "use": "Use",
+      "useNamed": "Use {{name}}"
+    },
+    "deleteTitle": "Delete server",
+    "deleteMessage": "Delete {{name}}?",
+    "fields": {
+      "name": "Name",
+      "hostAlias": "SSH Host",
+      "hostAliasHint": "Matches a Host entry in ~/.ssh/config.",
+      "username": "Username",
+      "port": "Port",
+      "identityFile": "Private key"
+    }
   },
   "subscription": {
     "title": "Subscription Quota",

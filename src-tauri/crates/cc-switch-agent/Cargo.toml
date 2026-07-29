@@ -1,0 +1,15 @@
+[package]
+name = "cc-switch-agent"
+version = "3.18.0"
+edition = "2021"
+rust-version = "1.85.0"
+publish = false
+
+[dependencies]
+cc-switch-core = { path = "../cc-switch-core" }
+cc-switch-protocol = { path = "../cc-switch-protocol" }
+serde_json = "1.0"
+thiserror = "2.0"
+
+[dev-dependencies]
+tempfile = "3"

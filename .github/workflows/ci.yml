@@ -11,6 +11,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  agent:
+    name: Static SSH Agent
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build static Linux Agents
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cross build --manifest-path src-tauri/Cargo.toml -p cc-switch-agent --release --target x86_64-unknown-linux-musl
+          cross build --manifest-path src-tauri/Cargo.toml -p cc-switch-agent --release --target aarch64-unknown-linux-musl
+
+      - name: Verify and collect Agent artifacts
+        shell: bash
+        run: |
+          set -euxo pipefail
+          X86=src-tauri/target/x86_64-unknown-linux-musl/release/cc-switch-agent
+          ARM=src-tauri/target/aarch64-unknown-linux-musl/release/cc-switch-agent
+          test -s "$X86"
+          test -s "$ARM"
+          file "$X86" | grep -q 'statically linked'
+          file "$ARM" | grep -q 'statically linked'
+          if ldd "$X86" > /tmp/agent-ldd.txt 2>&1; then
+            echo 'x86_64 Agent unexpectedly has a dynamic loader' >&2
+            exit 1
+          fi
+          grep -Eq 'not a dynamic executable|statically linked' /tmp/agent-ldd.txt
+          mkdir -p agent-artifacts/linux-x86_64 agent-artifacts/linux-aarch64
+          cp "$X86" agent-artifacts/linux-x86_64/cc-switch-agent
+          cp "$ARM" agent-artifacts/linux-aarch64/cc-switch-agent
+
+      - name: Upload static Agents
+        uses: actions/upload-artifact@v6
+        with:
+          name: cc-switch-linux-agents
+          path: agent-artifacts
+          if-no-files-found: error
+
   frontend:
     name: Frontend Checks
     runs-on: ubuntu-latest
@@ -55,6 +100,7 @@ jobs:
 
   backend:
     name: Backend Checks
+    needs: agent
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -63,6 +109,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Download static Agents
+        if: runner.os == 'Linux'
+        uses: actions/download-artifact@v7
+        with:
+          name: cc-switch-linux-agents
+          path: agent-artifacts
+
+      - name: Expose embedded Agent build inputs
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          echo "CC_SWITCH_AGENT_X86_64_PATH=$GITHUB_WORKSPACE/agent-artifacts/linux-x86_64/cc-switch-agent" >> "$GITHUB_ENV"
+          echo "CC_SWITCH_AGENT_AARCH64_PATH=$GITHUB_WORKSPACE/agent-artifacts/linux-aarch64/cc-switch-agent" >> "$GITHUB_ENV"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -96,10 +156,43 @@ jobs:
         run: mkdir -p dist
 
       - name: Check Rust formatting
-        run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
+        run: cargo fmt --all --check --manifest-path src-tauri/Cargo.toml
 
       - name: Clippy
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings
+
+      - name: Start clean SSH server
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/cc-switch-clean-key"
+          PUBLIC_KEY=$(cat "$RUNNER_TEMP/cc-switch-clean-key.pub")
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          docker run -d --name cc-switch-clean-sshd \
+            -p 127.0.0.1:22222:2222 \
+            -e PUID=1000 -e PGID=1000 -e TZ=UTC \
+            -e USER_NAME=ccswitch -e PUBLIC_KEY="$PUBLIC_KEY" \
+            lscr.io/linuxserver/openssh-server:latest
+          for attempt in $(seq 1 60); do
+            if ssh-keyscan -p 22222 127.0.0.1 >> "$HOME/.ssh/known_hosts" 2>/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              docker logs cc-switch-clean-sshd
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "CC_SWITCH_CLEAN_SSH_HOST=127.0.0.1" >> "$GITHUB_ENV"
+          echo "CC_SWITCH_CLEAN_SSH_USER=ccswitch" >> "$GITHUB_ENV"
+          echo "CC_SWITCH_CLEAN_SSH_PORT=22222" >> "$GITHUB_ENV"
+          echo "CC_SWITCH_CLEAN_SSH_KEY=$RUNNER_TEMP/cc-switch-clean-key" >> "$GITHUB_ENV"
 
       - name: Run tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        run: cargo test --manifest-path src-tauri/Cargo.toml --workspace --all-targets -j 1
+
+      - name: Stop clean SSH server
+        if: always() && runner.os == 'Linux'
+        run: docker rm -f cc-switch-clean-sshd

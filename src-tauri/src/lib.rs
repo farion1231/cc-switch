@@ -30,6 +30,7 @@ mod prompt_files;
 mod provider;
 mod provider_defaults;
 mod proxy;
+pub mod remote;
 mod services;
 mod session_manager;
 mod settings;
@@ -1088,6 +1089,21 @@ pub fn run() {
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
+            // SSH 远程运行时仅保存设备级连接元数据，与业务数据库和云同步隔离。
+            // 配置损坏时保留原文件并使用独立恢复文件，不能因此阻断本地模式启动。
+            let remote_runtime = crate::remote::runtime::RemoteRuntimeState::default_store()
+                .unwrap_or_else(|error| {
+                    log::error!("加载远程目标配置失败，将使用恢复文件: {error}");
+                    let fallback = crate::config::get_home_dir()
+                        .join(".cc-switch")
+                        .join("remote-targets.recovered.json");
+                    crate::remote::runtime::RemoteRuntimeState::new(
+                        crate::remote::target_store::RemoteTargetStore::at(fallback),
+                    )
+                    .expect("初始化远程运行时恢复文件失败")
+                });
+            app.manage(remote_runtime);
+
             // 初始化 SkillService
             let skill_service = SkillService::new();
             app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
@@ -1304,6 +1320,14 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::remote_discover_ssh_targets,
+            commands::remote_list_targets,
+            commands::remote_upsert_target,
+            commands::remote_test_target,
+            commands::remote_delete_target,
+            commands::remote_get_runtime_snapshot,
+            commands::remote_set_active_target,
+            commands::remote_invoke,
             commands::get_providers,
             commands::get_current_provider,
             commands::add_provider,

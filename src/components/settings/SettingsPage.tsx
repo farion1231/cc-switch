@@ -52,6 +52,7 @@ import { UsageDashboard } from "@/components/usage/UsageDashboard";
 import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
 import { CodexAuthSettings } from "@/components/settings/CodexAuthSettings";
+import { RemoteTargetsSettings } from "@/components/remote/RemoteTargetsSettings";
 import { useInstalledSkills } from "@/hooks/useSkills";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
@@ -224,13 +225,16 @@ export function SettingsPage({
           onValueChange={setActiveTab}
           className="flex flex-col h-full"
         >
-          <TabsList className="grid w-full grid-cols-6 mb-6 glass rounded-lg">
+          <TabsList className="grid w-full grid-cols-7 mb-6 glass rounded-lg">
             <TabsTrigger value="general">
               {t("settings.tabGeneral")}
             </TabsTrigger>
             <TabsTrigger value="proxy">{t("settings.tabProxy")}</TabsTrigger>
             <TabsTrigger value="auth">
               {t("settings.tabAuth", { defaultValue: "认证" })}
+            </TabsTrigger>
+            <TabsTrigger value="remote">
+              {t("settings.tabRemote", { defaultValue: "远程" })}
             </TabsTrigger>
             <TabsTrigger value="advanced">
               {t("settings.tabAdvanced")}
@@ -310,6 +314,11 @@ export function SettingsPage({
                 >
                   <AuthCenterPanel />
                 </motion.div>
+              </TabsContent>
+
+              <TabsContent value="remote" className="mt-0 pb-4">
+                {/* 远程目标属于本机连接元数据，不跟随当前运行目标或通用设置保存。 */}
+                <RemoteTargetsSettings />
               </TabsContent>
 
               <TabsContent value="advanced" className="space-y-6 mt-0 pb-4">

@@ -1,4 +1,6 @@
 node_modules/
+# pnpm 在部分本地配置下把内容寻址缓存放到仓库根目录，不应进入版本控制。
+/.pnpm-store/
 dist/
 release/
 .DS_Store

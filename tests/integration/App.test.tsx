@@ -128,6 +128,22 @@ vi.mock("@/components/AppSwitcher", () => ({
   ),
 }));
 
+// 远程运行时在 App 集成测试中只验证导航接线，连接状态和下拉行为由组件测试覆盖。
+vi.mock("@/components/remote/RuntimeTargetSwitcher", () => ({
+  RuntimeTargetSwitcher: ({ onManage }: { onManage: () => void }) => (
+    <button onClick={onManage}>runtime-manage</button>
+  ),
+}));
+
+// App 用例只关心导航参数，设置页内部的数据加载和标签渲染由 SettingsPage 集成测试覆盖。
+vi.mock("@/components/settings/SettingsPage", () => ({
+  SettingsPage: ({ defaultTab }: { defaultTab?: string }) => (
+    <div data-testid="settings-default-tab">
+      settings.tab{defaultTab === "remote" ? "Remote" : "General"}
+    </div>
+  ),
+}));
+
 vi.mock("@/components/UpdateBadge", () => ({
   UpdateBadge: ({ onClick }: any) => (
     <button onClick={onClick}>update-badge</button>
@@ -161,24 +177,32 @@ describe("App integration with MSW", () => {
     resetProviderState();
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
+    // App 会持久化最后页面；每个用例必须从供应商页启动，避免导航测试污染后续流程。
+    localStorage.setItem("cc-switch-last-view", "providers");
   });
 
   it("covers basic provider flows via real hooks", async () => {
     const { default: App } = await import("@/App");
     renderApp(App);
 
-    await waitFor(() =>
+    await waitFor(() => {
       expect(screen.getByTestId("provider-list").textContent).toContain(
         "claude-1",
-      ),
-    );
+      );
+      expect(screen.getByTestId("current-provider")).toHaveTextContent(
+        "claude-1",
+      );
+    });
 
     fireEvent.click(screen.getByText("switch-codex"));
-    await waitFor(() =>
+    await waitFor(() => {
       expect(screen.getByTestId("provider-list").textContent).toContain(
         "codex-1",
-      ),
-    );
+      );
+      expect(screen.getByTestId("current-provider")).toHaveTextContent(
+        "codex-1",
+      );
+    });
 
     fireEvent.click(screen.getByText("usage"));
     expect(screen.getByTestId("usage-modal")).toBeInTheDocument();
@@ -218,7 +242,19 @@ describe("App integration with MSW", () => {
 
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
-  });
+  }, 30_000);
+
+  it("opens the remote server settings from the runtime switcher", async () => {
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await screen.findByText("runtime-manage");
+    fireEvent.click(screen.getByText("runtime-manage"));
+
+    await waitFor(() => {
+      expect(screen.getByText("settings.tabRemote")).toBeInTheDocument();
+    });
+  }, 15_000);
 
   it("shows toast when auto sync fails in background", async () => {
     const { default: App } = await import("@/App");

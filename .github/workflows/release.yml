@@ -13,9 +13,58 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  agent-artifacts:
+    name: Build static SSH Agents
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build static Linux Agents
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cross build --manifest-path src-tauri/Cargo.toml -p cc-switch-agent --release --target x86_64-unknown-linux-musl
+          cross build --manifest-path src-tauri/Cargo.toml -p cc-switch-agent --release --target aarch64-unknown-linux-musl
+
+      - name: Verify and collect Agent artifacts
+        shell: bash
+        run: |
+          set -euxo pipefail
+          X86=src-tauri/target/x86_64-unknown-linux-musl/release/cc-switch-agent
+          ARM=src-tauri/target/aarch64-unknown-linux-musl/release/cc-switch-agent
+          test -s "$X86"
+          test -s "$ARM"
+          file "$X86" | grep -q 'statically linked'
+          file "$ARM" | grep -q 'statically linked'
+          if ldd "$X86" > /tmp/agent-ldd.txt 2>&1; then
+            echo 'x86_64 Agent unexpectedly has a dynamic loader' >&2
+            exit 1
+          fi
+          grep -Eq 'not a dynamic executable|statically linked' /tmp/agent-ldd.txt
+          mkdir -p agent-artifacts/linux-x86_64 agent-artifacts/linux-aarch64
+          cp "$X86" agent-artifacts/linux-x86_64/cc-switch-agent
+          cp "$ARM" agent-artifacts/linux-aarch64/cc-switch-agent
+
+      - name: Upload static Agents
+        uses: actions/upload-artifact@v6
+        with:
+          name: cc-switch-linux-agents
+          path: agent-artifacts
+          if-no-files-found: error
+
   release:
+    needs: agent-artifacts
     runs-on: ${{ matrix.os }}
     environment: release
+    env:
+      CC_SWITCH_AGENT_X86_64_PATH: ${{ github.workspace }}/agent-artifacts/linux-x86_64/cc-switch-agent
+      CC_SWITCH_AGENT_AARCH64_PATH: ${{ github.workspace }}/agent-artifacts/linux-aarch64/cc-switch-agent
     strategy:
       fail-fast: false
       matrix:
@@ -31,6 +80,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Download static Agents
+        uses: actions/download-artifact@v7
+        with:
+          name: cc-switch-linux-agents
+          path: agent-artifacts
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
