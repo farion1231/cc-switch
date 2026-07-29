@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use rusqlite::{params, Connection};
 use serde_json::json;
 use std::collections::HashMap;
-use tempfile::NamedTempFile;
+use tempfile::{tempdir, NamedTempFile};
 
 const LEGACY_SCHEMA_SQL: &str = r#"
     CREATE TABLE providers (
@@ -51,6 +51,39 @@ const LEGACY_SCHEMA_SQL: &str = r#"
         value TEXT
     );
 "#;
+
+#[cfg(unix)]
+#[test]
+#[serial_test::serial]
+fn init_sets_private_database_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+    let temp = tempdir().expect("tempdir");
+    let db_path = temp.path().join(".cc-switch").join("cc-switch.db");
+    std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+
+    let _db = Database::init().expect("init db");
+
+    let dir_mode = std::fs::metadata(db_path.parent().expect("db parent"))
+        .expect("db parent metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(dir_mode, 0o700);
+
+    let file_mode = std::fs::metadata(&db_path)
+        .expect("db metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(file_mode, 0o600);
+
+    match old_test_home {
+        Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+        None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+    }
+}
 
 // v3.8.x（schema v1）的真实表结构快照：用于验证从 v3.8.* 升级到当前版本的迁移链路
 // 参考：tag v3.8.3 的 src-tauri/src/database/schema.rs
