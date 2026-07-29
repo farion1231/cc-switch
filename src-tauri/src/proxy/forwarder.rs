@@ -28,7 +28,7 @@ use crate::proxy::providers::copilot_auth::CopilotAuthManager;
 use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
 use crate::{
     app_config::AppType,
-    provider::{LocalProxyRequestOverrides, Provider},
+    provider::{ClaudeDesktopMode, LocalProxyRequestOverrides, Provider},
 };
 use bytes::Bytes;
 use futures::StreamExt;
@@ -140,12 +140,21 @@ pub struct RequestForwarder {
     non_streaming_timeout: std::time::Duration,
     /// 流式请求响应头等待超时（秒）
     streaming_first_byte_timeout: std::time::Duration,
+    /// 是否启用自动故障转移；启用时即使候选链只有一家也必须经过熔断器。
+    auto_failover_enabled: bool,
     /// 单个客户端请求最多尝试的 provider 数。
     ///
     /// 由 `AppProxyConfig.max_retries` (UI: "请求失败时的重试次数, 0-10") 派生：
     /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
     /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
     max_attempts: usize,
+    /// 模型层级路由命中的目标 Provider id（None 表示本请求未走层级路由）。
+    ///
+    /// 转发时仅对该 Provider 的请求体副本应用 `routing_model_override`，
+    /// 故障转移队列中的其它 Provider 仍用客户端原始别名（保留各自的模型映射）。
+    routed_provider_id: Option<String>,
+    /// 层级路由改写后的上游模型名（与 `routed_provider_id` 同时出现）。
+    routing_model_override: Option<String>,
 }
 
 impl RequestForwarder {
@@ -212,7 +221,10 @@ impl RequestForwarder {
         rectifier_config: RectifierConfig,
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
+        auto_failover_enabled: bool,
         max_retries: u32,
+        routed_provider_id: Option<String>,
+        routing_model_override: Option<String>,
     ) -> Self {
         // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
         // saturating_add 防止 u32::MAX + 1 溢出。
@@ -235,7 +247,10 @@ impl RequestForwarder {
             streaming_first_byte_timeout: std::time::Duration::from_secs(
                 streaming_first_byte_timeout,
             ),
+            auto_failover_enabled,
             max_attempts,
+            routed_provider_id,
+            routing_model_override,
         }
     }
 
@@ -409,8 +424,9 @@ impl RequestForwarder {
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
 
-        // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
-        let bypass_circuit_breaker = providers.len() == 1;
+        // 故障转移关闭时跳过熔断器；开启时即使链中只有一家也必须获取放行许可。
+        // 层级路由目标可能是基础队列全熔断后的唯一候选，不能按链长误判为直连模式。
+        let bypass_circuit_breaker = !self.auto_failover_enabled;
 
         // 依次尝试每个供应商
         for provider in providers.iter() {
@@ -432,7 +448,7 @@ impl RequestForwarder {
             }
 
             // 发起请求前先获取熔断器放行许可（HalfOpen 会占用探测名额）
-            // 单 Provider 场景下跳过此检查，避免熔断器阻塞所有请求
+            // 仅在故障转移关闭时跳过，避免直连模式被历史熔断状态阻塞。
             let (allowed, used_half_open_permit) = if bypass_circuit_breaker {
                 (true, false)
             } else {
@@ -510,8 +526,9 @@ impl RequestForwarder {
                         let mut status = self.status.write().await;
                         status.success_requests += 1;
                         status.last_error = None;
-                        let should_switch =
-                            self.current_provider_id_at_start.as_str() != provider.id.as_str();
+                        let should_switch = self.current_provider_id_at_start.as_str()
+                            != provider.id.as_str()
+                            && self.routed_provider_id.is_none();
                         if should_switch {
                             status.failover_count += 1;
 
@@ -615,7 +632,8 @@ impl RequestForwarder {
                                         status.last_error = None;
                                         let should_switch =
                                             self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
+                                                != provider.id.as_str()
+                                                && self.routed_provider_id.is_none();
                                         if should_switch {
                                             status.failover_count += 1;
                                             let fm = self.failover_manager.clone();
@@ -761,7 +779,8 @@ impl RequestForwarder {
                                             status.last_error = None;
                                             let should_switch =
                                                 self.current_provider_id_at_start.as_str()
-                                                    != provider.id.as_str();
+                                                    != provider.id.as_str()
+                                                    && self.routed_provider_id.is_none();
                                             if should_switch {
                                                 status.failover_count += 1;
 
@@ -925,7 +944,8 @@ impl RequestForwarder {
                                         status.last_error = None;
                                         let should_switch =
                                             self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
+                                                != provider.id.as_str()
+                                                && self.routed_provider_id.is_none();
                                         if should_switch {
                                             status.failover_count += 1;
                                             let fm = self.failover_manager.clone();
@@ -1159,12 +1179,45 @@ impl RequestForwarder {
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
+        let desktop_tier_routed_provider = matches!(app_type, AppType::ClaudeDesktop)
+            && self.routed_provider_id.as_deref() == Some(provider.id.as_str())
+            && self
+                .routing_model_override
+                .as_deref()
+                .is_some_and(|model| !model.is_empty());
         let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
-            crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
-                .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+            if desktop_tier_routed_provider {
+                let routed_body = apply_tier_routing_model_override(
+                    body.clone(),
+                    provider.id.as_str(),
+                    self.routed_provider_id.as_deref(),
+                    self.routing_model_override.as_deref(),
+                );
+                crate::claude_desktop_config::prepare_proxy_request_with_upstream_model(
+                    routed_body,
+                    provider,
+                )
+            } else if matches!(
+                crate::claude_desktop_config::provider_mode(provider),
+                ClaudeDesktopMode::Direct
+            ) {
+                crate::claude_desktop_config::prepare_proxy_request_with_upstream_model(
+                    body.clone(),
+                    provider,
+                )
+            } else {
+                crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
+                    .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+            }
         } else {
-            let (mapped_body, _original_model, _mapped_model) =
+            let (mut mapped_body, _original_model, _mapped_model) =
                 super::model_mapper::apply_model_mapping(body.clone(), provider);
+            mapped_body = apply_tier_routing_model_override(
+                mapped_body,
+                provider.id.as_str(),
+                self.routed_provider_id.as_deref(),
+                self.routing_model_override.as_deref(),
+            );
             mapped_body
         };
 
@@ -3565,6 +3618,26 @@ fn value_for_log(value: &Value) -> String {
     }
 }
 
+fn apply_tier_routing_model_override(
+    mut body: Value,
+    provider_id: &str,
+    routed_provider_id: Option<&str>,
+    model_override: Option<&str>,
+) -> Value {
+    let Some(model) = model_override
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    else {
+        return body;
+    };
+    if routed_provider_id != Some(provider_id) {
+        return body;
+    }
+
+    body["model"] = serde_json::json!(model);
+    body
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3603,6 +3676,8 @@ mod tests {
         streaming_first_byte_timeout: Duration,
     ) -> RequestForwarder {
         let db = Arc::new(Database::memory().expect("memory db"));
+        db.save_provider("claude", &test_provider_with_type(None))
+            .expect("save default test provider");
 
         RequestForwarder {
             router: Arc::new(ProviderRouter::new(db.clone())),
@@ -3620,7 +3695,53 @@ mod tests {
             copilot_optimizer_config: CopilotOptimizerConfig::default(),
             non_streaming_timeout,
             streaming_first_byte_timeout,
+            auto_failover_enabled: false,
             max_attempts: 1,
+            routed_provider_id: None,
+            routing_model_override: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn single_provider_still_respects_circuit_breaker_when_failover_is_enabled() {
+        let mut forwarder = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
+        forwarder.auto_failover_enabled = true;
+        let provider = test_provider_with_type(None);
+
+        // Claude 的默认阈值为 8；把唯一候选打开后，转发器应在网络请求前拒绝它。
+        for _ in 0..8 {
+            forwarder
+                .router
+                .record_result(
+                    &provider.id,
+                    "claude",
+                    false,
+                    false,
+                    Some("failed".to_string()),
+                )
+                .await
+                .expect("record circuit failure");
+        }
+
+        let result = forwarder
+            .forward_with_retry_inner(
+                &AppType::Claude,
+                http::Method::POST,
+                "/v1/messages",
+                json!({ "model": "claude-opus-4-8", "messages": [] }),
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![provider],
+            )
+            .await;
+
+        match result {
+            Err(error) => assert!(
+                matches!(error.error, ProxyError::NoAvailableProvider),
+                "unexpected error: {}",
+                error.error
+            ),
+            Ok(_) => panic!("circuit-open provider must not be attempted"),
         }
     }
 
@@ -3650,6 +3771,28 @@ mod tests {
         assert_eq!(code, log_fwd::PROVIDER_FAILED_RETRY);
         assert!(message.contains("继续尝试下一个 (1/3)"));
         assert!(message.contains("请求超时"));
+    }
+
+    #[test]
+    fn tier_routing_override_wins_over_provider_default_model_mapping() {
+        let mut provider = test_provider_with_type(None);
+        provider.settings_config = json!({
+            "env": {
+                "ANTHROPIC_MODEL": "provider-default-model"
+            }
+        });
+
+        let body = json!({"model": "claude-opus-4-8", "messages": []});
+        let (mapped_body, _, _) = crate::proxy::model_mapper::apply_model_mapping(body, &provider);
+        assert_eq!(mapped_body["model"], json!("provider-default-model"));
+
+        let routed_body = apply_tier_routing_model_override(
+            mapped_body,
+            "provider-1",
+            Some("provider-1"),
+            Some("glm-5.2"),
+        );
+        assert_eq!(routed_body["model"], json!("glm-5.2"));
     }
 
     #[test]

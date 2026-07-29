@@ -190,6 +190,27 @@ fn plan_toggles(
     (toggles, dangling)
 }
 
+/// 关闭某 scope 下所有 app 的 tier routing 开关。
+///
+/// 切换项目时调用：tier routing 依赖 takeover，而 takeover 已被
+/// [`ProxyService::disable_takeover_for_app_sync`] 关闭；此时若不同步关闭 tier
+/// routing 配置，会留下「配置显示开、live 却未生效」的脏状态。只翻 per-app 开关，
+/// 不动总开关 `enabled`（无 app 启用时它无害）。返回是否真的改动了配置。
+fn disable_tier_routing_for_scope(
+    config: &mut crate::proxy::types::ModelTierRoutingConfig,
+    scope: ProfileScope,
+) -> bool {
+    let mut changed = false;
+    for app in scope.apps() {
+        let key = app.as_str();
+        if config.is_enabled_for_app(key) {
+            config.enabled_apps.insert(key.to_string(), false);
+            changed = true;
+        }
+    }
+    changed
+}
+
 pub struct ProfileService;
 
 impl ProfileService {
@@ -454,6 +475,22 @@ impl ProfileService {
             }
         }
 
+        // 切项目 = 退出代理环境。takeover 已在上面逐 app 关闭；tier routing 骑在
+        // takeover 上，同步关掉该 scope 的 tier routing 配置，避免「开关显示开、
+        // live 却未生效」的脏状态。best-effort：失败只告警，不阻塞项目切换（与上面
+        // disable_takeover 同级）。set_model_tier_routing_config 是纯 DB 写，不会
+        // 重新触发 takeover。
+        if let Ok(mut tier_config) = state.db.get_model_tier_routing_config() {
+            if disable_tier_routing_for_scope(&mut tier_config, scope) {
+                if let Err(e) = state.db.set_model_tier_routing_config(&tier_config) {
+                    warnings.push(format!(
+                        "[{}] clear model tier routing on profile switch failed: {e}",
+                        scope.as_str()
+                    ));
+                }
+            }
+        }
+
         state
             .db
             .set_current_profile_id(scope.as_str(), Some(profile_id))?;
@@ -471,6 +508,45 @@ mod tests {
 
     fn ids(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn disable_tier_routing_for_scope_only_touches_scope_apps() {
+        use crate::proxy::types::ModelTierRoutingConfig;
+
+        let mut config = ModelTierRoutingConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        config.enabled_apps.insert("claude".to_string(), true);
+        config.enabled_apps.insert("codex".to_string(), true);
+
+        // 切 Claude 项目 → 只关 claude，codex 不受影响
+        assert!(disable_tier_routing_for_scope(
+            &mut config,
+            ProfileScope::Claude
+        ));
+        assert!(!config.is_enabled_for_app("claude"));
+        assert!(config.is_enabled_for_app("codex"));
+
+        // 已关再切 → 无改动（幂等）
+        assert!(!disable_tier_routing_for_scope(
+            &mut config,
+            ProfileScope::Claude
+        ));
+
+        // legacy 兼容：enabled_apps 无 claude 键时 is_enabled_for_app 视 claude 为开，
+        // 切项目也必须显式把它关掉（写入 false，而非依赖默认）。
+        let mut legacy = ModelTierRoutingConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        assert!(disable_tier_routing_for_scope(
+            &mut legacy,
+            ProfileScope::Claude
+        ));
+        assert!(!legacy.is_enabled_for_app("claude"));
+        assert_eq!(legacy.enabled_apps.get("claude"), Some(&false));
     }
 
     #[test]

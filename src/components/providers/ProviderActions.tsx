@@ -36,7 +36,7 @@ interface ProviderActionsProps {
   isAutoFailoverEnabled?: boolean;
   isInFailoverQueue?: boolean;
   onToggleFailover?: (enabled: boolean) => void;
-  isOfficialBlockedByProxy?: boolean;
+  isNonRoutableBlockedByProxy?: boolean;
   // Hermes v12+ providers: dict overlay — edit/delete must go through Web UI
   isReadOnly?: boolean;
   // OpenClaw: default model
@@ -75,7 +75,7 @@ export function ProviderActions({
   isAutoFailoverEnabled = false,
   isInFailoverQueue = false,
   onToggleFailover,
-  isOfficialBlockedByProxy = false,
+  isNonRoutableBlockedByProxy = false,
   isReadOnly = false,
   // OpenClaw: default model
   isDefaultModel = false,
@@ -196,7 +196,7 @@ export function ProviderActions({
       };
     }
 
-    if (isOfficialBlockedByProxy) {
+    if (isNonRoutableBlockedByProxy) {
       return {
         disabled: true,
         variant: "default" as const,

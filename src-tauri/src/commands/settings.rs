@@ -692,6 +692,70 @@ pub async fn set_copilot_optimizer_config(
     Ok(true)
 }
 
+/// 获取模型层级路由配置
+#[tauri::command]
+pub async fn get_model_tier_routing_config(
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<crate::proxy::types::ModelTierRoutingConfig, String> {
+    state
+        .db
+        .get_model_tier_routing_config()
+        .map_err(|e| e.to_string())
+}
+
+/// 设置模型层级路由配置
+#[tauri::command]
+pub async fn set_model_tier_routing_config(
+    state: tauri::State<'_, crate::AppState>,
+    config: crate::proxy::types::ModelTierRoutingConfig,
+) -> Result<bool, String> {
+    let previous = state.db.get_model_tier_routing_config().unwrap_or_default();
+    state
+        .db
+        .set_model_tier_routing_config(&config)
+        .map_err(|e| e.to_string())?;
+
+    // 配置变更后，若 Claude 已被代理接管，强制重写一次 live 配置，让新的
+    // `*_MODEL_NAME` 等字段即时同步到 settings.json（首页编辑即生效）。
+    if let Err(e) = state
+        .proxy_service
+        .refresh_takeover_if_active(&crate::app_config::AppType::Claude)
+        .await
+    {
+        log::warn!("[ModelTierRouting] 刷新 Claude 接管 live 配置失败: {e}");
+    }
+
+    if previous.is_enabled_for_app("claude-desktop") || config.is_enabled_for_app("claude-desktop")
+    {
+        if let Err(e) = crate::services::ProviderService::sync_current_provider_for_app(
+            &state,
+            crate::app_config::AppType::ClaudeDesktop,
+        ) {
+            log::warn!(
+                "[ModelTierRouting] 刷新 Claude Desktop profile 失败，回滚模型层级路由配置: {e}"
+            );
+            if let Err(rollback_err) = state.db.set_model_tier_routing_config(&previous) {
+                log::error!("[ModelTierRouting] 回滚模型层级路由配置失败: {rollback_err}");
+                return Err(format!(
+                    "刷新 Claude Desktop profile 失败: {e}; 回滚配置失败: {rollback_err}"
+                ));
+            }
+            if let Err(refresh_err) = state
+                .proxy_service
+                .refresh_takeover_if_active(&crate::app_config::AppType::Claude)
+                .await
+            {
+                log::warn!(
+                    "[ModelTierRouting] 回滚后刷新 Claude 接管 live 配置失败: {refresh_err}"
+                );
+            }
+            return Err(format!("刷新 Claude Desktop profile 失败: {e}"));
+        }
+    }
+
+    Ok(true)
+}
+
 /// 获取日志配置
 #[tauri::command]
 pub async fn get_log_config(

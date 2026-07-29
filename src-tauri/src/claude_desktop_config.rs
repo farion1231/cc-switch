@@ -10,6 +10,7 @@ use crate::database::Database;
 use crate::database::CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID;
 use crate::error::AppError;
 use crate::provider::{ClaudeDesktopMode, Provider};
+use crate::proxy::types::ModelTierRoutingConfig;
 
 pub const PROFILE_ID: &str = "00000000-0000-4000-8000-000000157210";
 pub const PROFILE_NAME: &str = "CC Switch";
@@ -70,6 +71,17 @@ pub const DEFAULT_PROXY_ROUTES: &[ClaudeDesktopDefaultRoute] = &[
         env_key: "ANTHROPIC_DEFAULT_FABLE_MODEL",
         supports_1m: true,
     },
+];
+
+const MODEL_TIER_ROUTING_APP: &str = "claude-desktop";
+// tier → route_id。route_id 必须取自 DEFAULT_PROXY_ROUTES：二者不一致时 tier 路由 spec
+// 无法按 name 覆盖 fallback（见 overlay_tier_routing_model_specs），同档会在 profile 里
+// 留下两个模型条目。对齐由 desktop_tier_routes_stay_aligned_with_default_proxy_routes 守护。
+const DESKTOP_TIER_ROUTES: &[(&str, &str)] = &[
+    ("sonnet", "claude-sonnet-5"),
+    ("opus", CURRENT_OPUS_ROUTE_ID),
+    ("haiku", "claude-haiku-4-5"),
+    ("fable", "claude-fable-5"),
 ];
 
 #[derive(Debug, Clone)]
@@ -179,19 +191,29 @@ pub fn get_status(db: &Database, proxy_running: bool) -> Result<ClaudeDesktopSta
     .ok()
     .flatten()
     .and_then(|id| db.get_provider_by_id(&id, "claude-desktop").ok().flatten());
-    let mode = current_provider.as_ref().map(provider_mode);
-    let expected_base_url = match mode {
-        Some(ClaudeDesktopMode::Proxy) => proxy_gateway_base_url_from_db(db).ok(),
-        Some(ClaudeDesktopMode::Direct) => current_provider
-            .as_ref()
-            .and_then(|provider| direct_gateway_credentials(provider).ok())
-            .map(|credentials| credentials.base_url),
-        None => None,
+    let use_tier_routing_profile = has_desktop_tier_routing_profile(db)?;
+    let mode = if use_tier_routing_profile {
+        Some(ClaudeDesktopMode::Proxy)
+    } else {
+        current_provider.as_ref().map(provider_mode)
     };
-    let missing_route_mappings = current_provider.as_ref().is_some_and(|provider| {
-        matches!(provider_mode(provider), ClaudeDesktopMode::Proxy)
-            && proxy_model_routes(provider).is_err()
-    });
+    let expected_base_url = if use_tier_routing_profile {
+        proxy_gateway_base_url_from_db(db).ok()
+    } else {
+        match mode {
+            Some(ClaudeDesktopMode::Proxy) => proxy_gateway_base_url_from_db(db).ok(),
+            Some(ClaudeDesktopMode::Direct) => current_provider
+                .as_ref()
+                .and_then(|provider| direct_gateway_credentials(provider).ok())
+                .map(|credentials| credentials.base_url),
+            None => None,
+        }
+    };
+    let missing_route_mappings = !use_tier_routing_profile
+        && current_provider.as_ref().is_some_and(|provider| {
+            matches!(provider_mode(provider), ClaudeDesktopMode::Proxy)
+                && proxy_model_routes(provider).is_err()
+        });
 
     Ok(ClaudeDesktopStatus {
         supported: true,
@@ -649,16 +671,39 @@ fn next_catalog_safe_route_id(
 
 pub fn model_list_response(provider: &Provider) -> Result<Value, AppError> {
     let routes = proxy_model_routes(provider)?;
-    let data: Vec<Value> = routes
+    let model_specs = routes
         .iter()
-        .map(|route| {
-            let model_id = route.route_id.clone();
+        .map(|route| InferenceModelSpec {
+            name: route.route_id.clone(),
+            label_override: route.label_override.clone(),
+            supports_1m: route.supports_1m,
+        })
+        .collect::<Vec<_>>();
+    Ok(model_list_response_from_specs(&model_specs))
+}
+
+pub fn model_list_response_for_tier_routing(
+    db: &Database,
+    provider: &Provider,
+) -> Result<Option<Value>, AppError> {
+    let config = db.get_model_tier_routing_config()?;
+    let model_specs = desktop_tier_routing_model_specs(db, &config, provider)?;
+    if model_specs.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(model_list_response_from_specs(&model_specs)))
+}
+
+fn model_list_response_from_specs(model_specs: &[InferenceModelSpec]) -> Value {
+    let data: Vec<Value> = model_specs
+        .iter()
+        .map(|spec| {
             let mut item = json!({
                 "type": "model",
-                "id": model_id,
+                "id": spec.name.clone(),
                 "created_at": DEFAULT_CREATED_AT,
             });
-            if route.supports_1m {
+            if spec.supports_1m {
                 item["supports1m"] = json!(true);
             }
             item
@@ -675,12 +720,203 @@ pub fn model_list_response(provider: &Provider) -> Result<Value, AppError> {
         .and_then(Value::as_str)
         .map(str::to_string);
 
-    Ok(json!({
+    json!({
         "data": data,
         "has_more": false,
         "first_id": first_id,
         "last_id": last_id,
-    }))
+    })
+}
+
+fn configured_desktop_tier_routing_model_specs(
+    db: &Database,
+    config: &ModelTierRoutingConfig,
+) -> Result<Vec<InferenceModelSpec>, AppError> {
+    if !config.is_enabled_for_app(MODEL_TIER_ROUTING_APP) {
+        return Ok(Vec::new());
+    }
+
+    let Some(routes) = config.active_routes_for_app(MODEL_TIER_ROUTING_APP) else {
+        return Ok(Vec::new());
+    };
+
+    let mut specs = Vec::new();
+    for &(tier, route_id) in DESKTOP_TIER_ROUTES {
+        let Some(route) = routes.get(tier) else {
+            continue;
+        };
+        if route.provider_id.trim().is_empty() || route.model.trim().is_empty() {
+            continue;
+        }
+        let Some(provider) = db.get_provider_by_id(&route.provider_id, MODEL_TIER_ROUTING_APP)?
+        else {
+            continue;
+        };
+        if !provider.supports_routing() {
+            continue;
+        }
+        validate_tier_routing_target_provider(&provider)?;
+
+        let model = route.model.trim();
+        let display_name = route.display_name.trim();
+        let label_override = (!display_name.is_empty()).then(|| display_name.to_string());
+        specs.push(InferenceModelSpec {
+            name: route_id.to_string(),
+            label_override,
+            supports_1m: route.supports_1m || model_has_one_m_marker(model),
+        });
+    }
+    Ok(specs)
+}
+
+fn desktop_tier_routing_model_specs(
+    db: &Database,
+    config: &ModelTierRoutingConfig,
+    provider: &Provider,
+) -> Result<Vec<InferenceModelSpec>, AppError> {
+    let configured_specs = configured_desktop_tier_routing_model_specs(db, config)?;
+    if configured_specs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let fallback_specs = desktop_tier_routing_fallback_model_specs(provider)?;
+    Ok(overlay_tier_routing_model_specs(
+        fallback_specs,
+        configured_specs,
+    ))
+}
+
+fn desktop_tier_routing_fallback_model_specs(
+    provider: &Provider,
+) -> Result<Vec<InferenceModelSpec>, AppError> {
+    // 未配置 tier 只能回退到本地代理实际可转发的当前 Provider。官方 1P Provider
+    // 没有可提取的 base_url/凭据；若在这里只因 models 为空而补齐默认四档，Desktop
+    // 会展示最终必然转发失败的模型。其它缺少代理凭据的脏配置同样不应成为 fallback。
+    if !provider.supports_routing() {
+        return Ok(Vec::new());
+    }
+    if let Err(error) = validate_tier_routing_target_provider(provider) {
+        log::warn!(
+            "[ClaudeDesktop] 当前 Provider {} 无法作为层级路由 fallback，已仅发布显式配置的 tier: {error}",
+            provider.id
+        );
+        return Ok(Vec::new());
+    }
+
+    match provider_mode(provider) {
+        ClaudeDesktopMode::Direct => {
+            let specs = direct_inference_model_specs(provider)?;
+            if specs.is_empty() {
+                Ok(default_desktop_model_specs())
+            } else {
+                Ok(specs)
+            }
+        }
+        ClaudeDesktopMode::Proxy => proxy_inference_model_specs(provider),
+    }
+}
+
+fn proxy_inference_model_specs(provider: &Provider) -> Result<Vec<InferenceModelSpec>, AppError> {
+    Ok(proxy_model_routes(provider)?
+        .iter()
+        .map(|route| InferenceModelSpec {
+            name: route.route_id.clone(),
+            label_override: route.label_override.clone(),
+            supports_1m: route.supports_1m,
+        })
+        .collect())
+}
+
+fn default_desktop_model_specs() -> Vec<InferenceModelSpec> {
+    DEFAULT_PROXY_ROUTES
+        .iter()
+        .map(|route| InferenceModelSpec {
+            name: route.route_id.to_string(),
+            label_override: None,
+            supports_1m: route.supports_1m,
+        })
+        .collect()
+}
+
+fn overlay_tier_routing_model_specs(
+    mut fallback_specs: Vec<InferenceModelSpec>,
+    configured_specs: Vec<InferenceModelSpec>,
+) -> Vec<InferenceModelSpec> {
+    if fallback_specs.is_empty() {
+        return configured_specs;
+    }
+
+    for configured in configured_specs {
+        if let Some(existing) = fallback_specs
+            .iter_mut()
+            .find(|spec| spec.name == configured.name)
+        {
+            *existing = configured;
+        } else {
+            fallback_specs.push(configured);
+        }
+    }
+
+    fallback_specs
+}
+
+fn validate_tier_routing_target_provider(provider: &Provider) -> Result<(), AppError> {
+    if !provider.settings_config.is_object() {
+        return Err(AppError::localized(
+            "claude_desktop.provider.settings_not_object",
+            "Claude Desktop 本地路由供应商配置必须是 JSON 对象",
+            "Claude Desktop proxy provider configuration must be a JSON object",
+        ));
+    }
+
+    if let Some(meta) = provider.meta.as_ref() {
+        if let Some(api_format) = meta.api_format.as_deref() {
+            if !matches!(
+                api_format,
+                "" | "anthropic" | "openai_chat" | "openai_responses" | "gemini_native"
+            ) {
+                return Err(AppError::localized(
+                    "claude_desktop.provider.api_format_unsupported",
+                    format!("Claude Desktop 本地路由模式不支持 API 格式: {api_format}"),
+                    format!("Claude Desktop proxy mode does not support API format: {api_format}"),
+                ));
+            }
+        }
+    }
+
+    if !has_proxy_base_url_and_key(provider) {
+        return Err(AppError::localized(
+            "claude_desktop.provider.credentials_missing",
+            "Claude Desktop 本地路由供应商缺少 Base URL 或 API Key",
+            "Claude Desktop proxy provider is missing Base URL or API key",
+        ));
+    }
+
+    Ok(())
+}
+
+fn has_desktop_tier_routing_profile(db: &Database) -> Result<bool, AppError> {
+    let config = db.get_model_tier_routing_config()?;
+    Ok(!configured_desktop_tier_routing_model_specs(db, &config)?.is_empty())
+}
+
+fn model_has_one_m_marker(model: &str) -> bool {
+    let trimmed = model.trim();
+    let marker = ONE_M_CONTEXT_MARKER.as_bytes();
+    let bytes = trimmed.as_bytes();
+    bytes.len() >= marker.len() && bytes[bytes.len() - marker.len()..].eq_ignore_ascii_case(marker)
+}
+
+pub fn prepare_proxy_request_with_upstream_model(mut body: Value, provider: &Provider) -> Value {
+    let upstream_model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if should_normalize_mimo_anthropic_thinking_history(provider, &upstream_model) {
+        normalize_mimo_anthropic_thinking_history(&mut body);
+    }
+    body
 }
 
 pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<Value, AppError> {
@@ -938,11 +1174,14 @@ fn apply_provider_to_paths(
     provider: &Provider,
     paths: &ClaudeDesktopPaths,
 ) -> Result<(), AppError> {
-    if is_official_provider(provider) {
+    let use_tier_routing_profile = has_desktop_tier_routing_profile(db)?;
+    if is_official_provider(provider) && !use_tier_routing_profile {
         return restore_official_at_paths(paths);
     }
 
-    validate_provider(provider)?;
+    if !use_tier_routing_profile {
+        validate_provider(provider)?;
+    }
     with_rollback(paths, |paths| {
         apply_provider_to_paths_inner(db, provider, paths)
     })
@@ -976,28 +1215,32 @@ fn apply_provider_to_paths_inner(
     provider: &Provider,
     paths: &ClaudeDesktopPaths,
 ) -> Result<(), AppError> {
+    let tier_routing = db.get_model_tier_routing_config()?;
+    let tier_model_specs = desktop_tier_routing_model_specs(db, &tier_routing, provider)?;
     let profile = match provider_mode(provider) {
         ClaudeDesktopMode::Direct => {
-            let credentials = direct_gateway_credentials(provider)?;
-            let model_specs = direct_inference_model_specs(provider)?;
-            build_gateway_profile(
-                &credentials.base_url,
-                &credentials.api_key,
-                (!model_specs.is_empty()).then_some(model_specs.as_slice()),
-            )
+            if !tier_model_specs.is_empty() {
+                let base_url = proxy_gateway_base_url_from_db(db)?;
+                let api_key = get_or_create_gateway_token(db)?;
+                build_gateway_profile(&base_url, &api_key, Some(tier_model_specs.as_slice()))
+            } else {
+                let credentials = direct_gateway_credentials(provider)?;
+                let model_specs = direct_inference_model_specs(provider)?;
+                build_gateway_profile(
+                    &credentials.base_url,
+                    &credentials.api_key,
+                    (!model_specs.is_empty()).then_some(model_specs.as_slice()),
+                )
+            }
         }
         ClaudeDesktopMode::Proxy => {
             let base_url = proxy_gateway_base_url_from_db(db)?;
             let api_key = get_or_create_gateway_token(db)?;
-            let routes = proxy_model_routes(provider)?;
-            let model_specs = routes
-                .iter()
-                .map(|route| InferenceModelSpec {
-                    name: route.route_id.clone(),
-                    label_override: route.label_override.clone(),
-                    supports_1m: route.supports_1m,
-                })
-                .collect::<Vec<_>>();
+            let model_specs = if !tier_model_specs.is_empty() {
+                tier_model_specs
+            } else {
+                proxy_inference_model_specs(provider)?
+            };
             build_gateway_profile(&base_url, &api_key, Some(model_specs.as_slice()))
         }
     };
@@ -1351,6 +1594,13 @@ mod tests {
         futures::executor::block_on(db.update_proxy_config(config)).expect("update proxy config");
     }
 
+    fn find_model<'a>(models: &'a [Value], name: &str) -> &'a Value {
+        models
+            .iter()
+            .find(|model| model["name"] == json!(name) || model["id"] == json!(name))
+            .unwrap_or_else(|| panic!("missing model {name} in {models:?}"))
+    }
+
     fn direct_provider(id: &str) -> Provider {
         let mut provider = Provider::with_id(
             id.to_string(),
@@ -1581,6 +1831,348 @@ mod tests {
             json!([{ "name": "claude-sonnet-4-6", "labelOverride": "Kimi K2", "supports1m": true }])
         );
         assert!(!profile.to_string().contains("kimi-k2"));
+    }
+
+    #[test]
+    fn desktop_tier_routes_stay_aligned_with_default_proxy_routes() {
+        // tier 路由 spec 靠 name 覆盖 DEFAULT_PROXY_ROUTES 派生的 fallback，
+        // 故 DESKTOP_TIER_ROUTES 的每个 route_id 都必须在 DEFAULT_PROXY_ROUTES 里。
+        // 上游再 bump 模型版本时只改 DEFAULT_PROXY_ROUTES 一处，遗漏会被这里拦下。
+        for &(tier, route_id) in DESKTOP_TIER_ROUTES {
+            assert!(
+                DEFAULT_PROXY_ROUTES
+                    .iter()
+                    .any(|route| route.route_id == route_id),
+                "DESKTOP_TIER_ROUTES 的 {tier} 档 route_id={route_id} 不在 DEFAULT_PROXY_ROUTES 中，\
+                 二者必须对齐，否则 tier 路由覆盖 fallback 时同档会留下重复模型条目"
+            );
+        }
+    }
+
+    #[test]
+    fn claude_desktop_tier_routing_profile_uses_configured_routes() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let current_provider = direct_provider("direct-current");
+        let mut routed_provider = proxy_provider("zhipu");
+        routed_provider.category = Some("cn_official".to_string());
+        let db = test_db();
+        set_proxy_port(&db, 15721);
+        db.save_provider(MODEL_TIER_ROUTING_APP, &routed_provider)
+            .expect("save routed provider");
+
+        let mut enabled_apps = std::collections::HashMap::new();
+        enabled_apps.insert(MODEL_TIER_ROUTING_APP.to_string(), true);
+        let mut claude_desktop_routes = std::collections::HashMap::new();
+        claude_desktop_routes.insert(
+            "opus".to_string(),
+            crate::proxy::types::TierRoute {
+                provider_id: "zhipu".to_string(),
+                model: "glm-5.2[1m]".to_string(),
+                display_name: "GLM-5.2".to_string(),
+                ..Default::default()
+            },
+        );
+        claude_desktop_routes.insert(
+            "sonnet".to_string(),
+            crate::proxy::types::TierRoute {
+                provider_id: "missing".to_string(),
+                model: "should-not-appear".to_string(),
+                display_name: "Missing".to_string(),
+                ..Default::default()
+            },
+        );
+        let mut routes = std::collections::HashMap::new();
+        routes.insert(MODEL_TIER_ROUTING_APP.to_string(), claude_desktop_routes);
+        db.set_model_tier_routing_config(&crate::proxy::types::ModelTierRoutingConfig {
+            enabled: true,
+            enabled_apps,
+            routes,
+            ..Default::default()
+        })
+        .expect("set tier config");
+
+        apply_provider_to_paths(&db, &current_provider, &paths)
+            .expect("apply tier routing profile");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(
+            profile["inferenceGatewayBaseUrl"],
+            json!("http://127.0.0.1:15721/claude-desktop")
+        );
+        let models = profile["inferenceModels"]
+            .as_array()
+            .expect("inferenceModels array");
+        assert_eq!(models.len(), 4);
+        assert_eq!(
+            find_model(models, "claude-sonnet-5")["name"],
+            json!("claude-sonnet-5")
+        );
+        let opus = find_model(models, CURRENT_OPUS_ROUTE_ID);
+        assert_eq!(opus["labelOverride"], json!("GLM-5.2"));
+        assert_eq!(opus["supports1m"], json!(true));
+        assert_eq!(
+            find_model(models, "claude-haiku-4-5")["name"],
+            json!("claude-haiku-4-5")
+        );
+        assert_eq!(
+            find_model(models, "claude-fable-5")["name"],
+            json!("claude-fable-5")
+        );
+
+        let list = model_list_response_for_tier_routing(&db, &current_provider)
+            .expect("model list response")
+            .expect("tier response present");
+        let list_models = list["data"].as_array().expect("model list data");
+        assert_eq!(list_models.len(), 4);
+        assert_eq!(
+            find_model(list_models, CURRENT_OPUS_ROUTE_ID)["supports1m"],
+            json!(true)
+        );
+    }
+
+    #[test]
+    fn claude_desktop_tier_routing_official_provider_only_exposes_configured_tiers() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let current_provider = official_provider();
+        let routed_provider = proxy_provider("zhipu");
+        let db = test_db();
+        set_proxy_port(&db, 15721);
+        db.save_provider(MODEL_TIER_ROUTING_APP, &routed_provider)
+            .expect("save routed provider");
+
+        let mut enabled_apps = std::collections::HashMap::new();
+        enabled_apps.insert(MODEL_TIER_ROUTING_APP.to_string(), true);
+        let mut claude_desktop_routes = std::collections::HashMap::new();
+        claude_desktop_routes.insert(
+            "opus".to_string(),
+            crate::proxy::types::TierRoute {
+                provider_id: "zhipu".to_string(),
+                model: "glm-5.2".to_string(),
+                display_name: "GLM-5.2".to_string(),
+                supports_1m: true,
+            },
+        );
+        let mut routes = std::collections::HashMap::new();
+        routes.insert(MODEL_TIER_ROUTING_APP.to_string(), claude_desktop_routes);
+        db.set_model_tier_routing_config(&crate::proxy::types::ModelTierRoutingConfig {
+            enabled: true,
+            enabled_apps,
+            routes,
+            ..Default::default()
+        })
+        .expect("set tier config");
+
+        apply_provider_to_paths(&db, &current_provider, &paths)
+            .expect("apply tier routing profile over official provider");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        let models = profile["inferenceModels"]
+            .as_array()
+            .expect("inferenceModels array");
+        assert_eq!(
+            models.len(),
+            1,
+            "official provider cannot back fallback tiers"
+        );
+        assert_eq!(
+            find_model(models, CURRENT_OPUS_ROUTE_ID)["labelOverride"],
+            json!("GLM-5.2")
+        );
+
+        let list = model_list_response_for_tier_routing(&db, &current_provider)
+            .expect("model list response")
+            .expect("tier response present");
+        let list_models = list["data"].as_array().expect("model list data");
+        assert_eq!(list_models.len(), 1);
+        assert_eq!(list_models[0]["id"], json!(CURRENT_OPUS_ROUTE_ID));
+    }
+
+    #[test]
+    fn claude_desktop_tier_routing_preserves_provider_fallback_models() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let current_provider = proxy_provider("proxy-current");
+        let mut routed_provider = proxy_provider("zhipu");
+        routed_provider.category = Some("cn_official".to_string());
+        let db = test_db();
+        set_proxy_port(&db, 15721);
+        db.save_provider(MODEL_TIER_ROUTING_APP, &routed_provider)
+            .expect("save routed provider");
+
+        let mut enabled_apps = std::collections::HashMap::new();
+        enabled_apps.insert(MODEL_TIER_ROUTING_APP.to_string(), true);
+        let mut claude_desktop_routes = std::collections::HashMap::new();
+        claude_desktop_routes.insert(
+            "opus".to_string(),
+            crate::proxy::types::TierRoute {
+                provider_id: "zhipu".to_string(),
+                model: "glm-5.2".to_string(),
+                display_name: "GLM-5.2".to_string(),
+                supports_1m: true,
+            },
+        );
+        let mut routes = std::collections::HashMap::new();
+        routes.insert(MODEL_TIER_ROUTING_APP.to_string(), claude_desktop_routes);
+        db.set_model_tier_routing_config(&crate::proxy::types::ModelTierRoutingConfig {
+            enabled: true,
+            enabled_apps,
+            routes,
+            ..Default::default()
+        })
+        .expect("set tier config");
+
+        apply_provider_to_paths(&db, &current_provider, &paths)
+            .expect("apply tier routing profile");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        let models = profile["inferenceModels"]
+            .as_array()
+            .expect("inferenceModels array");
+        assert_eq!(models.len(), 2);
+        assert_eq!(
+            find_model(models, "claude-sonnet-4-6")["labelOverride"],
+            json!("Kimi K2")
+        );
+        let opus = find_model(models, CURRENT_OPUS_ROUTE_ID);
+        assert_eq!(opus["labelOverride"], json!("GLM-5.2"));
+        assert_eq!(opus["supports1m"], json!(true));
+
+        let list = model_list_response_for_tier_routing(&db, &current_provider)
+            .expect("model list response")
+            .expect("tier response present");
+        let list_models = list["data"].as_array().expect("model list data");
+        assert_eq!(list_models.len(), 2);
+        assert_eq!(
+            find_model(list_models, "claude-sonnet-4-6")["id"],
+            json!("claude-sonnet-4-6")
+        );
+        assert_eq!(
+            find_model(list_models, CURRENT_OPUS_ROUTE_ID)["supports1m"],
+            json!(true)
+        );
+    }
+
+    #[test]
+    fn claude_desktop_tier_routing_supports1m_flag_from_field() {
+        // supports_1m=true 且 model 名干净（无 [1m] 后缀）→ profile 仍标 supports1m=true。
+        // 字段为真相源；上一用例用 model="glm-5.2[1m]" 靠后缀回退，本用例验证显式字段路径。
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let current_provider = direct_provider("direct-current");
+        let mut routed_provider = proxy_provider("zhipu");
+        routed_provider.category = Some("cn_official".to_string());
+        let db = test_db();
+        set_proxy_port(&db, 15721);
+        db.save_provider(MODEL_TIER_ROUTING_APP, &routed_provider)
+            .expect("save routed provider");
+
+        let mut enabled_apps = std::collections::HashMap::new();
+        enabled_apps.insert(MODEL_TIER_ROUTING_APP.to_string(), true);
+        let mut claude_desktop_routes = std::collections::HashMap::new();
+        claude_desktop_routes.insert(
+            "opus".to_string(),
+            crate::proxy::types::TierRoute {
+                provider_id: "zhipu".to_string(),
+                model: "glm-5.2".to_string(),
+                display_name: "GLM-5.2".to_string(),
+                supports_1m: true,
+            },
+        );
+        let mut routes = std::collections::HashMap::new();
+        routes.insert(MODEL_TIER_ROUTING_APP.to_string(), claude_desktop_routes);
+        db.set_model_tier_routing_config(&crate::proxy::types::ModelTierRoutingConfig {
+            enabled: true,
+            enabled_apps,
+            routes,
+            ..Default::default()
+        })
+        .expect("set tier config");
+
+        apply_provider_to_paths(&db, &current_provider, &paths)
+            .expect("apply tier routing profile");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        let models = profile["inferenceModels"]
+            .as_array()
+            .expect("inferenceModels array");
+        assert_eq!(models.len(), 4);
+        // model 名无后缀，但 supports_1m=true → supports1m 由字段派生
+        assert_eq!(
+            find_model(models, CURRENT_OPUS_ROUTE_ID)["supports1m"],
+            json!(true)
+        );
+
+        let list = model_list_response_for_tier_routing(&db, &current_provider)
+            .expect("model list response")
+            .expect("tier response present");
+        let list_models = list["data"].as_array().expect("model list data");
+        assert_eq!(
+            find_model(list_models, CURRENT_OPUS_ROUTE_ID)["supports1m"],
+            json!(true)
+        );
+    }
+
+    #[test]
+    fn claude_desktop_tier_routing_rejects_target_provider_without_credentials() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let current_provider = direct_provider("direct-current");
+        let mut broken_provider = Provider::with_id(
+            "broken".to_string(),
+            "Broken".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://gateway.example.com"
+                }
+            }),
+            Some("https://example.com".to_string()),
+        );
+        broken_provider.category = Some("cn_official".to_string());
+        broken_provider.meta = Some(ProviderMeta {
+            claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+            api_format: Some("openai_chat".to_string()),
+            ..Default::default()
+        });
+
+        let db = test_db();
+        set_proxy_port(&db, 15721);
+        db.save_provider(MODEL_TIER_ROUTING_APP, &broken_provider)
+            .expect("save broken provider");
+
+        let mut enabled_apps = std::collections::HashMap::new();
+        enabled_apps.insert(MODEL_TIER_ROUTING_APP.to_string(), true);
+        let mut claude_desktop_routes = std::collections::HashMap::new();
+        claude_desktop_routes.insert(
+            "opus".to_string(),
+            crate::proxy::types::TierRoute {
+                provider_id: "broken".to_string(),
+                model: "glm-5.2".to_string(),
+                display_name: "Broken Opus".to_string(),
+                ..Default::default()
+            },
+        );
+        let mut routes = std::collections::HashMap::new();
+        routes.insert(MODEL_TIER_ROUTING_APP.to_string(), claude_desktop_routes);
+        db.set_model_tier_routing_config(&crate::proxy::types::ModelTierRoutingConfig {
+            enabled: true,
+            enabled_apps,
+            routes,
+            ..Default::default()
+        })
+        .expect("set tier config");
+
+        let err = apply_provider_to_paths(&db, &current_provider, &paths)
+            .expect_err("broken tier target provider should be rejected before writing profile");
+        assert!(
+            err.to_string().contains("Base URL 或 API Key"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            !paths.profile_path.exists(),
+            "profile should not be written when tier target validation fails"
+        );
     }
 
     #[test]

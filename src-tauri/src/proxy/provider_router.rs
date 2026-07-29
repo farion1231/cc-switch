@@ -7,7 +7,7 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -35,6 +35,19 @@ impl ProviderRouter {
     /// - 故障转移关闭时：仅返回当前供应商
     /// - 故障转移开启时：仅使用故障转移队列，按队列顺序依次尝试（P1 → P2 → ...）
     pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
+        self.select_providers_with_preferred(app_type, None).await
+    }
+
+    /// 选择可用 Provider，并把额外的首选 Provider 纳入同一轮熔断筛选。
+    ///
+    /// `preferred_provider_id` 用于模型层级路由：目标 Provider 可以不在普通故障转移
+    /// 队列中，但仍必须遵守该 app 的熔断器状态。可用时它排在链首；不可用时回退到
+    /// 普通队列。未提供首选项时与 [`Self::select_providers`] 完全一致。
+    pub async fn select_providers_with_preferred(
+        &self,
+        app_type: &str,
+        preferred_provider_id: Option<&str>,
+    ) -> Result<Vec<Provider>, AppError> {
         let mut result = Vec::new();
         let mut total_providers = 0usize;
         let mut circuit_open_count = 0usize;
@@ -49,23 +62,30 @@ impl ProviderRouter {
         };
 
         if auto_failover_enabled {
-            // 故障转移开启：仅按队列顺序依次尝试（P1 → P2 → ...）
+            // 故障转移开启：层级路由目标优先，其后按队列顺序依次尝试（P1 → P2 → ...）
             let all_providers = self.db.get_all_providers(app_type)?;
 
-            // 使用 DAO 返回的排序结果，确保和前端展示一致
-            let ordered_ids: Vec<String> = self
-                .db
-                .get_failover_queue(app_type)?
-                .into_iter()
-                .map(|item| item.provider_id)
-                .collect();
-
-            total_providers = ordered_ids.len();
+            // 使用 DAO 返回的排序结果，确保和前端展示一致；首选项已在队列中时去重并置顶。
+            let mut ordered_ids = Vec::new();
+            let mut seen_ids = HashSet::new();
+            if let Some(preferred_id) = preferred_provider_id
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+            {
+                seen_ids.insert(preferred_id.to_string());
+                ordered_ids.push(preferred_id.to_string());
+            }
+            for item in self.db.get_failover_queue(app_type)? {
+                if seen_ids.insert(item.provider_id.clone()) {
+                    ordered_ids.push(item.provider_id);
+                }
+            }
 
             for provider_id in ordered_ids {
                 let Some(provider) = all_providers.get(&provider_id).cloned() else {
                     continue;
                 };
+                total_providers += 1;
 
                 let circuit_key = format!("{app_type}:{}", provider.id);
                 let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
@@ -77,7 +97,8 @@ impl ProviderRouter {
                 }
             }
         } else {
-            // 故障转移关闭：仅使用当前供应商，跳过熔断器检查
+            // 故障转移关闭：层级路由目标优先，其后保留当前供应商作为既有回退；
+            // max_attempts=1 会确保只尝试首家，并继续跳过熔断器检查。
             let current_id = AppType::from_str(app_type)
                 .ok()
                 .and_then(|app_enum| {
@@ -87,10 +108,25 @@ impl ProviderRouter {
                 })
                 .or_else(|| self.db.get_current_provider(app_type).ok().flatten());
 
+            let mut ordered_ids = Vec::new();
+            let mut seen_ids = HashSet::new();
+            if let Some(preferred_id) = preferred_provider_id
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+            {
+                seen_ids.insert(preferred_id.to_string());
+                ordered_ids.push(preferred_id.to_string());
+            }
             if let Some(current_id) = current_id {
-                if let Some(current) = self.db.get_provider_by_id(&current_id, app_type)? {
-                    total_providers = 1;
-                    result.push(current);
+                if seen_ids.insert(current_id.clone()) {
+                    ordered_ids.push(current_id);
+                }
+            }
+
+            for provider_id in ordered_ids {
+                if let Some(provider) = self.db.get_provider_by_id(&provider_id, app_type)? {
+                    total_providers += 1;
+                    result.push(provider);
                 }
             }
         }
@@ -423,6 +459,50 @@ mod tests {
 
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0].id, "b");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn preferred_provider_remains_available_when_failover_queue_is_all_open() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let base = Provider::with_id("base".to_string(), "Base".to_string(), json!({}), None);
+        let routed = Provider::with_id("routed".to_string(), "Routed".to_string(), json!({}), None);
+        db.save_provider("claude", &base).unwrap();
+        db.save_provider("claude", &routed).unwrap();
+        db.add_to_failover_queue("claude", "base").unwrap();
+
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        config.circuit_failure_threshold = 1;
+        config.circuit_timeout_seconds = 3600;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db);
+        router
+            .record_result(
+                "base",
+                "claude",
+                false,
+                false,
+                Some("base failed".to_string()),
+            )
+            .await
+            .unwrap();
+
+        let error = router
+            .select_providers("claude")
+            .await
+            .expect_err("the base queue should be fully circuit-open");
+        assert!(matches!(error, AppError::AllProvidersCircuitOpen));
+
+        let providers = router
+            .select_providers_with_preferred("claude", Some("routed"))
+            .await
+            .expect("the routed provider outside the queue should still be selected");
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "routed");
     }
 
     #[tokio::test]
