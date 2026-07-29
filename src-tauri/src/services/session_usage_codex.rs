@@ -450,14 +450,13 @@ fn parse_token_signature(info: &serde_json::Value) -> Option<TokenUsageSignature
     (total.is_some() || last.is_some()).then_some(TokenUsageSignature { total, last })
 }
 
-fn token_counter_lane(payload: &serde_json::Value, current_model: &str) -> String {
+fn token_snapshot_source(payload: &serde_json::Value) -> Option<String> {
     payload
         .get("rate_limits")
         .and_then(|rate_limits| rate_limits.get("limit_id"))
         .and_then(serde_json::Value::as_str)
         .filter(|value| !value.is_empty())
-        .map(|value| format!("limit:{value}"))
-        .unwrap_or_else(|| format!("model:{current_model}"))
+        .map(str::to_owned)
 }
 
 fn get_codex_sync_state(db: &Database, file_path: &Path) -> Result<(i64, i64), AppError> {
@@ -574,7 +573,18 @@ fn update_high_water(high_water: &mut CumulativeTokens, current: &CumulativeToke
 
 /// 从 JSON Value 中提取累计 token 用量
 fn parse_cumulative_tokens(total_usage: &serde_json::Value) -> Option<CumulativeTokens> {
-    if total_usage.is_null() || !total_usage.is_object() {
+    let fields = total_usage.as_object()?;
+    if ![
+        "input_tokens",
+        "cached_input_tokens",
+        "cache_read_input_tokens",
+        "output_tokens",
+        "reasoning_output_tokens",
+        "total_tokens",
+    ]
+    .iter()
+    .any(|field| fields.contains_key(*field))
+    {
         return None;
     }
     Some(CumulativeTokens {
@@ -720,11 +730,15 @@ fn parse_codex_file(
     let mut root_timestamp = None;
     let mut parent = ParentResolution::None;
     let mut current_model = "unknown".to_string();
-    // A rollout can interleave independent cumulative counters (for example
-    // `codex` and `codex_bengalfox`). A single baseline turns every lane
-    // switch into a fake multi-million-token delta.
-    let mut total_high_water_by_lane: HashMap<String, CumulativeTokens> = HashMap::new();
-    let mut last_total_signature_by_lane: HashMap<String, TokenCountersSignature> = HashMap::new();
+    // `total_token_usage` is session-cumulative, including across model and
+    // rate-limit bucket changes. Divergent snapshots are handled by preferring
+    // exact `last_token_usage`, not by splitting the cumulative baseline.
+    let mut total_high_water = None;
+    // Rate-limit refreshes can re-emit unchanged token info under another
+    // `limit_id`. Keep only each source's latest full snapshot and compare
+    // across sources so replay bursts are ignored without retaining unbounded
+    // signature history.
+    let mut last_signature_by_source: HashMap<Option<String>, TokenUsageSignature> = HashMap::new();
     let mut event_index = 0u32;
     let mut token_events = Vec::new();
     let mut line_offset = 0i64;
@@ -830,21 +844,22 @@ fn parse_codex_file(
                     current_model = normalize_codex_model(model);
                 }
 
-                let lane = token_counter_lane(payload, &current_model);
+                let snapshot_source = token_snapshot_source(payload);
                 let total = info
                     .get("total_token_usage")
                     .and_then(parse_cumulative_tokens);
                 let last = info
                     .get("last_token_usage")
                     .and_then(parse_cumulative_tokens);
-                let duplicate_total = signature.total.as_ref().is_some_and(|total_signature| {
-                    last_total_signature_by_lane.get(&lane) == Some(total_signature)
-                });
-                if let Some(total_signature) = signature.total.as_ref() {
-                    last_total_signature_by_lane.insert(lane.clone(), total_signature.clone());
+                let duplicate_snapshot = signature.total.is_some()
+                    && last_signature_by_source
+                        .values()
+                        .any(|previous| previous == &signature);
+                if signature.total.is_some() {
+                    last_signature_by_source.insert(snapshot_source, signature.clone());
                 }
 
-                let delta = if duplicate_total {
+                let delta = if duplicate_snapshot {
                     DeltaTokens {
                         input: 0,
                         cached_input: 0,
@@ -860,15 +875,16 @@ fn parse_codex_file(
                         output: last.output as u32,
                     }
                 } else if let Some(total) = total.as_ref() {
-                    compute_delta(&total_high_water_by_lane.get(&lane).cloned(), total)
+                    compute_delta(&total_high_water, total)
                 } else {
                     continue;
                 };
                 if let Some(total) = total {
-                    total_high_water_by_lane
-                        .entry(lane)
-                        .and_modify(|high_water| update_high_water(high_water, &total))
-                        .or_insert(total);
+                    if let Some(high_water) = total_high_water.as_mut() {
+                        update_high_water(high_water, &total);
+                    } else {
+                        total_high_water = Some(total);
+                    }
                 }
                 let delta = DeltaTokens {
                     cached_input: delta.cached_input.min(delta.input),
@@ -1429,12 +1445,16 @@ mod tests {
         session_meta_at(thread_id, None, None, "2026-07-10T03:00:00Z")
     }
 
-    fn turn_context_at(timestamp: &str) -> serde_json::Value {
+    fn turn_context_for_model_at(model: &str, timestamp: &str) -> serde_json::Value {
         serde_json::json!({
             "timestamp": timestamp,
             "type": "turn_context",
-            "payload": { "model": "gpt-5.6-sol" }
+            "payload": { "model": model }
         })
+    }
+
+    fn turn_context_at(timestamp: &str) -> serde_json::Value {
+        turn_context_for_model_at("gpt-5.6-sol", timestamp)
     }
 
     fn turn_context() -> serde_json::Value {
@@ -1501,32 +1521,6 @@ mod tests {
                         "output_tokens": last_output,
                         "reasoning_output_tokens": 0,
                         "total_tokens": last_input + last_output
-                    }
-                },
-                "rate_limits": { "limit_id": limit_id }
-            }
-        })
-    }
-
-    fn token_count_total_for_lane_at(
-        input: u64,
-        cached: u64,
-        output: u64,
-        limit_id: &str,
-        timestamp: &str,
-    ) -> serde_json::Value {
-        serde_json::json!({
-            "timestamp": timestamp,
-            "type": "event_msg",
-            "payload": {
-                "type": "token_count",
-                "info": {
-                    "total_token_usage": {
-                        "input_tokens": input,
-                        "cached_input_tokens": cached,
-                        "output_tokens": output,
-                        "reasoning_output_tokens": 0,
-                        "total_tokens": input + output
                     }
                 },
                 "rate_limits": { "limit_id": limit_id }
@@ -1688,7 +1682,42 @@ mod tests {
     }
 
     #[test]
-    fn test_lane_snapshot_dedupe_allows_counter_reset() -> Result<(), AppError> {
+    fn test_cross_limit_snapshot_replay_is_not_double_counted() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_count_with_last_at(1_000, 0, 10, 100, 0, 10, "codex", "2026-07-10T03:00:02Z"),
+                token_count_with_last_at(
+                    1_000,
+                    0,
+                    10,
+                    100,
+                    0,
+                    10,
+                    "codex_bengalfox",
+                    "2026-07-10T03:00:03Z",
+                ),
+            ],
+        );
+
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        let deltas = parsed
+            .token_events
+            .iter()
+            .filter(|event| !event.delta.is_zero())
+            .map(|event| event.delta.input)
+            .collect::<Vec<_>>();
+
+        assert_eq!(deltas, vec![100]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_full_snapshot_dedupe_allows_counter_reset() -> Result<(), AppError> {
         let dir = tempdir().unwrap();
         let file = rollout_path(dir.path(), PARENT_ID);
         let first =
@@ -1711,7 +1740,7 @@ mod tests {
                     "2026-07-10T03:00:04Z",
                 ),
                 // A restarted counter may legitimately return to an older
-                // signature after another snapshot has advanced the lane.
+                // total after another full snapshot has advanced the source.
                 token_count_with_last_at(100, 50, 10, 50, 25, 5, "codex", "2026-07-10T03:00:05Z"),
             ],
         );
@@ -1729,7 +1758,7 @@ mod tests {
     }
 
     #[test]
-    fn test_total_fallback_uses_per_lane_high_water_after_regression() -> Result<(), AppError> {
+    fn test_empty_last_usage_falls_back_to_total() -> Result<(), AppError> {
         let dir = tempdir().unwrap();
         let file = rollout_path(dir.path(), PARENT_ID);
         write_jsonl(
@@ -1737,17 +1766,23 @@ mod tests {
             &[
                 session_meta(PARENT_ID),
                 turn_context(),
-                token_count_total_for_lane_at(100, 50, 10, "codex", "2026-07-10T03:00:02Z"),
-                token_count_total_for_lane_at(
-                    1_000,
-                    500,
-                    100,
-                    "codex_bengalfox",
-                    "2026-07-10T03:00:03Z",
-                ),
-                token_count_total_for_lane_at(80, 40, 8, "codex", "2026-07-10T03:00:04Z"),
-                token_count_total_for_lane_at(90, 45, 9, "codex", "2026-07-10T03:00:05Z"),
-                token_count_total_for_lane_at(120, 60, 12, "codex", "2026-07-10T03:00:06Z"),
+                serde_json::json!({
+                    "timestamp": "2026-07-10T03:00:02Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "total_token_usage": {
+                                "input_tokens": 100,
+                                "cached_input_tokens": 0,
+                                "output_tokens": 10,
+                                "reasoning_output_tokens": 0,
+                                "total_tokens": 110
+                            },
+                            "last_token_usage": {}
+                        }
+                    }
+                }),
             ],
         );
 
@@ -1756,16 +1791,37 @@ mod tests {
             .token_events
             .iter()
             .filter(|event| !event.delta.is_zero())
-            .map(|event| {
-                (
-                    event.delta.input,
-                    event.delta.cached_input,
-                    event.delta.output,
-                )
-            })
+            .map(|event| event.delta.input)
             .collect::<Vec<_>>();
 
-        assert_eq!(deltas, vec![(100, 50, 10), (1_000, 500, 100), (20, 10, 2)]);
+        assert_eq!(deltas, vec![100]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_total_fallback_uses_session_baseline_across_model_switch() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context_for_model_at("model-a", "2026-07-10T03:00:01Z"),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:02Z"),
+                turn_context_for_model_at("model-b", "2026-07-10T03:00:03Z"),
+                token_count_at(150, 75, 15, "2026-07-10T03:00:04Z"),
+            ],
+        );
+
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        let deltas = parsed
+            .token_events
+            .iter()
+            .filter(|event| !event.delta.is_zero())
+            .map(|event| event.delta.input)
+            .collect::<Vec<_>>();
+
+        assert_eq!(deltas, vec![100, 50]);
         Ok(())
     }
 
@@ -1788,6 +1844,17 @@ mod tests {
     fn test_parse_cumulative_tokens_null() {
         let json = serde_json::Value::Null;
         assert!(parse_cumulative_tokens(&json).is_none());
+    }
+
+    #[test]
+    fn test_parse_cumulative_tokens_rejects_empty_object_but_accepts_explicit_zero() {
+        assert!(parse_cumulative_tokens(&serde_json::json!({})).is_none());
+
+        let tokens = parse_cumulative_tokens(&serde_json::json!({ "input_tokens": 0 }))
+            .expect("an explicit zero is valid usage");
+        assert_eq!(tokens.input, 0);
+        assert_eq!(tokens.cached_input, 0);
+        assert_eq!(tokens.output, 0);
     }
 
     #[test]
