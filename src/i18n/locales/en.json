@@ -540,6 +540,8 @@
         "path": "Remote path",
         "dbCompat": "DB compatibility",
         "artifacts": "Contents",
+        "skillsEntries": "Skills file/directory entries",
+        "estimatedExtractedSize": "Estimated extracted size",
         "legacyNotice": "A legacy remote path was detected. After restoring, the next upload will write to the new v2/db-v6 path.",
         "warning": "This will overwrite all local data and skill configurations",
         "confirm": "Confirm Restore"
@@ -645,6 +647,8 @@
         "deviceName": "Uploaded by",
         "createdAt": "Uploaded at",
         "artifacts": "Contents",
+        "skillsEntries": "Skills file/directory entries",
+        "estimatedExtractedSize": "Estimated extracted size",
         "warning": "This will overwrite all local data and skill configurations",
         "confirm": "Confirm Restore"
       },

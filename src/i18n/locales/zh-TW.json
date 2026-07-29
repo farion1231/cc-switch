@@ -540,6 +540,8 @@
         "path": "遠端路徑",
         "dbCompat": "資料庫相容層",
         "artifacts": "包含內容",
+        "skillsEntries": "Skills 檔案/目錄項目",
+        "estimatedExtractedSize": "預估解壓縮大小",
         "legacyNotice": "檢測到舊版雲端路徑。還原完成後，下次上傳將寫入新路徑 v2/db-v6。",
         "warning": "還原將覆寫本地所有資料和技能設定",
         "confirm": "確認還原"
@@ -645,6 +647,8 @@
         "deviceName": "上傳裝置",
         "createdAt": "上傳時間",
         "artifacts": "包含內容",
+        "skillsEntries": "Skills 檔案/目錄項目",
+        "estimatedExtractedSize": "預估解壓縮大小",
         "warning": "還原將覆寫本地所有資料和技能設定",
         "confirm": "確認還原"
       },

@@ -1,8 +1,9 @@
 use std::collections::HashSet;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use tempfile::{tempdir, TempDir};
 use zip::write::SimpleFileOptions;
 use zip::DateTime;
@@ -14,8 +15,45 @@ use crate::services::sync_protocol::{
     io_context_localized, localized, MAX_SYNC_ARTIFACT_BYTES, REMOTE_SKILLS_ZIP,
 };
 
-/// Maximum number of entries allowed in a zip archive.
-const MAX_EXTRACT_ENTRIES: usize = 10_000;
+/// Maximum number of file and directory entries allowed in a Skills archive.
+pub(crate) const MAX_SKILLS_ARCHIVE_ENTRIES: u64 = 100_000;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SkillsArchiveStats {
+    pub entry_count: u64,
+    pub uncompressed_size: u64,
+}
+
+impl SkillsArchiveStats {
+    fn add_entry(&mut self) -> Result<(), AppError> {
+        let next = self
+            .entry_count
+            .checked_add(1)
+            .ok_or_else(skills_archive_stats_overflow)?;
+        let candidate = Self {
+            entry_count: next,
+            ..*self
+        };
+        validate_skills_archive_stats(candidate)?;
+        self.entry_count = next;
+        Ok(())
+    }
+
+    fn add_uncompressed_bytes(&mut self, bytes: u64) -> Result<(), AppError> {
+        let next = self
+            .uncompressed_size
+            .checked_add(bytes)
+            .ok_or_else(skills_archive_stats_overflow)?;
+        let candidate = Self {
+            uncompressed_size: next,
+            ..*self
+        };
+        validate_skills_archive_stats(candidate)?;
+        self.uncompressed_size = next;
+        Ok(())
+    }
+}
 
 pub(crate) struct SkillsBackup {
     _tmp: TempDir,
@@ -24,7 +62,7 @@ pub(crate) struct SkillsBackup {
     existed: bool,
 }
 
-pub(crate) fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
+pub(crate) fn zip_skills_ssot(dest_path: &Path) -> Result<SkillsArchiveStats, AppError> {
     let source = SkillService::get_ssot_dir().map_err(|e| {
         localized(
             "webdav.sync.skills_ssot_dir_failed",
@@ -41,6 +79,7 @@ pub(crate) fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
     let options = SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .last_modified_time(DateTime::default());
+    let mut stats = SkillsArchiveStats::default();
 
     if source.exists() {
         let canonical_root = fs::canonicalize(&source).unwrap_or_else(|_| source.clone());
@@ -52,6 +91,7 @@ pub(crate) fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
             &mut writer,
             options,
             &mut visited,
+            &mut stats,
         )?;
     }
 
@@ -62,7 +102,8 @@ pub(crate) fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
             format!("Failed to write skills.zip: {e}"),
         )
     })?;
-    Ok(())
+    validate_skills_archive_stats(stats)?;
+    Ok(stats)
 }
 
 pub(crate) fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
@@ -86,23 +127,10 @@ pub(crate) fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
         )
     })?;
 
+    inspect_skills_archive(&mut archive)?;
+
     let extracted = tmp.path().join("skills-extracted");
     fs::create_dir_all(&extracted).map_err(|e| AppError::io(&extracted, e))?;
-
-    if archive.len() > MAX_EXTRACT_ENTRIES {
-        return Err(localized(
-            "webdav.sync.skills_zip_too_many_entries",
-            format!(
-                "skills.zip 条目数过多（{}），上限 {MAX_EXTRACT_ENTRIES}",
-                archive.len()
-            ),
-            format!(
-                "skills.zip has too many entries ({}), limit is {MAX_EXTRACT_ENTRIES}",
-                archive.len()
-            ),
-        ));
-    }
-
     let mut total_bytes: u64 = 0;
     for idx in 0..archive.len() {
         let mut entry = archive.by_index(idx).map_err(|e| {
@@ -210,6 +238,7 @@ fn zip_dir_recursive(
     writer: &mut zip::ZipWriter<fs::File>,
     options: SimpleFileOptions,
     visited: &mut HashSet<PathBuf>,
+    stats: &mut SkillsArchiveStats,
 ) -> Result<(), AppError> {
     let mut entries: Vec<_> = fs::read_dir(current)
         .map_err(|e| AppError::io(current, e))?
@@ -258,6 +287,7 @@ fn zip_dir_recursive(
                 );
                 continue;
             }
+            stats.add_entry()?;
             writer
                 .add_directory(format!("{rel_str}/"), options)
                 .map_err(|e| {
@@ -267,8 +297,9 @@ fn zip_dir_recursive(
                         format!("Failed to write ZIP directory entry: {e}"),
                     )
                 })?;
-            zip_dir_recursive(root, &real_path, writer, options, visited)?;
+            zip_dir_recursive(root, &real_path, writer, options, visited, stats)?;
         } else {
+            stats.add_entry()?;
             writer.start_file(&rel_str, options).map_err(|e| {
                 localized(
                     "webdav.sync.zip_start_file_failed",
@@ -277,19 +308,69 @@ fn zip_dir_recursive(
                 )
             })?;
             let mut file = fs::File::open(&real_path).map_err(|e| AppError::io(&real_path, e))?;
-            let mut buf = Vec::new();
-            file.read_to_end(&mut buf)
-                .map_err(|e| AppError::io(&real_path, e))?;
-            writer.write_all(&buf).map_err(|e| {
-                localized(
-                    "webdav.sync.zip_write_file_failed",
-                    format!("写入 ZIP 文件内容失败: {e}"),
-                    format!("Failed to write ZIP file content: {e}"),
-                )
-            })?;
+            copy_entry_with_total_limit(
+                &mut file,
+                writer,
+                &mut stats.uncompressed_size,
+                MAX_SYNC_ARTIFACT_BYTES,
+                &real_path,
+            )?;
         }
     }
     Ok(())
+}
+
+fn inspect_skills_archive<R: Read + Seek>(
+    archive: &mut zip::ZipArchive<R>,
+) -> Result<SkillsArchiveStats, AppError> {
+    let mut stats = SkillsArchiveStats::default();
+    for idx in 0..archive.len() {
+        let entry = archive.by_index(idx).map_err(|e| {
+            localized(
+                "webdav.sync.skills_zip_entry_read_failed",
+                format!("读取 ZIP 项失败: {e}"),
+                format!("Failed to read ZIP entry: {e}"),
+            )
+        })?;
+        stats.add_entry()?;
+        if !entry.is_dir() {
+            stats.add_uncompressed_bytes(entry.size())?;
+        }
+    }
+    Ok(stats)
+}
+
+fn validate_skills_archive_stats(stats: SkillsArchiveStats) -> Result<(), AppError> {
+    if stats.entry_count > MAX_SKILLS_ARCHIVE_ENTRIES {
+        return Err(localized(
+            "webdav.sync.skills_zip_too_many_entries",
+            format!(
+                "Skills 归档文件/目录条目数过多（{}），上限 {MAX_SKILLS_ARCHIVE_ENTRIES}",
+                stats.entry_count
+            ),
+            format!(
+                "Skills archive has too many file/directory entries ({}), limit is {MAX_SKILLS_ARCHIVE_ENTRIES}",
+                stats.entry_count
+            ),
+        ));
+    }
+    if stats.uncompressed_size > MAX_SYNC_ARTIFACT_BYTES {
+        let max_mb = MAX_SYNC_ARTIFACT_BYTES / 1024 / 1024;
+        return Err(localized(
+            "webdav.sync.skills_zip_too_large",
+            format!("Skills 归档预计解压体积超过上限（{max_mb} MB）"),
+            format!("Skills archive estimated extracted size exceeds limit ({max_mb} MB)"),
+        ));
+    }
+    Ok(())
+}
+
+fn skills_archive_stats_overflow() -> AppError {
+    localized(
+        "webdav.sync.skills_zip_stats_overflow",
+        "Skills 归档规模统计溢出",
+        "Skills archive size statistics overflowed",
+    )
 }
 
 fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<(), AppError> {
@@ -368,11 +449,18 @@ fn copy_entry_with_total_limit<R: Read, W: Write>(
 
 #[cfg(test)]
 mod tests {
-    use super::{copy_entry_with_total_limit, mark_visited_dir};
+    use super::{
+        copy_entry_with_total_limit, inspect_skills_archive, mark_visited_dir,
+        validate_skills_archive_stats, zip_dir_recursive, SkillsArchiveStats,
+        MAX_SKILLS_ARCHIVE_ENTRIES,
+    };
     use std::collections::HashSet;
-    use std::io::Cursor;
+    use std::fs;
+    use std::io::{Cursor, Write};
     use std::path::Path;
     use tempfile::tempdir;
+    use zip::write::SimpleFileOptions;
+    use zip::DateTime;
 
     #[test]
     fn mark_visited_dir_tracks_canonical_duplicates() {
@@ -407,6 +495,109 @@ mod tests {
             writer.len(),
             0,
             "should not write when the first chunk exceeds limit"
+        );
+    }
+
+    #[test]
+    fn archive_policy_accepts_limits_and_rejects_excess() {
+        let max_bytes = crate::services::sync_protocol::MAX_SYNC_ARTIFACT_BYTES;
+
+        assert!(validate_skills_archive_stats(SkillsArchiveStats {
+            entry_count: MAX_SKILLS_ARCHIVE_ENTRIES,
+            uncompressed_size: max_bytes,
+        })
+        .is_ok());
+
+        let entry_err = validate_skills_archive_stats(SkillsArchiveStats {
+            entry_count: MAX_SKILLS_ARCHIVE_ENTRIES + 1,
+            uncompressed_size: max_bytes,
+        })
+        .expect_err("entry count above the limit must fail");
+        assert!(entry_err.to_string().contains("100001"));
+
+        let size_err = validate_skills_archive_stats(SkillsArchiveStats {
+            entry_count: MAX_SKILLS_ARCHIVE_ENTRIES,
+            uncompressed_size: max_bytes + 1,
+        })
+        .expect_err("uncompressed size above the limit must fail");
+        assert!(size_err.to_string().contains("512"));
+    }
+
+    #[test]
+    fn archive_stats_checked_add_rejects_overflow() {
+        let mut stats = SkillsArchiveStats {
+            entry_count: 0,
+            uncompressed_size: u64::MAX,
+        };
+
+        assert!(stats.add_uncompressed_bytes(1).is_err());
+        assert_eq!(stats.uncompressed_size, u64::MAX);
+    }
+
+    #[test]
+    fn inspect_skills_archive_reports_entries_and_uncompressed_size() {
+        let cursor = Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(cursor);
+        let options = SimpleFileOptions::default();
+        writer
+            .add_directory("examples/", options)
+            .expect("add directory");
+        writer
+            .start_file("examples/a.txt", options)
+            .expect("file a");
+        writer.write_all(b"hi").expect("write file a");
+        writer.start_file("b.txt", options).expect("file b");
+        writer.write_all(b"abc").expect("write file b");
+        let cursor = writer.finish().expect("finish zip");
+
+        let mut archive = zip::ZipArchive::new(cursor).expect("open zip");
+        let stats = inspect_skills_archive(&mut archive).expect("inspect zip");
+
+        assert_eq!(
+            stats,
+            SkillsArchiveStats {
+                entry_count: 3,
+                uncompressed_size: 5,
+            }
+        );
+    }
+
+    #[test]
+    fn zip_dir_recursive_returns_stats_for_entries_it_writes() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("skills");
+        fs::create_dir_all(root.join("examples")).expect("create skill directories");
+        fs::write(root.join("examples/a.txt"), b"hi").expect("write nested file");
+        fs::write(root.join("b.txt"), b"abc").expect("write root file");
+
+        let zip_path = temp.path().join("skills.zip");
+        let file = fs::File::create(&zip_path).expect("create zip");
+        let mut writer = zip::ZipWriter::new(file);
+        let options = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .last_modified_time(DateTime::default());
+        let canonical_root = fs::canonicalize(&root).expect("canonical root");
+        let mut visited = HashSet::new();
+        mark_visited_dir(&canonical_root, &mut visited).expect("mark root");
+        let mut stats = SkillsArchiveStats::default();
+
+        zip_dir_recursive(
+            &canonical_root,
+            &canonical_root,
+            &mut writer,
+            options,
+            &mut visited,
+            &mut stats,
+        )
+        .expect("zip skills");
+        writer.finish().expect("finish zip");
+
+        assert_eq!(
+            stats,
+            SkillsArchiveStats {
+                entry_count: 3,
+                uncompressed_size: 5,
+            }
         );
     }
 }

@@ -540,6 +540,8 @@
         "path": "远端路径",
         "dbCompat": "数据库兼容层",
         "artifacts": "包含内容",
+        "skillsEntries": "Skills 文件/目录条目",
+        "estimatedExtractedSize": "预计解压体积",
         "legacyNotice": "检测到旧版云端路径。恢复完成后，下次上传将写入新路径 v2/db-v6。",
         "warning": "恢复将覆盖本地所有数据和技能配置",
         "confirm": "确认恢复"
@@ -645,6 +647,8 @@
         "deviceName": "上传设备",
         "createdAt": "上传时间",
         "artifacts": "包含内容",
+        "skillsEntries": "Skills 文件/目录条目",
+        "estimatedExtractedSize": "预计解压体积",
         "warning": "恢复将覆盖本地所有数据和技能配置",
         "confirm": "确认恢复"
       },

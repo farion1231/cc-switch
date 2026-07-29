@@ -540,6 +540,8 @@
         "path": "リモートパス",
         "dbCompat": "DB 互換レイヤー",
         "artifacts": "内容",
+        "skillsEntries": "Skills のファイル/ディレクトリエントリ",
+        "estimatedExtractedSize": "推定展開サイズ",
         "legacyNotice": "旧レイアウトのリモートパスを検出しました。復元後、次回のアップロードは新しい v2/db-v6 パスに書き込まれます。",
         "warning": "ローカルのすべてのデータとスキル設定が上書きされます",
         "confirm": "復元を実行"
@@ -645,6 +647,8 @@
         "deviceName": "アップロード元",
         "createdAt": "アップロード日時",
         "artifacts": "内容",
+        "skillsEntries": "Skills のファイル/ディレクトリエントリ",
+        "estimatedExtractedSize": "推定展開サイズ",
         "warning": "ローカルのすべてのデータとスキル設定が上書きされます",
         "confirm": "復元を実行"
       },
