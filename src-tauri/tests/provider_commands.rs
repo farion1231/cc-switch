@@ -123,7 +123,7 @@ fn pi_default_import_preserves_live_provider_identity() {
                 "packy": {
                     "baseURL": "https://api.packy.example/v1",
                     "apiKey": "sk-packy",
-                    "api": "openai-chat",
+                    "api": "openai-completions",
                     "models": [{ "id": "gpt-5.5", "name": "GPT 5.5" }]
                 }
             }

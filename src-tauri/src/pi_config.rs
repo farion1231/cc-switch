@@ -4,6 +4,7 @@
 //! `settings.json` under `~/.pi/agent` by default.
 
 use serde_json::{json, Map, Value};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -288,6 +289,163 @@ fn first_string<'a>(object: &'a Map<String, Value>, keys: &[&str]) -> Option<&'a
         .filter(|value| !value.is_empty())
 }
 
+const PI_SUPPORTED_APIS: [&str; 4] = [
+    "openai-completions",
+    "openai-responses",
+    "anthropic-messages",
+    "google-generative-ai",
+];
+
+fn validate_pi_api(value: Option<&Value>, field: &str) -> Result<(), AppError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let api = value
+        .as_str()
+        .ok_or_else(|| AppError::Config(format!("Pi provider field '{field}' must be a string")))?;
+    if !PI_SUPPORTED_APIS.contains(&api) {
+        return Err(AppError::Config(format!(
+            "Pi provider field '{field}' uses unsupported API '{api}'"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_pi_headers(value: Option<&Value>, field: &str) -> Result<(), AppError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let headers = value.as_object().ok_or_else(|| {
+        AppError::Config(format!("Pi provider field '{field}' must be an object"))
+    })?;
+    if let Some((name, _)) = headers
+        .iter()
+        .find(|(name, value)| name.trim().is_empty() || !value.is_string())
+    {
+        return Err(AppError::Config(format!(
+            "Pi provider header '{field}.{name}' must have a non-empty name and string value"
+        )));
+    }
+    Ok(())
+}
+
+/// Validate the Pi fields CC Switch understands while allowing unknown fields
+/// to pass through for forward compatibility with newer Pi releases.
+pub(crate) fn validate_pi_provider_config(config: &Value) -> Result<(), AppError> {
+    let source = config.as_object().ok_or_else(|| {
+        AppError::Config("Pi provider settings must be a JSON object".to_string())
+    })?;
+
+    let mut base_urls = Vec::with_capacity(2);
+    for field in ["baseUrl", "baseURL"] {
+        if let Some(value) = source.get(field) {
+            let base_url = value.as_str().ok_or_else(|| {
+                AppError::Config(format!("Pi provider field '{field}' must be a string"))
+            })?;
+            let base_url = base_url.trim();
+            if base_url.is_empty() {
+                return Err(AppError::Config(format!(
+                    "Pi provider field '{field}' must not be empty"
+                )));
+            }
+            base_urls.push((field, base_url));
+        }
+    }
+    if base_urls.len() == 2 && base_urls[0].1 != base_urls[1].1 {
+        return Err(AppError::Config(
+            "Pi provider fields 'baseUrl' and 'baseURL' must not conflict".to_string(),
+        ));
+    }
+
+    validate_pi_api(source.get("api"), "api")?;
+    if source.get("apiKey").is_some_and(|value| !value.is_string()) {
+        return Err(AppError::Config(
+            "Pi provider field 'apiKey' must be a string".to_string(),
+        ));
+    }
+    if let Some(oauth) = source.get("oauth") {
+        if oauth.as_str() != Some("radius") {
+            return Err(AppError::Config(
+                "Pi provider field 'oauth' currently supports only 'radius'".to_string(),
+            ));
+        }
+        if base_urls.is_empty() {
+            return Err(AppError::Config(
+                "Pi provider field 'baseUrl' is required when 'oauth' is configured".to_string(),
+            ));
+        }
+    }
+    if source
+        .get("authHeader")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        return Err(AppError::Config(
+            "Pi provider field 'authHeader' must be a boolean".to_string(),
+        ));
+    }
+    validate_pi_headers(source.get("headers"), "headers")?;
+    for field in ["compat", "modelOverrides"] {
+        if source.get(field).is_some_and(|value| !value.is_object()) {
+            return Err(AppError::Config(format!(
+                "Pi provider field '{field}' must be an object"
+            )));
+        }
+    }
+
+    if source
+        .get("defaultModel")
+        .is_some_and(|value| !value.is_string())
+    {
+        return Err(AppError::Config(
+            "Pi provider field 'defaultModel' must be a string".to_string(),
+        ));
+    }
+    let Some(models_value) = source.get("models") else {
+        return Ok(());
+    };
+    let models = models_value.as_array().ok_or_else(|| {
+        AppError::Config("Pi provider field 'models' must be an array".to_string())
+    })?;
+
+    // Whether baseUrl/api/defaultModel may be inherited depends on Pi's
+    // evolving built-in provider catalog, so this fragment validator must not
+    // hard-code those contextual requirements.
+    let mut model_ids = HashSet::with_capacity(models.len());
+    for (index, model) in models.iter().enumerate() {
+        let id = match model {
+            // Accept the legacy shorthand already supported by CC Switch and
+            // normalize it during writes.
+            Value::String(id) => id.trim(),
+            Value::Object(model) => {
+                let id = model.get("id").and_then(Value::as_str).ok_or_else(|| {
+                    AppError::Config(format!(
+                        "Pi provider field 'models[{index}].id' must be a string"
+                    ))
+                })?;
+                validate_pi_api(model.get("api"), &format!("models[{index}].api"))?;
+                id.trim()
+            }
+            _ => {
+                return Err(AppError::Config(format!(
+                    "Pi provider field 'models[{index}]' must be an object or string"
+                )));
+            }
+        };
+        if id.is_empty() {
+            return Err(AppError::Config(format!(
+                "Pi provider field 'models[{index}].id' must not be empty"
+            )));
+        }
+        if !model_ids.insert(id) {
+            return Err(AppError::Config(format!(
+                "Pi provider contains duplicate model id '{id}'"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 fn model_ids_from_config(config: &Value) -> Vec<String> {
     config
         .get("models")
@@ -342,6 +500,7 @@ fn normalize_provider_config(config: &Value) -> Result<Value, AppError> {
             "Pi provider settings must be a JSON object".to_string(),
         ));
     };
+    validate_pi_provider_config(config)?;
 
     let mut output = source.clone();
 
@@ -583,7 +742,8 @@ mod tests {
             "baseURL": "https://api.example.com/v1",
             "apiKey": "sk-test",
             "api": "openai-completions",
-            "models": []
+            "models": [],
+            "futurePiField": { "keep": true }
         });
 
         let normalized = normalize_provider_config(&config).unwrap();
@@ -596,6 +756,114 @@ mod tests {
             normalized.get("baseURL").is_none(),
             "Pi models.json must use baseUrl, not baseURL"
         );
+        assert_eq!(
+            normalized.pointer("/futurePiField/keep"),
+            Some(&json!(true)),
+            "unknown Pi fields must survive normalization"
+        );
+    }
+
+    #[test]
+    fn validates_all_official_pi_apis_without_requiring_an_api_key() {
+        for api in PI_SUPPORTED_APIS {
+            validate_pi_provider_config(&json!({
+                "baseUrl": "https://api.example.com/v1",
+                "api": api,
+                "models": [{ "id": "model-1" }]
+            }))
+            .unwrap_or_else(|error| panic!("{api} should be accepted: {error}"));
+        }
+
+        validate_pi_provider_config(&json!({
+            "baseUrl": "https://api.example.com/v1",
+            "models": [{ "id": "model-1", "api": "anthropic-messages" }]
+        }))
+        .expect("model-level API should satisfy Pi's API requirement");
+    }
+
+    #[test]
+    fn allows_builtin_overrides_and_future_fields() {
+        validate_pi_provider_config(&json!({
+            "baseUrl": "https://proxy.example.com/v1",
+            "oauth": "radius",
+            "authHeader": true,
+            "headers": { "x-route": "$PI_ROUTE" },
+            "compat": { "supportsDeveloperRole": false },
+            "modelOverrides": {
+                "known-model": { "contextWindow": 200000 }
+            },
+            "futurePiField": { "enabled": true }
+        }))
+        .expect("built-in overrides and unknown future fields should be accepted");
+
+        validate_pi_provider_config(&json!({
+            "models": [{ "id": "custom-model" }],
+            "defaultModel": "built-in-model"
+        }))
+        .expect("built-in providers may inherit endpoint, API, and model catalog entries");
+    }
+
+    #[test]
+    fn rejects_invalid_pi_provider_schema() {
+        let cases = [
+            (
+                json!({
+                    "baseUrl": "https://api.example.com/v1",
+                    "api": "openai-chat",
+                    "models": [{ "id": "model-1" }]
+                }),
+                "unsupported API",
+            ),
+            (
+                json!({
+                    "baseUrl": "",
+                    "api": "openai-completions"
+                }),
+                "baseUrl",
+            ),
+            (
+                json!({
+                    "baseUrl": "https://api.example.com/v1",
+                    "models": [{ "name": "missing-id" }]
+                }),
+                "models[0].id",
+            ),
+            (
+                json!({
+                    "baseUrl": "https://api.example.com/v1",
+                    "api": "openai-completions",
+                    "models": [{ "id": "same" }, { "id": "same" }]
+                }),
+                "duplicate model id",
+            ),
+            (
+                json!({
+                    "baseUrl": "https://api.example.com/v1",
+                    "api": "openai-completions",
+                    "models": [{ "id": "model-1" }],
+                    "defaultModel": 42
+                }),
+                "defaultModel",
+            ),
+            (
+                json!({
+                    "baseUrl": "https://api.example.com/v1",
+                    "api": "openai-completions",
+                    "headers": { "x-route": 42 },
+                    "models": [{ "id": "model-1" }]
+                }),
+                "string value",
+            ),
+        ];
+
+        for (config, expected) in cases {
+            let error =
+                validate_pi_provider_config(&config).expect_err("invalid config must be rejected");
+            assert!(
+                error.to_string().contains(expected),
+                "expected '{expected}' in error, got {error}"
+            );
+        }
     }
 
     #[test]
