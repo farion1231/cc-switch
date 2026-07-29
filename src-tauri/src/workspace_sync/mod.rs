@@ -4,6 +4,8 @@
 
 pub mod crypto;
 
+pub mod manifest;
+
 pub mod model;
 
 pub mod state_db;
