@@ -1065,6 +1065,7 @@
       "qiniu": "Qiniu",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
+      "tokenhub": "Tokenhub (江蘇電信)",
       "together": "Together AI"
     },
     "parameterConfig": "パラメーター設定 - {{name}} *",

@@ -1036,6 +1036,7 @@
       "qiniu": "七牛雲",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
+      "tokenhub": "智雲Tokenhub",
       "together": "Together AI"
     },
     "parameterConfig": "參數設定 - {{name}} *",

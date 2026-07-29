@@ -577,10 +577,24 @@ export const iconMetadata: Record<string, IconMetadata> = {
   },
   zhipu: {
     name: "zhipu",
-    displayName: "Zhipu AI",
+    displayName: "Zhipu",
     category: "ai-provider",
-    keywords: ["chatglm", "glm"],
+    keywords: ["zhipu", "glm", "bigmodel", "cn-official", "chinese"],
     defaultColor: "#0F62FE",
+  },
+  tokenhub: {
+    name: "tokenhub",
+    displayName: "Tokenhub",
+    category: "ai-provider",
+    keywords: [
+      "tokenhub",
+      "telecomjs",
+      "js telecom",
+      "jiangsu telecom",
+      "aggregator",
+      "gateway",
+    ],
+    defaultColor: "#0078D4",
   },
   openrouter: {
     name: "openrouter",

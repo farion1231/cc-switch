@@ -1065,6 +1065,7 @@
       "qiniu": "Qiniu",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
+      "tokenhub": "Tokenhub (Jiangsu Telecom)",
       "together": "Together AI"
     },
     "parameterConfig": "Parameter Config - {{name}} *",

@@ -2142,6 +2142,53 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
   },
+  {
+    name: "Tokenhub",
+    nameKey: "providerForm.presets.tokenhub",
+    websiteUrl: "https://aigw.telecomjs.com",
+    settingsConfig: {
+      baseUrl: "https://aigw.telecomjs.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "deepseek-v4-pro",
+          name: "DeepSeek V4 Pro",
+          contextWindow: 131072,
+          cost: { input: 2, output: 8 },
+        },
+        {
+          id: "kimi-k2.7-code",
+          name: "Kimi K2.7 Code",
+          contextWindow: 131072,
+          cost: { input: 2, output: 8 },
+        },
+        {
+          id: "qwen3-coder-plus",
+          name: "Qwen3 Coder Plus",
+          contextWindow: 131072,
+          cost: { input: 2, output: 8 },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "tokenhub",
+    iconColor: "#0078D4",
+    templateValues: {
+      apiKey: { label: "API Key", placeholder: "sk-...", editorValue: "" },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "tokenhub/deepseek-v4-pro",
+        fallbacks: ["tokenhub/kimi-k2.7-code"],
+      },
+      modelCatalog: {
+        "tokenhub/deepseek-v4-pro": { alias: "DeepSeek V4 Pro" },
+        "tokenhub/kimi-k2.7-code": { alias: "Kimi K2.7 Code" },
+        "tokenhub/qwen3-coder-plus": { alias: "Qwen3 Coder Plus" },
+      },
+    },
+  },
 
   {
     name: "AiHubMix",
