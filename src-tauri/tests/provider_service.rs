@@ -1763,6 +1763,7 @@ fn switch_codex_provider_with_takeover_live_but_stopped_proxy_keeps_proxy_live_c
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
     enable_codex_official_auth_preservation();
+    enable_codex_unified_history();
     let _home = ensure_test_home();
 
     let oauth_auth = json!({
@@ -1837,6 +1838,11 @@ wire_api = "responses"
     }
 
     let state = create_test_state_with_config(&config).expect("create test state");
+    let codex_dir = cc_switch_lib::get_codex_config_path()
+        .parent()
+        .expect("Codex config directory")
+        .to_path_buf();
+    create_codex_thread_artifacts(&codex_dir);
     futures::executor::block_on(
         state.db.save_live_backup(
             "codex",
@@ -1853,6 +1859,41 @@ wire_api = "responses"
         !futures::executor::block_on(state.proxy_service.is_running()),
         "fixture keeps the proxy server stopped"
     );
+
+    let invalid_state_dir = codex_dir.join("sqlite");
+    std::fs::create_dir_all(&invalid_state_dir).expect("create nested state directory");
+    let invalid_state_path = invalid_state_dir.join("state_6.sqlite");
+    std::fs::write(&invalid_state_path, b"invalid sqlite").expect("write invalid state DB");
+
+    ProviderService::switch(&state, AppType::Codex, "new-provider")
+        .expect_err("invalid history DB must abort a Codex hot switch");
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::Codex.as_str())
+            .expect("get rolled-back current provider")
+            .as_deref(),
+        Some("old-provider")
+    );
+    assert_eq!(
+        read_codex_thread_routes(&codex_dir),
+        (
+            "openai".to_string(),
+            "openai".to_string(),
+            "openai".to_string(),
+            "gpt-5.4".to_string()
+        ),
+        "failed hot switches must leave history unchanged"
+    );
+    let rolled_back_live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read rolled back live");
+    assert!(
+        rolled_back_live.contains(r#"model_provider = "deepseek""#)
+            && !rolled_back_live.contains("deepseek-new"),
+        "failed hot switches must restore the previous proxy live route"
+    );
+
+    std::fs::remove_file(invalid_state_path).expect("remove invalid state DB");
 
     ProviderService::switch(&state, AppType::Codex, "new-provider")
         .expect("switch should update takeover backup instead of writing normal live config");
@@ -1908,6 +1949,16 @@ wire_api = "responses"
         .get_current_provider(AppType::Codex.as_str())
         .expect("get current provider");
     assert_eq!(current.as_deref(), Some("new-provider"));
+    assert_eq!(
+        read_codex_thread_routes(&codex_dir),
+        (
+            "deepseek-new".to_string(),
+            "deepseek-new".to_string(),
+            "deepseek-new".to_string(),
+            "deepseek-reasoner".to_string()
+        ),
+        "unified history must follow Codex hot switches"
+    );
 }
 
 #[test]

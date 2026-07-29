@@ -2549,29 +2549,65 @@ impl ProxyService {
             return Err(error);
         }
 
-        if let Err(error) = crate::settings::set_current_provider(&app_type_enum, Some(provider_id))
-        {
-            self.rollback_hot_switch_preparation(
-                &app_type_enum,
-                previous_backup.as_ref(),
-                previous_provider_id.as_deref(),
-                should_sync_backup,
-                live_taken_over,
-                previous_live_before_direct_write.as_ref(),
-            )
-            .await;
-            return Err(format!("更新本地当前供应商失败: {error}"));
-        }
-        if let Err(error) = self
-            .db
-            .set_current_provider(app_type_enum.as_str(), provider_id)
-        {
-            if let Err(rollback_error) = crate::settings::set_current_provider(
-                &app_type_enum,
-                previous_local_provider_id.as_deref(),
-            ) {
-                log::error!("数据库切换失败后恢复本地当前供应商失败: {rollback_error}");
+        let publish_result = (|| -> Result<(), String> {
+            let mut history = if matches!(app_type_enum, AppType::Codex)
+                && crate::settings::unify_codex_session_history()
+            {
+                let history =
+                    crate::codex_history_reconcile::reconcile_history_for_provider(&provider)
+                        .map_err(|error| error.to_string())?;
+                log::info!(
+                    "Codex history followed hot-switched provider '{}': jsonl_files={}, state_rows={}",
+                    provider.id,
+                    history.outcome().changed_jsonl_files,
+                    history.outcome().changed_state_rows
+                );
+                Some(history)
+            } else {
+                None
+            };
+
+            if let Err(error) =
+                crate::settings::set_current_provider(&app_type_enum, Some(provider_id))
+            {
+                let mut message = format!("更新本地当前供应商失败: {error}");
+                if let Some(history) = history.take() {
+                    if let Err(rollback_error) = history.rollback() {
+                        message.push_str(&format!(
+                            "; failed to roll back Codex history: {rollback_error}"
+                        ));
+                    }
+                }
+                return Err(message);
             }
+
+            if let Err(error) = self
+                .db
+                .set_current_provider(app_type_enum.as_str(), provider_id)
+            {
+                let mut message = format!("更新当前供应商失败: {error}");
+                if let Some(history) = history.take() {
+                    if let Err(rollback_error) = history.rollback() {
+                        message.push_str(&format!(
+                            "; failed to roll back Codex history: {rollback_error}"
+                        ));
+                    }
+                }
+                if let Err(rollback_error) = crate::settings::set_current_provider(
+                    &app_type_enum,
+                    previous_local_provider_id.as_deref(),
+                ) {
+                    message.push_str(&format!(
+                        "; failed to restore local current provider: {rollback_error}"
+                    ));
+                }
+                return Err(message);
+            }
+
+            Ok(())
+        })();
+
+        if let Err(error) = publish_result {
             self.rollback_hot_switch_preparation(
                 &app_type_enum,
                 previous_backup.as_ref(),
@@ -2581,7 +2617,7 @@ impl ProxyService {
                 previous_live_before_direct_write.as_ref(),
             )
             .await;
-            return Err(format!("更新当前供应商失败: {error}"));
+            return Err(error);
         }
 
         if let Some(server) = self.server.read().await.as_ref() {
@@ -4058,8 +4094,11 @@ wire_api = "responses"
         crate::settings::reload_settings().expect("reload settings");
         // Exercise the default setting: takeover itself must now preserve native
         // auth regardless of the legacy compatibility toggle.
-        crate::settings::update_settings(crate::settings::AppSettings::default())
-            .expect("reset settings");
+        crate::settings::update_settings(crate::settings::AppSettings {
+            unify_codex_session_history: true,
+            ..Default::default()
+        })
+        .expect("enable unified Codex history");
 
         let db = Arc::new(Database::memory().expect("init db"));
         use_ephemeral_proxy_port(&db).await;
@@ -4073,6 +4112,50 @@ wire_api = "responses"
         });
         crate::codex_config::write_codex_live_atomic(&oauth_auth, Some("model = \"gpt-5.4\"\n"))
             .expect("seed official live config");
+
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        let session_path = codex_dir.join("sessions/2026/07/thread-1.jsonl");
+        std::fs::create_dir_all(session_path.parent().expect("session parent"))
+            .expect("create session directory");
+        std::fs::write(
+            &session_path,
+            concat!(
+                r#"{"type":"session_meta","payload":{"id":"thread-1","model_provider":"openai"}}"#,
+                "\n"
+            ),
+        )
+        .expect("seed Codex session");
+        let state_path = codex_dir.join("state_5.sqlite");
+        let connection = rusqlite::Connection::open(&state_path).expect("open state DB");
+        connection
+            .execute_batch(
+                "CREATE TABLE threads (
+                    id TEXT PRIMARY KEY,
+                    model_provider TEXT NOT NULL,
+                    model TEXT NOT NULL
+                );
+                INSERT INTO threads (id, model_provider, model)
+                VALUES ('thread-1', 'openai', 'gpt-5.4');",
+            )
+            .expect("seed state DB");
+        drop(connection);
+        let read_history_providers = || -> (String, String) {
+            let line = std::fs::read_to_string(&session_path).expect("read Codex session");
+            let value: Value = serde_json::from_str(line.trim()).expect("parse session meta");
+            let session_provider = value["payload"]["model_provider"]
+                .as_str()
+                .expect("session provider")
+                .to_string();
+            let connection = rusqlite::Connection::open(&state_path).expect("open state DB");
+            let state_provider = connection
+                .query_row(
+                    "SELECT model_provider FROM threads WHERE id = 'thread-1'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("read state provider");
+            (session_provider, state_provider)
+        };
 
         let mut official = Provider::with_id(
             "codex-official".to_string(),
@@ -4141,6 +4224,10 @@ wire_api = "responses"
         assert!(!crate::codex_config::codex_config_has_official_proxy_route(
             &third_party_live
         ));
+        assert_eq!(
+            read_history_providers(),
+            ("rightcode".to_string(), "rightcode".to_string())
+        );
 
         service
             .hot_switch_provider("codex", "codex-official")
@@ -4157,12 +4244,18 @@ wire_api = "responses"
             &official_live
         ));
         assert!(!official_live.contains(PROXY_TOKEN_PLACEHOLDER));
+        assert_eq!(
+            read_history_providers(),
+            ("openai".to_string(), "openai".to_string())
+        );
 
         service
             .set_takeover_for_app("codex", false)
             .await
             .expect("disable takeover");
         assert_eq!(read_auth(), oauth_auth);
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("reset settings");
     }
 
     #[test]
