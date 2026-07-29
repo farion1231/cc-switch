@@ -234,11 +234,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://code0.ai",
-        GEMINI_MODEL: "gemini-3.1-pro-preview",
+        GEMINI_MODEL: "gemini-3.6-flash",
       },
     },
     baseURL: "https://code0.ai",
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-3.6-flash",
     description: "Code0",
     category: "aggregator",
     isPartner: true,
@@ -360,11 +360,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.qnaigc.com/bypass/vertex",
-        GEMINI_MODEL: "gemini-3.1-pro-preview",
+        GEMINI_MODEL: "gemini-3.6-flash",
       },
     },
     baseURL: "https://api.qnaigc.com/bypass/vertex",
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-3.6-flash",
     description: "Qiniu",
     category: "aggregator",
     isPartner: true,
