@@ -454,6 +454,23 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "cherryin",
   },
   {
+    name: "XuanShu API",
+    websiteUrl: "https://www.xuanshuapi.com",
+    apiKeyUrl: "https://www.xuanshuapi.com/keys",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://www.xuanshuapi.com",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3-pro-preview",
+      },
+    },
+    baseURL: "https://www.xuanshuapi.com",
+    model: "gemini-3-pro-preview",
+    description: "XuanShu API",
+    category: "aggregator",
+    endpointCandidates: ["https://www.xuanshuapi.com"],
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",

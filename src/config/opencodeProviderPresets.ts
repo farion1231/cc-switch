@@ -1901,6 +1901,33 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "XuanShu API",
+    websiteUrl: "https://www.xuanshuapi.com",
+    apiKeyUrl: "https://www.xuanshuapi.com/keys",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "XuanShu API",
+      options: {
+        // @ai-sdk/anthropic 会在 baseURL 后拼接 /messages
+        baseURL: "https://www.xuanshuapi.com/v1",
+        apiKey: "",
+      },
+      models: {
+        "claude-opus-4-7": { name: "Claude Opus 4.7" },
+        "claude-opus-4-6": { name: "Claude Opus 4.6" },
+        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",

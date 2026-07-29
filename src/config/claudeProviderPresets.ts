@@ -1199,6 +1199,20 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    name: "XuanShu API",
+    websiteUrl: "https://www.xuanshuapi.com",
+    apiKeyUrl: "https://www.xuanshuapi.com/keys",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://www.xuanshuapi.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    // Anthropic 兼容层挂在根路径，Base URL 不带 /v1
+    endpointCandidates: ["https://www.xuanshuapi.com"],
+  },
+  {
     name: "OpenRouter",
     websiteUrl: "https://openrouter.ai",
     apiKeyUrl: "https://openrouter.ai/keys",
