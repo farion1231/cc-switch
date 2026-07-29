@@ -2637,7 +2637,7 @@ command = "ghost-cmd"
         );
     }
 
-    // B 的 live：共享键传递到位，A 的密钥/投影不得跟过来
+    // B 的 live：共享键传递到位，A 的路由凭据只能保留在 A 自己的作用域内
     let live_after = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
         .expect("read config.toml after switch");
     assert!(
@@ -2648,9 +2648,20 @@ command = "ghost-cmd"
         live_after.contains("model_provider = \"bprov\""),
         "live should be provider B's own config, got: {live_after}"
     );
+    let live_toml: toml::Value = toml::from_str(&live_after).expect("parse live config");
+    assert_eq!(
+        live_toml["model_providers"]["bprov"]["experimental_bearer_token"].as_str(),
+        Some("sk-b"),
+        "provider B must keep its own scoped token"
+    );
+    assert_eq!(
+        live_toml["model_providers"]["aprov"]["experimental_bearer_token"].as_str(),
+        Some("sk-a-live-secret"),
+        "inactive provider A must keep its token in A's own scope"
+    );
     assert!(
-        !live_after.contains("sk-a-live-secret"),
-        "provider A's bearer token must not leak into B's live, got: {live_after}"
+        live_toml.get("experimental_bearer_token").is_none(),
+        "provider A's bearer token must not leak into global config"
     );
     assert!(
         !live_after.contains("mcp_servers"),
