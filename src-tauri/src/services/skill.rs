@@ -3121,6 +3121,18 @@ impl SkillService {
     /// 磁盘上。守卫交给调用方持有，清理就变成作用域结束时自动发生，不再依赖每条
     /// 出口都记得手写 `remove_dir_all`（实测漏了不止一条）。
     fn extract_local_zip(zip_path: &Path) -> Result<tempfile::TempDir> {
+        Self::extract_local_zip_with_temp_factory(zip_path, tempfile::tempdir)
+    }
+
+    /// 临时目录创建器作为私有依赖传入：生产路径继续使用系统临时目录，测试则可用
+    /// `tempdir_in` 精确隔离目录，无需修改进程级 TMPDIR 并干扰并行测试。
+    fn extract_local_zip_with_temp_factory<F>(
+        zip_path: &Path,
+        create_temp_dir: F,
+    ) -> Result<tempfile::TempDir>
+    where
+        F: FnOnce() -> std::io::Result<tempfile::TempDir>,
+    {
         let file = fs::File::open(zip_path)
             .with_context(|| format!("Failed to open ZIP file: {}", zip_path.display()))?;
 
@@ -3149,7 +3161,7 @@ impl SkillService {
 
         // 守卫持有到解压全部成功为止：中途任何 `?` 都会让它清掉半成品目录。
         // 原来在这里就 keep()，超限或解压出错都会留下永久残留。
-        let temp_dir = tempfile::tempdir()?;
+        let temp_dir = create_temp_dir()?;
         let temp_path = temp_dir.path().to_path_buf();
 
         let mut symlinks: Vec<(PathBuf, String)> = Vec::new();
@@ -3965,12 +3977,10 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
     fn extract_local_zip_leaves_no_partial_directory_when_it_fails() {
         use std::io::Write;
         use zip::write::SimpleFileOptions;
 
-        // TMPDIR 要在建这两个目录之后再改，否则它们自己就落进被观测的目录里
         let holder = tempdir().expect("tempdir");
         let scratch = tempdir().expect("tempdir");
 
@@ -3989,13 +3999,11 @@ mod tests {
         let zip_path = holder.path().join("collide.zip");
         fs::write(&zip_path, &buf).expect("write zip");
 
-        let original = std::env::var_os("TMPDIR");
-        std::env::set_var("TMPDIR", scratch.path());
-        let result = SkillService::extract_local_zip(&zip_path);
-        match original {
-            Some(value) => std::env::set_var("TMPDIR", value),
-            None => std::env::remove_var("TMPDIR"),
-        }
+        // 不修改进程级 TMPDIR；否则未标记 serial 的并行测试也会把临时目录写进 scratch，
+        // 造成误报，且 scratch 析构时可能删除其他测试仍在使用的目录。
+        let result = SkillService::extract_local_zip_with_temp_factory(&zip_path, || {
+            tempfile::tempdir_in(scratch.path())
+        });
 
         assert!(
             result.is_err(),
@@ -4013,7 +4021,6 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
     fn extract_local_zip_hands_back_a_guard_that_owns_the_tree() {
         use std::io::Write;
         use zip::write::SimpleFileOptions;
@@ -4036,13 +4043,10 @@ mod tests {
         let zip_path = holder.path().join("ok.zip");
         fs::write(&zip_path, &buf).expect("write zip");
 
-        let original = std::env::var_os("TMPDIR");
-        std::env::set_var("TMPDIR", scratch.path());
-        let extracted = SkillService::extract_local_zip(&zip_path);
-        match original {
-            Some(value) => std::env::set_var("TMPDIR", value),
-            None => std::env::remove_var("TMPDIR"),
-        }
+        // 显式目录工厂既能验证守卫所有权，又不会把测试隔离建立在全局环境变量上。
+        let extracted = SkillService::extract_local_zip_with_temp_factory(&zip_path, || {
+            tempfile::tempdir_in(scratch.path())
+        });
 
         let extracted = extracted.expect("extract must succeed");
         assert!(
