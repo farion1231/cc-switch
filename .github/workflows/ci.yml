@@ -27,15 +27,18 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          cross build --manifest-path src-tauri/Cargo.toml -p cc-switch-agent --release --target x86_64-unknown-linux-musl
-          cross build --manifest-path src-tauri/Cargo.toml -p cc-switch-agent --release --target aarch64-unknown-linux-musl
+          # 两个 cross 镜像的宿主 GLIBC 版本可能不同，必须隔离宿主 build script，禁止共用 target 根目录。
+          CARGO_TARGET_DIR=src-tauri/target/cross-x86_64 \
+            cross build --manifest-path src-tauri/Cargo.toml -p cc-switch-agent --release --target x86_64-unknown-linux-musl
+          CARGO_TARGET_DIR=src-tauri/target/cross-aarch64 \
+            cross build --manifest-path src-tauri/Cargo.toml -p cc-switch-agent --release --target aarch64-unknown-linux-musl
 
       - name: Verify and collect Agent artifacts
         shell: bash
         run: |
           set -euxo pipefail
-          X86=src-tauri/target/x86_64-unknown-linux-musl/release/cc-switch-agent
-          ARM=src-tauri/target/aarch64-unknown-linux-musl/release/cc-switch-agent
+          X86=src-tauri/target/cross-x86_64/x86_64-unknown-linux-musl/release/cc-switch-agent
+          ARM=src-tauri/target/cross-aarch64/aarch64-unknown-linux-musl/release/cc-switch-agent
           test -s "$X86"
           test -s "$ARM"
           file "$X86" | grep -q 'statically linked'

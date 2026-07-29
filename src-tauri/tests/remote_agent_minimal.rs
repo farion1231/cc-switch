@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -92,4 +93,44 @@ fn standalone_agent_dependency_graph_excludes_desktop_gui_stack() {
         "最小 Agent 依赖了桌面 GUI 栈: {}",
         banned.join(", ")
     );
+}
+
+#[test]
+fn cross_workflows_isolate_host_build_artifacts_per_architecture() {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("src-tauri 应位于仓库根目录下")
+        .to_path_buf();
+
+    // cross 镜像的宿主 GLIBC 版本可能不同；若共用 target，前一镜像生成的 build script
+    // 会被后一镜像复用并在启动阶段失败，因此 CI 与发布流程都必须按架构隔离缓存根目录。
+    for workflow in ["ci.yml", "release.yml"] {
+        let path = workspace_root
+            .join(".github")
+            .join("workflows")
+            .join(workflow);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("读取 {} 失败: {error}", path.display()));
+
+        assert!(
+            source.contains("CARGO_TARGET_DIR=src-tauri/target/cross-x86_64"),
+            "{workflow} 必须为 x86_64 cross 构建设置独立 target 目录"
+        );
+        assert!(
+            source.contains("CARGO_TARGET_DIR=src-tauri/target/cross-aarch64"),
+            "{workflow} 必须为 aarch64 cross 构建设置独立 target 目录"
+        );
+        assert!(
+            source.contains(
+                "X86=src-tauri/target/cross-x86_64/x86_64-unknown-linux-musl/release/cc-switch-agent"
+            ),
+            "{workflow} 必须从隔离后的 x86_64 目录收集 Agent"
+        );
+        assert!(
+            source.contains(
+                "ARM=src-tauri/target/cross-aarch64/aarch64-unknown-linux-musl/release/cc-switch-agent"
+            ),
+            "{workflow} 必须从隔离后的 aarch64 目录收集 Agent"
+        );
+    }
 }
