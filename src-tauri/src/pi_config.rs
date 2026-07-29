@@ -7,8 +7,9 @@ use serde_json::{json, Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::config::{atomic_write, get_home_dir, write_json_file};
+use crate::config::{atomic_write, get_app_config_dir, get_home_dir, write_json_file};
 use crate::error::AppError;
 use crate::provider::Provider;
 
@@ -111,6 +112,70 @@ fn restore_snapshot(snapshot: &JsonFileSnapshot) -> Result<(), AppError> {
     }
 }
 
+fn cleanup_backups(backup_root: &Path) -> Result<(), AppError> {
+    let retain = crate::settings::effective_backup_retain_count();
+    let mut entries = fs::read_dir(backup_root)
+        .map_err(|error| AppError::io(backup_root, error))?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
+        .collect::<Vec<_>>();
+    if entries.len() <= retain {
+        return Ok(());
+    }
+
+    entries.sort_by_key(|entry| entry.metadata().and_then(|meta| meta.modified()).ok());
+    let remove_count = entries.len().saturating_sub(retain);
+    for entry in entries.into_iter().take(remove_count) {
+        if let Err(error) = fs::remove_dir_all(entry.path()) {
+            log::warn!(
+                "Failed to remove old Pi backup {}: {error}",
+                entry.path().display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn create_backup(snapshots: &[&JsonFileSnapshot]) -> Result<(), AppError> {
+    if snapshots.iter().all(|snapshot| snapshot.raw.is_none()) {
+        return Ok(());
+    }
+
+    let backup_root = get_app_config_dir().join("backups").join("pi");
+    fs::create_dir_all(&backup_root).map_err(|error| AppError::io(&backup_root, error))?;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let base_name = format!("pi_{timestamp}");
+    let mut backup_dir = backup_root.join(&base_name);
+    let mut suffix = 1;
+    while backup_dir.exists() {
+        backup_dir = backup_root.join(format!("{base_name}_{suffix}"));
+        suffix += 1;
+    }
+    fs::create_dir_all(&backup_dir).map_err(|error| AppError::io(&backup_dir, error))?;
+
+    for snapshot in snapshots {
+        let Some(raw) = snapshot.raw.as_deref() else {
+            continue;
+        };
+        let filename = snapshot
+            .path
+            .file_name()
+            .ok_or_else(|| AppError::Config("Invalid Pi config filename".to_string()))?;
+        let backup_path = backup_dir.join(filename);
+        atomic_write(&backup_path, raw)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&backup_path, fs::Permissions::from_mode(0o600))
+                .map_err(|error| AppError::io(&backup_path, error))?;
+        }
+    }
+    cleanup_backups(&backup_root)
+}
+
 fn apply_documents_with<F>(documents: &[PendingDocument<'_>], mut writer: F) -> Result<(), AppError>
 where
     F: FnMut(&Path, &Value) -> Result<(), AppError>,
@@ -173,6 +238,11 @@ fn commit_documents(
         }
     }
 
+    let snapshots = documents
+        .iter()
+        .map(|document| document.snapshot)
+        .collect::<Vec<_>>();
+    create_backup(&snapshots)?;
     apply_documents_with(&documents, write_json_file)
 }
 

@@ -164,6 +164,43 @@ fn writes_provider_and_defaults_without_clobbering_existing_pi_config() {
         Some(&json!("dark")),
         "unrelated settings should be preserved"
     );
+
+    let backup_root = home
+        .dir
+        .path()
+        .join(".cc-switch")
+        .join("backups")
+        .join("pi");
+    let backup_dirs = fs::read_dir(&backup_root)
+        .expect("read Pi backups")
+        .map(|entry| entry.expect("read Pi backup entry").path())
+        .collect::<Vec<_>>();
+    assert_eq!(backup_dirs.len(), 1, "one activation creates one backup");
+    let backup_models: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(backup_dirs[0].join("models.json")).expect("read backed-up models"),
+    )
+    .expect("parse backed-up models");
+    let backup_settings: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(backup_dirs[0].join("settings.json")).expect("read backed-up settings"),
+    )
+    .expect("parse backed-up settings");
+    assert_eq!(
+        backup_models.pointer("/providers/existing/apiKey"),
+        Some(&json!("keep"))
+    );
+    assert_eq!(
+        backup_settings.pointer("/defaultProvider"),
+        Some(&json!("existing"))
+    );
+
+    cc_switch_lib::pi_config::write_pi_live_provider(&provider).expect("repeat no-op write");
+    assert_eq!(
+        fs::read_dir(&backup_root)
+            .expect("re-read Pi backups")
+            .count(),
+        1,
+        "a no-op activation must not create another backup"
+    );
 }
 
 #[test]
