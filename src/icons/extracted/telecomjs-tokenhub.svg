@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" version="1.1" xmlns:xlink="http://www.w3.org/1999/xlink"
-  viewBox="0 0 400 400">
+<svg id="_图层_1" data-name="图层_1" xmlns="http://www.w3.org/2000/svg" version="1.1" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 400 400">
   <!-- Generator: Adobe Illustrator 29.8.1, SVG Export Plug-In . SVG Version: 2.1.1 Build 2)  -->
   <defs>
     <style>
@@ -12,23 +11,17 @@
         fill: url(#_未命名的渐变_2);
       }
     </style>
-    <linearGradient id="_未命名的渐变" data-name="未命名的渐变" x1="-219.19" y1="497.92" x2="-218.36"
-      y2="497.09" gradientTransform="translate(79000 179302.21) scale(360 -360)"
-      gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#3b7bfc" />
-      <stop offset="1" stop-color="#1a5cff" />
+    <linearGradient id="_未命名的渐变" data-name="未命名的渐变" x1="-438.62" y1=".57" x2="-437.72" y2="1.47" gradientTransform="translate(157980 -174) scale(360)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3b7bfc"/>
+      <stop offset="1" stop-color="#1a5cff"/>
     </linearGradient>
-    <linearGradient id="_未命名的渐变_2" data-name="未命名的渐变 2" x1="-218.72" y1="497.92" x2="-217.69"
-      y2="496.9" gradientTransform="translate(31516 71894.68) scale(144 -144)"
-      gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#3b7bfc" />
-      <stop offset="1" stop-color="#1a5cff" />
+    <linearGradient id="_未命名的渐变_2" data-name="未命名的渐变 2" x1="-437.33" y1=".98" x2="-436.21" y2="2.08" gradientTransform="translate(62976 46) scale(144)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3b7bfc"/>
+      <stop offset="1" stop-color="#1a5cff"/>
     </linearGradient>
   </defs>
-  <g id="_图层_1" data-name="图层_1">
-    <path class="st0"
-      d="M224.95,69.08c11.3,60.79,89.82,121.3,165.15,130.41-75.33,9.12-153.85,69.63-165.15,130.41-11.3-60.79-58.92-120.8-134.25-129.91,75.33-9.12,122.95-70.13,134.25-130.92Z" />
-    <path class="st1"
-      d="M86.79,205.04c6,37.96,37.57,57.8,81.57,62.97-44,5.18-75.57,25.02-81.57,62.97-6-37.96-21.49-58.54-65.49-63.71,44-5.18,59.49-24.28,65.49-62.23Z" />
+  <g id="_图层_11" data-name="_图层_1">
+    <path class="st0" d="M221.72,52.29c12.2,65.62,96.96,130.94,178.28,140.78-81.32,9.85-166.08,75.17-178.28,140.78-12.2-65.62-63.6-130.41-144.92-140.24,81.32-9.85,132.73-75.71,144.92-141.33h0Z"/>
+    <path class="st1" d="M72.57,199.06c6.48,40.98,40.56,62.4,88.06,67.98-47.5,5.59-81.58,27.01-88.06,67.98-6.48-40.98-23.2-63.19-70.7-68.78,47.5-5.59,64.22-26.21,70.7-67.18h0Z"/>
   </g>
 </svg>
