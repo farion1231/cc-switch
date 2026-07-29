@@ -5,3 +5,5 @@
 pub mod model;
 
 pub mod state_db;
+
+pub mod storage;
