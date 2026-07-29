@@ -39,7 +39,7 @@ pub(crate) use live::{
 // Internal re-exports
 use live::{
     remove_hermes_provider_from_live, remove_openclaw_provider_from_live,
-    remove_opencode_provider_from_live, write_gemini_live,
+    remove_opencode_provider_from_live, write_gemini_live, LiveSnapshot,
 };
 use usage::validate_usage_script;
 
@@ -51,57 +51,31 @@ pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &
         && crate::proxy::providers::is_codex_official_provider(provider)
 }
 
-/// 统一会话开关变更后，立即按新开关状态重写当前官方 Codex 供应商的
-/// live 配置，使开关即时生效（无需等下一次切换）。
-/// 当前供应商非官方（或不存在）时为 no-op：注入只作用于官方配置，
-/// 第三方 live 配置不受开关影响。
-pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, AppError> {
+/// Rebuild the current Codex route after the unified-history setting changes.
+/// The regular switch transaction is reused so direct and takeover routes have
+/// the same rollback guarantees. Existing history is touched only when the
+/// caller explicitly accepted migration.
+pub fn reapply_current_codex_live(
+    state: &AppState,
+    reconcile_existing_history: bool,
+) -> Result<bool, AppError> {
     let current_id = ProviderService::current(state, AppType::Codex)?;
     if current_id.is_empty() {
         return Ok(false);
     }
-    let providers = state.db.get_all_providers(AppType::Codex.as_str())?;
-    let Some(provider) = providers.get(&current_id) else {
+    if state
+        .db
+        .get_provider_by_id(&current_id, AppType::Codex.as_str())?
+        .is_none()
+    {
         return Ok(false);
-    };
-    if provider.category.as_deref() != Some("official") {
-        return Ok(false);
     }
-
-    // 代理接管期间 live 归代理所有（开启代理时官方供应商只警告不拦截，
-    // 二者可以共存）。与切换/保存路径一致：以 backup/占位符为所有权信号，
-    // 只更新备份，注入后的配置由接管释放时的恢复路径落盘。
-    let has_live_backup =
-        futures::executor::block_on(state.db.get_live_backup(AppType::Codex.as_str()))
-            .ok()
-            .flatten()
-            .is_some();
-    let live_taken_over = state
-        .proxy_service
-        .detect_takeover_in_live_config_for_app(&AppType::Codex);
-    if has_live_backup || live_taken_over {
-        futures::executor::block_on(
-            state
-                .proxy_service
-                .update_live_backup_from_provider(AppType::Codex.as_str(), provider),
-        )
-        .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
-        return Ok(true);
-    }
-
-    live::write_live_with_common_config(&state.db, &AppType::Codex, provider)?;
-    // 重写 live 会整体替换 config.toml（有意设计），[mcp_servers] 随之丢失，
-    // 写完必须立刻从 DB 重新投影启用的 MCP。只投影 Codex 而非
-    // sync_all_enabled：后者按 AppType::all() 顺序逐应用短路，排在 Codex
-    // 前面的无关应用 live 损坏（如 ~/.claude.json 坏 JSON）会阻断 Codex
-    // 的重投影，让刚被清掉的 [mcp_servers] 无人补回。
-    // 投影失败降级为警告：走到这里 live 已按新开关状态落盘，开关事实上
-    // 已生效；若把错误上抛，save_settings 会回滚开关设置，制造"设置=旧值、
-    // live=新桶"的会话分裂——正是该回滚要防止的状态。MCP 投影可自愈
-    // （下次切换 / 任一 MCP 启停操作都会重新投影）。
-    if let Err(err) = McpService::sync_enabled_for_app(state, &AppType::Codex) {
-        log::warn!("统一会话开关重写 live 后重投影 Codex MCP 失败（将在下次同步时自愈）: {err}");
-    }
+    ProviderService::switch_with_history_policy(
+        state,
+        AppType::Codex,
+        &current_id,
+        reconcile_existing_history,
+    )?;
     Ok(true)
 }
 
@@ -113,6 +87,36 @@ pub struct ProviderService;
 #[serde(rename_all = "camelCase")]
 pub struct SwitchResult {
     pub warnings: Vec<String>,
+}
+
+fn rollback_codex_switch(
+    primary: AppError,
+    previous_local_provider: Option<&str>,
+    history: Option<crate::codex_history_reconcile::AppliedHistoryReconcile>,
+    live: LiveSnapshot,
+) -> AppError {
+    let mut rollback_errors = Vec::new();
+    if let Err(error) =
+        crate::settings::set_current_provider(&AppType::Codex, previous_local_provider)
+    {
+        rollback_errors.push(format!("local provider: {error}"));
+    }
+    if let Some(history) = history {
+        if let Err(error) = history.rollback() {
+            rollback_errors.push(format!("history: {error}"));
+        }
+    }
+    if let Err(error) = live.restore() {
+        rollback_errors.push(format!("live config: {error}"));
+    }
+    if rollback_errors.is_empty() {
+        primary
+    } else {
+        AppError::Message(format!(
+            "{primary}; Codex switch rollback failed: {}",
+            rollback_errors.join("; ")
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -2964,6 +2968,15 @@ impl ProviderService {
     ///    d. Write target provider config to live files
     ///    e. Sync MCP configuration
     pub fn switch(state: &AppState, app_type: AppType, id: &str) -> Result<SwitchResult, AppError> {
+        Self::switch_with_history_policy(state, app_type, id, true)
+    }
+
+    fn switch_with_history_policy(
+        state: &AppState,
+        app_type: AppType,
+        id: &str,
+        reconcile_codex_history: bool,
+    ) -> Result<SwitchResult, AppError> {
         // Check if provider exists
         let providers = state.db.get_all_providers(app_type.as_str())?;
         let _provider = providers
@@ -2972,18 +2985,18 @@ impl ProviderService {
 
         // OMO providers are switched through their own exclusive path.
         if matches!(app_type, AppType::OpenCode) && _provider.category.as_deref() == Some("omo") {
-            return Self::switch_normal(state, app_type, id, &providers);
+            return Self::switch_normal(state, app_type, id, &providers, reconcile_codex_history);
         }
 
         // OMO Slim providers are switched through their own exclusive path.
         if matches!(app_type, AppType::OpenCode)
             && _provider.category.as_deref() == Some("omo-slim")
         {
-            return Self::switch_normal(state, app_type, id, &providers);
+            return Self::switch_normal(state, app_type, id, &providers, reconcile_codex_history);
         }
 
         if matches!(app_type, AppType::ClaudeDesktop) {
-            return Self::switch_normal(state, app_type, id, &providers);
+            return Self::switch_normal(state, app_type, id, &providers, reconcile_codex_history);
         }
 
         // Provider switches and takeover toggles both mutate live config and the
@@ -3039,9 +3052,11 @@ impl ProviderService {
             );
 
             futures::executor::block_on(
-                state
-                    .proxy_service
-                    .hot_switch_provider_inner(app_type.as_str(), id),
+                state.proxy_service.hot_switch_provider_inner_with_history(
+                    app_type.as_str(),
+                    id,
+                    reconcile_codex_history,
+                ),
             )
             .map_err(|e| AppError::Message(format!("热切换失败: {e}")))?;
 
@@ -3051,7 +3066,7 @@ impl ProviderService {
         }
 
         // Normal mode: full switch with Live config write
-        Self::switch_normal(state, app_type, id, &providers)
+        Self::switch_normal(state, app_type, id, &providers, reconcile_codex_history)
     }
 
     /// Normal switch flow (non-proxy mode)
@@ -3060,6 +3075,7 @@ impl ProviderService {
         app_type: AppType,
         id: &str,
         providers: &indexmap::IndexMap<String, Provider>,
+        reconcile_codex_history: bool,
     ) -> Result<SwitchResult, AppError> {
         let provider = providers
             .get(id)
@@ -3130,8 +3146,56 @@ impl ProviderService {
             }
         }
 
-        // Additive mode apps skip setting is_current (no such concept)
-        if !app_type.is_additive_mode() {
+        if matches!(app_type, AppType::Codex) {
+            let previous_local_provider = crate::settings::get_current_provider(&app_type);
+            let live_snapshot = LiveSnapshot::capture_codex()?;
+
+            write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+
+            let history =
+                if reconcile_codex_history && crate::settings::unify_codex_session_history() {
+                    match crate::codex_history_reconcile::reconcile_history_for_live_config() {
+                        Ok(history) => {
+                            log::info!(
+                            "Codex history followed provider '{}': jsonl_files={}, state_rows={}",
+                            provider.id,
+                            history.outcome().changed_jsonl_files,
+                            history.outcome().changed_state_rows
+                        );
+                            Some(history)
+                        }
+                        Err(error) => {
+                            let rollback_error = live_snapshot.restore().err();
+                            return match rollback_error {
+                                Some(rollback_error) => Err(AppError::Message(format!(
+                                "{error}; failed to restore Codex live config: {rollback_error}"
+                            ))),
+                                None => Err(error),
+                            };
+                        }
+                    }
+                } else {
+                    None
+                };
+
+            if let Err(error) = crate::settings::set_current_provider(&app_type, Some(id)) {
+                return Err(rollback_codex_switch(
+                    error,
+                    previous_local_provider.as_deref(),
+                    history,
+                    live_snapshot,
+                ));
+            }
+            if let Err(error) = state.db.set_current_provider(app_type.as_str(), id) {
+                return Err(rollback_codex_switch(
+                    error,
+                    previous_local_provider.as_deref(),
+                    history,
+                    live_snapshot,
+                ));
+            }
+        } else if !app_type.is_additive_mode() {
+            // Additive mode apps skip setting is_current (no such concept).
             // Update local settings (device-level, takes priority)
             crate::settings::set_current_provider(&app_type, Some(id))?;
 
@@ -3139,8 +3203,11 @@ impl ProviderService {
             state.db.set_current_provider(app_type.as_str(), id)?;
         }
 
-        // Sync to live (write_gemini_live handles security flag internally for Gemini)
-        write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+        // Codex was written before publishing its current-provider state so a
+        // failed history reconciliation can roll back cleanly.
+        if !matches!(app_type, AppType::Codex) {
+            write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+        }
 
         // Hermes is additive, so "switching" doesn't overwrite a live config file
         // — we instead update the top-level `model:` section to point at this

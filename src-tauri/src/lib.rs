@@ -6,6 +6,7 @@ mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
 mod codex_history_migration;
+mod codex_history_reconcile;
 mod codex_state_db;
 mod commands;
 mod config;
@@ -59,7 +60,7 @@ pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService},
-    provider::reapply_current_codex_official_live,
+    provider::reapply_current_codex_live,
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
     SkillService, SpeedtestService,
@@ -729,7 +730,7 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to seed official providers: {e}"),
             }
 
-            {
+            let codex_history_migration_task = {
                 let db_for_codex_history_migration = app_state.db.clone();
                 tauri::async_runtime::spawn_blocking(move || {
                     match crate::codex_history_migration::maybe_migrate_codex_third_party_history_provider_bucket(
@@ -770,26 +771,8 @@ pub fn run() {
                         }
                     }
 
-                    // 统一会话开关的官方历史迁移：开关开启但上次未完成（如文件被占用
-                    // 中途失败）时在启动期重试；函数内部自门控，开关关闭时直接跳过。
-                    match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
-                        Ok(outcome) => {
-                            if let Some(reason) = outcome.skipped_reason {
-                                log::debug!("○ Codex official history unify migration skipped: {reason}");
-                            } else {
-                                log::info!(
-                                    "✓ Codex official history unify migration completed: jsonl_files={}, state_rows={}",
-                                    outcome.migrated_jsonl_files,
-                                    outcome.migrated_state_rows
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            log::warn!("✗ Codex official history unify migration failed: {e}");
-                        }
-                    }
-                });
-            }
+                })
+            };
 
             // 老用户 / 已确认的路径由 `fresh_install_at_startup` 自行拦截，这里不做写入。
             // 字段只由前端在用户点击"我知道了"时 save_settings 回写，语义是"用户显式确认过"。
@@ -1193,6 +1176,23 @@ pub fn run() {
                     .await
                 {
                     log::warn!("清理 Gemini 通用配置泄漏凭据失败: {e}");
+                }
+
+                if let Err(error) = codex_history_migration_task.await {
+                    log::warn!("✗ Codex legacy history migration task failed: {error}");
+                }
+                if crate::settings::unify_codex_session_history()
+                    && crate::settings::unify_codex_migrate_existing_requested()
+                {
+                    match crate::services::provider::reapply_current_codex_live(&state, true) {
+                        Ok(true) => log::info!(
+                            "✓ Codex unified route and history reconciled to the current provider"
+                        ),
+                        Ok(false) => log::debug!("○ No current Codex provider to reconcile"),
+                        Err(error) => {
+                            log::warn!("✗ Codex history reconciliation failed: {error}")
+                        }
+                    }
                 }
 
                 initialize_common_config_snippets(&state);

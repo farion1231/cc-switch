@@ -9,8 +9,147 @@ use cc_switch_lib::{
 mod support;
 use support::{
     create_test_state, create_test_state_with_config, enable_codex_official_auth_preservation,
-    ensure_test_home, reset_test_fs, test_mutex,
+    enable_codex_unified_history, ensure_test_home, reset_test_fs, test_mutex,
 };
+
+fn create_codex_thread_artifacts(codex_dir: &std::path::Path) {
+    let session_path = codex_dir.join("sessions/2026/07/thread-1.jsonl");
+    std::fs::create_dir_all(session_path.parent().expect("session parent"))
+        .expect("create session parent");
+    std::fs::write(
+        &session_path,
+        concat!(
+            r#"{"type":"session_meta","payload":{"id":"thread-1","model_provider":"openai"}}"#,
+            "\n",
+            r#"{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"model":"gpt-5.4","model_provider_id":"openai"}}}"#,
+            "\n"
+        ),
+    )
+    .expect("write Codex session");
+
+    let state_path = codex_dir.join("state_5.sqlite");
+    let connection = rusqlite::Connection::open(state_path).expect("open Codex state DB");
+    connection
+        .execute_batch(
+            "CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                model_provider TEXT NOT NULL,
+                model TEXT NOT NULL
+            );
+            INSERT INTO threads (id, model_provider, model)
+            VALUES ('thread-1', 'openai', 'gpt-5.4');",
+        )
+        .expect("seed Codex state DB");
+}
+
+fn read_codex_thread_routes(codex_dir: &std::path::Path) -> (String, String, String, String) {
+    let session = std::fs::read_to_string(codex_dir.join("sessions/2026/07/thread-1.jsonl"))
+        .expect("read Codex session");
+    let meta: serde_json::Value =
+        serde_json::from_str(session.lines().next().expect("session meta"))
+            .expect("parse session meta");
+    let settings = session
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .rfind(|value| {
+            value
+                .pointer("/payload/type")
+                .and_then(serde_json::Value::as_str)
+                == Some("thread_settings_applied")
+        })
+        .expect("latest thread settings");
+    let connection =
+        rusqlite::Connection::open(codex_dir.join("state_5.sqlite")).expect("open Codex state DB");
+    let (db_provider, db_model) = connection
+        .query_row(
+            "SELECT model_provider, model FROM threads WHERE id = 'thread-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read Codex state route");
+    (
+        meta["payload"]["model_provider"]
+            .as_str()
+            .expect("session provider")
+            .to_string(),
+        settings["payload"]["thread_settings"]["model_provider_id"]
+            .as_str()
+            .expect("thread provider")
+            .to_string(),
+        db_provider,
+        db_model,
+    )
+}
+
+fn read_latest_codex_thread_settings(codex_dir: &std::path::Path) -> (String, Option<String>) {
+    let session = std::fs::read_to_string(codex_dir.join("sessions/2026/07/thread-1.jsonl"))
+        .expect("read Codex session");
+    session
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .rfind(|value| {
+            value
+                .pointer("/payload/type")
+                .and_then(serde_json::Value::as_str)
+                == Some("thread_settings_applied")
+        })
+        .map(|value| {
+            (
+                value
+                    .pointer("/payload/thread_settings/model_provider_id")
+                    .and_then(serde_json::Value::as_str)
+                    .expect("thread settings provider")
+                    .to_string(),
+                value
+                    .pointer("/payload/thread_settings/model")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
+            )
+        })
+        .expect("latest thread settings event")
+}
+
+fn codex_bidirectional_switch_fixture() -> (MultiAppConfig, serde_json::Value, &'static str) {
+    let official_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": "official-openai-key",
+        "tokens": {"access_token": "official-token", "account_id": "acct-1"}
+    });
+    let official_config = "model = \"gpt-5.4\"\n";
+    let mut config = MultiAppConfig::default();
+    let manager = config
+        .get_manager_mut(&AppType::Codex)
+        .expect("codex manager");
+    manager.current = "official".to_string();
+    let mut official = Provider::with_id(
+        "official".to_string(),
+        "OpenAI Official".to_string(),
+        json!({"auth": official_auth, "config": official_config}),
+        None,
+    );
+    official.category = Some("official".to_string());
+    manager.providers.insert("official".to_string(), official);
+    let mut custom = Provider::with_id(
+        "custom".to_string(),
+        "Custom".to_string(),
+        json!({
+            "auth": {"OPENAI_API_KEY": "third-party-key"},
+            "config": concat!(
+                "model_provider = \"custom\"\n",
+                "model = \"gpt-5.6-sol\"\n\n",
+                "[model_providers.custom]\n",
+                "name = \"Custom\"\n",
+                "base_url = \"https://third.example/v1\"\n",
+                "wire_api = \"responses\"\n",
+                "requires_openai_auth = true\n"
+            )
+        }),
+        None,
+    );
+    custom.category = Some("custom".to_string());
+    manager.providers.insert("custom".to_string(), custom);
+    (config, official_auth, official_config)
+}
 
 fn sanitize_provider_name(name: &str) -> String {
     name.chars()
@@ -706,13 +845,9 @@ wire_api = "responses"
 }
 
 #[test]
-fn provider_service_switch_codex_default_overwrites_official_auth_when_preservation_off() {
+fn provider_service_switch_codex_keeps_official_auth_and_scopes_third_party_key() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
-    // Intentionally do NOT enable preservation: this locks the default opt-out
-    // behavior where switching to a third-party provider rewrites auth.json,
-    // discarding the user's ChatGPT OAuth login. It is the dual of
-    // `provider_service_switch_codex_preserves_oauth_and_backfills_api_key_from_live_token`.
     let _home = ensure_test_home();
 
     let live_auth = json!({
@@ -783,13 +918,272 @@ requires_openai_auth = true
     let auth_value: serde_json::Value =
         read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
     assert_eq!(
-        auth_value.get("OPENAI_API_KEY").and_then(|v| v.as_str()),
-        Some("third-party-key"),
-        "default (preservation off) should overwrite auth.json with the third-party API key"
+        auth_value
+            .pointer("/tokens/access_token")
+            .and_then(|value| value.as_str()),
+        Some("official-oauth-token"),
+        "third-party switches must keep the official OAuth login"
     );
+    assert_ne!(
+        auth_value
+            .get("OPENAI_API_KEY")
+            .and_then(|value| value.as_str()),
+        Some("third-party-key"),
+        "third-party keys must not be written to global auth.json"
+    );
+
+    let config =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    let parsed: toml::Value = toml::from_str(&config).expect("parse config.toml");
+    assert_eq!(
+        parsed["model_providers"]["aihubmix"]["experimental_bearer_token"].as_str(),
+        Some("third-party-key"),
+        "the selected third-party provider owns its bearer token"
+    );
+}
+
+#[test]
+fn provider_service_switch_codex_restores_distinct_official_api_key() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let official_auth = json!({
+        "auth_mode": "apikey",
+        "OPENAI_API_KEY": "official-openai-key"
+    });
+    let custom_config = r#"model_provider = "custom"
+
+[model_providers.custom]
+base_url = "https://third.example/v1"
+experimental_bearer_token = "third-party-key"
+"#;
+    write_codex_live_atomic(&official_auth, Some(custom_config))
+        .expect("seed mixed official and third-party live state");
+
+    let mut config = MultiAppConfig::default();
+    let manager = config
+        .get_manager_mut(&AppType::Codex)
+        .expect("codex manager");
+    manager.current = "third-party".to_string();
+    manager.providers.insert(
+        "third-party".to_string(),
+        Provider::with_id(
+            "third-party".to_string(),
+            "Third Party".to_string(),
+            json!({
+                "auth": {"OPENAI_API_KEY": "third-party-key"},
+                "config": custom_config
+            }),
+            None,
+        ),
+    );
+    let mut official = Provider::with_id(
+        "official".to_string(),
+        "OpenAI Official".to_string(),
+        json!({"auth": {}, "config": "model_provider = \"openai\"\n"}),
+        None,
+    );
+    official.category = Some("official".to_string());
+    manager.providers.insert("official".to_string(), official);
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    ProviderService::switch(&state, AppType::Codex, "official")
+        .expect("switch back to official provider");
+
+    let restored_auth: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read restored auth");
+    assert_eq!(restored_auth, official_auth);
+}
+
+#[test]
+fn codex_unified_switch_rebinds_existing_threads_in_both_directions() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_unified_history();
+    let _home = ensure_test_home();
+
+    let (config, official_auth, official_config) = codex_bidirectional_switch_fixture();
+    write_codex_live_atomic(&official_auth, Some(official_config)).expect("seed official live");
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    let codex_dir = cc_switch_lib::get_codex_config_path()
+        .parent()
+        .expect("Codex config directory")
+        .to_path_buf();
+    create_codex_thread_artifacts(&codex_dir);
+
+    ProviderService::switch(&state, AppType::Codex, "custom")
+        .expect("switch existing threads to custom");
+    assert_eq!(
+        read_codex_thread_routes(&codex_dir),
+        (
+            "custom".to_string(),
+            "custom".to_string(),
+            "custom".to_string(),
+            "gpt-5.6-sol".to_string()
+        )
+    );
+    assert_eq!(
+        read_latest_codex_thread_settings(&codex_dir),
+        ("custom".to_string(), Some("gpt-5.6-sol".to_string())),
+        "the JSONL route and model must follow the projected live config"
+    );
+    let custom_auth: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read custom auth");
+    assert_eq!(
+        custom_auth
+            .get("OPENAI_API_KEY")
+            .and_then(serde_json::Value::as_str),
+        Some("official-openai-key"),
+        "an official key distinct from the active scoped token must remain available"
+    );
+    assert_eq!(
+        custom_auth
+            .pointer("/tokens/access_token")
+            .and_then(serde_json::Value::as_str),
+        Some("official-token")
+    );
+
+    ProviderService::switch(&state, AppType::Codex, "official")
+        .expect("switch existing threads back to official");
+    assert_eq!(
+        read_codex_thread_routes(&codex_dir),
+        (
+            "custom".to_string(),
+            "custom".to_string(),
+            "custom".to_string(),
+            "gpt-5.4".to_string()
+        )
+    );
+    assert_eq!(
+        read_latest_codex_thread_settings(&codex_dir),
+        ("custom".to_string(), Some("gpt-5.4".to_string())),
+        "custom-to-custom switches must still update the JSONL model"
+    );
+    let official_live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read unified official config");
+    let official_live: toml::Value = toml::from_str(&official_live).expect("parse official config");
+    assert_eq!(
+        official_live
+            .get("model_provider")
+            .and_then(toml::Value::as_str),
+        Some("custom"),
+        "unified history must keep one stable provider bucket across switches"
+    );
+    assert_eq!(
+        official_live["model_providers"]["custom"]["name"].as_str(),
+        Some("OpenAI")
+    );
+    assert_eq!(
+        read_json_file::<serde_json::Value>(&cc_switch_lib::get_codex_auth_path())
+            .expect("read official auth"),
+        official_auth
+    );
+}
+
+#[test]
+fn reapply_current_codex_live_makes_toggle_changes_immediate() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let (config, official_auth, official_config) = codex_bidirectional_switch_fixture();
+    write_codex_live_atomic(&official_auth, Some(official_config)).expect("seed official live");
+    let state = create_test_state_with_config(&config).expect("create test state");
+    let codex_dir = cc_switch_lib::get_codex_config_path()
+        .parent()
+        .expect("Codex config directory")
+        .to_path_buf();
+    create_codex_thread_artifacts(&codex_dir);
+
+    cc_switch_lib::update_settings(cc_switch_lib::AppSettings {
+        unify_codex_session_history: true,
+        unify_codex_migrate_existing: Some(true),
+        ..Default::default()
+    })
+    .expect("enable unified history");
     assert!(
-        auth_value.pointer("/tokens/access_token").is_none(),
-        "default switch must clear the official ChatGPT OAuth token from live auth.json"
+        cc_switch_lib::reapply_current_codex_live(&state, true)
+            .expect("reapply enabled unified route"),
+        "a current Codex provider should be reapplied"
+    );
+    let enabled = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read enabled live config");
+    assert_eq!(
+        toml::from_str::<toml::Value>(&enabled)
+            .expect("parse enabled config")
+            .get("model_provider")
+            .and_then(toml::Value::as_str),
+        Some("custom")
+    );
+    assert_eq!(
+        read_codex_thread_routes(&codex_dir).0,
+        "custom",
+        "enabling with migration must update existing history immediately"
+    );
+
+    cc_switch_lib::update_settings(cc_switch_lib::AppSettings::default())
+        .expect("disable unified history");
+    assert!(
+        cc_switch_lib::reapply_current_codex_live(&state, false).expect("reapply disabled route"),
+        "disabling must also reapply the current route"
+    );
+    let disabled = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read disabled live config");
+    assert_ne!(
+        toml::from_str::<toml::Value>(&disabled)
+            .expect("parse disabled config")
+            .get("model_provider")
+            .and_then(toml::Value::as_str),
+        Some("custom"),
+        "disabling must not leave the stable unified route active"
+    );
+}
+
+#[test]
+fn codex_unified_switch_rolls_back_when_history_reconciliation_fails() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_unified_history();
+    let _home = ensure_test_home();
+    let (config, official_auth, official_config) = codex_bidirectional_switch_fixture();
+    write_codex_live_atomic(&official_auth, Some(official_config)).expect("seed official live");
+    let state = create_test_state_with_config(&config).expect("create test state");
+    let codex_dir = cc_switch_lib::get_codex_config_path()
+        .parent()
+        .expect("Codex config directory")
+        .to_path_buf();
+    create_codex_thread_artifacts(&codex_dir);
+    std::fs::create_dir_all(codex_dir.join("sqlite")).expect("create nested state directory");
+    std::fs::write(codex_dir.join("sqlite/state_6.sqlite"), b"invalid sqlite")
+        .expect("write invalid state DB");
+
+    ProviderService::switch(&state, AppType::Codex, "custom")
+        .expect_err("history failure must abort the switch");
+
+    assert_eq!(
+        ProviderService::current(&state, AppType::Codex).expect("read current provider"),
+        "official"
+    );
+    assert_eq!(
+        read_codex_thread_routes(&codex_dir),
+        (
+            "openai".to_string(),
+            "openai".to_string(),
+            "openai".to_string(),
+            "gpt-5.4".to_string()
+        )
+    );
+    assert_eq!(
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+            .expect("read rolled back config"),
+        official_config
+    );
+    assert_eq!(
+        read_json_file::<serde_json::Value>(&cc_switch_lib::get_codex_auth_path())
+            .expect("read rolled back auth"),
+        official_auth
     );
 }
 
@@ -960,7 +1354,7 @@ fn reapply_codex_official_live_resyncs_mcp_servers() {
     // 统一会话开关变更触发的 reapply 会整体重写 live config.toml（有意设计），
     // 写完必须重新投影 DB 里启用的 MCP，否则用户的 MCP 会静默失效。
     let reapplied =
-        cc_switch_lib::reapply_current_codex_official_live(&state).expect("reapply official live");
+        cc_switch_lib::reapply_current_codex_live(&state, false).expect("reapply official live");
     assert!(
         reapplied,
         "current provider is official, reapply should run"
@@ -1058,7 +1452,7 @@ fn reapply_codex_official_live_projects_mcp_despite_broken_claude_json() {
     let claude_json = cc_switch_lib::get_claude_mcp_path();
     std::fs::write(&claude_json, "{ not valid json").expect("seed broken claude json");
 
-    let reapplied = cc_switch_lib::reapply_current_codex_official_live(&state)
+    let reapplied = cc_switch_lib::reapply_current_codex_live(&state, false)
         .expect("MCP projection failure must degrade to a warning, not fail the toggle");
     assert!(
         reapplied,
@@ -1548,6 +1942,7 @@ fn switch_codex_provider_with_takeover_live_but_stopped_proxy_keeps_proxy_live_c
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
     enable_codex_official_auth_preservation();
+    enable_codex_unified_history();
     let _home = ensure_test_home();
 
     let oauth_auth = json!({
@@ -1622,6 +2017,11 @@ wire_api = "responses"
     }
 
     let state = create_test_state_with_config(&config).expect("create test state");
+    let codex_dir = cc_switch_lib::get_codex_config_path()
+        .parent()
+        .expect("Codex config directory")
+        .to_path_buf();
+    create_codex_thread_artifacts(&codex_dir);
     futures::executor::block_on(
         state.db.save_live_backup(
             "codex",
@@ -1638,6 +2038,54 @@ wire_api = "responses"
         !futures::executor::block_on(state.proxy_service.is_running()),
         "fixture keeps the proxy server stopped"
     );
+
+    let invalid_state_dir = codex_dir.join("sqlite");
+    std::fs::create_dir_all(&invalid_state_dir).expect("create nested state directory");
+    let invalid_state_path = invalid_state_dir.join("state_6.sqlite");
+    std::fs::write(&invalid_state_path, b"invalid sqlite").expect("write invalid state DB");
+
+    ProviderService::switch(&state, AppType::Codex, "new-provider")
+        .expect_err("invalid history DB must abort a Codex hot switch");
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::Codex.as_str())
+            .expect("get rolled-back current provider")
+            .as_deref(),
+        Some("old-provider")
+    );
+    assert_eq!(
+        read_codex_thread_routes(&codex_dir),
+        (
+            "openai".to_string(),
+            "openai".to_string(),
+            "openai".to_string(),
+            "gpt-5.4".to_string()
+        ),
+        "failed hot switches must leave history unchanged"
+    );
+    let rolled_back_live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read rolled back live");
+    let rolled_back_config: toml::Value =
+        toml::from_str(&rolled_back_live).expect("parse rolled-back Codex config");
+    assert_eq!(
+        rolled_back_config
+            .get("model_provider")
+            .and_then(toml::Value::as_str),
+        Some("deepseek"),
+        "failed hot switches must restore the previous active proxy route"
+    );
+    assert_eq!(
+        rolled_back_config
+            .get("model_providers")
+            .and_then(|providers| providers.get("deepseek"))
+            .and_then(|provider| provider.get("base_url"))
+            .and_then(toml::Value::as_str),
+        Some("http://127.0.0.1:15721/v1"),
+        "the restored active route must remain pointed at the local proxy"
+    );
+
+    std::fs::remove_file(invalid_state_path).expect("remove invalid state DB");
 
     ProviderService::switch(&state, AppType::Codex, "new-provider")
         .expect("switch should update takeover backup instead of writing normal live config");
@@ -1660,13 +2108,16 @@ wire_api = "responses"
         "live config should keep the proxy bearer placeholder"
     );
     assert!(
-        live_config.contains(r#"model_provider = "deepseek-new""#)
+        live_config.contains(r#"model_provider = "custom""#)
             && live_config.contains(r#"name = "DeepSeek New""#),
         "live config should update the Codex-visible provider label during takeover"
     );
-    assert!(
-        !live_config.contains("https://new.deepseek.example/v1"),
-        "normal provider base_url must not overwrite taken-over live config"
+    let parsed_live: toml::Value =
+        toml::from_str(&live_config).expect("parse takeover live config");
+    assert_eq!(
+        parsed_live["model_providers"]["custom"]["base_url"].as_str(),
+        Some("http://127.0.0.1:15721/v1"),
+        "the active unified route must remain pointed at the local proxy"
     );
 
     let backup = futures::executor::block_on(state.db.get_live_backup("codex"))
@@ -1693,6 +2144,16 @@ wire_api = "responses"
         .get_current_provider(AppType::Codex.as_str())
         .expect("get current provider");
     assert_eq!(current.as_deref(), Some("new-provider"));
+    assert_eq!(
+        read_codex_thread_routes(&codex_dir),
+        (
+            "custom".to_string(),
+            "custom".to_string(),
+            "custom".to_string(),
+            "deepseek-reasoner".to_string()
+        ),
+        "unified Codex history must keep one stable provider bucket during hot switches"
+    );
 }
 
 #[test]
@@ -2371,7 +2832,7 @@ command = "ghost-cmd"
         );
     }
 
-    // B 的 live：共享键传递到位，A 的密钥/投影不得跟过来
+    // B 的 live：共享键传递到位，A 的路由凭据只能保留在 A 自己的作用域内
     let live_after = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
         .expect("read config.toml after switch");
     assert!(
@@ -2382,9 +2843,20 @@ command = "ghost-cmd"
         live_after.contains("model_provider = \"bprov\""),
         "live should be provider B's own config, got: {live_after}"
     );
+    let live_toml: toml::Value = toml::from_str(&live_after).expect("parse live config");
+    assert_eq!(
+        live_toml["model_providers"]["bprov"]["experimental_bearer_token"].as_str(),
+        Some("sk-b"),
+        "provider B must keep its own scoped token"
+    );
+    assert_eq!(
+        live_toml["model_providers"]["aprov"]["experimental_bearer_token"].as_str(),
+        Some("sk-a-live-secret"),
+        "inactive provider A must keep its token in A's own scope"
+    );
     assert!(
-        !live_after.contains("sk-a-live-secret"),
-        "provider A's bearer token must not leak into B's live, got: {live_after}"
+        live_toml.get("experimental_bearer_token").is_none(),
+        "provider A's bearer token must not leak into global config"
     );
     assert!(
         !live_after.contains("mcp_servers"),

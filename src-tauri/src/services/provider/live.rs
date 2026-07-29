@@ -3,6 +3,7 @@
 //! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
 
 use std::collections::HashMap;
+use std::fs;
 
 use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
@@ -873,8 +874,8 @@ fn restore_live_settings_for_provider_backfill(
         );
     }
 
-    // 统一会话开关注入的共享 `custom` 路由只属于 live 配置；切换回填时
-    // 必须剥掉，否则官方供应商的存储配置被污染，关闭开关后无法还原。
+    // Older releases injected an official-as-custom live route. Never backfill
+    // that compatibility artifact into the stored official provider.
     if provider.category.as_deref() == Some("official") {
         if let Err(err) =
             crate::codex_config::strip_codex_unified_session_bucket_from_settings(&mut settings)
@@ -957,6 +958,25 @@ pub(crate) enum LiveSnapshot {
 }
 
 impl LiveSnapshot {
+    pub(crate) fn capture_codex() -> Result<Self, AppError> {
+        let auth_path = get_codex_auth_path();
+        let config_path = get_codex_config_path();
+        let auth = if auth_path.exists() {
+            Some(read_json_file(&auth_path)?)
+        } else {
+            None
+        };
+        let config = if config_path.exists() {
+            Some(
+                fs::read_to_string(&config_path)
+                    .map_err(|error| AppError::io(&config_path, error))?,
+            )
+        } else {
+            None
+        };
+        Ok(LiveSnapshot::Codex { auth, config })
+    }
+
     #[allow(dead_code)]
     pub(crate) fn restore(&self) -> Result<(), AppError> {
         match self {

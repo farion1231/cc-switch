@@ -290,14 +290,14 @@
     },
     "unifyCodexHistory": {
       "title": "Unified Codex session history",
-      "message": "When enabled, the official subscription and third-party providers share one session history list. Note: resuming an old session across providers may fail because its encrypted_content reasoning cannot be decrypted by another backend.\n\nYou can also migrate your existing official session history into the shared list (originals are backed up to ~/.cc-switch/backups first and can be restored when you turn this off).",
-      "migrateExisting": "Also migrate existing official session history",
+      "message": "When enabled, saved sessions are rebound to whichever Codex provider you select, in both directions. Reopen sessions that are already running after a switch. Note: encrypted_content created by one backend may not be readable by another.",
+      "migrateExisting": "Update all existing saved sessions now",
       "confirm": "I understand, enable"
     },
     "unifyCodexHistoryOff": {
       "title": "Turn off unified session history",
-      "message": "After turning this off, the official subscription and third-party providers return to separate history lists. Sessions created while it was on cannot be attributed to a provider, so they stay in the third-party history and the official subscription will not see them.",
-      "restoreBackup": "Restore the official sessions migrated at enable time back to the official history (exact restore from backup)",
+      "message": "After turning this off, provider switches stop rebinding saved sessions. Existing sessions remain assigned to the last selected provider.",
+      "restoreBackup": "Restore official sessions from a backup created by an older CC Switch version",
       "confirm": "Turn off"
     },
     "usage": {
@@ -682,10 +682,8 @@
     "skipClaudeOnboarding": "Skip Claude Code first-run confirmation",
     "skipClaudeOnboardingDescription": "When enabled, Claude Code will skip the first-run confirmation",
     "codexAuth": "Codex App Enhancements",
-    "preserveCodexOfficialAuthOnSwitch": "Keep official login for direct switches",
-    "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
     "unifyCodexSessionHistory": "Unified Codex session history",
-    "unifyCodexSessionHistoryDescription": "When enabled, the official subscription runs under the shared \"custom\" provider id so official and third-party sessions appear in one history list, optionally migrating existing official sessions in (backed up first). When turning it off, the migrated sessions can be restored from backup. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
+    "unifyCodexSessionHistoryDescription": "When enabled, saved sessions follow the currently selected Codex provider in both directions. Reopen an already running session after switching. Existing sessions can be updated when enabling the option. Note: encrypted_content created by one backend may not be readable by another.",
     "unifyCodexHistoryRestoreCompleted": "Official session history restored from backup ({{files}} session files, {{rows}} index rows)",
     "unifyCodexHistoryRestoreFailed": "Failed to restore official session history, please try again",
     "unifyCodexHistoryRestoreNothing": "No restorable migration backup for the current Codex directory",

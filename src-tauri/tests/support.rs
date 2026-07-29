@@ -61,6 +61,15 @@ pub fn enable_codex_official_auth_preservation() {
     .expect("enable Codex official auth preservation");
 }
 
+#[allow(dead_code)]
+pub fn enable_codex_unified_history() {
+    update_settings(AppSettings {
+        unify_codex_session_history: true,
+        ..Default::default()
+    })
+    .expect("enable Codex unified history");
+}
+
 /// 全局互斥锁，避免多测试并发写入相同的 HOME 目录。
 pub fn test_mutex() -> &'static Mutex<()> {
     static MUTEX: OnceLock<Mutex<()>> = OnceLock::new();

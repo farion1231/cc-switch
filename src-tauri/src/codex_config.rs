@@ -237,7 +237,7 @@ pub fn write_codex_live_atomic(
     } else {
         None
     };
-    let _old_config = if config_path.exists() {
+    let old_config = if config_path.exists() {
         Some(fs::read(&config_path).map_err(|e| AppError::io(&config_path, e))?)
     } else {
         None
@@ -257,15 +257,83 @@ pub fn write_codex_live_atomic(
 
     // 第二步：写 config.toml（失败则回滚 auth.json）
     if let Err(e) = write_text_file(&config_path, &cfg_text) {
-        // 回滚 auth.json
-        if let Some(bytes) = old_auth {
-            let _ = atomic_write(&auth_path, &bytes);
-        } else {
-            let _ = delete_file(&auth_path);
-        }
-        return Err(e);
+        return match rollback_codex_live_files(
+            &auth_path,
+            old_auth.as_deref(),
+            &config_path,
+            old_config.as_deref(),
+        ) {
+            Ok(()) => Err(e),
+            Err(rollback_error) => Err(AppError::Message(format!(
+                "{e}; failed to roll back Codex auth/config: {rollback_error}"
+            ))),
+        };
     }
 
+    Ok(())
+}
+
+fn restore_optional_file(path: &Path, contents: Option<&[u8]>) -> Result<(), AppError> {
+    match contents {
+        Some(contents) => atomic_write(path, contents),
+        None if path.exists() => delete_file(path),
+        None => Ok(()),
+    }
+}
+
+fn rollback_codex_live_files(
+    auth_path: &Path,
+    old_auth: Option<&[u8]>,
+    config_path: &Path,
+    old_config: Option<&[u8]>,
+) -> Result<(), AppError> {
+    let mut errors = Vec::new();
+    if let Err(error) = restore_optional_file(auth_path, old_auth) {
+        errors.push(error.to_string());
+    }
+    if let Err(error) = restore_optional_file(config_path, old_config) {
+        errors.push(error.to_string());
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::Message(errors.join("; ")))
+    }
+}
+
+pub(crate) fn write_codex_live_transition_atomic(
+    auth: &Value,
+    target_config: &str,
+    safe_current_config: &str,
+) -> Result<(), AppError> {
+    validate_config_toml(safe_current_config)?;
+    validate_config_toml(target_config)?;
+
+    let auth_path = get_codex_auth_path();
+    let config_path = get_codex_config_path();
+    let old_auth = auth_path
+        .exists()
+        .then(|| fs::read(&auth_path).map_err(|error| AppError::io(&auth_path, error)))
+        .transpose()?;
+    let old_config = config_path
+        .exists()
+        .then(|| fs::read(&config_path).map_err(|error| AppError::io(&config_path, error)))
+        .transpose()?;
+
+    write_codex_live_config_atomic(Some(safe_current_config))?;
+    if let Err(error) = write_codex_live_atomic(auth, Some(target_config)) {
+        return match rollback_codex_live_files(
+            &auth_path,
+            old_auth.as_deref(),
+            &config_path,
+            old_config.as_deref(),
+        ) {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(AppError::Message(format!(
+                "{error}; failed to restore the original Codex live route: {rollback_error}"
+            ))),
+        };
+    }
     Ok(())
 }
 
@@ -1446,7 +1514,7 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
 
 /// `[model_providers.custom]` entry that makes an official (ChatGPT OAuth)
 /// provider behave like Codex's built-in `openai` entry while running under
-/// the shared custom id: `requires_openai_auth` routes auth to the ChatGPT
+/// CC Switch's temporary proxy provider id: `requires_openai_auth` routes auth to the ChatGPT
 /// login in `auth.json` (base_url then defaults to the official Codex
 /// backend), `name = "OpenAI"` keeps Codex's `is_openai()` feature gates
 /// (web search, remote compaction), and `supports_websockets` restores the
@@ -1501,6 +1569,7 @@ fn remove_codex_proxy_placeholders_from_providers(providers: &mut toml_edit::Tab
 pub fn apply_codex_official_proxy_route(
     config_text: &str,
     proxy_base_url: &str,
+    unified_history: bool,
 ) -> Result<String, AppError> {
     let mut doc = config_text
         .parse::<DocumentMut>()
@@ -1509,7 +1578,12 @@ pub fn apply_codex_official_proxy_route(
     // A third-party takeover may have left the proxy placeholder in config.toml.
     // The official route must use Codex's native OpenAI login instead.
     doc.as_table_mut().remove("experimental_bearer_token");
-    doc["model_provider"] = toml_edit::value(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID);
+    let route_id = if unified_history {
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID
+    } else {
+        CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID
+    };
+    doc["model_provider"] = toml_edit::value(route_id);
 
     let mut providers = match doc.as_table_mut().remove("model_providers") {
         Some(item) => item.into_table().map_err(|_| {
@@ -1531,29 +1605,44 @@ pub fn apply_codex_official_proxy_route(
     // The local proxy currently exposes HTTP/SSE, not Codex websocket routes.
     let table = codex_official_provider_table(Some(proxy_base_url), false);
 
-    providers.insert(
-        CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID,
-        toml_edit::Item::Table(table),
-    );
+    providers.insert(route_id, toml_edit::Item::Table(table));
     doc["model_providers"] = toml_edit::Item::Table(providers);
     Ok(doc.to_string())
 }
 
 /// Whether a live Codex config is the official route projected by CC Switch.
 pub fn codex_config_has_official_proxy_route(config_text: &str) -> bool {
-    if !config_text.contains(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID) {
+    let Ok(doc) = config_text.parse::<DocumentMut>() else {
+        return false;
+    };
+    let Some(route_id) = doc.get("model_provider").and_then(|item| item.as_str()) else {
+        return false;
+    };
+    if route_id == CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID {
+        return true;
+    }
+    if route_id != CC_SWITCH_CODEX_MODEL_PROVIDER_ID {
         return false;
     }
-    config_text
-        .parse::<DocumentMut>()
-        .ok()
-        .and_then(|doc| {
-            doc.get("model_provider")
-                .and_then(|item| item.as_str())
-                .map(str::to_string)
+    doc.get("model_providers")
+        .and_then(|item| item.as_table_like())
+        .and_then(|providers| providers.get(route_id))
+        .and_then(|item| item.as_table_like())
+        .is_some_and(|table| {
+            table.get("name").and_then(|item| item.as_str()) == Some("OpenAI")
+                && table
+                    .get("requires_openai_auth")
+                    .and_then(|item| item.as_bool())
+                    == Some(true)
+                && table
+                    .get("supports_websockets")
+                    .and_then(|item| item.as_bool())
+                    == Some(false)
+                && table
+                    .get("base_url")
+                    .and_then(|item| item.as_str())
+                    .is_some_and(|value| !value.trim().is_empty())
         })
-        .as_deref()
-        == Some(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
 }
 
 /// Remove only the official takeover route owned by CC Switch. This is a
@@ -1562,11 +1651,15 @@ pub fn remove_codex_official_proxy_route(config_text: &str) -> Result<String, Ap
     let mut doc = config_text
         .parse::<DocumentMut>()
         .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
-    if doc.get("model_provider").and_then(|item| item.as_str())
-        != Some(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
-    {
+    if !codex_config_has_official_proxy_route(config_text) {
         return Ok(config_text.to_string());
     }
+
+    let route_id = doc
+        .get("model_provider")
+        .and_then(|item| item.as_str())
+        .expect("official proxy route was validated")
+        .to_string();
 
     doc.as_table_mut().remove("model_provider");
     if let Some(item) = doc.as_table_mut().remove("model_providers") {
@@ -1575,7 +1668,7 @@ pub fn remove_codex_official_proxy_route(config_text: &str) -> Result<String, Ap
                 "Invalid Codex config.toml: model_providers must be a table".to_string(),
             )
         })?;
-        providers.remove(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID);
+        providers.remove(&route_id);
         remove_codex_proxy_placeholders_from_providers(&mut providers);
         if !providers.is_empty() {
             doc["model_providers"] = toml_edit::Item::Table(providers);
@@ -1598,59 +1691,97 @@ fn table_matches_codex_unified_official_provider(table: &toml_edit::Table) -> bo
         && table.get("wire_api").and_then(|item| item.as_str()) == Some("responses")
 }
 
-/// 统一 Codex 会话历史：把官方供应商的 live 配置改写为以共享的
-/// `custom` model_provider 标识运行（认证仍走 `auth.json` 的 ChatGPT 登录），
-/// 使开关开启后创建的官方会话与第三方会话共用同一个 resume 历史桶。
-///
-/// 两种情况拒绝注入、原样返回：
-/// - 配置已有显式 `model_provider`：用户手工指定的路由不被覆盖；
-/// - 配置已有形态不同的 `[model_providers.custom]` 表：设置 `model_provider`
-///   会激活这张我们不认识的表（可能带第三方 base_url/token，会把 ChatGPT
-///   OAuth 流量路由到错误后端），宁可让开关对该配置不生效。
-pub fn inject_codex_unified_session_bucket(config_text: &str) -> Result<String, AppError> {
+fn table_like_matches_codex_unified_official_provider(table: &dyn toml_edit::TableLike) -> bool {
+    table.get("name").and_then(|item| item.as_str()) == Some("OpenAI")
+        && table
+            .get("requires_openai_auth")
+            .and_then(|item| item.as_bool())
+            == Some(true)
+        && table
+            .get("supports_websockets")
+            .and_then(|item| item.as_bool())
+            .is_some()
+        && table.get("wire_api").and_then(|item| item.as_str()) == Some("responses")
+}
+
+/// Keep every unified Codex session in one stable provider bucket. Switching
+/// changes only the route behind `custom`, so Codex's provider-filtered history
+/// remains visible after restart and an open append-only rollout never needs to
+/// be replaced on subsequent switches.
+pub fn project_codex_unified_session_bucket(
+    category: Option<&str>,
+    config_text: &str,
+) -> Result<String, AppError> {
     let mut doc = config_text
         .parse::<DocumentMut>()
-        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+        .map_err(|error| AppError::Message(format!("Invalid Codex config.toml: {error}")))?;
 
-    if doc.get("model_provider").is_some() {
-        return Ok(config_text.to_string());
-    }
-
-    let existing_custom_conflicts = doc
-        .get("model_providers")
-        .and_then(|item| item.as_table())
-        .and_then(|providers| providers.get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID))
-        .and_then(|item| item.as_table())
-        .is_some_and(|table| !table_matches_codex_unified_official_provider(table));
-    if existing_custom_conflicts {
-        log::warn!(
-            "官方 Codex 配置已存在自定义 [model_providers.custom]，跳过统一会话路由注入以避免激活未知路由"
-        );
-        return Ok(config_text.to_string());
-    }
-
-    doc["model_provider"] = toml_edit::value(CC_SWITCH_CODEX_MODEL_PROVIDER_ID);
+    let route = if category == Some("official") {
+        toml_edit::Item::Table(codex_unified_official_provider_table())
+    } else {
+        let provider_id = doc
+            .get("model_provider")
+            .and_then(|item| item.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                AppError::Config(
+                    "Third-party Codex provider config must define model_provider".to_string(),
+                )
+            })?;
+        let provider = doc
+            .get("model_providers")
+            .and_then(|item| item.as_table_like())
+            .and_then(|providers| providers.get(provider_id))
+            .filter(|item| codex_provider_definition_is_routable(item))
+            .cloned()
+            .ok_or_else(|| {
+                AppError::Config(format!(
+                    "Third-party Codex provider '{provider_id}' must define a non-empty base_url"
+                ))
+            })?;
+        provider
+    };
 
     if doc.get("model_providers").is_none() {
-        let mut parent = toml_edit::Table::new();
-        parent.set_implicit(true);
-        doc["model_providers"] = toml_edit::Item::Table(parent);
+        let mut providers = toml_edit::Table::new();
+        providers.set_implicit(true);
+        doc["model_providers"] = toml_edit::Item::Table(providers);
     }
-    if let Some(providers) = doc["model_providers"].as_table_mut() {
-        if !providers.contains_key(CC_SWITCH_CODEX_MODEL_PROVIDER_ID) {
-            providers.insert(
-                CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
-                toml_edit::Item::Table(codex_unified_official_provider_table()),
-            );
-        }
-    }
+    let providers = doc
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_like_mut())
+        .ok_or_else(|| {
+            AppError::Message(
+                "Invalid Codex config.toml: model_providers must be a table".to_string(),
+            )
+        })?;
+    providers.insert(CC_SWITCH_CODEX_MODEL_PROVIDER_ID, route);
+    doc["model_provider"] = toml_edit::value(CC_SWITCH_CODEX_MODEL_PROVIDER_ID);
     Ok(doc.to_string())
 }
 
-/// `inject_codex_unified_session_bucket` 的反向操作：从配置文本里剥掉注入的
-/// 统一会话路由，保证切换回填不会把它带进数据库的存储配置（关闭开关后
-/// 切换即可完全还原）。仅当形态与注入产物完全一致时才剥离；第三方模板和
-/// 用户自定义的 `custom` 条目（带 base_url 等差异字段）原样保留。
+pub fn project_codex_unified_session_bucket_in_settings(
+    category: Option<&str>,
+    settings: &mut Value,
+) -> Result<(), AppError> {
+    if !crate::settings::unify_codex_session_history() {
+        return Ok(());
+    }
+    let config_text = settings
+        .get("config")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let projected = project_codex_unified_session_bucket(category, &config_text)?;
+    if let Some(object) = settings.as_object_mut() {
+        object.insert("config".to_string(), Value::String(projected));
+    }
+    Ok(())
+}
+
+/// Remove the exact official-as-custom route written by older CC Switch
+/// versions. Real third-party `custom` definitions are left untouched.
 pub fn strip_codex_unified_session_bucket(config_text: &str) -> Result<String, AppError> {
     if !config_text.contains("model_provider") {
         return Ok(config_text.to_string());
@@ -1688,35 +1819,7 @@ pub fn strip_codex_unified_session_bucket(config_text: &str) -> Result<String, A
     Ok(doc.to_string())
 }
 
-/// 统一会话开关开启时，把官方供应商 `{ auth, config }` 设置对象中的
-/// config 文本注入共享 custom 路由；开关关闭或非官方供应商时不做改动。
-///
-/// 普通 live 写入（`write_codex_live_for_provider`）与代理接管备份
-/// （`update_live_backup_from_provider`）两条落盘路径共用：接管期间
-/// live 归代理所有，注入必须进备份，接管释放恢复的 live 才带统一路由。
-pub fn apply_codex_unified_session_bucket_to_settings(
-    category: Option<&str>,
-    settings: &mut Value,
-) -> Result<(), AppError> {
-    if category != Some("official") || !crate::settings::unify_codex_session_history() {
-        return Ok(());
-    }
-    let config_text = settings
-        .get("config")
-        .and_then(|value| value.as_str())
-        .unwrap_or("")
-        .to_string();
-    let injected = inject_codex_unified_session_bucket(&config_text)?;
-    if injected != config_text {
-        if let Some(obj) = settings.as_object_mut() {
-            obj.insert("config".to_string(), Value::String(injected));
-        }
-    }
-    Ok(())
-}
-
-/// Backfill helper: strip the unified-session injection from a live
-/// `{ auth, config }` settings object before it is stored back to the DB.
+/// Backfill helper for cleaning the legacy official-as-custom route.
 pub fn strip_codex_unified_session_bucket_from_settings(
     settings: &mut Value,
 ) -> Result<(), AppError> {
@@ -1775,39 +1878,185 @@ pub fn strip_codex_mcp_servers_from_settings(settings: &mut Value) -> Result<(),
     Ok(())
 }
 
+fn codex_provider_definition_is_routable(item: &toml_edit::Item) -> bool {
+    item.as_table_like()
+        .and_then(|table| table.get("base_url"))
+        .and_then(|value| value.as_str())
+        .is_some_and(|value| !value.trim().is_empty())
+}
+
+pub(crate) fn preserve_inactive_codex_provider_definitions(
+    target_config: &str,
+    live_config: &str,
+) -> Result<String, AppError> {
+    let mut target = target_config
+        .parse::<DocumentMut>()
+        .map_err(|error| AppError::Message(format!("Invalid Codex config.toml: {error}")))?;
+    let live = match live_config.parse::<DocumentMut>() {
+        Ok(live) => live,
+        Err(error) => {
+            log::warn!("Skipping inactive Codex provider preservation: {error}");
+            return Ok(target_config.to_string());
+        }
+    };
+
+    let Some(live_providers) = live
+        .get("model_providers")
+        .and_then(|item| item.as_table_like())
+    else {
+        return Ok(target_config.to_string());
+    };
+    let target_active = target
+        .get("model_provider")
+        .and_then(|item| item.as_str())
+        .map(str::to_string);
+
+    if target.get("model_providers").is_none() {
+        let mut providers = toml_edit::Table::new();
+        providers.set_implicit(true);
+        target["model_providers"] = toml_edit::Item::Table(providers);
+    }
+    let target_providers = target
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_like_mut())
+        .ok_or_else(|| {
+            AppError::Message(
+                "Invalid Codex config.toml: model_providers must be a table".to_string(),
+            )
+        })?;
+
+    for (provider_id, live_definition) in live_providers.iter() {
+        if !codex_provider_definition_is_routable(live_definition) {
+            continue;
+        }
+        let target_is_routable = target_providers
+            .get(provider_id)
+            .is_some_and(codex_provider_definition_is_routable);
+        let is_target_active = target_active.as_deref() == Some(provider_id);
+        if target_is_routable || is_target_active {
+            continue;
+        }
+        target_providers.insert(provider_id, live_definition.clone());
+    }
+
+    Ok(target.to_string())
+}
+
+fn codex_config_uses_custom_provider(config_text: &str) -> bool {
+    let Ok(doc) = config_text.parse::<DocumentMut>() else {
+        return false;
+    };
+    let Some(provider_id) = active_codex_model_provider_id(&doc) else {
+        return false;
+    };
+    if !is_custom_codex_model_provider_id(&provider_id) {
+        return false;
+    }
+    !doc.get("model_providers")
+        .and_then(|item| item.as_table_like())
+        .and_then(|providers| providers.get(&provider_id))
+        .and_then(|item| item.as_table_like())
+        .is_some_and(table_like_matches_codex_unified_official_provider)
+}
+
+pub(crate) fn sanitize_codex_global_auth(auth: &Value, active_config: &str) -> Value {
+    if !codex_config_uses_custom_provider(active_config) {
+        return auth.clone();
+    }
+
+    let mut sanitized = auth.clone();
+    let global_key = sanitized
+        .get("OPENAI_API_KEY")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|key| !key.is_empty());
+    let global_key_belongs_to_active_provider = global_key.is_some_and(|global_key| {
+        extract_codex_experimental_bearer_token(active_config)
+            .as_deref()
+            .is_none_or(|scoped_token| scoped_token.trim() == global_key)
+    });
+    if global_key_belongs_to_active_provider {
+        if let Some(object) = sanitized.as_object_mut() {
+            object.remove("OPENAI_API_KEY");
+        }
+        if !codex_auth_has_oauth_login_material(&sanitized) {
+            if let Some(object) = sanitized.as_object_mut() {
+                object.remove("auth_mode");
+            }
+        }
+    }
+    sanitized
+}
+
 /// Route a Codex live write between full auth+config or config-only.
 ///
-/// Official providers with usable login material own `auth.json`. Third-party
-/// providers only touch `config.toml` when the compatibility setting is enabled
-/// so the user's ChatGPT login cache survives provider switches.
-///
-/// 统一会话开关开启时，官方配置在落盘前注入共享的 `custom` 路由
-/// （见 `inject_codex_unified_session_bucket`）。
+/// Official providers own global `auth.json`. Third-party keys are always scoped
+/// to their model-provider table, leaving official auth available to stale
+/// `openai` threads during a switch.
 pub fn write_codex_live_for_provider(
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
-    let unified_official_config =
-        if category == Some("official") && crate::settings::unify_codex_session_history() {
-            Some(inject_codex_unified_session_bucket(
-                config_text.unwrap_or(""),
-            )?)
-        } else {
-            None
-        };
-    let config_text = unified_official_config.as_deref().or(config_text);
-
-    let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
-        || (category != Some("official")
-            && !crate::settings::preserve_codex_official_auth_on_switch());
-
-    if should_write_auth {
-        write_codex_live_atomic(auth, config_text)
+    let live_config = read_codex_config_text()?;
+    let auth_path = get_codex_auth_path();
+    let live_auth = if auth_path.exists() {
+        read_json_file(&auth_path)?
     } else {
-        let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
-        write_codex_live_config_atomic(Some(&live_config))
+        json!({})
+    };
+
+    let safe_live_config = if codex_config_uses_custom_provider(&live_config)
+        && extract_codex_auth_api_key(&live_auth).is_some()
+    {
+        prepare_preserved_codex_live_config(&live_auth, &live_config)?
+    } else {
+        live_config.clone()
+    };
+    let provider_config = if category == Some("official") {
+        strip_codex_unified_session_bucket(config_text.unwrap_or(""))?
+    } else {
+        prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?
+    };
+    let target_config = if crate::settings::unify_codex_session_history() {
+        project_codex_unified_session_bucket(category, &provider_config)?
+    } else {
+        provider_config
+    };
+    let target_config =
+        preserve_inactive_codex_provider_definitions(&target_config, &safe_live_config)?;
+
+    let safe_live_auth = sanitize_codex_global_auth(&live_auth, &live_config);
+    let scoped_target_auth = sanitize_codex_global_auth(&safe_live_auth, &target_config);
+    let target_auth = if category == Some("official") && codex_auth_has_login_material(auth) {
+        auth
+    } else if category == Some("official") {
+        &safe_live_auth
+    } else {
+        &scoped_target_auth
+    };
+    if !auth_path.exists()
+        && target_auth
+            .as_object()
+            .is_some_and(serde_json::Map::is_empty)
+    {
+        write_codex_live_config_atomic(Some(&target_config))
+    } else {
+        write_codex_live_transition_atomic(target_auth, &target_config, &safe_live_config)
     }
+}
+
+pub(crate) fn prepare_preserved_codex_live_config(
+    auth: &Value,
+    config_text: &str,
+) -> Result<String, AppError> {
+    let token = extract_codex_experimental_bearer_token(config_text)
+        .or_else(|| extract_codex_auth_api_key(auth));
+
+    Ok(match token {
+        Some(token) => set_codex_experimental_bearer_token(config_text, &token)?,
+        None => config_text.to_string(),
+    })
 }
 
 /// Build the live Codex config for provider switching.
@@ -2031,6 +2280,29 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn codex_live_rollback_reports_file_restore_failures() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let auth_path = temp.path().join("auth.json");
+        let config_path = temp.path().join("config.toml");
+        std::fs::create_dir(&auth_path).expect("block auth restore with a directory");
+        std::fs::write(&config_path, b"new-config").expect("seed config");
+
+        let error = rollback_codex_live_files(
+            &auth_path,
+            Some(b"old-auth"),
+            &config_path,
+            Some(b"old-config"),
+        )
+        .expect_err("auth rollback failure must be reported");
+
+        assert!(error.to_string().contains("auth.json"));
+        assert_eq!(
+            std::fs::read(&config_path).expect("read restored config"),
+            b"old-config"
+        );
+    }
+
+    #[test]
     fn catalog_tool_profile_from_api_format() {
         assert_eq!(
             CodexCatalogToolProfile::from_api_format(Some("anthropic")),
@@ -2051,33 +2323,6 @@ mod tests {
     }
 
     #[test]
-    fn unified_session_bucket_injects_for_empty_official_config() {
-        let injected = inject_codex_unified_session_bucket("").expect("inject");
-        let doc: toml::Table = toml::from_str(&injected).expect("parse injected config");
-
-        assert_eq!(
-            doc.get("model_provider").and_then(|v| v.as_str()),
-            Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
-        );
-        let custom = doc["model_providers"][CC_SWITCH_CODEX_MODEL_PROVIDER_ID]
-            .as_table()
-            .expect("custom provider table");
-        assert_eq!(custom.get("name").and_then(|v| v.as_str()), Some("OpenAI"));
-        assert_eq!(
-            custom.get("requires_openai_auth").and_then(|v| v.as_bool()),
-            Some(true)
-        );
-        assert_eq!(
-            custom.get("supports_websockets").and_then(|v| v.as_bool()),
-            Some(true)
-        );
-        assert_eq!(
-            custom.get("wire_api").and_then(|v| v.as_str()),
-            Some("responses")
-        );
-    }
-
-    #[test]
     fn official_proxy_route_uses_native_auth_and_local_responses_provider() {
         let input = r#"model = "gpt-5.4"
 experimental_bearer_token = "PROXY_MANAGED"
@@ -2085,7 +2330,7 @@ experimental_bearer_token = "PROXY_MANAGED"
 [mcp_servers.example]
 command = "example"
 "#;
-        let output = apply_codex_official_proxy_route(input, "http://127.0.0.1:15721/v1")
+        let output = apply_codex_official_proxy_route(input, "http://127.0.0.1:15721/v1", false)
             .expect("apply official proxy route");
         let doc: toml::Value = toml::from_str(&output).expect("parse output");
 
@@ -2121,9 +2366,12 @@ command = "example"
 
     #[test]
     fn official_proxy_route_cleanup_only_removes_owned_provider() {
-        let projected =
-            apply_codex_official_proxy_route("model = \"gpt-5.4\"\n", "http://127.0.0.1:15721/v1")
-                .expect("project");
+        let projected = apply_codex_official_proxy_route(
+            "model = \"gpt-5.4\"\n",
+            "http://127.0.0.1:15721/v1",
+            false,
+        )
+        .expect("project");
         let cleaned = remove_codex_official_proxy_route(&projected).expect("clean");
         let doc: toml::Value = toml::from_str(&cleaned).expect("parse cleaned");
         assert!(doc.get("model_provider").is_none());
@@ -2140,7 +2388,8 @@ command = "example"
             "model_providers = 3\n",
             "[[model_providers]]\nname = \"broken\"\n",
         ] {
-            let result = apply_codex_official_proxy_route(input, "http://127.0.0.1:15721/v1");
+            let result =
+                apply_codex_official_proxy_route(input, "http://127.0.0.1:15721/v1", false);
             assert!(result.is_err());
         }
     }
@@ -2150,7 +2399,7 @@ command = "example"
         let input = r#"model_provider = "rightcode"
 model_providers = { rightcode = { name = "RightCode", experimental_bearer_token = "PROXY_MANAGED" } }
 "#;
-        let projected = apply_codex_official_proxy_route(input, "http://127.0.0.1:15721/v1")
+        let projected = apply_codex_official_proxy_route(input, "http://127.0.0.1:15721/v1", false)
             .expect("project inline provider table");
         let projected_doc: toml::Value = toml::from_str(&projected).expect("parse projected");
         assert!(projected_doc["model_providers"]["rightcode"]
@@ -2170,45 +2419,84 @@ model_providers = { rightcode = { name = "RightCode", experimental_bearer_token 
     }
 
     #[test]
-    fn unified_session_bucket_preserves_other_keys_and_explicit_routing() {
-        let with_catalog = "model_catalog_json = \"cc-switch-model-catalog.json\"\n";
-        let injected = inject_codex_unified_session_bucket(with_catalog).expect("inject");
-        assert!(injected.contains("model_catalog_json"));
-        assert!(injected.contains("model_provider = \"custom\""));
+    fn unified_session_bucket_strip_removes_legacy_official_route() {
+        let legacy = r#"model_provider = "custom"
+model_catalog_json = "cc-switch-model-catalog.json"
 
-        // 用户显式指定过 model_provider 的官方配置不被覆盖
-        let explicit = "model_provider = \"openai_https\"\n";
-        let unchanged = inject_codex_unified_session_bucket(explicit).expect("inject");
-        assert_eq!(unchanged, explicit);
-    }
-
-    #[test]
-    fn unified_session_bucket_skips_conflicting_custom_table() {
-        // 残留的非注入形态 custom 表：设置 model_provider 会把官方流量
-        // 路由到表里的第三方端点，必须整体拒绝注入。
-        let stale = r#"[model_providers.custom]
-name = "Relay"
-base_url = "https://relay.example/v1"
+[model_providers.custom]
+name = "OpenAI"
+requires_openai_auth = true
+supports_websockets = true
+wire_api = "responses"
 "#;
-        let unchanged = inject_codex_unified_session_bucket(stale).expect("inject");
-        assert_eq!(unchanged, stale);
-
-        // 已是注入形态的 custom 表（如重复注入）则照常补上 model_provider
-        let injected_once = inject_codex_unified_session_bucket("").expect("inject");
-        let reinjected = inject_codex_unified_session_bucket(&injected_once).expect("re-inject");
-        assert_eq!(reinjected, injected_once);
+        let stripped = strip_codex_unified_session_bucket(legacy).expect("strip");
+        assert_eq!(
+            stripped,
+            "model_catalog_json = \"cc-switch-model-catalog.json\"\n"
+        );
     }
 
     #[test]
-    fn unified_session_bucket_strip_round_trips_injection() {
-        let injected = inject_codex_unified_session_bucket("").expect("inject");
-        let stripped = strip_codex_unified_session_bucket(&injected).expect("strip");
-        assert_eq!(stripped.trim(), "");
+    fn unified_session_bucket_projects_official_and_third_party_to_custom() {
+        let official =
+            project_codex_unified_session_bucket(Some("official"), "model = \"gpt-5.4\"\n")
+                .expect("project official route");
+        let official: toml::Value = toml::from_str(&official).expect("parse official route");
+        assert_eq!(official["model_provider"].as_str(), Some("custom"));
+        assert_eq!(
+            official["model_providers"]["custom"]["name"].as_str(),
+            Some("OpenAI")
+        );
+        assert_eq!(
+            official["model_providers"]["custom"]["supports_websockets"].as_bool(),
+            Some(true)
+        );
 
-        let with_catalog = "model_catalog_json = \"cc-switch-model-catalog.json\"\n";
-        let injected = inject_codex_unified_session_bucket(with_catalog).expect("inject");
-        let stripped = strip_codex_unified_session_bucket(&injected).expect("strip");
-        assert_eq!(stripped, with_catalog);
+        let third_party = project_codex_unified_session_bucket(
+            None,
+            r#"model_provider = "vendor_alpha"
+model = "model-a"
+
+[model_providers.vendor_alpha]
+name = "Vendor Alpha"
+base_url = "https://vendor.example/v1"
+wire_api = "responses"
+experimental_bearer_token = "vendor-token"
+"#,
+        )
+        .expect("project third-party route");
+        let third_party: toml::Value =
+            toml::from_str(&third_party).expect("parse third-party route");
+        assert_eq!(third_party["model_provider"].as_str(), Some("custom"));
+        assert_eq!(
+            third_party["model_providers"]["custom"]["base_url"].as_str(),
+            Some("https://vendor.example/v1")
+        );
+        assert_eq!(
+            third_party["model_providers"]["custom"]["experimental_bearer_token"].as_str(),
+            Some("vendor-token")
+        );
+        assert!(third_party["model_providers"]["vendor_alpha"]
+            .as_table()
+            .is_some());
+    }
+
+    #[test]
+    fn unified_official_proxy_route_keeps_custom_history_bucket() {
+        let projected = apply_codex_official_proxy_route(
+            "model = \"gpt-5.4\"\n",
+            "http://127.0.0.1:15721/v1",
+            true,
+        )
+        .expect("project unified official proxy route");
+        let parsed: toml::Value = toml::from_str(&projected).expect("parse proxy route");
+
+        assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
+        assert_eq!(
+            parsed["model_providers"]["custom"]["base_url"].as_str(),
+            Some("http://127.0.0.1:15721/v1")
+        );
+        assert!(codex_config_has_official_proxy_route(&projected));
     }
 
     #[test]
@@ -2229,7 +2517,14 @@ requires_openai_auth = true
 
     #[test]
     fn unified_session_bucket_strip_from_settings_only_touches_config() {
-        let injected = inject_codex_unified_session_bucket("").expect("inject");
+        let injected = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "OpenAI"
+requires_openai_auth = true
+supports_websockets = true
+wire_api = "responses"
+"#;
         let mut settings = json!({
             "auth": { "tokens": { "access_token": "secret" } },
             "config": injected,
@@ -2333,6 +2628,180 @@ base_url = "https://single.example.com/v1"
             err.to_string().contains("config.toml"),
             "error should explain missing config.toml, got: {err}"
         );
+    }
+
+    #[test]
+    fn preservation_copies_routable_inactive_provider() {
+        let target = r#"model_provider = "openai"
+model = "gpt-5.4"
+"#;
+        let live = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Third Party"
+base_url = "https://third.example/v1"
+wire_api = "responses"
+experimental_bearer_token = "third-party-key"
+"#;
+
+        let output = preserve_inactive_codex_provider_definitions(target, live)
+            .expect("preserve inactive provider");
+
+        let parsed: toml::Value = toml::from_str(&output).expect("parse output");
+        assert_eq!(
+            parsed["model_providers"]["custom"]["base_url"].as_str(),
+            Some("https://third.example/v1")
+        );
+        assert_eq!(
+            parsed["model_providers"]["custom"]["experimental_bearer_token"].as_str(),
+            Some("third-party-key")
+        );
+    }
+
+    #[test]
+    fn preservation_replaces_incomplete_custom_placeholder() {
+        let target = r#"model_provider = "openai"
+
+[model_providers.custom]
+name = "OpenAI"
+"#;
+        let live = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Third Party"
+base_url = "https://third.example/v1"
+wire_api = "responses"
+"#;
+
+        let output = preserve_inactive_codex_provider_definitions(target, live)
+            .expect("replace incomplete placeholder");
+
+        let parsed: toml::Value = toml::from_str(&output).expect("parse output");
+        assert_eq!(
+            parsed["model_providers"]["custom"]["name"].as_str(),
+            Some("Third Party")
+        );
+        assert_eq!(
+            parsed["model_providers"]["custom"]["base_url"].as_str(),
+            Some("https://third.example/v1")
+        );
+    }
+
+    #[test]
+    fn preservation_keeps_complete_target_provider_definition() {
+        let target = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Target"
+base_url = "https://target.example/v1"
+wire_api = "responses"
+"#;
+        let live = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Previous"
+base_url = "https://previous.example/v1"
+wire_api = "responses"
+"#;
+
+        let output = preserve_inactive_codex_provider_definitions(target, live)
+            .expect("keep target provider");
+
+        let parsed: toml::Value = toml::from_str(&output).expect("parse output");
+        assert_eq!(
+            parsed["model_providers"]["custom"]["base_url"].as_str(),
+            Some("https://target.example/v1")
+        );
+    }
+
+    #[test]
+    fn sanitize_global_auth_removes_custom_provider_key() {
+        let auth = json!({
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "third-party-key"
+        });
+        let config = r#"model_provider = "custom"
+
+[model_providers.custom]
+base_url = "https://third.example/v1"
+"#;
+
+        let sanitized = sanitize_codex_global_auth(&auth, config);
+
+        assert_eq!(sanitized, json!({}));
+    }
+
+    #[test]
+    fn sanitize_global_auth_keeps_official_api_key() {
+        let auth = json!({
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "official-openai-key"
+        });
+
+        let sanitized = sanitize_codex_global_auth(&auth, "model_provider = \"openai\"\n");
+
+        assert_eq!(sanitized, auth);
+    }
+
+    #[test]
+    fn sanitize_global_auth_keeps_key_distinct_from_active_scoped_token() {
+        let auth = json!({
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "official-openai-key"
+        });
+        let config = r#"model_provider = "custom"
+
+[model_providers.custom]
+base_url = "https://third.example/v1"
+experimental_bearer_token = "third-party-key"
+"#;
+
+        let sanitized = sanitize_codex_global_auth(&auth, config);
+
+        assert_eq!(sanitized, auth);
+    }
+
+    #[test]
+    fn preserve_live_route_prefers_existing_scoped_token_over_global_key() {
+        let auth = json!({
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "official-openai-key"
+        });
+        let config = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Third Party"
+base_url = "https://third.example/v1"
+wire_api = "responses"
+experimental_bearer_token = "third-party-key"
+"#;
+
+        let preserved = prepare_preserved_codex_live_config(&auth, config)
+            .expect("prepare preserved live config");
+        let parsed: toml::Value = toml::from_str(&preserved).expect("parse preserved config");
+
+        assert_eq!(
+            parsed["model_providers"]["custom"]["experimental_bearer_token"].as_str(),
+            Some("third-party-key")
+        );
+    }
+
+    #[test]
+    fn sanitize_global_auth_keeps_oauth_when_custom_is_active() {
+        let auth = json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": {"access_token": "official-oauth-token"}
+        });
+        let config = r#"model_provider = "custom"
+
+[model_providers.custom]
+base_url = "https://third.example/v1"
+"#;
+
+        let sanitized = sanitize_codex_global_auth(&auth, config);
+
+        assert_eq!(sanitized, auth);
     }
 
     #[test]

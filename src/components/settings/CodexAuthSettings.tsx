@@ -47,11 +47,9 @@ export function CodexAuthSettings({
     });
   };
 
-  // 备份探测可能落后于正在后台进行的迁移（刚勾选迁入就立刻关闭时，
-  // 备份尚未产出）。只要本轮勾选过"迁入既有会话"，就必须提供恢复入口；
-  // 真正有没有账本交给后端 restore 的 skippedReason 判定。
-  const showRestoreOption =
-    hasUnifyBackup || (settings.unifyCodexMigrateExisting ?? false);
+  // Older releases may have created an exact-restore backup. The current
+  // reconciliation is transactional and does not create migration backups.
+  const showRestoreOption = hasUnifyBackup;
 
   const handleDisableConfirm = async (restoreBackup: boolean) => {
     setShowDisableConfirm(false);
@@ -94,16 +92,6 @@ export function CodexAuthSettings({
         <KeyRound className="h-4 w-4 text-primary" />
         <h3 className="text-sm font-medium">{t("settings.codexAuth")}</h3>
       </div>
-
-      <ToggleRow
-        icon={<KeyRound className="h-4 w-4 text-emerald-500" />}
-        title={t("settings.preserveCodexOfficialAuthOnSwitch")}
-        description={t("settings.preserveCodexOfficialAuthOnSwitchDescription")}
-        checked={settings.preserveCodexOfficialAuthOnSwitch ?? false}
-        onCheckedChange={(value) =>
-          onChange({ preserveCodexOfficialAuthOnSwitch: value })
-        }
-      />
 
       <ToggleRow
         icon={<History className="h-4 w-4 text-sky-500" />}
