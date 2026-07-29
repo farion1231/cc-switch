@@ -3501,7 +3501,13 @@ impl ProviderService {
                             "Grok Build configuration is missing the config field",
                         )
                     })?;
-                crate::grok_config::validate_config_toml(config)?;
+                if provider.category.as_deref() == Some("official") {
+                    // 官方条目走 Grok CLI 自带 OAuth：空 config 合法，
+                    // 回填快照只要求 TOML 语法合法。
+                    crate::grok_config::validate_config_toml_syntax(config)?;
+                } else {
+                    crate::grok_config::validate_config_toml(config)?;
+                }
             }
             AppType::OpenCode => {
                 // OpenCode uses a different config structure: { npm, options, models }

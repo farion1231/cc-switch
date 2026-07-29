@@ -440,14 +440,17 @@ fn chat_tool_to_anthropic_tool(chat_tool: &Value) -> Option<Value> {
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
-    let mut tool = json!({
-        "name": name,
-        "input_schema": function
-            .get("parameters")
-            .cloned()
-            .filter(|value| value.as_object().is_some_and(|object| !object.is_empty()))
-            .unwrap_or_else(|| json!({ "type": "object", "properties": {} }))
-    });
+    let mut input_schema = function
+        .get("parameters")
+        .cloned()
+        .filter(|value| value.as_object().is_some_and(|object| !object.is_empty()))
+        .unwrap_or_else(|| json!({ "type": "object", "properties": {} }));
+    if let Some(schema) = input_schema.as_object_mut() {
+        if schema.get("type").and_then(Value::as_str) != Some("object") {
+            schema.insert("type".to_string(), json!("object"));
+        }
+    }
+    let mut tool = json!({ "name": name, "input_schema": input_schema });
     if let Some(description) = function.get("description").and_then(|value| value.as_str()) {
         tool["description"] = json!(description);
     }
@@ -1543,6 +1546,44 @@ mod tests {
         assert_eq!(tools[0]["input_schema"]["type"], "object");
         assert!(tools[0].get("parameters").is_none());
         assert_eq!(tools[1]["name"], "apply_patch");
+    }
+
+    #[test]
+    fn test_request_tool_search_output_schema_defaults_root_type_to_object() {
+        let input = json!({
+            "model": "claude",
+            "max_output_tokens": 100,
+            "input": [
+                { "role": "user", "content": "hi" },
+                {
+                    "type": "tool_search_output",
+                    "call_id": "tool_demo123",
+                    "tools": [{
+                        "type": "function",
+                        "name": "demo_union_tool",
+                        "parameters": {
+                            "oneOf": [
+                                { "type": "object", "properties": { "mode": { "type": "string" } } },
+                                { "type": "object", "properties": { "name": { "type": "string" } } }
+                            ]
+                        }
+                    }]
+                }
+            ]
+        });
+
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        let input_schema = &result["tools"][0]["input_schema"];
+
+        assert_eq!(input_schema["type"], "object");
+        assert_eq!(
+            input_schema["oneOf"][0]["properties"]["mode"]["type"],
+            "string"
+        );
+        assert_eq!(
+            input_schema["oneOf"][1]["properties"]["name"]["type"],
+            "string"
+        );
     }
 
     #[test]

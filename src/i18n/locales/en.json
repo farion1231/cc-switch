@@ -259,6 +259,8 @@
     "proxyReasonOpenAIResponses": "uses OpenAI Responses API format",
     "proxyReasonAnthropicMessages": "uses Anthropic Messages API format",
     "proxyReasonFullUrl": "has full URL connection mode enabled",
+    "proxyReasonManagedOAuth": "uses managed OAuth login (token injected by local routing)",
+    "proxyReasonRoutingRequired": "requires local routing to process requests",
     "openAIFormatHint": "This provider uses OpenAI-compatible format and requires the routing service to be enabled",
     "copilotProxyHint": "GitHub Copilot as a Claude provider always requires local routing; routing automatically selects Chat Completions or Responses based on the current model.",
     "openLinkFailed": "Failed to open link",
@@ -326,7 +328,8 @@
       "description": "Use your other subscriptions in Claude Code — please be mindful of compliance risks.",
       "beta": "Beta",
       "copilotDescription": "Manage GitHub Copilot accounts",
-      "codexOauthDescription": "Manage ChatGPT accounts"
+      "codexOauthDescription": "Manage ChatGPT accounts",
+      "xaiOauthDescription": "Manage xAI / Grok accounts"
     },
     "advanced": {
       "configDir": {
@@ -397,10 +400,10 @@
         "cacheInjectionDescription": "Automatically inject standard 5-minute cache breakpoints at key positions to reduce duplicate token billing"
       },
       "logConfig": {
-        "title": "Log Management",
-        "description": "Control log output level",
-        "enabled": "Enable Logging",
-        "enabledDescription": "Master switch, all logging will be disabled when turned off",
+        "title": "Application Diagnostic Logs",
+        "description": "Control the output level for application diagnostic logs",
+        "enabled": "Enable Diagnostic Logs",
+        "enabledDescription": "Controls cc-switch.log; request usage records and crash.log are unaffected",
         "level": "Log Level",
         "levelDescription": "Set the minimum log level to output",
         "levels": {
@@ -1014,6 +1017,7 @@
     "customApiKeyHint": "💡 Custom configuration requires manually filling all necessary fields",
     "omoHint": "💡 OMO config manages Agent model assignments and supports both oh-my-openagent.jsonc and oh-my-opencode.jsonc",
     "officialHint": "💡 Official provider uses browser login, no API Key needed",
+    "providerKeyStatusLoading": "Provider identifier status is still loading. Please try again shortly.",
     "getApiKey": "Get API Key",
     "partnerPromotion": {
       "sudocode": "With one SudoCode key, Claude Code and Claude Desktop use Claude Opus 4.8, while Codex uses GPT-5.6. Sign up, join QQ group 726213516, and contact the group owner to claim CNY ¥10 in trial credit.",
@@ -1221,6 +1225,31 @@
     "copyCode": "Copy code",
     "fastMode": "FAST mode",
     "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate."
+  },
+  "xaiOauth": {
+    "authStatus": "xAI OAuth authentication",
+    "accountCount": "Usable accounts: {{count}}",
+    "reauthRequired": "Sign-in required",
+    "notAuthenticated": "Not authenticated",
+    "selectAccount": "Select account",
+    "selectAccountPlaceholder": "Select an xAI account",
+    "useDefaultAccount": "Use default account",
+    "accounts": "xAI accounts",
+    "defaultAccount": "Default",
+    "expired": "Credentials expired",
+    "setAsDefault": "Set as default",
+    "removeAccount": "Remove account",
+    "addOrReauth": "Add account or sign in again",
+    "login": "Sign in with xAI",
+    "waitingForAuth": "Waiting for xAI authorization…",
+    "enterCode": "If the browser did not fill it in automatically, enter:",
+    "retry": "Retry",
+    "logoutAll": "Remove all xAI accounts",
+    "loginRequired": "Sign in to an xAI account first"
+  },
+  "managedAuth": {
+    "selectedAccountNeedsReauth": "The linked account is missing or needs you to sign in again",
+    "selectedAccountUnavailable": "The linked account is missing or needs you to sign in again. Select another account."
   },
   "endpointTest": {
     "title": "API Endpoint Management",
@@ -1492,6 +1521,17 @@
       "upToDate": "Session logs are up to date",
       "failed": "Session sync failed"
     },
+    "rebuildCodex": {
+      "title": "Codex Usage Maintenance",
+      "description": "Rebuild Codex session usage from local rollout logs",
+      "warning": "The database is backed up first. History whose source JSONL has been deleted cannot be re-imported.",
+      "action": "Rebuild Codex Usage",
+      "confirmTitle": "Rebuild Codex usage?",
+      "confirmMessage": "This clears existing Codex session details and rollups, then imports them again from local Codex logs.\n\nHistory with deleted logs will be lost. Forks whose parent rollout is missing will be deferred.",
+      "confirmAction": "Back Up and Rebuild",
+      "completed": "Rebuild complete: {{imported}} imported, {{errors}} errors, {{suspected}} suspected duplicates, {{deferred}} deferred files",
+      "failed": "Codex usage rebuild failed: {{error}}"
+    },
     "totalRecords": "{{total}} records total",
     "goToPage": "Go",
     "pageInputPlaceholder": "Page",
@@ -1701,7 +1741,10 @@
   "errors": {
     "usage_query_failed": "Usage query failed",
     "configLoadFailedTitle": "Configuration Load Failed",
-    "configLoadFailedMessage": "Unable to read configuration file:\n{{path}}\n\nError details:\n{{detail}}\n\nPlease check if the JSON is valid, or restore from a backup file (e.g., config.json.bak) in the same directory.\n\nThe app will exit so you can fix this."
+    "configLoadFailedMessage": "Unable to read configuration file:\n{{path}}\n\nError details:\n{{detail}}\n\nPlease check if the JSON is valid, or restore from a backup file (e.g., config.json.bak) in the same directory.\n\nThe app will exit so you can fix this.",
+    "frontendCrashTitle": "Something went wrong in the interface",
+    "frontendCrashMessage": "An attempt was made to write the error to the application diagnostic log. Reload the interface, and attach the log when opening an issue if the problem continues.",
+    "reloadInterface": "Reload interface"
   },
   "presetSelector": {
     "title": "Select Configuration Type",
@@ -2533,8 +2576,8 @@
           "description": "Maximum wait time for a single request (0 = unlimited, or 10 ~ 600 seconds)"
         },
         "enableLogging": {
-          "label": "Enable Logging",
-          "description": "Log all routing requests for troubleshooting"
+          "label": "Record Request Usage",
+          "description": "Write routing request usage and status to the local statistics database"
         },
         "streamingFirstByteTimeout": {
           "label": "Streaming First Byte Timeout (sec)",

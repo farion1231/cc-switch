@@ -107,6 +107,7 @@ import {
   useHermesFormState,
   useCopilotAuth,
   useCodexOauth,
+  useXaiOauth,
 } from "./hooks";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useSettingsQuery } from "@/lib/query";
@@ -514,10 +515,19 @@ function ProviderFormFull({
   );
 
   // Copilot OAuth 认证状态（仅 Claude 应用需要）
-  const { isAuthenticated: isCopilotAuthenticated } = useCopilotAuth();
+  const { isAuthenticated: isCopilotAuthenticated, accounts: copilotAccounts } =
+    useCopilotAuth();
 
   // Codex OAuth 认证状态（ChatGPT Plus/Pro 反代）
-  const { isAuthenticated: isCodexOauthAuthenticated } = useCodexOauth();
+  const {
+    isAuthenticated: isCodexOauthAuthenticated,
+    accounts: codexOauthAccounts,
+  } = useCodexOauth();
+
+  const {
+    isAuthenticated: isXaiOauthAuthenticated,
+    accounts: xaiOauthAccounts,
+  } = useXaiOauth();
 
   // 选中的 GitHub 账号 ID（多账号支持）
   const [selectedGitHubAccountId, setSelectedGitHubAccountId] = useState<
@@ -528,6 +538,9 @@ function ProviderFormFull({
   const [selectedCodexAccountId, setSelectedCodexAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "codex_oauth"));
+  const [selectedXaiAccountId, setSelectedXaiAccountId] = useState<
+    string | null
+  >(() => resolveManagedAccountId(initialData?.meta, "xai_oauth"));
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
   );
@@ -703,6 +716,17 @@ function ProviderFormFull({
         preset,
       }));
   }, [appId]);
+
+  // 预设声明的托管身份类型（github_copilot / codex_oauth / xai_oauth）。
+  // 跨应用通用：claude 的 templatePreset 与此查同一张 presetEntries 表，
+  // codex 等其它应用没有 templatePreset，只能走这里。
+  const presetProviderType = useMemo(() => {
+    if (!selectedPresetId) return undefined;
+    const preset = presetEntries.find(
+      (entry) => entry.id === selectedPresetId,
+    )?.preset;
+    return preset && "providerType" in preset ? preset.providerType : undefined;
+  }, [presetEntries, selectedPresetId]);
 
   const {
     templateValues,
@@ -1140,12 +1164,15 @@ function ProviderFormFull({
 
     // OAuth 未登录：B 类（token 根本不存在，保存了也没法建立）
     const isCopilotProvider =
-      templatePreset?.providerType === "github_copilot" ||
+      presetProviderType === "github_copilot" ||
       initialData?.meta?.providerType === "github_copilot" ||
       baseUrl.includes("githubcopilot.com");
     const isCodexOauthProvider =
-      templatePreset?.providerType === "codex_oauth" ||
+      presetProviderType === "codex_oauth" ||
       initialData?.meta?.providerType === "codex_oauth";
+    const isXaiOauthProvider =
+      presetProviderType === "xai_oauth" ||
+      initialData?.meta?.providerType === "xai_oauth";
     if (isCopilotProvider && !isCopilotAuthenticated) {
       toast.error(
         t("copilot.loginRequired", {
@@ -1158,6 +1185,56 @@ function ProviderFormFull({
       toast.error(
         t("codexOauth.loginRequired", {
           defaultValue: "请先登录 ChatGPT 账号",
+        }),
+      );
+      return;
+    }
+    if (isXaiOauthProvider && !isXaiOauthAuthenticated) {
+      toast.error(
+        t("xaiOauth.loginRequired", {
+          defaultValue: "请先登录 xAI 账号",
+        }),
+      );
+      return;
+    }
+
+    const selectedAccountIsUsable = (
+      accountId: string | null,
+      accounts: Array<{ id: string; requires_reauth: boolean }>,
+    ) =>
+      accountId === null ||
+      accounts.some(
+        (account) => account.id === accountId && !account.requires_reauth,
+      );
+    if (
+      isCopilotProvider &&
+      !selectedAccountIsUsable(selectedGitHubAccountId, copilotAccounts)
+    ) {
+      toast.error(
+        t("managedAuth.selectedAccountUnavailable", {
+          defaultValue: "已绑定账号不存在，请重新选择账号",
+        }),
+      );
+      return;
+    }
+    if (
+      isCodexOauthProvider &&
+      !selectedAccountIsUsable(selectedCodexAccountId, codexOauthAccounts)
+    ) {
+      toast.error(
+        t("managedAuth.selectedAccountUnavailable", {
+          defaultValue: "已绑定账号不存在，请重新选择账号",
+        }),
+      );
+      return;
+    }
+    if (
+      isXaiOauthProvider &&
+      !selectedAccountIsUsable(selectedXaiAccountId, xaiOauthAccounts)
+    ) {
+      toast.error(
+        t("managedAuth.selectedAccountNeedsReauth", {
+          defaultValue: "已绑定 xAI 账号不存在或需要重新登录",
         }),
       );
       return;
@@ -1198,14 +1275,19 @@ function ProviderFormFull({
     // cloud_provider（如 Bedrock）通过模板变量处理认证，跳过通用校验
     if (category !== "official" && category !== "cloud_provider") {
       if (appId === "claude") {
-        if (!isCodexOauthProvider && !baseUrl.trim()) {
+        if (!isCodexOauthProvider && !isXaiOauthProvider && !baseUrl.trim()) {
           issues.push(
             t("providerForm.endpointRequired", {
               defaultValue: "非官方供应商请填写 API 端点",
             }),
           );
         }
-        if (!isCopilotProvider && !isCodexOauthProvider && !apiKey.trim()) {
+        if (
+          !isCopilotProvider &&
+          !isCodexOauthProvider &&
+          !isXaiOauthProvider &&
+          !apiKey.trim()
+        ) {
           issues.push(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -1213,14 +1295,16 @@ function ProviderFormFull({
           );
         }
       } else if (appId === "codex") {
-        if (!codexBaseUrl.trim()) {
+        // 托管 OAuth 预设（xAI）：端点由 adapter 硬定向、token 由代理注入，
+        // 两项都不需要用户填写
+        if (!isXaiOauthProvider && !codexBaseUrl.trim()) {
           issues.push(
             t("providerForm.endpointRequired", {
               defaultValue: "非官方供应商请填写 API 端点",
             }),
           );
         }
-        if (!codexApiKey.trim()) {
+        if (!isXaiOauthProvider && !codexApiKey.trim()) {
           issues.push(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -1272,12 +1356,15 @@ function ProviderFormFull({
 
     // OAuth / 其它身份识别（与 handleSubmit 保持一致）
     const isCopilotProvider =
-      templatePreset?.providerType === "github_copilot" ||
+      presetProviderType === "github_copilot" ||
       initialData?.meta?.providerType === "github_copilot" ||
       baseUrl.includes("githubcopilot.com");
     const isCodexOauthProvider =
-      templatePreset?.providerType === "codex_oauth" ||
+      presetProviderType === "codex_oauth" ||
       initialData?.meta?.providerType === "codex_oauth";
+    const isXaiOauthProvider =
+      presetProviderType === "xai_oauth" ||
+      initialData?.meta?.providerType === "xai_oauth";
 
     let settingsConfig: string;
 
@@ -1454,8 +1541,7 @@ function ProviderFormFull({
       payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
 
     // 确定 providerType（新建时从预设获取，编辑时从现有数据获取）
-    const providerType =
-      templatePreset?.providerType || initialData?.meta?.providerType;
+    const providerType = presetProviderType || initialData?.meta?.providerType;
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
@@ -1483,7 +1569,13 @@ function ProviderFormFull({
               authProvider: "codex_oauth",
               accountId: selectedCodexAccountId ?? undefined,
             }
-          : undefined,
+          : isXaiOauthProvider
+            ? {
+                source: "managed_account",
+                authProvider: "xai_oauth",
+                accountId: selectedXaiAccountId ?? undefined,
+              }
+            : undefined,
       // GitHub Copilot 多账号：保存关联的账号 ID
       githubAccountId:
         isCopilotProvider && selectedGitHubAccountId
@@ -1519,9 +1611,13 @@ function ProviderFormFull({
           : undefined,
       apiFormat:
         appId === "claude" && category !== "official"
-          ? localApiFormat
+          ? isXaiOauthProvider
+            ? "openai_responses"
+            : localApiFormat
           : appId === "codex" && category !== "official"
-            ? localCodexApiFormat
+            ? isXaiOauthProvider
+              ? "openai_responses"
+              : localCodexApiFormat
             : undefined,
       apiKeyField:
         appId === "claude" &&
@@ -1552,7 +1648,10 @@ function ProviderFormFull({
           ? Number(localCodexMaxOutputTokens)
           : undefined,
       isFullUrl:
-        supportsFullUrl && category !== "official" && localIsFullUrl
+        supportsFullUrl &&
+        category !== "official" &&
+        !isXaiOauthProvider &&
+        localIsFullUrl
           ? true
           : undefined,
     };
@@ -2101,21 +2200,27 @@ function ProviderFormFull({
               isPartner={isClaudePartner}
               partnerPromotionKey={claudePartnerPromotionKey}
               isCopilotPreset={
-                templatePreset?.providerType === "github_copilot" ||
+                presetProviderType === "github_copilot" ||
                 initialData?.meta?.providerType === "github_copilot" ||
                 baseUrl.includes("githubcopilot.com")
               }
               isCodexOauthPreset={
-                templatePreset?.providerType === "codex_oauth" ||
+                presetProviderType === "codex_oauth" ||
                 initialData?.meta?.providerType === "codex_oauth"
+              }
+              isXaiOauthPreset={
+                presetProviderType === "xai_oauth" ||
+                initialData?.meta?.providerType === "xai_oauth"
               }
               usesOAuth={
                 templatePreset?.requiresOAuth === true ||
-                templatePreset?.providerType === "github_copilot" ||
+                presetProviderType === "github_copilot" ||
                 initialData?.meta?.providerType === "github_copilot" ||
                 baseUrl.includes("githubcopilot.com") ||
-                templatePreset?.providerType === "codex_oauth" ||
-                initialData?.meta?.providerType === "codex_oauth"
+                presetProviderType === "codex_oauth" ||
+                initialData?.meta?.providerType === "codex_oauth" ||
+                presetProviderType === "xai_oauth" ||
+                initialData?.meta?.providerType === "xai_oauth"
               }
               isCopilotAuthenticated={isCopilotAuthenticated}
               selectedGitHubAccountId={selectedGitHubAccountId}
@@ -2125,6 +2230,9 @@ function ProviderFormFull({
               onCodexAccountSelect={setSelectedCodexAccountId}
               codexFastMode={codexFastMode}
               onCodexFastModeChange={setCodexFastMode}
+              isXaiOauthAuthenticated={isXaiOauthAuthenticated}
+              selectedXaiAccountId={selectedXaiAccountId}
+              onXaiAccountSelect={setSelectedXaiAccountId}
               templateValueEntries={templateValueEntries}
               templateValues={templateValues}
               templatePresetName={templatePreset?.name || ""}
@@ -2171,6 +2279,13 @@ function ProviderFormFull({
           {appId === "codex" && (
             <CodexFormFields
               providerId={providerId}
+              isXaiOauthPreset={
+                presetProviderType === "xai_oauth" ||
+                initialData?.meta?.providerType === "xai_oauth"
+              }
+              isXaiOauthAuthenticated={isXaiOauthAuthenticated}
+              selectedXaiAccountId={selectedXaiAccountId}
+              onXaiAccountSelect={setSelectedXaiAccountId}
               codexApiKey={codexApiKey}
               onApiKeyChange={handleCodexApiKeyChange}
               category={category}

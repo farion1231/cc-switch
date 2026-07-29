@@ -1502,6 +1502,19 @@ impl ProxyService {
         Ok((proxy_url, proxy_codex_base_url))
     }
 
+    /// Grok Build live 是否具备可接管的自定义模型表。
+    ///
+    /// 官方态 live（Grok CLI 自带 OAuth 登录、无 `[model.*]` 表）没有注入
+    /// 占位符的落点，且官方供应商本就禁止经代理接管（封号风险），调用方
+    /// 应跳过接管或直接报错。
+    fn grok_live_config_supports_takeover(config: &Value) -> bool {
+        config
+            .get("config")
+            .and_then(Value::as_str)
+            .and_then(crate::grok_config::extract_model_config)
+            .is_some()
+    }
+
     fn apply_grok_takeover_fields(config: &mut Value, proxy_base_url: &str) -> Result<(), String> {
         let config_toml = config
             .get("config")
@@ -1573,9 +1586,13 @@ impl ProxyService {
 
         // Grok Build: keep its own provider namespace while reusing Responses forwarding.
         if let Ok(mut live_config) = self.read_grok_live() {
-            Self::apply_grok_takeover_fields(&mut live_config, &proxy_grok_base_url)?;
-            self.write_grok_live(&live_config)?;
-            log::info!("Grok Build Live 配置已接管，代理地址: {proxy_grok_base_url}");
+            if Self::grok_live_config_supports_takeover(&live_config) {
+                Self::apply_grok_takeover_fields(&mut live_config, &proxy_grok_base_url)?;
+                self.write_grok_live(&live_config)?;
+                log::info!("Grok Build Live 配置已接管，代理地址: {proxy_grok_base_url}");
+            } else {
+                log::info!("Grok Build Live 处于官方登录态（无自定义模型表），跳过代理接管");
+            }
         }
 
         Ok(())
@@ -1630,6 +1647,14 @@ impl ProxyService {
             }
             AppType::GrokBuild => {
                 let mut live_config = self.read_grok_live()?;
+                if !Self::grok_live_config_supports_takeover(&live_config) {
+                    return Err(
+                        "Grok Build 当前为官方登录态（无自定义模型表），官方供应商不支持代理接管 \
+                         (Grok Build is using the official login without a custom model table; \
+                         official providers cannot be taken over by the proxy)"
+                            .to_string(),
+                    );
+                }
                 Self::apply_grok_takeover_fields(&mut live_config, &proxy_grok_base_url)?;
                 self.write_grok_live(&live_config)?;
                 log::info!("Grok Build Live 配置已接管，代理地址: {proxy_grok_base_url}");
@@ -1701,8 +1726,14 @@ impl ProxyService {
             }
             AppType::GrokBuild => {
                 if let Ok(mut live_config) = self.read_grok_live() {
-                    Self::apply_grok_takeover_fields(&mut live_config, &proxy_grok_base_url)?;
-                    let _ = self.write_grok_live(&live_config);
+                    if Self::grok_live_config_supports_takeover(&live_config) {
+                        Self::apply_grok_takeover_fields(&mut live_config, &proxy_grok_base_url)?;
+                        let _ = self.write_grok_live(&live_config);
+                    } else {
+                        log::info!(
+                            "Grok Build Live 处于官方登录态（无自定义模型表），跳过代理接管"
+                        );
+                    }
                 }
             }
             _ => {}
@@ -3528,6 +3559,45 @@ mod tests {
             .expect("env should exist");
         assert_env_str(env, "ANTHROPIC_API_KEY", None);
         assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
+    }
+
+    #[test]
+    fn managed_account_claude_takeover_xai_keeps_one_auth_key() {
+        let mut provider = Provider::with_id(
+            "xai".to_string(),
+            "xAI".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.x.ai/v1"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("xai_oauth".to_string()),
+            ..Default::default()
+        });
+
+        let mut live_config = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "old-token",
+                "ANTHROPIC_API_KEY": "old-key",
+                "OPENAI_API_KEY": "old-openai-key"
+            }
+        });
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(Value::as_object)
+            .expect("env should exist");
+        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
+        assert_env_str(env, "ANTHROPIC_API_KEY", None);
+        assert_env_str(env, "OPENAI_API_KEY", None);
     }
 
     #[test]
