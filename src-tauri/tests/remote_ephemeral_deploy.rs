@@ -12,6 +12,9 @@ use cc_switch_lib::remote::ephemeral_deploy::{
 use cc_switch_lib::remote::models::RemoteTargetConfig;
 use cc_switch_lib::remote::ssh::RemoteSshError;
 
+const SAFE_REMOTE_COMMAND_PREFIX: &str =
+    r#"PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"; export PATH; "#;
+
 fn target() -> RemoteTargetConfig {
     RemoteTargetConfig {
         id: "remote-test".to_string(),
@@ -73,10 +76,22 @@ fn scp_and_remote_commands_keep_transport_arguments_isolated() {
     assert!(launch.contains(&spec.length.to_string()));
     assert!(launch.contains("--stdio"));
     assert!(!launch.contains("CC_SWITCH_AGENT_ARTIFACT"));
-    assert_eq!(
-        build_cleanup_command(&spec.remote_path),
-        format!("rm -f -- '{}'", spec.remote_path)
-    );
+
+    // 非交互式 shell 可能不继承标准 PATH；启动与清理必须共享同一前缀，避免只修一条退出路径。
+    assert!(launch.starts_with(SAFE_REMOTE_COMMAND_PREFIX));
+    for executable in ["wc", "tr", "sha256sum", "awk", "chmod", "rm"] {
+        assert!(
+            launch.contains(&format!("command {executable}")),
+            "启动命令必须绕过 {executable} 的 alias 或同名函数"
+        );
+    }
+
+    let cleanup = build_cleanup_command(&spec.remote_path);
+    assert!(cleanup.starts_with(SAFE_REMOTE_COMMAND_PREFIX));
+    assert!(cleanup.contains(&format!(
+        "command rm -f -- '{}'",
+        spec.remote_path
+    )));
 }
 
 #[derive(Default)]

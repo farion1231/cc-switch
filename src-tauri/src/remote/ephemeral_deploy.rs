@@ -5,6 +5,15 @@ use std::sync::Arc;
 use super::embedded_agent::EphemeralAgentSpec;
 use super::models::{RemoteTargetConfig, RemoteTargetValidationError};
 
+const REMOTE_PATH_SETUP: &str =
+    r#"PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"; export PATH"#;
+
+/// 为桌面端生成的远端命令建立确定性工具搜索路径，同时保留管理员提供的附加目录。
+/// 标准目录必须位于原 PATH 之前，避免用户环境中的同名程序接管完整性校验和临时文件清理。
+fn with_remote_command_environment(command: String) -> String {
+    format!("{REMOTE_PATH_SETUP}; {command}")
+}
+
 /// 构造 scp 参数数组，不经过本地 shell。路径中的空格保持为单个 OsString，避免命令拼接
 /// 引入参数注入；远端路径只能来自 EphemeralAgentSpec 生成的十六进制 token。
 pub fn build_scp_args(
@@ -39,24 +48,25 @@ pub fn build_scp_args(
 /// 远端 shell 仅插入本地生成的十六进制路径、十进制长度与 SHA-256，不包含任何用户输入。
 /// trap 覆盖正常退出和常见终止信号；桌面端清理守卫还会通过独立 SSH 做一次兜底删除。
 pub fn build_launch_command(spec: &EphemeralAgentSpec) -> String {
-    format!(
+    let command = format!(
         "path='{path}'; \
-cleanup() {{ rm -f -- \"$path\"; }}; \
+cleanup() {{ command rm -f -- \"$path\"; }}; \
 trap cleanup EXIT HUP INT TERM; \
-actual_size=$(wc -c < \"$path\" | tr -d '[:space:]'); \
+actual_size=$(command wc -c < \"$path\" | command tr -d '[:space:]'); \
 if [ \"$actual_size\" != '{length}' ]; then echo 'AGENT_INTEGRITY_FAILED: size' >&2; exit 70; fi; \
-actual_sha=$(sha256sum -- \"$path\" | awk '{{print $1}}'); \
+actual_sha=$(command sha256sum -- \"$path\" | command awk '{{print $1}}'); \
 if [ \"$actual_sha\" != '{sha256}' ]; then echo 'AGENT_INTEGRITY_FAILED: sha256' >&2; exit 71; fi; \
-chmod 700 -- \"$path\" || exit 72; \
+command chmod 700 -- \"$path\" || exit 72; \
 \"$path\" --stdio",
         path = spec.remote_path,
         length = spec.length,
         sha256 = spec.sha256,
-    )
+    );
+    with_remote_command_environment(command)
 }
 
 pub fn build_cleanup_command(remote_path: &str) -> String {
-    format!("rm -f -- '{remote_path}'")
+    with_remote_command_environment(format!("command rm -f -- '{remote_path}'"))
 }
 
 /// 清理执行器由 SSH 层实现，守卫只负责“至多调度一次”的生命周期语义。接口允许测试记录
