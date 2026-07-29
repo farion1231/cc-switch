@@ -68,7 +68,12 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "packycode",
-    endpointCandidates: ["https://www.packyapi.ai"],
+    endpointCandidates: [
+      "https://www.packyapi.ai",
+      "https://cf.api.fan",
+      "https://slb-v1.api.fan",
+      "https://www.packyapi.com",
+    ],
     icon: "packycode",
   },
   {

@@ -84,7 +84,12 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     apiKeyUrl: "https://www.packyapi.ai/register?aff=cc-switch",
     auth: grokAuth(),
     config: grokPresetConfig("PackyCode", "https://www.packyapi.ai/v1"),
-    endpointCandidates: ["https://www.packyapi.ai/v1"],
+    endpointCandidates: [
+      "https://www.packyapi.ai/v1",
+      "https://cf.api.fan/v1",
+      "https://slb-v1.api.fan/v1",
+      "https://www.packyapi.com/v1",
+    ],
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "packycode",

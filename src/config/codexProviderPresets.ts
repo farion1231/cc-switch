@@ -205,7 +205,12 @@ export const codexProviderPresets: CodexProviderPreset[] = [
       "https://www.packyapi.ai/v1",
       "gpt-5.6-sol",
     ),
-    endpointCandidates: ["https://www.packyapi.ai/v1"],
+    endpointCandidates: [
+      "https://www.packyapi.ai/v1",
+      "https://cf.api.fan/v1",
+      "https://slb-v1.api.fan/v1",
+      "https://www.packyapi.com/v1",
+    ],
     isPartner: true, // 合作伙伴
     partnerPromotionKey: "packycode", // 促销信息 i18n key
     icon: "packycode",
