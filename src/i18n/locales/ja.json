@@ -1020,6 +1020,7 @@
     "providerKeyStatusLoading": "プロバイダー識別子の状態を読み込んでいます。しばらくしてからもう一度お試しください",
     "getApiKey": "API Key を取得",
     "partnerPromotion": {
+      "a6api": "A6API はトークンアグリゲーションサイトです。リアルタイム価格ランキングを内蔵し、全ネット最安値を自動で選択。動作は滑らかで安定し、面倒な価格比較も不要。登録するだけで体験クレジットがもらえます！",
       "sudocode": "SudoCode の1つのキーで、Claude Code と Claude Desktop では Claude Opus 5、Codex では GPT-5.6 を利用できます。登録後 QQ グループ 726213516 に参加し、管理者へ連絡すると CNY ¥10 のトライアルクレジットを受け取れます。",
       "code0": "code0.ai は開発者向けの AI コーディングサービスプラットフォームで、Claude Code、Codex、Gemini に対応。CC Switch ユーザー限定特典：公式サイトからサポートに連絡してテストクレジットを受け取れます！",
       "nekocode": "NekoCode は Claude や Codex などの AI モデルに対応した、安定・高効率で信頼性の高い API 中継サービスを提供します。明瞭な従量課金制。CC Switch ユーザー限定 10%オフ：上のリンクから登録し、チャージ時にクーポンコード cc-switch を入力すると 10%オフ！",
