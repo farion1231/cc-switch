@@ -134,3 +134,41 @@ fn cross_workflows_isolate_host_build_artifacts_per_architecture() {
         );
     }
 }
+
+#[test]
+fn cross_workflows_accept_and_log_static_pie_artifacts() {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("src-tauri 应位于仓库根目录下")
+        .to_path_buf();
+
+    // musl 目标可能生成 static PIE；file 对此输出 `static-pie linked`，不能只接受传统
+    // `statically linked` 文案。保留元数据日志可让后续镜像差异直接出现在 Actions 中。
+    for workflow in ["ci.yml", "release.yml"] {
+        let path = workspace_root
+            .join(".github")
+            .join("workflows")
+            .join(workflow);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("读取 {} 失败: {error}", path.display()));
+
+        assert!(
+            source.contains("STATIC_LINK_PATTERN='statically linked|static-pie linked'"),
+            "{workflow} 必须接受普通静态链接与 static PIE"
+        );
+        assert!(
+            source.contains("X86_FILE=$(file \"$X86\")")
+                && source.contains("ARM_FILE=$(file \"$ARM\")"),
+            "{workflow} 必须保存两个架构的 file 元数据"
+        );
+        assert!(
+            source.contains("printf '%s\\n%s\\n' \"$X86_FILE\" \"$ARM_FILE\""),
+            "{workflow} 必须把 Agent 文件类型写入 CI 日志"
+        );
+        assert_eq!(
+            source.matches("grep -Eq \"$STATIC_LINK_PATTERN\"").count(),
+            2,
+            "{workflow} 必须分别验证两个架构的静态链接类型"
+        );
+    }
+}
