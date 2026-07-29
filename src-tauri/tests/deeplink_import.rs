@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use cc_switch_lib::{import_provider_from_deeplink, parse_deeplink_url, AppState, Database};
+use serde_json::json;
 
 #[path = "support.rs"]
 mod support;
@@ -83,4 +85,51 @@ fn deeplink_import_codex_provider_builds_auth_and_config() {
         config_text.contains("model = \"gpt-4o\""),
         "config.toml content should contain model setting"
     );
+}
+
+#[test]
+fn deeplink_import_pi_provider_preserves_pi_specific_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let inline_config = json!({
+        "baseUrl": "https://api.example.com/v1",
+        "apiKey": "sk-test-pi-key",
+        "api": "anthropic-messages",
+        "models": [{
+            "id": "claude-sonnet-4",
+            "name": "Claude Sonnet 4",
+            "contextWindow": 200000
+        }],
+        "defaultModel": "claude-sonnet-4",
+        "customHeader": "preserve-me"
+    });
+    let encoded = URL_SAFE_NO_PAD.encode(inline_config.to_string());
+    let url = format!(
+        "ccswitch://v1/import?resource=provider&app=pi&name=DeepLink%20Pi&config={encoded}&configFormat=json"
+    );
+    let request = parse_deeplink_url(&url).expect("parse Pi deeplink url");
+
+    let db = Arc::new(Database::memory().expect("create memory db"));
+    let state = AppState::new(db.clone());
+    let provider_id =
+        import_provider_from_deeplink(&state, request).expect("import Pi provider from deeplink");
+
+    let providers = db.get_all_providers("pi").expect("get Pi providers");
+    let provider = providers
+        .get(&provider_id)
+        .expect("Pi provider created via deeplink");
+
+    assert_eq!(provider.settings_config["api"], "anthropic-messages");
+    assert_eq!(
+        provider.settings_config["models"][0]["name"],
+        "Claude Sonnet 4"
+    );
+    assert_eq!(
+        provider.settings_config["models"][0]["contextWindow"],
+        200000
+    );
+    assert_eq!(provider.settings_config["defaultModel"], "claude-sonnet-4");
+    assert_eq!(provider.settings_config["customHeader"], "preserve-me");
 }
