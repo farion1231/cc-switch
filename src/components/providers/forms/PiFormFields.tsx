@@ -34,7 +34,9 @@ interface PiFormFieldsProps {
 
 const PI_API_PROTOCOLS = [
   { value: "openai-completions", label: "OpenAI Chat Completions" },
+  { value: "openai-responses", label: "OpenAI Responses" },
   { value: "anthropic-messages", label: "Anthropic Messages" },
+  { value: "google-generative-ai", label: "Google Generative AI" },
 ];
 
 const createModelKey = () => crypto.randomUUID();
