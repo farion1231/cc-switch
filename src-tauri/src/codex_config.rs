@@ -1809,7 +1809,7 @@ pub fn write_codex_live_for_provider(
     let safe_live_config = if codex_config_uses_custom_provider(&live_config)
         && extract_codex_auth_api_key(&live_auth).is_some()
     {
-        prepare_codex_provider_live_config(&live_auth, &live_config)?
+        prepare_preserved_codex_live_config(&live_auth, &live_config)?
     } else {
         live_config.clone()
     };
@@ -1839,6 +1839,19 @@ pub fn write_codex_live_for_provider(
     } else {
         write_codex_live_atomic(target_auth, Some(&target_config))
     }
+}
+
+fn prepare_preserved_codex_live_config(
+    auth: &Value,
+    config_text: &str,
+) -> Result<String, AppError> {
+    let token = extract_codex_experimental_bearer_token(config_text)
+        .or_else(|| extract_codex_auth_api_key(auth));
+
+    Ok(match token {
+        Some(token) => set_codex_experimental_bearer_token(config_text, &token)?,
+        None => config_text.to_string(),
+    })
 }
 
 /// Build the live Codex config for provider switching.
@@ -2433,6 +2446,31 @@ base_url = "https://third.example/v1"
         let sanitized = sanitize_codex_global_auth(&auth, "model_provider = \"openai\"\n");
 
         assert_eq!(sanitized, auth);
+    }
+
+    #[test]
+    fn preserve_live_route_prefers_existing_scoped_token_over_global_key() {
+        let auth = json!({
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "official-openai-key"
+        });
+        let config = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Third Party"
+base_url = "https://third.example/v1"
+wire_api = "responses"
+experimental_bearer_token = "third-party-key"
+"#;
+
+        let preserved = prepare_preserved_codex_live_config(&auth, config)
+            .expect("prepare preserved live config");
+        let parsed: toml::Value = toml::from_str(&preserved).expect("parse preserved config");
+
+        assert_eq!(
+            parsed["model_providers"]["custom"]["experimental_bearer_token"].as_str(),
+            Some("third-party-key")
+        );
     }
 
     #[test]
