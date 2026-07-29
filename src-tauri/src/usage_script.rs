@@ -1,9 +1,11 @@
-use rquickjs::{Context, Function, Runtime};
+use rquickjs::{Context, Function, Object, Runtime};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use url::{Host, Url};
 
 use crate::error::AppError;
+
+const MAX_USAGE_SCRIPT_REQUESTS: usize = 5;
 
 /// 执行用量查询脚本
 pub async fn execute_usage_script(
@@ -29,86 +31,17 @@ pub async fn execute_usage_script(
         validate_base_url(base_url)?;
     }
 
-    // 3. 在独立作用域中提取 request 配置（确保 Runtime/Context 在 await 前释放）
-    let request_config = {
-        let runtime = Runtime::new().map_err(|e| {
-            AppError::localized(
-                "usage_script.runtime_create_failed",
-                format!("创建 JS 运行时失败: {e}"),
-                format!("Failed to create JS runtime: {e}"),
-            )
-        })?;
-        let context = Context::full(&runtime).map_err(|e| {
-            AppError::localized(
-                "usage_script.context_create_failed",
-                format!("创建 JS 上下文失败: {e}"),
-                format!("Failed to create JS context: {e}"),
-            )
-        })?;
+    // 3. 在独立作用域中提取 request/requests 配置（确保 Runtime/Context 在 await 前释放）
+    let request_spec = extract_request_spec_json(&script_with_vars)?;
 
-        context.with(|ctx| {
-            // 执行用户代码，获取配置对象
-            let config: rquickjs::Object = ctx.eval(script_with_vars.clone()).map_err(|e| {
-                AppError::localized(
-                    "usage_script.config_parse_failed",
-                    format!("解析配置失败: {e}"),
-                    format!("Failed to parse config: {e}"),
-                )
-            })?;
-
-            // 提取 request 配置
-            let request: rquickjs::Object = config.get("request").map_err(|e| {
-                AppError::localized(
-                    "usage_script.request_missing",
-                    format!("缺少 request 配置: {e}"),
-                    format!("Missing request config: {e}"),
-                )
-            })?;
-
-            // 将 request 转换为 JSON 字符串
-            let request_json: String = ctx
-                .json_stringify(request)
-                .map_err(|e| {
-                    AppError::localized(
-                        "usage_script.request_serialize_failed",
-                        format!("序列化 request 失败: {e}"),
-                        format!("Failed to serialize request: {e}"),
-                    )
-                })?
-                .ok_or_else(|| {
-                    AppError::localized(
-                        "usage_script.serialize_none",
-                        "序列化返回 None",
-                        "Serialization returned None",
-                    )
-                })?
-                .get()
-                .map_err(|e| {
-                    AppError::localized(
-                        "usage_script.get_string_failed",
-                        format!("获取字符串失败: {e}"),
-                        format!("Failed to get string: {e}"),
-                    )
-                })?;
-
-            Ok::<_, AppError>(request_json)
-        })?
-    }; // Runtime 和 Context 在这里被 drop
-
-    // 4. 解析 request 配置
-    let request: RequestConfig = serde_json::from_str(&request_config).map_err(|e| {
-        AppError::localized(
-            "usage_script.request_format_invalid",
-            format!("request 配置格式错误: {e}"),
-            format!("Invalid request config format: {e}"),
-        )
-    })?;
+    // 4. 解析 request/requests 配置
+    let request_spec = parse_request_spec(&request_spec)?;
 
     // 5. 验证请求 URL（HTTPS 强制 + 同源检查）
-    validate_request_url(&request.url, base_url, is_custom_template)?;
+    validate_request_spec(&request_spec, base_url, is_custom_template)?;
 
     // 6. 发送 HTTP 请求
-    let response_data = send_http_request(&request, timeout_secs).await?;
+    let response_data = send_request_spec(&request_spec, timeout_secs).await?;
 
     // 7. 在独立作用域中执行 extractor（确保 Runtime/Context 在函数结束前释放）
     let result: Value = {
@@ -129,7 +62,7 @@ pub async fn execute_usage_script(
 
         context.with(|ctx| {
             // 重新 eval 获取配置对象
-            let config: rquickjs::Object = ctx.eval(script_with_vars.clone()).map_err(|e| {
+            let config: rquickjs::Object = ctx.eval(script_with_vars).map_err(|e| {
                 AppError::localized(
                     "usage_script.config_reparse_failed",
                     format!("重新解析配置失败: {e}"),
@@ -156,7 +89,8 @@ pub async fn execute_usage_script(
                     )
                 })?;
 
-            // 调用 extractor(response)
+            // 调用 extractor(response)。旧版 request 路径传单个响应对象；
+            // 新版 requests 路径传 { key: response } 对象。
             let result_js: rquickjs::Value = extractor.call((response_js,)).map_err(|e| {
                 AppError::localized(
                     "usage_script.extractor_exec_failed",
@@ -208,6 +142,115 @@ pub async fn execute_usage_script(
     Ok(result)
 }
 
+fn extract_request_spec_json(script_with_vars: &str) -> Result<String, AppError> {
+    let request_spec = {
+        let runtime = Runtime::new().map_err(|e| {
+            AppError::localized(
+                "usage_script.runtime_create_failed",
+                format!("创建 JS 运行时失败: {e}"),
+                format!("Failed to create JS runtime: {e}"),
+            )
+        })?;
+        let context = Context::full(&runtime).map_err(|e| {
+            AppError::localized(
+                "usage_script.context_create_failed",
+                format!("创建 JS 上下文失败: {e}"),
+                format!("Failed to create JS context: {e}"),
+            )
+        })?;
+
+        context.with(|ctx| {
+            // 执行用户代码，获取配置对象
+            let config: rquickjs::Object = ctx.eval(script_with_vars).map_err(|e| {
+                AppError::localized(
+                    "usage_script.config_parse_failed",
+                    format!("解析配置失败: {e}"),
+                    format!("Failed to parse config: {e}"),
+                )
+            })?;
+
+            // 先选择有效契约，再只序列化对应字段，避免无关字段影响旧版 request。
+            let request_contract: Object = Object::new(ctx.clone()).map_err(|e| {
+                AppError::localized(
+                    "usage_script.config_serialize_failed",
+                    format!("创建请求配置对象失败: {e}"),
+                    format!("Failed to create request config object: {e}"),
+                )
+            })?;
+
+            if config.contains_key("request").map_err(|e| {
+                AppError::localized(
+                    "usage_script.config_serialize_failed",
+                    format!("检查 request 配置失败: {e}"),
+                    format!("Failed to check request config: {e}"),
+                )
+            })? {
+                let request_value: rquickjs::Value = config.get("request").map_err(|e| {
+                    AppError::localized(
+                        "usage_script.config_serialize_failed",
+                        format!("提取 request 配置失败: {e}"),
+                        format!("Failed to extract request config: {e}"),
+                    )
+                })?;
+                request_contract
+                    .set("request", request_value)
+                    .map_err(|e| {
+                        AppError::localized(
+                            "usage_script.config_serialize_failed",
+                            format!("设置 request 配置失败: {e}"),
+                            format!("Failed to set request config: {e}"),
+                        )
+                    })?;
+            } else {
+                let requests_value: rquickjs::Value = config.get("requests").map_err(|e| {
+                    AppError::localized(
+                        "usage_script.config_serialize_failed",
+                        format!("提取 requests 配置失败: {e}"),
+                        format!("Failed to extract requests config: {e}"),
+                    )
+                })?;
+                request_contract
+                    .set("requests", requests_value)
+                    .map_err(|e| {
+                        AppError::localized(
+                            "usage_script.config_serialize_failed",
+                            format!("设置 requests 配置失败: {e}"),
+                            format!("Failed to set requests config: {e}"),
+                        )
+                    })?;
+            }
+
+            let config_json: String = ctx
+                .json_stringify(request_contract)
+                .map_err(|e| {
+                    AppError::localized(
+                        "usage_script.config_serialize_failed",
+                        format!("序列化配置失败: {e}"),
+                        format!("Failed to serialize config: {e}"),
+                    )
+                })?
+                .ok_or_else(|| {
+                    AppError::localized(
+                        "usage_script.serialize_none",
+                        "序列化返回 None",
+                        "Serialization returned None",
+                    )
+                })?
+                .get()
+                .map_err(|e| {
+                    AppError::localized(
+                        "usage_script.get_string_failed",
+                        format!("获取字符串失败: {e}"),
+                        format!("Failed to get string: {e}"),
+                    )
+                })?;
+
+            Ok::<_, AppError>(config_json)
+        })?
+    }; // Runtime 和 Context 在这里被 drop
+    Ok(request_spec)
+}
+
 /// 请求配置结构
 #[derive(Debug, serde::Deserialize)]
 struct RequestConfig {
@@ -217,6 +260,118 @@ struct RequestConfig {
     headers: HashMap<String, String>,
     #[serde(default)]
     body: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct UsageScriptConfig {
+    #[serde(default)]
+    request: Option<RequestConfig>,
+    #[serde(default)]
+    requests: Option<BTreeMap<String, RequestConfig>>,
+}
+
+#[derive(Debug)]
+enum RequestSpec {
+    Single(RequestConfig),
+    Multi(BTreeMap<String, RequestConfig>),
+}
+
+fn parse_request_spec(config_json: &str) -> Result<RequestSpec, AppError> {
+    let config: UsageScriptConfig = serde_json::from_str(config_json).map_err(|e| {
+        AppError::localized(
+            "usage_script.config_format_invalid",
+            format!("配置格式错误: {e}"),
+            format!("Invalid config format: {e}"),
+        )
+    })?;
+
+    if let Some(request) = config.request {
+        return Ok(RequestSpec::Single(request));
+    }
+
+    if let Some(requests) = config.requests {
+        if requests.is_empty() {
+            return Err(AppError::localized(
+                "usage_script.requests_empty",
+                "requests 配置不能为空",
+                "requests config cannot be empty",
+            ));
+        }
+        if requests.len() > MAX_USAGE_SCRIPT_REQUESTS {
+            return Err(AppError::localized(
+                "usage_script.requests_too_many",
+                format!("requests 最多支持 {MAX_USAGE_SCRIPT_REQUESTS} 个请求"),
+                format!("requests supports at most {MAX_USAGE_SCRIPT_REQUESTS} entries"),
+            ));
+        }
+        return Ok(RequestSpec::Multi(requests));
+    }
+
+    Err(AppError::localized(
+        "usage_script.request_missing",
+        "缺少 request 或 requests 配置",
+        "Missing request or requests config",
+    ))
+}
+
+fn validate_request_spec(
+    spec: &RequestSpec,
+    base_url: &str,
+    is_custom_template: bool,
+) -> Result<(), AppError> {
+    match spec {
+        RequestSpec::Single(request) => {
+            validate_request_url(&request.url, base_url, is_custom_template)
+        }
+        RequestSpec::Multi(requests) => {
+            for (name, request) in requests {
+                validate_request_url(&request.url, base_url, is_custom_template).map_err(|e| {
+                    AppError::localized(
+                        "usage_script.request_validation_failed",
+                        format!("requests.{name} 验证失败: {e}"),
+                        format!("requests.{name} validation failed: {e}"),
+                    )
+                })?;
+            }
+            Ok(())
+        }
+    }
+}
+
+async fn send_request_spec(spec: &RequestSpec, timeout_secs: u64) -> Result<String, AppError> {
+    match spec {
+        RequestSpec::Single(request) => send_http_request(request, timeout_secs).await,
+        RequestSpec::Multi(requests) => {
+            let mut responses = serde_json::Map::new();
+            for (name, request) in requests {
+                let response_text =
+                    send_http_request(request, timeout_secs)
+                        .await
+                        .map_err(|e| {
+                            AppError::localized(
+                                "usage_script.request_failed_named",
+                                format!("requests.{name} 请求失败: {e}"),
+                                format!("requests.{name} request failed: {e}"),
+                            )
+                        })?;
+                let response_value: Value = serde_json::from_str(&response_text).map_err(|e| {
+                    AppError::localized(
+                        "usage_script.response_parse_failed",
+                        format!("requests.{name} 响应不是有效 JSON: {e}"),
+                        format!("requests.{name} response is not valid JSON: {e}"),
+                    )
+                })?;
+                responses.insert(name.clone(), response_value);
+            }
+            serde_json::to_string(&Value::Object(responses)).map_err(|e| {
+                AppError::localized(
+                    "usage_script.response_serialize_failed",
+                    format!("序列化多请求响应失败: {e}"),
+                    format!("Failed to serialize multi-request response: {e}"),
+                )
+            })
+        }
+    }
 }
 
 /// 发送 HTTP 请求
@@ -573,6 +728,191 @@ fn is_loopback_host(url: &Url) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_request_spec_prefers_legacy_request_when_both_exist() {
+        let config = r#"{
+            "request": {
+                "url": "https://api.example.com/legacy",
+                "method": "GET"
+            },
+            "requests": {
+                "quota": {
+                    "url": "https://api.example.com/quota",
+                    "method": "GET"
+                }
+            }
+        }"#;
+
+        let spec = parse_request_spec(config).expect("config should parse");
+        match spec {
+            RequestSpec::Single(request) => {
+                assert_eq!(request.url, "https://api.example.com/legacy");
+            }
+            RequestSpec::Multi(_) => panic!("legacy request must keep old behavior"),
+        }
+    }
+
+    #[test]
+    fn parse_request_spec_accepts_named_requests() {
+        let config = r#"{
+            "requests": {
+                "quota": {
+                    "url": "https://api.example.com/quota",
+                    "method": "GET"
+                },
+                "usage": {
+                    "url": "https://api.example.com/usage",
+                    "method": "POST",
+                    "headers": {
+                        "Authorization": "Bearer sk-test"
+                    },
+                    "body": "{}"
+                }
+            }
+        }"#;
+
+        let spec = parse_request_spec(config).expect("config should parse");
+        match spec {
+            RequestSpec::Multi(requests) => {
+                assert_eq!(requests.len(), 2);
+                assert_eq!(
+                    requests.get("quota").expect("quota request").url,
+                    "https://api.example.com/quota"
+                );
+                assert_eq!(requests.get("usage").expect("usage request").method, "POST");
+            }
+            RequestSpec::Single(_) => panic!("requests-only config should use multi mode"),
+        }
+    }
+
+    #[test]
+    fn parse_request_spec_accepts_max_named_requests() {
+        let config = r#"{
+            "requests": {
+                "one": { "url": "https://api.example.com/one", "method": "GET" },
+                "two": { "url": "https://api.example.com/two", "method": "GET" },
+                "three": { "url": "https://api.example.com/three", "method": "GET" },
+                "four": { "url": "https://api.example.com/four", "method": "GET" },
+                "five": { "url": "https://api.example.com/five", "method": "GET" }
+            }
+        }"#;
+
+        let spec = parse_request_spec(config).expect("max requests should parse");
+        match spec {
+            RequestSpec::Multi(requests) => {
+                assert_eq!(requests.len(), MAX_USAGE_SCRIPT_REQUESTS);
+            }
+            RequestSpec::Single(_) => panic!("requests-only config should use multi mode"),
+        }
+    }
+
+    #[test]
+    fn parse_request_spec_rejects_too_many_named_requests() {
+        let config = r#"{
+            "requests": {
+                "one": { "url": "https://api.example.com/one", "method": "GET" },
+                "two": { "url": "https://api.example.com/two", "method": "GET" },
+                "three": { "url": "https://api.example.com/three", "method": "GET" },
+                "four": { "url": "https://api.example.com/four", "method": "GET" },
+                "five": { "url": "https://api.example.com/five", "method": "GET" },
+                "six": { "url": "https://api.example.com/six", "method": "GET" }
+            }
+        }"#;
+
+        let err = parse_request_spec(config).expect_err("too many requests fail");
+        assert!(err
+            .to_string()
+            .contains(&format!("最多支持 {MAX_USAGE_SCRIPT_REQUESTS} 个请求")));
+    }
+
+    #[test]
+    fn parse_request_spec_rejects_empty_named_requests() {
+        let err = parse_request_spec(r#"{"requests": {}}"#).expect_err("empty requests fail");
+        assert!(err.to_string().contains("requests 配置不能为空"));
+    }
+
+    #[test]
+    fn extract_request_spec_ignores_unrelated_non_serializable_config_fields() {
+        let script = r#"({
+            request: {
+                url: "https://api.example.com/usage",
+                method: "GET"
+            },
+            unrelated: BigInt(1),
+            extractor: function(response) {
+                return response;
+            }
+        })"#;
+
+        let config_json =
+            extract_request_spec_json(script).expect("unrelated fields should not be serialized");
+        let spec = parse_request_spec(&config_json).expect("request spec should parse");
+        match spec {
+            RequestSpec::Single(request) => {
+                assert_eq!(request.url, "https://api.example.com/usage");
+            }
+            RequestSpec::Multi(_) => panic!("request-only config should use single mode"),
+        }
+    }
+
+    #[test]
+    fn extract_request_spec_ignores_requests_when_legacy_request_exists() {
+        let script = r#"({
+            request: {
+                url: "https://api.example.com/legacy",
+                method: "GET"
+            },
+            requests: {
+                quota: {
+                    url: "https://api.example.com/quota",
+                    method: "GET",
+                    body: BigInt(1)
+                }
+            },
+            extractor: function(response) {
+                return response;
+            }
+        })"#;
+
+        let config_json =
+            extract_request_spec_json(script).expect("legacy request should ignore requests");
+        let spec = parse_request_spec(&config_json).expect("request spec should parse");
+        match spec {
+            RequestSpec::Single(request) => {
+                assert_eq!(request.url, "https://api.example.com/legacy");
+            }
+            RequestSpec::Multi(_) => panic!("legacy request must keep old behavior"),
+        }
+    }
+
+    #[test]
+    fn validate_request_spec_checks_all_named_requests() {
+        let spec = RequestSpec::Multi(BTreeMap::from([
+            (
+                "quota".to_string(),
+                RequestConfig {
+                    url: "https://api.example.com/quota".to_string(),
+                    method: "GET".to_string(),
+                    headers: HashMap::new(),
+                    body: None,
+                },
+            ),
+            (
+                "usage".to_string(),
+                RequestConfig {
+                    url: "https://other.example.com/usage".to_string(),
+                    method: "GET".to_string(),
+                    headers: HashMap::new(),
+                    body: None,
+                },
+            ),
+        ]));
+
+        let err = validate_request_spec(&spec, "https://api.example.com", false)
+            .expect_err("host mismatch should fail");
+        assert!(err.to_string().contains("requests.usage"));
+    }
 
     #[test]
     fn test_https_bypass_prevention() {
