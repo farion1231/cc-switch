@@ -293,6 +293,39 @@ pub fn write_text_file(path: &Path, data: &str) -> Result<(), AppError> {
     atomic_write(path, data.as_bytes())
 }
 
+#[cfg(windows)]
+fn replace_file_atomically(source: &Path, destination: &Path) -> Result<(), AppError> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let source_wide: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination_wide: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let result = unsafe {
+        MoveFileExW(
+            source_wide.as_ptr(),
+            destination_wide.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        return Err(AppError::IoContext {
+            context: format!(
+                "原子替换失败: {} -> {}",
+                source.display(),
+                destination.display()
+            ),
+            source: std::io::Error::last_os_error(),
+        });
+    }
+    Ok(())
+}
+
 /// 原子写入：写入临时文件后 rename 替换，避免半写状态
 pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
     if let Some(parent) = path.parent() {
@@ -331,14 +364,7 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
 
     #[cfg(windows)]
     {
-        // Windows 上 rename 目标存在会失败，先移除再重命名（尽量接近原子性）
-        if path.exists() {
-            let _ = fs::remove_file(path);
-        }
-        fs::rename(&tmp, path).map_err(|e| AppError::IoContext {
-            context: format!("原子替换失败: {} -> {}", tmp.display(), path.display()),
-            source: e,
-        })?;
+        replace_file_atomically(&tmp, path)?;
     }
 
     #[cfg(not(windows))]
@@ -354,6 +380,21 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_atomic_replace_overwrites_existing_destination() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("config.tmp");
+        let destination = temp.path().join("config.toml");
+        fs::write(&source, b"new").expect("write replacement");
+        fs::write(&destination, b"old").expect("write destination");
+
+        replace_file_atomically(&source, &destination).expect("replace destination");
+
+        assert_eq!(fs::read(&destination).expect("read destination"), b"new");
+        assert!(!source.exists());
+    }
 
     #[test]
     fn derive_mcp_path_from_override_uses_config_dir_for_custom_path() {

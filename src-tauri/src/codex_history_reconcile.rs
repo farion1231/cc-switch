@@ -573,12 +573,16 @@ fn rollback_changes(
 }
 
 fn rollback_jsonl_change(change: &JsonlChange) -> Result<(), AppError> {
-    let current = fs::read(&change.path).map_err(|error| AppError::io(&change.path, error))?;
-    if current != change.rewritten.as_bytes() {
-        return Err(AppError::Message(format!(
-            "Codex session changed before rollback: {}",
-            change.path.display()
-        )));
+    match fs::read(&change.path) {
+        Ok(current) if current != change.rewritten.as_bytes() => {
+            return Err(AppError::Message(format!(
+                "Codex session changed before rollback: {}",
+                change.path.display()
+            )));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(AppError::io(&change.path, error)),
     }
     atomic_write(&change.path, change.original.as_bytes())?;
     restore_file_times(&change.path, change.accessed, change.modified)
@@ -858,6 +862,26 @@ mod tests {
         assert_eq!(
             state_route(&valid_db, "thread-1"),
             ("openai".to_string(), "gpt-5.4".to_string())
+        );
+    }
+
+    #[test]
+    fn rollback_jsonl_change_recreates_missing_destination() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("sessions/thread-1.jsonl");
+        let change = JsonlChange {
+            path: path.clone(),
+            original: format!("{SESSION_META}\n"),
+            rewritten: SESSION_META.replace("openai", "custom") + "\n",
+            accessed: None,
+            modified: None,
+        };
+
+        rollback_jsonl_change(&change).expect("restore missing session from journal");
+
+        assert_eq!(
+            fs::read_to_string(path).expect("read restored session"),
+            change.original
         );
     }
 }
