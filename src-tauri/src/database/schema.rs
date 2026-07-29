@@ -2165,7 +2165,7 @@ impl Database {
                 "0.06",
                 "0.375",
             ),
-            ("minimax-m3", "MiniMax M3", "0.60", "2.40", "0.12", "0"),
+            ("minimax-m3", "MiniMax M3", "0.30", "1.20", "0.06", "0"),
             // GLM (智谱)
             ("glm-4.7", "GLM-4.7", "0.6", "2.2", "0.11", "0"),
             ("glm-4.6", "GLM-4.6", "0.6", "2.2", "0.11", "0"),
@@ -2429,6 +2429,19 @@ impl Database {
 
     fn repair_current_model_pricing(conn: &Connection) -> Result<(), AppError> {
         let pricing_fixes = [
+            // 2026-07-29 MiniMax M3 permanent 50% discount for the standard context tier.
+            (
+                "minimax-m3",
+                "MiniMax M3",
+                "0.30",
+                "1.20",
+                "0.06",
+                "0",
+                "0.60",
+                "2.40",
+                "0.12",
+                "0",
+            ),
             // 2026-07-12 GPT-5.6 家族 cache write=1.25× 输入价（OpenAI 5.6 起的新规），
             // 修正早期 seed 的 0 值；只匹配未被用户改过的行
             (
