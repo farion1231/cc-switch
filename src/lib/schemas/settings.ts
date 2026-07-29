@@ -18,7 +18,7 @@ export const settingsSchema = z.object({
   usageDashboardRefreshIntervalMs: z.number().optional(),
   preserveCodexOfficialAuthOnSwitch: z.boolean().optional(),
   unifyCodexSessionHistory: z.boolean().optional(),
-  language: z.enum(["en", "zh", "zh-TW", "ja"]).optional(),
+  language: z.enum(["en", "zh", "zh-TW", "ja", "ko"]).optional(),
 
   // 设备级目录覆盖
   claudeConfigDir: directorySchema.nullable().optional(),
