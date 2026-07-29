@@ -125,6 +125,8 @@ export interface HermesProviderSettingsConfig {
   models?: HermesModel[];
   /** Delay in seconds between consecutive requests to this provider. */
   rate_limit_delay?: number;
+  /** Whether to probe the /models endpoint for live model discovery. */
+  discover_models?: boolean;
   [key: string]: unknown;
 }
 

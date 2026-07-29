@@ -38,12 +38,14 @@ export interface HermesFormState {
   hermesApiMode: HermesApiMode;
   hermesModels: HermesModel[];
   hermesRateLimitDelay: number | undefined;
+  hermesDiscoverModels: boolean;
   existingHermesKeys: string[];
   handleHermesBaseUrlChange: (baseUrl: string) => void;
   handleHermesApiKeyChange: (apiKey: string) => void;
   handleHermesApiModeChange: (mode: HermesApiMode) => void;
   handleHermesModelsChange: (models: HermesModel[]) => void;
   handleHermesRateLimitDelayChange: (delay: number | undefined) => void;
+  handleHermesDiscoverModelsChange: (enabled: boolean) => void;
   resetHermesState: (config?: Partial<HermesProviderSettingsConfig>) => void;
 }
 
@@ -123,6 +125,16 @@ export function useHermesFormState({
     return parseRateLimitDelay(initialData?.settingsConfig?.rate_limit_delay);
   });
 
+  const [hermesDiscoverModels, setHermesDiscoverModels] = useState<boolean>(
+    () => {
+      if (appId !== "hermes") return true;
+      const raw = initialData?.settingsConfig?.discover_models;
+      // Explicit false → false; anything else → true (Hermes default).
+      if (raw === false || raw === "false") return false;
+      return true;
+    },
+  );
+
   const updateHermesConfig = useCallback(
     (updater: (config: Record<string, unknown>) => void) => {
       try {
@@ -194,6 +206,19 @@ export function useHermesFormState({
     [updateHermesConfig],
   );
 
+  const handleHermesDiscoverModelsChange = useCallback(
+    (enabled: boolean) => {
+      setHermesDiscoverModels(enabled);
+      updateHermesConfig((config) => {
+        // Explicitly write true / false so the Rust forward-compat
+        // merge doesn't resurrect a stale 'false' from the on-disk
+        // YAML when the user re-enables discovery.
+        config.discover_models = enabled;
+      });
+    },
+    [updateHermesConfig],
+  );
+
   const resetHermesState = useCallback(
     (config?: Partial<HermesProviderSettingsConfig>) => {
       setHermesProviderKey("");
@@ -202,6 +227,7 @@ export function useHermesFormState({
       setHermesApiMode(config?.api_mode ?? HERMES_DEFAULT_API_MODE);
       setHermesModels(config?.models ?? []);
       setHermesRateLimitDelay(parseRateLimitDelay(config?.rate_limit_delay));
+      setHermesDiscoverModels(config?.discover_models !== false);
     },
     [],
   );
@@ -214,12 +240,14 @@ export function useHermesFormState({
     hermesApiMode,
     hermesModels,
     hermesRateLimitDelay,
+    hermesDiscoverModels,
     existingHermesKeys,
     handleHermesBaseUrlChange,
     handleHermesApiKeyChange,
     handleHermesApiModeChange,
     handleHermesModelsChange,
     handleHermesRateLimitDelayChange,
+    handleHermesDiscoverModelsChange,
     resetHermesState,
   };
 }
