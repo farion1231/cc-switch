@@ -6,10 +6,35 @@
 use serde_json::{json, Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
-use crate::config::{get_home_dir, write_json_file};
+use crate::config::{atomic_write, get_home_dir, write_json_file};
 use crate::error::AppError;
 use crate::provider::Provider;
+
+#[derive(Debug)]
+struct JsonFileSnapshot {
+    path: PathBuf,
+    raw: Option<Vec<u8>>,
+    value: Value,
+}
+
+#[derive(Clone, Copy)]
+struct PendingDocument<'a> {
+    snapshot: &'a JsonFileSnapshot,
+    next: &'a Value,
+}
+
+fn pi_config_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn lock_pi_config() -> Result<std::sync::MutexGuard<'static, ()>, AppError> {
+    pi_config_lock()
+        .lock()
+        .map_err(|_| AppError::Message("Pi configuration write lock is poisoned".to_string()))
+}
 
 pub fn get_pi_dir() -> PathBuf {
     if let Some(override_dir) = crate::settings::get_pi_override_dir() {
@@ -35,17 +60,142 @@ pub fn get_pi_settings_path() -> PathBuf {
     get_pi_dir().join("settings.json")
 }
 
+fn read_snapshot(path: &Path) -> Result<JsonFileSnapshot, AppError> {
+    let raw = match fs::read(path) {
+        Ok(raw) => Some(raw),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(AppError::io(path, error)),
+    };
+    let value = match raw.as_deref() {
+        None => Value::Object(Map::new()),
+        Some(raw) if raw.iter().all(|byte| byte.is_ascii_whitespace()) => Value::Object(Map::new()),
+        Some(raw) => serde_json::from_slice(raw).map_err(|error| AppError::json(path, error))?,
+    };
+
+    Ok(JsonFileSnapshot {
+        path: path.to_path_buf(),
+        raw,
+        value,
+    })
+}
+
 fn read_json_or_empty_object(path: &Path) -> Result<Value, AppError> {
-    if !path.exists() {
-        return Ok(Value::Object(Map::new()));
+    read_snapshot(path).map(|snapshot| snapshot.value)
+}
+
+fn current_raw(path: &Path) -> Result<Option<Vec<u8>>, AppError> {
+    match fs::read(path) {
+        Ok(raw) => Ok(Some(raw)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(AppError::io(path, error)),
+    }
+}
+
+fn ensure_unchanged(snapshot: &JsonFileSnapshot) -> Result<(), AppError> {
+    if current_raw(&snapshot.path)? != snapshot.raw {
+        return Err(AppError::Config(format!(
+            "Pi configuration changed on disk while CC Switch was updating it: {}. Reload and try again.",
+            snapshot.path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn restore_snapshot(snapshot: &JsonFileSnapshot) -> Result<(), AppError> {
+    match &snapshot.raw {
+        Some(raw) => atomic_write(&snapshot.path, raw),
+        None if snapshot.path.exists() => {
+            fs::remove_file(&snapshot.path).map_err(|error| AppError::io(&snapshot.path, error))
+        }
+        None => Ok(()),
+    }
+}
+
+fn apply_documents_with<F>(documents: &[PendingDocument<'_>], mut writer: F) -> Result<(), AppError>
+where
+    F: FnMut(&Path, &Value) -> Result<(), AppError>,
+{
+    for (index, document) in documents.iter().enumerate() {
+        if let Err(operation_error) = writer(&document.snapshot.path, document.next) {
+            let rollback_errors = documents[..=index]
+                .iter()
+                .rev()
+                .filter_map(|document| {
+                    restore_snapshot(document.snapshot)
+                        .err()
+                        .map(|error| format!("{}: {error}", document.snapshot.path.display()))
+                })
+                .collect::<Vec<_>>();
+            return if rollback_errors.is_empty() {
+                Err(operation_error)
+            } else {
+                Err(AppError::Message(format!(
+                    "{operation_error}; rollback also failed for {}",
+                    rollback_errors.join(", ")
+                )))
+            };
+        }
+    }
+    Ok(())
+}
+
+fn commit_documents(
+    models_snapshot: &JsonFileSnapshot,
+    models_next: &Value,
+    settings: Option<(&JsonFileSnapshot, &Value)>,
+) -> Result<(), AppError> {
+    let models_changed = models_next != &models_snapshot.value;
+    let settings_changed = settings.is_some_and(|(snapshot, next)| next != &snapshot.value);
+    if !models_changed && !settings_changed {
+        return Ok(());
     }
 
-    let content = fs::read_to_string(path).map_err(|e| AppError::io(path, e))?;
-    if content.trim().is_empty() {
-        return Ok(Value::Object(Map::new()));
+    // Every loaded document is an observed dependency. For example, removal
+    // reads settings.json even though it only writes models.json.
+    ensure_unchanged(models_snapshot)?;
+    if let Some((settings_snapshot, _)) = settings {
+        ensure_unchanged(settings_snapshot)?;
     }
 
-    serde_json::from_str(&content).map_err(|e| AppError::json(path, e))
+    let mut documents = Vec::with_capacity(2);
+    if models_changed {
+        documents.push(PendingDocument {
+            snapshot: models_snapshot,
+            next: models_next,
+        });
+    }
+    if let Some((settings_snapshot, settings_next)) = settings {
+        if settings_changed {
+            documents.push(PendingDocument {
+                snapshot: settings_snapshot,
+                next: settings_next,
+            });
+        }
+    }
+
+    apply_documents_with(&documents, write_json_file)
+}
+
+fn mutate_pi_documents<F>(include_settings: bool, mutate: F) -> Result<(), AppError>
+where
+    F: FnOnce(&mut Value, Option<&mut Value>) -> Result<(), AppError>,
+{
+    let _guard = lock_pi_config()?;
+    let models_snapshot = read_snapshot(&get_pi_models_path())?;
+    let settings_snapshot = include_settings
+        .then(|| read_snapshot(&get_pi_settings_path()))
+        .transpose()?;
+    let mut models_next = models_snapshot.value.clone();
+    let mut settings_next = settings_snapshot
+        .as_ref()
+        .map(|snapshot| snapshot.value.clone());
+
+    mutate(&mut models_next, settings_next.as_mut())?;
+    commit_documents(
+        &models_snapshot,
+        &models_next,
+        settings_snapshot.as_ref().zip(settings_next.as_ref()),
+    )
 }
 
 fn object_mut<'a>(
@@ -202,11 +352,14 @@ pub fn upsert_pi_live_provider(
     provider: &Provider,
     overwrite_existing: bool,
 ) -> Result<(), AppError> {
-    let models_path = get_pi_models_path();
-    let mut models_root = read_json_or_empty_object(&models_path)?;
-    insert_provider(&mut models_root, &models_path, provider, overwrite_existing)?;
-    write_json_file(&models_path, &models_root)?;
-    Ok(())
+    mutate_pi_documents(false, |models_root, _| {
+        insert_provider(
+            models_root,
+            &get_pi_models_path(),
+            provider,
+            overwrite_existing,
+        )
+    })
 }
 
 /// Add or update a provider and select it as Pi's default provider/model.
@@ -214,16 +367,18 @@ pub fn activate_pi_live_provider(
     provider: &Provider,
     overwrite_existing: bool,
 ) -> Result<(), AppError> {
-    let models_path = get_pi_models_path();
-    let settings_path = get_pi_settings_path();
-    let mut models_root = read_json_or_empty_object(&models_path)?;
-    insert_provider(&mut models_root, &models_path, provider, overwrite_existing)?;
-    let mut settings_root = read_json_or_empty_object(&settings_path)?;
-    select_provider(&mut settings_root, provider)?;
-
-    write_json_file(&models_path, &models_root)?;
-    write_json_file(&settings_path, &settings_root)?;
-    Ok(())
+    mutate_pi_documents(true, |models_root, settings_root| {
+        insert_provider(
+            models_root,
+            &get_pi_models_path(),
+            provider,
+            overwrite_existing,
+        )?;
+        select_provider(
+            settings_root.expect("settings requested for Pi provider activation"),
+            provider,
+        )
+    })
 }
 
 /// Compatibility wrapper retained for callers that mean "activate".
@@ -236,23 +391,23 @@ pub fn sync_pi_live_providers(
     providers: &[&Provider],
     active_provider: Option<&Provider>,
 ) -> Result<(), AppError> {
-    let models_path = get_pi_models_path();
-    let mut models_root = read_json_or_empty_object(&models_path)?;
-    for provider in providers {
-        insert_provider(&mut models_root, &models_path, provider, true)?;
-    }
-    write_json_file(&models_path, &models_root)?;
-
-    if let Some(active_provider) = active_provider {
-        let settings_path = get_pi_settings_path();
-        let mut settings_root = read_json_or_empty_object(&settings_path)?;
-        select_provider(&mut settings_root, active_provider)?;
-        write_json_file(&settings_path, &settings_root)?;
-    }
-    Ok(())
+    mutate_pi_documents(active_provider.is_some(), |models_root, settings_root| {
+        let models_path = get_pi_models_path();
+        for provider in providers {
+            insert_provider(models_root, &models_path, provider, true)?;
+        }
+        if let Some(active_provider) = active_provider {
+            select_provider(
+                settings_root.expect("settings requested for Pi provider sync"),
+                active_provider,
+            )?;
+        }
+        Ok(())
+    })
 }
 
 pub fn pi_provider_exists(provider_id: &str) -> Result<bool, AppError> {
+    let _guard = lock_pi_config()?;
     let models_path = get_pi_models_path();
     let models_root = read_json_or_empty_object(&models_path)?;
     let root = models_root.as_object().ok_or_else(|| {
@@ -270,18 +425,17 @@ pub fn pi_provider_exists(provider_id: &str) -> Result<bool, AppError> {
 /// Remove a managed provider, but never leave Pi's default pointing at a
 /// provider that no longer exists.
 pub fn remove_pi_live_provider(provider_id: &str) -> Result<(), AppError> {
-    let settings_path = get_pi_settings_path();
-    let settings_root = read_json_or_empty_object(&settings_path)?;
-    if settings_root.get("defaultProvider").and_then(Value::as_str) == Some(provider_id) {
-        return Err(AppError::Config(format!(
-            "Cannot remove active Pi provider '{provider_id}'. Switch first."
-        )));
-    }
+    mutate_pi_documents(true, |models_root, settings_root| {
+        let settings_root = settings_root.expect("settings requested for Pi provider removal");
+        if settings_root.get("defaultProvider").and_then(Value::as_str) == Some(provider_id) {
+            return Err(AppError::Config(format!(
+                "Cannot remove active Pi provider '{provider_id}'. Switch first."
+            )));
+        }
 
-    let models_path = get_pi_models_path();
-    let mut models_root = read_json_or_empty_object(&models_path)?;
-    providers_mut(&mut models_root, &models_path)?.remove(provider_id);
-    write_json_file(&models_path, &models_root)
+        providers_mut(models_root, &get_pi_models_path())?.remove(provider_id);
+        Ok(())
+    })
 }
 
 fn provider_models_for_form(provider_config: &Value) -> Value {
@@ -304,6 +458,7 @@ fn provider_models_for_form(provider_config: &Value) -> Value {
 }
 
 pub fn read_pi_live_settings() -> Result<Value, AppError> {
+    let _guard = lock_pi_config()?;
     let models_path = get_pi_models_path();
     let settings_path = get_pi_settings_path();
     let models_root = read_json_or_empty_object(&models_path)?;
@@ -350,6 +505,7 @@ pub fn read_pi_live_settings() -> Result<Value, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn normalize_provider_config_writes_pi_base_url_key() {
@@ -370,5 +526,59 @@ mod tests {
             normalized.get("baseURL").is_none(),
             "Pi models.json must use baseUrl, not baseURL"
         );
+    }
+
+    #[test]
+    fn detects_external_changes_after_snapshot() {
+        let dir = tempdir().expect("create temp dir");
+        let path = dir.path().join("models.json");
+        fs::write(&path, br#"{"providers":{}}"#).expect("seed models");
+        let snapshot = read_snapshot(&path).expect("snapshot models");
+
+        fs::write(&path, br#"{"providers":{"external":{}}}"#).expect("edit models");
+        let error = ensure_unchanged(&snapshot).expect_err("external edit must be detected");
+
+        assert!(error.to_string().contains("changed on disk"));
+    }
+
+    #[test]
+    fn rolls_back_models_when_settings_write_fails() {
+        let dir = tempdir().expect("create temp dir");
+        let models_path = dir.path().join("models.json");
+        let settings_path = dir.path().join("settings.json");
+        let original_models = br#"{"providers":{"old":{}}}"#;
+        let original_settings = br#"{"defaultProvider":"old"}"#;
+        fs::write(&models_path, original_models).expect("seed models");
+        fs::write(&settings_path, original_settings).expect("seed settings");
+        let models_snapshot = read_snapshot(&models_path).expect("snapshot models");
+        let settings_snapshot = read_snapshot(&settings_path).expect("snapshot settings");
+        let models_next = json!({"providers": {"old": {}, "new": {}}});
+        let settings_next = json!({"defaultProvider": "new"});
+        let documents = [
+            PendingDocument {
+                snapshot: &models_snapshot,
+                next: &models_next,
+            },
+            PendingDocument {
+                snapshot: &settings_snapshot,
+                next: &settings_next,
+            },
+        ];
+
+        let error = apply_documents_with(&documents, |path, value| {
+            if path == settings_path {
+                return Err(AppError::Message(
+                    "injected settings write failure".to_string(),
+                ));
+            }
+            write_json_file(path, value)
+        })
+        .expect_err("settings write should fail");
+
+        assert!(error
+            .to_string()
+            .contains("injected settings write failure"));
+        assert_eq!(fs::read(&models_path).unwrap(), original_models);
+        assert_eq!(fs::read(&settings_path).unwrap(), original_settings);
     }
 }
