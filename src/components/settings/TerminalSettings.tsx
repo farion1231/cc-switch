@@ -18,6 +18,10 @@ const MACOS_TERMINALS = [
   { value: "wezterm", labelKey: "settings.terminal.options.macos.wezterm" },
   { value: "kaku", labelKey: "settings.terminal.options.macos.kaku" },
   { value: "warp", labelKey: "settings.terminal.options.macos.warp" },
+  {
+    value: "cube-shell",
+    labelKey: "settings.terminal.options.macos.cubeShell",
+  },
 ] as const;
 
 const WINDOWS_TERMINALS = [
@@ -27,6 +31,10 @@ const WINDOWS_TERMINALS = [
     labelKey: "settings.terminal.options.windows.powershell",
   },
   { value: "wt", labelKey: "settings.terminal.options.windows.wt" },
+  {
+    value: "cube-shell",
+    labelKey: "settings.terminal.options.windows.cubeShell",
+  },
 ] as const;
 
 const LINUX_TERMINALS = [
@@ -42,6 +50,10 @@ const LINUX_TERMINALS = [
   { value: "alacritty", labelKey: "settings.terminal.options.linux.alacritty" },
   { value: "kitty", labelKey: "settings.terminal.options.linux.kitty" },
   { value: "ghostty", labelKey: "settings.terminal.options.linux.ghostty" },
+  {
+    value: "cube-shell",
+    labelKey: "settings.terminal.options.linux.cubeShell",
+  },
 ] as const;
 
 // Get terminals for the current platform
