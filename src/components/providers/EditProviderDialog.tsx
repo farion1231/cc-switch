@@ -22,6 +22,38 @@ interface EditProviderDialogProps {
   isProxyTakeover?: boolean; // 代理接管模式下不读取 live（避免显示被接管后的代理配置）
 }
 
+const KIMI_MODEL_ENV_KEYS = [
+  "ANTHROPIC_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_FABLE_MODEL",
+  "CLAUDE_CODE_SUBAGENT_MODEL",
+] as const;
+
+const KIMI_CONTEXT_ENV_KEYS = [
+  "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+  "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+] as const;
+
+function getKimiInjectedContextDefault(
+  storedEnv: Record<string, unknown>,
+): "262144" | "1048576" {
+  let sawModel = false;
+  for (const key of KIMI_MODEL_ENV_KEYS) {
+    const value = storedEnv[key];
+    if (value === undefined) continue;
+    if (typeof value !== "string") return "262144";
+
+    const model = value.trim();
+    if (!model) continue;
+    sawModel = true;
+    if (model.toLowerCase() !== "k3[1m]") return "262144";
+  }
+
+  return sawModel ? "1048576" : "262144";
+}
+
 export function EditProviderDialog({
   open,
   provider,
@@ -148,10 +180,10 @@ export function EditProviderDialog({
       storedClaudeEnv.ANTHROPIC_BASE_URL.trim().replace(/\/+$/, "") ===
         "https://api.kimi.com/coding";
 
-    // Kimi context defaults may be injected only into Claude's live settings.
-    // They are provider-owned values, so the DB remains the SSOT in the editor:
-    // preserve an explicit stored override, and remove an injected-only live
-    // value when the provider did not store the key.
+    // Keep this derivation symmetric with the backend's Kimi injection logic.
+    // Only strip a live value proven to be generated: the provider did not
+    // store the key and the value exactly matches its model-specific default.
+    // Any other live value may be a manual edit and must survive round-trip.
     if (
       isKimiCodingProvider &&
       liveSettings &&
@@ -164,14 +196,13 @@ export function EditProviderDialog({
           ? { ...(base.env as Record<string, unknown>) }
           : {};
       const storedEnv = storedClaudeEnv ?? {};
+      const injectedDefault = getKimiInjectedContextDefault(storedEnv);
 
-      for (const key of [
-        "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
-        "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
-      ]) {
-        if (Object.prototype.hasOwnProperty.call(storedEnv, key)) {
-          liveEnv[key] = storedEnv[key];
-        } else {
+      for (const key of KIMI_CONTEXT_ENV_KEYS) {
+        if (
+          !Object.prototype.hasOwnProperty.call(storedEnv, key) &&
+          liveEnv[key] === injectedDefault
+        ) {
           delete liveEnv[key];
         }
       }
