@@ -703,6 +703,24 @@ mod tests {
     }
 
     #[test]
+    fn validate_provider_settings_uses_pi_schema_validator() {
+        let provider = Provider::with_id(
+            "pi-custom".into(),
+            "Pi Custom".into(),
+            json!({
+                "baseUrl": "https://example.com/v1",
+                "api": "openai-chat",
+                "models": [{ "id": "model-1" }]
+            }),
+            None,
+        );
+
+        let error = ProviderService::validate_provider_settings(&AppType::Pi, &provider)
+            .expect_err("unsupported Pi API must be rejected at the service boundary");
+        assert!(error.to_string().contains("unsupported API"));
+    }
+
+    #[test]
     fn extract_gemini_common_config_strips_credentials_keeps_shareable() {
         // Gemini 的共享片段会被 deep-merge 回**其它** Gemini 供应商的 env
         // (live.rs::apply_common_config_to_settings)，因此任何凭据都不得进入片段。
@@ -4382,13 +4400,7 @@ impl ProviderService {
                 }
             }
             AppType::Pi => {
-                if !provider.settings_config.is_object() {
-                    return Err(AppError::localized(
-                        "provider.pi.settings.not_object",
-                        "Pi Agent 配置必须是 JSON 对象",
-                        "Pi Agent configuration must be a JSON object",
-                    ));
-                }
+                crate::pi_config::validate_pi_provider_config(&provider.settings_config)?;
             }
         }
 

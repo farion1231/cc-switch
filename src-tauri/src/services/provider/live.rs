@@ -2693,7 +2693,7 @@ base_url = "https://a.example/v1"
             "providerConfig": {
                 "baseUrl": "https://api.packy.example/v1",
                 "apiKey": "sk-packy",
-                "api": "openai-chat",
+                "api": "openai-completions",
                 "models": [
                     { "id": "gpt-5.5" },
                     { "id": "gpt-5.5-mini" }

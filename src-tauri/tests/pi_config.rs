@@ -95,7 +95,7 @@ fn writes_provider_and_defaults_without_clobbering_existing_pi_config() {
         json!({
             "baseUrl": "https://api.packy.example/v1",
             "apiKey": "sk-packy",
-            "api": "openai-chat",
+            "api": "openai-completions",
             "models": [
                 {
                     "id": "gpt-5.5",
@@ -216,7 +216,7 @@ fn read_live_settings_returns_current_provider_fragment() {
     "packy": {
       "baseURL": "https://api.packy.example/v1",
       "apiKey": "sk-packy",
-      "api": "openai-chat",
+      "api": "openai-completions",
       "models": ["gpt-5.5"]
     }
   }
@@ -269,7 +269,7 @@ fn write_provider_clears_stale_default_model_when_no_model_can_be_derived() {
         json!({
             "baseUrl": "https://api.example.com/v1",
             "apiKey": "sk-empty",
-            "api": "openai-chat",
+            "api": "openai-completions",
             "models": []
         }),
         None,
@@ -301,7 +301,7 @@ fn write_provider_rejects_existing_non_object_pi_files() {
         json!({
             "baseUrl": "https://api.packy.example/v1",
             "apiKey": "sk-packy",
-            "api": "openai-chat",
+            "api": "openai-completions",
             "models": [{ "id": "gpt-5.5" }]
         }),
         None,
