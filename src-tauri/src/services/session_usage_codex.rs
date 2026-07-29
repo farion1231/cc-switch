@@ -450,6 +450,16 @@ fn parse_token_signature(info: &serde_json::Value) -> Option<TokenUsageSignature
     (total.is_some() || last.is_some()).then_some(TokenUsageSignature { total, last })
 }
 
+fn token_counter_lane(payload: &serde_json::Value, current_model: &str) -> String {
+    payload
+        .get("rate_limits")
+        .and_then(|rate_limits| rate_limits.get("limit_id"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("limit:{value}"))
+        .unwrap_or_else(|| format!("model:{current_model}"))
+}
+
 fn get_codex_sync_state(db: &Database, file_path: &Path) -> Result<(i64, i64), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
     let state = get_sync_state(db, &file_path_str)?;
@@ -554,6 +564,12 @@ fn compute_delta(prev: &Option<CumulativeTokens>, current: &CumulativeTokens) ->
             output: current.output.saturating_sub(p.output) as u32,
         },
     }
+}
+
+fn update_high_water(high_water: &mut CumulativeTokens, current: &CumulativeTokens) {
+    high_water.input = high_water.input.max(current.input);
+    high_water.cached_input = high_water.cached_input.max(current.cached_input);
+    high_water.output = high_water.output.max(current.output);
 }
 
 /// 从 JSON Value 中提取累计 token 用量
@@ -704,7 +720,11 @@ fn parse_codex_file(
     let mut root_timestamp = None;
     let mut parent = ParentResolution::None;
     let mut current_model = "unknown".to_string();
-    let mut prev_total: Option<CumulativeTokens> = None;
+    // A rollout can interleave independent cumulative counters (for example
+    // `codex` and `codex_bengalfox`). A single baseline turns every lane
+    // switch into a fake multi-million-token delta.
+    let mut total_high_water_by_lane: HashMap<String, CumulativeTokens> = HashMap::new();
+    let mut last_total_signature_by_lane: HashMap<String, TokenCountersSignature> = HashMap::new();
     let mut event_index = 0u32;
     let mut token_events = Vec::new();
     let mut line_offset = 0i64;
@@ -810,27 +830,46 @@ fn parse_codex_file(
                     current_model = normalize_codex_model(model);
                 }
 
-                let (cumulative, is_total) = if let Some(total) = info.get("total_token_usage") {
-                    (parse_cumulative_tokens(total), true)
-                } else if let Some(last) = info.get("last_token_usage") {
-                    (parse_cumulative_tokens(last), false)
-                } else {
-                    continue;
-                };
-                let Some(cumulative) = cumulative else {
-                    continue;
-                };
-                let delta = if is_total {
-                    let delta = compute_delta(&prev_total, &cumulative);
-                    prev_total = Some(cumulative);
-                    delta
-                } else {
+                let lane = token_counter_lane(payload, &current_model);
+                let total = info
+                    .get("total_token_usage")
+                    .and_then(parse_cumulative_tokens);
+                let last = info
+                    .get("last_token_usage")
+                    .and_then(parse_cumulative_tokens);
+                let duplicate_total = signature.total.as_ref().is_some_and(|total_signature| {
+                    last_total_signature_by_lane.get(&lane) == Some(total_signature)
+                });
+                if let Some(total_signature) = signature.total.as_ref() {
+                    last_total_signature_by_lane.insert(lane.clone(), total_signature.clone());
+                }
+
+                let delta = if duplicate_total {
                     DeltaTokens {
-                        input: cumulative.input as u32,
-                        cached_input: cumulative.cached_input as u32,
-                        output: cumulative.output as u32,
+                        input: 0,
+                        cached_input: 0,
+                        output: 0,
                     }
+                } else if let Some(last) = last {
+                    // Codex provides the exact per-request usage. Prefer it to
+                    // subtracting cumulative snapshots, which may come from
+                    // multiple independently advancing rate-limit lanes.
+                    DeltaTokens {
+                        input: last.input as u32,
+                        cached_input: last.cached_input as u32,
+                        output: last.output as u32,
+                    }
+                } else if let Some(total) = total.as_ref() {
+                    compute_delta(&total_high_water_by_lane.get(&lane).cloned(), total)
+                } else {
+                    continue;
                 };
+                if let Some(total) = total {
+                    total_high_water_by_lane
+                        .entry(lane)
+                        .and_modify(|high_water| update_high_water(high_water, &total))
+                        .or_insert(total);
+                }
                 let delta = DeltaTokens {
                     cached_input: delta.cached_input.min(delta.input),
                     ..delta
@@ -1432,6 +1471,69 @@ mod tests {
         value
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn token_count_with_last_at(
+        total_input: u64,
+        total_cached: u64,
+        total_output: u64,
+        last_input: u64,
+        last_cached: u64,
+        last_output: u64,
+        limit_id: &str,
+        timestamp: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "timestamp": timestamp,
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": total_input,
+                        "cached_input_tokens": total_cached,
+                        "output_tokens": total_output,
+                        "reasoning_output_tokens": 0,
+                        "total_tokens": total_input + total_output
+                    },
+                    "last_token_usage": {
+                        "input_tokens": last_input,
+                        "cached_input_tokens": last_cached,
+                        "output_tokens": last_output,
+                        "reasoning_output_tokens": 0,
+                        "total_tokens": last_input + last_output
+                    }
+                },
+                "rate_limits": { "limit_id": limit_id }
+            }
+        })
+    }
+
+    fn token_count_total_for_lane_at(
+        input: u64,
+        cached: u64,
+        output: u64,
+        limit_id: &str,
+        timestamp: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "timestamp": timestamp,
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": input,
+                        "cached_input_tokens": cached,
+                        "output_tokens": output,
+                        "reasoning_output_tokens": 0,
+                        "total_tokens": input + output
+                    }
+                },
+                "rate_limits": { "limit_id": limit_id }
+            }
+        })
+    }
+
     fn sync_test_file(
         db: &Database,
         file: &Path,
@@ -1512,6 +1614,159 @@ mod tests {
         assert_eq!(delta.cached_input, 0);
         assert_eq!(delta.output, 0);
         assert!(delta.is_zero());
+    }
+
+    #[test]
+    fn test_interleaved_counter_lanes_use_exact_last_usage() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let bengal_event = token_count_with_last_at(
+            87_709_262,
+            83_563_008,
+            240_919,
+            151_258,
+            147_200,
+            87,
+            "codex_bengalfox",
+            "2026-07-10T03:00:03Z",
+        );
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_count_with_last_at(
+                    76_780_408,
+                    73_010_432,
+                    243_036,
+                    175_074,
+                    169_728,
+                    6_827,
+                    "codex",
+                    "2026-07-10T03:00:02Z",
+                ),
+                bengal_event.clone(),
+                token_count_with_last_at(
+                    76_962_538,
+                    73_180_160,
+                    243_258,
+                    182_130,
+                    169_728,
+                    222,
+                    "codex",
+                    "2026-07-10T03:00:04Z",
+                ),
+                // Repeated snapshots are notifications, not additional API usage.
+                bengal_event,
+            ],
+        );
+
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        let deltas = parsed
+            .token_events
+            .iter()
+            .filter(|event| !event.delta.is_zero())
+            .map(|event| {
+                (
+                    event.delta.input,
+                    event.delta.cached_input,
+                    event.delta.output,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            deltas,
+            vec![
+                (175_074, 169_728, 6_827),
+                (151_258, 147_200, 87),
+                (182_130, 169_728, 222),
+            ]
+        );
+        assert!(parsed.token_events[3].delta.is_zero());
+        Ok(())
+    }
+
+    #[test]
+    fn test_lane_snapshot_dedupe_allows_counter_reset() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let first =
+            token_count_with_last_at(100, 50, 10, 100, 50, 10, "codex", "2026-07-10T03:00:02Z");
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                first.clone(),
+                first,
+                token_count_with_last_at(
+                    200,
+                    100,
+                    20,
+                    100,
+                    50,
+                    10,
+                    "codex",
+                    "2026-07-10T03:00:04Z",
+                ),
+                // A restarted counter may legitimately return to an older
+                // signature after another snapshot has advanced the lane.
+                token_count_with_last_at(100, 50, 10, 50, 25, 5, "codex", "2026-07-10T03:00:05Z"),
+            ],
+        );
+
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        let deltas = parsed
+            .token_events
+            .iter()
+            .filter(|event| !event.delta.is_zero())
+            .map(|event| event.delta.input)
+            .collect::<Vec<_>>();
+
+        assert_eq!(deltas, vec![100, 100, 50]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_total_fallback_uses_per_lane_high_water_after_regression() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_count_total_for_lane_at(100, 50, 10, "codex", "2026-07-10T03:00:02Z"),
+                token_count_total_for_lane_at(
+                    1_000,
+                    500,
+                    100,
+                    "codex_bengalfox",
+                    "2026-07-10T03:00:03Z",
+                ),
+                token_count_total_for_lane_at(80, 40, 8, "codex", "2026-07-10T03:00:04Z"),
+                token_count_total_for_lane_at(90, 45, 9, "codex", "2026-07-10T03:00:05Z"),
+                token_count_total_for_lane_at(120, 60, 12, "codex", "2026-07-10T03:00:06Z"),
+            ],
+        );
+
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        let deltas = parsed
+            .token_events
+            .iter()
+            .filter(|event| !event.delta.is_zero())
+            .map(|event| {
+                (
+                    event.delta.input,
+                    event.delta.cached_input,
+                    event.delta.output,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(deltas, vec![(100, 50, 10), (1_000, 500, 100), (20, 10, 2)]);
+        Ok(())
     }
 
     #[test]
