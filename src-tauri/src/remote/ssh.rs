@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use super::client::{RemoteClientError, RemoteSession};
 use super::embedded_agent::{embedded_agent_bytes, EmbeddedAgentError, EphemeralAgentSpec};
 use super::ephemeral_deploy::{
-    build_cleanup_command, build_launch_command, build_scp_args, CleanupScheduler,
-    EphemeralCleanupGuard,
+    build_cleanup_command, build_launch_command, build_preflight_command, build_scp_args,
+    CleanupScheduler, EphemeralCleanupGuard,
 };
 use super::models::{RemoteTargetConfig, RemoteTargetValidationError};
 use super::protocol::ProtocolError;
@@ -157,7 +157,7 @@ impl Drop for OpenSshSession {
 }
 
 pub fn preflight(target: &RemoteTargetConfig) -> Result<RemotePlatform, RemoteSshError> {
-    let args = build_ssh_args(target, &["uname -s; uname -m".to_string()])?;
+    let args = build_ssh_args(target, &[build_preflight_command()])?;
     let output = Command::new("ssh")
         .args(args)
         .output()

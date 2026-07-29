@@ -6,8 +6,8 @@ use cc_switch_lib::remote::embedded_agent::{
     embedded_agent_catalog, AgentArchitecture, EphemeralAgentSpec,
 };
 use cc_switch_lib::remote::ephemeral_deploy::{
-    build_cleanup_command, build_launch_command, build_scp_args, CleanupScheduler,
-    EphemeralCleanupGuard,
+    build_cleanup_command, build_launch_command, build_preflight_command, build_scp_args,
+    CleanupScheduler, EphemeralCleanupGuard,
 };
 use cc_switch_lib::remote::models::RemoteTargetConfig;
 use cc_switch_lib::remote::ssh::RemoteSshError;
@@ -92,6 +92,15 @@ fn scp_and_remote_commands_keep_transport_arguments_isolated() {
         "command rm -f -- '{}'",
         spec.remote_path
     )));
+}
+
+#[test]
+fn preflight_uses_the_same_safe_remote_environment() {
+    let command = build_preflight_command();
+
+    // 预检和 Agent 生命周期命令必须保持同一环境契约，否则 PATH 异常会在不同阶段产生不一致错误。
+    assert!(command.starts_with(SAFE_REMOTE_COMMAND_PREFIX));
+    assert!(command.contains("command uname -s; command uname -m"));
 }
 
 #[derive(Default)]

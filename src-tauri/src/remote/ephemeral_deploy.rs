@@ -14,6 +14,11 @@ fn with_remote_command_environment(command: String) -> String {
     format!("{REMOTE_PATH_SETUP}; {command}")
 }
 
+/// 平台预检与 Agent 生命周期命令共享同一远端环境，避免非交互式 shell 的 PATH 差异改变错误阶段。
+pub fn build_preflight_command() -> String {
+    with_remote_command_environment("command uname -s; command uname -m".to_string())
+}
+
 /// 构造 scp 参数数组，不经过本地 shell。路径中的空格保持为单个 OsString，避免命令拼接
 /// 引入参数注入；远端路径只能来自 EphemeralAgentSpec 生成的十六进制 token。
 pub fn build_scp_args(
