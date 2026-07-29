@@ -32,3 +32,17 @@ threads follow the selected provider when unified history is enabled.
   and Windows symlink privilege).
 - [x] Windows release compile and MSI installer packaging.
 - [x] Final diff review.
+
+## Review follow-up
+
+- [ ] Add failing coverage proving proxy takeover hot switches reconcile Codex
+  history and roll it back before provider publication on failure.
+- [ ] Add failing coverage proving a preserved scoped third-party token wins over a
+  retained global official API key.
+- [ ] Add failing coverage for Windows atomic replacement and recovery when a
+  journaled JSONL destination is absent.
+- [ ] Implement the three minimal fixes and run focused tests after each change.
+- [ ] Run formatting, Clippy, full Rust/frontend tests, release compilation, and
+  Windows MSI packaging.
+- [ ] Push the review commit, reply in each inline thread with the approved `OK.`
+  wording, and resolve only after GitHub reflects the pushed fix.

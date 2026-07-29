@@ -157,6 +157,29 @@ Test-driven coverage must include:
 - formatting, Clippy with warnings denied, Rust tests, frontend typecheck/tests, release
   compilation, and Windows installer generation.
 
+## Review amendments (2026-07-29)
+
+The coordinated-switch guarantees apply equally to direct switches and proxy
+takeover hot switches. A Codex hot switch must reconcile history after its live and
+backup preparation succeeds but before publishing local or database
+current-provider state. The applied history journal participates in every later
+rollback path.
+
+When retaining the currently live third-party route during an upgrade, an existing
+provider-scoped `experimental_bearer_token` is authoritative. A global
+`OPENAI_API_KEY` may populate the scoped token only when the active provider table
+does not already have one. Target-provider writes retain their existing
+stored-auth-first behavior.
+
+JSONL replacement on Windows must not remove the destination before the replacement
+is ready. The shared atomic-write primitive will use a same-directory Windows atomic
+replace operation. History rollback also recreates the journaled original if an
+interrupted external or legacy write leaves the destination absent.
+
+Regression coverage must include proxy takeover in both directions and rollback,
+upgrade state containing an official global API key plus a third-party scoped token,
+and Windows replacement/absent-destination recovery.
+
 ## Non-goals
 
 - Decrypting backend-specific `encrypted_content` across providers.
