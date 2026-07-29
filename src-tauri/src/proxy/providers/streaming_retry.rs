@@ -18,6 +18,12 @@
 //! 与 #5546 在提交边界前的处理保持同一分界。可重试与否由转换器附加的
 //! [`RETRYABLE_STREAM_MARKER`] 注释行标识，而非事件里的 `error.type`——后者
 //! 逐字透传自上游可控字段，不可信。
+//!
+//! 包装器同时承担正常流转期间的思考期心跳：推理模型隐藏思考时上游可整段
+//! 无事件，`message_start` 之后上游每静默 [`KEEPALIVE_INTERVAL`] 即向下游发
+//! 一次 ping（至多 [`UPSTREAM_SILENCE_KEEPALIVE_LIMIT`]），防止下游空闲计时
+//! 器（本代理 120s passthrough 超时、Claude Code 字节级 stream watchdog）把
+//! 长思考误判为断流。
 
 use super::streaming_responses::{
     anthropic_error_sse, anthropic_sse, create_anthropic_sse_stream_from_responses,
@@ -36,12 +42,23 @@ use std::time::Duration;
 /// 与官方 Codex CLI 的 `stream_max_retries` 默认值对齐。
 pub(crate) const RESPONSES_STREAM_MAX_RETRIES: u32 = 5;
 
-/// 重连等待期间向下游发 keepalive 的间隔。
+/// 重连等待与正常流转静默期间向下游发 keepalive 的间隔。
 ///
 /// 退避（≤3.2s）+ 重连（≤60s）+ 等待重连后首个事件（≤60s）三段串联可超过
 /// 下游 `create_logged_passthrough_stream` 的单次 120s 空闲超时；每段内部
 /// 都合规也可能被外层掐掉。周期性 ping 喂空闲计时器，保住合法的重试窗口。
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+
+/// 正常流转期间容忍的上游连续静默上限，超过后停止心跳。
+///
+/// 推理模型（GPT-5 系）隐藏思考期间可能长时间不产出任何 SSE 事件——未请求
+/// reasoning summary 时全程零事件，请求了摘要其增量也可能明显滞后。这种
+/// 静默是合法的"仍在生成"状态，但下游无从分辨：本代理的 120s passthrough
+/// 空闲超时会先掐断，即便调大，Claude Code 自身的字节级 stream watchdog
+/// （2.1.157 实测 180s，当前版本默认 5 分钟）也会中止请求。心跳在此窗口内
+/// 持续喂两级计时器；超过上限说明连接大概率已死（如 TCP 黑洞），停止心跳
+/// 把裁决权交还给操作者配置的空闲超时，避免无限保活一条死流。
+const UPSTREAM_SILENCE_KEEPALIVE_LIMIT: Duration = Duration::from_secs(300);
 
 pub(crate) type ByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>;
 type ConnectFuture = Pin<Box<dyn Future<Output = Result<ProxyResponse, ProxyError>> + Send>>;
@@ -171,6 +188,9 @@ fn retry_failure_reason(event: &ScannedEvent) -> String {
 /// 把 Responses 上游字节流转换为 Anthropic SSE，并在下游只收到协议脚手架
 /// （`message_start`/`ping`）时对可重试的流中断做有界自动重连。
 ///
+/// 无论是否带 `reconnector`，`message_start` 之后上游每静默
+/// [`KEEPALIVE_INTERVAL`] 就向下游发一次 ping（推理模型隐藏思考期间上游可
+/// 整段无事件），至多持续 [`UPSTREAM_SILENCE_KEEPALIVE_LIMIT`]。除此之外，
 /// `reconnector` 为 `None` 时行为与 `create_anthropic_sse_stream_from_responses`
 /// 完全一致。
 pub fn create_resilient_anthropic_sse_stream_from_responses(
@@ -179,9 +199,35 @@ pub fn create_resilient_anthropic_sse_stream_from_responses(
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let Some(reconnector) = reconnector else {
+            // 无重连工厂：不做重试，但思考期心跳与主循环保持同款语义。
             let translated = create_anthropic_sse_stream_from_responses(initial);
             futures::pin_mut!(translated);
-            while let Some(item) = translated.next().await {
+            let mut message_start_forwarded = false;
+            loop {
+                let mut silent = Duration::ZERO;
+                let next = loop {
+                    match tokio::time::timeout(KEEPALIVE_INTERVAL, translated.next()).await {
+                        Ok(item) => break item,
+                        Err(_) => {
+                            silent += KEEPALIVE_INTERVAL;
+                            if message_start_forwarded
+                                && silent <= UPSTREAM_SILENCE_KEEPALIVE_LIMIT
+                            {
+                                yield Ok(anthropic_sse("ping", &json!({"type": "ping"})));
+                            }
+                        }
+                    }
+                };
+                let Some(item) = next else { break };
+                if let Ok(chunk) = &item {
+                    if !message_start_forwarded
+                        && scan_chunk(&String::from_utf8_lossy(chunk))
+                            .iter()
+                            .any(|event| event.name == "message_start")
+                    {
+                        message_start_forwarded = true;
+                    }
+                }
                 yield item;
             }
             return;
@@ -238,7 +284,23 @@ pub fn create_resilient_anthropic_sse_stream_from_responses(
                     }
                     result
                 } else {
-                    translated.next().await
+                    // 正常流转期间的思考期心跳：上游静默时周期性向下游发 ping
+                    // （Anthropic 协议允许任意时刻出现 ping），超过
+                    // UPSTREAM_SILENCE_KEEPALIVE_LIMIT 后停发，让外层空闲超时接管。
+                    let mut silent = Duration::ZERO;
+                    loop {
+                        match tokio::time::timeout(KEEPALIVE_INTERVAL, translated.next()).await {
+                            Ok(item) => break item,
+                            Err(_) => {
+                                silent += KEEPALIVE_INTERVAL;
+                                if message_start_forwarded
+                                    && silent <= UPSTREAM_SILENCE_KEEPALIVE_LIMIT
+                                {
+                                    yield Ok(anthropic_sse("ping", &json!({"type": "ping"})));
+                                }
+                            }
+                        }
+                    }
                 };
                 let Some(item) = next else {
                     break;
@@ -388,6 +450,20 @@ mod tests {
             .collect();
         items.push(Err(std::io::Error::other("error decoding response body")));
         Box::pin(stream::iter(items))
+    }
+
+    /// head 立即到达，tail 在 `delay` 之后到达——模拟推理模型隐藏思考的静默窗口。
+    fn delayed_chunks(head: &str, delay: Duration, tail: &str) -> ByteStream {
+        let head = Bytes::from(head.to_string());
+        let tail = Bytes::from(tail.to_string());
+        Box::pin(
+            stream::once(async move { Ok::<_, std::io::Error>(head) }).chain(stream::once(
+                async move {
+                    tokio::time::sleep(delay).await;
+                    Ok(tail)
+                },
+            )),
+        )
     }
 
     fn streamed_response(parts: &[&str]) -> ProxyResponse {
@@ -680,6 +756,98 @@ mod tests {
         assert!(
             out.matches("event: ping").count() >= 3,
             "expected keepalive pings while awaiting first event: {out}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn thinking_silence_emits_keepalive_pings_without_retry() {
+        // message_start 之后上游静默 60 秒（推理模型隐藏思考）：期间必须周期性
+        // 发 ping 喂下游空闲计时器，且不得触发重连——静默不是中断。
+        let (reconnector, calls) = scripted_reconnector(vec![]);
+        let tail = [text_delta("ok"), completed()].concat();
+        let first = delayed_chunks(&created(), Duration::from_secs(60), &tail);
+        let out = collect(create_resilient_anthropic_sse_stream_from_responses(
+            first,
+            Some(reconnector),
+        ))
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "must not reconnect");
+        assert!(out.contains("event: message_stop"));
+        assert!(!out.contains("event: error"), "unexpected error in: {out}");
+        let pings = out.matches("event: ping").count();
+        assert!(
+            pings >= 4,
+            "expected keepalive pings during thinking silence, got {pings}: {out}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn thinking_silence_keepalive_stops_at_limit() {
+        // 上游静默远超上限：心跳只覆盖前 300 秒，之后停发，
+        // 把死流的裁决权交还给外层空闲超时。
+        let (reconnector, calls) = scripted_reconnector(vec![]);
+        let tail = [text_delta("ok"), completed()].concat();
+        let silence = UPSTREAM_SILENCE_KEEPALIVE_LIMIT + Duration::from_secs(100);
+        let first = delayed_chunks(&created(), silence, &tail);
+        let out = collect(create_resilient_anthropic_sse_stream_from_responses(
+            first,
+            Some(reconnector),
+        ))
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "must not reconnect");
+        assert!(out.contains("event: message_stop"));
+        let pings = out.matches("event: ping").count();
+        let cap =
+            (UPSTREAM_SILENCE_KEEPALIVE_LIMIT.as_secs() / KEEPALIVE_INTERVAL.as_secs()) as usize;
+        assert!(pings <= cap, "pings must stop at the limit, got {pings}");
+        assert!(
+            pings >= cap - 2,
+            "expected pings up to the limit, got {pings} (cap {cap})"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn no_keepalive_before_message_start() {
+        // message_start 之前（上游还没发 response.created）不发 ping：该阶段由
+        // 首包超时语义治理，提前 ping 会向客户端伪造"响应已开始"。
+        let (reconnector, calls) = scripted_reconnector(vec![]);
+        let body = [created(), text_delta("ok"), completed()].concat();
+        let first: ByteStream = Box::pin(stream::once(async move {
+            tokio::time::sleep(Duration::from_secs(45)).await;
+            Ok::<_, std::io::Error>(Bytes::from(body))
+        }));
+        let out = collect(create_resilient_anthropic_sse_stream_from_responses(
+            first,
+            Some(reconnector),
+        ))
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "must not reconnect");
+        assert!(
+            !out.contains("event: ping"),
+            "no pings before message_start: {out}"
+        );
+        assert!(out.contains("event: message_stop"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn thinking_silence_pings_flow_without_reconnector() {
+        // 心跳不依赖重连工厂：reconnector 为 None 的路径同样要保活思考期。
+        let tail = [text_delta("ok"), completed()].concat();
+        let first = delayed_chunks(&created(), Duration::from_secs(60), &tail);
+        let out = collect(create_resilient_anthropic_sse_stream_from_responses(
+            first, None,
+        ))
+        .await;
+
+        assert!(out.contains("event: message_stop"));
+        assert!(!out.contains("event: error"), "unexpected error in: {out}");
+        let pings = out.matches("event: ping").count();
+        assert!(
+            pings >= 4,
+            "expected keepalive pings during thinking silence, got {pings}: {out}"
         );
     }
 
