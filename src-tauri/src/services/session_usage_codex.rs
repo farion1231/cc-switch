@@ -31,9 +31,15 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
+#[cfg(windows)]
+use windows_sys::Win32::Storage::FileSystem::{
+    FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
+};
 
 const CODEX_THREAD_REQUEST_ID_PREFIX: &str = "codex_session:thread-v1";
 
@@ -88,19 +94,49 @@ struct ParentFileStamp {
     device: u64,
     #[cfg(unix)]
     inode: u64,
+    #[cfg(windows)]
+    volume_serial: u64,
+    #[cfg(windows)]
+    file_id: [u8; 16],
 }
 
 impl ParentFileStamp {
-    fn from_metadata(metadata: &fs::Metadata) -> Self {
-        Self {
-            modified_nanos: metadata_modified_nanos(metadata),
+    fn from_file(file: &fs::File) -> Option<Self> {
+        let metadata = file.metadata().ok()?;
+        #[cfg(windows)]
+        let (volume_serial, file_id) = windows_file_identity(file)?;
+        Some(Self {
+            modified_nanos: metadata_modified_nanos(&metadata),
             size: metadata.len(),
             #[cfg(unix)]
             device: metadata.dev(),
             #[cfg(unix)]
             inode: metadata.ino(),
-        }
+            #[cfg(windows)]
+            volume_serial,
+            #[cfg(windows)]
+            file_id,
+        })
     }
+}
+
+#[cfg(windows)]
+fn windows_file_identity(file: &fs::File) -> Option<(u64, [u8; 16])> {
+    let mut information = FILE_ID_INFO::default();
+    // SAFETY: `file` owns a live handle for this call, and `information` is a
+    // valid writable FILE_ID_INFO buffer of the size passed to Windows.
+    let succeeded = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileIdInfo,
+            std::ptr::addr_of_mut!(information).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    } != 0;
+    succeeded.then_some((
+        information.VolumeSerialNumber,
+        information.FileId.Identifier,
+    ))
 }
 
 #[derive(Debug)]
@@ -144,6 +180,13 @@ impl ParentTokenTimeline {
 struct CachedParentTimeline {
     stamp: ParentFileStamp,
     timeline: Arc<ParentTokenTimeline>,
+}
+
+#[derive(Debug)]
+struct CachedReplayPrefix {
+    modified: i64,
+    size: u64,
+    prefix: usize,
 }
 
 #[derive(Debug)]
@@ -191,7 +234,7 @@ struct PendingEntry {
 #[derive(Debug, Default)]
 struct CodexReplayCaches {
     parent_timelines: HashMap<PathBuf, CachedParentTimeline>,
-    replay_prefixes: HashMap<(PathBuf, i64, u64), usize>,
+    replay_prefixes: HashMap<PathBuf, CachedReplayPrefix>,
     pending: HashMap<PathBuf, PendingEntry>,
 }
 
@@ -833,10 +876,7 @@ fn parent_signatures_before(
 ) -> Result<Vec<TokenUsageSignature>, String> {
     let file = fs::File::open(parent_path)
         .map_err(|error| format!("无法打开父 rollout {}: {error}", parent_path.display()))?;
-    let stamp = file
-        .metadata()
-        .ok()
-        .map(|metadata| ParentFileStamp::from_metadata(&metadata));
+    let stamp = ParentFileStamp::from_file(&file);
     let cached_timeline = stamp.and_then(|stamp| {
         replay_caches().lock().ok().and_then(|caches| {
             caches
@@ -1080,10 +1120,14 @@ fn sync_single_codex_file(
                     ),
                 ));
             };
-            let cache_key = (file_path.to_path_buf(), file_modified, file_size);
             if let Ok(caches) = replay_caches().lock() {
-                if let Some(prefix) = caches.replay_prefixes.get(&cache_key) {
-                    *prefix
+                if let Some(prefix) = caches
+                    .replay_prefixes
+                    .get(file_path)
+                    .filter(|cached| cached.modified == file_modified && cached.size == file_size)
+                    .map(|cached| cached.prefix)
+                {
+                    prefix
                 } else {
                     drop(caches);
                     let parent_signatures =
@@ -1105,10 +1149,14 @@ fn sync_single_codex_file(
                         };
                     let prefix = matching_replay_prefix(&parsed.token_events, &parent_signatures);
                     if let Ok(mut caches) = replay_caches().lock() {
-                        caches
-                            .replay_prefixes
-                            .retain(|(path, _, _), _| path != file_path);
-                        caches.replay_prefixes.insert(cache_key, prefix);
+                        caches.replay_prefixes.insert(
+                            file_path.to_path_buf(),
+                            CachedReplayPrefix {
+                                modified: file_modified,
+                                size: file_size,
+                                prefix,
+                            },
+                        );
                     }
                     prefix
                 }
@@ -1506,6 +1554,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_thread_spawn_parent_strips_replay_and_keeps_live_usage() -> Result<(), AppError> {
         clear_codex_replay_caches();
         let db = Database::memory()?;
@@ -1548,6 +1597,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_filtered_parent_events_use_subsequence_prefix_alignment() -> Result<(), AppError> {
         clear_codex_replay_caches();
         let db = Database::memory()?;
@@ -1598,10 +1648,16 @@ mod tests {
         let early = "2026-07-10T03:00:05Z".parse::<DateTime<Utc>>().unwrap();
         let late = "2026-07-10T03:00:15Z".parse::<DateTime<Utc>>().unwrap();
         assert_eq!(parent_signatures_before(&parent, early).unwrap().len(), 1);
+        let first_timeline =
+            Arc::clone(&replay_caches().lock().unwrap().parent_timelines[&parent].timeline);
         assert_eq!(parent_signatures_before(&parent, late).unwrap().len(), 2);
 
         let caches = replay_caches().lock().unwrap();
         assert_eq!(caches.parent_timelines.len(), 1);
+        assert!(Arc::ptr_eq(
+            &first_timeline,
+            &caches.parent_timelines[&parent].timeline
+        ));
         Ok(())
     }
 
@@ -1697,7 +1753,7 @@ mod tests {
         assert_eq!(replay_caches().lock().unwrap().parent_timelines.len(), 1);
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn test_parent_file_stamp_distinguishes_same_size_same_mtime_files() {
         let temp = tempdir().unwrap();
@@ -1706,7 +1762,8 @@ mod tests {
         let values = [session_meta(PARENT_ID), token_count(100, 50, 10)];
         write_jsonl(&parent, &values);
         write_jsonl(&replacement, &values);
-        let original_metadata = fs::metadata(&parent).unwrap();
+        let original_file = fs::File::open(&parent).unwrap();
+        let original_metadata = original_file.metadata().unwrap();
         let replacement_file = fs::OpenOptions::new()
             .write(true)
             .open(&replacement)
@@ -1714,9 +1771,8 @@ mod tests {
         replacement_file
             .set_times(fs::FileTimes::new().set_modified(original_metadata.modified().unwrap()))
             .unwrap();
-        let replacement_metadata = replacement_file.metadata().unwrap();
-        let original_stamp = ParentFileStamp::from_metadata(&original_metadata);
-        let replacement_stamp = ParentFileStamp::from_metadata(&replacement_metadata);
+        let original_stamp = ParentFileStamp::from_file(&original_file).unwrap();
+        let replacement_stamp = ParentFileStamp::from_file(&replacement_file).unwrap();
         assert_eq!(
             (original_stamp.size, original_stamp.modified_nanos),
             (replacement_stamp.size, replacement_stamp.modified_nanos)
@@ -1725,6 +1781,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_empty_fork_imports_no_parent_usage() -> Result<(), AppError> {
         clear_codex_replay_caches();
         let db = Database::memory()?;
@@ -1770,6 +1827,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_conflicting_explicit_parents_are_deferred() -> Result<(), AppError> {
         clear_codex_replay_caches();
         let db = Database::memory()?;
@@ -1795,6 +1853,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_parent_future_signature_cannot_extend_replay_prefix() -> Result<(), AppError> {
         clear_codex_replay_caches();
         let db = Database::memory()?;
@@ -1826,6 +1885,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_missing_parent_is_deferred_and_recovered_without_child_change() -> Result<(), AppError>
     {
         clear_codex_replay_caches();
@@ -1859,6 +1919,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_billable_file_without_meta_is_deferred_without_cursor() -> Result<(), AppError> {
         clear_codex_replay_caches();
         let db = Database::memory()?;
@@ -1885,6 +1946,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_non_billable_file_without_meta_advances_cursor() -> Result<(), AppError> {
         clear_codex_replay_caches();
         let db = Database::memory()?;
@@ -1905,6 +1967,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_subagents_use_filename_thread_ids() -> Result<(), AppError> {
         clear_codex_replay_caches();
         let db = Database::memory()?;
