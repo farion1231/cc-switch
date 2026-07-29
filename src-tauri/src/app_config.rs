@@ -418,6 +418,15 @@ impl AppType {
         )
     }
 
+    /// Whether multiple providers coexist in the application's live registry.
+    ///
+    /// Pi is intentionally included here even though it is not an additive-mode
+    /// app: it keeps an additive provider registry while also tracking an active
+    /// default provider/model.
+    pub fn uses_additive_provider_registry(&self) -> bool {
+        self.is_additive_mode() || matches!(self, AppType::Pi)
+    }
+
     /// Return an iterator over all app types
     pub fn all() -> impl Iterator<Item = AppType> {
         [
@@ -1050,6 +1059,8 @@ mod tests {
             AppType::all().any(|app| app == AppType::Pi),
             "Pi should be included in global app iteration"
         );
+        assert!(!AppType::Pi.is_additive_mode());
+        assert!(AppType::Pi.uses_additive_provider_registry());
     }
 
     #[test]

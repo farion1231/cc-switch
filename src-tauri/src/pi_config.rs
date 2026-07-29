@@ -150,23 +150,41 @@ fn default_model_for_provider(config: &Value) -> Option<String> {
         .or_else(|| model_ids_from_config(config).into_iter().next())
 }
 
-pub fn write_pi_live_provider(provider: &Provider) -> Result<(), AppError> {
-    let models_path = get_pi_models_path();
-    let settings_path = get_pi_settings_path();
-
-    let mut models_root = read_json_or_empty_object(&models_path)?;
-    let root = object_mut(&mut models_root, &models_path, "Pi models.json root")?;
+fn providers_mut<'a>(
+    models_root: &'a mut Value,
+    models_path: &Path,
+) -> Result<&'a mut Map<String, Value>, AppError> {
+    let root = object_mut(models_root, models_path, "Pi models.json root")?;
     let providers = root
         .entry("providers".to_string())
         .or_insert_with(|| Value::Object(Map::new()));
-    object_mut(providers, &models_path, "Pi models.json providers")?.insert(
+    object_mut(providers, models_path, "Pi models.json providers")
+}
+
+fn insert_provider(
+    models_root: &mut Value,
+    models_path: &Path,
+    provider: &Provider,
+    overwrite_existing: bool,
+) -> Result<(), AppError> {
+    let providers = providers_mut(models_root, models_path)?;
+    if providers.contains_key(&provider.id) && !overwrite_existing {
+        return Err(AppError::Config(format!(
+            "Pi provider '{}' already exists in models.json and is not managed by CC Switch",
+            provider.id
+        )));
+    }
+
+    providers.insert(
         provider.id.clone(),
         normalize_provider_config(&provider.settings_config)?,
     );
-    write_json_file(&models_path, &models_root)?;
+    Ok(())
+}
 
-    let mut settings_root = read_json_or_empty_object(&settings_path)?;
-    let settings = object_mut(&mut settings_root, &settings_path, "Pi settings.json root")?;
+fn select_provider(settings_root: &mut Value, provider: &Provider) -> Result<(), AppError> {
+    let settings_path = get_pi_settings_path();
+    let settings = object_mut(settings_root, &settings_path, "Pi settings.json root")?;
     settings.insert(
         "defaultProvider".to_string(),
         Value::String(provider.id.clone()),
@@ -176,9 +194,94 @@ pub fn write_pi_live_provider(provider: &Provider) -> Result<(), AppError> {
     } else {
         settings.remove("defaultModel");
     }
-    write_json_file(&settings_path, &settings_root)?;
-
     Ok(())
+}
+
+/// Add or update a provider in Pi's additive registry without selecting it.
+pub fn upsert_pi_live_provider(
+    provider: &Provider,
+    overwrite_existing: bool,
+) -> Result<(), AppError> {
+    let models_path = get_pi_models_path();
+    let mut models_root = read_json_or_empty_object(&models_path)?;
+    insert_provider(&mut models_root, &models_path, provider, overwrite_existing)?;
+    write_json_file(&models_path, &models_root)?;
+    Ok(())
+}
+
+/// Add or update a provider and select it as Pi's default provider/model.
+pub fn activate_pi_live_provider(
+    provider: &Provider,
+    overwrite_existing: bool,
+) -> Result<(), AppError> {
+    let models_path = get_pi_models_path();
+    let settings_path = get_pi_settings_path();
+    let mut models_root = read_json_or_empty_object(&models_path)?;
+    insert_provider(&mut models_root, &models_path, provider, overwrite_existing)?;
+    let mut settings_root = read_json_or_empty_object(&settings_path)?;
+    select_provider(&mut settings_root, provider)?;
+
+    write_json_file(&models_path, &models_root)?;
+    write_json_file(&settings_path, &settings_root)?;
+    Ok(())
+}
+
+/// Compatibility wrapper retained for callers that mean "activate".
+pub fn write_pi_live_provider(provider: &Provider) -> Result<(), AppError> {
+    activate_pi_live_provider(provider, true)
+}
+
+/// Synchronize all CC Switch-managed providers and the selected default.
+pub fn sync_pi_live_providers(
+    providers: &[&Provider],
+    active_provider: Option<&Provider>,
+) -> Result<(), AppError> {
+    let models_path = get_pi_models_path();
+    let mut models_root = read_json_or_empty_object(&models_path)?;
+    for provider in providers {
+        insert_provider(&mut models_root, &models_path, provider, true)?;
+    }
+    write_json_file(&models_path, &models_root)?;
+
+    if let Some(active_provider) = active_provider {
+        let settings_path = get_pi_settings_path();
+        let mut settings_root = read_json_or_empty_object(&settings_path)?;
+        select_provider(&mut settings_root, active_provider)?;
+        write_json_file(&settings_path, &settings_root)?;
+    }
+    Ok(())
+}
+
+pub fn pi_provider_exists(provider_id: &str) -> Result<bool, AppError> {
+    let models_path = get_pi_models_path();
+    let models_root = read_json_or_empty_object(&models_path)?;
+    let root = models_root.as_object().ok_or_else(|| {
+        AppError::Config(format!(
+            "Pi models.json root must be a JSON object: {}",
+            models_path.display()
+        ))
+    })?;
+    Ok(root
+        .get("providers")
+        .and_then(Value::as_object)
+        .is_some_and(|providers| providers.contains_key(provider_id)))
+}
+
+/// Remove a managed provider, but never leave Pi's default pointing at a
+/// provider that no longer exists.
+pub fn remove_pi_live_provider(provider_id: &str) -> Result<(), AppError> {
+    let settings_path = get_pi_settings_path();
+    let settings_root = read_json_or_empty_object(&settings_path)?;
+    if settings_root.get("defaultProvider").and_then(Value::as_str) == Some(provider_id) {
+        return Err(AppError::Config(format!(
+            "Cannot remove active Pi provider '{provider_id}'. Switch first."
+        )));
+    }
+
+    let models_path = get_pi_models_path();
+    let mut models_root = read_json_or_empty_object(&models_path)?;
+    providers_mut(&mut models_root, &models_path)?.remove(provider_id);
+    write_json_file(&models_path, &models_root)
 }
 
 fn provider_models_for_form(provider_config: &Value) -> Value {
