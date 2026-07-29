@@ -214,8 +214,10 @@ fn run_tool_lifecycle_silently(command_line: &str, _label: &str) -> Result<(), S
     use std::process::Command;
     // command_line 是 bash 风格脚本（含 `set -e` 与多行命令）；强制用 bash 执行，
     // 避免用户默认 shell 为 fish/zsh 时 `set -e` 等语义不一致。
+    // 使用登录 shell (`-l`) 以确保 `/etc/profile` 中的 `path_helper` 被调用，
+    // 使得 GUI 应用启动的非登录 shell 也能获取完整 PATH（如 /usr/local/bin 中的 npm）。
     let output = Command::new("bash")
-        .arg("-c")
+        .arg("-lc")
         .arg(command_line)
         .output()
         .map_err(|e| format!("启动安装进程失败: {e}"))?;
