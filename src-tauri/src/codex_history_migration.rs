@@ -142,10 +142,18 @@ pub fn maybe_migrate_codex_third_party_history_provider_bucket(
 
     let backup_root = migration_backup_root(MIGRATION_NAME);
     let codex_dir = get_codex_config_dir();
-    let migrated_jsonl_files =
-        migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root, CC_SWITCH_CODEX_MODEL_PROVIDER_ID)?;
-    let migrated_state_rows =
-        migrate_codex_state_dbs(&codex_dir, &source_provider_ids, &backup_root, CC_SWITCH_CODEX_MODEL_PROVIDER_ID)?;
+    let migrated_jsonl_files = migrate_codex_jsonl_files(
+        &codex_dir,
+        &source_provider_ids,
+        &backup_root,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    )?;
+    let migrated_state_rows = migrate_codex_state_dbs(
+        &codex_dir,
+        &source_provider_ids,
+        &backup_root,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    )?;
 
     let source_provider_ids_vec: Vec<String> = source_provider_ids.iter().cloned().collect();
     crate::settings::mark_codex_third_party_history_provider_bucket_migrated(
@@ -236,10 +244,18 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
     let source_provider_ids: BTreeSet<String> =
         std::iter::once(OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string()).collect();
     let backup_root = migration_backup_root(OFFICIAL_UNIFY_MIGRATION_NAME);
-    let migrated_jsonl_files =
-        migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root, CC_SWITCH_CODEX_MODEL_PROVIDER_ID)?;
-    let migrated_state_rows =
-        migrate_codex_state_dbs(&codex_dir, &source_provider_ids, &backup_root, CC_SWITCH_CODEX_MODEL_PROVIDER_ID)?;
+    let migrated_jsonl_files = migrate_codex_jsonl_files(
+        &codex_dir,
+        &source_provider_ids,
+        &backup_root,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    )?;
+    let migrated_state_rows = migrate_codex_state_dbs(
+        &codex_dir,
+        &source_provider_ids,
+        &backup_root,
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+    )?;
     // 备份代际记录来源目录，restore 据此只取当前目录的账本。
     write_backup_generation_meta(&backup_root, &codex_dir_key)?;
 
@@ -1299,8 +1315,7 @@ pub fn sync_codex_sessions_for_provider_switch(
     };
 
     let codex_dir = get_codex_config_dir();
-    let source_provider_ids: BTreeSet<String> =
-        std::iter::once(source.to_string()).collect();
+    let source_provider_ids: BTreeSet<String> = std::iter::once(source.to_string()).collect();
 
     let backup_root = migration_backup_root("codex-session-sync-on-switch");
     let synced_jsonl_files =
@@ -1527,9 +1542,13 @@ base_url = "https://proxy.example/v1"
         )
         .expect("write session");
 
-        let migrated_jsonl =
-            migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root, CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
-                .expect("migrate jsonl");
+        let migrated_jsonl = migrate_codex_jsonl_files(
+            &codex_dir,
+            &source_provider_ids,
+            &backup_root,
+            CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+        )
+        .expect("migrate jsonl");
         assert_eq!(migrated_jsonl, 1);
         let session_text = fs::read_to_string(&session_path).expect("read session");
         assert_eq!(
@@ -1696,9 +1715,13 @@ base_url = "https://proxy.example/v1"
         )
         .expect("write session");
 
-        let migrated_jsonl =
-            migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root, CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
-                .expect("migrate jsonl");
+        let migrated_jsonl = migrate_codex_jsonl_files(
+            &codex_dir,
+            &source_provider_ids,
+            &backup_root,
+            CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+        )
+        .expect("migrate jsonl");
         assert_eq!(migrated_jsonl, 1);
         let session_text = fs::read_to_string(&session_path).expect("read session");
         assert_eq!(
@@ -1717,8 +1740,13 @@ base_url = "https://proxy.example/v1"
             .exists());
 
         // 第二次执行应当无事可做（幂等）
-        let rerun = migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root, CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
-            .expect("rerun migrate jsonl");
+        let rerun = migrate_codex_jsonl_files(
+            &codex_dir,
+            &source_provider_ids,
+            &backup_root,
+            CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+        )
+        .expect("rerun migrate jsonl");
         assert_eq!(rerun, 0);
 
         let state_db_path = codex_dir.join(CODEX_STATE_DB_FILENAME);

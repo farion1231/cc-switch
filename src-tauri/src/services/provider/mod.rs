@@ -3209,8 +3209,7 @@ impl ProviderService {
         }
 
         if matches!(app_type, AppType::Codex) {
-            let provider_is_official =
-                provider.category.as_deref() == Some("official");
+            let provider_is_official = provider.category.as_deref() == Some("official");
             let sync_outcome = sync_codex_sessions_for_provider_switch(provider_is_official);
             match sync_outcome {
                 Ok(outcome) => {
