@@ -29,6 +29,8 @@ use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
@@ -78,20 +80,70 @@ struct TimestampedTokenSignature {
     signature: TokenUsageSignature,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ParentFileStamp {
+    modified_nanos: i64,
+    size: u64,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+
+impl ParentFileStamp {
+    fn from_metadata(metadata: &fs::Metadata) -> Self {
+        Self {
+            modified_nanos: metadata_modified_nanos(metadata),
+            size: metadata.len(),
+            #[cfg(unix)]
+            device: metadata.dev(),
+            #[cfg(unix)]
+            inode: metadata.ino(),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct ParentTokenTimeline {
     events: Vec<TimestampedTokenSignature>,
     max_timestamp: Option<DateTime<Utc>>,
+    has_token_without_timestamp: bool,
 }
 
 impl ParentTokenTimeline {
-    fn signatures_before(&self, cutoff: DateTime<Utc>) -> Vec<TokenUsageSignature> {
-        self.events
+    fn signatures_before(
+        &self,
+        parent_path: &Path,
+        cutoff: DateTime<Utc>,
+    ) -> Result<Vec<TokenUsageSignature>, String> {
+        if self.has_token_without_timestamp {
+            return Err(format!(
+                "父 rollout {} 的 token_count 缺少有效 timestamp",
+                parent_path.display()
+            ));
+        }
+        if self
+            .max_timestamp
+            .is_none_or(|timestamp| timestamp < cutoff)
+        {
+            return Err(format!(
+                "父 rollout {} 尚未写到 child fork 时刻",
+                parent_path.display()
+            ));
+        }
+        Ok(self
+            .events
             .iter()
             .filter(|event| event.timestamp <= cutoff)
             .map(|event| event.signature.clone())
-            .collect()
+            .collect())
     }
+}
+
+#[derive(Debug)]
+struct CachedParentTimeline {
+    stamp: ParentFileStamp,
+    timeline: Arc<ParentTokenTimeline>,
 }
 
 #[derive(Debug)]
@@ -138,7 +190,7 @@ struct PendingEntry {
 
 #[derive(Debug, Default)]
 struct CodexReplayCaches {
-    parent_timelines: HashMap<(PathBuf, i64, u64), Arc<ParentTokenTimeline>>,
+    parent_timelines: HashMap<PathBuf, CachedParentTimeline>,
     replay_prefixes: HashMap<(PathBuf, i64, u64), usize>,
     pending: HashMap<PathBuf, PendingEntry>,
 }
@@ -779,38 +831,28 @@ fn parent_signatures_before(
     parent_path: &Path,
     cutoff: DateTime<Utc>,
 ) -> Result<Vec<TokenUsageSignature>, String> {
-    let metadata = fs::metadata(parent_path).map_err(|error| {
-        format!(
-            "无法读取父 rollout 元数据 {}: {error}",
-            parent_path.display()
-        )
-    })?;
-    let cache_key = (
-        parent_path.to_path_buf(),
-        metadata_modified_nanos(&metadata),
-        metadata.len(),
-    );
-    let cached_timeline = replay_caches()
-        .lock()
-        .ok()
-        .and_then(|caches| caches.parent_timelines.get(&cache_key).cloned());
-    if let Some(timeline) = cached_timeline {
-        if timeline
-            .max_timestamp
-            .is_none_or(|timestamp| timestamp < cutoff)
-        {
-            return Err(format!(
-                "父 rollout {} 尚未写到 child fork 时刻",
-                parent_path.display()
-            ));
-        }
-        return Ok(timeline.signatures_before(cutoff));
-    }
-
     let file = fs::File::open(parent_path)
         .map_err(|error| format!("无法打开父 rollout {}: {error}", parent_path.display()))?;
+    let stamp = file
+        .metadata()
+        .ok()
+        .map(|metadata| ParentFileStamp::from_metadata(&metadata));
+    let cached_timeline = stamp.and_then(|stamp| {
+        replay_caches().lock().ok().and_then(|caches| {
+            caches
+                .parent_timelines
+                .get(parent_path)
+                .filter(|entry| entry.stamp == stamp)
+                .map(|entry| Arc::clone(&entry.timeline))
+        })
+    });
+    if let Some(timeline) = cached_timeline {
+        return timeline.signatures_before(parent_path, cutoff);
+    }
+
     let mut events = Vec::new();
     let mut max_timestamp: Option<DateTime<Utc>> = None;
+    let mut has_token_without_timestamp = false;
 
     // 必须扫描完整父文件，不能在首个未来时间戳处 break：rollout 写入顺序
     // 不承诺时间戳严格单调。缓存完整时间线后，不同 child cutoff 只需内存过滤。
@@ -845,10 +887,8 @@ fn parent_signatures_before(
             continue;
         };
         let Some(timestamp) = timestamp else {
-            return Err(format!(
-                "父 rollout {} 的 token_count 缺少有效 timestamp",
-                parent_path.display()
-            ));
+            has_token_without_timestamp = true;
+            continue;
         };
         events.push(TimestampedTokenSignature {
             timestamp,
@@ -856,26 +896,22 @@ fn parent_signatures_before(
         });
     }
 
-    if max_timestamp.is_none_or(|timestamp| timestamp < cutoff) {
-        return Err(format!(
-            "父 rollout {} 尚未写到 child fork 时刻",
-            parent_path.display()
-        ));
-    }
-
     let timeline = Arc::new(ParentTokenTimeline {
         events,
         max_timestamp,
+        has_token_without_timestamp,
     });
-    if let Ok(mut caches) = replay_caches().lock() {
-        caches
-            .parent_timelines
-            .retain(|(path, _, _), _| path != parent_path);
-        caches
-            .parent_timelines
-            .insert(cache_key, Arc::clone(&timeline));
+    let result = timeline.signatures_before(parent_path, cutoff);
+    if let (Some(stamp), Ok(mut caches)) = (stamp, replay_caches().lock()) {
+        caches.parent_timelines.insert(
+            parent_path.to_path_buf(),
+            CachedParentTimeline {
+                stamp,
+                timeline: Arc::clone(&timeline),
+            },
+        );
     }
-    Ok(timeline.signatures_before(cutoff))
+    result
 }
 
 fn resolve_parent_signatures(
@@ -1339,6 +1375,15 @@ mod tests {
         token_count_at(input, cached, output, "2026-07-10T03:00:02Z")
     }
 
+    fn token_count_without_timestamp(input: u64, cached: u64, output: u64) -> serde_json::Value {
+        let mut value = token_count(input, cached, output);
+        value
+            .as_object_mut()
+            .expect("token_count must be an object")
+            .remove("timestamp");
+        value
+    }
+
     fn sync_test_file(
         db: &Database,
         file: &Path,
@@ -1591,6 +1636,92 @@ mod tests {
         let caches = replay_caches().lock().unwrap();
         assert_eq!(caches.parent_timelines.len(), 1);
         Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_parent_rollout_content_error_cache_preserves_open_errors() {
+        clear_codex_replay_caches();
+        let temp = tempdir().unwrap();
+        let parent = rollout_path(temp.path(), PARENT_ID);
+        let cutoff = "2026-07-10T03:00:05Z".parse::<DateTime<Utc>>().unwrap();
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_without_timestamp(100, 50, 10),
+                turn_context_at("2026-07-10T03:00:20Z"),
+            ],
+        );
+
+        let first_error = parent_signatures_before(&parent, cutoff).unwrap_err();
+        assert!(first_error.contains("token_count 缺少有效 timestamp"));
+        let cached_timeline =
+            || Arc::clone(&replay_caches().lock().unwrap().parent_timelines[&parent].timeline);
+        let first_timeline = cached_timeline();
+
+        let second_error = parent_signatures_before(&parent, cutoff).unwrap_err();
+        assert_eq!(second_error, first_error);
+        assert!(Arc::ptr_eq(&first_timeline, &cached_timeline()));
+
+        fs::remove_file(&parent).unwrap();
+        let open_error = parent_signatures_before(&parent, cutoff).unwrap_err();
+        assert!(open_error.contains("无法打开父 rollout"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_parent_rollout_nanosecond_cutoffs_are_exact() {
+        clear_codex_replay_caches();
+        let temp = tempdir().unwrap();
+        let parent = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:00.000000500Z"),
+                turn_context_at("2026-07-10T03:00:00.000000900Z"),
+            ],
+        );
+
+        let before = "2026-07-10T03:00:00.000000300Z"
+            .parse::<DateTime<Utc>>()
+            .unwrap();
+        let after = "2026-07-10T03:00:00.000000700Z"
+            .parse::<DateTime<Utc>>()
+            .unwrap();
+        assert!(parent_signatures_before(&parent, before)
+            .unwrap()
+            .is_empty());
+        assert_eq!(parent_signatures_before(&parent, after).unwrap().len(), 1);
+        assert_eq!(replay_caches().lock().unwrap().parent_timelines.len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_parent_file_stamp_distinguishes_same_size_same_mtime_files() {
+        let temp = tempdir().unwrap();
+        let parent = rollout_path(temp.path(), PARENT_ID);
+        let replacement = temp.path().join("replacement.jsonl");
+        let values = [session_meta(PARENT_ID), token_count(100, 50, 10)];
+        write_jsonl(&parent, &values);
+        write_jsonl(&replacement, &values);
+        let original_metadata = fs::metadata(&parent).unwrap();
+        let replacement_file = fs::OpenOptions::new()
+            .write(true)
+            .open(&replacement)
+            .unwrap();
+        replacement_file
+            .set_times(fs::FileTimes::new().set_modified(original_metadata.modified().unwrap()))
+            .unwrap();
+        let replacement_metadata = replacement_file.metadata().unwrap();
+        let original_stamp = ParentFileStamp::from_metadata(&original_metadata);
+        let replacement_stamp = ParentFileStamp::from_metadata(&replacement_metadata);
+        assert_eq!(
+            (original_stamp.size, original_stamp.modified_nanos),
+            (replacement_stamp.size, replacement_stamp.modified_nanos)
+        );
+        assert_ne!(original_stamp, replacement_stamp);
     }
 
     #[test]
