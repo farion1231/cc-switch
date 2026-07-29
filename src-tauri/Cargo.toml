@@ -80,6 +80,11 @@ rust_decimal = "1.33"
 uuid = { version = "1.11", features = ["v4"] }
 sha2 = "0.10"
 hmac = "0.12"
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+zeroize = { version = "1", features = ["derive"] }
+rand = "0.8"
 json5 = "0.4"
 json-five = "0.3.1"
 sys-locale = "0.3"
