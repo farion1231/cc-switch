@@ -97,7 +97,7 @@ impl CursorRuntimeService {
         let state = match self.refresh_state().await {
             Ok(state) => state,
             Err(error) => {
-                self.force_stop().await;
+                self.restore_after_failed_start().await;
                 return self.fail(error.to_string()).await;
             }
         };
@@ -577,6 +577,16 @@ impl CursorRuntimeService {
         inner.state.proxy_running = false;
         inner.state.last_error = message;
         true
+    }
+
+    async fn restore_after_failed_start(&self) {
+        if let Err(error) = self.post_empty("/v1/stop").await {
+            log::warn!("Cursor 启动失败后恢复设置失败: {error}");
+        }
+        if let Err(error) = self.post_empty("/v1/shutdown").await {
+            log::warn!("Cursor 启动失败后请求 sidecar 退出失败: {error}");
+        }
+        self.force_stop().await;
     }
 
     async fn force_stop(&self) {
