@@ -27,8 +27,9 @@ uses the `custom` route for official traffic.
 
 ## Required invariants
 
-1. Official live traffic uses Codex's built-in `openai` provider.
-2. Third-party live traffic uses its configured model-provider ID.
+1. Unified mode keeps one stable `custom` history identity in every live route.
+2. Official traffic keeps native OpenAI auth/capabilities behind an OpenAI-shaped
+   `custom` provider; third-party traffic replaces only that provider's route.
 3. Global `auth.json` never receives a third-party API key when resumable `openai`
    threads may exist. Third-party credentials are scoped to their provider table.
 4. Valid inactive provider definitions remain available while persisted or
@@ -42,14 +43,15 @@ uses the `custom` route for official traffic.
 ## Selected approach
 
 Use the existing unified-history toggle as an explicit current-provider-follow mode.
-Keep real route identities (`openai` and `custom`) and reconcile persisted history on
-each switch. Do not disguise official traffic as `custom` and do not require proxy
-takeover.
+Normalize official, third-party, direct, and proxy routes to one stable `custom`
+identity. Reconcile legacy history into that bucket once; later switches change only
+the route and credentials behind it, so restarting Codex cannot re-filter the same
+thread into an obsolete provider bucket.
 
 Alternatives rejected:
 
-- A permanent shared `custom` identity breaks built-in official capabilities such as
-  Responses Lite and reserved-provider behavior.
+- Per-switch provider rewrites cannot safely replace an append-only JSONL that Codex
+  keeps open; future appends would continue on the replaced file handle.
 - Proxy-only interception does not cover direct switching, cannot safely represent
   every provider format, and still leaves persisted metadata inconsistent.
 
@@ -59,22 +61,25 @@ Alternatives rejected:
 
 `codex_config` prepares a target snapshot before any state is committed:
 
-- official target: `model_provider = "openai"`, native official auth in `auth.json`;
-- third-party target: its configured `model_provider`, with the API key stored only
-  as that provider table's scoped bearer token;
+- official target: `model_provider = "custom"`, an OpenAI-shaped provider table, and
+  native official auth in `auth.json`;
+- third-party target: `model_provider = "custom"`, with the selected provider table
+  projected into that bucket and its API key stored only as a scoped bearer token;
 - complete inactive provider tables are retained when switching;
 - an incomplete placeholder such as only `name = "OpenAI"` is replaced by the last
   complete custom route instead of blocking preservation;
-- official-as-custom unified-session injection is removed.
+- proxy takeover routes and committed restore configurations use the same stable
+  bucket; the initial takeover backup remains a verbatim pre-transaction rollback
+  snapshot.
 
 ### History reconciliation
 
 A focused history reconciler operates on both `sessions` and `archived_sessions`.
-It updates only recognized fields:
+It updates only recognized fields needed for discovery and resume:
 
 - `session_meta.payload.model_provider`;
-- `event_msg` / `thread_settings_applied` provider and model fields;
-- `threads.model_provider` and, when the target defines one, `threads.model` in every
+- the latest `event_msg` / `thread_settings_applied` provider and model settings;
+- `threads.model_provider` and `threads.model` in every
   discovered state database.
 
 Database discovery scans every `state_*.sqlite` in:
@@ -91,9 +96,15 @@ SQLite tables are left untouched.
 
 Before writing, the reconciler parses every target JSONL file and state database and
 builds an in-memory change journal containing the exact original fields/content. No
-artifact is touched until all inputs validate. If a later write fails, applied
-databases and files are restored in reverse order. Concurrent changes are detected
-with file metadata and row-value predicates rather than overwritten.
+artifact is touched until all inputs validate. Equal-length provider tokens such as
+`openai` → `custom` are patched at fixed offsets, preserving an already-open append
+handle. Provider/model changes for the latest thread settings are recorded by
+appending a new valid settings event, matching Codex's append-only rollout format and
+avoiding a variable-length rewrite during ordinary switches. Legacy variable-length
+session metadata uses atomic replacement and fails closed on Windows when the file is
+open and on Unix/macOS while a Codex process is running. Later failures roll back in
+reverse order; if Codex appends a target-route event concurrently, rollback appends
+the original route again so the final effective event matches the restored Live state.
 
 ### Coordinated switch
 
@@ -102,9 +113,9 @@ through current-provider publication:
 
 1. validate the target provider and build its complete live snapshot in memory;
 2. capture current-provider settings/database values and live files;
-3. write a dual-safe live state in which both `openai` and retained `custom` routes
-   have only their own credentials;
-4. if unified mode is enabled, reconcile JSONL and all state databases to the target;
+3. write a safe live state whose stable route contains only the target credentials;
+4. if unified mode is enabled, reconcile legacy JSONL and all state databases to the
+   stable bucket;
 5. publish the target as current in local settings and the CC Switch database;
 6. re-project Codex MCP configuration and return success.
 
@@ -120,18 +131,20 @@ snapshot. It cannot change routing, credentials, or the transaction commit point
 
 - Enabling can immediately reconcile existing history to the currently selected
   Codex provider when the user selects that option.
-- While enabled, every successful switch reconciles all resumable threads to the new
-  target.
-- Disabling stops future rebinding; current tags remain usable. Exact-restore backups
-  created by older releases remain available for backward compatibility.
+- While enabled, every successful switch verifies all resumable threads remain in the
+  stable bucket while replacing that bucket's target route.
+- Disabling transactionally rebuilds the current direct or takeover route without the
+  stable bucket before the setting save returns. It stops future rebinding; current
+  tags remain usable. Exact-restore backups created by older releases remain
+  available for backward compatibility.
 - Legacy settings fields are migrated without silently enabling the mode.
 
 ## Active Codex processes
 
-CC Switch cannot replace a client already held in another process's memory. The safe
-dual-route snapshot prevents credential crossover during the switch, while persisted
-threads are correct on reopen. The UI reports that an already-open thread may need to
-be reopened; CC Switch does not terminate Codex automatically.
+The safe route snapshot prevents credential crossover during the switch. Common
+`openai`/`custom` history is patched without replacing the file held by Codex; a rare
+variable-length legacy migration may require closing Codex once. The UI reports that
+an already-open thread may need to be reopened; CC Switch never terminates Codex.
 
 ## Error handling
 
@@ -176,9 +189,22 @@ is ready. The shared atomic-write primitive will use a same-directory Windows at
 replace operation. History rollback also recreates the journaled original if an
 interrupted external or legacy write leaves the destination absent.
 
+Proxy activation failure is distinct from normal proxy stop or crash recovery. If
+takeover configuration or server startup fails before activation commits, every app
+is restored directly from its raw pre-transaction backup and no unified Codex
+projection or history reconciliation is performed. Cleanup and rollback failures are
+reported to the caller while backups remain available for recovery. A proxy that was
+prestarted for an ephemeral port remains running when rollback fails, so a remaining
+localhost Live route stays usable. Bulk takeover holds every per-app switch lock for
+the full transaction and rejects an already active per-app takeover without mutation.
+Normal stop and crash recovery continue to use the logical unified-history restore
+path.
+
 Regression coverage must include proxy takeover in both directions and rollback,
 upgrade state containing an official global API key plus a third-party scoped token,
-and Windows replacement/absent-destination recovery.
+Windows replacement/absent-destination recovery, and verbatim rollback after bulk
+takeover activation failure, including existing per-app ownership and prestarted
+proxy liveness.
 
 ## Non-goals
 

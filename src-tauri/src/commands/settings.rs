@@ -72,20 +72,16 @@ pub async fn save_settings(
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
 
     if unify_codex_changed {
-        if unify_codex_enabled {
-            if unify_codex_migrate_existing {
-                if let Err(err) =
-                    crate::codex_history_reconcile::reconcile_history_for_current_provider(
-                        &state.db,
-                    )
-                {
-                    if let Err(rollback_err) = crate::settings::update_settings(existing) {
-                        log::error!("回滚统一会话开关设置失败: {rollback_err}");
-                    }
-                    return Err(format!("统一 Codex 会话历史失败: {err}"));
-                }
+        let reconcile_existing = unify_codex_enabled && unify_codex_migrate_existing;
+        if let Err(err) =
+            crate::services::provider::reapply_current_codex_live(state.inner(), reconcile_existing)
+        {
+            if let Err(rollback_err) = crate::settings::update_settings(existing.clone()) {
+                log::error!("回滚统一会话开关设置失败: {rollback_err}");
             }
-        } else {
+            return Err(format!("应用 Codex 统一会话设置失败: {err}"));
+        }
+        if !unify_codex_enabled {
             // 清除标记与迁移意愿，让重新开启并再次勾选时能补迁
             // 关闭期间落入 openai 桶的官方会话。
             if let Err(err) = crate::settings::clear_codex_official_history_unify_migration() {

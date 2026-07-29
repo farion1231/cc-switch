@@ -237,7 +237,7 @@ pub fn write_codex_live_atomic(
     } else {
         None
     };
-    let _old_config = if config_path.exists() {
+    let old_config = if config_path.exists() {
         Some(fs::read(&config_path).map_err(|e| AppError::io(&config_path, e))?)
     } else {
         None
@@ -257,15 +257,83 @@ pub fn write_codex_live_atomic(
 
     // 第二步：写 config.toml（失败则回滚 auth.json）
     if let Err(e) = write_text_file(&config_path, &cfg_text) {
-        // 回滚 auth.json
-        if let Some(bytes) = old_auth {
-            let _ = atomic_write(&auth_path, &bytes);
-        } else {
-            let _ = delete_file(&auth_path);
-        }
-        return Err(e);
+        return match rollback_codex_live_files(
+            &auth_path,
+            old_auth.as_deref(),
+            &config_path,
+            old_config.as_deref(),
+        ) {
+            Ok(()) => Err(e),
+            Err(rollback_error) => Err(AppError::Message(format!(
+                "{e}; failed to roll back Codex auth/config: {rollback_error}"
+            ))),
+        };
     }
 
+    Ok(())
+}
+
+fn restore_optional_file(path: &Path, contents: Option<&[u8]>) -> Result<(), AppError> {
+    match contents {
+        Some(contents) => atomic_write(path, contents),
+        None if path.exists() => delete_file(path),
+        None => Ok(()),
+    }
+}
+
+fn rollback_codex_live_files(
+    auth_path: &Path,
+    old_auth: Option<&[u8]>,
+    config_path: &Path,
+    old_config: Option<&[u8]>,
+) -> Result<(), AppError> {
+    let mut errors = Vec::new();
+    if let Err(error) = restore_optional_file(auth_path, old_auth) {
+        errors.push(error.to_string());
+    }
+    if let Err(error) = restore_optional_file(config_path, old_config) {
+        errors.push(error.to_string());
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::Message(errors.join("; ")))
+    }
+}
+
+pub(crate) fn write_codex_live_transition_atomic(
+    auth: &Value,
+    target_config: &str,
+    safe_current_config: &str,
+) -> Result<(), AppError> {
+    validate_config_toml(safe_current_config)?;
+    validate_config_toml(target_config)?;
+
+    let auth_path = get_codex_auth_path();
+    let config_path = get_codex_config_path();
+    let old_auth = auth_path
+        .exists()
+        .then(|| fs::read(&auth_path).map_err(|error| AppError::io(&auth_path, error)))
+        .transpose()?;
+    let old_config = config_path
+        .exists()
+        .then(|| fs::read(&config_path).map_err(|error| AppError::io(&config_path, error)))
+        .transpose()?;
+
+    write_codex_live_config_atomic(Some(safe_current_config))?;
+    if let Err(error) = write_codex_live_atomic(auth, Some(target_config)) {
+        return match rollback_codex_live_files(
+            &auth_path,
+            old_auth.as_deref(),
+            &config_path,
+            old_config.as_deref(),
+        ) {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(AppError::Message(format!(
+                "{error}; failed to restore the original Codex live route: {rollback_error}"
+            ))),
+        };
+    }
     Ok(())
 }
 
@@ -1466,6 +1534,10 @@ fn codex_official_provider_table(
     table
 }
 
+fn codex_unified_official_provider_table() -> toml_edit::Table {
+    codex_official_provider_table(None, true)
+}
+
 fn remove_codex_proxy_placeholders_from_providers(providers: &mut toml_edit::Table) {
     for (_, item) in providers.iter_mut() {
         if let Some(table) = item.as_table_mut() {
@@ -1497,6 +1569,7 @@ fn remove_codex_proxy_placeholders_from_providers(providers: &mut toml_edit::Tab
 pub fn apply_codex_official_proxy_route(
     config_text: &str,
     proxy_base_url: &str,
+    unified_history: bool,
 ) -> Result<String, AppError> {
     let mut doc = config_text
         .parse::<DocumentMut>()
@@ -1505,7 +1578,12 @@ pub fn apply_codex_official_proxy_route(
     // A third-party takeover may have left the proxy placeholder in config.toml.
     // The official route must use Codex's native OpenAI login instead.
     doc.as_table_mut().remove("experimental_bearer_token");
-    doc["model_provider"] = toml_edit::value(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID);
+    let route_id = if unified_history {
+        CC_SWITCH_CODEX_MODEL_PROVIDER_ID
+    } else {
+        CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID
+    };
+    doc["model_provider"] = toml_edit::value(route_id);
 
     let mut providers = match doc.as_table_mut().remove("model_providers") {
         Some(item) => item.into_table().map_err(|_| {
@@ -1527,29 +1605,44 @@ pub fn apply_codex_official_proxy_route(
     // The local proxy currently exposes HTTP/SSE, not Codex websocket routes.
     let table = codex_official_provider_table(Some(proxy_base_url), false);
 
-    providers.insert(
-        CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID,
-        toml_edit::Item::Table(table),
-    );
+    providers.insert(route_id, toml_edit::Item::Table(table));
     doc["model_providers"] = toml_edit::Item::Table(providers);
     Ok(doc.to_string())
 }
 
 /// Whether a live Codex config is the official route projected by CC Switch.
 pub fn codex_config_has_official_proxy_route(config_text: &str) -> bool {
-    if !config_text.contains(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID) {
+    let Ok(doc) = config_text.parse::<DocumentMut>() else {
+        return false;
+    };
+    let Some(route_id) = doc.get("model_provider").and_then(|item| item.as_str()) else {
+        return false;
+    };
+    if route_id == CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID {
+        return true;
+    }
+    if route_id != CC_SWITCH_CODEX_MODEL_PROVIDER_ID {
         return false;
     }
-    config_text
-        .parse::<DocumentMut>()
-        .ok()
-        .and_then(|doc| {
-            doc.get("model_provider")
-                .and_then(|item| item.as_str())
-                .map(str::to_string)
+    doc.get("model_providers")
+        .and_then(|item| item.as_table_like())
+        .and_then(|providers| providers.get(route_id))
+        .and_then(|item| item.as_table_like())
+        .is_some_and(|table| {
+            table.get("name").and_then(|item| item.as_str()) == Some("OpenAI")
+                && table
+                    .get("requires_openai_auth")
+                    .and_then(|item| item.as_bool())
+                    == Some(true)
+                && table
+                    .get("supports_websockets")
+                    .and_then(|item| item.as_bool())
+                    == Some(false)
+                && table
+                    .get("base_url")
+                    .and_then(|item| item.as_str())
+                    .is_some_and(|value| !value.trim().is_empty())
         })
-        .as_deref()
-        == Some(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
 }
 
 /// Remove only the official takeover route owned by CC Switch. This is a
@@ -1558,11 +1651,15 @@ pub fn remove_codex_official_proxy_route(config_text: &str) -> Result<String, Ap
     let mut doc = config_text
         .parse::<DocumentMut>()
         .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
-    if doc.get("model_provider").and_then(|item| item.as_str())
-        != Some(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
-    {
+    if !codex_config_has_official_proxy_route(config_text) {
         return Ok(config_text.to_string());
     }
+
+    let route_id = doc
+        .get("model_provider")
+        .and_then(|item| item.as_str())
+        .expect("official proxy route was validated")
+        .to_string();
 
     doc.as_table_mut().remove("model_provider");
     if let Some(item) = doc.as_table_mut().remove("model_providers") {
@@ -1571,7 +1668,7 @@ pub fn remove_codex_official_proxy_route(config_text: &str) -> Result<String, Ap
                 "Invalid Codex config.toml: model_providers must be a table".to_string(),
             )
         })?;
-        providers.remove(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID);
+        providers.remove(&route_id);
         remove_codex_proxy_placeholders_from_providers(&mut providers);
         if !providers.is_empty() {
             doc["model_providers"] = toml_edit::Item::Table(providers);
@@ -1592,6 +1689,95 @@ fn table_matches_codex_unified_official_provider(table: &toml_edit::Table) -> bo
             .and_then(|item| item.as_bool())
             == Some(true)
         && table.get("wire_api").and_then(|item| item.as_str()) == Some("responses")
+}
+
+fn table_like_matches_codex_unified_official_provider(table: &dyn toml_edit::TableLike) -> bool {
+    table.get("name").and_then(|item| item.as_str()) == Some("OpenAI")
+        && table
+            .get("requires_openai_auth")
+            .and_then(|item| item.as_bool())
+            == Some(true)
+        && table
+            .get("supports_websockets")
+            .and_then(|item| item.as_bool())
+            .is_some()
+        && table.get("wire_api").and_then(|item| item.as_str()) == Some("responses")
+}
+
+/// Keep every unified Codex session in one stable provider bucket. Switching
+/// changes only the route behind `custom`, so Codex's provider-filtered history
+/// remains visible after restart and an open append-only rollout never needs to
+/// be replaced on subsequent switches.
+pub fn project_codex_unified_session_bucket(
+    category: Option<&str>,
+    config_text: &str,
+) -> Result<String, AppError> {
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|error| AppError::Message(format!("Invalid Codex config.toml: {error}")))?;
+
+    let route = if category == Some("official") {
+        toml_edit::Item::Table(codex_unified_official_provider_table())
+    } else {
+        let provider_id = doc
+            .get("model_provider")
+            .and_then(|item| item.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                AppError::Config(
+                    "Third-party Codex provider config must define model_provider".to_string(),
+                )
+            })?;
+        let provider = doc
+            .get("model_providers")
+            .and_then(|item| item.as_table_like())
+            .and_then(|providers| providers.get(provider_id))
+            .filter(|item| codex_provider_definition_is_routable(item))
+            .cloned()
+            .ok_or_else(|| {
+                AppError::Config(format!(
+                    "Third-party Codex provider '{provider_id}' must define a non-empty base_url"
+                ))
+            })?;
+        provider
+    };
+
+    if doc.get("model_providers").is_none() {
+        let mut providers = toml_edit::Table::new();
+        providers.set_implicit(true);
+        doc["model_providers"] = toml_edit::Item::Table(providers);
+    }
+    let providers = doc
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_like_mut())
+        .ok_or_else(|| {
+            AppError::Message(
+                "Invalid Codex config.toml: model_providers must be a table".to_string(),
+            )
+        })?;
+    providers.insert(CC_SWITCH_CODEX_MODEL_PROVIDER_ID, route);
+    doc["model_provider"] = toml_edit::value(CC_SWITCH_CODEX_MODEL_PROVIDER_ID);
+    Ok(doc.to_string())
+}
+
+pub fn project_codex_unified_session_bucket_in_settings(
+    category: Option<&str>,
+    settings: &mut Value,
+) -> Result<(), AppError> {
+    if !crate::settings::unify_codex_session_history() {
+        return Ok(());
+    }
+    let config_text = settings
+        .get("config")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let projected = project_codex_unified_session_bucket(category, &config_text)?;
+    if let Some(object) = settings.as_object_mut() {
+        object.insert("config".to_string(), Value::String(projected));
+    }
+    Ok(())
 }
 
 /// Remove the exact official-as-custom route written by older CC Switch
@@ -1699,7 +1885,7 @@ fn codex_provider_definition_is_routable(item: &toml_edit::Item) -> bool {
         .is_some_and(|value| !value.trim().is_empty())
 }
 
-fn preserve_inactive_codex_provider_definitions(
+pub(crate) fn preserve_inactive_codex_provider_definitions(
     target_config: &str,
     live_config: &str,
 ) -> Result<String, AppError> {
@@ -1757,25 +1943,39 @@ fn preserve_inactive_codex_provider_definitions(
 }
 
 fn codex_config_uses_custom_provider(config_text: &str) -> bool {
-    config_text
-        .parse::<DocumentMut>()
-        .ok()
-        .and_then(|doc| active_codex_model_provider_id(&doc))
-        .is_some_and(|provider_id| is_custom_codex_model_provider_id(&provider_id))
+    let Ok(doc) = config_text.parse::<DocumentMut>() else {
+        return false;
+    };
+    let Some(provider_id) = active_codex_model_provider_id(&doc) else {
+        return false;
+    };
+    if !is_custom_codex_model_provider_id(&provider_id) {
+        return false;
+    }
+    !doc.get("model_providers")
+        .and_then(|item| item.as_table_like())
+        .and_then(|providers| providers.get(&provider_id))
+        .and_then(|item| item.as_table_like())
+        .is_some_and(table_like_matches_codex_unified_official_provider)
 }
 
-fn sanitize_codex_global_auth(auth: &Value, active_config: &str) -> Value {
+pub(crate) fn sanitize_codex_global_auth(auth: &Value, active_config: &str) -> Value {
     if !codex_config_uses_custom_provider(active_config) {
         return auth.clone();
     }
 
     let mut sanitized = auth.clone();
-    let has_third_party_key = sanitized
+    let global_key = sanitized
         .get("OPENAI_API_KEY")
         .and_then(Value::as_str)
         .map(str::trim)
-        .is_some_and(|key| !key.is_empty());
-    if has_third_party_key {
+        .filter(|key| !key.is_empty());
+    let global_key_belongs_to_active_provider = global_key.is_some_and(|global_key| {
+        extract_codex_experimental_bearer_token(active_config)
+            .as_deref()
+            .is_none_or(|scoped_token| scoped_token.trim() == global_key)
+    });
+    if global_key_belongs_to_active_provider {
         if let Some(object) = sanitized.as_object_mut() {
             object.remove("OPENAI_API_KEY");
         }
@@ -1813,10 +2013,15 @@ pub fn write_codex_live_for_provider(
     } else {
         live_config.clone()
     };
-    let target_config = if category == Some("official") {
+    let provider_config = if category == Some("official") {
         strip_codex_unified_session_bucket(config_text.unwrap_or(""))?
     } else {
         prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?
+    };
+    let target_config = if crate::settings::unify_codex_session_history() {
+        project_codex_unified_session_bucket(category, &provider_config)?
+    } else {
+        provider_config
     };
     let target_config =
         preserve_inactive_codex_provider_definitions(&target_config, &safe_live_config)?;
@@ -1837,11 +2042,11 @@ pub fn write_codex_live_for_provider(
     {
         write_codex_live_config_atomic(Some(&target_config))
     } else {
-        write_codex_live_atomic(target_auth, Some(&target_config))
+        write_codex_live_transition_atomic(target_auth, &target_config, &safe_live_config)
     }
 }
 
-fn prepare_preserved_codex_live_config(
+pub(crate) fn prepare_preserved_codex_live_config(
     auth: &Value,
     config_text: &str,
 ) -> Result<String, AppError> {
@@ -2075,6 +2280,29 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn codex_live_rollback_reports_file_restore_failures() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let auth_path = temp.path().join("auth.json");
+        let config_path = temp.path().join("config.toml");
+        std::fs::create_dir(&auth_path).expect("block auth restore with a directory");
+        std::fs::write(&config_path, b"new-config").expect("seed config");
+
+        let error = rollback_codex_live_files(
+            &auth_path,
+            Some(b"old-auth"),
+            &config_path,
+            Some(b"old-config"),
+        )
+        .expect_err("auth rollback failure must be reported");
+
+        assert!(error.to_string().contains("auth.json"));
+        assert_eq!(
+            std::fs::read(&config_path).expect("read restored config"),
+            b"old-config"
+        );
+    }
+
+    #[test]
     fn catalog_tool_profile_from_api_format() {
         assert_eq!(
             CodexCatalogToolProfile::from_api_format(Some("anthropic")),
@@ -2102,7 +2330,7 @@ experimental_bearer_token = "PROXY_MANAGED"
 [mcp_servers.example]
 command = "example"
 "#;
-        let output = apply_codex_official_proxy_route(input, "http://127.0.0.1:15721/v1")
+        let output = apply_codex_official_proxy_route(input, "http://127.0.0.1:15721/v1", false)
             .expect("apply official proxy route");
         let doc: toml::Value = toml::from_str(&output).expect("parse output");
 
@@ -2138,9 +2366,12 @@ command = "example"
 
     #[test]
     fn official_proxy_route_cleanup_only_removes_owned_provider() {
-        let projected =
-            apply_codex_official_proxy_route("model = \"gpt-5.4\"\n", "http://127.0.0.1:15721/v1")
-                .expect("project");
+        let projected = apply_codex_official_proxy_route(
+            "model = \"gpt-5.4\"\n",
+            "http://127.0.0.1:15721/v1",
+            false,
+        )
+        .expect("project");
         let cleaned = remove_codex_official_proxy_route(&projected).expect("clean");
         let doc: toml::Value = toml::from_str(&cleaned).expect("parse cleaned");
         assert!(doc.get("model_provider").is_none());
@@ -2157,7 +2388,8 @@ command = "example"
             "model_providers = 3\n",
             "[[model_providers]]\nname = \"broken\"\n",
         ] {
-            let result = apply_codex_official_proxy_route(input, "http://127.0.0.1:15721/v1");
+            let result =
+                apply_codex_official_proxy_route(input, "http://127.0.0.1:15721/v1", false);
             assert!(result.is_err());
         }
     }
@@ -2167,7 +2399,7 @@ command = "example"
         let input = r#"model_provider = "rightcode"
 model_providers = { rightcode = { name = "RightCode", experimental_bearer_token = "PROXY_MANAGED" } }
 "#;
-        let projected = apply_codex_official_proxy_route(input, "http://127.0.0.1:15721/v1")
+        let projected = apply_codex_official_proxy_route(input, "http://127.0.0.1:15721/v1", false)
             .expect("project inline provider table");
         let projected_doc: toml::Value = toml::from_str(&projected).expect("parse projected");
         assert!(projected_doc["model_providers"]["rightcode"]
@@ -2202,6 +2434,69 @@ wire_api = "responses"
             stripped,
             "model_catalog_json = \"cc-switch-model-catalog.json\"\n"
         );
+    }
+
+    #[test]
+    fn unified_session_bucket_projects_official_and_third_party_to_custom() {
+        let official =
+            project_codex_unified_session_bucket(Some("official"), "model = \"gpt-5.4\"\n")
+                .expect("project official route");
+        let official: toml::Value = toml::from_str(&official).expect("parse official route");
+        assert_eq!(official["model_provider"].as_str(), Some("custom"));
+        assert_eq!(
+            official["model_providers"]["custom"]["name"].as_str(),
+            Some("OpenAI")
+        );
+        assert_eq!(
+            official["model_providers"]["custom"]["supports_websockets"].as_bool(),
+            Some(true)
+        );
+
+        let third_party = project_codex_unified_session_bucket(
+            None,
+            r#"model_provider = "vendor_alpha"
+model = "model-a"
+
+[model_providers.vendor_alpha]
+name = "Vendor Alpha"
+base_url = "https://vendor.example/v1"
+wire_api = "responses"
+experimental_bearer_token = "vendor-token"
+"#,
+        )
+        .expect("project third-party route");
+        let third_party: toml::Value =
+            toml::from_str(&third_party).expect("parse third-party route");
+        assert_eq!(third_party["model_provider"].as_str(), Some("custom"));
+        assert_eq!(
+            third_party["model_providers"]["custom"]["base_url"].as_str(),
+            Some("https://vendor.example/v1")
+        );
+        assert_eq!(
+            third_party["model_providers"]["custom"]["experimental_bearer_token"].as_str(),
+            Some("vendor-token")
+        );
+        assert!(third_party["model_providers"]["vendor_alpha"]
+            .as_table()
+            .is_some());
+    }
+
+    #[test]
+    fn unified_official_proxy_route_keeps_custom_history_bucket() {
+        let projected = apply_codex_official_proxy_route(
+            "model = \"gpt-5.4\"\n",
+            "http://127.0.0.1:15721/v1",
+            true,
+        )
+        .expect("project unified official proxy route");
+        let parsed: toml::Value = toml::from_str(&projected).expect("parse proxy route");
+
+        assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
+        assert_eq!(
+            parsed["model_providers"]["custom"]["base_url"].as_str(),
+            Some("http://127.0.0.1:15721/v1")
+        );
+        assert!(codex_config_has_official_proxy_route(&projected));
     }
 
     #[test]
@@ -2444,6 +2739,24 @@ base_url = "https://third.example/v1"
         });
 
         let sanitized = sanitize_codex_global_auth(&auth, "model_provider = \"openai\"\n");
+
+        assert_eq!(sanitized, auth);
+    }
+
+    #[test]
+    fn sanitize_global_auth_keeps_key_distinct_from_active_scoped_token() {
+        let auth = json!({
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "official-openai-key"
+        });
+        let config = r#"model_provider = "custom"
+
+[model_providers.custom]
+base_url = "https://third.example/v1"
+experimental_bearer_token = "third-party-key"
+"#;
+
+        let sanitized = sanitize_codex_global_auth(&auth, config);
 
         assert_eq!(sanitized, auth);
     }
