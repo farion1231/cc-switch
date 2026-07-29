@@ -480,6 +480,21 @@ fn infer_aggregator_platform_config(
 ) -> Option<CodexChatReasoningConfig> {
     let platform = format!("{name} {base_url}");
 
+    // Ark Coding Plan exposes routed model IDs such as kimi-k2.7-code, but the
+    // coding endpoint rejects reasoning controls for its ark-code-latest route.
+    if base_url.contains("ark.cn-beijing.volces.com/api/coding/")
+        || base_url.contains("ark.ap-southeast.bytepluses.com/api/coding/")
+    {
+        return Some(CodexChatReasoningConfig {
+            supports_thinking: Some(false),
+            supports_effort: Some(false),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("none".to_string()),
+            effort_value_mode: None,
+            output_format: Some("auto".to_string()),
+        });
+    }
+
     // OpenRouter：用原生归一化对象 `reasoning: { effort }`（由 OpenRouter 翻译成各底层
     // 模型的正确推理参数，比顶层 OpenAI 别名 reasoning_effort 覆盖面更全）。effort 走
     // "openrouter" 值映射：枚举为 xhigh|high|medium|low|minimal，无 max——max 会触发
@@ -1515,6 +1530,39 @@ wire_api = "chat"
         assert_eq!(config.effort_param.as_deref(), Some("reasoning.effort"));
         assert_eq!(config.effort_value_mode.as_deref(), Some("openrouter"));
         assert_eq!(config.supports_effort, Some(true));
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_ark_platform_disables_kimi_reasoning() {
+        let provider = create_provider(json!({
+            "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3"
+        }));
+
+        let config =
+            resolve_codex_chat_reasoning_config(&provider, &json!({ "model": "kimi-k2.7-code" }))
+                .unwrap();
+        let converted =
+            crate::proxy::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+                json!({
+                    "model": "kimi-k2.7-code",
+                    "input": "ping",
+                    "reasoning": { "effort": "high" }
+                }),
+                Some(&config),
+            )
+            .unwrap();
+
+        assert_eq!(config.supports_thinking, Some(false));
+        assert_eq!(config.supports_effort, Some(false));
+        for field in [
+            "thinking",
+            "enable_thinking",
+            "reasoning_split",
+            "reasoning",
+            "reasoning_effort",
+        ] {
+            assert!(converted.get(field).is_none(), "{field} must be omitted");
+        }
     }
 
     #[test]
