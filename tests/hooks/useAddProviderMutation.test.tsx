@@ -69,6 +69,31 @@ beforeEach(() => {
 });
 
 describe("useAddProviderMutation", () => {
+  it("namespaces generated Pi registry keys", async () => {
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useAddProviderMutation("pi"), {
+      wrapper,
+    });
+
+    const provider = await act(async () =>
+      result.current.mutateAsync({
+        name: "Pi Relay",
+        settingsConfig: {
+          baseUrl: "https://pi.example/v1",
+          api: "openai-completions",
+          models: [{ id: "model-a" }],
+        },
+      }),
+    );
+
+    expect(provider.id).toBe("cc-switch-generated-uuid");
+    expect(apiMocks.add).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "cc-switch-generated-uuid" }),
+      "pi",
+      undefined,
+    );
+  });
+
   it("duplicates Claude Desktop official providers with a fresh id", async () => {
     const { wrapper } = createWrapper();
     const { result } = renderHook(
