@@ -56,6 +56,18 @@ vi.mock("@tauri-apps/api/event", () => ({
   },
 }));
 
+// jsdom 没有 Tauri 窗口对象；提供完整的无副作用替身，避免 App 生命周期测试产生误导性错误日志。
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    isMaximized: async () => false,
+    onResized: async () => () => undefined,
+    setDecorations: async () => undefined,
+    minimize: async () => undefined,
+    toggleMaximize: async () => undefined,
+    close: async () => undefined,
+  }),
+}));
+
 // Ensure the MSW server is referenced so tree shaking doesn't remove imports
 void server;
 

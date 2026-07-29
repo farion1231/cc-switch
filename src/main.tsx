@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { DatabaseUpgrade } from "./components/DatabaseUpgrade";
 import { UpdateProvider } from "./contexts/UpdateContext";
+import { RuntimeTargetProvider } from "./contexts/RuntimeTargetContext";
 import "./index.css";
 // 导入国际化配置
 import i18n from "./i18n";
@@ -116,8 +117,11 @@ async function bootstrap() {
         <QueryClientProvider client={queryClient}>
           <ThemeProvider defaultTheme="system" storageKey="cc-switch-theme">
             <UpdateProvider>
-              <App />
-              <Toaster />
+              {/* 运行目标上下文位于业务组件之外，确保所有 Provider 请求读取同一连接快照。 */}
+              <RuntimeTargetProvider>
+                <App />
+                <Toaster />
+              </RuntimeTargetProvider>
             </UpdateProvider>
           </ThemeProvider>
         </QueryClientProvider>

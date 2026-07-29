@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   Provider,
@@ -6,6 +5,7 @@ import type {
   UniversalProvidersMap,
 } from "@/types";
 import type { AppId } from "./types";
+import { appInvoke, localInvoke } from "@/lib/runtime/invoke";
 
 export interface ProviderSortUpdate {
   id: string;
@@ -48,11 +48,19 @@ export interface ClaudeDesktopDefaultRoute {
 
 export const providersApi = {
   async getAll(appId: AppId): Promise<Record<string, Provider>> {
-    return await invoke("get_providers", { app: appId });
+    return await appInvoke(
+      "get_providers",
+      { app: appId },
+      { remoteCommand: "provider.list" },
+    );
   },
 
   async getCurrent(appId: AppId): Promise<string> {
-    return await invoke("get_current_provider", { app: appId });
+    return await appInvoke(
+      "get_current_provider",
+      { app: appId },
+      { remoteCommand: "provider.current" },
+    );
   },
 
   async add(
@@ -60,7 +68,11 @@ export const providersApi = {
     appId: AppId,
     addToLive?: boolean,
   ): Promise<boolean> {
-    return await invoke("add_provider", { provider, app: appId, addToLive });
+    return await appInvoke(
+      "add_provider",
+      { provider, app: appId, addToLive },
+      { remoteCommand: "provider.add" },
+    );
   },
 
   async update(
@@ -68,15 +80,19 @@ export const providersApi = {
     appId: AppId,
     originalId?: string,
   ): Promise<boolean> {
-    return await invoke("update_provider", {
-      provider,
-      app: appId,
-      originalId,
-    });
+    return await appInvoke(
+      "update_provider",
+      { provider, app: appId, originalId },
+      { remoteCommand: "provider.update" },
+    );
   },
 
   async delete(id: string, appId: AppId): Promise<boolean> {
-    return await invoke("delete_provider", { id, app: appId });
+    return await appInvoke(
+      "delete_provider",
+      { id, app: appId },
+      { remoteCommand: "provider.delete" },
+    );
   },
 
   /**
@@ -84,50 +100,61 @@ export const providersApi = {
    * Does NOT delete from database - provider remains in the list
    */
   async removeFromLiveConfig(id: string, appId: AppId): Promise<boolean> {
-    return await invoke("remove_provider_from_live_config", { id, app: appId });
+    return await appInvoke("remove_provider_from_live_config", {
+      id,
+      app: appId,
+    });
   },
 
   async switch(id: string, appId: AppId): Promise<SwitchResult> {
-    return await invoke("switch_provider", { id, app: appId });
+    return await appInvoke(
+      "switch_provider",
+      { id, app: appId },
+      { remoteCommand: "provider.switch" },
+    );
   },
 
   async importDefault(appId: AppId): Promise<boolean> {
-    return await invoke("import_default_config", { app: appId });
+    return await appInvoke("import_default_config", { app: appId });
   },
 
   async importClaudeDesktopFromClaude(): Promise<number> {
-    return await invoke("import_claude_desktop_providers_from_claude");
+    return await appInvoke("import_claude_desktop_providers_from_claude");
   },
 
   async ensureClaudeDesktopOfficialProvider(): Promise<boolean> {
-    return await invoke("ensure_claude_desktop_official_provider");
+    return await appInvoke("ensure_claude_desktop_official_provider");
   },
 
   async ensureCodexOfficialProvider(): Promise<boolean> {
-    return await invoke("ensure_codex_official_provider");
+    return await appInvoke("ensure_codex_official_provider");
   },
 
   async ensureGrokBuildOfficialProvider(): Promise<boolean> {
-    return await invoke("ensure_grokbuild_official_provider");
+    return await appInvoke("ensure_grokbuild_official_provider");
   },
 
   async getClaudeDesktopStatus(): Promise<ClaudeDesktopStatus> {
-    return await invoke("get_claude_desktop_status");
+    return await appInvoke("get_claude_desktop_status");
   },
 
   async getClaudeDesktopDefaultRoutes(): Promise<ClaudeDesktopDefaultRoute[]> {
-    return await invoke("get_claude_desktop_default_routes");
+    return await appInvoke("get_claude_desktop_default_routes");
   },
 
   async updateTrayMenu(): Promise<boolean> {
-    return await invoke("update_tray_menu");
+    return await localInvoke("update_tray_menu");
   },
 
   async updateSortOrder(
     updates: ProviderSortUpdate[],
     appId: AppId,
   ): Promise<boolean> {
-    return await invoke("update_providers_sort_order", { updates, app: appId });
+    return await appInvoke(
+      "update_providers_sort_order",
+      { updates, app: appId },
+      { remoteCommand: "provider.update_sort_order" },
+    );
   },
 
   async onSwitched(
@@ -150,7 +177,7 @@ export const providersApi = {
     options?: OpenTerminalOptions,
   ): Promise<boolean> {
     const { cwd } = options ?? {};
-    return await invoke("open_provider_terminal", {
+    return await localInvoke("open_provider_terminal", {
       providerId,
       app: appId,
       cwd,
@@ -162,7 +189,7 @@ export const providersApi = {
    * OpenCode 特有功能：由于累加模式，用户可能已在 opencode.json 中配置供应商
    */
   async importOpenCodeFromLive(): Promise<number> {
-    return await invoke("import_opencode_providers_from_live");
+    return await appInvoke("import_opencode_providers_from_live");
   },
 
   /**
@@ -170,7 +197,7 @@ export const providersApi = {
    * 用于前端判断供应商是否已添加到 opencode.json
    */
   async getOpenCodeLiveProviderIds(): Promise<string[]> {
-    return await invoke("get_opencode_live_provider_ids");
+    return await appInvoke("get_opencode_live_provider_ids");
   },
 
   /**
@@ -178,7 +205,7 @@ export const providersApi = {
    * 用于前端判断供应商是否已添加到 openclaw.json
    */
   async getOpenClawLiveProviderIds(): Promise<string[]> {
-    return await invoke("get_openclaw_live_provider_ids");
+    return await appInvoke("get_openclaw_live_provider_ids");
   },
 
   /**
@@ -186,7 +213,7 @@ export const providersApi = {
    * 用于前端判断供应商是否已添加到 Hermes 配置
    */
   async getHermesLiveProviderIds(): Promise<string[]> {
-    return await invoke("get_hermes_live_provider_ids");
+    return await appInvoke("get_hermes_live_provider_ids");
   },
 
   /**
@@ -194,7 +221,7 @@ export const providersApi = {
    * OpenClaw 特有功能：由于累加模式，用户可能已在 openclaw.json 中配置供应商
    */
   async importOpenClawFromLive(): Promise<number> {
-    return await invoke("import_openclaw_providers_from_live");
+    return await appInvoke("import_openclaw_providers_from_live");
   },
 
   /**
@@ -202,7 +229,7 @@ export const providersApi = {
    * Hermes 特有功能：由于累加模式，用户可能已在 Hermes 配置中配置供应商
    */
   async importHermesFromLive(): Promise<number> {
-    return await invoke("import_hermes_providers_from_live");
+    return await appInvoke("import_hermes_providers_from_live");
   },
 };
 
@@ -215,34 +242,34 @@ export const universalProvidersApi = {
    * 获取所有统一供应商
    */
   async getAll(): Promise<UniversalProvidersMap> {
-    return await invoke("get_universal_providers");
+    return await appInvoke("get_universal_providers");
   },
 
   /**
    * 获取单个统一供应商
    */
   async get(id: string): Promise<UniversalProvider | null> {
-    return await invoke("get_universal_provider", { id });
+    return await appInvoke("get_universal_provider", { id });
   },
 
   /**
    * 添加或更新统一供应商
    */
   async upsert(provider: UniversalProvider): Promise<boolean> {
-    return await invoke("upsert_universal_provider", { provider });
+    return await appInvoke("upsert_universal_provider", { provider });
   },
 
   /**
    * 删除统一供应商
    */
   async delete(id: string): Promise<boolean> {
-    return await invoke("delete_universal_provider", { id });
+    return await appInvoke("delete_universal_provider", { id });
   },
 
   /**
    * 手动同步统一供应商到各应用
    */
   async sync(id: string): Promise<boolean> {
-    return await invoke("sync_universal_provider", { id });
+    return await appInvoke("sync_universal_provider", { id });
   },
 };

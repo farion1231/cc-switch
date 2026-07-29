@@ -120,6 +120,11 @@ vi.mock("@/components/settings/AboutSection", () => ({
   AboutSection: ({ isPortable }: any) => <div>about:{String(isPortable)}</div>,
 }));
 
+// 设置页集成测试只验证标签导航；远程表单及运行时上下文由独立组件测试负责。
+vi.mock("@/components/remote/RemoteTargetsSettings", () => ({
+  RemoteTargetsSettings: () => <div>remote-targets-settings</div>,
+}));
+
 const renderDialog = (
   props?: Partial<React.ComponentProps<typeof SettingsPage>>,
 ) => {
@@ -156,6 +161,14 @@ describe("SettingsPage integration", () => {
       "settings.browsePlaceholderApp",
     );
     expect((appInput as HTMLInputElement).value).toBe("/home/mock/.cc-switch");
+  });
+
+  it("opens remote server management as an independent settings tab", async () => {
+    renderDialog({ defaultTab: "remote" });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("tab-remote")).toBeInTheDocument();
+    });
   });
 
   it("imports configuration and triggers success callback", async () => {

@@ -59,6 +59,7 @@ import {
 } from "@/lib/platform";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
+import { RuntimeTargetSwitcher } from "@/components/remote/RuntimeTargetSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
@@ -1277,6 +1278,18 @@ function App() {
                   <ProfileSwitcher activeApp={activeApp} />
                 </div>
               )}
+            <div
+              className="flex shrink-0 items-center"
+              style={{ WebkitAppRegion: "no-drag" } as any}
+            >
+              {/* 目标状态始终可见，避免用户离开供应商页后误判当前操作环境。 */}
+              <RuntimeTargetSwitcher
+                onManage={() => {
+                  setSettingsDefaultTab("remote");
+                  setCurrentView("settings");
+                }}
+              />
+            </div>
             <div
               ref={toolbarRef}
               className="flex flex-1 min-w-0 overflow-x-hidden items-center py-4 pr-2"

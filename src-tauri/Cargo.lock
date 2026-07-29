@@ -768,6 +768,7 @@ dependencies = [
  "base64 0.22.1",
  "brotli 7.0.0",
  "bytes",
+ "cc-switch-protocol",
  "chrono",
  "dirs 5.0.1",
  "flate2",
@@ -827,6 +828,39 @@ dependencies = [
  "winreg 0.52.0",
  "zip 2.4.2",
  "zstd",
+]
+
+[[package]]
+name = "cc-switch-agent"
+version = "3.18.0"
+dependencies = [
+ "cc-switch-core",
+ "cc-switch-protocol",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "cc-switch-core"
+version = "3.18.0"
+dependencies = [
+ "cc-switch-protocol",
+ "indexmap 2.13.0",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "cc-switch-protocol"
+version = "3.18.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

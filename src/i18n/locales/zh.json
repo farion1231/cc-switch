@@ -321,6 +321,7 @@
     "general": "通用",
     "tabGeneral": "通用",
     "tabAuth": "认证",
+    "tabRemote": "远程",
     "tabAdvanced": "高级",
     "tabProxy": "路由",
     "authCenter": {
@@ -2999,6 +3000,42 @@
     },
     "suggestedDefaults": "应用建议默认配置",
     "suggestedDefaultsHint": "使用此预设推荐的默认模型配置"
+  },
+  "remote": {
+    "local": "本机",
+    "manage": "管理服务器",
+    "title": "远程服务器",
+    "description": "使用本机的 OpenSSH 配置、密钥和 ssh-agent 连接远程 CC Switch。",
+    "add": "添加服务器",
+    "edit": "编辑服务器",
+    "empty": "暂无远程服务器",
+    "emptyHint": "添加 ~/.ssh/config 中的 SSH Host，或填写连接覆盖项。",
+    "active": "当前",
+    "connect": "连接",
+    "connectNamed": "连接 {{name}}",
+    "editNamed": "编辑 {{name}}",
+    "deleteNamed": "删除 {{name}}",
+    "saved": "服务器已保存",
+    "test": "测试连接",
+    "testSucceeded": "连接成功：{{os}} {{architecture}}",
+    "advanced": "高级选项",
+    "formDescription": "连接信息仅保存在本机，并使用 OpenSSH 完成认证。",
+    "discovery": {
+      "title": "SSH 配置中的服务器",
+      "empty": "未发现其他可导入的服务器。",
+      "use": "使用",
+      "useNamed": "使用 {{name}}"
+    },
+    "deleteTitle": "删除服务器",
+    "deleteMessage": "确定删除 {{name}}？",
+    "fields": {
+      "name": "名称",
+      "hostAlias": "SSH Host",
+      "hostAliasHint": "对应 ~/.ssh/config 中的 Host 条目。",
+      "username": "用户名",
+      "port": "端口",
+      "identityFile": "私钥"
+    }
   },
   "subscription": {
     "title": "订阅额度",

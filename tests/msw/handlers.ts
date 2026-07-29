@@ -44,6 +44,71 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/get_skills_migration_result`, () =>
     success(null),
   ),
+  http.post(`${TAURI_ENDPOINT}/get_installed_skills`, () => success([])),
+  http.post(`${TAURI_ENDPOINT}/list_profiles`, () => success([])),
+
+  // 远程连接元数据始终由桌面端处理；集成测试默认保持本机运行时。
+  http.post(`${TAURI_ENDPOINT}/remote_discover_ssh_targets`, () => success([])),
+  http.post(`${TAURI_ENDPOINT}/remote_list_targets`, () => success([])),
+  http.post(`${TAURI_ENDPOINT}/remote_upsert_target`, () => success(true)),
+  http.post(`${TAURI_ENDPOINT}/remote_delete_target`, () => success(true)),
+  http.post(`${TAURI_ENDPOINT}/remote_test_target`, () =>
+    success({ os: "linux", architecture: "x86_64" }),
+  ),
+  http.post(`${TAURI_ENDPOINT}/remote_get_runtime_snapshot`, () =>
+    success({ status: "local", generation: 0 }),
+  ),
+  http.post(
+    `${TAURI_ENDPOINT}/remote_set_active_target`,
+    async ({ request }) => {
+      const { targetId } = await withJson<{ targetId?: string | null }>(
+        request,
+      );
+      return success(
+        targetId
+          ? { status: "online", generation: 1, activeTargetId: targetId }
+          : { status: "local", generation: 1 },
+      );
+    },
+  ),
+  http.post(`${TAURI_ENDPOINT}/remote_invoke`, async ({ request }) => {
+    const { command, args = {} } = await withJson<{
+      command: string;
+      args?: Record<string, any>;
+    }>(request);
+    const app = args.app as AppId;
+    switch (command) {
+      case "provider.list":
+        return success(getProviders(app));
+      case "provider.current":
+        return success(getCurrentProviderId(app));
+      case "provider.add": {
+        const provider = args.provider as Provider & { id?: string };
+        addProvider(app, {
+          ...provider,
+          id: provider.id ?? `mock-${Date.now()}`,
+        });
+        return success(true);
+      }
+      case "provider.update":
+        updateProvider(app, args.provider as Provider);
+        return success(true);
+      case "provider.delete":
+        deleteProvider(app, args.id as string);
+        return success(true);
+      case "provider.switch":
+        setCurrentProviderId(app, args.id as string);
+        return success({ warnings: [] });
+      case "provider.update_sort_order":
+        updateSortOrder(app, args.updates ?? []);
+        return success(true);
+      default:
+        return HttpResponse.json(
+          { code: "COMMAND_NOT_EXPOSED", message: command },
+          { status: 400 },
+        );
+    }
+  }),
   http.post(`${TAURI_ENDPOINT}/get_providers`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);
     return success(getProviders(app));

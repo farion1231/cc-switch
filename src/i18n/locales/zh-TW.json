@@ -321,6 +321,7 @@
     "general": "通用",
     "tabGeneral": "通用",
     "tabAuth": "驗證",
+    "tabRemote": "遠端",
     "tabAdvanced": "進階",
     "tabProxy": "路由",
     "authCenter": {
@@ -2970,6 +2971,42 @@
     },
     "suggestedDefaults": "套用建議預設設定",
     "suggestedDefaultsHint": "使用此預設推薦的預設模型設定"
+  },
+  "remote": {
+    "local": "本機",
+    "manage": "管理伺服器",
+    "title": "遠端伺服器",
+    "description": "使用本機的 OpenSSH 設定、金鑰和 ssh-agent 連線遠端 CC Switch。",
+    "add": "新增伺服器",
+    "edit": "編輯伺服器",
+    "empty": "尚無遠端伺服器",
+    "emptyHint": "新增 ~/.ssh/config 中的 SSH Host，或填寫連線覆寫項目。",
+    "active": "目前",
+    "connect": "連線",
+    "connectNamed": "連線 {{name}}",
+    "editNamed": "編輯 {{name}}",
+    "deleteNamed": "刪除 {{name}}",
+    "saved": "伺服器已儲存",
+    "test": "測試連線",
+    "testSucceeded": "連線成功：{{os}} {{architecture}}",
+    "advanced": "進階選項",
+    "formDescription": "連線資訊僅儲存在本機，並使用 OpenSSH 完成驗證。",
+    "discovery": {
+      "title": "SSH 設定中的伺服器",
+      "empty": "未找到其他可匯入的伺服器。",
+      "use": "使用",
+      "useNamed": "使用 {{name}}"
+    },
+    "deleteTitle": "刪除伺服器",
+    "deleteMessage": "確定刪除 {{name}}？",
+    "fields": {
+      "name": "名稱",
+      "hostAlias": "SSH Host",
+      "hostAliasHint": "對應 ~/.ssh/config 中的 Host 項目。",
+      "username": "使用者名稱",
+      "port": "連接埠",
+      "identityFile": "私鑰"
+    }
   },
   "subscription": {
     "title": "訂閱額度",

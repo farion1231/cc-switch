@@ -321,6 +321,7 @@
     "general": "一般",
     "tabGeneral": "一般",
     "tabAuth": "認証",
+    "tabRemote": "リモート",
     "tabAdvanced": "詳細",
     "tabProxy": "ルーティング",
     "authCenter": {
@@ -2999,6 +3000,42 @@
     },
     "suggestedDefaults": "推奨デフォルト設定を適用",
     "suggestedDefaultsHint": "このプリセットの推奨デフォルトモデル設定を使用します"
+  },
+  "remote": {
+    "local": "ローカル",
+    "manage": "サーバーを管理",
+    "title": "リモートサーバー",
+    "description": "ローカルの OpenSSH 設定、鍵、ssh-agent を使用してリモート CC Switch に接続します。",
+    "add": "サーバーを追加",
+    "edit": "サーバーを編集",
+    "empty": "リモートサーバーがありません",
+    "emptyHint": "~/.ssh/config の SSH Host を追加するか、接続設定を上書きしてください。",
+    "active": "使用中",
+    "connect": "接続",
+    "connectNamed": "{{name}} に接続",
+    "editNamed": "{{name}} を編集",
+    "deleteNamed": "{{name}} を削除",
+    "saved": "サーバーを保存しました",
+    "test": "接続テスト",
+    "testSucceeded": "接続成功：{{os}} {{architecture}}",
+    "advanced": "詳細オプション",
+    "formDescription": "接続情報はこのコンピューターにのみ保存され、OpenSSH で認証されます。",
+    "discovery": {
+      "title": "SSH 設定のサーバー",
+      "empty": "インポートできる他のサーバーはありません。",
+      "use": "使用",
+      "useNamed": "{{name}} を使用"
+    },
+    "deleteTitle": "サーバーを削除",
+    "deleteMessage": "{{name}} を削除しますか？",
+    "fields": {
+      "name": "名前",
+      "hostAlias": "SSH Host",
+      "hostAliasHint": "~/.ssh/config の Host エントリに対応します。",
+      "username": "ユーザー名",
+      "port": "ポート",
+      "identityFile": "秘密鍵"
+    }
   },
   "subscription": {
     "title": "サブスクリプションクォータ",
