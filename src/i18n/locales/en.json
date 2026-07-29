@@ -1159,6 +1159,8 @@
     "categoryAggregation": "Aggregation",
     "categoryThirdParty": "Third Party",
     "fetchModels": "Fetch Models",
+    "searchModel": "Search model...",
+    "noModelsFound": "No models found.",
     "fetchingModels": "Fetching...",
     "fetchModelsSuccess": "Found {{count}} models",
     "fetchModelsFailed": "Failed to fetch models",

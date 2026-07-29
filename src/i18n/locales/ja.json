@@ -1159,6 +1159,8 @@
     "categoryAggregation": "アグリゲーター",
     "categoryThirdParty": "サードパーティ",
     "fetchModels": "モデル一覧を取得",
+    "searchModel": "モデルを検索...",
+    "noModelsFound": "モデルが見つかりません。",
     "fetchingModels": "取得中...",
     "fetchModelsSuccess": "{{count}}件のモデルを取得",
     "fetchModelsFailed": "モデル一覧の取得に失敗しました",

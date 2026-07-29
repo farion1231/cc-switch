@@ -1130,6 +1130,8 @@
     "categoryAggregation": "聚合服務",
     "categoryThirdParty": "第三方",
     "fetchModels": "取得模型清單",
+    "searchModel": "搜尋模型...",
+    "noModelsFound": "未找到模型。",
     "fetchingModels": "正在取得...",
     "fetchModelsSuccess": "取得 {{count}} 個模型",
     "fetchModelsFailed": "取得模型清單失敗",
