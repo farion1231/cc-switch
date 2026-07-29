@@ -2483,7 +2483,11 @@
       "title": "Batch Import MCP Servers",
       "targetApps": "Target Apps",
       "serverCount": "MCP Servers ({{count}})",
-      "enabledWarning": "After import, configurations will be written to all specified apps immediately"
+      "enabledWarning": "After import, configurations will be written to all specified apps immediately",
+      "command": "Command",
+      "args": "Args",
+      "env": "Env",
+      "url": "URL"
     },
     "prompt": {
       "title": "Import System Prompt",
@@ -2505,10 +2509,17 @@
     "usageScript": "Usage Query",
     "usageScriptEnabled": "Enabled",
     "usageScriptDisabled": "Disabled",
+    "usageScriptCode": "Script code",
+    "usageScriptWarning": "This is JavaScript that runs when usage is queried, once enabled. Import it only if you trust the source.",
     "usageApiKey": "Usage API Key",
     "usageBaseUrl": "Usage Query URL",
     "usageAutoInterval": "Auto Query",
-    "usageAutoIntervalValue": "Every {{minutes}} minutes"
+    "usageAutoIntervalValue": "Every {{minutes}} minutes",
+    "risk": {
+      "envHijack": "This config sets environment variables that change how processes load code (e.g. injecting libraries or replacing CA certificates). Import only from a source you trust.",
+      "privateEndpoint": "This address points at localhost or a private network. Do not import unless it is your own local service.",
+      "shellCommand": "This config runs a full command line through a shell — what actually executes is in the arguments. Review each line."
+    }
   },
   "iconPicker": {
     "search": "Search Icons",

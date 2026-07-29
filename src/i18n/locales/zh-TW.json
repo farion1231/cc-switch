@@ -2454,7 +2454,11 @@
       "title": "批次匯入 MCP Servers",
       "targetApps": "目標應用程式",
       "serverCount": "MCP Servers ({{count}} 個)",
-      "enabledWarning": "匯入後將立即寫入所有指定應用程式的設定檔"
+      "enabledWarning": "匯入後將立即寫入所有指定應用程式的設定檔",
+      "command": "命令",
+      "args": "參數",
+      "env": "環境",
+      "url": "位址"
     },
     "prompt": {
       "title": "匯入系統提示詞",
@@ -2476,10 +2480,17 @@
     "usageScript": "用量查詢",
     "usageScriptEnabled": "已啟用",
     "usageScriptDisabled": "未啟用",
+    "usageScriptCode": "指令碼程式碼",
+    "usageScriptWarning": "這是一段 JavaScript 程式碼，啟用後會在查詢用量時執行。請確認來源可信後再匯入。",
     "usageApiKey": "用量 API Key",
     "usageBaseUrl": "用量查詢位址",
     "usageAutoInterval": "自動查詢",
-    "usageAutoIntervalValue": "每 {{minutes}} 分鐘"
+    "usageAutoIntervalValue": "每 {{minutes}} 分鐘",
+    "risk": {
+      "envHijack": "該設定包含可改變處理程序載入行為的環境變數（例如注入動態程式庫、替換 CA 憑證），請確認來源可信。",
+      "privateEndpoint": "該位址指向本機或內部網路。若非你自建的本機服務，請勿匯入。",
+      "shellCommand": "該設定透過 shell 執行整段命令，實際執行的內容在參數裡，請逐行核對。"
+    }
   },
   "iconPicker": {
     "search": "搜尋圖示",

@@ -2483,7 +2483,11 @@
       "title": "MCP サーバーを一括インポート",
       "targetApps": "ターゲットアプリ",
       "serverCount": "MCP サーバー（{{count}} 件）",
-      "enabledWarning": "インポート後、指定したすべてのアプリに即座に書き込まれます"
+      "enabledWarning": "インポート後、指定したすべてのアプリに即座に書き込まれます",
+      "command": "コマンド",
+      "args": "引数",
+      "env": "環境変数",
+      "url": "URL"
     },
     "prompt": {
       "title": "システムプロンプトをインポート",
@@ -2505,10 +2509,17 @@
     "usageScript": "使用量クエリ",
     "usageScriptEnabled": "有効",
     "usageScriptDisabled": "無効",
+    "usageScriptCode": "スクリプトコード",
+    "usageScriptWarning": "これは有効化すると使用量クエリ時に実行される JavaScript です。提供元が信頼できる場合のみインポートしてください。",
     "usageApiKey": "使用量 API キー",
     "usageBaseUrl": "使用量クエリ URL",
     "usageAutoInterval": "自動クエリ",
-    "usageAutoIntervalValue": "{{minutes}} 分ごと"
+    "usageAutoIntervalValue": "{{minutes}} 分ごと",
+    "risk": {
+      "envHijack": "この設定には、プロセスの読み込み動作を変える環境変数（ライブラリの注入、CA 証明書の差し替えなど）が含まれています。信頼できる提供元か確認してください。",
+      "privateEndpoint": "このアドレスはローカルホストまたは内部ネットワークを指しています。自分で立てたローカルサービス以外はインポートしないでください。",
+      "shellCommand": "この設定はシェル経由でコマンド全体を実行します。実際に動作する内容は引数にあります。1 行ずつ確認してください。"
+    }
   },
   "iconPicker": {
     "search": "アイコンを検索",

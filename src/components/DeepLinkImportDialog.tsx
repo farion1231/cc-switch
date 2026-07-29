@@ -17,6 +17,14 @@ import { PromptConfirmation } from "./deeplink/PromptConfirmation";
 import { McpConfirmation } from "./deeplink/McpConfirmation";
 import { SkillConfirmation } from "./deeplink/SkillConfirmation";
 import { ProviderIcon } from "./ProviderIcon";
+import {
+  classifyEndpoint,
+  classifyEnvKey,
+  decodeDeeplinkPayload,
+  maskValue,
+  riskI18nKey,
+} from "@/utils/deeplinkRisk";
+import { decodeBase64Utf8 } from "@/lib/utils/base64";
 
 interface DeeplinkError {
   url: string;
@@ -277,16 +285,28 @@ export function DeepLinkImportDialog() {
     }
   }, [request?.config, request?.app]);
 
-  // Helper to mask sensitive values
-  const maskValue = (key: string, value: string): string => {
-    const sensitiveKeys = ["TOKEN", "KEY", "SECRET", "PASSWORD"];
-    const isSensitive = sensitiveKeys.some((k) =>
-      key.toUpperCase().includes(k),
+  /**
+   * env 行：值经 `maskValue` 脱敏，键命中加载器控制变量时标记。
+   *
+   * `break-all` 而非 `truncate`——被截断的值等于没展示。
+   */
+  const EnvRow = ({ envKey, value }: { envKey: string; value: string }) => {
+    const risk = classifyEnvKey(envKey);
+    return (
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <span
+          className={`font-mono break-all ${
+            risk
+              ? "text-yellow-700 dark:text-yellow-500 font-semibold"
+              : "text-muted-foreground"
+          }`}
+        >
+          {risk && <span aria-hidden="true">⚠ </span>}
+          {envKey}
+        </span>
+        <span className="font-mono break-all">{maskValue(envKey, value)}</span>
+      </div>
     );
-    if (isSensitive && value.length > 8) {
-      return `${value.substring(0, 8)}${"*".repeat(12)}`;
-    }
-    return value;
   };
 
   const getTitle = () => {
@@ -391,22 +411,37 @@ export function DeepLinkImportDialog() {
                       {t("deeplink.endpoint")}
                     </div>
                     <div className="col-span-2 text-sm break-all space-y-1">
-                      {request.endpoint?.split(",").map((ep, idx) => (
-                        <div
-                          key={idx}
-                          className={
-                            idx === 0 ? "font-medium" : "text-muted-foreground"
-                          }
-                        >
-                          {idx === 0 ? "🔹 " : "└ "}
-                          {ep.trim()}
-                          {idx === 0 && request.endpoint?.includes(",") && (
-                            <span className="text-xs text-muted-foreground ml-2">
-                              ({t("deeplink.primaryEndpoint")})
-                            </span>
-                          )}
-                        </div>
-                      ))}
+                      {request.endpoint?.split(",").map((ep, idx) => {
+                        const endpointRisk = classifyEndpoint(ep.trim());
+                        return (
+                          <div
+                            key={idx}
+                            className={
+                              endpointRisk
+                                ? "text-yellow-700 dark:text-yellow-500 font-semibold"
+                                : idx === 0
+                                  ? "font-medium"
+                                  : "text-muted-foreground"
+                            }
+                          >
+                            {idx === 0 ? "🔹 " : "└ "}
+                            {endpointRisk && (
+                              <span aria-hidden="true">⚠ </span>
+                            )}
+                            {ep.trim()}
+                            {idx === 0 && request.endpoint?.includes(",") && (
+                              <span className="text-xs text-muted-foreground ml-2">
+                                ({t("deeplink.primaryEndpoint")})
+                              </span>
+                            )}
+                            {endpointRisk && (
+                              <div className="text-xs font-normal mt-0.5">
+                                {t(riskI18nKey(endpointRisk))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -527,17 +562,11 @@ export function DeepLinkImportDialog() {
                               <div className="space-y-1.5">
                                 {Object.entries(parsedConfig.env).map(
                                   ([key, value]) => (
-                                    <div
+                                    <EnvRow
                                       key={key}
-                                      className="grid grid-cols-2 gap-2 text-xs"
-                                    >
-                                      <span className="font-mono text-muted-foreground truncate">
-                                        {key}
-                                      </span>
-                                      <span className="font-mono truncate">
-                                        {maskValue(key, String(value))}
-                                      </span>
-                                    </div>
+                                      envKey={key}
+                                      value={String(value)}
+                                    />
                                   ),
                                 )}
                               </div>
@@ -552,21 +581,17 @@ export function DeepLinkImportDialog() {
                                     <div className="text-xs text-muted-foreground">
                                       Auth:
                                     </div>
-                                    {Object.entries(parsedConfig.auth).map(
-                                      ([key, value]) => (
-                                        <div
-                                          key={key}
-                                          className="grid grid-cols-2 gap-2 text-xs pl-2"
-                                        >
-                                          <span className="font-mono text-muted-foreground truncate">
-                                            {key}
-                                          </span>
-                                          <span className="font-mono truncate">
-                                            {maskValue(key, String(value))}
-                                          </span>
-                                        </div>
-                                      ),
-                                    )}
+                                    <div className="pl-2 space-y-1.5">
+                                      {Object.entries(parsedConfig.auth).map(
+                                        ([key, value]) => (
+                                          <EnvRow
+                                            key={key}
+                                            envKey={key}
+                                            value={String(value)}
+                                          />
+                                        ),
+                                      )}
+                                    </div>
                                   </div>
                                 )}
                               {parsedConfig.tomlConfig && (
@@ -590,17 +615,11 @@ export function DeepLinkImportDialog() {
                               <div className="space-y-1.5">
                                 {Object.entries(parsedConfig.env).map(
                                   ([key, value]) => (
-                                    <div
+                                    <EnvRow
                                       key={key}
-                                      className="grid grid-cols-2 gap-2 text-xs"
-                                    >
-                                      <span className="font-mono text-muted-foreground truncate">
-                                        {key}
-                                      </span>
-                                      <span className="font-mono truncate">
-                                        {maskValue(key, String(value))}
-                                      </span>
-                                    </div>
+                                      envKey={key}
+                                      value={String(value)}
+                                    />
                                   ),
                                 )}
                               </div>
@@ -632,14 +651,19 @@ export function DeepLinkImportDialog() {
                           })}
                         </div>
                         <div className="col-span-2 text-sm">
+                          {/*
+                            判据是 `=== true`，与后端 `usage_enabled.unwrap_or(false)`
+                            严格对齐。此前用的 `!== false` 会把"链接没说"渲染成绿色的
+                            「已启用」——徽章必须显示实际会发生的事，不能比后端更乐观。
+                          */}
                           <span
                             className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${
-                              request.usageEnabled !== false
+                              request.usageEnabled === true
                                 ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300"
                                 : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400"
                             }`}
                           >
-                            {request.usageEnabled !== false
+                            {request.usageEnabled === true
                               ? t("deeplink.usageScriptEnabled", {
                                   defaultValue: "已启用",
                                 })
@@ -648,6 +672,33 @@ export function DeepLinkImportDialog() {
                                 })}
                           </span>
                         </div>
+                      </div>
+
+                      {/*
+                        脚本正文必须完整展示。这段是会执行的 JavaScript，而 payload
+                        常常整条藏在中间——`whitespace-pre-wrap break-all` + 可滚动容器，
+                        不用 truncate，任何字符都不得被 CSS 藏起来。
+                      */}
+                      <div className="space-y-1">
+                        <div className="font-medium text-sm text-muted-foreground">
+                          {t("deeplink.usageScriptCode")}
+                        </div>
+                        <pre className="max-h-48 overflow-auto rounded border border-border-default bg-muted/40 p-2 text-xs font-mono whitespace-pre-wrap break-all">
+                          {decodeDeeplinkPayload(
+                            request.usageScript,
+                            decodeBase64Utf8,
+                          )}
+                        </pre>
+                      </div>
+
+                      {/*
+                        无条件显示，不看 `usageEnabled`：代码无论启用与否都会被写入供应商
+                        配置，用户之后在应用内一键即可开启。挂条件等于让攻击者省略参数就能
+                        关掉这条警告。
+                      */}
+                      <div className="text-yellow-600 dark:text-yellow-500 text-sm flex items-start gap-2">
+                        <span aria-hidden="true">⚠️</span>
+                        <span>{t("deeplink.usageScriptWarning")}</span>
                       </div>
 
                       {/* Usage API Key (if different from provider) */}
