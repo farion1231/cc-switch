@@ -1,24 +1,20 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { AppId } from "@/lib/api";
 import type { OpenClawModel } from "@/types";
 import { PI_DEFAULT_CONFIG } from "../helpers/opencodeFormUtils";
 
 interface UsePiFormStateParams {
-  initialData?: {
-    settingsConfig?: Record<string, unknown>;
-  };
-  appId: AppId | "pi";
+  appId: AppId;
+  settingsConfig: string;
   onSettingsConfigChange: (config: string) => void;
-  getSettingsConfig: () => string;
 }
 
 interface PiProviderConfig {
-  baseUrl?: string;
-  baseURL?: string;
-  apiKey?: string;
-  api?: string;
-  models?: OpenClawModel[];
-  defaultModel?: string;
+  baseUrl: string;
+  apiKey: string;
+  api: string;
+  models: OpenClawModel[];
+  defaultModel: string;
 }
 
 export interface PiFormState {
@@ -34,53 +30,120 @@ export interface PiFormState {
   handlePiDefaultModelChange: (model: string) => void;
 }
 
-function parsePiConfig(
-  initialData: UsePiFormStateParams["initialData"],
-): PiProviderConfig {
+function parsePiConfig(rawConfig: string): PiProviderConfig | null {
   try {
-    return JSON.parse(
-      initialData?.settingsConfig
-        ? JSON.stringify(initialData.settingsConfig)
-        : PI_DEFAULT_CONFIG,
-    ) as PiProviderConfig;
+    const parsed = JSON.parse(rawConfig || PI_DEFAULT_CONFIG);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    const config = parsed as Record<string, unknown>;
+    for (const field of [
+      "baseUrl",
+      "baseURL",
+      "apiKey",
+      "api",
+      "defaultModel",
+    ]) {
+      if (config[field] !== undefined && typeof config[field] !== "string") {
+        return null;
+      }
+    }
+
+    const models: OpenClawModel[] = [];
+    if (config.models !== undefined) {
+      if (!Array.isArray(config.models)) return null;
+      for (const entry of config.models) {
+        if (typeof entry === "string") {
+          models.push({ id: entry, name: entry });
+          continue;
+        }
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+          return null;
+        }
+        const model = entry as Record<string, unknown>;
+        if (
+          typeof model.id !== "string" ||
+          (model.name !== undefined && typeof model.name !== "string")
+        ) {
+          return null;
+        }
+        models.push({
+          ...model,
+          id: model.id,
+          name: typeof model.name === "string" ? model.name : model.id,
+        } as OpenClawModel);
+      }
+    }
+
+    const baseUrl =
+      typeof config.baseUrl === "string"
+        ? config.baseUrl
+        : typeof config.baseURL === "string"
+          ? config.baseURL
+          : "";
+    const defaultModel =
+      typeof config.defaultModel === "string"
+        ? config.defaultModel
+        : models[0]?.id || "";
+
+    return {
+      baseUrl,
+      apiKey: typeof config.apiKey === "string" ? config.apiKey : "",
+      api: typeof config.api === "string" ? config.api : "openai-completions",
+      models,
+      defaultModel,
+    };
   } catch {
-    return JSON.parse(PI_DEFAULT_CONFIG) as PiProviderConfig;
+    return null;
   }
 }
 
 export function usePiFormState({
-  initialData,
   appId,
+  settingsConfig,
   onSettingsConfigChange,
-  getSettingsConfig,
 }: UsePiFormStateParams): PiFormState {
-  const initial = parsePiConfig(initialData);
+  const fallback = parsePiConfig(PI_DEFAULT_CONFIG) as PiProviderConfig;
+  const initial =
+    appId === "pi" ? parsePiConfig(settingsConfig) || fallback : fallback;
 
   const [piBaseUrl, setPiBaseUrl] = useState(() => {
     if (appId !== "pi") return "";
-    return initial.baseUrl || initial.baseURL || "";
+    return initial.baseUrl;
   });
   const [piApiKey, setPiApiKey] = useState(() => {
     if (appId !== "pi") return "";
-    return initial.apiKey || "";
+    return initial.apiKey;
   });
   const [piApi, setPiApi] = useState(() => {
     if (appId !== "pi") return "openai-completions";
-    return initial.api || "openai-completions";
+    return initial.api;
   });
   const [piModels, setPiModels] = useState<OpenClawModel[]>(() => {
     if (appId !== "pi") return [];
-    return initial.models || [];
+    return initial.models;
   });
   const [piDefaultModel, setPiDefaultModel] = useState(() => {
     if (appId !== "pi") return "";
-    return initial.defaultModel || initial.models?.[0]?.id || "";
+    return initial.defaultModel || initial.models[0]?.id || "";
   });
+
+  useEffect(() => {
+    if (appId !== "pi") return;
+    const config = parsePiConfig(settingsConfig);
+    if (!config) return;
+
+    setPiBaseUrl(config.baseUrl);
+    setPiApiKey(config.apiKey);
+    setPiApi(config.api);
+    setPiModels(config.models);
+    setPiDefaultModel(config.defaultModel || config.models[0]?.id || "");
+  }, [appId, settingsConfig]);
 
   const updatePiConfig = useCallback(
     (updater: (config: Record<string, unknown>) => void) => {
       try {
-        const parsed = JSON.parse(getSettingsConfig() || PI_DEFAULT_CONFIG);
+        const parsed = JSON.parse(settingsConfig || PI_DEFAULT_CONFIG);
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
           return;
         }
@@ -91,7 +154,7 @@ export function usePiFormState({
         // Leave invalid JSON editor content untouched while the user is editing.
       }
     },
-    [getSettingsConfig, onSettingsConfigChange],
+    [settingsConfig, onSettingsConfigChange],
   );
 
   const handlePiBaseUrlChange = useCallback(

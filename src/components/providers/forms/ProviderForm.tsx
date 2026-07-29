@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -410,6 +410,13 @@ function ProviderFormFull({
     resolver: zodResolver(providerSchema),
     defaultValues,
     mode: "onSubmit",
+  });
+  const piSettingsConfig = useWatch({
+    control: form.control,
+    name: "settingsConfig",
+    defaultValue: defaultValues.settingsConfig,
+    disabled: appId !== "pi",
+    exact: true,
   });
   const { isSubmitting } = form.formState;
 
@@ -934,10 +941,9 @@ function ProviderFormFull({
   } = useHermesLiveProviderIds(appId === "hermes");
 
   const piForm = usePiFormState({
-    initialData,
     appId,
-    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
-    getSettingsConfig: () => form.getValues("settingsConfig"),
+    settingsConfig: piSettingsConfig,
+    onSettingsConfigChange: handleSettingsConfigChange,
   });
 
   const additiveExistingProviderKeys = useMemo(() => {
