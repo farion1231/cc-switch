@@ -85,13 +85,20 @@ pub fn extract_text(content: &Value) -> String {
 fn extract_text_from_item(item: &Value) -> Option<String> {
     let item_type = item.get("type").and_then(Value::as_str).unwrap_or("");
 
-    // tool_use: show tool name
+    // tool_use: show tool name and input
     if item_type == "tool_use" {
         let name = item
             .get("name")
             .and_then(Value::as_str)
             .unwrap_or("unknown");
-        return Some(format!("[Tool: {name}]"));
+        match item.get("input") {
+            Some(input) if !input.is_null() => {
+                let rendered =
+                    serde_json::to_string_pretty(input).unwrap_or_else(|_| input.to_string());
+                return Some(format!("[Tool: {name}]\n{rendered}"));
+            }
+            _ => return Some(format!("[Tool: {name}]")),
+        }
     }
 
     // tool_result: extract nested content
