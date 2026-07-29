@@ -104,7 +104,7 @@ impl KeyMaterial {
         validate_object_id(object_id)?;
         let object_key = self.derive_object_key(object_id)?;
         let nonce = self.object_nonce(object_id);
-        encrypt_with_key(&object_key, &nonce, b"blob", plaintext, aad)
+        encrypt_with_key(&object_key, &nonce, plaintext, aad)
     }
 
     pub fn decrypt_blob(
@@ -116,13 +116,13 @@ impl KeyMaterial {
         validate_object_id(object_id)?;
         let object_key = self.derive_object_key(object_id)?;
         let nonce = self.object_nonce(object_id);
-        decrypt_with_key(&object_key, &nonce, b"blob", ciphertext, aad)
+        decrypt_with_key(&object_key, &nonce, ciphertext, aad)
     }
 
     pub fn encrypt_manifest(&self, plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>, AppError> {
         let mut nonce = [0_u8; XNONCE_LEN];
         OsRng.fill_bytes(&mut nonce);
-        let ciphertext = encrypt_with_key(&self.manifest_key, &nonce, b"manifest", plaintext, aad)?;
+        let ciphertext = encrypt_with_key(&self.manifest_key, &nonce, plaintext, aad)?;
         let mut output = Vec::with_capacity(XNONCE_LEN + ciphertext.len());
         output.extend_from_slice(&nonce);
         output.extend_from_slice(&ciphertext);
@@ -134,7 +134,7 @@ impl KeyMaterial {
             .split_at_checked(XNONCE_LEN)
             .ok_or_else(authentication_failed)?;
         let nonce: &[u8; XNONCE_LEN] = nonce.try_into().map_err(|_| authentication_failed())?;
-        decrypt_with_key(&self.manifest_key, nonce, b"manifest", encrypted, aad)
+        decrypt_with_key(&self.manifest_key, nonce, encrypted, aad)
     }
 
     pub fn key_check(&self) -> [u8; 32] {
@@ -152,7 +152,7 @@ impl KeyMaterial {
     fn derive_object_key(&self, object_id: &str) -> Result<Zeroizing<[u8; SUBKEY_LEN]>, AppError> {
         let hkdf = Hkdf::<Sha256>::new(Some(object_id.as_bytes()), &self.blob_key);
         let mut key = Zeroizing::new([0_u8; SUBKEY_LEN]);
-        hkdf.expand(b"cc-switch/workspace-sync/blob-object/v1", key.as_mut())
+        hkdf.expand(b"blob", key.as_mut())
             .map_err(|_| encryption_failed())?;
         Ok(key)
     }
@@ -170,11 +170,11 @@ impl KeyMaterial {
 fn derive_subkeys(master: &[u8; MASTER_KEY_LEN]) -> Result<KeyMaterial, AppError> {
     let hkdf = Hkdf::<Sha256>::new(None, master);
     Ok(KeyMaterial {
-        manifest_key: expand_subkey(&hkdf, b"cc-switch/workspace-sync/manifest/v1")?,
-        blob_key: expand_subkey(&hkdf, b"cc-switch/workspace-sync/blob/v1")?,
-        object_id_key: expand_subkey(&hkdf, b"cc-switch/workspace-sync/object-id/v1")?,
-        nonce_key: expand_subkey(&hkdf, b"cc-switch/workspace-sync/nonce/v1")?,
-        key_check_key: expand_subkey(&hkdf, b"cc-switch/workspace-sync/key-check/v1")?,
+        manifest_key: expand_subkey(&hkdf, b"manifest")?,
+        blob_key: expand_subkey(&hkdf, b"blob")?,
+        object_id_key: expand_subkey(&hkdf, b"object-id")?,
+        nonce_key: expand_subkey(&hkdf, b"nonce")?,
+        key_check_key: expand_subkey(&hkdf, b"key-check")?,
     })
 }
 
@@ -188,18 +188,16 @@ fn expand_subkey(hkdf: &Hkdf<Sha256>, label: &[u8]) -> Result<[u8; SUBKEY_LEN], 
 fn encrypt_with_key(
     key: &[u8; SUBKEY_LEN],
     nonce: &[u8; XNONCE_LEN],
-    domain: &[u8],
     plaintext: &[u8],
     aad: &[u8],
 ) -> Result<Vec<u8>, AppError> {
     let cipher = XChaCha20Poly1305::new(key.into());
-    let authenticated_data = domain_aad(domain, aad);
     cipher
         .encrypt(
             XNonce::from_slice(nonce),
             Payload {
                 msg: plaintext,
-                aad: &authenticated_data,
+                aad,
             },
         )
         .map_err(|_| encryption_failed())
@@ -208,29 +206,19 @@ fn encrypt_with_key(
 fn decrypt_with_key(
     key: &[u8; SUBKEY_LEN],
     nonce: &[u8; XNONCE_LEN],
-    domain: &[u8],
     ciphertext: &[u8],
     aad: &[u8],
 ) -> Result<Vec<u8>, AppError> {
     let cipher = XChaCha20Poly1305::new(key.into());
-    let authenticated_data = domain_aad(domain, aad);
     cipher
         .decrypt(
             XNonce::from_slice(nonce),
             Payload {
                 msg: ciphertext,
-                aad: &authenticated_data,
+                aad,
             },
         )
         .map_err(|_| authentication_failed())
-}
-
-fn domain_aad(domain: &[u8], aad: &[u8]) -> Vec<u8> {
-    let mut authenticated_data = Vec::with_capacity(domain.len() + 1 + aad.len());
-    authenticated_data.extend_from_slice(domain);
-    authenticated_data.push(0);
-    authenticated_data.extend_from_slice(aad);
-    authenticated_data
 }
 
 fn validate_salt(salt: &[u8]) -> Result<(), AppError> {
@@ -241,12 +229,13 @@ fn validate_salt(salt: &[u8]) -> Result<(), AppError> {
 }
 
 fn validate_object_id(object_id: &str) -> Result<(), AppError> {
-    if object_id.is_empty()
-        || !object_id.is_ascii()
-        || !object_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+    if object_id.len() != 64
+        || !object_id
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
     {
         return Err(invalid_input(
-            "workspace sync object ID must be non-empty hexadecimal ASCII",
+            "workspace sync object ID must be 64 lowercase hexadecimal ASCII characters",
         ));
     }
     Ok(())
@@ -280,7 +269,12 @@ fn authentication_failed() -> AppError {
 
 #[cfg(test)]
 mod tests {
-    use super::{KdfParams, KeyMaterial};
+    use super::{derive_subkeys, KdfParams, KeyMaterial, SUBKEY_LEN, XNONCE_LEN};
+    use chacha20poly1305::{
+        aead::{Aead, Payload},
+        KeyInit, XChaCha20Poly1305, XNonce,
+    };
+    use hkdf::Hkdf;
     use sha2::{Digest, Sha256};
 
     const SALT: &[u8] = b"0123456789abcdef";
@@ -313,6 +307,79 @@ mod tests {
             },
         )
         .is_err());
+    }
+
+    #[test]
+    fn hkdf_uses_exact_protocol_info_labels() {
+        let master = [0x5a; 32];
+        let keys = derive_subkeys(&master).expect("subkey derivation should succeed");
+        let hkdf = Hkdf::<Sha256>::new(None, &master);
+
+        let cases: [(&[u8; SUBKEY_LEN], &[u8]); 5] = [
+            (&keys.manifest_key, b"manifest"),
+            (&keys.blob_key, b"blob"),
+            (&keys.object_id_key, b"object-id"),
+            (&keys.nonce_key, b"nonce"),
+            (&keys.key_check_key, b"key-check"),
+        ];
+
+        for (actual, label) in cases {
+            let mut expected = [0_u8; SUBKEY_LEN];
+            hkdf.expand(label, &mut expected)
+                .expect("32-byte HKDF expansion should succeed");
+            assert_eq!(actual, &expected, "unexpected HKDF info label");
+        }
+    }
+
+    #[test]
+    fn blob_aad_is_exactly_the_caller_bytes() {
+        let keys = keys("password");
+        let plaintext = b"blob payload";
+        let aad = b"caller-controlled-aad";
+        let object_id = keys.object_id(DOMAIN, plaintext);
+        let ciphertext = keys
+            .encrypt_blob(&object_id, plaintext, aad)
+            .expect("blob encryption should succeed");
+        let hkdf = Hkdf::<Sha256>::new(Some(object_id.as_bytes()), &keys.blob_key);
+        let mut object_key = [0_u8; SUBKEY_LEN];
+        hkdf.expand(b"blob", &mut object_key)
+            .expect("object key derivation should succeed");
+        let nonce = keys.object_nonce(&object_id);
+        let cipher = XChaCha20Poly1305::new((&object_key).into());
+
+        let decrypted = cipher
+            .decrypt(
+                XNonce::from_slice(&nonce),
+                Payload {
+                    msg: &ciphertext,
+                    aad,
+                },
+            )
+            .expect("raw AEAD should authenticate the caller AAD without a prefix");
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn manifest_aad_is_exactly_the_caller_bytes() {
+        let keys = keys("password");
+        let plaintext = b"manifest payload";
+        let aad = b"caller-controlled-aad";
+        let encrypted = keys
+            .encrypt_manifest(plaintext, aad)
+            .expect("manifest encryption should succeed");
+        let (nonce, ciphertext) = encrypted.split_at(XNONCE_LEN);
+        let cipher = XChaCha20Poly1305::new((&keys.manifest_key).into());
+
+        let decrypted = cipher
+            .decrypt(
+                XNonce::from_slice(nonce),
+                Payload {
+                    msg: ciphertext,
+                    aad,
+                },
+            )
+            .expect("raw AEAD should authenticate the caller AAD without a prefix");
+        assert_eq!(decrypted, plaintext);
     }
 
     #[test]
@@ -425,10 +492,19 @@ mod tests {
     #[test]
     fn invalid_object_ids_are_rejected() {
         let keys = keys("password");
+        let invalid = [
+            String::new(),
+            "aa".to_string(),
+            "a".repeat(63),
+            "A".repeat(64),
+            format!("{}g", "a".repeat(63)),
+        ];
 
-        for invalid in ["", "not-hex", "密文"] {
-            assert!(keys.encrypt_blob(invalid, b"secret", b"aad").is_err());
-            assert!(keys.decrypt_blob(invalid, b"ciphertext", b"aad").is_err());
+        for object_id in invalid {
+            assert!(keys.encrypt_blob(&object_id, b"secret", b"aad").is_err());
+            assert!(keys
+                .decrypt_blob(&object_id, b"ciphertext", b"aad")
+                .is_err());
         }
     }
 
