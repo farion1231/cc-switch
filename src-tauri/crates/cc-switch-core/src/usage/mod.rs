@@ -196,6 +196,7 @@ pub(crate) fn dispatch(
     state: &HeadlessState,
     command: &str,
     args: Value,
+    cancellation: &OperationCancellation,
 ) -> Result<Value, CommandError> {
     match command {
         "usage.summary" => {
@@ -271,17 +272,11 @@ pub(crate) fn dispatch(
                 &args.app_type,
             )?)
         }
-        "usage.session_sync" => {
-            // Task 8 先提供同步 RPC 入口；Task 9 的 Agent worker 会把请求级 token
-            // 传入同一服务，以便 Cancel 帧能中断目录扫描、备份和导入边界。
-            let cancellation = OperationCancellation::active();
-            serialize(UsageService::sync_sessions(state, &cancellation)?)
-        }
+        "usage.session_sync" => serialize(UsageService::sync_sessions(state, cancellation)?),
         "usage.codex_rebuild" => {
             // 重建顺序和取消检查统一封装在 Core，分发层不得自行拆开 backup/reset/import，
             // 否则远程断线时可能留下无法解释的半完成状态。
-            let cancellation = OperationCancellation::active();
-            serialize(UsageService::rebuild_codex(state, &cancellation)?)
+            serialize(UsageService::rebuild_codex(state, cancellation)?)
         }
         _ => Err(CommandError::CapabilityUnavailable(command.to_string())),
     }

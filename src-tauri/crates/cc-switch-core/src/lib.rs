@@ -10,7 +10,7 @@ mod schema;
 mod state;
 mod usage;
 
-pub use dispatch::{dispatch_command, CommandError};
+pub use dispatch::{dispatch_command, dispatch_command_with_cancellation, CommandError};
 pub use error::CoreError;
 // Provider 的完整 DTO 与数据库服务统一从独立模块导出，RPC 与桌面适配层不得再维护私有 SQL。
 pub use provider::{project_provider, LiveContext, SwitchResult, TargetPlatform};

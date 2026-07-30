@@ -136,14 +136,15 @@ impl OpenSshSession {
     }
 
     pub fn invoke(
-        &mut self,
+        &self,
         request_id: &str,
         command: &str,
         args: serde_json::Value,
         timeout_ms: u64,
     ) -> Result<serde_json::Value, RemoteSshError> {
+        let operation_id = uuid::Uuid::new_v4().to_string();
         self.protocol
-            .invoke_with_id(request_id, command, args, timeout_ms)
+            .invoke_with_id(request_id, &operation_id, command, args, timeout_ms)
             .map_err(RemoteSshError::Client)
     }
 }
@@ -324,7 +325,7 @@ pub enum RemoteSshError {
 }
 
 impl RemoteSshError {
-    pub fn code(&self) -> &'static str {
+    pub fn code(&self) -> &str {
         match self {
             Self::HostKeyNotTrusted => "HOST_KEY_NOT_TRUSTED",
             Self::AuthenticationFailed => "AUTH_FAILED",
@@ -337,6 +338,7 @@ impl RemoteSshError {
             Self::AgentStartFailed(_) => "AGENT_START_FAILED",
             Self::AgentIncompatible(_) => "AGENT_INCOMPATIBLE",
             Self::Validation(_) => "REMOTE_TARGET_INVALID",
+            Self::Client(error) => error.code(),
             _ => "REMOTE_CONNECTION_ERROR",
         }
     }

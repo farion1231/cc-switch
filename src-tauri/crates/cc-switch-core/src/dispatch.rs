@@ -3,7 +3,10 @@ use serde_json::Value;
 
 use cc_switch_protocol::capabilities::{CommandCapabilityRegistry, RemoteCapabilityError};
 
-use crate::{CoreError, HeadlessState, ProviderRecord, ProviderService, ProviderSortUpdate};
+use crate::{
+    CoreError, HeadlessState, OperationCancellation, ProviderRecord, ProviderService,
+    ProviderSortUpdate,
+};
 
 /// 通用远程分发入口先经过协议白名单，再按领域委托；任何未迁移领域都显式失败。
 pub fn dispatch_command(
@@ -11,11 +14,22 @@ pub fn dispatch_command(
     command: &str,
     args: Value,
 ) -> Result<Value, CommandError> {
+    dispatch_command_with_cancellation(state, command, args, &OperationCancellation::active())
+}
+
+/// Agent worker 通过该入口把 operation registry 中的 token 传到长任务；普通调用
+/// 继续使用 `dispatch_command`，避免短命令调用方承担无意义的取消状态。
+pub fn dispatch_command_with_cancellation(
+    state: &HeadlessState,
+    command: &str,
+    args: Value,
+    cancellation: &OperationCancellation,
+) -> Result<Value, CommandError> {
     CommandCapabilityRegistry::remote_supported().require(command)?;
     if command.starts_with("provider.") {
         return dispatch_provider(state, command, args);
     }
-    crate::usage::dispatch(state, command, args)
+    crate::usage::dispatch(state, command, args, cancellation)
 }
 
 fn dispatch_provider(

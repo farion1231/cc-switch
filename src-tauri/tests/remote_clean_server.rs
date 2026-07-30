@@ -70,7 +70,7 @@ fn clean_linux_server_runs_ephemeral_provider_slice_and_leaves_no_agent() {
     );
 
     {
-        let mut session = OpenSshSession::connect(&target).expect("连接干净 Linux 服务器");
+        let session = OpenSshSession::connect(&target).expect("连接干净 Linux 服务器");
         for (index, (id, name)) in [("clean-a", "Clean A"), ("clean-b", "Clean B")]
             .into_iter()
             .enumerate()

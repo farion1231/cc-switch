@@ -104,7 +104,7 @@ pub async fn remote_invoke(
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RemoteErrorPayload<'a> {
-    code: &'static str,
+    code: &'a str,
     message: &'a str,
 }
 

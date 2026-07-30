@@ -84,6 +84,15 @@ pub struct RpcRequest {
     pub operation_id: Option<String>,
 }
 
+/// request ID 关联一次响应，operation ID 跨超时与取消生命周期定位 worker；
+/// 两者同时携带可防止迟到 Cancel 误伤其他请求。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelRequest {
+    pub request_id: String,
+    pub operation_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Hello {

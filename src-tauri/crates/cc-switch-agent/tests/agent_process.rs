@@ -4,7 +4,8 @@ use std::time::{Duration, Instant};
 
 use cc_switch_core::ProviderRecord;
 use cc_switch_protocol::protocol::{
-    decode_frame, write_frame, Frame, FrameKind, Hello, HelloAck, RpcRequest, RpcResponse,
+    decode_frame, write_frame, CancelRequest, Frame, FrameKind, Hello, HelloAck, RpcRequest,
+    RpcResponse,
 };
 use serde_json::{json, Value};
 
@@ -268,4 +269,106 @@ fn cli_modes_have_stable_output_and_exit_codes() {
         unsupported.stdout.is_empty(),
         "非法调用不能污染 stdout 协议通道"
     );
+}
+
+#[test]
+fn cancelled_usage_operation_keeps_agent_session_available() {
+    let home = tempfile::tempdir().expect("创建隔离 HOME");
+    let sessions = home.path().join(".codex/sessions/2026/07/30");
+    std::fs::create_dir_all(&sessions).expect("创建 Codex sessions");
+    // 足够多的文件确保 worker 进入可取消扫描阶段；每个文件都只含非计费元数据，
+    // 测试不依赖机器速度制造大数据库。
+    for index in 0..512 {
+        std::fs::write(
+            sessions.join(format!("rollout-{index:04}.jsonl")),
+            serde_json::json!({
+                "timestamp": "2026-07-30T10:00:00Z",
+                "type": "session_meta",
+                "payload": { "id": format!("session-{index}") }
+            })
+            .to_string(),
+        )
+        .expect("写入 Codex 取消 fixture");
+    }
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cc-switch-agent"))
+        .arg("--stdio")
+        .env("CC_SWITCH_TEST_HOME", home.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("启动独立 Agent");
+    let mut stdin = child.stdin.take().expect("Agent stdin");
+    let mut stdout = child.stdout.take().expect("Agent stdout");
+    write_frame(
+        &mut stdin,
+        &Frame::from_json(
+            FrameKind::Hello,
+            &Hello {
+                app_version: env!("CARGO_PKG_VERSION").to_string(),
+                protocol_minor: 0,
+            },
+        )
+        .expect("编码 hello"),
+    )
+    .expect("写入 hello");
+    assert_eq!(
+        decode_frame(&mut stdout).expect("读取 hello ack").kind,
+        FrameKind::HelloAck
+    );
+
+    write_frame(
+        &mut stdin,
+        &Frame::from_json(
+            FrameKind::Request,
+            &RpcRequest {
+                id: "cancel-request".to_string(),
+                command: "usage.session_sync".to_string(),
+                args: json!({}),
+                timeout_ms: 300_000,
+                operation_id: Some("cancel-operation".to_string()),
+            },
+        )
+        .expect("编码长任务请求"),
+    )
+    .expect("写入长任务请求");
+    write_frame(
+        &mut stdin,
+        &Frame::from_json(
+            FrameKind::Cancel,
+            &CancelRequest {
+                request_id: "cancel-request".to_string(),
+                operation_id: "cancel-operation".to_string(),
+            },
+        )
+        .expect("编码取消帧"),
+    )
+    .expect("写入取消帧");
+
+    let response: RpcResponse = decode_frame(&mut stdout)
+        .expect("读取取消响应")
+        .json()
+        .expect("解析取消响应");
+    assert_eq!(response.id, "cancel-request");
+    assert_eq!(
+        response.error.expect("取消错误").code,
+        "REMOTE_OPERATION_CANCELLED"
+    );
+
+    write_frame(
+        &mut stdin,
+        &Frame {
+            kind: FrameKind::Ping,
+            major: cc_switch_protocol::protocol::PROTOCOL_MAJOR,
+            payload: b"still-alive".to_vec(),
+        },
+    )
+    .expect("写入取消后 ping");
+    assert_eq!(
+        decode_frame(&mut stdout).expect("读取 pong").kind,
+        FrameKind::Pong
+    );
+    drop(stdin);
+    drop(stdout);
+    assert!(child.wait().expect("等待 Agent 退出").success());
 }

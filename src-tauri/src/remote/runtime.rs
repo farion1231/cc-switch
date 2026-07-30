@@ -190,7 +190,7 @@ pub enum RemoteRuntimeError {
 }
 
 impl RemoteRuntimeError {
-    pub fn code(&self) -> &'static str {
+    pub fn code(&self) -> &str {
         match self {
             Self::Store(_) => "REMOTE_TARGET_STORE_ERROR",
             Self::StatePoisoned(_) => "REMOTE_STATE_ERROR",
@@ -199,11 +199,11 @@ impl RemoteRuntimeError {
             Self::Capability(_) => "COMMAND_NOT_EXPOSED",
             Self::Ssh(RemoteSshError::Validation(_)) => "REMOTE_TARGET_INVALID",
             Self::Ssh(error) => ssh_error_code(error),
-            Self::Client(_) => "REMOTE_PROTOCOL_ERROR",
+            Self::Client(error) => error.code(),
         }
     }
 }
 
-fn ssh_error_code(error: &RemoteSshError) -> &'static str {
+fn ssh_error_code(error: &RemoteSshError) -> &str {
     error.code()
 }
