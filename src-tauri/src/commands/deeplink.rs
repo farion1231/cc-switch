@@ -265,6 +265,26 @@ fn inspect_provider_switch_internal(
         None
     };
     let is_current = effective_current_provider_id.as_deref() == Some(request.id.as_str());
+    if is_current {
+        let live_config = live_settings
+            .get("config")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                AppError::InvalidInput(
+                    "Live Codex configuration does not match the selected provider".to_string(),
+                )
+            })?;
+        let live_identity = mixed_provider_identity_from_config(live_config).map_err(|_| {
+            AppError::InvalidInput(
+                "Live Codex configuration does not match the selected provider".to_string(),
+            )
+        })?;
+        if live_identity != target_identity {
+            return Err(AppError::InvalidInput(
+                "Live Codex configuration does not match the selected provider".to_string(),
+            ));
+        }
+    }
     let snapshot = ProviderSwitchStateSnapshot {
         target_provider: serde_json::to_value(&provider)
             .map_err(|source| AppError::JsonSerialize { source })?,

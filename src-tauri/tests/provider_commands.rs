@@ -1552,7 +1552,7 @@ experimental_bearer_token = "target-provider-key"
 }
 
 #[test]
-fn provider_switch_does_not_report_success_when_current_id_and_live_target_disagree() {
+fn provider_switch_preview_rejects_current_id_and_live_target_disagreement_without_writing() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
     let auth = mixed_codex_auth();
@@ -1591,6 +1591,81 @@ fn provider_switch_does_not_report_success_when_current_id_and_live_target_disag
     })
     .expect("select target in device settings only");
 
+    let auth_before = std::fs::read(get_codex_auth_path()).expect("read OAuth before preview");
+    let config_before =
+        std::fs::read(get_codex_config_path()).expect("read stale live before preview");
+
+    let error = preview_provider_switch_test_hook(
+        &state,
+        &ProviderSwitchRequest {
+            version: "v1".to_string(),
+            resource: "provider-switch".to_string(),
+            app: "codex".to_string(),
+            id: "target-provider".to_string(),
+        },
+    )
+    .expect_err("a stale live endpoint must block the current-target preview");
+
+    assert!(error
+        .to_string()
+        .contains("does not match the selected provider"));
+    assert_eq!(
+        std::fs::read(get_codex_auth_path()).expect("read OAuth after rejected preview"),
+        auth_before
+    );
+    assert_eq!(
+        std::fs::read(get_codex_config_path()).expect("read live after rejected preview"),
+        config_before
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::Codex.as_str())
+            .expect("read database current after rejected preview")
+            .as_deref(),
+        Some("target-provider")
+    );
+    let home = PathBuf::from(std::env::var("HOME").expect("test HOME should be set"));
+    let saved_settings: AppSettings =
+        read_json_file(&settings_path(&home)).expect("read settings after rejected preview");
+    assert_eq!(
+        saved_settings.current_provider_codex.as_deref(),
+        Some("target-provider")
+    );
+}
+
+#[test]
+fn provider_switch_preview_reports_current_when_live_target_matches() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let auth = mixed_codex_auth();
+    let target_config = mixed_codex_config("target.example", "target-key");
+    write_codex_live_atomic(&auth, Some(&target_config)).expect("seed target live config");
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_provider(
+            AppType::Codex.as_str(),
+            &mixed_codex_provider(
+                "target-provider",
+                "Target Relay",
+                "target.example",
+                "target-key",
+                &auth,
+            ),
+        )
+        .expect("save target provider");
+    state
+        .db
+        .set_current_provider(AppType::Codex.as_str(), "target-provider")
+        .expect("select target in database");
+    update_settings(AppSettings {
+        preserve_codex_official_auth_on_switch: true,
+        current_provider_codex: Some("target-provider".to_string()),
+        ..Default::default()
+    })
+    .expect("select target in device settings");
+
     let preview = preview_provider_switch_test_hook(
         &state,
         &ProviderSwitchRequest {
@@ -1600,24 +1675,11 @@ fn provider_switch_does_not_report_success_when_current_id_and_live_target_disag
             id: "target-provider".to_string(),
         },
     )
-    .expect("preview apparently current target");
-    assert!(preview.is_current, "test requires a current target ID");
-    let auth_before = std::fs::read(get_codex_auth_path()).expect("read OAuth before confirm");
-    let config_before =
-        std::fs::read(get_codex_config_path()).expect("read stale live before confirm");
+    .expect("preview matching current target");
 
-    let error = confirm_provider_switch_test_hook(&state, &preview.review_token)
-        .expect_err("a stale live endpoint must not be reported as a successful switch");
-
-    assert!(error.to_string().contains("could not prove"));
-    assert_eq!(
-        std::fs::read(get_codex_auth_path()).expect("read OAuth after rejected confirm"),
-        auth_before
-    );
-    assert_eq!(
-        std::fs::read(get_codex_config_path()).expect("read live after rejected confirm"),
-        config_before
-    );
+    assert!(preview.is_current);
+    cancel_provider_switch_test_hook(&state, &preview.review_token)
+        .expect("cancel matching current-target review");
 }
 
 #[test]
