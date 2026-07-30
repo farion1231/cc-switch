@@ -59,7 +59,8 @@ impl CostCalculator {
         pricing: &ModelPricing,
         cost_multiplier: Decimal,
     ) -> CostBreakdown {
-        let input_includes_cache_read = matches!(app_type, "codex" | "gemini" | "grokbuild");
+        let input_includes_cache_read =
+            crate::services::sql_helpers::is_cache_inclusive_app(app_type);
         Self::calculate_with_cache_semantics(
             usage,
             pricing,

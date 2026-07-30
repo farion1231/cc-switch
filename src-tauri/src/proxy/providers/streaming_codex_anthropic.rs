@@ -589,6 +589,21 @@ pub(crate) fn responses_sse_events_from_anthropic_message(
     tool_context: CodexToolContext,
 ) -> Vec<Bytes> {
     let mut state = AnthropicToResponsesState::with_tool_context(tool_context);
+
+    // The whole conversion below assumes `body` is an Anthropic message object.
+    // A misbehaving gateway can return a top-level JSON array (or scalar) with
+    // HTTP 200 despite `stream:true`; index-assigning `message_start["content"]`
+    // on such a non-object would panic. Bail out gracefully instead.
+    if !body.is_object() {
+        return state
+            .failed_event(
+                "upstream returned a non-object Anthropic message body".to_string(),
+                Some("invalid_response".to_string()),
+            )
+            .into_iter()
+            .collect();
+    }
+
     if body.get("type").and_then(Value::as_str) == Some("error") || body.get("error").is_some() {
         let (message, error_type) = extract_anthropic_sse_error(body);
         return state
@@ -817,6 +832,15 @@ mod tests {
         assert!(merged.contains("authentication_error"));
         assert!(merged.contains("bad key"));
         assert!(!merged.contains("stream_truncated"));
+    }
+
+    #[test]
+    fn test_json_non_object_body_returns_failed_event_not_panic() {
+        // A gateway that ignores `stream:true` and returns a top-level JSON array
+        // would have panicked on `message_start["content"] = …` before the guard.
+        let merged = render_message_events(&json!([1, 2, 3]));
+        assert!(merged.contains("event: response.failed"));
+        assert!(merged.contains("invalid_response"));
     }
 
     #[test]

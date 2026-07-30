@@ -5,11 +5,77 @@ import { configApi } from "@/lib/api";
 const LEGACY_STORAGE_KEY = "cc-switch:gemini-common-config-snippet";
 const DEFAULT_GEMINI_COMMON_CONFIG_SNIPPET = "{}";
 
+/** 供应商专属、不可共享的键（端点与主凭据），按名单剥离。 */
 const GEMINI_COMMON_ENV_FORBIDDEN_KEYS = [
   "GOOGLE_GEMINI_BASE_URL",
   "GEMINI_API_KEY",
 ] as const;
-type GeminiForbiddenEnvKey = (typeof GEMINI_COMMON_ENV_FORBIDDEN_KEYS)[number];
+
+/**
+ * 凭据键的模式匹配，对应后端 `ProviderService::is_sensitive_config_key`。
+ *
+ * 共享片段会被深合并进**其它** Gemini 供应商的 env，所以任何凭据都不能进来。
+ * 固定名单挡不住下一个 `*_API_KEY`（`GOOGLE_API_KEY` 就是这么漏过去的），
+ * 必须用模式覆盖整类。两端判定要一致，否则后端清理完还能从这里手工写回去。
+ */
+const SENSITIVE_EXACT = [
+  "APIKEY",
+  "API_KEY",
+  "TOKEN",
+  "SECRET",
+  "PASSWORD",
+  "CREDENTIALS",
+];
+// 单数 `_TOKEN` 命中 AWS_SESSION_TOKEN 等，但不误伤复数 `_TOKENS`（那是正常配置）
+const SENSITIVE_SUFFIXES = [
+  // 裸 `_KEY` 是最常见的凭据写法（OPENAI_KEY / GROQ_KEY / XAI_KEY…），必须单列：
+  // 只枚举 `_API_KEY` / `_ACCESS_KEY` 这些子类，等于把最普通的那一种漏在外面。
+  "_KEY",
+  "_API_KEY",
+  "_ACCESS_KEY",
+  "_ACCESS_KEY_ID",
+  "_KEY_ID",
+  "_PRIVATE_KEY",
+  // 不带分隔符的复合写法各走各的后缀：`_KEY` 够不着 `..._APIKEY`。
+  "_APIKEY",
+  "_ACCESSKEY",
+  "_SECRETKEY",
+  "_APITOKEN",
+  "_AUTH_TOKEN",
+  "_TOKEN",
+  // GITHUB_PAT / GITLAB_PAT 等 personal access token 的惯用写法，
+  // 既不含 TOKEN 也不含 KEY，前面每一条规则都够不着。
+  "_PAT",
+  // 口令类的常见缩写。`_PASS` 不会误伤 `*_BYPASS`，`_PWD` 不会误伤 PWD / OLDPWD。
+  "_PWD",
+  "_PASS",
+  "_PASSPHRASE",
+  "_CREDS",
+];
+const SENSITIVE_CONTAINS = [
+  "SECRET",
+  "PASSWORD",
+  "PASSWD",
+  "CREDENTIAL",
+  "PRIVATE_KEY",
+  "BEARER_TOKEN",
+];
+
+function isForbiddenCommonEnvKey(name: string): boolean {
+  if (
+    GEMINI_COMMON_ENV_FORBIDDEN_KEYS.includes(
+      name as (typeof GEMINI_COMMON_ENV_FORBIDDEN_KEYS)[number],
+    )
+  ) {
+    return true;
+  }
+  const upper = name.toUpperCase();
+  return (
+    SENSITIVE_EXACT.includes(upper) ||
+    SENSITIVE_SUFFIXES.some((suffix) => upper.endsWith(suffix)) ||
+    SENSITIVE_CONTAINS.some((part) => upper.includes(part))
+  );
+}
 
 interface UseGeminiCommonConfigProps {
   envValue: string;
@@ -90,9 +156,7 @@ export function useGeminiCommonConfig({
       }
 
       const keys = Object.keys(parsed);
-      const forbiddenKeys = keys.filter((key) =>
-        GEMINI_COMMON_ENV_FORBIDDEN_KEYS.includes(key as GeminiForbiddenEnvKey),
-      );
+      const forbiddenKeys = keys.filter(isForbiddenCommonEnvKey);
       if (forbiddenKeys.length > 0) {
         return {
           env: {},

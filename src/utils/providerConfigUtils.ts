@@ -10,11 +10,53 @@ const isPlainObject = (value: unknown): value is Record<string, any> => {
   return Object.prototype.toString.call(value) === "[object Object]";
 };
 
+/**
+ * 遍历配置对象时必须跳过的键。
+ *
+ * `JSON.parse('{"__proto__":{…}}')` 产生的 `__proto__` 是**自有可枚举属性**，
+ * 会被 `Object.entries` 取出；而 `isPlainObject(target["__proto__"])` 对
+ * `Object.prototype` 返回 true，于是递归直接写进全局原型。通用配置片段
+ * (`settings.common_config_*`) 会被 WebDAV/S3 同步的远端覆盖，所以这条路径
+ * 不需要 XSS 就可达。
+ *
+ * 正常流程里片段在入口已经过 `sanitizeSnippet`，下面三个遍历函数
+ * (`deepMerge` / `deepRemove` / `isSubset`) 不会再见到这些键；它们各自仍带一层
+ * 检查，是为了让每个函数**单独拿出来用也是安全的**，不依赖调用方记得先净化。
+ */
+const FORBIDDEN_MERGE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+/**
+ * 递归剥掉禁键，得到"实际会被写进配置的那份片段"。
+ *
+ * 只给**读取侧**（`hasCommonConfigSnippet` / `hasTomlCommonConfigSnippet`）用，
+ * 写入侧不需要——`deepMerge` / `deepRemove` 自身就跳过禁键，净化前后输出相同。
+ *
+ * 之所以读取侧非做不可：两侧对禁键的处理**语义不同**。写入侧是"跳过这个键、
+ * 继续处理其余字段"，而 `isSubset` 出于安全必须"见到禁键就整体否决"。于是
+ * `{"env":{"A":"1"},"__proto__":{}}` 会真的写入 `env.A`，却被判定成"未应用"——
+ * 片段部分生效，而开关永远显示未启用。
+ *
+ * 让读取侧先净化，比对的就是写入侧真正会产生的那份内容，两边不再各说各话。
+ */
+const sanitizeSnippet = (value: any): any => {
+  if (Array.isArray(value)) return value.map(sanitizeSnippet);
+  if (!isPlainObject(value)) return value;
+
+  const cleaned: Record<string, any> = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (FORBIDDEN_MERGE_KEYS.has(key)) continue;
+    cleaned[key] = sanitizeSnippet(child);
+  }
+  return cleaned;
+};
+
 const deepMerge = (
   target: Record<string, any>,
   source: Record<string, any>,
 ): Record<string, any> => {
   Object.entries(source).forEach(([key, value]) => {
+    if (FORBIDDEN_MERGE_KEYS.has(key)) return;
+
     if (isPlainObject(value)) {
       if (!isPlainObject(target[key])) {
         target[key] = {};
@@ -33,6 +75,9 @@ const deepRemove = (
   source: Record<string, any>,
 ) => {
   Object.entries(source).forEach(([key, value]) => {
+    // 同 deepMerge：这里更危险——`"__proto__" in target` 恒为 true（`in` 查
+    // 原型链），不跳过会递归进 `Object.prototype` 并 `delete` 掉它的属性。
+    if (FORBIDDEN_MERGE_KEYS.has(key)) return;
     if (!(key in target)) return;
 
     if (isPlainObject(value) && isPlainObject(target[key])) {
@@ -51,9 +96,17 @@ const deepRemove = (
 const isSubset = (target: any, source: any): boolean => {
   if (isPlainObject(source)) {
     if (!isPlainObject(target)) return false;
-    return Object.entries(source).every(([key, value]) =>
-      isSubset(target[key], value),
-    );
+    return Object.entries(source).every(([key, value]) => {
+      // 兜底（正常流程已被 sanitizeSnippet 剥掉）。这里只读不写，不会污染原型，
+      // 但不拦就会走进 `target["__proto__"]`（索引查原型链），拿
+      // `Object.prototype` 去比对——`{"__proto__":{}}` 会被判成**任何**配置的子集。
+      // 选择否决而不是跳过：万一有调用方绕过净化，"误报未应用"（用户再点一次，
+      // 合并是幂等的）比"误报已应用"安全。
+      if (FORBIDDEN_MERGE_KEYS.has(key)) return false;
+      // 继承来的键不算"配置里有这一项"，必须是自有属性。
+      if (!Object.prototype.hasOwnProperty.call(target, key)) return false;
+      return isSubset(target[key], value);
+    });
   }
 
   if (Array.isArray(source)) {
@@ -119,6 +172,8 @@ export const updateCommonConfigSnippet = (
     };
   }
 
+  // 这里不必净化：deepMerge / deepRemove 自身就跳过禁键，净化前后输出逐字节相同。
+  // 需要净化的是**读取侧**（hasCommonConfigSnippet），原因见 sanitizeSnippet。
   const snippet = JSON.parse(snippetString) as Record<string, any>;
 
   if (enabled) {
@@ -143,8 +198,13 @@ export const hasCommonConfigSnippet = (
   try {
     if (!snippetString.trim()) return false;
     const config = jsonString ? JSON.parse(jsonString) : {};
-    const snippet = JSON.parse(snippetString);
-    if (!isPlainObject(snippet)) return false;
+    const parsed = JSON.parse(snippetString);
+    if (!isPlainObject(parsed)) return false;
+    // 与 updateCommonConfigSnippet 用同一份净化结果比对。
+    const snippet = sanitizeSnippet(parsed);
+    // 全是禁键时净化后为空对象——空片段什么也没应用，不能报"已启用"
+    //（`isSubset(config, {})` 对任何配置都是 true）。
+    if (Object.keys(snippet).length === 0) return false;
     return isSubset(config, snippet);
   } catch (err) {
     return false;
@@ -357,7 +417,13 @@ export const hasTomlCommonConfigSnippet = (
 
   try {
     const config = parseToml(normalizeTomlText(tomlString || ""));
-    const snippet = parseToml(normalizeTomlText(snippetString));
+    // 与 JSON 侧同样净化：smol-toml 也会把 `["__proto__"]` 这类表头解析成自有键。
+    const snippet = sanitizeSnippet(
+      parseToml(normalizeTomlText(snippetString)),
+    );
+    if (!isPlainObject(snippet) || Object.keys(snippet).length === 0) {
+      return false;
+    }
     return isSubset(config, snippet);
   } catch {
     // Fallback to text-based matching if TOML parsing fails
