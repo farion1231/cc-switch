@@ -998,6 +998,8 @@
   },
   "providerForm": {
     "supplierName": "供应商名称",
+    "unifySessionHistory": "统一会话历史",
+    "unifySessionHistoryDescription": "切换到此供应商时，将所有历史会话的 provider 统一为当前供应商，重启 Codex 后可看到全部会话。",
     "supplierNameRequired": "供应商名称 *",
     "supplierNamePlaceholder": "例如：Anthropic 官方",
     "websiteUrl": "官网地址",
