@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+/// 远程命令的安全与调度元数据；桌面 runtime 和 Agent 握手必须共享同一份定义。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandCapability {
     pub name: &'static str,
@@ -14,56 +15,20 @@ pub struct CommandCapabilityRegistry {
 }
 
 impl CommandCapabilityRegistry {
-    /// 第一阶段只开放供应商纵向闭环。这里使用显式白名单，避免桌面端后续新增命令时
-    /// 被 Agent 自动暴露；扩展远程能力前必须先定义安全语义、超时和幂等性。
-    pub fn provider_phase() -> Self {
-        let mut commands = HashMap::new();
-        for capability in [
-            CommandCapability {
-                name: "provider.list",
-                read_only: true,
-                idempotent: true,
-                timeout_ms: 30_000,
-            },
-            CommandCapability {
-                name: "provider.current",
-                read_only: true,
-                idempotent: true,
-                timeout_ms: 30_000,
-            },
-            CommandCapability {
-                name: "provider.add",
-                read_only: false,
-                idempotent: false,
-                timeout_ms: 30_000,
-            },
-            CommandCapability {
-                name: "provider.update",
-                read_only: false,
-                idempotent: false,
-                timeout_ms: 30_000,
-            },
-            CommandCapability {
-                name: "provider.delete",
-                read_only: false,
-                idempotent: false,
-                timeout_ms: 30_000,
-            },
-            CommandCapability {
-                name: "provider.switch",
-                read_only: false,
-                idempotent: false,
-                timeout_ms: 60_000,
-            },
-            CommandCapability {
-                name: "provider.update_sort_order",
-                read_only: false,
-                idempotent: false,
-                timeout_ms: 30_000,
-            },
-        ] {
-            commands.insert(capability.name, capability);
-        }
+    /// 返回当前 Agent 明确开放的完整领域白名单；新增命令必须先定义幂等性和超时。
+    pub fn remote_supported() -> Self {
+        Self::from_capabilities(
+            provider_capabilities()
+                .into_iter()
+                .chain(usage_capabilities()),
+        )
+    }
+
+    fn from_capabilities(capabilities: impl IntoIterator<Item = CommandCapability>) -> Self {
+        let commands = capabilities
+            .into_iter()
+            .map(|capability| (capability.name, capability))
+            .collect();
         Self { commands }
     }
 
@@ -75,6 +40,53 @@ impl CommandCapabilityRegistry {
 
     pub fn names(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.commands.keys().copied()
+    }
+}
+
+fn provider_capabilities() -> [CommandCapability; 7] {
+    [
+        capability("provider.list", true, true, 30_000),
+        capability("provider.current", true, true, 30_000),
+        capability("provider.add", false, false, 30_000),
+        capability("provider.update", false, false, 30_000),
+        capability("provider.delete", false, false, 30_000),
+        capability("provider.switch", false, false, 60_000),
+        capability("provider.update_sort_order", false, false, 30_000),
+    ]
+}
+
+fn usage_capabilities() -> [CommandCapability; 16] {
+    [
+        capability("usage.summary", true, true, 30_000),
+        capability("usage.summary_by_app", true, true, 30_000),
+        capability("usage.trends", true, true, 30_000),
+        capability("usage.provider_stats", true, true, 30_000),
+        capability("usage.model_stats", true, true, 30_000),
+        capability("usage.logs", true, true, 30_000),
+        capability("usage.detail", true, true, 30_000),
+        capability("usage.data_sources", true, true, 30_000),
+        capability("usage.pricing.list", true, true, 30_000),
+        capability("usage.limits", true, true, 30_000),
+        capability("usage.provider_query", true, true, 30_000),
+        capability("usage.pricing.update", false, false, 30_000),
+        capability("usage.pricing.delete", false, false, 30_000),
+        capability("usage.provider_test", false, false, 30_000),
+        capability("usage.session_sync", false, false, 300_000),
+        capability("usage.codex_rebuild", false, false, 300_000),
+    ]
+}
+
+const fn capability(
+    name: &'static str,
+    read_only: bool,
+    idempotent: bool,
+    timeout_ms: u64,
+) -> CommandCapability {
+    CommandCapability {
+        name,
+        read_only,
+        idempotent,
+        timeout_ms,
     }
 }
 

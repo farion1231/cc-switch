@@ -140,7 +140,7 @@ impl RemoteRuntimeState {
         command: &str,
         args: serde_json::Value,
     ) -> Result<serde_json::Value, RemoteRuntimeError> {
-        let registry = CommandCapabilityRegistry::provider_phase();
+        let registry = CommandCapabilityRegistry::remote_supported();
         let capability = registry.require(command)?;
         let mut session = self.lock_session()?;
         let session = session.as_mut().ok_or(RemoteRuntimeError::Offline)?;

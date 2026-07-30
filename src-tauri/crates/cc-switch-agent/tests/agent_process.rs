@@ -89,6 +89,10 @@ fn stdio_agent_completes_provider_vertical_slice_and_exits_on_eof() {
     assert_eq!(ack.kind, FrameKind::HelloAck);
     let ack: HelloAck = ack.json().expect("解析 hello_ack");
     assert!(ack.capabilities.contains(&"provider.add".to_string()));
+    assert!(ack.capabilities.contains(&"usage.summary".to_string()));
+    assert!(ack
+        .capabilities
+        .contains(&"usage.codex_rebuild".to_string()));
 
     for item in [
         provider("remote-a", "Remote A"),

@@ -1,7 +1,7 @@
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
-use cc_switch_core::{dispatch_provider_command, HeadlessState, SCHEMA_VERSION};
+use cc_switch_core::{dispatch_command, HeadlessState, SCHEMA_VERSION};
 use cc_switch_protocol::capabilities::CommandCapabilityRegistry;
 use cc_switch_protocol::protocol::{
     decode_frame, write_frame, Frame, FrameKind, Hello, HelloAck, ProtocolError, RpcError,
@@ -58,7 +58,7 @@ pub fn run_session<R: Read, W: Write>(
     }
 
     let _hello: Hello = first.json()?;
-    let mut capabilities = CommandCapabilityRegistry::provider_phase()
+    let mut capabilities = CommandCapabilityRegistry::remote_supported()
         .names()
         .map(str::to_string)
         .collect::<Vec<_>>();
@@ -77,22 +77,21 @@ pub fn run_session<R: Read, W: Write>(
         match frame.kind {
             FrameKind::Request => {
                 let request: RpcRequest = frame.json()?;
-                let response =
-                    match dispatch_provider_command(state, &request.command, request.args) {
-                        Ok(result) => RpcResponse {
-                            id: request.id,
-                            result: Some(result),
-                            error: None,
-                        },
-                        Err(error) => RpcResponse {
-                            id: request.id,
-                            result: None,
-                            error: Some(RpcError {
-                                code: error.code().to_string(),
-                                message: sanitize_error(&error.to_string()),
-                            }),
-                        },
-                    };
+                let response = match dispatch_command(state, &request.command, request.args) {
+                    Ok(result) => RpcResponse {
+                        id: request.id,
+                        result: Some(result),
+                        error: None,
+                    },
+                    Err(error) => RpcResponse {
+                        id: request.id,
+                        result: None,
+                        error: Some(RpcError {
+                            code: error.code().to_string(),
+                            message: sanitize_error(&error.to_string()),
+                        }),
+                    },
+                };
                 write_frame(
                     &mut writer,
                     &Frame::from_json(FrameKind::Response, &response)?,
