@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import type { Provider, UsageScript } from "@/types";
+import { setRuntimeSnapshot } from "@/lib/runtime/store";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
@@ -51,6 +52,10 @@ vi.mock("@/lib/query", () => ({
   useUpdateProviderMutation: () => useUpdateProviderMutationMock(),
   useDeleteProviderMutation: () => useDeleteProviderMutationMock(),
   useSwitchProviderMutation: () => useSwitchProviderMutationMock(),
+  // 与生产 providerKeys 的本机 scope 形状保持一致，供动作 hook 的失效断言使用。
+  providerKeys: {
+    byApp: (appId: string) => ["providers", "local", 0, appId],
+  },
 }));
 
 const providersApiUpdateMock = vi.fn();
@@ -132,6 +137,7 @@ beforeEach(() => {
   useUpdateProviderMutationMock.mockClear();
   useDeleteProviderMutationMock.mockClear();
   useSwitchProviderMutationMock.mockClear();
+  setRuntimeSnapshot({ status: "local", generation: 0 });
 });
 
 describe("useProviderActions", () => {
@@ -612,7 +618,7 @@ describe("useProviderActions", () => {
       "claude",
     );
     expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: ["providers", "claude"],
+      queryKey: ["providers", "local", 0, "claude"],
     });
     expect(toastSuccessMock).toHaveBeenCalledTimes(1);
   });

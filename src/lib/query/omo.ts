@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { omoApi, omoSlimApi } from "@/lib/api/omo";
+import { providerKeys } from "@/lib/query/queries";
 
 // ── Factory ────────────────────────────────────────────────────
 
@@ -17,7 +18,7 @@ function createOmoQueryHooks(
   const keys = createOmoQueryKeys(variant);
 
   function invalidateAll(queryClient: ReturnType<typeof useQueryClient>) {
-    queryClient.invalidateQueries({ queryKey: ["providers"] });
+    queryClient.invalidateQueries({ queryKey: providerKeys.byApp("opencode") });
     queryClient.invalidateQueries({ queryKey: keys.currentProviderId() });
   }
 

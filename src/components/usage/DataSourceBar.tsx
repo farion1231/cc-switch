@@ -6,6 +6,7 @@ import { Database, FileText, RefreshCw, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useRuntimeQueryScope } from "@/lib/runtime/queryScope";
 
 interface DataSourceBarProps {
   refreshIntervalMs: number;
@@ -24,10 +25,11 @@ const DATA_SOURCE_ICONS: Record<string, React.ReactNode> = {
 export function DataSourceBar({ refreshIntervalMs }: DataSourceBarProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const scope = useRuntimeQueryScope();
   const [syncing, setSyncing] = useState(false);
 
   const { data: sources } = useQuery({
-    queryKey: [...usageKeys.all, "data-sources"],
+    queryKey: usageKeys.dataSources(scope),
     queryFn: usageApi.getDataSourceBreakdown,
     refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     refetchIntervalInBackground: false,
@@ -45,7 +47,7 @@ export function DataSourceBar({ refreshIntervalMs }: DataSourceBarProps) {
           }),
         );
         // Refresh all usage data
-        queryClient.invalidateQueries({ queryKey: usageKeys.all });
+        queryClient.invalidateQueries({ queryKey: usageKeys.all(scope) });
       } else {
         toast.info(
           t("usage.sessionSync.upToDate", {

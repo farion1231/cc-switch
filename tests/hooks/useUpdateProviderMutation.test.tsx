@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUpdateProviderMutation } from "@/lib/query/mutations";
 import { usageKeys } from "@/lib/query/usage";
+import { providerKeys } from "@/lib/query/queries";
+import { setRuntimeSnapshot } from "@/lib/runtime/store";
 import type { Provider } from "@/types";
 
 const apiMocks = vi.hoisted(() => ({
@@ -69,6 +71,8 @@ function createProvider(overrides: Partial<Provider> = {}): Provider {
 
 beforeEach(() => {
   apiMocks.update.mockReset().mockResolvedValue(true);
+  // 固定本机 generation，避免其他 runtime 测试留下的快照影响 Query Key 断言。
+  setRuntimeSnapshot({ status: "local", generation: 0 });
 });
 
 describe("useUpdateProviderMutation", () => {
@@ -85,13 +89,13 @@ describe("useUpdateProviderMutation", () => {
 
     expect(apiMocks.update).toHaveBeenCalledWith(provider, "codex", undefined);
     expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: ["providers", "codex"],
+      queryKey: providerKeys.byApp("codex"),
     });
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: usageKeys.script("provider-b", "codex"),
     });
     expect(invalidateSpy).not.toHaveBeenCalledWith({
-      queryKey: usageKeys.all,
+      queryKey: usageKeys.all(),
     });
   });
 
@@ -121,7 +125,7 @@ describe("useUpdateProviderMutation", () => {
       queryKey: usageKeys.script("provider-old", "openclaw"),
     });
     expect(invalidateSpy).not.toHaveBeenCalledWith({
-      queryKey: usageKeys.all,
+      queryKey: usageKeys.all(),
     });
   });
 });

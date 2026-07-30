@@ -47,6 +47,7 @@ import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { isTextEditableTarget } from "@/utils/domUtils";
+import { providerKeys } from "@/lib/query/queries";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -231,7 +232,7 @@ export function ProviderList({
     },
     onSuccess: (imported) => {
       if (imported) {
-        queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+        queryClient.invalidateQueries({ queryKey: providerKeys.byApp(appId) });
         if (appId === "claude-desktop") {
           queryClient.invalidateQueries({ queryKey: ["claudeDesktopStatus"] });
         }
@@ -246,7 +247,7 @@ export function ProviderList({
       toast.error(extractErrorMessage(error) || t("settings.importFailed"));
       // 导入失败前也可能已产生需要上屏的副作用：GrokBuild 官方登录态下点
       // 导入，命令层会先补种官方条目、随后才因 live 不可导入而报错。
-      queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      queryClient.invalidateQueries({ queryKey: providerKeys.byApp(appId) });
     },
   });
 

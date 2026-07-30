@@ -49,6 +49,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { usageApi } from "@/lib/api/usage";
 import { toast } from "sonner";
+import { useRuntimeQueryScope } from "@/lib/runtime/queryScope";
 
 const APP_FILTER_OPTIONS: AppTypeFilter[] = ["all", ...KNOWN_APP_TYPES];
 
@@ -91,6 +92,7 @@ export function UsageDashboard({
 }: UsageDashboardProps = {}) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
+  const scope = useRuntimeQueryScope();
   const [range, setRange] = useState<UsageRangeSelection>({ preset: "today" });
   const [appType, setAppType] = useState<AppTypeFilter>("all");
   const [providerName, setProviderName] = useState<string | undefined>(
@@ -131,7 +133,7 @@ export function UsageDashboard({
     const normalized = normalizeRefreshInterval(next);
     const previous = refreshIntervalMs;
     setRefreshIntervalMs(normalized);
-    queryClient.invalidateQueries({ queryKey: usageKeys.all });
+    queryClient.invalidateQueries({ queryKey: usageKeys.all(scope) });
     try {
       const saved = await onRefreshIntervalChange?.(normalized);
       if (saved === false) {
@@ -151,7 +153,7 @@ export function UsageDashboard({
     setRebuildingCodex(true);
     try {
       const result = await usageApi.rebuildCodexUsage();
-      await queryClient.invalidateQueries({ queryKey: usageKeys.all });
+      await queryClient.invalidateQueries({ queryKey: usageKeys.all(scope) });
       const message = t("usage.rebuildCodex.completed", {
         imported: result.imported,
         errors: result.errors.length,

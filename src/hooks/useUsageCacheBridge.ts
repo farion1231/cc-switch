@@ -4,6 +4,7 @@ import type { UsageResult } from "@/types";
 import type { SubscriptionQuota } from "@/types/subscription";
 import { usageKeys } from "@/lib/query/usage";
 import { subscriptionKeys } from "@/lib/query/subscription";
+import { useRuntimeQueryScope } from "@/lib/runtime/queryScope";
 import { useTauriEvent } from "./useTauriEvent";
 
 type UsageCacheUpdatedPayload =
@@ -26,11 +27,14 @@ type UsageCacheUpdatedPayload =
  */
 export function useUsageCacheBridge() {
   const queryClient = useQueryClient();
+  const scope = useRuntimeQueryScope();
 
   useTauriEvent<UsageCacheUpdatedPayload>("usage-cache-updated", (payload) => {
+    // 托盘和本地后端事件没有远端 target 标识；远端模式忽略它们，避免本机额度覆盖远端卡片。
+    if (scope[0] !== "local") return;
     if (payload.kind === "script") {
       queryClient.setQueryData<UsageResult>(
-        usageKeys.script(payload.providerId, payload.appType),
+        usageKeys.script(payload.providerId, payload.appType, scope),
         payload.data,
       );
     } else if (payload.kind === "subscription") {

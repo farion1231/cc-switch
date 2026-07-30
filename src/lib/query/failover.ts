@@ -3,6 +3,7 @@ import { failoverApi } from "@/lib/api/failover";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { providerKeys } from "@/lib/query/queries";
 
 // ========== 熔断器 Hooks ==========
 
@@ -43,7 +44,7 @@ export function useResetCircuitBreaker() {
       });
       // 刷新供应商列表（因为可能发生了自动恢复切换）
       queryClient.invalidateQueries({
-        queryKey: ["providers", variables.appType],
+        queryKey: providerKeys.byApp(variables.appType),
       });
       // 刷新代理状态（更新 active_targets）
       queryClient.invalidateQueries({
@@ -135,7 +136,7 @@ export function useAddToFailoverQueue() {
         queryKey: ["availableProvidersForFailover", variables.appType],
       });
       queryClient.invalidateQueries({
-        queryKey: ["providers", variables.appType],
+        queryKey: providerKeys.byApp(variables.appType),
       });
     },
   });
@@ -163,7 +164,7 @@ export function useRemoveFromFailoverQueue() {
         queryKey: ["availableProvidersForFailover", variables.appType],
       });
       queryClient.invalidateQueries({
-        queryKey: ["providers", variables.appType],
+        queryKey: providerKeys.byApp(variables.appType),
       });
       // 清除该供应商的健康状态缓存（退出队列后不再需要健康监控）
       queryClient.invalidateQueries({
@@ -280,7 +281,7 @@ export function useSetAutoFailoverEnabled() {
         queryKey: ["availableProvidersForFailover", variables.appType],
       });
       queryClient.invalidateQueries({
-        queryKey: ["providers", variables.appType],
+        queryKey: providerKeys.byApp(variables.appType),
       });
       queryClient.invalidateQueries({
         queryKey: ["proxyStatus"],

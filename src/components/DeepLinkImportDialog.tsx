@@ -17,6 +17,7 @@ import { PromptConfirmation } from "./deeplink/PromptConfirmation";
 import { McpConfirmation } from "./deeplink/McpConfirmation";
 import { SkillConfirmation } from "./deeplink/SkillConfirmation";
 import { ProviderIcon } from "./ProviderIcon";
+import { providerKeys } from "@/lib/query/queries";
 
 interface DeeplinkError {
   url: string;
@@ -130,12 +131,18 @@ export function DeepLinkImportDialog() {
         }
       };
 
+      // 旧版 Deep Link 结果允许省略 app；缺失时不能生成带 undefined 的 Provider key。
+      const invalidateProviderApp = async () => {
+        if (!request.app) return;
+        await queryClient.invalidateQueries({
+          queryKey: providerKeys.byApp(request.app),
+        });
+      };
+
       // Handle different result types
       if ("type" in result) {
         if (result.type === "provider") {
-          await queryClient.invalidateQueries({
-            queryKey: ["providers", request.app],
-          });
+          await invalidateProviderApp();
           toast.success(t("deeplink.importSuccess"), {
             description: t("deeplink.importSuccessDescription", {
               name: request.name,
@@ -179,9 +186,7 @@ export function DeepLinkImportDialog() {
         await refreshMcp(result);
       } else {
         // Legacy return type (string ID) - assume provider
-        await queryClient.invalidateQueries({
-          queryKey: ["providers", request.app],
-        });
+        await invalidateProviderApp();
         toast.success(t("deeplink.importSuccess"), {
           description: t("deeplink.importSuccessDescription", {
             name: request.name,

@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useQueryClient } from "@tanstack/react-query";
 import { usageKeys } from "@/lib/query/usage";
+import { useRuntimeQueryScope } from "@/lib/runtime/queryScope";
 
 /**
  * 监听后端 `usage-log-recorded` 事件，收到后立刻 invalidate 所有
@@ -14,6 +15,7 @@ import { usageKeys } from "@/lib/query/usage";
  */
 export function useUsageEventBridge() {
   const queryClient = useQueryClient();
+  const scope = useRuntimeQueryScope();
 
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
@@ -21,9 +23,11 @@ export function useUsageEventBridge() {
 
     (async () => {
       const off = await listen("usage-log-recorded", () => {
+        // 该 Tauri 事件只代表桌面本机写入；远端模式必须忽略，不能用本机事件刷新远端视图。
+        if (scope[0] !== "local") return;
         // invalidate 整个 usage 命名空间：summary / trends / providerStats /
         // modelStats / logs 全部跟着重拉
-        queryClient.invalidateQueries({ queryKey: usageKeys.all });
+        queryClient.invalidateQueries({ queryKey: usageKeys.all(scope) });
       });
 
       if (disposed) {
@@ -37,5 +41,5 @@ export function useUsageEventBridge() {
       disposed = true;
       unlisten?.();
     };
-  }, [queryClient]);
+  }, [queryClient, scope]);
 }

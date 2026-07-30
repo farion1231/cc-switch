@@ -1,9 +1,5 @@
 import { useRef } from "react";
-import {
-  useQuery,
-  type UseQueryResult,
-  keepPreviousData,
-} from "@tanstack/react-query";
+import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import {
   providersApi,
   settingsApi,
@@ -20,6 +16,11 @@ import type {
 } from "@/types";
 import { usageKeys } from "@/lib/query/usage";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import {
+  runtimeQueryScope,
+  useRuntimeQueryScope,
+  type RuntimeQueryScope,
+} from "@/lib/runtime/queryScope";
 
 const sortProviders = (
   providers: Record<string, Provider>,
@@ -49,6 +50,14 @@ export interface ProvidersQueryData {
   currentProviderId: string;
 }
 
+// Provider 与 Usage 共享 runtime scope 语义；root 前缀保留给维护场景清理全部目标。
+export const providerKeys = {
+  all: (scope: RuntimeQueryScope = runtimeQueryScope()) =>
+    ["providers", ...scope] as const,
+  byApp: (appId: string, scope: RuntimeQueryScope = runtimeQueryScope()) =>
+    [...providerKeys.all(scope), appId] as const,
+};
+
 export interface UseProvidersQueryOptions {
   isProxyRunning?: boolean; // 代理服务是否运行中
 }
@@ -58,10 +67,20 @@ export const useProvidersQuery = (
   options?: UseProvidersQueryOptions,
 ): UseQueryResult<ProvidersQueryData> => {
   const { isProxyRunning = false } = options || {};
+  const scope = useRuntimeQueryScope();
 
   return useQuery({
-    queryKey: ["providers", appId],
-    placeholderData: keepPreviousData,
+    queryKey: providerKeys.byApp(appId, scope),
+    // 同一主机切应用时保留旧列表以减少闪烁；runtime scope 一旦变化则必须立即清空，
+    // 绝不能把本机 Provider 当作远端加载中的占位数据展示。
+    placeholderData: (previousData, previousQuery) => {
+      const currentPrefix = providerKeys.all(scope);
+      const previousKey = previousQuery?.queryKey;
+      const sameRuntime = currentPrefix.every(
+        (part, index) => previousKey?.[index] === part,
+      );
+      return sameRuntime ? previousData : undefined;
+    },
     // 当代理服务运行时，每 10 秒刷新一次供应商列表
     // 这样可以自动反映后端熔断器自动禁用代理目标的变更
     refetchInterval: isProxyRunning ? 10000 : false,
@@ -248,6 +267,7 @@ export const useUsageQuery = (
   options?: UseUsageQueryOptions,
 ) => {
   const { enabled = true, autoQueryInterval = 0 } = options || {};
+  const scope = useRuntimeQueryScope();
 
   // 计算 staleTime：如果有自动刷新间隔，使用该间隔；否则默认 5 分钟
   // 这样可以避免切换 app 页面时重复触发查询
@@ -257,7 +277,7 @@ export const useUsageQuery = (
       : 5 * 60 * 1000; // 默认 5 分钟
 
   const query = useQuery<UsageResult>({
-    queryKey: usageKeys.script(providerId, appId),
+    queryKey: usageKeys.script(providerId, appId, scope),
     queryFn: async () => usageApi.query(providerId, appId),
     enabled: enabled && !!providerId,
     refetchInterval:
@@ -277,8 +297,17 @@ export const useUsageQuery = (
   });
 
   // Keep-last-good：失败时在 10 分钟窗口内继续展示上一次成功值（见 resolveDisplayUsage）。
-  // 每个 hook 实例各持一份 ref（按卡片维度）；ref 写入是幂等的（同份成功重复写无副作用）。
+  // 每个 hook 实例各持一份 ref（按卡片维度），但 scope 变化必须同步清空；
+  // 否则远端瞬时失败会把上一台主机的成功额度误当成当前目标的 last-good。
   const lastGoodRef = useRef<LastGoodUsage | null>(null);
+  const lastGoodScopeRef = useRef<RuntimeQueryScope>(scope);
+  const scopeChanged =
+    lastGoodScopeRef.current.length !== scope.length ||
+    scope.some((part, index) => lastGoodScopeRef.current[index] !== part);
+  if (scopeChanged) {
+    lastGoodRef.current = null;
+    lastGoodScopeRef.current = scope;
+  }
   const { data, lastQueriedAt, lastGood } = resolveDisplayUsage(
     query.data,
     query.dataUpdatedAt,

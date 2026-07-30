@@ -3,6 +3,7 @@ import { proxyApi } from "@/lib/api/proxy";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import type { GlobalProxyConfig, AppProxyConfig } from "@/types/proxy";
+import { providerKeys } from "@/lib/query/queries";
 
 // ========== 代理服务器状态 Hooks ==========
 
@@ -120,7 +121,7 @@ export function useSwitchProxyProvider() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
       queryClient.invalidateQueries({
-        queryKey: ["providers", variables.appType],
+        queryKey: providerKeys.byApp(variables.appType),
       });
     },
     onError: (error: Error) => {

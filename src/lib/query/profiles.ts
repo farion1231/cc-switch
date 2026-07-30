@@ -4,6 +4,8 @@ import { toast } from "sonner";
 import { profilesApi, providersApi } from "@/lib/api";
 import type { ProfileScope } from "@/lib/api/profiles";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { providerKeys } from "@/lib/query/queries";
+import { useRuntimeQueryScope } from "@/lib/runtime/queryScope";
 
 const updateTrayMenuSafely = async () => {
   try {
@@ -114,6 +116,7 @@ export const useClearProfileMutation = () => {
 export const useApplyProfileMutation = () => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
+  const scope = useRuntimeQueryScope();
 
   return useMutation({
     mutationFn: ({ id, scope }: { id: string; scope: ProfileScope }) =>
@@ -121,12 +124,14 @@ export const useApplyProfileMutation = () => {
     onSuccess: async (warnings) => {
       await queryClient.invalidateQueries({ queryKey: ["profiles"] });
       await queryClient.invalidateQueries({
-        queryKey: ["providers", "claude"],
+        queryKey: providerKeys.byApp("claude", scope),
       });
       await queryClient.invalidateQueries({
-        queryKey: ["providers", "claude-desktop"],
+        queryKey: providerKeys.byApp("claude-desktop", scope),
       });
-      await queryClient.invalidateQueries({ queryKey: ["providers", "codex"] });
+      await queryClient.invalidateQueries({
+        queryKey: providerKeys.byApp("codex", scope),
+      });
       await queryClient.invalidateQueries({ queryKey: ["mcp", "all"] });
       await queryClient.invalidateQueries({ queryKey: ["skills"] });
       await updateTrayMenuSafely();

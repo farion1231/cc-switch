@@ -12,10 +12,13 @@ import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import type { Provider } from "@/types";
 import { providersApi, type AppId } from "@/lib/api";
+import { providerKeys } from "@/lib/query/queries";
+import { useRuntimeQueryScope } from "@/lib/runtime/queryScope";
 
 export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
   const queryClient = useQueryClient();
   const { t, i18n } = useTranslation();
+  const scope = useRuntimeQueryScope();
 
   const sortedProviders = useMemo(() => {
     const locale =
@@ -77,7 +80,7 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
       try {
         await providersApi.updateSortOrder(updates, appId);
         await queryClient.invalidateQueries({
-          queryKey: ["providers", appId],
+          queryKey: providerKeys.byApp(appId, scope),
         });
 
         // 刷新故障转移队列（因为队列顺序依赖 sort_index）
@@ -108,7 +111,7 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
         );
       }
     },
-    [sortedProviders, appId, queryClient, t],
+    [sortedProviders, appId, queryClient, scope, t],
   );
 
   return {

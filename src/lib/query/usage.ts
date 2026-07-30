@@ -1,6 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { usageApi } from "@/lib/api/usage";
 import { resolveUsageRange } from "@/lib/usageRange";
+import {
+  runtimeQueryScope,
+  useRuntimeQueryScope,
+  type RuntimeQueryScope,
+} from "@/lib/runtime/queryScope";
 import type {
   LogFilters,
   UsageRangeSelection,
@@ -35,16 +40,20 @@ type RequestLogsKey = {
 
 // Query keys
 export const usageKeys = {
-  all: ["usage"] as const,
+  // scope 紧跟 domain root，允许按 ["usage", ...scope] 精确失效当前主机，
+  // 同时保留 ["usage"] 作为维护工具清理全部环境缓存的公共前缀。
+  all: (scope: RuntimeQueryScope = runtimeQueryScope()) =>
+    ["usage", ...scope] as const,
   summary: (
     preset: UsageRangeSelection["preset"],
     customStartDate: number | undefined,
     customEndDate: number | undefined,
     filters?: UsageScopeFilters,
     liveEndTime?: boolean,
+    scope: RuntimeQueryScope = runtimeQueryScope(),
   ) =>
     [
-      ...usageKeys.all,
+      ...usageKeys.all(scope),
       "summary",
       preset,
       customStartDate ?? 0,
@@ -60,9 +69,10 @@ export const usageKeys = {
     customEndDate: number | undefined,
     filters?: Pick<UsageScopeFilters, "providerName" | "model">,
     liveEndTime?: boolean,
+    scope: RuntimeQueryScope = runtimeQueryScope(),
   ) =>
     [
-      ...usageKeys.all,
+      ...usageKeys.all(scope),
       "summary-by-app",
       preset,
       customStartDate ?? 0,
@@ -77,9 +87,10 @@ export const usageKeys = {
     customEndDate: number | undefined,
     filters?: UsageScopeFilters,
     liveEndTime?: boolean,
+    scope: RuntimeQueryScope = runtimeQueryScope(),
   ) =>
     [
-      ...usageKeys.all,
+      ...usageKeys.all(scope),
       "trends",
       preset,
       customStartDate ?? 0,
@@ -95,9 +106,10 @@ export const usageKeys = {
     customEndDate: number | undefined,
     filters?: UsageScopeFilters,
     liveEndTime?: boolean,
+    scope: RuntimeQueryScope = runtimeQueryScope(),
   ) =>
     [
-      ...usageKeys.all,
+      ...usageKeys.all(scope),
       "provider-stats",
       preset,
       customStartDate ?? 0,
@@ -113,9 +125,10 @@ export const usageKeys = {
     customEndDate: number | undefined,
     filters?: UsageScopeFilters,
     liveEndTime?: boolean,
+    scope: RuntimeQueryScope = runtimeQueryScope(),
   ) =>
     [
-      ...usageKeys.all,
+      ...usageKeys.all(scope),
       "model-stats",
       preset,
       customStartDate ?? 0,
@@ -125,9 +138,14 @@ export const usageKeys = {
       filters?.providerName ?? null,
       filters?.model ?? null,
     ] as const,
-  logs: (key: RequestLogsKey, page: number, pageSize: number) =>
+  logs: (
+    key: RequestLogsKey,
+    page: number,
+    pageSize: number,
+    scope: RuntimeQueryScope = runtimeQueryScope(),
+  ) =>
     [
-      ...usageKeys.all,
+      ...usageKeys.all(scope),
       "logs",
       key.preset,
       key.customStartDate ?? 0,
@@ -140,13 +158,22 @@ export const usageKeys = {
       page,
       pageSize,
     ] as const,
-  detail: (requestId: string) =>
-    [...usageKeys.all, "detail", requestId] as const,
-  pricing: () => [...usageKeys.all, "pricing"] as const,
-  limits: (providerId: string, appType: string) =>
-    [...usageKeys.all, "limits", providerId, appType] as const,
-  script: (providerId: string, appType: string) =>
-    [...usageKeys.all, providerId, appType] as const,
+  detail: (requestId: string, scope: RuntimeQueryScope = runtimeQueryScope()) =>
+    [...usageKeys.all(scope), "detail", requestId] as const,
+  dataSources: (scope: RuntimeQueryScope = runtimeQueryScope()) =>
+    [...usageKeys.all(scope), "data-sources"] as const,
+  pricing: (scope: RuntimeQueryScope = runtimeQueryScope()) =>
+    [...usageKeys.all(scope), "pricing"] as const,
+  limits: (
+    providerId: string,
+    appType: string,
+    scope: RuntimeQueryScope = runtimeQueryScope(),
+  ) => [...usageKeys.all(scope), "limits", providerId, appType] as const,
+  script: (
+    providerId: string,
+    appType: string,
+    scope: RuntimeQueryScope = runtimeQueryScope(),
+  ) => [...usageKeys.all(scope), "script", providerId, appType] as const,
 };
 
 /** 把 UI 侧的 "all" 哨兵归一成 undefined（后端语义：不过滤）。 */
@@ -164,6 +191,7 @@ export function useUsageSummary(
   filters?: UsageScopeFilters,
   options?: UsageQueryOptions,
 ) {
+  const scope = useRuntimeQueryScope();
   const effective = normalizeScopeFilters(filters);
   return useQuery({
     queryKey: usageKeys.summary(
@@ -172,6 +200,7 @@ export function useUsageSummary(
       range.customEndDate,
       effective,
       range.liveEndTime,
+      scope,
     ),
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
@@ -193,6 +222,7 @@ export function useUsageSummaryByApp(
   filters?: Pick<UsageScopeFilters, "providerName" | "model">,
   options?: UsageQueryOptions,
 ) {
+  const scope = useRuntimeQueryScope();
   return useQuery({
     queryKey: usageKeys.summaryByApp(
       range.preset,
@@ -200,6 +230,7 @@ export function useUsageSummaryByApp(
       range.customEndDate,
       filters,
       range.liveEndTime,
+      scope,
     ),
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
@@ -220,6 +251,7 @@ export function useUsageTrends(
   filters?: UsageScopeFilters,
   options?: UsageQueryOptions,
 ) {
+  const scope = useRuntimeQueryScope();
   const effective = normalizeScopeFilters(filters);
   return useQuery({
     queryKey: usageKeys.trends(
@@ -228,6 +260,7 @@ export function useUsageTrends(
       range.customEndDate,
       effective,
       range.liveEndTime,
+      scope,
     ),
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
@@ -249,6 +282,7 @@ export function useProviderStats(
   filters?: UsageScopeFilters,
   options?: UsageQueryOptions,
 ) {
+  const scope = useRuntimeQueryScope();
   const effective = normalizeScopeFilters(filters);
   return useQuery({
     queryKey: usageKeys.providerStats(
@@ -257,6 +291,7 @@ export function useProviderStats(
       range.customEndDate,
       effective,
       range.liveEndTime,
+      scope,
     ),
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
@@ -278,6 +313,7 @@ export function useModelStats(
   filters?: UsageScopeFilters,
   options?: UsageQueryOptions,
 ) {
+  const scope = useRuntimeQueryScope();
   const effective = normalizeScopeFilters(filters);
   return useQuery({
     queryKey: usageKeys.modelStats(
@@ -286,6 +322,7 @@ export function useModelStats(
       range.customEndDate,
       effective,
       range.liveEndTime,
+      scope,
     ),
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
@@ -309,6 +346,7 @@ export function useRequestLogs({
   pageSize = 20,
   options,
 }: RequestLogsQueryArgs) {
+  const scope = useRuntimeQueryScope();
   const key: RequestLogsKey = {
     preset: range.preset,
     customStartDate: range.customStartDate,
@@ -321,7 +359,7 @@ export function useRequestLogs({
   };
 
   return useQuery({
-    queryKey: usageKeys.logs(key, page, pageSize),
+    queryKey: usageKeys.logs(key, page, pageSize, scope),
     queryFn: () => {
       const effectiveFilters = { ...filters, ...resolveUsageRange(range) };
       return usageApi.getRequestLogs(effectiveFilters, page, pageSize);
@@ -332,23 +370,26 @@ export function useRequestLogs({
 }
 
 export function useRequestDetail(requestId: string) {
+  const scope = useRuntimeQueryScope();
   return useQuery({
-    queryKey: usageKeys.detail(requestId),
+    queryKey: usageKeys.detail(requestId, scope),
     queryFn: () => usageApi.getRequestDetail(requestId),
     enabled: !!requestId,
   });
 }
 
 export function useModelPricing() {
+  const scope = useRuntimeQueryScope();
   return useQuery({
-    queryKey: usageKeys.pricing(),
+    queryKey: usageKeys.pricing(scope),
     queryFn: usageApi.getModelPricing,
   });
 }
 
 export function useProviderLimits(providerId: string, appType: string) {
+  const scope = useRuntimeQueryScope();
   return useQuery({
-    queryKey: usageKeys.limits(providerId, appType),
+    queryKey: usageKeys.limits(providerId, appType, scope),
     queryFn: () => usageApi.checkProviderLimits(providerId, appType),
     enabled: !!providerId && !!appType,
   });
@@ -356,6 +397,7 @@ export function useProviderLimits(providerId: string, appType: string) {
 
 export function useUpdateModelPricing() {
   const queryClient = useQueryClient();
+  const scope = useRuntimeQueryScope();
 
   return useMutation({
     mutationFn: (params: {
@@ -375,18 +417,19 @@ export function useUpdateModelPricing() {
         params.cacheCreationCost,
       ),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: usageKeys.all });
+      queryClient.invalidateQueries({ queryKey: usageKeys.all(scope) });
     },
   });
 }
 
 export function useDeleteModelPricing() {
   const queryClient = useQueryClient();
+  const scope = useRuntimeQueryScope();
 
   return useMutation({
     mutationFn: (modelId: string) => usageApi.deleteModelPricing(modelId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: usageKeys.all });
+      queryClient.invalidateQueries({ queryKey: usageKeys.all(scope) });
     },
   });
 }

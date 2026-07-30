@@ -21,6 +21,16 @@ import {
 import type { RemoteTargetConfig, RuntimeSnapshot } from "@/lib/runtime/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
+/**
+ * 目标切换只清理带主机语义的 Provider/Usage 缓存；Settings 等桌面级缓存不应被无关切换抹掉。
+ */
+function clearEnvironmentQueryCaches(
+  queryClient: ReturnType<typeof useQueryClient>,
+): void {
+  queryClient.removeQueries({ queryKey: ["providers"] });
+  queryClient.removeQueries({ queryKey: ["usage"] });
+}
+
 interface RuntimeTargetContextValue {
   snapshot: RuntimeSnapshot;
   targets: RemoteTargetConfig[];
@@ -62,9 +72,13 @@ export function RuntimeTargetProvider({ children }: { children: ReactNode }) {
     void remoteApi
       .onStatus((nextSnapshot) => {
         if (!active) return;
-        setRuntimeSnapshot(nextSnapshot);
-        // generation 变化意味着数据源已切换，旧查询缓存不得跨本机/远端复用。
-        queryClient.clear();
+        // 后端主动状态变化也先停止旧 generation；取消完成后才发布新快照，
+        // 避免旧请求在新目标已经可见时继续更新组件状态。
+        void queryClient.cancelQueries().then(() => {
+          if (!active) return;
+          clearEnvironmentQueryCaches(queryClient);
+          setRuntimeSnapshot(nextSnapshot);
+        });
       })
       .then((off) => {
         if (active) unlisten = off;
@@ -79,10 +93,13 @@ export function RuntimeTargetProvider({ children }: { children: ReactNode }) {
   const setActiveTarget = useCallback(
     async (targetId?: string) => {
       const previous = getRuntimeSnapshot();
+      // 先等待取消完成再发布 connecting，否则旧 queryFn 可能读取新 runtime 快照，
+      // 形成“旧 key、却访问新主机”的混合请求。
+      await queryClient.cancelQueries();
       setRuntimeSnapshot(createRuntimeTransition(previous, targetId));
       try {
         const next = await remoteApi.setActiveTarget(targetId);
-        queryClient.clear();
+        clearEnvironmentQueryCaches(queryClient);
         setRuntimeSnapshot(next);
       } catch (error) {
         const fallback = await remoteApi.getSnapshot().catch(() => ({
@@ -92,6 +109,7 @@ export function RuntimeTargetProvider({ children }: { children: ReactNode }) {
           errorCode: "REMOTE_CONNECTION_ERROR",
           errorMessage: extractErrorMessage(error),
         }));
+        clearEnvironmentQueryCaches(queryClient);
         setRuntimeSnapshot(fallback);
         toast.error(extractErrorMessage(error));
       }

@@ -16,8 +16,10 @@ import {
   useUpdateProviderMutation,
   useDeleteProviderMutation,
   useSwitchProviderMutation,
+  providerKeys,
 } from "@/lib/query";
 import { usageKeys } from "@/lib/query/usage";
+import { useRuntimeQueryScope } from "@/lib/runtime/queryScope";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import {
@@ -42,6 +44,7 @@ export function useProviderActions(
 ) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const scope = useRuntimeQueryScope();
 
   const addProviderMutation = useAddProviderMutation(activeApp);
   const updateProviderMutation = useUpdateProviderMutation(activeApp);
@@ -364,12 +367,12 @@ export function useProviderActions(
 
         await providersApi.update(updatedProvider, activeApp);
         await queryClient.invalidateQueries({
-          queryKey: ["providers", activeApp],
+          queryKey: providerKeys.byApp(activeApp, scope),
         });
         // 🔧 保存用量脚本后，也应该失效该 provider 的用量查询缓存
         // 这样主页列表会使用新配置重新查询，而不是使用测试时的缓存
         await queryClient.invalidateQueries({
-          queryKey: usageKeys.script(provider.id, activeApp),
+          queryKey: usageKeys.script(provider.id, activeApp, scope),
         });
         await queryClient.invalidateQueries({
           queryKey: ["subscription", "quota", activeApp],
@@ -389,7 +392,7 @@ export function useProviderActions(
         toast.error(detail);
       }
     },
-    [activeApp, queryClient, t],
+    [activeApp, queryClient, scope, t],
   );
 
   // Set provider as default model (OpenClaw only)

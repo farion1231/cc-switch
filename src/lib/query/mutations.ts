@@ -10,6 +10,8 @@ import { generateUUID } from "@/utils/uuid";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 import { usageKeys } from "@/lib/query/usage";
+import { providerKeys } from "@/lib/query/queries";
+import { useRuntimeQueryScope } from "@/lib/runtime/queryScope";
 import {
   CODEX_OFFICIAL_PROVIDER_ID,
   GROKBUILD_OFFICIAL_PROVIDER_ID,
@@ -18,6 +20,7 @@ import {
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
+  const scope = useRuntimeQueryScope();
 
   return useMutation({
     mutationFn: async (
@@ -98,7 +101,9 @@ export const useAddProviderMutation = (appId: AppId) => {
       return newProvider;
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      await queryClient.invalidateQueries({
+        queryKey: providerKeys.byApp(appId, scope),
+      });
 
       if (appId === "opencode") {
         await queryClient.invalidateQueries({
@@ -158,6 +163,7 @@ export const useAddProviderMutation = (appId: AppId) => {
 export const useUpdateProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
+  const scope = useRuntimeQueryScope();
 
   return useMutation({
     mutationFn: async ({
@@ -171,13 +177,15 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       return provider;
     },
     onSuccess: async (provider, variables) => {
-      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
       await queryClient.invalidateQueries({
-        queryKey: usageKeys.script(provider.id, appId),
+        queryKey: providerKeys.byApp(appId, scope),
+      });
+      await queryClient.invalidateQueries({
+        queryKey: usageKeys.script(provider.id, appId, scope),
       });
       if (variables.originalId && variables.originalId !== provider.id) {
         await queryClient.invalidateQueries({
-          queryKey: usageKeys.script(variables.originalId, appId),
+          queryKey: usageKeys.script(variables.originalId, appId, scope),
         });
       }
       if (appId === "openclaw") {
@@ -212,13 +220,16 @@ export const useUpdateProviderMutation = (appId: AppId) => {
 export const useDeleteProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
+  const scope = useRuntimeQueryScope();
 
   return useMutation({
     mutationFn: async (providerId: string) => {
       await providersApi.delete(providerId, appId);
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      await queryClient.invalidateQueries({
+        queryKey: providerKeys.byApp(appId, scope),
+      });
 
       if (appId === "opencode") {
         await queryClient.invalidateQueries({
@@ -278,13 +289,16 @@ export const useDeleteProviderMutation = (appId: AppId) => {
 export const useSwitchProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
+  const scope = useRuntimeQueryScope();
 
   return useMutation({
     mutationFn: async (providerId: string): Promise<SwitchResult> => {
       return await providersApi.switch(providerId, appId);
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      await queryClient.invalidateQueries({
+        queryKey: providerKeys.byApp(appId, scope),
+      });
       if (appId === "claude-desktop") {
         await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
         await queryClient.invalidateQueries({

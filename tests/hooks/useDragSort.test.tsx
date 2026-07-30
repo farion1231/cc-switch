@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi, beforeEach, afterAll } from "vitest";
 import type { Provider } from "@/types";
 import { useDragSort } from "@/hooks/useDragSort";
+import { providerKeys } from "@/lib/query/queries";
+import { setRuntimeSnapshot } from "@/lib/runtime/store";
 
 const updateSortOrderMock = vi.fn();
 const toastSuccessMock = vi.fn();
@@ -66,6 +68,8 @@ describe("useDragSort", () => {
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
     consoleErrorSpy.mockClear();
+    // Query Key 断言固定在本机 generation 0，避免测试之间共享 runtime 快照。
+    setRuntimeSnapshot({ status: "local", generation: 0 });
   });
 
   afterAll(() => {
@@ -112,7 +116,7 @@ describe("useDragSort", () => {
       "claude",
     );
     expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: ["providers", "claude"],
+      queryKey: providerKeys.byApp("claude"),
     });
     expect(toastSuccessMock).toHaveBeenCalledTimes(1);
     expect(toastErrorMock).not.toHaveBeenCalled();

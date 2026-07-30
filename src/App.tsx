@@ -29,7 +29,7 @@ import {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
-import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
+import { providerKeys, useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
   providersApi,
   settingsApi,
@@ -397,7 +397,7 @@ function App() {
     await queryClient.invalidateQueries({ queryKey: ["proxyTakeoverStatus"] });
     await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
     await queryClient.invalidateQueries({
-      queryKey: ["providers", "claude-desktop"],
+      queryKey: providerKeys.byApp("claude-desktop"),
     });
   });
 
