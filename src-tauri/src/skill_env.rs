@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
+#[cfg(unix)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -32,11 +33,10 @@ pub fn default_output_path() -> PathBuf {
         if let Ok(appdata) = std::env::var("APPDATA") {
             return PathBuf::from(appdata).join("skills").join("env.ps1");
         }
-        return home
-            .join("AppData")
+        home.join("AppData")
             .join("Roaming")
             .join("skills")
-            .join("env.ps1");
+            .join("env.ps1")
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -209,7 +209,7 @@ fn render_generated_env(env: &BTreeMap<String, String>, source: &Path) -> String
         for (key, value) in env {
             output.push_str(&format!("$env:{key} = {}\n", quote_powershell(value)));
         }
-        return output;
+        output
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -301,6 +301,7 @@ fn quote_dotenv_value(value: &str) -> String {
     format!("\"{}\"", escape_double_quoted(value))
 }
 
+#[cfg(not(target_os = "windows"))]
 fn quote_shell(value: &str) -> String {
     format!("\"{}\"", escape_double_quoted(value))
 }
