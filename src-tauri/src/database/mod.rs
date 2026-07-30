@@ -42,6 +42,7 @@ pub(crate) use dao::proxy::{
 };
 pub use dao::FailoverQueueItem;
 pub use dao::Profile;
+pub use dao::{QuotaHistoryRow, QuotaTierSample};
 
 use crate::config::get_app_config_dir;
 use crate::error::AppError;

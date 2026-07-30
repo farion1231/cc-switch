@@ -3,7 +3,7 @@
 //! 前端的每小时额度探针把快照写进来，「额度趋势」图从这里读。存储细节见
 //! `database::dao::quota_history`。
 
-use crate::database::dao::quota_history::{QuotaHistoryRow, QuotaTierSample};
+use crate::database::{QuotaHistoryRow, QuotaTierSample};
 use crate::error::AppError;
 use crate::store::AppState;
 use tauri::State;
