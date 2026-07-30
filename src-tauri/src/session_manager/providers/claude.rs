@@ -131,6 +131,12 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     let mut project_dir: Option<String> = None;
     let mut created_at: Option<i64> = None;
     let mut first_user_message: Option<String> = None;
+    // Claude Code's own generated session title (`ai-title` record, written near the top).
+    // Forked sessions inherit a long metadata preamble (`ai-title` / `agent-name` / `mode` /
+    // `permission-mode` + one `file-history-snapshot` per tracked file — 100+ lines, each
+    // several KB), which pushes the first `cwd` / `timestamp` / user message far out of the
+    // head window. `ai-title` is the one title source that stays cheap to reach.
+    let mut ai_title: Option<String> = None;
 
     // Extract metadata and first user message from head lines
     for line in &head {
@@ -152,6 +158,13 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         }
         if created_at.is_none() {
             created_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
+        }
+        if ai_title.is_none() && value.get("type").and_then(Value::as_str) == Some("ai-title") {
+            ai_title = value
+                .get("aiTitle")
+                .and_then(Value::as_str)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
         }
         // Extract first real user message as title candidate
         // Skip system-injected caveats and slash commands (e.g. /clear, /compact)
@@ -197,6 +210,16 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         if last_active_at.is_none() {
             last_active_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
         }
+        // Fallback for sessions whose head is all metadata (forks, see `ai_title` above):
+        // tail records carry the same `cwd`, and the tail is already in memory — recovering
+        // the project dir here costs no extra IO and keeps the session in its project group
+        // instead of "unknown directory".
+        if project_dir.is_none() {
+            project_dir = value
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map(|s| s.to_string());
+        }
         // Look for custom-title entry (take the last one, i.e. first in reverse)
         if custom_title.is_none()
             && value.get("type").and_then(Value::as_str) == Some("custom-title")
@@ -218,7 +241,13 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
                 }
             }
         }
-        if last_active_at.is_some() && summary.is_some() && custom_title.is_some() {
+        // `project_dir` included so the fork fallback above cannot be skipped by an early
+        // break (normal sessions already have it from the head, so nothing changes for them).
+        if last_active_at.is_some()
+            && summary.is_some()
+            && custom_title.is_some()
+            && project_dir.is_some()
+        {
             break;
         }
     }
@@ -226,10 +255,13 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     let session_id = session_id.or_else(|| infer_session_id_from_filename(path));
     let session_id = session_id?;
 
-    // Title priority: custom-title > first user message > directory basename
+    // Title priority: custom-title > first user message > Claude's ai-title > dir basename.
+    // `ai-title` ranks below the first user message so existing sessions keep their current
+    // title, and only sessions with no reachable user message (forks) fall through to it.
     let title = custom_title
         .map(|t| truncate_summary(&t, TITLE_MAX_CHARS))
         .or_else(|| first_user_message.map(|t| truncate_summary(&t, TITLE_MAX_CHARS)))
+        .or_else(|| ai_title.map(|t| truncate_summary(&t, TITLE_MAX_CHARS)))
         .or_else(|| {
             project_dir
                 .as_deref()
@@ -496,5 +528,111 @@ mod tests {
 
         let meta = parse_session(&path).unwrap();
         assert_eq!(meta.title.as_deref(), Some("帮我看看工作区的改动"));
+    }
+
+    /// Build a forked-session transcript: Claude Code forks inherit the parent's metadata
+    /// preamble (`ai-title` / `agent-name` / `mode` / `permission-mode` plus one
+    /// `file-history-snapshot` per tracked file — 100+ lines, several KB each in the wild),
+    /// so the first record carrying `cwd` / `timestamp` / a user message sits far outside
+    /// the head window.
+    fn forked_session_content() -> String {
+        let mut content = String::new();
+        content.push_str(
+            "{\"type\":\"ai-title\",\"aiTitle\":\"评估后端管理系统遗留问题\",\"sessionId\":\"fork-1\"}\n",
+        );
+        content
+            .push_str("{\"type\":\"agent-name\",\"agentName\":\"n\",\"sessionId\":\"fork-1\"}\n");
+        content.push_str("{\"type\":\"mode\",\"mode\":\"code\",\"sessionId\":\"fork-1\"}\n");
+        content.push_str(
+            "{\"type\":\"permission-mode\",\"mode\":\"default\",\"sessionId\":\"fork-1\"}\n",
+        );
+        for i in 0..100 {
+            content.push_str(&format!(
+                "{{\"type\":\"file-history-snapshot\",\"messageId\":\"msg-{i}\",\"snapshot\":{{}},\"isSnapshotUpdate\":false}}\n"
+            ));
+        }
+        content.push_str(
+            "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"continue the asset task\"},\"sessionId\":\"fork-1\",\"timestamp\":\"2026-07-29T10:00:00Z\",\"cwd\":\"/home/user/projects/spider\"}\n",
+        );
+        content.push_str(
+            "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"timestamp\":\"2026-07-29T10:00:01Z\",\"cwd\":\"/home/user/projects/spider\"}\n",
+        );
+        content
+    }
+
+    /// A forked session must still land in its project group rather than "unknown
+    /// directory": `cwd` is recovered from the tail records, which are already read.
+    #[test]
+    fn parse_session_recovers_project_dir_of_forked_session_from_tail() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("forked-session.jsonl");
+        std::fs::write(&path, forked_session_content()).expect("write");
+
+        let meta = parse_session(&path).expect("forked session must parse");
+        assert_eq!(meta.session_id, "fork-1");
+        assert_eq!(
+            meta.project_dir.as_deref(),
+            Some("/home/user/projects/spider")
+        );
+    }
+
+    /// A forked session has no user message inside the head window, so without the
+    /// `ai-title` fallback its title degrades to the directory basename (and, for sessions
+    /// whose project dir is also unknown, to the bare session-id prefix).
+    #[test]
+    fn parse_session_uses_ai_title_when_head_has_no_user_message() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("forked-session-title.jsonl");
+        std::fs::write(&path, forked_session_content()).expect("write");
+
+        let meta = parse_session(&path).expect("forked session must parse");
+        assert_eq!(meta.title.as_deref(), Some("评估后端管理系统遗留问题"));
+    }
+
+    /// `ai-title` must not outrank a real first user message: normal sessions keep the
+    /// title they have today.
+    #[test]
+    fn parse_session_prefers_first_user_message_over_ai_title() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("normal-session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"type\":\"ai-title\",\"aiTitle\":\"generated title\",\"sessionId\":\"s-1\"}\n",
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"real first message\"},\"sessionId\":\"s-1\",\"timestamp\":\"2026-07-29T10:00:00Z\",\"cwd\":\"/tmp/project\"}\n",
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).expect("session must parse");
+        assert_eq!(meta.title.as_deref(), Some("real first message"));
+    }
+
+    /// The tail loop must not break out before the `project_dir` fallback has a chance to
+    /// run: with a `custom-title` at the very end and a summary/timestamp record that lacks
+    /// `cwd`, the reverse scan satisfies (last_active, summary, custom_title) immediately —
+    /// it must keep scanning until `cwd` is found too.
+    #[test]
+    fn parse_session_tail_break_waits_for_project_dir() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("forked-custom-title.jsonl");
+
+        let mut content = forked_session_content();
+        // Reverse-scan order: custom-title (no cwd) → assistant without cwd (gives
+        // timestamp + summary) → … older records that do carry cwd.
+        content.push_str(
+            "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"done\"},\"timestamp\":\"2026-07-29T10:00:02Z\"}\n",
+        );
+        content.push_str(
+            "{\"type\":\"custom-title\",\"customTitle\":\"my renamed session\",\"sessionId\":\"fork-1\"}\n",
+        );
+        std::fs::write(&path, content).expect("write");
+
+        let meta = parse_session(&path).expect("session must parse");
+        assert_eq!(meta.title.as_deref(), Some("my renamed session"));
+        assert_eq!(
+            meta.project_dir.as_deref(),
+            Some("/home/user/projects/spider")
+        );
     }
 }
