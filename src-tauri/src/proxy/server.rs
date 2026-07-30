@@ -305,6 +305,27 @@ impl ProxyServer {
     }
 
     fn build_router(&self) -> Router {
+        // Claude for Office 本地 gateway（Office 加载项跑在 WebView2 浏览器中，
+        // 只发 x-api-key 鉴权，且要求 CORS + Private Network Access 预检通过）。
+        // 单独嵌套子 Router：CorsLayer 只作用于 /claude-office 前缀。若用
+        // Router::layer 挂在主路由上，axum 会把该层应用到之前注册的所有路由
+        // （含无鉴权的 /v1/messages），导致任意网页可跨站调用本机代理（PNA 劫持）。
+        let office_router = Router::new()
+            .route(
+                "/claude-office/v1/models",
+                get(handlers::handle_claude_office_models),
+            )
+            .route(
+                "/claude-office/v1/messages",
+                post(handlers::handle_claude_office_messages),
+            )
+            // Office 取模型列表时可能用 OpenAI 风格的 /models 路径
+            .route(
+                "/claude-office/models",
+                get(handlers::handle_claude_office_models),
+            )
+            .layer(claude_office_cors_layer());
+
         Router::new()
             // 健康检查
             .route("/health", get(handlers::health_check))
@@ -321,23 +342,7 @@ impl ProxyServer {
                 "/claude-desktop/v1/messages",
                 post(handlers::handle_claude_desktop_messages),
             )
-            // Claude for Office 本地 gateway（Office 加载项跑在 WebView2 浏览器中，
-            // 只发 x-api-key 鉴权，且要求 CORS + Private Network Access 预检通过，
-            // 因此该前缀单独挂 CorsLayer；其余路由不开放 CORS）
-            .route(
-                "/claude-office/v1/models",
-                get(handlers::handle_claude_office_models),
-            )
-            .route(
-                "/claude-office/v1/messages",
-                post(handlers::handle_claude_office_messages),
-            )
-            // Office 取模型列表时可能用 OpenAI 风格的 /models 路径
-            .route(
-                "/claude-office/models",
-                get(handlers::handle_claude_office_models),
-            )
-            .layer(claude_office_cors_layer())
+            .merge(office_router)
             // OpenAI Chat Completions API (Codex CLI，支持带前缀和不带前缀)
             .route("/chat/completions", post(handlers::handle_chat_completions))
             .route(
