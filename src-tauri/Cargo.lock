@@ -847,6 +847,7 @@ name = "cc-switch-core"
 version = "3.18.0"
 dependencies = [
  "cc-switch-protocol",
+ "chrono",
  "indexmap 2.13.0",
  "json5",
  "rusqlite",

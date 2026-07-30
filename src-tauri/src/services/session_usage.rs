@@ -13,9 +13,7 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
-use crate::services::usage_stats::{
-    effective_usage_log_filter, find_model_pricing, should_skip_session_insert, DedupKey,
-};
+use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -99,15 +97,6 @@ pub(crate) fn notify_sync_result(result: &SessionSyncResult) {
     if result.imported > 0 {
         crate::usage_events::notify_log_recorded();
     }
-}
-
-/// 数据来源分布
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DataSourceSummary {
-    pub data_source: String,
-    pub request_count: u32,
-    pub total_cost_usd: String,
 }
 
 /// 从 JSONL 中解析出的 assistant 消息使用数据
@@ -593,38 +582,6 @@ fn find_model_pricing_for_session(
     model_id: &str,
 ) -> Option<ModelPricing> {
     find_model_pricing(conn, model_id)
-}
-
-/// 查询数据来源分布统计
-pub fn get_data_source_breakdown(db: &Database) -> Result<Vec<DataSourceSummary>, AppError> {
-    let conn = lock_conn!(db.conn);
-
-    let effective_filter = effective_usage_log_filter("l");
-    let sql = format!(
-        "SELECT COALESCE(l.data_source, 'proxy') as ds, COUNT(*) as cnt,
-                COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as cost
-         FROM proxy_request_logs l
-         WHERE {effective_filter}
-         GROUP BY ds
-         ORDER BY cnt DESC"
-    );
-
-    let mut stmt = conn.prepare(&sql)?;
-
-    let rows = stmt.query_map([], |row| {
-        Ok(DataSourceSummary {
-            data_source: row.get(0)?,
-            request_count: row.get::<_, i64>(1)? as u32,
-            total_cost_usd: format!("{:.6}", row.get::<_, f64>(2)?),
-        })
-    })?;
-
-    let mut summaries = Vec::new();
-    for row in rows {
-        summaries.push(row.map_err(|e| AppError::Database(e.to_string()))?);
-    }
-
-    Ok(summaries)
 }
 
 #[cfg(test)]

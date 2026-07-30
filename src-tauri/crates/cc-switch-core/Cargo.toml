@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 cc-switch-protocol = { path = "../cc-switch-protocol" }
+chrono = "0.4"
 indexmap = { version = "2", features = ["serde"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }

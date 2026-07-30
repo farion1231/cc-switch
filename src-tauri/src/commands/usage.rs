@@ -3,6 +3,8 @@
 use crate::error::AppError;
 use crate::services::usage_stats::*;
 use crate::store::AppState;
+pub use cc_switch_core::ModelPricingInfo;
+use cc_switch_core::{DataSourceSummary, UsageService};
 use rust_decimal::Decimal;
 use std::str::FromStr;
 use tauri::State;
@@ -123,54 +125,12 @@ pub fn get_request_detail(
 /// 获取模型定价列表
 #[tauri::command]
 pub fn get_model_pricing(state: State<'_, AppState>) -> Result<Vec<ModelPricingInfo>, AppError> {
-    log::info!("获取模型定价列表");
     state.db.ensure_model_pricing_seeded()?;
-
-    let db = state.db.clone();
-    let conn = crate::database::lock_conn!(db.conn);
-
-    // 检查表是否存在
-    let table_exists: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='model_pricing'",
-            [],
-            |row| row.get::<_, i64>(0).map(|count| count > 0),
-        )
-        .unwrap_or(false);
-
-    if !table_exists {
-        log::error!("model_pricing 表不存在,可能需要重启应用以触发数据库迁移");
-        return Ok(Vec::new());
-    }
-
-    let mut stmt = conn.prepare(
-        "SELECT model_id, display_name, input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million
-         FROM model_pricing
-         ORDER BY display_name",
-    )?;
-
-    let rows = stmt.query_map([], |row| {
-        Ok(ModelPricingInfo {
-            model_id: row.get(0)?,
-            display_name: row.get(1)?,
-            input_cost_per_million: row.get(2)?,
-            output_cost_per_million: row.get(3)?,
-            cache_read_cost_per_million: row.get(4)?,
-            cache_creation_cost_per_million: row.get(5)?,
-        })
-    })?;
-
-    let mut pricing = Vec::new();
-    for row in rows {
-        pricing.push(row?);
-    }
-
-    log::info!("成功获取 {} 条模型定价数据", pricing.len());
-    Ok(pricing)
+    let conn = crate::database::lock_conn!(state.db.conn);
+    UsageService::pricing(&*conn).map_err(map_core_usage_error)
 }
 
-/// 更新模型定价
+/// 更新模型定价；写入与历史成本回填仍由桌面写侧服务维护。
 #[tauri::command]
 pub fn update_model_pricing(
     state: State<'_, AppState>,
@@ -322,20 +282,9 @@ pub async fn rebuild_codex_usage(
 #[tauri::command]
 pub fn get_usage_data_sources(
     state: State<'_, AppState>,
-) -> Result<Vec<crate::services::session_usage::DataSourceSummary>, AppError> {
-    crate::services::session_usage::get_data_source_breakdown(&state.db)
-}
-
-/// 模型定价信息
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelPricingInfo {
-    pub model_id: String,
-    pub display_name: String,
-    pub input_cost_per_million: String,
-    pub output_cost_per_million: String,
-    pub cache_read_cost_per_million: String,
-    pub cache_creation_cost_per_million: String,
+) -> Result<Vec<DataSourceSummary>, AppError> {
+    let conn = crate::database::lock_conn!(state.db.conn);
+    UsageService::data_sources(&*conn).map_err(map_core_usage_error)
 }
 
 #[cfg(test)]

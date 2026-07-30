@@ -94,6 +94,16 @@ fn stdio_agent_completes_provider_vertical_slice_and_exits_on_eof() {
         .capabilities
         .contains(&"usage.codex_rebuild".to_string()));
 
+    let empty_summary = request(
+        &mut stdin,
+        &mut stdout,
+        "usage-summary",
+        "usage.summary",
+        json!({}),
+    );
+    assert_eq!(empty_summary["totalRequests"], 0);
+    assert_eq!(empty_summary["realTotalTokens"], 0);
+
     for item in [
         provider("remote-a", "Remote A"),
         provider("remote-b", "Remote B"),

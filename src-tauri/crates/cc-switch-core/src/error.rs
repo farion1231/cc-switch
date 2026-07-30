@@ -26,8 +26,12 @@ pub enum CoreError {
     ProviderIdChangeUnsupported,
     #[error("供应商配置无效: {0}")]
     InvalidProvider(String),
+    #[error("Usage 查询范围无效: {0}")]
+    InvalidUsageRange(String),
     #[error("数据库正被其他 CC Switch 进程占用，请稍后重试")]
     DatabaseBusy,
+    #[error("远程结果超过协议帧上限: actual={actual}, limit={limit}")]
+    PayloadTooLarge { actual: usize, limit: usize },
     #[error(transparent)]
     Schema(#[from] SchemaError),
     #[error("数据库操作失败: {0}")]
@@ -47,7 +51,9 @@ impl CoreError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::StatePoisoned => "STATE_POISONED",
-            Self::UnsupportedApp(_) | Self::InvalidProvider(_) => "INVALID_ARGUMENT",
+            Self::UnsupportedApp(_) | Self::InvalidProvider(_) | Self::InvalidUsageRange(_) => {
+                "INVALID_ARGUMENT"
+            }
             Self::LiveWriteUnsupported(_) | Self::CapabilityUnavailable(_) => {
                 "CAPABILITY_UNAVAILABLE"
             }
@@ -56,6 +62,7 @@ impl CoreError {
             Self::CurrentProviderDeletion => "CURRENT_PROVIDER_DELETION",
             Self::ProviderIdChangeUnsupported => "PROVIDER_ID_CHANGE_UNSUPPORTED",
             Self::DatabaseBusy => "DATABASE_BUSY",
+            Self::PayloadTooLarge { .. } => "PAYLOAD_TOO_LARGE",
             Self::Schema(_) => "DATABASE_INCOMPATIBLE",
             Self::Database(_) => "DATABASE_ERROR",
             Self::Json(_) => "SERIALIZATION_ERROR",

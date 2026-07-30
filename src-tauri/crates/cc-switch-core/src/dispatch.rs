@@ -15,8 +15,7 @@ pub fn dispatch_command(
     if command.starts_with("provider.") {
         return dispatch_provider(state, command, args);
     }
-    // Task 7 会在此接入共享 UsageService；提前注册能力用于锁定协议元数据，当前不得回退本机。
-    Err(CommandError::CapabilityUnavailable(command.to_string()))
+    crate::usage::dispatch(state, command, args)
 }
 
 fn dispatch_provider(
