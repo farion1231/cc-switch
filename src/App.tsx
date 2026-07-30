@@ -1273,7 +1273,10 @@ function App() {
                   <ProfileSwitcher activeApp={activeApp} />
                 </div>
               )}
-            <div className="toolbar-x-scroll flex flex-1 min-w-0 items-center py-4 pr-2">
+            <div
+              className="toolbar-x-scroll flex flex-1 min-w-0 items-center py-4 pr-2"
+              style={{ WebkitAppRegion: "no-drag" } as any}
+            >
               <div
                 className="flex shrink-0 items-center gap-1.5 ml-auto"
                 style={{ WebkitAppRegion: "no-drag" } as any}

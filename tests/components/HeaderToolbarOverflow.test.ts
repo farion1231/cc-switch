@@ -23,6 +23,11 @@ describe("Header toolbar overflow (#5789)", () => {
     // Opt back into a thin scrollbar despite the global scrollbar:none rule.
     expect(cssSource).toContain(".toolbar-x-scroll::-webkit-scrollbar");
     expect(cssSource).toContain("scrollbar-width: thin");
+    // Tauri drag region on the header would steal scrollbar clicks without
+    // an explicit no-drag on the scroll container.
+    expect(appSource).toMatch(
+      /toolbar-x-scroll[\s\S]{0,120}WebkitAppRegion:\s*"no-drag"/,
+    );
   });
 
   it("keeps the add-provider action outside the scroll clip region", () => {
