@@ -401,6 +401,20 @@ pub struct LocalProxyRequestOverrides {
     pub body: Option<serde_json::Value>,
 }
 
+/// Codex Desktop Live voice transport exposed by a third-party provider.
+///
+/// This is intentionally opt-in. A provider that only implements Responses or
+/// Chat Completions must never receive Live SDP or sideband traffic.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CodexLiveConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(rename = "createEndpoint", skip_serializing_if = "Option::is_none")]
+    pub create_endpoint: Option<String>,
+    #[serde(rename = "sidebandEndpoint", skip_serializing_if = "Option::is_none")]
+    pub sideband_endpoint: Option<String>,
+}
+
 impl LocalProxyRequestOverrides {
     pub fn is_empty(&self) -> bool {
         self.headers.is_empty() && self.body.is_none()
@@ -518,6 +532,9 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub local_proxy_request_overrides: Option<LocalProxyRequestOverrides>,
+    /// Explicit third-party support for Codex Desktop Live voice.
+    #[serde(rename = "codexLive", skip_serializing_if = "Option::is_none")]
+    pub codex_live: Option<CodexLiveConfig>,
     /// 累加模式应用中，该 provider 是否已写入 live config。
     /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
     #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
@@ -561,6 +578,10 @@ impl ProviderMeta {
     /// 会按更高速率消耗 ChatGPT 订阅配额，用户需显式开启以换取更低延迟。
     pub fn codex_fast_mode_enabled(&self) -> bool {
         self.codex_fast_mode.unwrap_or(false)
+    }
+
+    pub fn enabled_codex_live(&self) -> Option<&CodexLiveConfig> {
+        self.codex_live.as_ref().filter(|config| config.enabled)
     }
 
     /// 经校验的 Provider 级自定义 User-Agent。见 [`parse_custom_user_agent`]。
@@ -984,8 +1005,9 @@ pub struct OpenCodeModelLimit {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, LocalProxyRequestOverrides,
-        OpenCodeProviderConfig, Provider, ProviderManager, ProviderMeta, UniversalProvider,
+        ClaudeModelConfig, CodexLiveConfig, CodexModelConfig, GeminiModelConfig,
+        LocalProxyRequestOverrides, OpenCodeProviderConfig, Provider, ProviderManager,
+        ProviderMeta, UniversalProvider,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -1065,6 +1087,28 @@ mod tests {
         let overrides = decoded.local_proxy_request_overrides.unwrap();
         assert_eq!(overrides.headers.get("X-Test"), Some(&"yes".to_string()));
         assert_eq!(overrides.body.unwrap()["temperature"], 0.2);
+    }
+
+    #[test]
+    fn provider_meta_defaults_incomplete_codex_live_config_without_losing_other_fields() {
+        let decoded: ProviderMeta = serde_json::from_value(json!({
+            "codexLive": {
+                "createEndpoint": "voice/live",
+                "sidebandEndpoint": "voice/live/{call_id}"
+            },
+            "customUserAgent": "codex-cli/test"
+        }))
+        .expect("deserialize backward-compatible Codex Live metadata");
+
+        assert_eq!(decoded.custom_user_agent.as_deref(), Some("codex-cli/test"));
+        assert_eq!(
+            decoded.codex_live,
+            Some(CodexLiveConfig {
+                enabled: false,
+                create_endpoint: Some("voice/live".to_string()),
+                sideband_endpoint: Some("voice/live/{call_id}".to_string()),
+            })
+        );
     }
 
     #[test]

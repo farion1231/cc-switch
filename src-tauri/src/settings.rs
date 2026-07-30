@@ -338,6 +338,15 @@ pub struct CodexOfficialHistoryUnifyMigration {
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
 /// 这确保了云同步场景下多设备可以独立运作。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexLiveVoiceRoute {
+    #[default]
+    Official,
+    CurrentProvider,
+    OfficialThenCurrent,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -386,6 +395,13 @@ pub struct AppSettings {
     /// providers. Opt-in: defaults to false.
     #[serde(default)]
     pub unify_codex_session_history: bool,
+    /// Route Codex Desktop Live voice requests through the local proxy.
+    /// Opt-in because this can consume subscription or third-party quota.
+    #[serde(default)]
+    pub enable_codex_live_voice: bool,
+    /// Explicit billing/routing policy for Live calls.
+    #[serde(default)]
+    pub codex_live_voice_route: CodexLiveVoiceRoute,
     /// User opted in (via the enable dialog checkbox) to migrate existing
     /// official sessions ("openai" bucket) into the shared bucket. Persisted so
     /// a failed migration retries at startup; cleared when the toggle turns off.
@@ -520,6 +536,8 @@ impl Default for AppSettings {
             show_profile_switcher: true,
             preserve_codex_official_auth_on_switch: false,
             unify_codex_session_history: false,
+            enable_codex_live_voice: false,
+            codex_live_voice_route: CodexLiveVoiceRoute::Official,
             unify_codex_migrate_existing: None,
             failover_confirmed: None,
             first_run_notice_confirmed: None,
@@ -953,6 +971,26 @@ pub fn unify_codex_session_history() -> bool {
         .unify_codex_session_history
 }
 
+pub fn codex_live_voice_enabled() -> bool {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .enable_codex_live_voice
+}
+
+pub fn codex_live_voice_route() -> CodexLiveVoiceRoute {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .codex_live_voice_route
+}
+
 // ===== 当前供应商管理函数 =====
 
 /// 获取指定应用类型的当前供应商 ID（从本地 settings 读取）
@@ -1177,5 +1215,42 @@ mod tests {
         .expect("visible apps");
 
         assert!(!visible.is_visible(&AppType::ClaudeDesktop));
+    }
+
+    #[test]
+    fn legacy_settings_default_codex_live_voice_to_disabled() {
+        let settings: AppSettings =
+            serde_json::from_value(serde_json::json!({})).expect("legacy settings");
+
+        assert!(!settings.enable_codex_live_voice);
+        assert_eq!(
+            settings.codex_live_voice_route,
+            CodexLiveVoiceRoute::Official
+        );
+    }
+
+    #[test]
+    fn settings_respect_explicit_codex_live_voice_disable() {
+        let settings: AppSettings = serde_json::from_value(serde_json::json!({
+            "enableCodexLiveVoice": false
+        }))
+        .expect("settings with Live disabled");
+
+        assert!(!settings.enable_codex_live_voice);
+    }
+
+    #[test]
+    fn settings_parse_codex_live_voice_route() {
+        let settings: AppSettings = serde_json::from_value(serde_json::json!({
+            "enableCodexLiveVoice": true,
+            "codexLiveVoiceRoute": "official_then_current"
+        }))
+        .expect("settings with explicit Live route");
+
+        assert!(settings.enable_codex_live_voice);
+        assert_eq!(
+            settings.codex_live_voice_route,
+            CodexLiveVoiceRoute::OfficialThenCurrent
+        );
     }
 }

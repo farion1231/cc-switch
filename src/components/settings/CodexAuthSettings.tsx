@@ -1,9 +1,16 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { History, KeyRound } from "lucide-react";
+import { History, KeyRound, Mic } from "lucide-react";
 import { toast } from "sonner";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import { ToggleRow } from "@/components/ui/toggle-row";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi } from "@/lib/api";
 
@@ -112,6 +119,49 @@ export function CodexAuthSettings({
         checked={settings.unifyCodexSessionHistory ?? false}
         onCheckedChange={handleUnifyHistoryChange}
       />
+
+      <ToggleRow
+        icon={<Mic className="h-4 w-4 text-rose-500" />}
+        title={t("settings.enableCodexLiveVoice")}
+        description={t("settings.enableCodexLiveVoiceDescription")}
+        checked={settings.enableCodexLiveVoice ?? false}
+        onCheckedChange={(value) => onChange({ enableCodexLiveVoice: value })}
+      />
+
+      {(settings.enableCodexLiveVoice ?? false) && (
+        <div className="ml-11 space-y-2 border-l border-border pl-4">
+          <p className="text-sm font-medium">
+            {t("settings.codexLiveVoiceRoute")}
+          </p>
+          <Select
+            value={settings.codexLiveVoiceRoute ?? "official"}
+            onValueChange={(value) =>
+              onChange({
+                codexLiveVoiceRoute:
+                  value as SettingsFormState["codexLiveVoiceRoute"],
+              })
+            }
+          >
+            <SelectTrigger aria-label={t("settings.codexLiveVoiceRoute")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="official">
+                {t("settings.codexLiveVoiceRouteOfficial")}
+              </SelectItem>
+              <SelectItem value="current_provider">
+                {t("settings.codexLiveVoiceRouteCurrent")}
+              </SelectItem>
+              <SelectItem value="official_then_current">
+                {t("settings.codexLiveVoiceRouteFallback")}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {t("settings.codexLiveVoiceRouteDescription")}
+          </p>
+        </div>
+      )}
 
       <ConfirmDialog
         isOpen={showEnableConfirm}
