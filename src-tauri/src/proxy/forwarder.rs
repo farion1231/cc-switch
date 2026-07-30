@@ -16,7 +16,7 @@ use super::{
         AuthInfo, AuthStrategy, ProviderAdapter, ProviderType,
     },
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
-    thinking_capability::ThinkingCapabilityStore,
+    thinking_capability::{ThinkingCapabilityStore, ThinkingMode},
     thinking_mode_rectifier::{
         client_model_from_body, detect_thinking_mode_error, normalize_thinking_shape,
         rectify_thinking_mode,
@@ -1340,6 +1340,44 @@ impl RequestForwarder {
         })
     }
 
+    /// Anthropic 直通链路的发送端 thinking 形状归一化。
+    ///
+    /// 客户端可能自己发了 thinking（例如 Claude Code 对着 Opus 5 发 enabled +
+    /// budget_tokens），按解析出的模型能力改写形状。返回改写后的形状，`None` 表示
+    /// 没动请求体。
+    ///
+    /// `client_model` 是客户端原始模型名（学习缓存的键，失败重试循环只拿得到它）；
+    /// 启发式按 `mapped_body` 里的模型名算 —— 那是真正发往上游的名字（模型映射已应用）。
+    fn normalize_client_thinking_shape(
+        &self,
+        provider_id: &str,
+        client_model: &str,
+        mapped_body: &mut Value,
+    ) -> Option<ThinkingMode> {
+        // 尊重整流器总开关：关闭整流后，客户端自己发的 thinking 一律透传 —— 与签名 /
+        // budget / 形状三个整流器一致（它们都先查 `enabled`）。本改写是形状整流器的
+        // 发送端，把学到或启发出的形状落到请求体上，属于同一套机制。
+        if !self.rectifier_config.enabled {
+            return None;
+        }
+
+        let capability = self.thinking_capability.resolve_mapped(
+            provider_id,
+            client_model,
+            client_model_from_body(mapped_body).unwrap_or_default(),
+        );
+
+        // api_format 默认就是 "anthropic"，所以这里也会流过大量「第三方模型经
+        // Anthropic 兼容端点」的 provider（DeepSeek / GLM / Kimi / MiniMax 预设）。
+        // 那些模型名解析不出 Claude 身份，没有依据说明它该用哪种形状 —— 客户端自己发的
+        // thinking 一个字都不动，免得把本来能用的请求改坏。
+        if !capability.grounded {
+            return None;
+        }
+
+        normalize_thinking_shape(mapped_body, capability.mode).then_some(capability.mode)
+    }
+
     /// 转发单个请求（使用适配器）
     ///
     /// 成功时返回 `(response, claude_api_format, outbound_model)`，其中
@@ -1580,24 +1618,14 @@ impl RequestForwarder {
                 // effort），在这里改写会造成行为漂移。Codex→Anthropic 桥接不经过本
                 // 分支（那是 Codex adapter），由 transform 自己按 capability 产出。
                 if api_format == "anthropic" {
-                    // 启发式按发往上游的模型名算（mapped_body 已应用模型映射），
-                    // 学习缓存仍按客户端模型名查 —— 失败重试循环只拿得到后者。
-                    let capability = self.thinking_capability.resolve_mapped(
+                    if let Some(mode) = self.normalize_client_thinking_shape(
                         &provider.id,
                         client_model_from_body(body).unwrap_or_default(),
-                        client_model_from_body(&mapped_body).unwrap_or_default(),
-                    );
-                    // api_format 默认就是 "anthropic"，所以这里也会流过大量「第三方模型
-                    // 经 Anthropic 兼容端点」的 provider（DeepSeek / GLM / Kimi / MiniMax
-                    // 预设）。那些模型名解析不出 Claude 身份，没有依据说明它该用哪种形状 ——
-                    // 客户端自己发的 thinking 一个字都不动，免得把本来能用的请求改坏。
-                    if capability.grounded
-                        && normalize_thinking_shape(&mut mapped_body, capability.mode)
-                    {
+                        &mut mapped_body,
+                    ) {
                         log::info!(
-                            "[{}] thinking 形状归一化为 {:?}: provider={}",
+                            "[{}] thinking 形状归一化为 {mode:?}: provider={}",
                             app_type.as_str(),
-                            capability.mode,
                             provider.id
                         );
                     }
@@ -3971,6 +3999,53 @@ mod tests {
             store.resolve(&provider.id, client_model).mode,
             super::super::thinking_capability::ThinkingMode::Legacy
         );
+    }
+
+    #[test]
+    fn client_thinking_shape_normalization_respects_the_rectifier_master_switch() {
+        // 总开关关掉时，客户端显式发的 thinking 必须原样透传 —— 与签名 / budget / 形状
+        // 三个整流器同一语义（那个开关的文案就是「关闭全部整流」）。
+        let client_body = json!({
+            "model": "claude-opus-5",
+            "thinking": { "type": "enabled", "budget_tokens": 4096 }
+        });
+
+        let on = forwarder_with_rectifier(RectifierConfig::default());
+        let mut body = client_body.clone();
+        assert_eq!(
+            on.normalize_client_thinking_shape("p1", "claude-opus-5", &mut body),
+            Some(ThinkingMode::Adaptive)
+        );
+        assert_eq!(body["thinking"], json!({ "type": "adaptive" }));
+        assert_eq!(body["output_config"]["effort"], "medium");
+
+        let off = forwarder_with_rectifier(RectifierConfig {
+            enabled: false,
+            ..RectifierConfig::default()
+        });
+        let mut body = client_body.clone();
+        assert_eq!(
+            off.normalize_client_thinking_shape("p1", "claude-opus-5", &mut body),
+            None
+        );
+        assert_eq!(body, client_body);
+    }
+
+    #[test]
+    fn client_thinking_shape_normalization_leaves_ungrounded_models_alone() {
+        // 第三方模型经 Anthropic 兼容端点：解析不出 Claude 身份就不动客户端的 thinking
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+        let client_body = json!({
+            "model": "deepseek-v4-pro",
+            "thinking": { "type": "enabled", "budget_tokens": 4096 }
+        });
+        let mut body = client_body.clone();
+
+        assert_eq!(
+            fwd.normalize_client_thinking_shape("p1", "deepseek-v4-pro", &mut body),
+            None
+        );
+        assert_eq!(body, client_body);
     }
 
     fn test_forwarder(

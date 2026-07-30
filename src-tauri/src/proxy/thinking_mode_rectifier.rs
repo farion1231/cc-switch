@@ -117,8 +117,19 @@ pub fn detect_thinking_mode_error(
         return None;
     }
 
-    let msg = error_message?;
-    let lower = msg.to_lowercase();
+    detect_direction(error_message?)
+}
+
+/// 报文是否在拒绝某个 thinking 形状（不查配置开关）。
+///
+/// 给别的整流器做优先级判断用：形状问题必须由本模块处理 —— 其它整流器改的东西
+/// 不影响形状，重试只会拿回同一个 400，反而把学习机会吃掉。
+pub fn looks_like_thinking_mode_error(error_message: &str) -> bool {
+    detect_direction(error_message).is_some()
+}
+
+fn detect_direction(error_message: &str) -> Option<ThinkingModeRectifyDirection> {
+    let lower = error_message.to_lowercase();
 
     // 顺序有意义：拒绝 enabled 的报文里通常也含 "adaptive"（建议用法），
     // 必须先判这个方向。
@@ -138,6 +149,7 @@ pub fn detect_thinking_mode_error(
 /// 上游」时调用；Codex 桥接链路由 transform 自己按 capability 产出，不走这里。
 ///
 /// `disabled` 与缺失 thinking 都不动 —— 那是调用方的明确意图，不是形状问题。
+/// 改写形状的同时会同步与形状绑定的 beta 标识，见 [`sync_interleaved_thinking_beta`]。
 /// 返回是否改写了请求体。
 pub fn normalize_thinking_shape(body: &mut Value, mode: ThinkingMode) -> bool {
     let Some(thinking_type) = body
@@ -159,6 +171,7 @@ pub fn normalize_thinking_shape(body: &mut Value, mode: ThinkingMode) -> bool {
             if let Some(effort) = effort {
                 set_effort(body, effort);
             }
+            sync_interleaved_thinking_beta(body, false);
             true
         }
         ("adaptive", ThinkingMode::Legacy) => {
@@ -167,22 +180,70 @@ pub fn normalize_thinking_shape(body: &mut Value, mode: ThinkingMode) -> bool {
                 .and_then(Value::as_str)
                 .unwrap_or("high");
             let max_tokens = body.get("max_tokens").and_then(Value::as_u64);
-            match legacy_budget(effort, max_tokens) {
+            let legacy_thinking = match legacy_budget(effort, max_tokens) {
                 Some(budget) => {
                     body["thinking"] = json!({ "type": "enabled", "budget_tokens": budget });
+                    true
                 }
                 None => {
                     // 挤不出 Anthropic 要求的 1024 下限，发 thinking 只会 400。
                     // 干脆不发，让上游按无思考处理。
+                    //
+                    // 这是唯一一处「静默丢掉调用方明确要的思考」的路径，且丢掉之后请求
+                    // 通常会成功 —— 用户只会觉得模型忽然不思考了，没有别的线索。留一条
+                    // 告警让它可诊断。
+                    log::warn!(
+                        "[RECT-025] adaptive→legacy: max_tokens={} 挤不出 Anthropic 要求的 1024 budget 下限，本次按无思考发送（effort={effort} 一并丢弃）",
+                        max_tokens
+                            .map(|m| m.to_string())
+                            .unwrap_or_else(|| "缺失".to_string())
+                    );
                     if let Some(obj) = body.as_object_mut() {
                         obj.remove("thinking");
                     }
+                    false
                 }
-            }
+            };
             remove_effort(body);
+            sync_interleaved_thinking_beta(body, legacy_thinking);
             true
         }
         _ => false,
+    }
+}
+
+/// 与 legacy thinking 形状绑定的 beta 标识。
+///
+/// 只在 `thinking: {"type":"enabled"}` 下有意义 —— adaptive 的交错思考是默认行为。
+/// 与 [`super::thinking_optimizer`] legacy 分支注入的标识保持一致。
+const INTERLEAVED_THINKING_BETA: &str = "interleaved-thinking-2025-05-14";
+
+/// 改写形状后同步 `anthropic_beta` 里与形状绑定的标识。
+///
+/// Bedrock 的 PRE-SEND 优化器按形状注入 beta（adaptive 分支 `context-1m-2025-08-07`、
+/// legacy 分支 `interleaved-thinking-2025-05-14`），但它在 `forward()` 之外就把请求体
+/// 定型了，整流重试不会重算 —— 形状被改写后 beta 数组会与形状脱节。
+///
+/// 两条边界有意为之：
+/// - **绝不新建 `anthropic_beta` 字段**。它是 Bedrock 的 body 级参数；Anthropic 直通链路
+///   走 `anthropic-beta` 请求头，往 body 里塞这个字段会被上游以「extra inputs are not
+///   permitted」拒掉。字段不存在就说明不是那条链路，直接返回。
+/// - **不动 `context-1m-2025-08-07`**。那是上下文窗口的 beta，与 thinking 形状无关
+///   （Sonnet 4.5 这类 legacy 形状的模型同样支持 1M 上下文）。它对当前模型合不合法在
+///   形状改写前后是同一个答案；这里贸然摘掉，长上下文请求会以另一种方式 400。
+fn sync_interleaved_thinking_beta(body: &mut Value, legacy_thinking: bool) {
+    let Some(betas) = body.get_mut("anthropic_beta").and_then(Value::as_array_mut) else {
+        return;
+    };
+
+    let present = betas
+        .iter()
+        .any(|beta| beta.as_str() == Some(INTERLEAVED_THINKING_BETA));
+
+    match (legacy_thinking, present) {
+        (true, false) => betas.push(json!(INTERLEAVED_THINKING_BETA)),
+        (false, true) => betas.retain(|beta| beta.as_str() != Some(INTERLEAVED_THINKING_BETA)),
+        _ => {}
     }
 }
 
@@ -479,6 +540,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn looks_like_thinking_mode_error_ignores_config_and_covers_both_directions() {
+        // 签名整流器用它做优先级判断（形状问题不该被通用 invalid request 兜底吃掉），
+        // 所以这里不看配置开关，只看报文本身。
+        for msg in [
+            r#""thinking.type.enabled" is not supported for this model. Use "thinking.type.adaptive"."#,
+            "Input tag 'adaptive' found using 'type' does not match expected tags: 'enabled'",
+            "output_config: Extra inputs are not permitted",
+        ] {
+            assert!(looks_like_thinking_mode_error(msg), "msg={msg}");
+        }
+        for msg in [
+            "Request timeout",
+            "invalid request: malformed JSON",
+            "messages.1.content.0: Invalid `signature` in `thinking` block",
+        ] {
+            assert!(!looks_like_thinking_mode_error(msg), "msg={msg}");
+        }
+    }
+
     // ==================== normalize_thinking_shape ====================
 
     #[test]
@@ -582,6 +663,117 @@ mod tests {
         assert!(normalize_thinking_shape(&mut body, ThinkingMode::Legacy));
         assert!(body.get("thinking").is_none());
         assert!(body.get("output_config").is_none());
+    }
+
+    // ==================== 形状绑定的 beta 标识 ====================
+
+    fn betas(body: &Value) -> Vec<&str> {
+        body["anthropic_beta"]
+            .as_array()
+            .expect("anthropic_beta 应仍是数组")
+            .iter()
+            .map(|beta| beta.as_str().expect("beta 应是字符串"))
+            .collect()
+    }
+
+    #[test]
+    fn rewrite_to_legacy_adds_the_interleaved_beta_and_keeps_the_context_beta() {
+        // Bedrock 场景：PRE-SEND 优化器按 adaptive 定型了请求体（含 context-1m beta），
+        // 上游拒绝 adaptive 后整流重试必须补上 legacy 形状要的 interleaved beta ——
+        // 否则重试体的 beta 数组与形状脱节。context-1m 是上下文窗口的 beta，与形状无关，
+        // 摘掉它会让长上下文请求以另一种方式失败，所以必须留着。
+        let mut body = json!({
+            "model": "anthropic.claude-opus-4-6-20250514-v1:0",
+            "max_tokens": 32000,
+            "thinking": { "type": "adaptive" },
+            "output_config": { "effort": "max" },
+            "anthropic_beta": ["context-1m-2025-08-07"]
+        });
+
+        assert!(normalize_thinking_shape(&mut body, ThinkingMode::Legacy));
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(
+            betas(&body),
+            vec!["context-1m-2025-08-07", "interleaved-thinking-2025-05-14"]
+        );
+    }
+
+    #[test]
+    fn rewrite_to_adaptive_drops_the_legacy_only_interleaved_beta() {
+        let mut body = json!({
+            "model": "claude-opus-5",
+            "max_tokens": 32000,
+            "thinking": { "type": "enabled", "budget_tokens": 8192 },
+            "anthropic_beta": ["interleaved-thinking-2025-05-14", "context-1m-2025-08-07"]
+        });
+
+        assert!(normalize_thinking_shape(&mut body, ThinkingMode::Adaptive));
+        assert_eq!(body["thinking"]["type"], "adaptive");
+        assert_eq!(betas(&body), vec!["context-1m-2025-08-07"]);
+    }
+
+    #[test]
+    fn beta_sync_is_idempotent_and_never_creates_the_field() {
+        // 已经有 interleaved：不重复追加
+        let mut body = json!({
+            "max_tokens": 32000,
+            "thinking": { "type": "adaptive" },
+            "anthropic_beta": ["interleaved-thinking-2025-05-14"]
+        });
+        assert!(normalize_thinking_shape(&mut body, ThinkingMode::Legacy));
+        assert_eq!(betas(&body), vec!["interleaved-thinking-2025-05-14"]);
+
+        // 没有 anthropic_beta 字段：一律不新建 —— 那是 Bedrock 的 body 级参数，
+        // Anthropic 直通链路走请求头，body 里多这个字段会被上游拒掉。
+        for mode in [ThinkingMode::Legacy, ThinkingMode::Adaptive] {
+            let mut direct = json!({
+                "max_tokens": 32000,
+                "thinking": match mode {
+                    ThinkingMode::Legacy => json!({ "type": "adaptive" }),
+                    _ => json!({ "type": "enabled", "budget_tokens": 8192 }),
+                }
+            });
+            assert!(normalize_thinking_shape(&mut direct, mode));
+            assert!(
+                direct.get("anthropic_beta").is_none(),
+                "mode={mode:?} 不该新建 anthropic_beta"
+            );
+        }
+    }
+
+    #[test]
+    fn dropping_thinking_at_the_floor_also_drops_the_interleaved_beta() {
+        // 挤不出 1024 下限时整个 thinking 都不发了，此时 interleaved beta 更没有意义
+        let mut body = json!({
+            "max_tokens": 1500,
+            "thinking": { "type": "adaptive" },
+            "output_config": { "effort": "low" },
+            "anthropic_beta": ["context-1m-2025-08-07", "interleaved-thinking-2025-05-14"]
+        });
+
+        assert!(normalize_thinking_shape(&mut body, ThinkingMode::Legacy));
+        assert!(body.get("thinking").is_none());
+        assert_eq!(betas(&body), vec!["context-1m-2025-08-07"]);
+    }
+
+    #[test]
+    fn beta_sync_tolerates_a_malformed_beta_field() {
+        // 第三方客户端什么都可能发：非数组的 anthropic_beta 一律不动
+        for malformed in [
+            json!("interleaved-thinking-2025-05-14"),
+            json!(null),
+            json!(7),
+        ] {
+            let mut body = json!({
+                "max_tokens": 32000,
+                "thinking": { "type": "adaptive" },
+                "anthropic_beta": malformed.clone()
+            });
+
+            assert!(normalize_thinking_shape(&mut body, ThinkingMode::Legacy));
+            assert_eq!(body["thinking"]["type"], "enabled");
+            assert_eq!(body["anthropic_beta"], malformed);
+        }
     }
 
     #[test]
