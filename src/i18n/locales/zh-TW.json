@@ -23,7 +23,6 @@
     "unknown": "未知",
     "enterValidValue": "請輸入有效的內容",
     "clear": "清除",
-    "toggleTheme": "切換主題",
     "format": "格式化",
     "formatSuccess": "格式化成功",
     "formatError": "格式化失敗：{{error}}",
@@ -1478,24 +1477,6 @@
       "grokbuild": "Grok Build"
     },
     "rawInputLabel": "原始",
-    "dataSources": "資料來源",
-    "dataSource": {
-      "proxy": "路由",
-      "session_log": "工作階段日誌",
-      "codex_db": "Codex 資料庫",
-      "codex_session": "Codex 工作階段日誌",
-      "gemini_session": "Gemini 工作階段日誌",
-      "opencode_session": "OpenCode 工作階段日誌",
-      "grok_session": "Grok Build 工作階段日誌"
-    },
-    "sessionSync": {
-      "trigger": "同步工作階段日誌",
-      "import": "匯入工作階段",
-      "resync": "同步",
-      "imported": "從工作階段日誌匯入了 {{count}} 筆紀錄",
-      "upToDate": "工作階段日誌已是最新",
-      "failed": "工作階段同步失敗"
-    },
     "rebuildCodex": {
       "title": "Codex 用量維護",
       "description": "從本機 rollout 日誌重新建構 Codex 工作階段用量",
@@ -2510,8 +2491,7 @@
     "selectIcon": "選擇圖示",
     "preview": "預覽",
     "clickToChange": "點擊更換圖示",
-    "clickToSelect": "點擊選擇圖示",
-    "color": "圖示顏色"
+    "clickToSelect": "點擊選擇圖示"
   },
   "migration": {
     "success": "設定遷移成功",
@@ -2752,33 +2732,6 @@
     "streamingFirstByte": "串流首位元組逾時",
     "streamingIdle": "串流閒置逾時",
     "nonStreaming": "非串流逾時"
-  },
-  "circuitBreaker": {
-    "failureThreshold": "失敗閾值",
-    "successThreshold": "成功閾值",
-    "timeoutSeconds": "逾時時間（秒）",
-    "errorRateThreshold": "錯誤率閾值 (%)",
-    "minRequests": "最小請求數",
-    "validationFailed": "以下欄位超出有效範圍：{{fields}}",
-    "configSaved": "斷路器設定已儲存",
-    "saveFailed": "儲存失敗",
-    "loading": "載入中...",
-    "title": "斷路器設定",
-    "description": "調整斷路器參數以控制故障檢測和恢復行為",
-    "failureThresholdHint": "連續失敗多少次後打開斷路器",
-    "timeoutSecondsHint": "斷路器打開後多久嘗試恢復（半開狀態）",
-    "successThresholdHint": "半開狀態下成功多少次後關閉斷路器",
-    "errorRateThresholdHint": "錯誤率超過此值時打開斷路器",
-    "minRequestsHint": "計算錯誤率前的最小請求數",
-    "saveConfig": "儲存設定",
-    "instructionsTitle": "設定說明",
-    "instructions": {
-      "failureThreshold": "連續失敗達到此次數時，斷路器打開",
-      "timeout": "斷路器打開後，等待此時間後嘗試半開",
-      "successThreshold": "半開狀態下，成功達到此次數時關閉斷路器",
-      "errorRate": "錯誤率超過此值時，斷路器打開",
-      "minRequests": "只有請求數達到此值後才計算錯誤率"
-    }
   },
   "universalProvider": {
     "duplicate": "複製",
