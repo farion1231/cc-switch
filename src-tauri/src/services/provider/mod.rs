@@ -703,6 +703,24 @@ mod tests {
     }
 
     #[test]
+    fn validate_provider_settings_uses_pi_schema_validator() {
+        let provider = Provider::with_id(
+            "pi-custom".into(),
+            "Pi Custom".into(),
+            json!({
+                "baseUrl": "https://example.com/v1",
+                "api": "openai-chat",
+                "models": [{ "id": "model-1" }]
+            }),
+            None,
+        );
+
+        let error = ProviderService::validate_provider_settings(&AppType::Pi, &provider)
+            .expect_err("unsupported Pi API must be rejected at the service boundary");
+        assert!(error.to_string().contains("unsupported API"));
+    }
+
+    #[test]
     fn extract_gemini_common_config_strips_credentials_keeps_shareable() {
         // Gemini 的共享片段会被 deep-merge 回**其它** Gemini 供应商的 env
         // (live.rs::apply_common_config_to_settings)，因此任何凭据都不得进入片段。
@@ -2560,12 +2578,38 @@ impl ProviderService {
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
-        if app_type.is_additive_mode() {
+        if app_type.uses_additive_provider_registry() {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
         }
 
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
+
+        // Pi combines an additive provider registry with an active default.
+        if matches!(app_type, AppType::Pi) {
+            if !add_to_live {
+                return Ok(true);
+            }
+
+            let current = crate::settings::get_effective_current_provider(&state.db, &app_type)?;
+            let live_result = if current.is_none() {
+                crate::pi_config::activate_pi_live_provider(&provider, false)
+            } else {
+                crate::pi_config::upsert_pi_live_provider(&provider, false)
+            };
+            if let Err(error) = live_result {
+                let _ = state.db.delete_provider(app_type.as_str(), &provider.id);
+                return Err(error);
+            }
+
+            if current.is_none() {
+                state
+                    .db
+                    .set_current_provider(app_type.as_str(), &provider.id)?;
+                crate::settings::set_current_provider(&app_type, Some(&provider.id))?;
+            }
+            return Ok(true);
+        }
 
         // Additive mode apps (OpenCode, OpenClaw): optionally write to live config.
         if app_type.is_additive_mode() {
@@ -2684,6 +2728,50 @@ impl ProviderService {
                 crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
             }
 
+            return Ok(true);
+        }
+
+        if matches!(app_type, AppType::Pi) {
+            let existing = existing_provider.as_ref().ok_or_else(|| {
+                AppError::Message(format!(
+                    "Provider '{}' does not exist in app '{}'",
+                    provider.id,
+                    app_type.as_str()
+                ))
+            })?;
+            let live_config_managed = match Self::provider_live_config_managed(existing) {
+                Some(managed) => managed,
+                None => crate::pi_config::pi_provider_exists(&provider.id)?,
+            };
+            Self::set_provider_live_config_managed(&mut provider, live_config_managed);
+
+            if !live_config_managed {
+                state.db.save_provider(app_type.as_str(), &provider)?;
+                return Ok(true);
+            }
+
+            let is_current = crate::settings::get_effective_current_provider(&state.db, &app_type)?
+                .as_deref()
+                == Some(provider.id.as_str());
+            let write_provider = |value: &Provider| {
+                if is_current {
+                    crate::pi_config::activate_pi_live_provider(value, true)
+                } else {
+                    crate::pi_config::upsert_pi_live_provider(value, true)
+                }
+            };
+
+            write_provider(&provider)?;
+            if let Err(error) = state.db.save_provider(app_type.as_str(), &provider) {
+                if let Err(rollback_error) = write_provider(existing) {
+                    log::warn!(
+                        "Failed to roll back Pi provider '{}' after DB save error: {}",
+                        provider.id,
+                        rollback_error
+                    );
+                }
+                return Err(error);
+            }
             return Ok(true);
         }
 
@@ -2887,6 +2975,32 @@ impl ProviderService {
             ));
         }
 
+        if matches!(app_type, AppType::Pi) {
+            let existing = state.db.get_provider_by_id(id, app_type.as_str())?;
+            let live_config_managed = existing
+                .as_ref()
+                .and_then(Self::provider_live_config_managed)
+                == Some(true);
+            if live_config_managed {
+                crate::pi_config::remove_pi_live_provider(id)?;
+            }
+            if let Err(error) = state.db.delete_provider(app_type.as_str(), id) {
+                if live_config_managed {
+                    if let Some(existing) = existing.as_ref() {
+                        if let Err(rollback_error) =
+                            crate::pi_config::upsert_pi_live_provider(existing, true)
+                        {
+                            log::warn!(
+                                "Failed to restore Pi provider '{id}' after DB delete error: {rollback_error}"
+                            );
+                        }
+                    }
+                }
+                return Err(error);
+            }
+            return Ok(());
+        }
+
         state.db.delete_provider(app_type.as_str(), id)
     }
 
@@ -2934,6 +3048,16 @@ impl ProviderService {
             }
             AppType::Hermes => {
                 remove_hermes_provider_from_live(id)?;
+            }
+            AppType::Pi => {
+                let current =
+                    crate::settings::get_effective_current_provider(&state.db, &app_type)?;
+                if current.as_deref() == Some(id) {
+                    return Err(AppError::Message(
+                        "Cannot remove the active Pi provider from live config".to_string(),
+                    ));
+                }
+                crate::pi_config::remove_pi_live_provider(id)?;
             }
             _ => {
                 return Err(AppError::Message(format!(
@@ -3130,6 +3254,33 @@ impl ProviderService {
             }
         }
 
+        let pi_live_preapplied = if matches!(app_type, AppType::Pi) {
+            let overwrite_existing = match Self::provider_live_config_managed(provider) {
+                Some(managed) => managed,
+                None => crate::pi_config::pi_provider_exists(&provider.id)?,
+            };
+            let mut managed_provider = provider.clone();
+            let marker_changed = Self::provider_live_config_managed(provider) != Some(true);
+            if marker_changed {
+                Self::set_provider_live_config_managed(&mut managed_provider, true);
+                state
+                    .db
+                    .save_provider(app_type.as_str(), &managed_provider)?;
+            }
+
+            if let Err(error) =
+                crate::pi_config::activate_pi_live_provider(provider, overwrite_existing)
+            {
+                if marker_changed {
+                    let _ = state.db.save_provider(app_type.as_str(), provider);
+                }
+                return Err(error);
+            }
+            true
+        } else {
+            false
+        };
+
         // Additive mode apps skip setting is_current (no such concept)
         if !app_type.is_additive_mode() {
             // Update local settings (device-level, takes priority)
@@ -3140,7 +3291,9 @@ impl ProviderService {
         }
 
         // Sync to live (write_gemini_live handles security flag internally for Gemini)
-        write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+        if !pi_live_preapplied {
+            write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+        }
 
         // Hermes is additive, so "switching" doesn't overwrite a live config file
         // — we instead update the top-level `model:` section to point at this
@@ -3462,6 +3615,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Pi => Ok(String::new()),     // Pi doesn't use common config snippets
         }
     }
 
@@ -3479,6 +3633,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Pi => Ok(String::new()),     // Pi doesn't use common config snippets
         }
     }
 
@@ -4244,6 +4399,9 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::Pi => {
+                crate::pi_config::validate_pi_provider_config(&provider.settings_config)?;
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -4448,7 +4606,7 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::OpenClaw | AppType::Hermes => {
+            AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
                 // OpenClaw/Hermes use apiKey and baseUrl directly on the object
                 let api_key = provider
                     .settings_config
@@ -4466,6 +4624,7 @@ impl ProviderService {
                 let base_url = provider
                     .settings_config
                     .get("baseUrl")
+                    .or_else(|| provider.settings_config.get("baseURL"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();

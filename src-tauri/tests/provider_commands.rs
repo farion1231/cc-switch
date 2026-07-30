@@ -35,6 +35,21 @@ context_window = 500000
     )
 }
 
+fn pi_provider(id: &str, model: &str) -> Provider {
+    Provider::with_id(
+        id.to_string(),
+        id.to_string(),
+        json!({
+            "baseUrl": format!("https://{id}.example/v1"),
+            "apiKey": format!("sk-{id}"),
+            "api": "openai-completions",
+            "models": [{ "id": model }],
+            "defaultModel": model
+        }),
+        None,
+    )
+}
+
 #[test]
 fn grokbuild_import_and_switch_write_live_config() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
@@ -91,6 +106,210 @@ fn grokbuild_import_and_switch_write_live_config() {
             .expect("read Grok Build current provider")
             .as_deref(),
         Some("relay")
+    );
+}
+
+#[test]
+fn pi_default_import_preserves_live_provider_identity() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let pi_dir = home.join(".pi").join("agent");
+    std::fs::create_dir_all(&pi_dir).expect("create Pi config dir");
+    std::fs::write(
+        pi_dir.join("models.json"),
+        serde_json::to_string_pretty(&json!({
+            "providers": {
+                "packy": {
+                    "baseURL": "https://api.packy.example/v1",
+                    "apiKey": "sk-packy",
+                    "api": "openai-completions",
+                    "models": [{ "id": "gpt-5.5", "name": "GPT 5.5" }]
+                }
+            }
+        }))
+        .expect("serialize Pi models"),
+    )
+    .expect("seed Pi models.json");
+    std::fs::write(
+        pi_dir.join("settings.json"),
+        serde_json::to_string_pretty(&json!({
+            "defaultProvider": "packy",
+            "defaultModel": "gpt-5.5"
+        }))
+        .expect("serialize Pi settings"),
+    )
+    .expect("seed Pi settings.json");
+
+    let state = create_test_state().expect("create test state");
+    assert!(
+        import_default_config_test_hook(&state, AppType::Pi).expect("import Pi default config"),
+        "Pi live config should be imported"
+    );
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Pi.as_str())
+        .expect("get Pi providers");
+    assert!(
+        providers.contains_key("packy"),
+        "the imported provider should keep Pi's defaultProvider id"
+    );
+    assert!(
+        !providers.contains_key("default"),
+        "Pi import must not invent a replacement provider id"
+    );
+    assert_eq!(
+        providers["packy"]
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.live_config_managed),
+        Some(true),
+        "an explicitly imported Pi provider is managed by CC Switch"
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::Pi.as_str())
+            .expect("get current Pi provider")
+            .as_deref(),
+        Some("packy")
+    );
+}
+
+#[test]
+fn pi_add_preserves_registry_and_switches_default_separately() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let state = create_test_state().expect("create test state");
+
+    ProviderService::add(
+        &state,
+        AppType::Pi,
+        pi_provider("cc-switch-one", "model-one"),
+        true,
+    )
+    .expect("add first Pi provider");
+    ProviderService::add(
+        &state,
+        AppType::Pi,
+        pi_provider("cc-switch-two", "model-two"),
+        true,
+    )
+    .expect("add second Pi provider");
+
+    let pi_dir = home.join(".pi").join("agent");
+    let models: serde_json::Value =
+        read_json_file(&pi_dir.join("models.json")).expect("read Pi models");
+    assert!(models.pointer("/providers/cc-switch-one").is_some());
+    assert!(models.pointer("/providers/cc-switch-two").is_some());
+
+    let settings: serde_json::Value =
+        read_json_file(&pi_dir.join("settings.json")).expect("read Pi settings");
+    assert_eq!(
+        settings.get("defaultProvider"),
+        Some(&json!("cc-switch-one")),
+        "adding another provider must not implicitly switch Pi"
+    );
+
+    switch_provider_test_hook(&state, AppType::Pi, "cc-switch-two").expect("switch Pi provider");
+
+    let models: serde_json::Value =
+        read_json_file(&pi_dir.join("models.json")).expect("read switched Pi models");
+    assert!(
+        models.pointer("/providers/cc-switch-one").is_some(),
+        "switching must not remove the previous Pi provider"
+    );
+    let settings: serde_json::Value =
+        read_json_file(&pi_dir.join("settings.json")).expect("read switched Pi settings");
+    assert_eq!(
+        settings.get("defaultProvider"),
+        Some(&json!("cc-switch-two"))
+    );
+    assert_eq!(settings.get("defaultModel"), Some(&json!("model-two")));
+}
+
+#[test]
+fn pi_delete_removes_only_managed_inactive_provider() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let state = create_test_state().expect("create test state");
+
+    ProviderService::add(
+        &state,
+        AppType::Pi,
+        pi_provider("cc-switch-one", "model-one"),
+        true,
+    )
+    .expect("add first Pi provider");
+    ProviderService::add(
+        &state,
+        AppType::Pi,
+        pi_provider("cc-switch-two", "model-two"),
+        true,
+    )
+    .expect("add second Pi provider");
+    switch_provider_test_hook(&state, AppType::Pi, "cc-switch-two").expect("switch Pi provider");
+
+    ProviderService::delete(&state, AppType::Pi, "cc-switch-one")
+        .expect("delete inactive Pi provider");
+    let models: serde_json::Value =
+        read_json_file(&home.join(".pi/agent/models.json")).expect("read Pi models");
+    assert!(models.pointer("/providers/cc-switch-one").is_none());
+    assert!(models.pointer("/providers/cc-switch-two").is_some());
+
+    ProviderService::delete(&state, AppType::Pi, "cc-switch-two")
+        .expect_err("active Pi provider deletion must be blocked");
+}
+
+#[test]
+fn pi_add_rejects_an_unmanaged_live_key_collision() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let pi_dir = home.join(".pi").join("agent");
+    std::fs::create_dir_all(&pi_dir).expect("create Pi config dir");
+    std::fs::write(
+        pi_dir.join("models.json"),
+        serde_json::to_vec_pretty(&json!({
+            "providers": {
+                "external": {
+                    "baseUrl": "https://external.example/v1",
+                    "apiKey": "keep-me",
+                    "api": "openai-completions",
+                    "models": [{ "id": "external-model" }]
+                }
+            }
+        }))
+        .expect("serialize Pi models"),
+    )
+    .expect("seed Pi models");
+    let state = create_test_state().expect("create test state");
+
+    ProviderService::add(
+        &state,
+        AppType::Pi,
+        pi_provider("external", "cc-switch-model"),
+        true,
+    )
+    .expect_err("unmanaged Pi key collision must be rejected");
+
+    assert!(
+        state
+            .db
+            .get_provider_by_id("external", AppType::Pi.as_str())
+            .expect("query Pi provider")
+            .is_none(),
+        "failed live registration must roll back the DB row"
+    );
+    let models: serde_json::Value =
+        read_json_file(&pi_dir.join("models.json")).expect("read Pi models");
+    assert_eq!(
+        models.pointer("/providers/external/apiKey"),
+        Some(&json!("keep-me")),
+        "CC Switch must not overwrite an unmanaged Pi provider"
     );
 }
 

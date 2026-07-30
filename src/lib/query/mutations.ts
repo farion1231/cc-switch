@@ -83,6 +83,10 @@ export const useAddProviderMutation = (appId: AppId) => {
           }
           id = providerInput.providerKey;
         }
+      } else if (appId === "pi") {
+        // Pi provider IDs are user-visible registry keys. Namespace generated
+        // IDs so they remain recognizable and avoid external-key collisions.
+        id = `cc-switch-${generateUUID()}`;
       } else {
         id = generateUUID();
       }

@@ -186,6 +186,7 @@ pub(crate) fn provider_exists_in_live_config(
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::Pi => crate::pi_config::pi_provider_exists(provider_id),
         _ => Ok(false),
     }
 }
@@ -527,7 +528,8 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
-        | AppType::ClaudeDesktop => false,
+        | AppType::ClaudeDesktop
+        | AppType::Pi => false,
     }
 }
 
@@ -601,7 +603,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
+        | AppType::ClaudeDesktop
+        | AppType::Pi => Ok(settings.clone()),
     }
 }
 
@@ -660,7 +663,8 @@ fn apply_common_config_to_settings(
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
+        | AppType::ClaudeDesktop
+        | AppType::Pi => Ok(settings.clone()),
     }
 }
 
@@ -1162,6 +1166,10 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::Pi => {
+            crate::pi_config::upsert_pi_live_provider(provider, true)?;
+            log::debug!("Pi provider '{}' written to live config", provider.id);
+        }
     }
     Ok(())
 }
@@ -1199,11 +1207,36 @@ fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<()
     Ok(())
 }
 
+fn sync_pi_providers_to_live(state: &AppState) -> Result<(), AppError> {
+    let app_type = AppType::Pi;
+    let providers = state.db.get_all_providers(app_type.as_str())?;
+    let managed = providers
+        .values()
+        .filter(|provider| {
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.live_config_managed)
+                != Some(false)
+        })
+        .collect::<Vec<_>>();
+    let current_id = crate::settings::get_effective_current_provider(&state.db, &app_type)?;
+    let active = current_id.as_deref().and_then(|id| {
+        managed
+            .iter()
+            .copied()
+            .find(|provider| provider.id.as_str() == id)
+    });
+    crate::pi_config::sync_pi_live_providers(&managed, active)
+}
+
 pub(crate) fn sync_current_provider_for_app_to_live(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<(), AppError> {
-    if app_type.is_additive_mode() {
+    if matches!(app_type, AppType::Pi) {
+        sync_pi_providers_to_live(state)?;
+    } else if app_type.is_additive_mode() {
         sync_all_providers_to_live(state, app_type)?;
     } else {
         let current_id = match crate::settings::get_effective_current_provider(&state.db, app_type)?
@@ -1278,7 +1311,9 @@ fn sync_current_provider_for_app_respecting_takeover(
 pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     // Sync providers based on mode
     for app_type in AppType::all() {
-        if app_type.is_additive_mode() {
+        if matches!(app_type, AppType::Pi) {
+            sync_pi_providers_to_live(state)?;
+        } else if app_type.is_additive_mode() {
             // Additive mode: sync ALL providers
             sync_all_providers_to_live(state, &app_type)?;
         } else {
@@ -1417,7 +1452,25 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = crate::hermes_config::yaml_to_json(&yaml_config)?;
             Ok(config)
         }
+        AppType::Pi => crate::pi_config::read_pi_live_settings(),
     }
+}
+
+fn pi_provider_config_from_live_settings(live_settings: Value) -> Value {
+    let mut provider_config = live_settings
+        .get("providerConfig")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+
+    if let Some(default_model) = live_settings.get("defaultModel").cloned() {
+        if !default_model.is_null() {
+            if let Some(obj) = provider_config.as_object_mut() {
+                obj.insert("defaultModel".to_string(), default_model);
+            }
+        }
+    }
+
+    provider_config
 }
 
 /// Import default configuration from live files
@@ -1455,6 +1508,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         ));
     }
 
+    let mut imported_provider_id = "default".to_string();
     let settings_config = match app_type {
         AppType::Codex => crate::codex_config::read_codex_live_settings()?,
         AppType::GrokBuild => {
@@ -1525,6 +1579,15 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
+        AppType::Pi => {
+            let live_settings = crate::pi_config::read_pi_live_settings()?;
+            imported_provider_id = live_settings
+                .get("defaultProvider")
+                .and_then(Value::as_str)
+                .unwrap_or("default")
+                .to_string();
+            pi_provider_config_from_live_settings(live_settings)
+        }
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
             unreachable!("additive mode apps are handled by early return")
@@ -1532,8 +1595,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     };
 
     let mut provider = Provider::with_id(
-        "default".to_string(),
-        "default".to_string(),
+        imported_provider_id.clone(),
+        imported_provider_id,
         settings_config,
         None,
     );
@@ -1563,6 +1626,12 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         }
         .to_string(),
     );
+    if matches!(app_type, AppType::Pi) {
+        provider
+            .meta
+            .get_or_insert_with(Default::default)
+            .live_config_managed = Some(true);
+    }
 
     state.db.save_provider(app_type.as_str(), &provider)?;
     state
@@ -2614,5 +2683,30 @@ base_url = "https://a.example/v1"
 
         assert!(!config_text.contains("mcp_servers"));
         assert!(config_text.contains("model = \"grok-4.5\""));
+    }
+
+    #[test]
+    fn pi_import_provider_config_preserves_default_model() {
+        let live_settings = json!({
+            "defaultProvider": "packy",
+            "defaultModel": "gpt-5.5-mini",
+            "providerConfig": {
+                "baseUrl": "https://api.packy.example/v1",
+                "apiKey": "sk-packy",
+                "api": "openai-completions",
+                "models": [
+                    { "id": "gpt-5.5" },
+                    { "id": "gpt-5.5-mini" }
+                ]
+            }
+        });
+
+        let provider_config = pi_provider_config_from_live_settings(live_settings);
+
+        assert_eq!(
+            provider_config.get("defaultModel"),
+            Some(&json!("gpt-5.5-mini")),
+            "Pi import must preserve settings.json defaultModel inside stored provider config"
+        );
     }
 }
