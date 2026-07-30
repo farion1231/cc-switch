@@ -7,7 +7,7 @@ use super::{
     forwarder::ActiveConnectionGuard,
     handler_config::{StreamUsageEventFilter, UsageParserConfig},
     handler_context::{RequestContext, StreamingTimeoutConfig},
-    hyper_client::ProxyResponse,
+    hyper_client::{ProxyResponse, MAX_RESPONSE_BODY_BYTES},
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
     usage::parser::TokenUsage,
@@ -86,10 +86,11 @@ pub(crate) async fn read_decoded_body(
 ) -> Result<(HeaderMap, http::StatusCode, Bytes), ProxyError> {
     let mut headers = response.headers().clone();
     let status = response.status();
+    let bytes_future = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES);
     let raw_bytes = if body_timeout.is_zero() {
-        response.bytes().await?
+        bytes_future.await?
     } else {
-        tokio::time::timeout(body_timeout, response.bytes())
+        tokio::time::timeout(body_timeout, bytes_future)
             .await
             .map_err(|_| {
                 ProxyError::Timeout(format!(
@@ -113,6 +114,9 @@ pub(crate) async fn read_decoded_body(
         log::debug!("[{tag}] 解压非流式响应: content-encoding={encoding}");
         match decompress_body(&encoding, &raw_bytes) {
             Ok(Some(decompressed)) => {
+                if decompressed.len() > MAX_RESPONSE_BODY_BYTES {
+                    return Err(ProxyError::ResponseBodyTooLarge(decompressed.len()));
+                }
                 body_bytes = Bytes::from(decompressed);
                 decoded = true;
             }

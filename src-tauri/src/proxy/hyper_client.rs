@@ -72,6 +72,10 @@ fn global_hyper_client() -> &'static HyperClient {
     })
 }
 
+/// 响应体读取上限（128 MiB）。正常非流式补全响应只有几十到几百 KiB；超过则视为
+/// 上游异常或恶意 payload，直接拒绝，避免代理进程被超大响应体/压缩炸弹耗尽内存。
+pub(crate) const MAX_RESPONSE_BODY_BYTES: usize = 128 * 1024 * 1024;
+
 /// Unified response wrapper that can hold either a hyper or reqwest response.
 ///
 /// The hyper variant is used for the main (direct) path with header-case preservation.
@@ -176,6 +180,51 @@ impl ProxyResponse {
                     let chunk = chunk.map_err(|e| {
                         ProxyError::ForwardFailed(format!("Failed to read response body: {e}"))
                     })?;
+                    body.extend_from_slice(&chunk);
+                }
+                Ok(body.freeze())
+            }
+        }
+    }
+
+    /// Consume the response and collect the full body into `Bytes`, but reject
+    /// payloads larger than `max_bytes` before returning them to the caller.
+    pub async fn bytes_with_limit(self, max_bytes: usize) -> Result<Bytes, ProxyError> {
+        match self {
+            Self::Hyper(r) => {
+                let collected = r.into_body().collect().await.map_err(|e| {
+                    ProxyError::ForwardFailed(format!("Failed to read response body: {e}"))
+                })?;
+                let bytes = collected.to_bytes();
+                if bytes.len() > max_bytes {
+                    return Err(ProxyError::ResponseBodyTooLarge(bytes.len()));
+                }
+                Ok(bytes)
+            }
+            Self::Reqwest(r) => {
+                let bytes = r.bytes().await.map_err(|e| {
+                    ProxyError::ForwardFailed(format!("Failed to read response body: {e}"))
+                })?;
+                if bytes.len() > max_bytes {
+                    return Err(ProxyError::ResponseBodyTooLarge(bytes.len()));
+                }
+                Ok(bytes)
+            }
+            Self::Buffered { body, .. } => {
+                if body.len() > max_bytes {
+                    return Err(ProxyError::ResponseBodyTooLarge(body.len()));
+                }
+                Ok(body)
+            }
+            Self::Streamed { mut stream, .. } => {
+                let mut body = bytes::BytesMut::new();
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk.map_err(|e| {
+                        ProxyError::ForwardFailed(format!("Failed to read response body: {e}"))
+                    })?;
+                    if body.len() + chunk.len() > max_bytes {
+                        return Err(ProxyError::ResponseBodyTooLarge(body.len() + chunk.len()));
+                    }
                     body.extend_from_slice(&chunk);
                 }
                 Ok(body.freeze())
@@ -779,5 +828,35 @@ mod tests {
         assert!(buffered_with_content_type(Some("application/problem+json")).is_json());
         assert!(!buffered_with_content_type(Some("text/event-stream")).is_json());
         assert!(!buffered_with_content_type(None).is_json());
+    }
+
+    #[tokio::test]
+    async fn bytes_with_limit_rejects_oversized_buffered_response() {
+        let oversized = Bytes::from(vec![0u8; MAX_RESPONSE_BODY_BYTES + 1]);
+        let response =
+            ProxyResponse::buffered(http::StatusCode::OK, http::HeaderMap::new(), oversized);
+
+        let result = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES).await;
+        assert!(matches!(result, Err(ProxyError::ResponseBodyTooLarge(_))));
+    }
+
+    #[tokio::test]
+    async fn bytes_with_limit_rejects_oversized_streamed_response() {
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(2);
+        let stream = futures::stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|item| (item, rx))
+        });
+        let response =
+            ProxyResponse::streamed(http::StatusCode::OK, http::HeaderMap::new(), stream);
+
+        tokio::spawn(async move {
+            let _ = tx.send(Ok(Bytes::from(vec![0u8; 64 * 1024]))).await;
+            let _ = tx
+                .send(Ok(Bytes::from(vec![0u8; MAX_RESPONSE_BODY_BYTES])))
+                .await;
+        });
+
+        let result = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES).await;
+        assert!(matches!(result, Err(ProxyError::ResponseBodyTooLarge(_))));
     }
 }
