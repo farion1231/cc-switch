@@ -81,16 +81,18 @@ fn should_run_auto_sync(settings: Option<&S3SyncSettings>) -> bool {
 
 fn persist_auto_sync_error(settings: &mut S3SyncSettings, error: &AppError) {
     settings.status.last_error = Some(error.to_string());
+    settings.status.last_error_key = error.localized_key().map(str::to_string);
     settings.status.last_error_source = Some("auto".to_string());
     let _ = settings::update_s3_sync_status(settings.status.clone());
 }
 
-fn emit_auto_sync_status_updated(app: &AppHandle, status: &str, error: Option<&str>) {
+fn emit_auto_sync_status_updated(app: &AppHandle, status: &str, error: Option<&AppError>) {
     let payload = match error {
-        Some(message) => json!({
+        Some(error) => json!({
             "source": "auto",
             "status": status,
-            "error": message,
+            "error": error.to_string(),
+            "errorKey": error.localized_key(),
         }),
         None => json!({
             "source": "auto",
@@ -117,7 +119,11 @@ async fn run_auto_sync_upload(
         None => return Ok(()),
     };
 
-    let result = s3_sync::run_with_sync_lock(s3_sync::upload(db, &mut sync_settings)).await;
+    let result = s3_sync::run_with_sync_lock(async {
+        s3_sync::ensure_remote_unchanged_since_last_sync(&sync_settings).await?;
+        s3_sync::upload(db, &mut sync_settings).await
+    })
+    .await;
     match result {
         Ok(_) => {
             emit_auto_sync_status_updated(app, "success", None);
@@ -125,7 +131,7 @@ async fn run_auto_sync_upload(
         }
         Err(err) => {
             persist_auto_sync_error(&mut sync_settings, &err);
-            emit_auto_sync_status_updated(app, "error", Some(&err.to_string()));
+            emit_auto_sync_status_updated(app, "error", Some(&err));
             Err(err)
         }
     }

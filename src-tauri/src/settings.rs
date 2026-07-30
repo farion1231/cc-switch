@@ -88,6 +88,8 @@ pub struct WebDavSyncStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error_source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_remote_etag: Option<String>,
@@ -95,6 +97,10 @@ pub struct WebDavSyncStatus {
     pub last_local_manifest_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_remote_manifest_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_local_snapshot_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_remote_snapshot_id: Option<String>,
 }
 
 fn default_remote_root() -> String {

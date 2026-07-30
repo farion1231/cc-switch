@@ -220,6 +220,14 @@ export const handlers = [
     return success(true);
   }),
 
+  http.post(`${TAURI_ENDPOINT}/webdav_sync_upload`, () =>
+    success({ status: "uploaded" }),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/webdav_sync_download`, () =>
+    success({ status: "downloaded" }),
+  ),
+
   http.post(
     `${TAURI_ENDPOINT}/set_app_config_dir_override`,
     async ({ request }) => {

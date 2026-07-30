@@ -17,6 +17,12 @@ const TRANSFER_TIMEOUT_SECS: u64 = 300;
 /// Auth pair: `(username, Some(password))`.
 pub type WebDavAuth = Option<(String, Option<String>)>;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PutPrecondition {
+    IfMatch(String),
+    IfNoneMatchAny,
+}
+
 // ─── WebDAV extension methods ────────────────────────────────
 
 fn method_propfind() -> Method {
@@ -97,6 +103,17 @@ pub fn auth_from_credentials(username: &str, password: &str) -> WebDavAuth {
 fn apply_auth(builder: RequestBuilder, auth: &WebDavAuth) -> RequestBuilder {
     match auth {
         Some((user, pass)) => builder.basic_auth(user, pass.as_deref()),
+        None => builder,
+    }
+}
+
+fn apply_put_precondition(
+    builder: RequestBuilder,
+    precondition: Option<&PutPrecondition>,
+) -> RequestBuilder {
+    match precondition {
+        Some(PutPrecondition::IfMatch(etag)) => builder.header("If-Match", etag),
+        Some(PutPrecondition::IfNoneMatchAny) => builder.header("If-None-Match", "*"),
         None => builder,
     }
 }
@@ -228,21 +245,49 @@ pub async fn put_bytes(
     bytes: Vec<u8>,
     content_type: &str,
 ) -> Result<(), AppError> {
+    put_bytes_inner(url, auth, bytes, content_type, None).await
+}
+
+/// PUT bytes to a remote WebDAV URL with an HTTP conditional header.
+pub async fn put_bytes_with_precondition(
+    url: &str,
+    auth: &WebDavAuth,
+    bytes: Vec<u8>,
+    content_type: &str,
+    precondition: PutPrecondition,
+) -> Result<(), AppError> {
+    put_bytes_inner(url, auth, bytes, content_type, Some(&precondition)).await
+}
+
+async fn put_bytes_inner(
+    url: &str,
+    auth: &WebDavAuth,
+    bytes: Vec<u8>,
+    content_type: &str,
+    precondition: Option<&PutPrecondition>,
+) -> Result<(), AppError> {
     let client = http_client::get();
-    let resp = apply_auth(
+    let builder = apply_put_precondition(
         client
             .put(url)
             .header("Content-Type", content_type)
             .body(bytes)
             .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS)),
-        auth,
-    )
-    .send()
-    .await
-    .map_err(|e| webdav_transport_error("webdav.put_failed", "PUT 请求", "PUT request", url, &e))?;
+        precondition,
+    );
+    let resp = apply_auth(builder, auth).send().await.map_err(|e| {
+        webdav_transport_error("webdav.put_failed", "PUT 请求", "PUT request", url, &e)
+    })?;
 
     if resp.status().is_success() {
         return Ok(());
+    }
+    if resp.status() == StatusCode::PRECONDITION_FAILED {
+        return Err(AppError::localized(
+            "webdav.put_precondition_failed",
+            "WebDAV 远端文件已变化，条件上传被拒绝",
+            "WebDAV remote file changed, so the conditional upload was rejected.",
+        ));
     }
     Err(webdav_status_error("PUT", resp.status(), url))
 }

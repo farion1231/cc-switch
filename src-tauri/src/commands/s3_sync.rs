@@ -13,6 +13,7 @@ use crate::store::AppState;
 
 fn persist_sync_error(settings: &mut S3SyncSettings, error: &AppError, source: &str) {
     settings.status.last_error = Some(error.to_string());
+    settings.status.last_error_key = error.localized_key().map(str::to_string);
     settings.status.last_error_source = Some(source.to_string());
     let _ = settings::update_s3_sync_status(settings.status.clone());
 }
