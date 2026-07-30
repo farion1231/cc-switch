@@ -1545,6 +1545,8 @@ impl Database {
                 "1.00",
                 "12.50",
             ),
+            // Claude Opus 5（与 Opus 4.8 同价位；fast mode $10/$50 不入表）
+            ("claude-opus-5", "Claude Opus 5", "5", "25", "0.50", "6.25"),
             // Claude 4.8 系列
             (
                 "claude-opus-4-8",
@@ -1853,6 +1855,15 @@ impl Database {
             ("gpt-4.1", "GPT-4.1", "2", "8", "0.50", "0"),
             ("gpt-4.1-mini", "GPT-4.1 Mini", "0.40", "1.60", "0.10", "0"),
             ("gpt-4.1-nano", "GPT-4.1 Nano", "0.10", "0.40", "0.025", "0"),
+            // Gemini 3.6 系列
+            (
+                "gemini-3.6-flash",
+                "Gemini 3.6 Flash",
+                "1.50",
+                "7.50",
+                "0.15",
+                "0",
+            ),
             // Gemini 3.5 系列
             (
                 "gemini-3.5-flash",
@@ -2246,6 +2257,10 @@ impl Database {
             ("qwen3-32b", "Qwen3 32B", "0.16", "0.64", "0", "0"),
             // Grok 系列 (xAI)
             ("grok-4.5", "Grok 4.5", "2", "6", "0.50", "0"),
+            // Grok CLI 官方 OAuth 态 modelUsage 上报的内部别名。定价由
+            // costUsdTicks（1 tick = 1e-10 USD）双轮实测反推：input/output 与
+            // grok-4.5 同为 2/6，cache read 实际按 0.30 计（非 API 挂牌的 0.50）
+            ("grok-4.5-build", "Grok 4.5 Build", "2", "6", "0.30", "0"),
             ("grok-4.3", "Grok 4.3", "1.25", "2.50", "0.20", "0"),
             (
                 "grok-4.20-0309-reasoning",

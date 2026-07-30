@@ -90,7 +90,8 @@ export function useSubscriptionQuota(
   const query = useQuery({
     queryKey: subscriptionKeys.quota(appId),
     queryFn: () => subscriptionApi.getQuota(appId),
-    enabled: enabled && ["claude", "codex", "gemini"].includes(appId),
+    enabled:
+      enabled && ["claude", "codex", "gemini", "grokbuild"].includes(appId),
     refetchInterval,
     refetchIntervalInBackground: Boolean(refetchInterval),
     refetchOnWindowFocus: Boolean(refetchInterval),
@@ -128,6 +129,33 @@ export function useCodexOauthQuota(
   const query = useQuery({
     queryKey: ["codex_oauth", "quota", accountId ?? "default"],
     queryFn: () => subscriptionApi.getCodexOauthQuota(accountId),
+    enabled,
+    refetchInterval: autoQuery ? REFETCH_INTERVAL : false,
+    refetchIntervalInBackground: autoQuery,
+    refetchOnWindowFocus: autoQuery,
+    staleTime: REFETCH_INTERVAL,
+    retry: 1,
+  });
+
+  return useQuotaKeepLastGood(query, accountId ?? "default");
+}
+
+/**
+ * xAI OAuth (SuperGrok 反代) 订阅额度查询 hook
+ *
+ * 与 `useCodexOauthQuota` 平行：数据走 cc-switch 自管的 xAI OAuth token，
+ * 而不是 Grok CLI 的 ~/.grok/auth.json；后端复用同一个 grok.com 账单端点，
+ * 因此与 Grok Build 分区的官方订阅显示同一份额度。
+ */
+export function useXaiOauthQuota(
+  meta: ProviderMeta | undefined,
+  options: UseCodexOauthQuotaOptions = {},
+) {
+  const { enabled = true, autoQuery = false } = options;
+  const accountId = resolveManagedAccountId(meta, PROVIDER_TYPES.XAI_OAUTH);
+  const query = useQuery({
+    queryKey: ["xai_oauth", "quota", accountId ?? "default"],
+    queryFn: () => subscriptionApi.getXaiOauthQuota(accountId),
     enabled,
     refetchInterval: autoQuery ? REFETCH_INTERVAL : false,
     refetchIntervalInBackground: autoQuery,
