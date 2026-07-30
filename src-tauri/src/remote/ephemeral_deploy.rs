@@ -5,8 +5,7 @@ use std::sync::Arc;
 use super::embedded_agent::EphemeralAgentSpec;
 use super::models::{RemoteTargetConfig, RemoteTargetValidationError};
 
-const REMOTE_PATH_SETUP: &str =
-    r#"PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"; export PATH"#;
+const REMOTE_PATH_SETUP: &str = r#"PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"; export PATH"#;
 
 /// 为桌面端生成的远端命令建立确定性工具搜索路径，同时保留管理员提供的附加目录。
 /// 标准目录必须位于原 PATH 之前，避免用户环境中的同名程序接管完整性校验和临时文件清理。

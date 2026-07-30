@@ -12,8 +12,7 @@ use cc_switch_lib::remote::ephemeral_deploy::{
 use cc_switch_lib::remote::models::RemoteTargetConfig;
 use cc_switch_lib::remote::ssh::RemoteSshError;
 
-const SAFE_REMOTE_COMMAND_PREFIX: &str =
-    r#"PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"; export PATH; "#;
+const SAFE_REMOTE_COMMAND_PREFIX: &str = r#"PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"; export PATH; "#;
 
 fn target() -> RemoteTargetConfig {
     RemoteTargetConfig {
@@ -88,10 +87,7 @@ fn scp_and_remote_commands_keep_transport_arguments_isolated() {
 
     let cleanup = build_cleanup_command(&spec.remote_path);
     assert!(cleanup.starts_with(SAFE_REMOTE_COMMAND_PREFIX));
-    assert!(cleanup.contains(&format!(
-        "command rm -f -- '{}'",
-        spec.remote_path
-    )));
+    assert!(cleanup.contains(&format!("command rm -f -- '{}'", spec.remote_path)));
 }
 
 #[test]
