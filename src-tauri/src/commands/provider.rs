@@ -118,6 +118,13 @@ pub async fn switch_provider(
 }
 
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
+    let _codex_guard = matches!(app_type, AppType::Codex).then(|| {
+        futures::executor::block_on(
+            state
+                .proxy_service
+                .lock_switch_for_app(AppType::Codex.as_str()),
+        )
+    });
     if matches!(app_type, AppType::GrokBuild) {
         // 官方登录态（live 语法合法且无自定义模型表）+ 用户手动导入：
         // 导入的正确结果是让 Grok Official 成为当前供应商，而非报错。
@@ -279,12 +286,25 @@ pub fn ensure_claude_desktop_official_provider(state: State<'_, AppState>) -> Re
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn ensure_codex_official_provider(state: State<'_, AppState>) -> Result<bool, String> {
+fn ensure_codex_official_provider_internal(state: &AppState) -> Result<bool, AppError> {
+    let _codex_guard = futures::executor::block_on(
+        state
+            .proxy_service
+            .lock_switch_for_app(AppType::Codex.as_str()),
+    );
     state
         .db
         .ensure_official_seed_by_id(crate::database::CODEX_OFFICIAL_PROVIDER_ID, AppType::Codex)
-        .map_err(|e| e.to_string())
+}
+
+#[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
+pub fn ensure_codex_official_provider_test_hook(state: &AppState) -> Result<bool, AppError> {
+    ensure_codex_official_provider_internal(state)
+}
+
+#[tauri::command]
+pub fn ensure_codex_official_provider(state: State<'_, AppState>) -> Result<bool, String> {
+    ensure_codex_official_provider_internal(state.inner()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

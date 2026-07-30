@@ -309,6 +309,17 @@ pub async fn set_common_config_snippet(
     snippet: String,
     state: tauri::State<'_, crate::store::AppState>,
 ) -> Result<(), String> {
+    let app = AppType::from_str(&app_type).map_err(|e| e.to_string())?;
+    let _codex_guard = if matches!(app, AppType::Codex) {
+        Some(
+            state
+                .proxy_service
+                .lock_switch_for_app(AppType::Codex.as_str())
+                .await,
+        )
+    } else {
+        None
+    };
     let is_cleared = snippet.trim().is_empty();
     let old_snippet = state
         .db
@@ -324,10 +335,9 @@ pub async fn set_common_config_snippet(
             .as_deref()
             .filter(|value| !value.trim().is_empty())
         {
-            let app = AppType::from_str(&app_type).map_err(|e| e.to_string())?;
             crate::services::provider::ProviderService::migrate_legacy_common_config_usage(
                 state.inner(),
-                app,
+                app.clone(),
                 legacy_snippet,
             )
             .map_err(|e| e.to_string())?;
@@ -344,12 +354,19 @@ pub async fn set_common_config_snippet(
         .map_err(|e| e.to_string())?;
 
     if matches!(app_type.as_str(), "claude" | "codex" | "gemini") {
-        let app = AppType::from_str(&app_type).map_err(|e| e.to_string())?;
-        crate::services::provider::ProviderService::sync_current_provider_for_app(
-            state.inner(),
-            app,
-        )
-        .map_err(|e| e.to_string())?;
+        if matches!(app, AppType::Codex) {
+            crate::services::provider::ProviderService::sync_current_provider_for_app_locked(
+                state.inner(),
+                app.clone(),
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            crate::services::provider::ProviderService::sync_current_provider_for_app(
+                state.inner(),
+                app.clone(),
+            )
+            .map_err(|e| e.to_string())?;
+        }
     }
 
     if app_type == "omo"

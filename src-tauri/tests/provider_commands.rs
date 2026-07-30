@@ -1,10 +1,16 @@
 use serde_json::json;
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 use cc_switch_lib::{
-    get_codex_auth_path, get_codex_config_path, import_default_config_test_hook, read_json_file,
-    switch_provider_test_hook, write_codex_live_atomic, AppError, AppType, McpApps, McpServer,
-    MultiAppConfig, Provider, ProviderService,
+    cancel_provider_switch_test_hook, confirm_provider_switch_test_hook,
+    ensure_codex_official_provider_test_hook, get_codex_auth_path, get_codex_config_path,
+    import_default_config_test_hook, lock_codex_provider_switch_test_hook,
+    migrate_codex_provider_templates_test_hook, preview_provider_switch_test_hook,
+    provider_switch_review_blocks_session_sync_test_hook, read_json_file,
+    switch_provider_test_hook, update_settings, write_codex_live_atomic, AppError, AppSettings,
+    AppState, AppType, McpApps, McpServer, McpService, MultiAppConfig, Provider, ProviderService,
+    ProviderSwitchRequest,
 };
 
 #[path = "support.rs"]
@@ -32,6 +38,45 @@ api_key = "{api_key}"
 api_backend = "responses"
 context_window = 500000
 "#
+    )
+}
+
+fn mixed_codex_auth() -> serde_json::Value {
+    json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": {
+            "access_token": "oauth-access",
+            "refresh_token": "oauth-refresh"
+        }
+    })
+}
+
+fn mixed_codex_config(host: &str, bearer: &str) -> String {
+    format!(
+        "model_provider = \"custom\"\n\
+         [model_providers.custom]\n\
+         base_url = \"https://{host}/v1\"\n\
+         requires_openai_auth = true\n\
+         experimental_bearer_token = \"{bearer}\"\n"
+    )
+}
+
+fn mixed_codex_provider(
+    id: &str,
+    name: &str,
+    host: &str,
+    bearer: &str,
+    auth: &serde_json::Value,
+) -> Provider {
+    Provider::with_id(
+        id.to_string(),
+        name.to_string(),
+        json!({
+            "auth": auth,
+            "config": mixed_codex_config(host, bearer)
+        }),
+        None,
     )
 }
 
@@ -458,6 +503,1538 @@ command = "say"
     assert_eq!(
         legacy_auth_value, "legacy-key",
         "previous provider should be backfilled with live auth"
+    );
+}
+
+#[test]
+fn provider_switch_preview_returns_only_safe_target_metadata() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let oauth_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": {"access_token": "oauth-secret"}
+    });
+    let live_config = r#"model_provider = "custom"
+
+[model_providers.custom]
+base_url = "https://current.example/v1"
+requires_openai_auth = true
+experimental_bearer_token = "current-secret"
+"#;
+    write_codex_live_atomic(&oauth_auth, Some(live_config)).expect("seed mixed Codex live");
+    let state = create_test_state().expect("create test state");
+
+    state
+        .db
+        .save_provider(
+            AppType::Codex.as_str(),
+            &Provider::with_id(
+                "target-provider".to_string(),
+                "Target Relay".to_string(),
+                json!({
+                    "auth": oauth_auth,
+                    "config": r#"model_provider = "custom"
+
+[model_providers.custom]
+base_url = "https://API.Target.Example:8443/openai/v1"
+requires_openai_auth = true
+experimental_bearer_token = "provider-secret"
+"#
+                }),
+                None,
+            ),
+        )
+        .expect("save target provider");
+
+    let preview = preview_provider_switch_test_hook(
+        &state,
+        &ProviderSwitchRequest {
+            version: "v1".to_string(),
+            resource: "provider-switch".to_string(),
+            app: "codex".to_string(),
+            id: "target-provider".to_string(),
+        },
+    )
+    .expect("preview target provider");
+
+    let serialized = serde_json::to_value(&preview).expect("serialize safe preview");
+    assert_eq!(serialized["name"], "Target Relay");
+    assert_eq!(serialized["hostname"], "api.target.example");
+    assert_eq!(serialized["isCurrent"], false);
+    let review_token = serialized["reviewToken"]
+        .as_str()
+        .expect("preview includes opaque review token");
+    Uuid::parse_str(review_token).expect("review token is an opaque random UUID");
+    assert_eq!(
+        serialized.as_object().expect("preview object").len(),
+        4,
+        "preview must not expose internal snapshot fields"
+    );
+    let serialized_text = serialized.to_string();
+    for secret in [
+        "oauth-secret",
+        "current-secret",
+        "provider-secret",
+        "/openai/v1",
+    ] {
+        assert!(
+            !serialized_text.contains(secret),
+            "preview leaked a secret or private endpoint path"
+        );
+    }
+}
+
+#[test]
+fn provider_switch_preview_rejects_when_codex_auth_preservation_is_disabled() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let oauth_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": {"access_token": "oauth-access"}
+    });
+    let config = r#"model_provider = "custom"
+[model_providers.custom]
+base_url = "https://target.example/v1"
+requires_openai_auth = true
+experimental_bearer_token = "target-key"
+"#;
+    write_codex_live_atomic(&oauth_auth, Some(config)).expect("seed mixed Codex live");
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_provider(
+            AppType::Codex.as_str(),
+            &Provider::with_id(
+                "target-provider".to_string(),
+                "Target Relay".to_string(),
+                json!({"auth": oauth_auth, "config": config}),
+                None,
+            ),
+        )
+        .expect("save target provider");
+
+    let error = preview_provider_switch_test_hook(
+        &state,
+        &ProviderSwitchRequest {
+            version: "v1".to_string(),
+            resource: "provider-switch".to_string(),
+            app: "codex".to_string(),
+            id: "target-provider".to_string(),
+        },
+    )
+    .expect_err("disabled auth preservation must block provider-switch preview");
+
+    assert!(error.to_string().contains("preservation is disabled"));
+}
+
+#[test]
+fn provider_switch_preview_requires_live_chatgpt_oauth_without_an_api_key() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let config = r#"model_provider = "custom"
+[model_providers.custom]
+base_url = "https://target.example/v1"
+requires_openai_auth = true
+experimental_bearer_token = "target-key"
+"#;
+    write_codex_live_atomic(&json!({"OPENAI_API_KEY": "legacy-key"}), Some(config))
+        .expect("seed API-key Codex live");
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_provider(
+            AppType::Codex.as_str(),
+            &Provider::with_id(
+                "target-provider".to_string(),
+                "Target Relay".to_string(),
+                json!({
+                    "auth": {
+                        "auth_mode": "chatgpt",
+                        "OPENAI_API_KEY": null,
+                        "tokens": {"access_token": "oauth-access"}
+                    },
+                    "config": config
+                }),
+                None,
+            ),
+        )
+        .expect("save target provider");
+
+    let error = preview_provider_switch_test_hook(
+        &state,
+        &ProviderSwitchRequest {
+            version: "v1".to_string(),
+            resource: "provider-switch".to_string(),
+            app: "codex".to_string(),
+            id: "target-provider".to_string(),
+        },
+    )
+    .expect_err("non-OAuth live auth must block provider-switch preview");
+
+    assert!(error.to_string().contains("Live ChatGPT OAuth"));
+}
+
+#[test]
+fn provider_switch_preview_rejects_proxy_takeover() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let oauth_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": {"access_token": "oauth-access"}
+    });
+    let config = r#"model_provider = "custom"
+[model_providers.custom]
+base_url = "https://target.example/v1"
+requires_openai_auth = true
+experimental_bearer_token = "target-key"
+"#;
+    write_codex_live_atomic(&oauth_auth, Some(config)).expect("seed mixed Codex live");
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_provider(
+            AppType::Codex.as_str(),
+            &Provider::with_id(
+                "target-provider".to_string(),
+                "Target Relay".to_string(),
+                json!({"auth": oauth_auth, "config": config}),
+                None,
+            ),
+        )
+        .expect("save target provider");
+    futures::executor::block_on(state.db.save_live_backup(AppType::Codex.as_str(), "{}"))
+        .expect("mark Codex live as proxy-owned");
+
+    let error = preview_provider_switch_test_hook(
+        &state,
+        &ProviderSwitchRequest {
+            version: "v1".to_string(),
+            resource: "provider-switch".to_string(),
+            app: "codex".to_string(),
+            id: "target-provider".to_string(),
+        },
+    )
+    .expect_err("proxy takeover must block reviewed provider switching");
+
+    assert!(error.to_string().contains("proxy takeover"));
+}
+
+#[test]
+fn provider_switch_preview_rejects_enabled_proxy_without_takeover_markers() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let auth = mixed_codex_auth();
+    let config = mixed_codex_config("target.example", "target-key");
+    write_codex_live_atomic(&auth, Some(&config)).expect("seed mixed Codex live");
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_provider(
+            AppType::Codex.as_str(),
+            &mixed_codex_provider(
+                "target-provider",
+                "Target Relay",
+                "target.example",
+                "target-key",
+                &auth,
+            ),
+        )
+        .expect("save target provider");
+    assert!(
+        futures::executor::block_on(state.db.get_live_backup(AppType::Codex.as_str()))
+            .expect("read live backup")
+            .is_none(),
+        "test requires no takeover backup"
+    );
+    let mut proxy_config =
+        futures::executor::block_on(state.db.get_proxy_config_for_app(AppType::Codex.as_str()))
+            .expect("read Codex proxy config");
+    proxy_config.enabled = true;
+    futures::executor::block_on(state.db.update_proxy_config_for_app(proxy_config))
+        .expect("enable Codex proxy");
+
+    let error = preview_provider_switch_test_hook(
+        &state,
+        &ProviderSwitchRequest {
+            version: "v1".to_string(),
+            resource: "provider-switch".to_string(),
+            app: "codex".to_string(),
+            id: "target-provider".to_string(),
+        },
+    )
+    .expect_err("enabled proxy must block provider-switch preview");
+
+    assert!(error.to_string().contains("proxy takeover"));
+}
+
+#[test]
+fn provider_switch_preview_rejects_targets_outside_the_mixed_auth_contract() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let oauth_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": {"access_token": "oauth-access"}
+    });
+    let valid_config = r#"model_provider = "custom"
+[model_providers.custom]
+base_url = "https://target.example/v1"
+requires_openai_auth = true
+experimental_bearer_token = "target-key"
+"#;
+    write_codex_live_atomic(&oauth_auth, Some(valid_config)).expect("seed mixed Codex live");
+    let state = create_test_state().expect("create test state");
+    let request = ProviderSwitchRequest {
+        version: "v1".to_string(),
+        resource: "provider-switch".to_string(),
+        app: "codex".to_string(),
+        id: "target-provider".to_string(),
+    };
+    let cases = [
+        (
+            "missing provider bearer",
+            oauth_auth.clone(),
+            r#"model_provider = "custom"
+[model_providers.custom]
+base_url = "https://target.example/v1"
+requires_openai_auth = true
+"#,
+            None,
+        ),
+        (
+            "OpenAI auth semantics disabled",
+            oauth_auth.clone(),
+            r#"model_provider = "custom"
+[model_providers.custom]
+base_url = "https://target.example/v1"
+requires_openai_auth = false
+experimental_bearer_token = "target-key"
+"#,
+            None,
+        ),
+        (
+            "top-level bearer source",
+            oauth_auth.clone(),
+            r#"experimental_bearer_token = "top-level-key"
+model_provider = "custom"
+[model_providers.custom]
+base_url = "https://target.example/v1"
+requires_openai_auth = true
+experimental_bearer_token = "target-key"
+"#,
+            None,
+        ),
+        (
+            "higher-priority auth source",
+            oauth_auth.clone(),
+            r#"model_provider = "custom"
+[model_providers.custom]
+base_url = "https://target.example/v1"
+requires_openai_auth = true
+experimental_bearer_token = "target-key"
+env_key = "SOME_API_KEY"
+"#,
+            None,
+        ),
+        (
+            "malformed higher-priority auth source",
+            oauth_auth.clone(),
+            r#"model_provider = "custom"
+[model_providers.custom]
+base_url = "https://target.example/v1"
+requires_openai_auth = true
+experimental_bearer_token = "target-key"
+env_key = false
+"#,
+            None,
+        ),
+        (
+            "provider auth API key",
+            json!({
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": "legacy-key",
+                "tokens": {"access_token": "oauth-access"}
+            }),
+            valid_config,
+            None,
+        ),
+        (
+            "malformed provider auth API key",
+            json!({
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": 42,
+                "tokens": {"access_token": "oauth-access"}
+            }),
+            valid_config,
+            None,
+        ),
+        (
+            "official provider category",
+            oauth_auth.clone(),
+            valid_config,
+            Some("official"),
+        ),
+    ];
+
+    for (case, auth, config, category) in cases {
+        let mut provider = Provider::with_id(
+            "target-provider".to_string(),
+            "Target Relay".to_string(),
+            json!({"auth": auth, "config": config}),
+            None,
+        );
+        provider.category = category.map(str::to_string);
+        state
+            .db
+            .save_provider(AppType::Codex.as_str(), &provider)
+            .expect("save unsafe target case");
+
+        assert!(
+            preview_provider_switch_test_hook(&state, &request).is_err(),
+            "provider-switch accepted unsafe target case: {case}"
+        );
+    }
+}
+
+#[test]
+fn provider_switch_preview_does_not_write_codex_or_provider_state() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let oauth_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": {"access_token": "oauth-secret", "refresh_token": "refresh-secret"}
+    });
+    let live_config = r#"model_provider = "custom"
+
+[model_providers.custom]
+base_url = "https://current.example/v1"
+requires_openai_auth = true
+experimental_bearer_token = "current-secret"
+"#;
+    write_codex_live_atomic(&oauth_auth, Some(live_config)).expect("seed Codex live files");
+    let state = create_test_state().expect("create test state");
+
+    for (id, name, hostname, bearer) in [
+        (
+            "current-provider",
+            "Current Relay",
+            "current.example",
+            "current-secret",
+        ),
+        (
+            "target-provider",
+            "Target Relay",
+            "target.example",
+            "target-secret",
+        ),
+    ] {
+        state
+            .db
+            .save_provider(
+                AppType::Codex.as_str(),
+                &Provider::with_id(
+                    id.to_string(),
+                    name.to_string(),
+                    json!({
+                        "auth": oauth_auth,
+                        "config": format!(
+                            "model_provider = \"custom\"\n\n[model_providers.custom]\nbase_url = \"https://{hostname}/v1\"\nrequires_openai_auth = true\nexperimental_bearer_token = \"{bearer}\"\n"
+                        )
+                    }),
+                    None,
+                ),
+            )
+            .expect("save Codex provider");
+    }
+    state
+        .db
+        .set_current_provider(AppType::Codex.as_str(), "current-provider")
+        .expect("select current provider");
+
+    let auth_before = std::fs::read(get_codex_auth_path()).expect("read auth before preview");
+    let config_before = std::fs::read(get_codex_config_path()).expect("read config before preview");
+    let providers_before = serde_json::to_value(
+        state
+            .db
+            .get_all_providers(AppType::Codex.as_str())
+            .expect("read providers before preview"),
+    )
+    .expect("serialize providers before preview");
+    let current_before = state
+        .db
+        .get_current_provider(AppType::Codex.as_str())
+        .expect("read current before preview");
+
+    let preview = preview_provider_switch_test_hook(
+        &state,
+        &ProviderSwitchRequest {
+            version: "v1".to_string(),
+            resource: "provider-switch".to_string(),
+            app: "codex".to_string(),
+            id: "target-provider".to_string(),
+        },
+    )
+    .expect("preview target provider");
+    assert!(
+        provider_switch_review_blocks_session_sync_test_hook(&state)
+            .expect("inspect provider-switch review barrier"),
+        "an open provider-switch review must pause session-log writes"
+    );
+
+    cancel_provider_switch_test_hook(&state, &preview.review_token)
+        .expect("cancel provider-switch review");
+    assert!(
+        !provider_switch_review_blocks_session_sync_test_hook(&state)
+            .expect("inspect released provider-switch review barrier"),
+        "cancel must release the session-log write barrier"
+    );
+
+    assert_eq!(
+        std::fs::read(get_codex_auth_path()).expect("read auth after preview"),
+        auth_before
+    );
+    assert_eq!(
+        std::fs::read(get_codex_config_path()).expect("read config after preview"),
+        config_before
+    );
+    assert_eq!(
+        serde_json::to_value(
+            state
+                .db
+                .get_all_providers(AppType::Codex.as_str())
+                .expect("read providers after preview"),
+        )
+        .expect("serialize providers after preview"),
+        providers_before
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::Codex.as_str())
+            .expect("read current after preview"),
+        current_before
+    );
+}
+
+#[test]
+fn codex_provider_edits_wait_for_the_provider_switch_lock() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let state = std::sync::Arc::new(create_test_state().expect("create test state"));
+    let provider = Provider::with_id(
+        "target-provider".to_string(),
+        "Target Relay".to_string(),
+        json!({
+            "auth": {
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": null,
+                "tokens": {"access_token": "oauth-access"}
+            },
+            "config": r#"model_provider = "custom"
+[model_providers.custom]
+base_url = "https://target.example/v1"
+requires_openai_auth = true
+experimental_bearer_token = "target-key"
+"#
+        }),
+        None,
+    );
+    state
+        .db
+        .save_provider(AppType::Codex.as_str(), &provider)
+        .expect("save target provider");
+
+    let switch_guard = lock_codex_provider_switch_test_hook(&state);
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    let worker_state = std::sync::Arc::clone(&state);
+    let mut edited = provider;
+    edited.name = "Edited Relay".to_string();
+    let worker = std::thread::spawn(move || {
+        let result = ProviderService::update(
+            &worker_state,
+            AppType::Codex,
+            Some("target-provider"),
+            edited,
+        );
+        result_tx.send(result).expect("send update result");
+    });
+
+    assert!(
+        matches!(
+            result_rx.recv_timeout(std::time::Duration::from_millis(200)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ),
+        "Codex provider edit bypassed the provider-switch lock"
+    );
+    drop(switch_guard);
+    assert!(result_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("provider edit should resume after lock release")
+        .is_ok());
+    worker.join().expect("join provider edit worker");
+}
+
+#[test]
+fn codex_sync_from_a_separate_app_state_waits_for_the_process_switch_lock() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let primary = create_test_state().expect("create primary test state");
+    let secondary = AppState::new(primary.db.clone());
+
+    let switch_guard = lock_codex_provider_switch_test_hook(&primary);
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let result = ProviderService::sync_current_to_live(&secondary);
+        result_tx.send(result).expect("send sync result");
+    });
+
+    assert!(
+        matches!(
+            result_rx.recv_timeout(std::time::Duration::from_millis(200)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ),
+        "a short-lived AppState bypassed the process-wide Codex switch lock"
+    );
+    drop(switch_guard);
+    result_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("sync should resume after lock release")
+        .expect("sync current providers");
+    worker.join().expect("join sync worker");
+}
+
+#[test]
+fn codex_live_import_waits_for_the_process_switch_lock() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let auth = mixed_codex_auth();
+    let config = mixed_codex_config("import.example", "import-key");
+    write_codex_live_atomic(&auth, Some(&config)).expect("seed importable Codex live config");
+    let primary = create_test_state().expect("create primary test state");
+    let secondary = AppState::new(primary.db.clone());
+
+    let switch_guard = lock_codex_provider_switch_test_hook(&primary);
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let result = import_default_config_test_hook(&secondary, AppType::Codex);
+        result_tx.send(result).expect("send import result");
+    });
+
+    assert!(
+        matches!(
+            result_rx.recv_timeout(std::time::Duration::from_millis(200)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ),
+        "Codex live import bypassed the process-wide switch lock"
+    );
+    drop(switch_guard);
+    assert!(
+        result_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("import should resume after lock release")
+            .expect("import Codex live config"),
+        "the seeded live configuration should be imported"
+    );
+    worker.join().expect("join import worker");
+}
+
+#[test]
+fn ensuring_codex_official_provider_waits_for_the_process_switch_lock() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let primary = create_test_state().expect("create primary test state");
+    let secondary = AppState::new(primary.db.clone());
+
+    assert!(primary
+        .db
+        .get_provider_by_id("codex-official", AppType::Codex.as_str())
+        .expect("query Codex official provider before ensure")
+        .is_none());
+
+    let switch_guard = lock_codex_provider_switch_test_hook(&primary);
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let result = ensure_codex_official_provider_test_hook(&secondary);
+        result_tx
+            .send(result)
+            .expect("send Codex official-provider ensure result");
+    });
+
+    assert!(
+        matches!(
+            result_rx.recv_timeout(std::time::Duration::from_millis(200)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ),
+        "the Codex official-provider repair bypassed the reviewed-switch lock"
+    );
+    drop(switch_guard);
+    assert!(
+        result_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("Codex official-provider repair should resume after lock release")
+            .expect("ensure Codex official provider"),
+        "the missing Codex official provider should be inserted"
+    );
+    worker.join().expect("join official-provider ensure worker");
+    assert!(primary
+        .db
+        .get_provider_by_id("codex-official", AppType::Codex.as_str())
+        .expect("query Codex official provider after ensure")
+        .is_some());
+}
+
+#[test]
+fn universal_provider_codex_writes_wait_for_the_process_switch_lock() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let state = std::sync::Arc::new(create_test_state().expect("create test state"));
+    let universal = serde_json::from_value(json!({
+        "id": "shared-relay",
+        "name": "Shared Relay",
+        "providerType": "custom",
+        "apps": {
+            "claude": false,
+            "codex": true,
+            "gemini": false
+        },
+        "baseUrl": "https://shared.example",
+        "apiKey": "shared-key"
+    }))
+    .expect("deserialize universal provider");
+    ProviderService::upsert_universal(&state, universal).expect("save universal provider");
+
+    let switch_guard = lock_codex_provider_switch_test_hook(&state);
+    let (sync_tx, sync_rx) = std::sync::mpsc::channel();
+    let sync_state = std::sync::Arc::clone(&state);
+    let sync_worker = std::thread::spawn(move || {
+        let result = ProviderService::sync_universal_to_apps(&sync_state, "shared-relay");
+        sync_tx.send(result).expect("send universal sync result");
+    });
+
+    assert!(
+        matches!(
+            sync_rx.recv_timeout(std::time::Duration::from_millis(200)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ),
+        "universal-provider Codex sync bypassed the process-wide switch lock"
+    );
+    drop(switch_guard);
+    assert!(sync_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("universal sync should resume after lock release")
+        .is_ok());
+    sync_worker.join().expect("join universal sync worker");
+    assert!(state
+        .db
+        .get_provider_by_id("universal-codex-shared-relay", AppType::Codex.as_str())
+        .expect("query generated Codex provider")
+        .is_some());
+
+    let switch_guard = lock_codex_provider_switch_test_hook(&state);
+    let (delete_tx, delete_rx) = std::sync::mpsc::channel();
+    let delete_state = std::sync::Arc::clone(&state);
+    let delete_worker = std::thread::spawn(move || {
+        let result = ProviderService::delete_universal(&delete_state, "shared-relay");
+        delete_tx
+            .send(result)
+            .expect("send universal delete result");
+    });
+
+    assert!(
+        matches!(
+            delete_rx.recv_timeout(std::time::Duration::from_millis(200)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ),
+        "universal-provider Codex deletion bypassed the process-wide switch lock"
+    );
+    drop(switch_guard);
+    assert!(delete_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("universal deletion should resume after lock release")
+        .is_ok());
+    delete_worker.join().expect("join universal delete worker");
+    assert!(state
+        .db
+        .get_provider_by_id("universal-codex-shared-relay", AppType::Codex.as_str())
+        .expect("query deleted generated Codex provider")
+        .is_none());
+}
+
+#[test]
+fn codex_auth_preservation_setting_waits_for_the_process_switch_lock() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let state = std::sync::Arc::new(create_test_state().expect("create test state"));
+    let settings = AppSettings {
+        preserve_codex_official_auth_on_switch: true,
+        ..Default::default()
+    };
+
+    let switch_guard = lock_codex_provider_switch_test_hook(&state);
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    let worker_state = std::sync::Arc::clone(&state);
+    let worker = std::thread::spawn(move || {
+        let result = futures::executor::block_on(cc_switch_lib::save_settings_test_hook(
+            &worker_state,
+            settings,
+        ));
+        result_tx.send(result).expect("send settings-save result");
+    });
+
+    assert!(
+        matches!(
+            result_rx.recv_timeout(std::time::Duration::from_millis(200)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ),
+        "the Codex auth-preservation setting changed during a reviewed switch"
+    );
+    drop(switch_guard);
+    assert!(result_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("settings save should resume after lock release")
+        .is_ok());
+    worker.join().expect("join settings-save worker");
+    let saved_settings: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(settings_path(ensure_test_home())).expect("read saved settings"),
+    )
+    .expect("parse saved settings");
+    assert_eq!(
+        saved_settings
+            .get("preserveCodexOfficialAuthOnSwitch")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+}
+
+#[test]
+fn codex_mcp_writes_wait_for_the_process_switch_lock() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let auth = mixed_codex_auth();
+    let config = mixed_codex_config("mcp-lock.example", "mcp-lock-key");
+    write_codex_live_atomic(&auth, Some(&config)).expect("seed Codex live config");
+    let auth_before = std::fs::read(get_codex_auth_path()).expect("read auth before MCP edit");
+    let state = std::sync::Arc::new(create_test_state().expect("create test state"));
+    let server = McpServer {
+        id: "lock-test".to_string(),
+        name: "Lock Test".to_string(),
+        server: json!({
+            "command": "cmd",
+            "args": ["/c", "echo", "ok"]
+        }),
+        apps: McpApps {
+            codex: true,
+            ..McpApps::default()
+        },
+        description: None,
+        homepage: None,
+        docs: None,
+        tags: Vec::new(),
+    };
+
+    let switch_guard = lock_codex_provider_switch_test_hook(&state);
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    let worker_state = std::sync::Arc::clone(&state);
+    let worker = std::thread::spawn(move || {
+        let result = McpService::upsert_server(&worker_state, server);
+        result_tx.send(result).expect("send MCP upsert result");
+    });
+
+    assert!(
+        matches!(
+            result_rx.recv_timeout(std::time::Duration::from_millis(200)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ),
+        "a Codex MCP live write bypassed the process-wide switch lock"
+    );
+    drop(switch_guard);
+    result_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("MCP upsert should resume after lock release")
+        .expect("upsert MCP server");
+    worker.join().expect("join MCP upsert worker");
+
+    assert_eq!(
+        std::fs::read(get_codex_auth_path()).expect("read auth after MCP edit"),
+        auth_before,
+        "MCP projection must preserve ChatGPT OAuth byte-for-byte"
+    );
+    let config_after =
+        std::fs::read_to_string(get_codex_config_path()).expect("read config after MCP edit");
+    assert!(config_after.contains("base_url = \"https://mcp-lock.example/v1\""));
+    assert!(config_after.contains("experimental_bearer_token = \"mcp-lock-key\""));
+    assert!(config_after.contains("[mcp_servers.lock-test]"));
+}
+
+#[test]
+fn codex_template_migration_waits_for_the_process_switch_lock() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let state = std::sync::Arc::new(create_test_state().expect("create test state"));
+    state
+        .db
+        .save_provider(
+            AppType::Codex.as_str(),
+            &Provider::with_id(
+                "aihubmix".to_string(),
+                "Legacy Relay".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "legacy-key"},
+                    "config": "model_provider = \"aihubmix\"\n[model_providers.aihubmix]\nbase_url = \"https://legacy.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
+                }),
+                None,
+            ),
+        )
+        .expect("save legacy Codex provider");
+
+    let switch_guard = lock_codex_provider_switch_test_hook(&state);
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    let worker_state = std::sync::Arc::clone(&state);
+    let worker = std::thread::spawn(move || {
+        let result = migrate_codex_provider_templates_test_hook(&worker_state);
+        result_tx
+            .send(result)
+            .expect("send template-migration result");
+    });
+
+    assert!(
+        matches!(
+            result_rx.recv_timeout(std::time::Duration::from_millis(200)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ),
+        "the startup Codex template migration bypassed the reviewed-switch lock"
+    );
+    drop(switch_guard);
+    let migrated = result_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("template migration should resume after lock release")
+        .expect("migrate Codex provider template");
+    worker.join().expect("join template-migration worker");
+    assert_eq!(migrated, 1);
+
+    let migrated_provider = state
+        .db
+        .get_provider_by_id("aihubmix", AppType::Codex.as_str())
+        .expect("query migrated provider")
+        .expect("migrated provider remains present");
+    let config = migrated_provider
+        .settings_config
+        .get("config")
+        .and_then(serde_json::Value::as_str)
+        .expect("migrated provider config");
+    assert!(config.contains("model_provider = \"custom\""));
+    assert!(config.contains("[model_providers.custom]"));
+}
+
+#[test]
+fn confirmed_provider_switch_preserves_oauth_and_selects_target_endpoint_and_bearer() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let oauth_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": {
+            "id_token": "oauth-id",
+            "access_token": "oauth-access",
+            "refresh_token": "oauth-refresh",
+            "account_id": "oauth-account"
+        }
+    });
+    let current_config = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Current Relay"
+base_url = "https://current.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+experimental_bearer_token = "current-provider-key"
+"#;
+    let target_config = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Target Relay"
+base_url = "https://target.example/openai/v1"
+wire_api = "responses"
+requires_openai_auth = true
+experimental_bearer_token = "target-provider-key"
+"#;
+    write_codex_live_atomic(&oauth_auth, Some(current_config)).expect("seed mixed Codex live");
+    let state = create_test_state().expect("create test state");
+
+    for (id, name, config) in [
+        ("current-provider", "Current Relay", current_config),
+        ("target-provider", "Target Relay", target_config),
+    ] {
+        state
+            .db
+            .save_provider(
+                AppType::Codex.as_str(),
+                &Provider::with_id(
+                    id.to_string(),
+                    name.to_string(),
+                    json!({"auth": oauth_auth, "config": config}),
+                    None,
+                ),
+            )
+            .expect("save mixed Codex provider");
+    }
+    state
+        .db
+        .set_current_provider(AppType::Codex.as_str(), "current-provider")
+        .expect("select current provider");
+
+    let request = ProviderSwitchRequest {
+        version: "v1".to_string(),
+        resource: "provider-switch".to_string(),
+        app: "codex".to_string(),
+        id: "target-provider".to_string(),
+    };
+    let expected =
+        preview_provider_switch_test_hook(&state, &request).expect("preview target provider");
+    let auth_before = std::fs::read(get_codex_auth_path()).expect("read OAuth before switch");
+
+    let result = confirm_provider_switch_test_hook(&state, &expected.review_token)
+        .expect("confirm provider switch");
+
+    assert!(result.is_current, "confirmed target should be current");
+    assert_eq!(
+        std::fs::read(get_codex_auth_path()).expect("read OAuth after switch"),
+        auth_before,
+        "mixed-provider switch must preserve auth.json byte-for-byte"
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::Codex.as_str())
+            .expect("read selected provider")
+            .as_deref(),
+        Some("target-provider")
+    );
+    let live_config = std::fs::read_to_string(get_codex_config_path())
+        .expect("read target Codex config after switch");
+    let live: toml::Value = live_config.parse().expect("parse target Codex config");
+    let selected = &live["model_providers"]["custom"];
+    assert_eq!(
+        selected["base_url"].as_str(),
+        Some("https://target.example/openai/v1")
+    );
+    assert_eq!(
+        selected["experimental_bearer_token"].as_str(),
+        Some("target-provider-key")
+    );
+
+    let auth_after_first =
+        std::fs::read(get_codex_auth_path()).expect("read OAuth after first confirm");
+    let config_after_first =
+        std::fs::read(get_codex_config_path()).expect("read config after first confirm");
+    let replay_error = confirm_provider_switch_test_hook(&state, &expected.review_token)
+        .expect_err("review token must be single use");
+    assert!(replay_error.to_string().contains("missing or expired"));
+    assert_eq!(
+        std::fs::read(get_codex_auth_path()).expect("read OAuth after replay"),
+        auth_after_first
+    );
+    assert_eq!(
+        std::fs::read(get_codex_config_path()).expect("read config after replay"),
+        config_after_first
+    );
+}
+
+#[test]
+fn provider_switch_does_not_report_success_when_current_id_and_live_target_disagree() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let auth = mixed_codex_auth();
+    let current_config = mixed_codex_config("current.example", "current-key");
+    write_codex_live_atomic(&auth, Some(&current_config)).expect("seed stale current live");
+    let state = create_test_state().expect("create test state");
+    for provider in [
+        mixed_codex_provider(
+            "current-provider",
+            "Current Relay",
+            "current.example",
+            "current-key",
+            &auth,
+        ),
+        mixed_codex_provider(
+            "target-provider",
+            "Target Relay",
+            "target.example",
+            "target-key",
+            &auth,
+        ),
+    ] {
+        state
+            .db
+            .save_provider(AppType::Codex.as_str(), &provider)
+            .expect("save provider");
+    }
+    state
+        .db
+        .set_current_provider(AppType::Codex.as_str(), "target-provider")
+        .expect("select target in database only");
+    update_settings(AppSettings {
+        preserve_codex_official_auth_on_switch: true,
+        current_provider_codex: Some("target-provider".to_string()),
+        ..Default::default()
+    })
+    .expect("select target in device settings only");
+
+    let preview = preview_provider_switch_test_hook(
+        &state,
+        &ProviderSwitchRequest {
+            version: "v1".to_string(),
+            resource: "provider-switch".to_string(),
+            app: "codex".to_string(),
+            id: "target-provider".to_string(),
+        },
+    )
+    .expect("preview apparently current target");
+    assert!(preview.is_current, "test requires a current target ID");
+    let auth_before = std::fs::read(get_codex_auth_path()).expect("read OAuth before confirm");
+    let config_before =
+        std::fs::read(get_codex_config_path()).expect("read stale live before confirm");
+
+    let error = confirm_provider_switch_test_hook(&state, &preview.review_token)
+        .expect_err("a stale live endpoint must not be reported as a successful switch");
+
+    assert!(error.to_string().contains("could not prove"));
+    assert_eq!(
+        std::fs::read(get_codex_auth_path()).expect("read OAuth after rejected confirm"),
+        auth_before
+    );
+    assert_eq!(
+        std::fs::read(get_codex_config_path()).expect("read live after rejected confirm"),
+        config_before
+    );
+}
+
+#[test]
+fn provider_switch_rejects_a_target_changed_after_preview_without_writing_live() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let oauth_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": {"access_token": "oauth-access", "refresh_token": "oauth-refresh"}
+    });
+    let current_config = r#"model_provider = "custom"
+[model_providers.custom]
+base_url = "https://current.example/v1"
+requires_openai_auth = true
+experimental_bearer_token = "current-key"
+"#;
+    let target_config = r#"model_provider = "custom"
+[model_providers.custom]
+base_url = "https://target.example/v1"
+requires_openai_auth = true
+experimental_bearer_token = "target-key"
+"#;
+    write_codex_live_atomic(&oauth_auth, Some(current_config)).expect("seed current live");
+    let state = create_test_state().expect("create test state");
+    for (id, name, config) in [
+        ("current-provider", "Current Relay", current_config),
+        ("target-provider", "Target Relay", target_config),
+    ] {
+        state
+            .db
+            .save_provider(
+                AppType::Codex.as_str(),
+                &Provider::with_id(
+                    id.to_string(),
+                    name.to_string(),
+                    json!({"auth": oauth_auth, "config": config}),
+                    None,
+                ),
+            )
+            .expect("save provider");
+    }
+    state
+        .db
+        .set_current_provider(AppType::Codex.as_str(), "current-provider")
+        .expect("select current provider");
+    let request = ProviderSwitchRequest {
+        version: "v1".to_string(),
+        resource: "provider-switch".to_string(),
+        app: "codex".to_string(),
+        id: "target-provider".to_string(),
+    };
+    let expected =
+        preview_provider_switch_test_hook(&state, &request).expect("preview target provider");
+
+    state
+        .db
+        .save_provider(
+            AppType::Codex.as_str(),
+            &Provider::with_id(
+                "target-provider".to_string(),
+                "Target Relay".to_string(),
+                json!({
+                    "auth": oauth_auth,
+                    "config": r#"model_provider = "custom"
+[model_providers.custom]
+base_url = "https://target.example/v2"
+requires_openai_auth = true
+experimental_bearer_token = "changed-key"
+"#
+                }),
+                None,
+            ),
+        )
+        .expect("change target after preview");
+    let auth_before = std::fs::read(get_codex_auth_path()).expect("read auth before confirm");
+    let config_before = std::fs::read(get_codex_config_path()).expect("read config before confirm");
+
+    let error = confirm_provider_switch_test_hook(&state, &expected.review_token)
+        .expect_err("changed target must require a new preview");
+
+    assert!(error.to_string().contains("changed after preview"));
+    assert_eq!(
+        std::fs::read(get_codex_auth_path()).expect("read auth after rejected confirm"),
+        auth_before
+    );
+    assert_eq!(
+        std::fs::read(get_codex_config_path()).expect("read config after rejected confirm"),
+        config_before
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::Codex.as_str())
+            .expect("read current after rejected confirm")
+            .as_deref(),
+        Some("current-provider")
+    );
+}
+
+#[test]
+fn provider_switch_rejects_proxy_takeover_started_after_preview_without_writing_live() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let auth = mixed_codex_auth();
+    let current_config = mixed_codex_config("current.example", "current-key");
+    write_codex_live_atomic(&auth, Some(&current_config)).expect("seed current live");
+    let state = create_test_state().expect("create test state");
+    for provider in [
+        mixed_codex_provider(
+            "current-provider",
+            "Current Relay",
+            "current.example",
+            "current-key",
+            &auth,
+        ),
+        mixed_codex_provider(
+            "target-provider",
+            "Target Relay",
+            "target.example",
+            "target-key",
+            &auth,
+        ),
+    ] {
+        state
+            .db
+            .save_provider(AppType::Codex.as_str(), &provider)
+            .expect("save provider");
+    }
+    state
+        .db
+        .set_current_provider(AppType::Codex.as_str(), "current-provider")
+        .expect("select current provider");
+    let preview = preview_provider_switch_test_hook(
+        &state,
+        &ProviderSwitchRequest {
+            version: "v1".to_string(),
+            resource: "provider-switch".to_string(),
+            app: "codex".to_string(),
+            id: "target-provider".to_string(),
+        },
+    )
+    .expect("preview target provider");
+    let auth_before = std::fs::read(get_codex_auth_path()).expect("read auth before confirm");
+    let config_before = std::fs::read(get_codex_config_path()).expect("read config before confirm");
+
+    futures::executor::block_on(state.db.save_live_backup(AppType::Codex.as_str(), "{}"))
+        .expect("start proxy takeover after preview");
+    let error = confirm_provider_switch_test_hook(&state, &preview.review_token)
+        .expect_err("new proxy takeover must invalidate the review");
+
+    assert!(error.to_string().contains("proxy takeover"));
+    assert_eq!(
+        std::fs::read(get_codex_auth_path()).expect("read auth after rejected confirm"),
+        auth_before
+    );
+    assert_eq!(
+        std::fs::read(get_codex_config_path()).expect("read config after rejected confirm"),
+        config_before
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::Codex.as_str())
+            .expect("read current after rejected confirm")
+            .as_deref(),
+        Some("current-provider")
+    );
+}
+
+#[test]
+fn provider_switch_rejects_proxy_enabled_after_preview_without_writing_live() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let auth = mixed_codex_auth();
+    let current_config = mixed_codex_config("current.example", "current-key");
+    write_codex_live_atomic(&auth, Some(&current_config)).expect("seed current live");
+    let state = create_test_state().expect("create test state");
+    for provider in [
+        mixed_codex_provider(
+            "current-provider",
+            "Current Relay",
+            "current.example",
+            "current-key",
+            &auth,
+        ),
+        mixed_codex_provider(
+            "target-provider",
+            "Target Relay",
+            "target.example",
+            "target-key",
+            &auth,
+        ),
+    ] {
+        state
+            .db
+            .save_provider(AppType::Codex.as_str(), &provider)
+            .expect("save provider");
+    }
+    state
+        .db
+        .set_current_provider(AppType::Codex.as_str(), "current-provider")
+        .expect("select current provider");
+    let preview = preview_provider_switch_test_hook(
+        &state,
+        &ProviderSwitchRequest {
+            version: "v1".to_string(),
+            resource: "provider-switch".to_string(),
+            app: "codex".to_string(),
+            id: "target-provider".to_string(),
+        },
+    )
+    .expect("preview target provider");
+    let auth_before = std::fs::read(get_codex_auth_path()).expect("read auth before confirm");
+    let config_before = std::fs::read(get_codex_config_path()).expect("read config before confirm");
+    assert!(
+        futures::executor::block_on(state.db.get_live_backup(AppType::Codex.as_str()))
+            .expect("read live backup")
+            .is_none(),
+        "test requires no takeover backup"
+    );
+
+    let mut proxy_config =
+        futures::executor::block_on(state.db.get_proxy_config_for_app(AppType::Codex.as_str()))
+            .expect("read Codex proxy config");
+    proxy_config.enabled = true;
+    futures::executor::block_on(state.db.update_proxy_config_for_app(proxy_config))
+        .expect("enable Codex proxy after preview");
+    let error = confirm_provider_switch_test_hook(&state, &preview.review_token)
+        .expect_err("newly enabled proxy must invalidate the review");
+
+    assert!(error.to_string().contains("proxy takeover"));
+    assert_eq!(
+        std::fs::read(get_codex_auth_path()).expect("read auth after rejected confirm"),
+        auth_before
+    );
+    assert_eq!(
+        std::fs::read(get_codex_config_path()).expect("read config after rejected confirm"),
+        config_before
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::Codex.as_str())
+            .expect("read current after rejected confirm")
+            .as_deref(),
+        Some("current-provider")
+    );
+}
+
+#[test]
+fn provider_switch_rejects_current_provider_record_changes_after_preview() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let auth = mixed_codex_auth();
+    let current_config = mixed_codex_config("current.example", "current-key");
+    write_codex_live_atomic(&auth, Some(&current_config)).expect("seed current live");
+    let state = create_test_state().expect("create test state");
+    let mut current = mixed_codex_provider(
+        "current-provider",
+        "Current Relay",
+        "current.example",
+        "current-key",
+        &auth,
+    );
+    let target = mixed_codex_provider(
+        "target-provider",
+        "Target Relay",
+        "target.example",
+        "target-key",
+        &auth,
+    );
+    for provider in [&current, &target] {
+        state
+            .db
+            .save_provider(AppType::Codex.as_str(), provider)
+            .expect("save provider");
+    }
+    state
+        .db
+        .set_current_provider(AppType::Codex.as_str(), "current-provider")
+        .expect("select current provider");
+    let preview = preview_provider_switch_test_hook(
+        &state,
+        &ProviderSwitchRequest {
+            version: "v1".to_string(),
+            resource: "provider-switch".to_string(),
+            app: "codex".to_string(),
+            id: "target-provider".to_string(),
+        },
+    )
+    .expect("preview target provider");
+    let auth_before = std::fs::read(get_codex_auth_path()).expect("read auth before confirm");
+    let config_before = std::fs::read(get_codex_config_path()).expect("read config before confirm");
+
+    current.notes = Some("edited after preview".to_string());
+    state
+        .db
+        .save_provider(AppType::Codex.as_str(), &current)
+        .expect("edit current provider after preview");
+    let error = confirm_provider_switch_test_hook(&state, &preview.review_token)
+        .expect_err("changed current provider row must invalidate the review");
+
+    assert!(error.to_string().contains("changed after preview"));
+    assert_eq!(
+        std::fs::read(get_codex_auth_path()).expect("read auth after rejected confirm"),
+        auth_before
+    );
+    assert_eq!(
+        std::fs::read(get_codex_config_path()).expect("read config after rejected confirm"),
+        config_before
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::Codex.as_str())
+            .expect("read current after rejected confirm")
+            .as_deref(),
+        Some("current-provider")
+    );
+}
+
+#[test]
+fn provider_switch_rejects_device_current_changes_after_preview() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let auth = mixed_codex_auth();
+    let device_config = mixed_codex_config("device.example", "device-key");
+    write_codex_live_atomic(&auth, Some(&device_config)).expect("seed device-current live");
+    let state = create_test_state().expect("create test state");
+    for provider in [
+        mixed_codex_provider(
+            "device-current",
+            "Device Relay",
+            "device.example",
+            "device-key",
+            &auth,
+        ),
+        mixed_codex_provider(
+            "database-current",
+            "Database Relay",
+            "database.example",
+            "database-key",
+            &auth,
+        ),
+        mixed_codex_provider(
+            "next-device-current",
+            "Next Device Relay",
+            "next-device.example",
+            "next-device-key",
+            &auth,
+        ),
+        mixed_codex_provider(
+            "target-provider",
+            "Target Relay",
+            "target.example",
+            "target-key",
+            &auth,
+        ),
+    ] {
+        state
+            .db
+            .save_provider(AppType::Codex.as_str(), &provider)
+            .expect("save provider");
+    }
+    state
+        .db
+        .set_current_provider(AppType::Codex.as_str(), "database-current")
+        .expect("select database current");
+    update_settings(AppSettings {
+        preserve_codex_official_auth_on_switch: true,
+        current_provider_codex: Some("device-current".to_string()),
+        ..Default::default()
+    })
+    .expect("select device current");
+    let preview = preview_provider_switch_test_hook(
+        &state,
+        &ProviderSwitchRequest {
+            version: "v1".to_string(),
+            resource: "provider-switch".to_string(),
+            app: "codex".to_string(),
+            id: "target-provider".to_string(),
+        },
+    )
+    .expect("preview target provider");
+    let auth_before = std::fs::read(get_codex_auth_path()).expect("read auth before confirm");
+    let config_before = std::fs::read(get_codex_config_path()).expect("read config before confirm");
+
+    update_settings(AppSettings {
+        preserve_codex_official_auth_on_switch: true,
+        current_provider_codex: Some("next-device-current".to_string()),
+        ..Default::default()
+    })
+    .expect("change device current after preview");
+    let error = confirm_provider_switch_test_hook(&state, &preview.review_token)
+        .expect_err("changed device current must invalidate the review");
+
+    assert!(error.to_string().contains("changed after preview"));
+    assert_eq!(
+        std::fs::read(get_codex_auth_path()).expect("read auth after rejected confirm"),
+        auth_before
+    );
+    assert_eq!(
+        std::fs::read(get_codex_config_path()).expect("read config after rejected confirm"),
+        config_before
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::Codex.as_str())
+            .expect("read database current after rejected confirm")
+            .as_deref(),
+        Some("database-current")
     );
 }
 

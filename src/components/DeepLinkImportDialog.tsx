@@ -1,6 +1,13 @@
 import { useState, useEffect, useMemo } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { DeepLinkImportRequest, deeplinkApi } from "@/lib/api/deeplink";
+import {
+  DeepLinkImportRequest,
+  DeepLinkRequest,
+  ProviderSwitchPreview,
+  ProviderSwitchRequest,
+  deeplinkApi,
+  isProviderSwitchRequest,
+} from "@/lib/api/deeplink";
 import {
   Dialog,
   DialogContent,
@@ -16,6 +23,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { PromptConfirmation } from "./deeplink/PromptConfirmation";
 import { McpConfirmation } from "./deeplink/McpConfirmation";
 import { SkillConfirmation } from "./deeplink/SkillConfirmation";
+import { ProviderSwitchConfirmation } from "./deeplink/ProviderSwitchConfirmation";
 import { ProviderIcon } from "./ProviderIcon";
 import {
   classifyEndpoint,
@@ -27,7 +35,6 @@ import {
 import { decodeBase64Utf8 } from "@/lib/utils/base64";
 
 interface DeeplinkError {
-  url: string;
   error: string;
 }
 
@@ -35,6 +42,10 @@ export function DeepLinkImportDialog() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [request, setRequest] = useState<DeepLinkImportRequest | null>(null);
+  const [providerSwitchRequest, setProviderSwitchRequest] =
+    useState<ProviderSwitchRequest | null>(null);
+  const [providerSwitchPreview, setProviderSwitchPreview] =
+    useState<ProviderSwitchPreview | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
 
@@ -58,9 +69,31 @@ export function DeepLinkImportDialog() {
 
   useEffect(() => {
     // Listen for deep link import events
-    const unlistenImport = listen<DeepLinkImportRequest>(
+    const unlistenImport = listen<DeepLinkRequest>(
       "deeplink-import",
       async (event) => {
+        if (isProviderSwitchRequest(event.payload)) {
+          try {
+            const preview = await deeplinkApi.previewProviderSwitch(
+              event.payload,
+            );
+            setRequest(null);
+            setProviderSwitchRequest(event.payload);
+            setProviderSwitchPreview(preview);
+            setIsOpen(true);
+          } catch {
+            setIsOpen(false);
+            setProviderSwitchRequest(null);
+            setProviderSwitchPreview(null);
+            toast.error(t("deeplink.providerSwitch.previewError"), {
+              description: t("deeplink.providerSwitch.previewErrorDescription"),
+            });
+          }
+          return;
+        }
+
+        setProviderSwitchRequest(null);
+        setProviderSwitchPreview(null);
         // If config is present, merge it to get the complete configuration
         if (event.payload.config || event.payload.configUrl) {
           try {
@@ -89,7 +122,7 @@ export function DeepLinkImportDialog() {
     const unlistenError = listen<DeeplinkError>("deeplink-error", (event) => {
       console.error("Deep link error:", event.payload);
       toast.error(t("deeplink.parseError"), {
-        description: event.payload.error,
+        description: t("deeplink.parseErrorDescription"),
       });
     });
 
@@ -210,8 +243,66 @@ export function DeepLinkImportDialog() {
     }
   };
 
+  const handleProviderSwitch = async () => {
+    if (!providerSwitchRequest || !providerSwitchPreview) return;
+
+    setIsImporting(true);
+    try {
+      const result = await deeplinkApi.confirmProviderSwitch(
+        providerSwitchPreview.reviewToken,
+      );
+      await queryClient.invalidateQueries({ queryKey: ["providers", "codex"] });
+      if (result.hasWarnings) {
+        toast.warning(t("deeplink.providerSwitch.successWithWarnings"), {
+          description: t("deeplink.providerSwitch.successDescription", {
+            name: result.name,
+          }),
+        });
+      } else {
+        toast.success(t("deeplink.providerSwitch.success"), {
+          description: t("deeplink.providerSwitch.successDescription", {
+            name: result.name,
+          }),
+          closeButton: true,
+        });
+      }
+      setIsOpen(false);
+      setProviderSwitchRequest(null);
+      setProviderSwitchPreview(null);
+    } catch {
+      setIsOpen(false);
+      setProviderSwitchRequest(null);
+      setProviderSwitchPreview(null);
+      toast.error(t("deeplink.providerSwitch.error"), {
+        description: t("deeplink.providerSwitch.errorDescription"),
+      });
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleProviderSwitchCancel = async () => {
+    if (!providerSwitchPreview || isImporting) return;
+
+    setIsImporting(true);
+    try {
+      await deeplinkApi.cancelProviderSwitch(providerSwitchPreview.reviewToken);
+      setIsOpen(false);
+      setProviderSwitchRequest(null);
+      setProviderSwitchPreview(null);
+    } catch {
+      toast.error(t("deeplink.providerSwitch.cancelError"), {
+        description: t("deeplink.providerSwitch.cancelErrorDescription"),
+      });
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   const handleCancel = () => {
     setIsOpen(false);
+    setProviderSwitchRequest(null);
+    setProviderSwitchPreview(null);
   };
 
   // Mask API key for display (show first 4 chars + ***)
@@ -336,6 +427,54 @@ export function DeepLinkImportDialog() {
         return t("deeplink.confirmImportDescription");
     }
   };
+
+  if (providerSwitchRequest && providerSwitchPreview) {
+    return (
+      <Dialog
+        open={isOpen}
+        onOpenChange={(open) => {
+          if (!open) void handleProviderSwitchCancel();
+        }}
+      >
+        <DialogContent className="sm:max-w-[500px]" zIndex="top">
+          <DialogHeader className="text-left sm:text-left">
+            <DialogTitle>{t("deeplink.providerSwitch.title")}</DialogTitle>
+            <DialogDescription>
+              {t("deeplink.providerSwitch.description")}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-y-auto px-8 py-4 [scrollbar-width:thin] [&::-webkit-scrollbar]:block [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-200 dark:[&::-webkit-scrollbar-thumb]:bg-gray-700">
+            <ProviderSwitchConfirmation preview={providerSwitchPreview} />
+          </div>
+          <DialogFooter>
+            {providerSwitchPreview.isCurrent ? (
+              <Button
+                onClick={() => void handleProviderSwitchCancel()}
+                disabled={isImporting}
+              >
+                {t("common.close")}
+              </Button>
+            ) : (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => void handleProviderSwitchCancel()}
+                  disabled={isImporting}
+                >
+                  {t("common.cancel")}
+                </Button>
+                <Button onClick={handleProviderSwitch} disabled={isImporting}>
+                  {isImporting
+                    ? t("deeplink.providerSwitch.switching")
+                    : t("deeplink.providerSwitch.confirm")}
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog open={isOpen && !!request} onOpenChange={setIsOpen}>

@@ -74,7 +74,7 @@ impl ProxyService {
             db,
             server: Arc::new(RwLock::new(None)),
             app_handle: Arc::new(RwLock::new(None)),
-            switch_locks: SwitchLockManager::new(),
+            switch_locks: SwitchLockManager::process_wide(),
         }
     }
 
@@ -2326,7 +2326,7 @@ impl ProxyService {
     }
 
     /// 仅供已持有 per-app 切换锁的调用方使用。
-    async fn update_live_backup_from_provider_inner(
+    pub(crate) async fn update_live_backup_from_provider_inner(
         &self,
         app_type: &str,
         provider: &Provider,

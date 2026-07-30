@@ -6,7 +6,8 @@ use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 
 use crate::commands::sync_support::{
-    post_sync_warning_from_result, run_post_import_sync, success_payload_with_warning,
+    post_sync_warning_from_result, run_post_import_sync_locked, success_payload_with_warning,
+    with_codex_mutation_lock,
 };
 use crate::database::backup::BackupEntry;
 use crate::database::Database;
@@ -44,15 +45,16 @@ pub async fn import_config_from_file(
     state: State<'_, AppState>,
 ) -> Result<Value, String> {
     let db = state.db.clone();
-    let db_for_sync = db.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let path_buf = PathBuf::from(&filePath);
-        let backup_id = db.import_sql(&path_buf)?;
-        let warning = post_sync_warning_from_result(Ok(run_post_import_sync(db_for_sync)));
-        if let Some(msg) = warning.as_ref() {
-            log::warn!("[Import] post-import sync warning: {msg}");
-        }
-        Ok::<_, AppError>(success_payload_with_warning(backup_id, warning))
+        with_codex_mutation_lock(db.clone(), |app_state| {
+            let path_buf = PathBuf::from(&filePath);
+            let backup_id = db.import_sql(&path_buf)?;
+            let warning = post_sync_warning_from_result(Ok(run_post_import_sync_locked(app_state)));
+            if let Some(msg) = warning.as_ref() {
+                log::warn!("[Import] post-import sync warning: {msg}");
+            }
+            Ok(success_payload_with_warning(backup_id, warning))
+        })
     })
     .await
     .map_err(|e| format!("导入配置失败: {e}"))?
@@ -63,12 +65,13 @@ pub async fn import_config_from_file(
 pub async fn sync_current_providers_live(state: State<'_, AppState>) -> Result<Value, String> {
     let db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let app_state = AppState::new(db);
-        ProviderService::sync_current_to_live(&app_state)?;
-        Ok::<_, AppError>(json!({
-            "success": true,
-            "message": "Live configuration synchronized"
-        }))
+        with_codex_mutation_lock(db, |app_state| {
+            ProviderService::sync_current_to_live_locked(app_state)?;
+            Ok(json!({
+                "success": true,
+                "message": "Live configuration synchronized"
+            }))
+        })
     })
     .await
     .map_err(|e| format!("同步当前供应商失败: {e}"))?
@@ -154,10 +157,12 @@ pub async fn restore_db_backup(
     filename: String,
 ) -> Result<String, String> {
     let db = state.db.clone();
-    tauri::async_runtime::spawn_blocking(move || db.restore_from_backup(&filename))
-        .await
-        .map_err(|e| format!("Restore failed: {e}"))?
-        .map_err(|e: AppError| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        with_codex_mutation_lock(db.clone(), |_| db.restore_from_backup(&filename))
+    })
+    .await
+    .map_err(|e| format!("Restore failed: {e}"))?
+    .map_err(|e: AppError| e.to_string())
 }
 
 /// Rename a database backup file

@@ -3,10 +3,86 @@
 //! Parses ccswitch:// URLs into DeepLinkImportRequest structures.
 
 use super::utils::validate_url;
-use super::DeepLinkImportRequest;
+use super::{DeepLinkImportRequest, DeepLinkRequest, ProviderSwitchRequest};
 use crate::error::AppError;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use url::Url;
+
+pub fn parse_deeplink_request_url(url_str: &str) -> Result<DeepLinkRequest, AppError> {
+    let url = Url::parse(url_str)
+        .map_err(|e| AppError::InvalidInput(format!("Invalid deep link URL: {e}")))?;
+    let is_provider_switch = url
+        .query_pairs()
+        .any(|(key, value)| key == "resource" && value == "provider-switch");
+
+    if !is_provider_switch {
+        return parse_deeplink_url(url_str)
+            .map(|request| DeepLinkRequest::Import(Box::new(request)));
+    }
+
+    if url.scheme() != "ccswitch" {
+        return Err(AppError::InvalidInput(
+            "Invalid scheme: expected 'ccswitch'".to_string(),
+        ));
+    }
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(AppError::InvalidInput(
+            "Unsupported URL component in provider-switch request".to_string(),
+        ));
+    }
+    let version = url
+        .host_str()
+        .ok_or_else(|| AppError::InvalidInput("Missing version in URL host".to_string()))?;
+    if version != "v1" {
+        return Err(AppError::InvalidInput(
+            "Unsupported protocol version".to_string(),
+        ));
+    }
+    if url.path() != "/import" {
+        return Err(AppError::InvalidInput(
+            "Invalid path: expected '/import'".to_string(),
+        ));
+    }
+
+    let mut seen = HashSet::new();
+    for (key, _) in url.query_pairs() {
+        if !matches!(key.as_ref(), "resource" | "app" | "id") {
+            return Err(AppError::InvalidInput(
+                "Unsupported parameter in provider-switch request".to_string(),
+            ));
+        }
+        if !seen.insert(key.into_owned()) {
+            return Err(AppError::InvalidInput(
+                "Duplicate parameter in provider-switch request".to_string(),
+            ));
+        }
+    }
+
+    let params: HashMap<String, String> = url.query_pairs().into_owned().collect();
+    let app = params
+        .get("app")
+        .ok_or_else(|| AppError::InvalidInput("Missing 'app' parameter".to_string()))?;
+    if app != "codex" {
+        return Err(AppError::InvalidInput(
+            "Provider switches support only the 'codex' app".to_string(),
+        ));
+    }
+    let id = params
+        .get("id")
+        .filter(|id| !id.trim().is_empty())
+        .ok_or_else(|| AppError::InvalidInput("Missing 'id' parameter".to_string()))?;
+
+    Ok(DeepLinkRequest::ProviderSwitch(ProviderSwitchRequest {
+        version: version.to_string(),
+        resource: "provider-switch".to_string(),
+        app: app.to_string(),
+        id: id.to_string(),
+    }))
+}
 
 /// Parse a ccswitch:// URL into a DeepLinkImportRequest
 ///

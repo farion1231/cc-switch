@@ -22,10 +22,49 @@ use serde::{Deserialize, Serialize};
 
 // Re-export public API
 pub use mcp::import_mcp_from_deeplink;
-pub use parser::parse_deeplink_url;
+pub use parser::{parse_deeplink_request_url, parse_deeplink_url};
 pub use prompt::import_prompt_from_deeplink;
 pub use provider::{import_provider_from_deeplink, parse_and_merge_config};
 pub use skill::import_skill_from_deeplink;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum DeepLinkRequest {
+    Import(Box<DeepLinkImportRequest>),
+    ProviderSwitch(ProviderSwitchRequest),
+}
+
+impl DeepLinkRequest {
+    pub fn resource(&self) -> &str {
+        match self {
+            Self::Import(request) => &request.resource,
+            Self::ProviderSwitch(request) => &request.resource,
+        }
+    }
+
+    pub fn app(&self) -> Option<&str> {
+        match self {
+            Self::Import(request) => request.app.as_deref(),
+            Self::ProviderSwitch(request) => Some(&request.app),
+        }
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Self::Import(request) => request.name.as_deref(),
+            Self::ProviderSwitch(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProviderSwitchRequest {
+    pub version: String,
+    pub resource: String,
+    pub app: String,
+    pub id: String,
+}
 
 /// Deep link import request model
 ///

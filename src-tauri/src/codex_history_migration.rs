@@ -3,6 +3,7 @@
 //! 只迁移本机 `~/.codex` 历史数据；完成标记写入设备级 `settings.json`，
 //! 失败时不写标记，下一次启动自动重试。
 
+use crate::app_config::AppType;
 use crate::codex_config::{
     get_codex_config_dir, read_codex_config_text, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
 };
@@ -40,6 +41,18 @@ fn lock_codex_official_history_op() -> std::sync::MutexGuard<'static, ()> {
     CODEX_OFFICIAL_HISTORY_OP_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Serialize every migration that reads or rewrites Codex provider identity,
+/// live routing, settings markers, or session buckets with reviewed provider
+/// switches. Startup launches these migrations on a background worker after
+/// deep-link handling may already be available, so startup ordering alone is
+/// not a sufficient concurrency boundary.
+fn lock_codex_provider_mutation() -> tokio::sync::OwnedMutexGuard<()> {
+    futures::executor::block_on(
+        crate::proxy::switch_lock::SwitchLockManager::process_wide()
+            .lock_for_app(AppType::Codex.as_str()),
+    )
 }
 /// Codex 内建默认 provider id：config.toml 没有 `model_provider` 键时会话归入此桶。
 /// 官方订阅（ChatGPT OAuth / OpenAI API key）的历史会话都记录这个 id。
@@ -115,6 +128,7 @@ pub struct CodexProviderTemplateBucketMigrationOutcome {
 pub fn maybe_migrate_codex_third_party_history_provider_bucket(
     db: &Database,
 ) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
+    let _codex_guard = lock_codex_provider_mutation();
     if crate::settings::is_codex_third_party_history_provider_bucket_migrated() {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("already_migrated".to_string()),
@@ -170,6 +184,7 @@ pub fn maybe_migrate_codex_third_party_history_provider_bucket(
 pub fn maybe_migrate_codex_provider_template_bucket(
     db: &Database,
 ) -> Result<CodexProviderTemplateBucketMigrationOutcome, AppError> {
+    let _codex_guard = lock_codex_provider_mutation();
     if crate::settings::is_codex_provider_template_migrated() {
         return Ok(CodexProviderTemplateBucketMigrationOutcome {
             skipped_reason: Some("already_migrated".to_string()),
@@ -197,6 +212,7 @@ pub fn maybe_migrate_codex_provider_template_bucket(
 /// 迁移前 jsonl / state DB 均备份到 `~/.cc-switch/backups/codex-official-history-unify-v1/`。
 pub fn maybe_migrate_codex_official_history_to_unified_bucket(
 ) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
+    let _codex_guard = lock_codex_provider_mutation();
     if !crate::settings::unify_codex_session_history() {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("unify_toggle_off".to_string()),
@@ -353,6 +369,7 @@ fn has_official_history_unify_backup_for_dir(ledger_parent: &Path, codex_dir_key
 /// 且只改写当前仍为 custom 的目标，重复执行无害。
 pub fn restore_codex_official_history_from_backups(
 ) -> Result<CodexOfficialHistoryRestoreOutcome, AppError> {
+    let _codex_guard = lock_codex_provider_mutation();
     let _op_guard = lock_codex_official_history_op();
     // 开关已（重新）开启时拒绝还原：live 正路由 custom，把账本会话翻回
     // openai 桶等于亲手制造分裂。覆盖"关闭保存成功后用户立刻重新开启，

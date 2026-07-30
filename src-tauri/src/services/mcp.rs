@@ -10,6 +10,18 @@ use crate::store::AppState;
 pub struct McpService;
 
 impl McpService {
+    /// Serialize MCP database/live mutations with reviewed Codex provider
+    /// switches. MCP operations can rewrite `~/.codex/config.toml`, and several
+    /// of them save the whole cross-app server record, so the lock covers the
+    /// complete read/modify/write sequence rather than only the file write.
+    fn lock_codex_mutation(state: &AppState) -> tokio::sync::OwnedMutexGuard<()> {
+        futures::executor::block_on(
+            state
+                .proxy_service
+                .lock_switch_for_app(AppType::Codex.as_str()),
+        )
+    }
+
     /// 获取所有 MCP 服务器（统一结构）
     pub fn get_all_servers(state: &AppState) -> Result<IndexMap<String, McpServer>, AppError> {
         state.db.get_all_mcp_servers()
@@ -17,6 +29,7 @@ impl McpService {
 
     /// 添加或更新 MCP 服务器
     pub fn upsert_server(state: &AppState, server: McpServer) -> Result<(), AppError> {
+        let _codex_guard = Self::lock_codex_mutation(state);
         // 读取旧状态：用于处理“编辑时取消勾选某个应用”的场景（需要从对应 live 配置中移除）
         let prev_apps = state
             .db
@@ -55,6 +68,7 @@ impl McpService {
 
     /// 删除 MCP 服务器
     pub fn delete_server(state: &AppState, id: &str) -> Result<bool, AppError> {
+        let _codex_guard = Self::lock_codex_mutation(state);
         let server = state.db.get_all_mcp_servers()?.shift_remove(id);
 
         if let Some(server) = server {
@@ -75,6 +89,7 @@ impl McpService {
         app: AppType,
         enabled: bool,
     ) -> Result<(), AppError> {
+        let _codex_guard = Self::lock_codex_mutation(state);
         let mut servers = state.db.get_all_mcp_servers()?;
 
         if let Some(server) = servers.get_mut(server_id) {
@@ -218,6 +233,16 @@ impl McpService {
     /// 定向重投影，避免把无关应用的失败面（如 ~/.claude.json 坏 JSON）
     /// 牵连进目标应用的关键路径。
     pub fn sync_enabled_for_app(state: &AppState, app: &AppType) -> Result<(), AppError> {
+        let _codex_guard = matches!(app, AppType::Codex).then(|| Self::lock_codex_mutation(state));
+        Self::sync_enabled_for_app_locked(state, app)
+    }
+
+    /// Project one application's MCP state while the caller already owns the
+    /// process-wide Codex mutation lock when `app` is Codex.
+    pub(crate) fn sync_enabled_for_app_locked(
+        state: &AppState,
+        app: &AppType,
+    ) -> Result<(), AppError> {
         let servers = Self::get_all_servers(state)?;
         Self::project_servers_to_app(state, &servers, app)
     }

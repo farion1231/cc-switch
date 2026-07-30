@@ -56,6 +56,15 @@ pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &
 /// 当前供应商非官方（或不存在）时为 no-op：注入只作用于官方配置，
 /// 第三方 live 配置不受开关影响。
 pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, AppError> {
+    let _codex_guard = ProviderService::lock_provider_mutation(state, &AppType::Codex);
+    reapply_current_codex_official_live_locked(state)
+}
+
+/// Reapply the current official Codex provider while the caller already owns
+/// the process-wide Codex mutation lock.
+pub(crate) fn reapply_current_codex_official_live_locked(
+    state: &AppState,
+) -> Result<bool, AppError> {
     let current_id = ProviderService::current(state, AppType::Codex)?;
     if current_id.is_empty() {
         return Ok(false);
@@ -83,7 +92,7 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
         futures::executor::block_on(
             state
                 .proxy_service
-                .update_live_backup_from_provider(AppType::Codex.as_str(), provider),
+                .update_live_backup_from_provider_inner(AppType::Codex.as_str(), provider),
         )
         .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
         return Ok(true);
@@ -99,7 +108,7 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     // 已生效；若把错误上抛，save_settings 会回滚开关设置，制造"设置=旧值、
     // live=新桶"的会话分裂——正是该回滚要防止的状态。MCP 投影可自愈
     // （下次切换 / 任一 MCP 启停操作都会重新投影）。
-    if let Err(err) = McpService::sync_enabled_for_app(state, &AppType::Codex) {
+    if let Err(err) = McpService::sync_enabled_for_app_locked(state, &AppType::Codex) {
         log::warn!("统一会话开关重写 live 后重投影 Codex MCP 失败（将在下次同步时自愈）: {err}");
     }
     Ok(true)
@@ -2420,6 +2429,28 @@ requires_openai_auth = true
 }
 
 impl ProviderService {
+    fn lock_provider_mutation(
+        state: &AppState,
+        app_type: &AppType,
+    ) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        matches!(app_type, AppType::Codex).then(|| {
+            futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()))
+        })
+    }
+
+    fn lock_switch_operation(
+        state: &AppState,
+        app_type: &AppType,
+    ) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        matches!(
+            app_type,
+            AppType::Claude | AppType::Codex | AppType::Gemini | AppType::GrokBuild
+        )
+        .then(|| {
+            futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()))
+        })
+    }
+
     fn normalize_provider_if_claude(app_type: &AppType, provider: &mut Provider) {
         if matches!(app_type, AppType::Claude) {
             let mut v = provider.settings_config.clone();
@@ -2554,6 +2585,7 @@ impl ProviderService {
         provider: Provider,
         add_to_live: bool,
     ) -> Result<bool, AppError> {
+        let _mutation_guard = Self::lock_provider_mutation(state, &app_type);
         let mut provider = provider;
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
@@ -2604,6 +2636,7 @@ impl ProviderService {
         original_id: Option<&str>,
         provider: Provider,
     ) -> Result<bool, AppError> {
+        let _mutation_guard = Self::lock_provider_mutation(state, &app_type);
         let mut provider = provider;
         let original_id = original_id.unwrap_or(provider.id.as_str()).to_string();
         let provider_id_changed = original_id != provider.id;
@@ -2778,7 +2811,7 @@ impl ProviderService {
                     futures::executor::block_on(
                         state
                             .proxy_service
-                            .update_live_backup_from_provider(app_type.as_str(), &provider),
+                            .update_live_backup_from_provider_inner(app_type.as_str(), &provider),
                     )
                     .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
                 }
@@ -2813,7 +2846,7 @@ impl ProviderService {
                 // 流程。走到这里 DB 与 live 都已按新配置落盘，保存事实上已
                 // 成功；投影失败降级为警告，避免制造"保存失败"假象（MCP
                 // 投影可自愈：下次切换 / 任一 MCP 启停都会重新投影）。
-                if let Err(err) = McpService::sync_enabled_for_app(state, &app_type) {
+                if let Err(err) = McpService::sync_enabled_for_app_locked(state, &app_type) {
                     log::warn!(
                         "保存供应商后重投影 {app_type:?} MCP 失败（将在下次同步时自愈）: {err}"
                     );
@@ -2829,6 +2862,7 @@ impl ProviderService {
     /// 同时检查本地 settings 和数据库的当前供应商，防止删除任一端正在使用的供应商。
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
+        let _mutation_guard = Self::lock_provider_mutation(state, &app_type);
         // Additive mode apps - no current provider concept
         if app_type.is_additive_mode() {
             // Single DB read shared across all additive-mode sub-paths below.
@@ -2964,6 +2998,49 @@ impl ProviderService {
     ///    d. Write target provider config to live files
     ///    e. Sync MCP configuration
     pub fn switch(state: &AppState, app_type: AppType, id: &str) -> Result<SwitchResult, AppError> {
+        Self::switch_with_conditions(state, app_type, id, |_| Ok(true), |_| Ok(()))
+    }
+
+    pub(crate) fn switch_reviewed<F, P>(
+        state: &AppState,
+        app_type: AppType,
+        id: &str,
+        revalidate: F,
+        postcondition: P,
+    ) -> Result<SwitchResult, AppError>
+    where
+        F: FnOnce(&AppState) -> Result<bool, AppError>,
+        P: FnOnce(&AppState) -> Result<(), AppError>,
+    {
+        Self::switch_with_conditions(state, app_type, id, revalidate, postcondition)
+    }
+
+    fn switch_with_conditions<F, P>(
+        state: &AppState,
+        app_type: AppType,
+        id: &str,
+        revalidate: F,
+        postcondition: P,
+    ) -> Result<SwitchResult, AppError>
+    where
+        F: FnOnce(&AppState) -> Result<bool, AppError>,
+        P: FnOnce(&AppState) -> Result<(), AppError>,
+    {
+        let _switch_guard = Self::lock_switch_operation(state, &app_type);
+        if !revalidate(state)? {
+            postcondition(state)?;
+            return Ok(SwitchResult::default());
+        }
+        let result = Self::switch_locked(state, app_type, id)?;
+        postcondition(state)?;
+        Ok(result)
+    }
+
+    fn switch_locked(
+        state: &AppState,
+        app_type: AppType,
+        id: &str,
+    ) -> Result<SwitchResult, AppError> {
         // Check if provider exists
         let providers = state.db.get_all_providers(app_type.as_str())?;
         let _provider = providers
@@ -2985,21 +3062,6 @@ impl ProviderService {
         if matches!(app_type, AppType::ClaudeDesktop) {
             return Self::switch_normal(state, app_type, id, &providers);
         }
-
-        // Provider switches and takeover toggles both mutate live config and the
-        // restore backup. Serialize them per app, then decide from the locked
-        // current state so a just-started takeover cannot be overwritten by a
-        // normal live write.
-        let _switch_guard = if matches!(
-            app_type,
-            AppType::Claude | AppType::Codex | AppType::Gemini | AppType::GrokBuild
-        ) {
-            Some(futures::executor::block_on(
-                state.proxy_service.lock_switch_for_app(app_type.as_str()),
-            ))
-        } else {
-            None
-        };
 
         // Backup or live placeholders mean the live file is owned by proxy
         // takeover, even if the proxy server is temporarily stopped or is in the
@@ -3203,7 +3265,7 @@ impl ProviderService {
         // 走到这里 DB is_current 与 live 都已落盘，切换事实上已成功；
         // 投影失败上抛会让前端报"切换失败"制造分裂假象，故降级为警告
         // （MCP 投影可自愈：下次切换 / 任一 MCP 启停都会重新投影）。
-        if let Err(err) = McpService::sync_enabled_for_app(state, &app_type) {
+        if let Err(err) = McpService::sync_enabled_for_app_locked(state, &app_type) {
             log::warn!("切换供应商后重投影 {app_type:?} MCP 失败（将在下次同步时自愈）: {err}");
         }
 
@@ -3212,10 +3274,26 @@ impl ProviderService {
 
     /// Sync current provider to live configuration (re-export)
     pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
+        let _codex_guard = Self::lock_provider_mutation(state, &AppType::Codex);
+        Self::sync_current_to_live_locked(state)
+    }
+
+    /// Synchronize current providers while the caller already holds the Codex
+    /// provider-mutation lock. Snapshot imports use this to keep database
+    /// replacement and the resulting live projection in one critical section.
+    pub(crate) fn sync_current_to_live_locked(state: &AppState) -> Result<(), AppError> {
         sync_current_to_live(state)
     }
 
     pub fn sync_current_provider_for_app(
+        state: &AppState,
+        app_type: AppType,
+    ) -> Result<(), AppError> {
+        let _mutation_guard = Self::lock_provider_mutation(state, &app_type);
+        Self::sync_current_provider_for_app_locked(state, app_type)
+    }
+
+    pub(crate) fn sync_current_provider_for_app_locked(
         state: &AppState,
         app_type: AppType,
     ) -> Result<(), AppError> {
@@ -3252,12 +3330,20 @@ impl ProviderService {
                 return Ok(());
             }
 
-            futures::executor::block_on(
-                state
-                    .proxy_service
-                    .update_live_backup_from_provider(app_type.as_str(), provider),
-            )
-            .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+            let update = if matches!(app_type, AppType::Codex) {
+                futures::executor::block_on(
+                    state
+                        .proxy_service
+                        .update_live_backup_from_provider_inner(app_type.as_str(), provider),
+                )
+            } else {
+                futures::executor::block_on(
+                    state
+                        .proxy_service
+                        .update_live_backup_from_provider(app_type.as_str(), provider),
+                )
+            };
+            update.map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
             return Ok(());
         }
 
@@ -4045,6 +4131,7 @@ impl ProviderService {
         provider_id: &str,
         url: String,
     ) -> Result<(), AppError> {
+        let _mutation_guard = Self::lock_provider_mutation(state, &app_type);
         endpoints::add_custom_endpoint(state, app_type, provider_id, url)
     }
 
@@ -4055,6 +4142,7 @@ impl ProviderService {
         provider_id: &str,
         url: String,
     ) -> Result<(), AppError> {
+        let _mutation_guard = Self::lock_provider_mutation(state, &app_type);
         endpoints::remove_custom_endpoint(state, app_type, provider_id, url)
     }
 
@@ -4065,6 +4153,7 @@ impl ProviderService {
         provider_id: &str,
         url: String,
     ) -> Result<(), AppError> {
+        let _mutation_guard = Self::lock_provider_mutation(state, &app_type);
         endpoints::update_endpoint_last_used(state, app_type, provider_id, url)
     }
 
@@ -4074,6 +4163,7 @@ impl ProviderService {
         app_type: AppType,
         updates: Vec<ProviderSortUpdate>,
     ) -> Result<bool, AppError> {
+        let _mutation_guard = Self::lock_provider_mutation(state, &app_type);
         let mut providers = state.db.get_all_providers(app_type.as_str())?;
 
         for update in updates {
@@ -4593,6 +4683,11 @@ impl ProviderService {
 
     /// 删除统一供应商
     pub fn delete_universal(state: &AppState, id: &str) -> Result<bool, AppError> {
+        // Universal-provider deletion can remove a generated Codex provider.
+        // Serialize the whole read/delete sequence with reviewed Codex switches
+        // so the reviewed target row cannot disappear during confirmation.
+        let _codex_guard = Self::lock_provider_mutation(state, &AppType::Codex);
+
         // 获取统一供应商（用于删除生成的子供应商）
         let provider = state.db.get_universal_provider(id)?;
 
@@ -4620,6 +4715,11 @@ impl ProviderService {
 
     /// 同步统一供应商到各应用
     pub fn sync_universal_to_apps(state: &AppState, id: &str) -> Result<bool, AppError> {
+        // A universal-provider sync may save or delete a generated Codex
+        // provider. Keep the source read and every child write in the same
+        // process-wide critical section as reviewed Codex switching.
+        let _codex_guard = Self::lock_provider_mutation(state, &AppType::Codex);
+
         let provider = state
             .db
             .get_universal_provider(id)?
