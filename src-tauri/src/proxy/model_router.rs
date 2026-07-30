@@ -20,7 +20,9 @@ impl ModelRouter {
     /// 2. 精确匹配：请求 model == 配置值（大小写不敏感）
     /// 3. 通配符匹配：配置值以 `*` 结尾，且请求以该前缀开头
     /// 4. 多个匹配时，精确 > 通配符 > 更短的通配符
-    /// 5. 未匹配 → None
+    /// 5. 同等匹配质量下，sort_index 较小的优先（未设置视为最大）
+    /// 6. sort_index 相同或均未设置 → 随机（尊重 HashMap 的遍历顺序）
+    /// 7. 未匹配 → None
     pub fn match_model<'a>(
         model: &str,
         providers: &'a HashMap<String, UniversalProvider>,
@@ -33,7 +35,11 @@ impl ModelRouter {
         let model_lower = model.to_lowercase();
         let mut best: Option<(&'a UniversalProvider, MatchKind)> = None;
 
-        for provider in providers.values() {
+        // 按 sort_index 升序遍历，使低 sort_index 的 provider 优先被考虑
+        let mut sorted: Vec<&'a UniversalProvider> = providers.values().collect();
+        sorted.sort_by_key(|p| p.sort_index.unwrap_or(usize::MAX));
+
+        for provider in sorted {
             let kind = match app_type {
                 "claude" => Self::match_claude(&model_lower, provider),
                 "codex" => Self::match_codex(&model_lower, provider),
@@ -44,7 +50,15 @@ impl ModelRouter {
             if let Some(k) = kind {
                 let is_better = match best {
                     None => true,
-                    Some((_, best_kind)) => k.better_than(best_kind),
+                    Some((best_p, best_kind)) => {
+                        if k == best_kind {
+                            // 同等匹配质量 → sort_index 较小的优先
+                            provider.sort_index.unwrap_or(usize::MAX)
+                                < best_p.sort_index.unwrap_or(usize::MAX)
+                        } else {
+                            k.better_than(best_kind)
+                        }
+                    }
                 };
                 if is_better {
                     best = Some((provider, k));
