@@ -90,11 +90,12 @@ pub async fn remote_invoke(
     app_handle: tauri::AppHandle,
     command: String,
     #[allow(non_snake_case)] args: Value,
+    generation: u64,
 ) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         app_handle
             .state::<RemoteRuntimeState>()
-            .invoke_remote(&command, args)
+            .invoke_remote(generation, &command, args)
             .map_err(serialize_error)
     })
     .await

@@ -33,7 +33,7 @@ fn runtime_starts_local_and_manages_saved_targets_without_connecting() {
         .is_empty());
 
     let error = runtime
-        .invoke_remote("provider.list", serde_json::json!({ "app": "codex" }))
+        .invoke_remote(0, "provider.list", serde_json::json!({ "app": "codex" }))
         .expect_err("offline runtime must reject remote calls");
     assert_eq!(error.code(), "REMOTE_OFFLINE");
 }

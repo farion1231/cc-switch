@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use super::capabilities::{CommandCapabilityRegistry, RemoteCapabilityError};
 use super::client::RemoteClientError;
@@ -6,10 +6,34 @@ use super::models::{RemoteConnectionStatus, RemoteRuntimeSnapshot, RemoteTargetC
 use super::ssh::{preflight, OpenSshSession, RemotePlatform, RemoteSshError};
 use super::target_store::{RemoteTargetStore, TargetStoreError};
 
+trait RuntimeCommandSession: Send + Sync {
+    fn invoke(
+        &self,
+        request_id: &str,
+        command: &str,
+        args: serde_json::Value,
+        timeout_ms: u64,
+    ) -> Result<serde_json::Value, RemoteSshError>;
+}
+
+impl RuntimeCommandSession for OpenSshSession {
+    fn invoke(
+        &self,
+        request_id: &str,
+        command: &str,
+        args: serde_json::Value,
+        timeout_ms: u64,
+    ) -> Result<serde_json::Value, RemoteSshError> {
+        OpenSshSession::invoke(self, request_id, command, args, timeout_ms)
+    }
+}
+
+type SharedRuntimeSession = Arc<dyn RuntimeCommandSession>;
+
 pub struct RemoteRuntimeState {
     store: RemoteTargetStore,
     snapshot: Mutex<RemoteRuntimeSnapshot>,
-    session: Mutex<Option<OpenSshSession>>,
+    session: Mutex<Option<SharedRuntimeSession>>,
 }
 
 impl RemoteRuntimeState {
@@ -102,7 +126,7 @@ impl RemoteRuntimeState {
 
         match OpenSshSession::connect(&target) {
             Ok(session) => {
-                *self.lock_session()? = Some(session);
+                *self.lock_session()? = Some(Arc::new(session));
                 let mut snapshot = self.lock_snapshot()?;
                 *snapshot = RemoteRuntimeSnapshot {
                     status: RemoteConnectionStatus::Online,
@@ -137,21 +161,53 @@ impl RemoteRuntimeState {
 
     pub fn invoke_remote(
         &self,
+        expected_generation: u64,
         command: &str,
         args: serde_json::Value,
     ) -> Result<serde_json::Value, RemoteRuntimeError> {
+        self.require_generation(expected_generation)?;
         let registry = CommandCapabilityRegistry::remote_supported();
         let capability = registry.require(command)?;
-        let mut session = self.lock_session()?;
-        let session = session.as_mut().ok_or(RemoteRuntimeError::Offline)?;
-        session
-            .invoke(
-                &uuid::Uuid::new_v4().to_string(),
-                command,
-                args,
-                capability.timeout_ms,
-            )
-            .map_err(RemoteRuntimeError::Ssh)
+        // 克隆 Arc 后立即释放 runtime session 锁；目标切换可并发丢弃旧 session，
+        // 正在执行的请求仍持有旧 Arc，返回时由第二次 generation 检查拒绝迟到结果。
+        let session = self
+            .lock_session()?
+            .clone()
+            .ok_or(RemoteRuntimeError::Offline)?;
+        let result = session.invoke(
+            &uuid::Uuid::new_v4().to_string(),
+            command,
+            args,
+            capability.timeout_ms,
+        );
+        self.require_generation(expected_generation)?;
+        result.map_err(RemoteRuntimeError::Ssh)
+    }
+
+    fn require_generation(&self, expected: u64) -> Result<(), RemoteRuntimeError> {
+        let snapshot = self.lock_snapshot()?;
+        if snapshot.generation != expected {
+            return Err(RemoteRuntimeError::StaleRuntime {
+                expected,
+                actual: snapshot.generation,
+            });
+        }
+        if snapshot.status != RemoteConnectionStatus::Online {
+            return Err(RemoteRuntimeError::Offline);
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn install_test_session(&self, generation: u64, session: Box<dyn RuntimeCommandSession>) {
+        *self.session.lock().expect("锁定测试 session") = Some(Arc::from(session));
+        *self.snapshot.lock().expect("锁定测试 snapshot") = RemoteRuntimeSnapshot {
+            status: RemoteConnectionStatus::Online,
+            generation,
+            active_target_id: Some("test-target".to_string()),
+            error_code: None,
+            error_message: None,
+        };
     }
 
     fn lock_snapshot(
@@ -164,7 +220,7 @@ impl RemoteRuntimeState {
 
     fn lock_session(
         &self,
-    ) -> Result<std::sync::MutexGuard<'_, Option<OpenSshSession>>, RemoteRuntimeError> {
+    ) -> Result<std::sync::MutexGuard<'_, Option<SharedRuntimeSession>>, RemoteRuntimeError> {
         self.session
             .lock()
             .map_err(|error| RemoteRuntimeError::StatePoisoned(error.to_string()))
@@ -181,6 +237,8 @@ pub enum RemoteRuntimeError {
     TargetNotFound(String),
     #[error("远程连接未建立")]
     Offline,
+    #[error("远程运行时已切换: expected={expected}, actual={actual}")]
+    StaleRuntime { expected: u64, actual: u64 },
     #[error(transparent)]
     Capability(#[from] RemoteCapabilityError),
     #[error(transparent)]
@@ -196,6 +254,7 @@ impl RemoteRuntimeError {
             Self::StatePoisoned(_) => "REMOTE_STATE_ERROR",
             Self::TargetNotFound(_) => "REMOTE_TARGET_NOT_FOUND",
             Self::Offline => "REMOTE_OFFLINE",
+            Self::StaleRuntime { .. } => "STALE_RUNTIME",
             Self::Capability(_) => "COMMAND_NOT_EXPOSED",
             Self::Ssh(RemoteSshError::Validation(_)) => "REMOTE_TARGET_INVALID",
             Self::Ssh(error) => ssh_error_code(error),
@@ -206,4 +265,92 @@ impl RemoteRuntimeError {
 
 fn ssh_error_code(error: &RemoteSshError) -> &str {
     error.code()
+}
+
+#[cfg(test)]
+mod generation_tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::time::Duration;
+
+    use serde_json::json;
+
+    use super::*;
+
+    struct BlockingSession {
+        calls: Arc<AtomicUsize>,
+        started: mpsc::Sender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+
+    impl RuntimeCommandSession for BlockingSession {
+        fn invoke(
+            &self,
+            _request_id: &str,
+            _command: &str,
+            _args: serde_json::Value,
+            _timeout_ms: u64,
+        ) -> Result<serde_json::Value, RemoteSshError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let _ = self.started.send(());
+            self.release
+                .lock()
+                .expect("锁定 fake release")
+                .recv_timeout(Duration::from_secs(2))
+                .expect("等待释放 fake 响应");
+            Ok(json!({ "source": "old-generation" }))
+        }
+    }
+
+    fn connected_runtime(session: BlockingSession) -> (Arc<RemoteRuntimeState>, Arc<AtomicUsize>) {
+        let temp = tempfile::tempdir().expect("创建 runtime fixture");
+        let store = RemoteTargetStore::at(temp.keep().join("remote-targets.json"));
+        let runtime = Arc::new(RemoteRuntimeState::new(store).expect("创建 runtime"));
+        let calls = Arc::clone(&session.calls);
+        runtime.install_test_session(7, Box::new(session));
+        (runtime, calls)
+    }
+
+    #[test]
+    fn stale_generation_is_rejected_before_reaching_session() {
+        let (started_sender, _started_receiver) = mpsc::channel();
+        let (_release_sender, release_receiver) = mpsc::channel();
+        let (runtime, calls) = connected_runtime(BlockingSession {
+            calls: Arc::new(AtomicUsize::new(0)),
+            started: started_sender,
+            release: Mutex::new(release_receiver),
+        });
+
+        let error = runtime
+            .invoke_remote(6, "usage.summary", json!({}))
+            .expect_err("旧 generation 必须在发送前被拒绝");
+        assert_eq!(error.code(), "STALE_RUNTIME");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn response_is_rejected_when_generation_changes_during_request() {
+        let (started_sender, started_receiver) = mpsc::channel();
+        let (release_sender, release_receiver) = mpsc::channel();
+        let (runtime, _calls) = connected_runtime(BlockingSession {
+            calls: Arc::new(AtomicUsize::new(0)),
+            started: started_sender,
+            release: Mutex::new(release_receiver),
+        });
+        let invoking = Arc::clone(&runtime);
+        let request =
+            std::thread::spawn(move || invoking.invoke_remote(7, "usage.summary", json!({})));
+        started_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("fake session 收到请求");
+        let snapshot = runtime.use_local().expect("请求期间切回本地");
+        assert_eq!(snapshot.generation, 8);
+        release_sender.send(()).expect("释放旧响应");
+
+        let error = request
+            .join()
+            .expect("等待旧请求")
+            .expect_err("迟到响应必须被拒绝");
+        assert_eq!(error.code(), "STALE_RUNTIME");
+    }
 }
