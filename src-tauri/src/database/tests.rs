@@ -157,8 +157,13 @@ fn deleted_default_skill_repo_is_not_restored() {
 
     assert_eq!(db.init_default_skill_repos().expect("initialize repos"), 4);
     for repo in db.get_skill_repos().expect("get initialized repos") {
-        db.delete_skill_repo(&repo.owner, &repo.name)
-            .expect("delete repo");
+        db.delete_skill_repo(
+            &repo.normalized_source_type(),
+            &repo.normalized_source_host(),
+            &repo.owner,
+            &repo.name,
+        )
+        .expect("delete repo");
     }
     assert!(db.get_skill_repos().expect("get deleted repos").is_empty());
 
@@ -527,8 +532,8 @@ fn schema_create_tables_repairs_dev_global_profile_marker() {
             "SELECT value FROM settings WHERE key = 'current_profile_id_claude'",
             [],
             |row| row.get(0),
-    )
-    .expect("scoped current marker survives");
+        )
+        .expect("scoped current marker survives");
     assert_eq!(claude_marker, "p1");
 }
 
@@ -606,6 +611,69 @@ fn migration_v16_to_v17_adds_skill_repo_sources() {
     assert_eq!(
         Database::get_user_version(&conn).expect("version after migration"),
         SCHEMA_VERSION
+    );
+}
+
+#[test]
+fn migration_from_local_skill_source_v12_remains_compatible() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE skills (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            directory TEXT NOT NULL,
+            repo_source_type TEXT,
+            repo_source_host TEXT,
+            repo_owner TEXT,
+            repo_name TEXT,
+            repo_branch TEXT DEFAULT 'main',
+            readme_url TEXT,
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+            enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            installed_at INTEGER NOT NULL DEFAULT 0,
+            content_hash TEXT,
+            updated_at INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE skill_repos (
+            source_type TEXT NOT NULL DEFAULT 'github',
+            source_host TEXT NOT NULL DEFAULT 'github.com',
+            owner TEXT NOT NULL,
+            name TEXT NOT NULL,
+            branch TEXT NOT NULL DEFAULT 'main',
+            enabled BOOLEAN NOT NULL DEFAULT 1,
+            PRIMARY KEY (source_type, source_host, owner, name)
+        );
+        INSERT INTO skill_repos
+            (source_type, source_host, owner, name, branch, enabled)
+        VALUES ('gitlab', 'gitlab.example.com', 'group', 'skills', 'develop', 1);
+        "#,
+    )
+    .expect("seed local v12 skill tables");
+    Database::set_user_version(&conn, 12).expect("set user_version=12");
+
+    Database::create_tables_on_conn(&conn).expect("create current tables");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after migration"),
+        SCHEMA_VERSION
+    );
+    assert!(Database::has_column(&conn, "skills", "enabled_grokbuild").unwrap());
+    let (source_type, source_host, branch): (String, String, String) = conn
+        .query_row(
+            "SELECT source_type, source_host, branch FROM skill_repos",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("preserved GitLab repo");
+    assert_eq!(
+        (source_type.as_str(), source_host.as_str(), branch.as_str()),
+        ("gitlab", "gitlab.example.com", "develop")
     );
 }
 

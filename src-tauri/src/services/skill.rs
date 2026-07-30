@@ -548,10 +548,7 @@ impl SkillService {
     /// `openExternal` 直接打开，恶意仓库坐标可能把它指向非预期位置。
     fn build_skill_doc_url(repo: &SkillRepo, branch: &str, doc_path: &str) -> Option<String> {
         if Self::validate_skill_repo(repo, branch).is_err() {
-            log::warn!(
-                "跳过非法仓库坐标的文档链接: {}@{branch}",
-                repo.repo_key()
-            );
+            log::warn!("跳过非法仓库坐标的文档链接: {}@{branch}", repo.repo_key());
             return None;
         }
 
@@ -2604,11 +2601,8 @@ impl SkillService {
 
     fn assert_gitlab_archive_url(url: &str, repo: &SkillRepo) -> Result<()> {
         let parsed = url::Url::parse(url).map_err(|e| anyhow!("Invalid archive URL: {e}"))?;
-        let expected = url::Url::parse(&format!(
-            "https://{}/",
-            repo.normalized_source_host()
-        ))
-        .map_err(|e| anyhow!("Invalid GitLab host: {e}"))?;
+        let expected = url::Url::parse(&format!("https://{}/", repo.normalized_source_host()))
+            .map_err(|e| anyhow!("Invalid GitLab host: {e}"))?;
         let expected_prefix = format!("/{}/{}/-/archive/", repo.owner, repo.name);
         if parsed.scheme() != "https"
             || parsed.host_str() != expected.host_str()
@@ -4095,15 +4089,64 @@ mod tests {
     }
 
     #[test]
-    fn build_skill_doc_url_drops_illegal_coordinates() {
+    fn gitlab_archive_and_doc_urls_keep_the_configured_host() {
+        let repo = SkillRepo {
+            source_type: "gitlab".to_string(),
+            source_host: "gitlab.example.com".to_string(),
+            owner: "group/subgroup".to_string(),
+            name: "skills".to_string(),
+            branch: "feature/env".to_string(),
+            enabled: true,
+        };
+
         assert_eq!(
-            SkillService::build_skill_doc_url("owner", "repo", "main", "a/SKILL.md").as_deref(),
+            SkillService::build_repo_archive_url(&repo, "feature/env").unwrap(),
+            "https://gitlab.example.com/group/subgroup/skills/-/archive/feature/env/skills-feature/env.zip"
+        );
+        assert_eq!(
+            SkillService::build_skill_doc_url(&repo, "feature/env", "demo/SKILL.md").as_deref(),
+            Some(
+                "https://gitlab.example.com/group/subgroup/skills/-/blob/feature/env/demo/SKILL.md"
+            )
+        );
+    }
+
+    #[test]
+    fn gitlab_repo_validation_rejects_host_and_path_injection() {
+        for (host, owner, branch) in [
+            ("gitlab.example.com/evil", "group", "main"),
+            ("user@gitlab.example.com", "group", "main"),
+            ("gitlab.example.com", "../group", "main"),
+            ("gitlab.example.com", "group", "../../../issues"),
+        ] {
+            let repo = SkillRepo {
+                source_type: "gitlab".to_string(),
+                source_host: host.to_string(),
+                owner: owner.to_string(),
+                name: "skills".to_string(),
+                branch: branch.to_string(),
+                enabled: true,
+            };
+            assert!(SkillService::validate_skill_repo(&repo, branch).is_err());
+        }
+    }
+
+    #[test]
+    fn build_skill_doc_url_drops_illegal_coordinates() {
+        let repo = SkillRepo {
+            source_type: "github".to_string(),
+            source_host: "github.com".to_string(),
+            owner: "owner".to_string(),
+            name: "repo".to_string(),
+            branch: "main".to_string(),
+            enabled: true,
+        };
+        assert_eq!(
+            SkillService::build_skill_doc_url(&repo, "main", "a/SKILL.md").as_deref(),
             Some("https://github.com/owner/repo/blob/main/a/SKILL.md")
         );
         // readme_url 会被前端 openExternal 直接打开，非法坐标不得产出链接
-        assert!(
-            SkillService::build_skill_doc_url("owner", "repo", "../../../issues", "x").is_none()
-        );
+        assert!(SkillService::build_skill_doc_url(&repo, "../../../issues", "x").is_none());
     }
 
     #[test]
@@ -4551,6 +4594,8 @@ mod tests {
             name: "poisoned".to_string(),
             description: None,
             directory: directory.to_string(),
+            repo_source_type: None,
+            repo_source_host: None,
             repo_owner: None,
             repo_name: None,
             repo_branch: None,

@@ -1542,24 +1542,32 @@ impl Database {
         if Self::table_exists(conn, "skills")? {
             Self::add_column_if_missing(conn, "skills", "repo_source_type", "TEXT")?;
             Self::add_column_if_missing(conn, "skills", "repo_source_host", "TEXT")?;
-            conn.execute(
-                "UPDATE skills
-                 SET repo_source_type = 'github'
-                 WHERE repo_owner IS NOT NULL
-                   AND repo_name IS NOT NULL
-                   AND (repo_source_type IS NULL OR repo_source_type = '')",
-                [],
-            )
-            .map_err(|e| AppError::Database(format!("回填 skills.repo_source_type 失败: {e}")))?;
-            conn.execute(
-                "UPDATE skills
-                 SET repo_source_host = 'github.com'
-                 WHERE repo_owner IS NOT NULL
-                   AND repo_name IS NOT NULL
-                   AND (repo_source_host IS NULL OR repo_source_host = '')",
-                [],
-            )
-            .map_err(|e| AppError::Database(format!("回填 skills.repo_source_host 失败: {e}")))?;
+            if Self::has_column(conn, "skills", "repo_owner")?
+                && Self::has_column(conn, "skills", "repo_name")?
+            {
+                conn.execute(
+                    "UPDATE skills
+                     SET repo_source_type = 'github'
+                     WHERE repo_owner IS NOT NULL
+                       AND repo_name IS NOT NULL
+                       AND (repo_source_type IS NULL OR repo_source_type = '')",
+                    [],
+                )
+                .map_err(|e| {
+                    AppError::Database(format!("回填 skills.repo_source_type 失败: {e}"))
+                })?;
+                conn.execute(
+                    "UPDATE skills
+                     SET repo_source_host = 'github.com'
+                     WHERE repo_owner IS NOT NULL
+                       AND repo_name IS NOT NULL
+                       AND (repo_source_host IS NULL OR repo_source_host = '')",
+                    [],
+                )
+                .map_err(|e| {
+                    AppError::Database(format!("回填 skills.repo_source_host 失败: {e}"))
+                })?;
+            }
         }
 
         if !Self::table_exists(conn, "skill_repos")? {
@@ -3156,7 +3164,7 @@ mod tests {
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
-        assert_eq!(Database::get_user_version(&conn)?, 16);
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         let counts: (i64, i64, i64, i64) = conn.query_row(
             "SELECT
                 (SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'),
