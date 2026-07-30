@@ -2304,7 +2304,8 @@ fn strip_model_date_suffix(model_id: &str) -> Option<String> {
 }
 
 fn strip_reasoning_effort_suffix(model_id: &str) -> Option<String> {
-    for suffix in ["-minimal", "-low", "-medium", "-high", "-xhigh"] {
+    // GPT-5.6 官方支持 max；剥离后复用同一模型的基础定价。
+    for suffix in ["-minimal", "-low", "-medium", "-high", "-xhigh", "-max"] {
         if let Some(stripped) = model_id.strip_suffix(suffix) {
             if !stripped.is_empty() {
                 return Some(stripped.to_string());
@@ -4208,6 +4209,28 @@ mod tests {
         assert!(
             result.is_some(),
             "OpenAI 日期后缀模型应能回退到 gpt-5.5 基础定价"
+        );
+        let result = find_model_pricing_row(&conn, "OpenAI/GPT-5.6@MAX")?;
+        assert_eq!(
+            result,
+            Some((
+                "5".to_string(),
+                "30".to_string(),
+                "0.50".to_string(),
+                "6.25".to_string(),
+            )),
+            "GPT-5.6 裸别名的 max 档位应命中 Sol 定价",
+        );
+        let result = find_model_pricing_row(&conn, "gpt-5.6-terra@max")?;
+        assert_eq!(
+            result,
+            Some((
+                "2.50".to_string(),
+                "15".to_string(),
+                "0.25".to_string(),
+                "3.125".to_string(),
+            )),
+            "GPT-5.6 Terra 的 max 档位应命中 Terra 定价",
         );
         let result = find_model_pricing_row(&conn, "google/gemini-3-pro-preview-20260514")?;
         assert!(
