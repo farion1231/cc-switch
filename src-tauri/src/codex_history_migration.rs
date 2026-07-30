@@ -2124,6 +2124,7 @@ base_url = "https://proxy.example/v1"
             paths,
             vec![
                 codex_dir.join(CODEX_STATE_DB_FILENAME),
+                codex_dir.join("sqlite").join(CODEX_STATE_DB_FILENAME),
                 sqlite_home.join(CODEX_STATE_DB_FILENAME),
             ]
         );
@@ -2146,6 +2147,7 @@ base_url = "https://proxy.example/v1"
             paths,
             vec![
                 codex_dir.join(CODEX_STATE_DB_FILENAME),
+                codex_dir.join("sqlite").join(CODEX_STATE_DB_FILENAME),
                 config_sqlite_home.join(CODEX_STATE_DB_FILENAME),
             ]
         );

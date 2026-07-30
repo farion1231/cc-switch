@@ -1,9 +1,9 @@
 //! Locating Codex's per-thread state SQLite databases.
 //!
 //! Codex stores thread metadata in `state_5.sqlite`, normally inside the Codex
-//! config dir (`CODEX_HOME` / `~/.codex`). The SQLite location can be moved with
-//! the `sqlite_home` key in `config.toml` or the `CODEX_SQLITE_HOME` env var;
-//! when set, a second DB lives there. Both history migration and the session
+//! config dir (`CODEX_HOME` / `~/.codex`) or its `sqlite` subdirectory. The
+//! SQLite location can also be moved with the `sqlite_home` key in `config.toml`
+//! or the `CODEX_SQLITE_HOME` env var. Both history migration and the session
 //! list's title lookup need the same resolution, so it lives here once.
 
 use std::path::{Path, PathBuf};
@@ -20,14 +20,19 @@ pub(crate) const CODEX_STATE_DB_FILENAME: &str = "state_5.sqlite";
 /// Env var that overrides the Codex SQLite state directory.
 const CODEX_SQLITE_HOME_ENV: &str = "CODEX_SQLITE_HOME";
 
-/// Resolve every candidate `state_5.sqlite` path: the config-dir DB plus, when
-/// Codex is configured to keep its SQLite state elsewhere, that DB too.
+/// Resolve every candidate `state_5.sqlite` path: the config-dir DB, Codex
+/// Desktop's default `sqlite` subdirectory, and any configured override.
 ///
 /// `config_dir` is the Codex config dir (`~/.codex`); `config_text` is the raw
 /// `config.toml` contents, used to detect a `sqlite_home` override.
 pub(crate) fn codex_state_db_paths(config_dir: &Path, config_text: &str) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     push_unique_path(&mut paths, config_dir.join(CODEX_STATE_DB_FILENAME));
+    // Recent Codex Desktop builds use this path even when sqlite_home is absent.
+    push_unique_path(
+        &mut paths,
+        config_dir.join("sqlite").join(CODEX_STATE_DB_FILENAME),
+    );
     // Codex lets SQLite state move away from CODEX_HOME; config takes precedence.
     if let Some(sqlite_home) = sqlite_home_from_codex_config(config_text) {
         push_unique_path(&mut paths, sqlite_home.join(CODEX_STATE_DB_FILENAME));
@@ -80,11 +85,50 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn includes_default_sqlite_subdirectory_without_override() {
+        let temp = tempdir().expect("tempdir");
+
+        let paths = codex_state_db_paths(temp.path(), "");
+
+        assert_eq!(
+            paths,
+            vec![
+                temp.path().join(CODEX_STATE_DB_FILENAME),
+                temp
+                    .path()
+                    .join("sqlite")
+                    .join(CODEX_STATE_DB_FILENAME),
+            ]
+        );
+    }
+
+    #[test]
     fn includes_config_sqlite_home() {
         let temp = tempdir().expect("tempdir");
         let sqlite_home = temp.path().join("sqlite-home");
         // 用 TOML 字面量字符串(单引号)承载路径：Windows 路径含反斜杠，basic string(双引号)
         // 会把 `\U`/`\s` 等当作非法转义导致解析失败。
+        let config_text = format!("sqlite_home = '{}'\n", sqlite_home.display());
+
+        let paths = codex_state_db_paths(temp.path(), &config_text);
+
+        assert_eq!(
+            paths,
+            vec![
+                temp.path().join(CODEX_STATE_DB_FILENAME),
+                temp
+                    .path()
+                    .join("sqlite")
+                    .join(CODEX_STATE_DB_FILENAME),
+                sqlite_home.join(CODEX_STATE_DB_FILENAME),
+            ]
+        );
+    }
+
+    #[test]
+    fn deduplicates_default_sqlite_subdirectory_override() {
+        let temp = tempdir().expect("tempdir");
+        let sqlite_home = temp.path().join("sqlite");
         let config_text = format!("sqlite_home = '{}'\n", sqlite_home.display());
 
         let paths = codex_state_db_paths(temp.path(), &config_text);
