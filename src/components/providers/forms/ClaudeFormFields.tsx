@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/collapsible";
 import { toast } from "sonner";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import {
@@ -137,6 +138,10 @@ interface ClaudeFormFieldsProps {
   subagentModel: string;
   onModelChange: (field: ClaudeModelEnvField, value: string) => void;
 
+  // Claude 订阅透传：未填模型 ID 的角色直接使用 Claude 订阅额度
+  claudeSubscriptionPassthrough?: boolean;
+  onClaudeSubscriptionPassthroughChange?: (enabled: boolean) => void;
+
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
 
@@ -211,6 +216,8 @@ export function ClaudeFormFields({
   defaultFableModelName,
   subagentModel,
   onModelChange,
+  claudeSubscriptionPassthrough,
+  onClaudeSubscriptionPassthroughChange,
   speedTestEndpoints,
   apiFormat,
   onApiFormatChange,
@@ -1103,6 +1110,29 @@ export function ClaudeFormFields({
                 })}
               </p>
             </div>
+
+            {onClaudeSubscriptionPassthroughChange && (
+              <div className="space-y-2 border-t pt-4">
+                <div className="flex items-center justify-between gap-4">
+                  <FormLabel htmlFor="claude-subscription-passthrough">
+                    {t("providerForm.subscriptionPassthroughLabel", {
+                      defaultValue: "Claude 订阅透传",
+                    })}
+                  </FormLabel>
+                  <Switch
+                    id="claude-subscription-passthrough"
+                    checked={claudeSubscriptionPassthrough ?? false}
+                    onCheckedChange={onClaudeSubscriptionPassthroughChange}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {t("providerForm.subscriptionPassthroughHint", {
+                    defaultValue:
+                      "开启后，上方未填写模型的角色直接使用 Claude 订阅额度：请求透传官方接口并保留 Claude Code 自带的订阅登录，CC Switch 不经手凭据。需开启本地代理接管，且已在 Claude Code 登录订阅。填写了默认兜底模型时所有请求仍会命中该供应商。",
+                  })}
+                </p>
+              </div>
+            )}
 
             <CustomUserAgentField
               id="claude-custom-user-agent"

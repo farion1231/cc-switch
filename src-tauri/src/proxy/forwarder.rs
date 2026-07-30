@@ -56,6 +56,26 @@ fn validate_codex_official_authorization(headers: &http::HeaderMap) -> Result<()
     }
 }
 
+/// Claude 订阅透传要求客户端自带订阅登录凭据（CC Switch 不注入任何凭据）。
+/// 与 [`validate_codex_official_authorization`] 同一模式。
+fn validate_subscription_passthrough_authorization(
+    headers: &http::HeaderMap,
+) -> Result<(), ProxyError> {
+    let authorization = headers
+        .get(http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim);
+    match authorization {
+        None | Some("") => Err(ProxyError::AuthError(
+            "Claude 订阅透传需要客户端自带登录凭据，请先在 Claude Code 中完成订阅登录".to_string(),
+        )),
+        Some(value) if value.contains(PROXY_AUTH_PLACEHOLDER) => Err(ProxyError::AuthError(
+            "检测到代理占位符凭据，请重启 Claude Code 或新建会话以加载订阅登录".to_string(),
+        )),
+        Some(_) => Ok(()),
+    }
+}
+
 pub struct ForwardResult {
     pub response: ProxyResponse,
     pub provider: Provider,
@@ -414,6 +434,29 @@ impl RequestForwarder {
 
         // 依次尝试每个供应商
         for provider in providers.iter() {
+            // Claude 订阅透传：开关开启的供应商，未填模型 ID 的档位请求解析成
+            // 「Claude 订阅直连」合成供应商，转发到官方上游并保留客户端自带凭据。
+            // 解析放在熔断器 allow 之前，让熔断/健康记账落在合成 id 上——订阅额度
+            // 耗尽不应拉闸用户选中的真实供应商；「当前供应商」的身份展示与切换
+            // 判定仍以用户选中的供应商为准（identity_provider）。
+            let resolved_passthrough: Option<Provider> = if matches!(app_type, AppType::Claude) {
+                let request_model = body.get("model").and_then(Value::as_str);
+                let resolved =
+                    super::passthrough::resolve_subscription_passthrough(provider, request_model);
+                if resolved.is_some() {
+                    log::info!(
+                        "[{app_type_str}] [SubscriptionPassthrough] {} 未配置该档位模型，透传官方订阅 (model={})",
+                        provider.name,
+                        request_model.unwrap_or("-")
+                    );
+                }
+                resolved
+            } else {
+                None
+            };
+            let identity_provider: &Provider = provider;
+            let provider: &Provider = resolved_passthrough.as_ref().unwrap_or(provider);
+
             // 整流器重试标记：每个 provider 独立持有，避免标记跨 provider 短路故障转移
             // —— 首家 provider 整流后被 5xx/timeout 击落时，下家仍能用整流后的请求体走整流流程
             let mut rectifier_retried = false;
@@ -469,11 +512,12 @@ impl RequestForwarder {
             //
             // total_requests / last_request_at / active_connections 已由
             // forward_with_retry wrapper 在客户端请求维度统一处理，这里只刷
-            // 新「正在尝试哪个 provider」的展示字段。
+            // 新「正在尝试哪个 provider」的展示字段。展示身份用 identity_provider：
+            // 订阅透传解析出的合成供应商不应替代用户选中的供应商出现在 UI 上。
             {
                 let mut status = self.status.write().await;
-                status.current_provider = Some(provider.name.clone());
-                status.current_provider_id = Some(provider.id.clone());
+                status.current_provider = Some(identity_provider.name.clone());
+                status.current_provider_id = Some(identity_provider.id.clone());
             }
 
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
@@ -496,12 +540,13 @@ impl RequestForwarder {
                     self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
                         .await;
 
-                    // 更新当前应用类型使用的 provider
+                    // 更新当前应用类型使用的 provider（身份 = 用户选中的供应商，
+                    // 订阅透传解析出的合成供应商不改变这里）
                     {
                         let mut current_providers = self.current_providers.write().await;
                         current_providers.insert(
                             app_type_str.to_string(),
-                            (provider.id.clone(), provider.name.clone()),
+                            (identity_provider.id.clone(), identity_provider.name.clone()),
                         );
                     }
 
@@ -510,16 +555,18 @@ impl RequestForwarder {
                         let mut status = self.status.write().await;
                         status.success_requests += 1;
                         status.last_error = None;
-                        let should_switch =
-                            self.current_provider_id_at_start.as_str() != provider.id.as_str();
+                        // 「切换当前供应商」按 identity 判断：透传解析出的合成供应商
+                        // 承接了请求不算切换，否则一次透传就会把用户选中的供应商改掉。
+                        let should_switch = self.current_provider_id_at_start.as_str()
+                            != identity_provider.id.as_str();
                         if should_switch {
                             status.failover_count += 1;
 
                             // 异步触发供应商切换，更新 UI/托盘，并把“当前供应商”同步为实际使用的 provider
                             let fm = self.failover_manager.clone();
                             let ah = self.app_handle.clone();
-                            let pid = provider.id.clone();
-                            let pname = provider.name.clone();
+                            let pid = identity_provider.id.clone();
+                            let pname = identity_provider.name.clone();
                             let at = app_type_str.to_string();
 
                             tokio::spawn(async move {
@@ -605,7 +652,10 @@ impl RequestForwarder {
                                             self.current_providers.write().await;
                                         current_providers.insert(
                                             app_type_str.to_string(),
-                                            (provider.id.clone(), provider.name.clone()),
+                                            (
+                                                identity_provider.id.clone(),
+                                                identity_provider.name.clone(),
+                                            ),
                                         );
                                     }
 
@@ -615,13 +665,13 @@ impl RequestForwarder {
                                         status.last_error = None;
                                         let should_switch =
                                             self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
+                                                != identity_provider.id.as_str();
                                         if should_switch {
                                             status.failover_count += 1;
                                             let fm = self.failover_manager.clone();
                                             let ah = self.app_handle.clone();
-                                            let pid = provider.id.clone();
-                                            let pname = provider.name.clone();
+                                            let pid = identity_provider.id.clone();
+                                            let pname = identity_provider.name.clone();
                                             let at = app_type_str.to_string();
 
                                             tokio::spawn(async move {
@@ -750,7 +800,10 @@ impl RequestForwarder {
                                                 self.current_providers.write().await;
                                             current_providers.insert(
                                                 app_type_str.to_string(),
-                                                (provider.id.clone(), provider.name.clone()),
+                                                (
+                                                    identity_provider.id.clone(),
+                                                    identity_provider.name.clone(),
+                                                ),
                                             );
                                         }
 
@@ -761,15 +814,15 @@ impl RequestForwarder {
                                             status.last_error = None;
                                             let should_switch =
                                                 self.current_provider_id_at_start.as_str()
-                                                    != provider.id.as_str();
+                                                    != identity_provider.id.as_str();
                                             if should_switch {
                                                 status.failover_count += 1;
 
                                                 // 异步触发供应商切换，更新 UI/托盘
                                                 let fm = self.failover_manager.clone();
                                                 let ah = self.app_handle.clone();
-                                                let pid = provider.id.clone();
-                                                let pname = provider.name.clone();
+                                                let pid = identity_provider.id.clone();
+                                                let pname = identity_provider.name.clone();
                                                 let at = app_type_str.to_string();
 
                                                 tokio::spawn(async move {
@@ -915,7 +968,10 @@ impl RequestForwarder {
                                             self.current_providers.write().await;
                                         current_providers.insert(
                                             app_type_str.to_string(),
-                                            (provider.id.clone(), provider.name.clone()),
+                                            (
+                                                identity_provider.id.clone(),
+                                                identity_provider.name.clone(),
+                                            ),
                                         );
                                     }
 
@@ -925,13 +981,13 @@ impl RequestForwarder {
                                         status.last_error = None;
                                         let should_switch =
                                             self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
+                                                != identity_provider.id.as_str();
                                         if should_switch {
                                             status.failover_count += 1;
                                             let fm = self.failover_manager.clone();
                                             let ah = self.app_handle.clone();
-                                            let pid = provider.id.clone();
-                                            let pname = provider.name.clone();
+                                            let pid = identity_provider.id.clone();
+                                            let pname = identity_provider.name.clone();
                                             let at = app_type_str.to_string();
                                             tokio::spawn(async move {
                                                 let _ = fm
@@ -1154,6 +1210,16 @@ impl RequestForwarder {
 
         if codex_official_auth_passthrough {
             validate_codex_official_authorization(headers)?;
+        }
+
+        // Claude 订阅透传：与 Codex 官方透传同一模式 —— 客户端自带的
+        // Authorization 必须原样送达官方上游。仅放行 Authorization；
+        // x-api-key / x-goog-api-key 仍然丢弃。
+        let subscription_auth_passthrough = matches!(app_type, AppType::Claude)
+            && super::passthrough::is_passthrough_provider(provider);
+
+        if subscription_auth_passthrough {
+            validate_subscription_passthrough_authorization(headers)?;
         }
 
         // 应用模型映射（独立于格式转换）
@@ -1965,7 +2031,10 @@ impl RequestForwarder {
                 // Codex send its native ChatGPT authorization, which must reach
                 // the fixed official upstream unchanged. Other credential
                 // headers are still discarded.
-                if codex_official_auth_passthrough && key_str.eq_ignore_ascii_case("authorization")
+                // Claude subscription passthrough follows the same pattern for
+                // the client's own subscription authorization.
+                if (codex_official_auth_passthrough || subscription_auth_passthrough)
+                    && key_str.eq_ignore_ascii_case("authorization")
                 {
                     saw_auth = true;
                     ordered_headers.append(key.clone(), value.clone());

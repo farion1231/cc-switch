@@ -365,6 +365,9 @@ function ProviderFormFull({
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
+    setClaudeSubscriptionPassthrough(
+      initialData?.meta?.claudeSubscriptionPassthrough ?? false,
+    );
     setLocalProxyHeadersOverride(
       formatRequestOverrideObject(
         initialData?.meta?.localProxyRequestOverrides?.headers,
@@ -555,6 +558,10 @@ function ProviderFormFull({
   const [customUserAgent, setCustomUserAgent] = useState<string>(
     () => initialData?.meta?.customUserAgent ?? "",
   );
+  const [claudeSubscriptionPassthrough, setClaudeSubscriptionPassthrough] =
+    useState<boolean>(
+      () => initialData?.meta?.claudeSubscriptionPassthrough ?? false,
+    );
   const [localProxyHeadersOverride, setLocalProxyHeadersOverride] =
     useState<string>(() =>
       formatRequestOverrideObject(
@@ -1599,6 +1606,12 @@ function ProviderFormFull({
         (appId === "claude" || appId === "codex") && category !== "official"
           ? customUserAgent.trim() || undefined
           : undefined,
+      claudeSubscriptionPassthrough:
+        appId === "claude" &&
+        category !== "official" &&
+        claudeSubscriptionPassthrough
+          ? true
+          : undefined,
       localProxyRequestOverrides: shouldApplyLocalProxyRequestOverrides
         ? overridesResult.overrides
         : undefined,
@@ -2267,6 +2280,10 @@ function ProviderFormFull({
               onApiKeyFieldChange={handleApiKeyFieldChange}
               isFullUrl={localIsFullUrl}
               onFullUrlChange={setLocalIsFullUrl}
+              claudeSubscriptionPassthrough={claudeSubscriptionPassthrough}
+              onClaudeSubscriptionPassthroughChange={
+                setClaudeSubscriptionPassthrough
+              }
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}
               localProxyHeadersOverride={localProxyHeadersOverride}

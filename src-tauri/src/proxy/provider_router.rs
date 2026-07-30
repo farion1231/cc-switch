@@ -148,6 +148,13 @@ impl ProviderRouter {
         }
 
         // 3. 更新数据库健康状态（使用配置的阈值）
+        //
+        // 订阅透传的合成供应商不落库：provider_health 对 providers 表有外键
+        // （schema.rs），写合成 id 每次请求都会触发 FK 违约。熔断器（内存态）
+        // 已在上面按合成 id 记账，健康持久化跳过即可。
+        if provider_id == crate::proxy::passthrough::PASSTHROUGH_PROVIDER_ID {
+            return Ok(());
+        }
         self.db
             .update_provider_health_with_threshold(
                 provider_id,
@@ -519,5 +526,26 @@ mod tests {
         let third = router.allow_provider_request("a", "claude").await;
         assert!(third.allowed);
         assert!(third.used_half_open_permit);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_record_result_for_subscription_passthrough_skips_health_persistence() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let router = ProviderRouter::new(db);
+
+        // 合成 id 不在 providers 表中；健康持久化必须跳过，
+        // 否则 provider_health 的外键会让每次透传请求都报错
+        router
+            .record_result(
+                crate::proxy::passthrough::PASSTHROUGH_PROVIDER_ID,
+                "claude",
+                false,
+                false,
+                Some("fail".to_string()),
+            )
+            .await
+            .expect("passthrough result recording must not hit the provider_health FK");
     }
 }

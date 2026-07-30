@@ -997,6 +997,8 @@
     "openReleaseNotesFailed": "リリースノートを開けませんでした:"
   },
   "providerForm": {
+    "subscriptionPassthroughLabel": "Claude サブスクリプション透過",
+    "subscriptionPassthroughHint": "有効にすると、上で未入力のモデルロールは Claude サブスクリプションの枠を直接使用します。リクエストは公式 API へ透過され、Claude Code 自身のサブスクリプションログインがそのまま使われます（CC Switch は資格情報に関与しません）。プロキシ引き継ぎが有効で、Claude Code でサブスクリプションにログインしている必要があります。既定フォールバックモデルを設定した場合、すべてのリクエストは引き続きこのプロバイダーに送られます。",
     "supplierName": "プロバイダー名",
     "supplierNameRequired": "プロバイダー名 *",
     "supplierNamePlaceholder": "例: Anthropic Official",

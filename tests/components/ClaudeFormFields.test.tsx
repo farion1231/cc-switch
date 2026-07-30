@@ -175,6 +175,37 @@ describe("ClaudeFormFields", () => {
     });
   });
 
+  it("订阅透传开关渲染当前状态并回传切换", () => {
+    const onToggle = vi.fn();
+    renderCopilotForm({
+      claudeSubscriptionPassthrough: false,
+      onClaudeSubscriptionPassthroughChange: onToggle,
+      // 开关位于「高级选项」折叠区内；customUserAgent 属于
+      // hasAnyAdvancedValue 条件，可让折叠区初始即展开
+      customUserAgent: "test-agent",
+    });
+
+    const toggle = screen.getByRole("switch", {
+      name: "Claude 订阅透传",
+    });
+    expect(toggle).toHaveAttribute("data-state", "unchecked");
+
+    fireEvent.click(toggle);
+    expect(onToggle).toHaveBeenCalledWith(true);
+  });
+
+  it("未接入订阅透传回调时不渲染开关", () => {
+    renderCopilotForm({
+      customUserAgent: "test-agent",
+    });
+
+    expect(
+      screen.queryByRole("switch", {
+        name: "Claude 订阅透传",
+      }),
+    ).toBeNull();
+  });
+
   it("一键设置会同时写入 Subagent 模型", () => {
     const onModelChange = vi.fn();
     renderCopilotForm({
