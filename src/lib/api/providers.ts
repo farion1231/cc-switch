@@ -91,6 +91,10 @@ export const providersApi = {
     return await invoke("switch_provider", { id, app: appId });
   },
 
+  async clearCurrent(appId: AppId): Promise<void> {
+    return await invoke("clear_current_provider", { app: appId });
+  },
+
   async importDefault(appId: AppId): Promise<boolean> {
     return await invoke("import_default_config", { app: appId });
   },

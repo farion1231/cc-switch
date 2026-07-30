@@ -1115,6 +1115,11 @@ function App() {
                           ? handleEnablePiProvider
                           : switchProvider
                       }
+                      onStopUsing={
+                        activeApp === "gemini" || activeApp === "claude" || activeApp === "codex" || activeApp === "grokbuild" || activeApp === "claude-desktop"
+                          ? () => providersApi.clearCurrent(activeApp)
+                          : undefined
+                      }
                       onEdit={(provider) => {
                         setEditingProvider(provider);
                       }}

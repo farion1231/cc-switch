@@ -132,6 +132,36 @@ pub async fn switch_provider(
     .map_err(|e| format!("供应商切换任务执行失败: {e}"))?
 }
 
+#[tauri::command]
+pub fn clear_current_provider(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+    app: String,
+) -> Result<(), String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+
+    // 清空本地 settings 中的当前供应商
+    crate::settings::set_current_provider(&app_type, None).map_err(|e| e.to_string())?;
+
+    // 清空数据库中的 is_current 标记
+    state
+        .db
+        .clear_current_provider(app_type.as_str())
+        .map_err(|e| e.to_string())?;
+
+    // 发送事件通知前端刷新 UI
+    let event_data = serde_json::json!({
+        "appType": app_type.as_str(),
+        "providerId": "",
+    });
+    let _ = app_handle.emit("provider-switched", event_data);
+
+    // 刷新托盘菜单
+    let _ = crate::tray::refresh_tray_menu(&app_handle);
+
+    Ok(())
+}
+
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
     if matches!(app_type, AppType::GrokBuild) {
         // 官方登录态（live 语法合法且无自定义模型表）+ 用户手动导入：
