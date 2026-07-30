@@ -72,6 +72,8 @@ fn installed_skill(id: &str, directory: &str, claude_enabled: bool) -> Installed
         name: id.to_string(),
         description: None,
         directory: directory.to_string(),
+        repo_source_type: None,
+        repo_source_host: None,
         repo_owner: None,
         repo_name: None,
         repo_branch: None,
