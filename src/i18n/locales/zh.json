@@ -23,7 +23,6 @@
     "unknown": "未知",
     "enterValidValue": "请输入有效的内容",
     "clear": "清除",
-    "toggleTheme": "切换主题",
     "format": "格式化",
     "formatSuccess": "格式化成功",
     "formatError": "格式化失败：{{error}}",
@@ -1507,24 +1506,6 @@
       "grokbuild": "Grok Build"
     },
     "rawInputLabel": "原始",
-    "dataSources": "数据来源",
-    "dataSource": {
-      "proxy": "路由",
-      "session_log": "会话日志",
-      "codex_db": "Codex 数据库",
-      "codex_session": "Codex 会话日志",
-      "gemini_session": "Gemini 会话日志",
-      "opencode_session": "OpenCode 会话日志",
-      "grok_session": "Grok Build 会话日志"
-    },
-    "sessionSync": {
-      "trigger": "同步会话日志",
-      "import": "导入会话",
-      "resync": "同步",
-      "imported": "从会话日志导入了 {{count}} 条记录",
-      "upToDate": "会话日志已是最新",
-      "failed": "会话同步失败"
-    },
     "rebuildCodex": {
       "title": "Codex 用量维护",
       "description": "从本地 rollout 日志重新构建 Codex 会话用量",
@@ -2539,8 +2520,7 @@
     "selectIcon": "选择图标",
     "preview": "预览",
     "clickToChange": "点击更换图标",
-    "clickToSelect": "点击选择图标",
-    "color": "图标颜色"
+    "clickToSelect": "点击选择图标"
   },
   "migration": {
     "success": "配置迁移成功",
@@ -2781,33 +2761,6 @@
     "streamingFirstByte": "流式首字节超时",
     "streamingIdle": "流式静默超时",
     "nonStreaming": "非流式超时"
-  },
-  "circuitBreaker": {
-    "failureThreshold": "失败阈值",
-    "successThreshold": "成功阈值",
-    "timeoutSeconds": "超时时间（秒）",
-    "errorRateThreshold": "错误率阈值 (%)",
-    "minRequests": "最小请求数",
-    "validationFailed": "以下字段超出有效范围: {{fields}}",
-    "configSaved": "熔断器配置已保存",
-    "saveFailed": "保存失败",
-    "loading": "加载中...",
-    "title": "熔断器配置",
-    "description": "调整熔断器参数以控制故障检测和恢复行为",
-    "failureThresholdHint": "连续失败多少次后打开熔断器",
-    "timeoutSecondsHint": "熔断器打开后多久尝试恢复（半开状态）",
-    "successThresholdHint": "半开状态下成功多少次后关闭熔断器",
-    "errorRateThresholdHint": "错误率超过此值时打开熔断器",
-    "minRequestsHint": "计算错误率前的最小请求数",
-    "saveConfig": "保存配置",
-    "instructionsTitle": "配置说明",
-    "instructions": {
-      "failureThreshold": "连续失败达到此次数时，熔断器打开",
-      "timeout": "熔断器打开后，等待此时间后尝试半开",
-      "successThreshold": "半开状态下，成功达到此次数时关闭熔断器",
-      "errorRate": "错误率超过此值时，熔断器打开",
-      "minRequests": "只有请求数达到此值后才计算错误率"
-    }
   },
   "universalProvider": {
     "duplicate": "复制",

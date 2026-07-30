@@ -23,7 +23,6 @@
     "unknown": "不明",
     "enterValidValue": "有効な値を入力してください",
     "clear": "クリア",
-    "toggleTheme": "テーマを切り替え",
     "format": "フォーマット",
     "formatSuccess": "整形しました",
     "formatError": "整形に失敗しました: {{error}}",
@@ -1507,24 +1506,6 @@
       "grokbuild": "Grok Build"
     },
     "rawInputLabel": "原始",
-    "dataSources": "データソース",
-    "dataSource": {
-      "proxy": "ルーティング",
-      "session_log": "セッションログ",
-      "codex_db": "Codex DB",
-      "codex_session": "Codex セッション",
-      "gemini_session": "Gemini セッション",
-      "opencode_session": "OpenCode セッション",
-      "grok_session": "Grok Build セッション"
-    },
-    "sessionSync": {
-      "trigger": "セッションログを同期",
-      "import": "セッションをインポート",
-      "resync": "同期",
-      "imported": "セッションログから {{count}} 件のレコードをインポートしました",
-      "upToDate": "セッションログは最新です",
-      "failed": "セッション同期に失敗しました"
-    },
     "rebuildCodex": {
       "title": "Codex 使用量メンテナンス",
       "description": "ローカルの rollout ログから Codex セッション使用量を再構築します",
@@ -2539,8 +2520,7 @@
     "selectIcon": "アイコンを選択",
     "preview": "プレビュー",
     "clickToChange": "クリックでアイコンを変更",
-    "clickToSelect": "クリックでアイコンを選択",
-    "color": "アイコンカラー"
+    "clickToSelect": "クリックでアイコンを選択"
   },
   "migration": {
     "success": "設定の移行が完了しました",
@@ -2781,33 +2761,6 @@
     "streamingFirstByte": "ストリーミング初回バイトタイムアウト",
     "streamingIdle": "ストリーミングアイドルタイムアウト",
     "nonStreaming": "非ストリーミングタイムアウト"
-  },
-  "circuitBreaker": {
-    "failureThreshold": "失敗閾値",
-    "successThreshold": "成功閾値",
-    "timeoutSeconds": "タイムアウト（秒）",
-    "errorRateThreshold": "エラー率閾値 (%)",
-    "minRequests": "最小リクエスト数",
-    "validationFailed": "以下のフィールドが有効範囲外です: {{fields}}",
-    "configSaved": "サーキットブレーカー設定が保存されました",
-    "saveFailed": "保存に失敗しました",
-    "loading": "読み込み中...",
-    "title": "サーキットブレーカー設定",
-    "description": "サーキットブレーカーパラメータを調整して、障害検出と復旧動作を制御します",
-    "failureThresholdHint": "連続失敗後にサーキットブレーカーを開く回数",
-    "timeoutSecondsHint": "サーキットブレーカーを開いた後、復旧を試みるまでの時間（半開状態）",
-    "successThresholdHint": "半開状態で成功してサーキットブレーカーを閉じる回数",
-    "errorRateThresholdHint": "エラー率がこの値を超えるとサーキットブレーカーを開く",
-    "minRequestsHint": "エラー率を計算する前の最小リクエスト数",
-    "saveConfig": "設定を保存",
-    "instructionsTitle": "設定説明",
-    "instructions": {
-      "failureThreshold": "連続失敗がこの回数に達するとサーキットブレーカーが開く",
-      "timeout": "サーキットブレーカーを開いた後、この時間待機してから半開を試みる",
-      "successThreshold": "半開状態で成功がこの回数に達するとサーキットブレーカーを閉じる",
-      "errorRate": "エラー率がこの値を超えるとサーキットブレーカーが開く",
-      "minRequests": "リクエスト数がこの値に達した後にのみエラー率が計算される"
-    }
   },
   "universalProvider": {
     "duplicate": "複製",

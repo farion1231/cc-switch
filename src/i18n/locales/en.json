@@ -23,7 +23,6 @@
     "unknown": "Unknown",
     "enterValidValue": "Please enter a valid value",
     "clear": "Clear",
-    "toggleTheme": "Toggle theme",
     "format": "Format",
     "formatSuccess": "Formatted successfully",
     "formatError": "Format failed: {{error}}",
@@ -1507,24 +1506,6 @@
       "grokbuild": "Grok Build"
     },
     "rawInputLabel": "Raw",
-    "dataSources": "Data Sources",
-    "dataSource": {
-      "proxy": "Routing",
-      "session_log": "Session Log",
-      "codex_db": "Codex DB",
-      "codex_session": "Codex Session",
-      "gemini_session": "Gemini Session",
-      "opencode_session": "OpenCode Session",
-      "grok_session": "Grok Build Session"
-    },
-    "sessionSync": {
-      "trigger": "Sync session logs",
-      "import": "Import Sessions",
-      "resync": "Sync",
-      "imported": "Imported {{count}} records from session logs",
-      "upToDate": "Session logs are up to date",
-      "failed": "Session sync failed"
-    },
     "rebuildCodex": {
       "title": "Codex Usage Maintenance",
       "description": "Rebuild Codex session usage from local rollout logs",
@@ -2539,8 +2520,7 @@
     "selectIcon": "Select Icon",
     "preview": "Preview",
     "clickToChange": "Click to change icon",
-    "clickToSelect": "Click to select icon",
-    "color": "Icon Color"
+    "clickToSelect": "Click to select icon"
   },
   "migration": {
     "success": "Configuration migrated successfully",
@@ -2781,33 +2761,6 @@
     "streamingFirstByte": "Streaming First Byte Timeout",
     "streamingIdle": "Streaming Idle Timeout",
     "nonStreaming": "Non-Streaming Timeout"
-  },
-  "circuitBreaker": {
-    "failureThreshold": "Failure Threshold",
-    "successThreshold": "Success Threshold",
-    "timeoutSeconds": "Timeout (seconds)",
-    "errorRateThreshold": "Error Rate Threshold (%)",
-    "minRequests": "Minimum Requests",
-    "validationFailed": "The following fields are out of valid range: {{fields}}",
-    "configSaved": "Circuit breaker configuration saved",
-    "saveFailed": "Save failed",
-    "loading": "Loading...",
-    "title": "Circuit Breaker Configuration",
-    "description": "Adjust circuit breaker parameters to control fault detection and recovery behavior",
-    "failureThresholdHint": "How many consecutive failures trigger the circuit breaker",
-    "timeoutSecondsHint": "How long to wait before attempting recovery (half-open state)",
-    "successThresholdHint": "How many successes in half-open state to close the circuit breaker",
-    "errorRateThresholdHint": "Open circuit breaker when error rate exceeds this value",
-    "minRequestsHint": "Minimum requests before calculating error rate",
-    "saveConfig": "Save Configuration",
-    "instructionsTitle": "Configuration Instructions",
-    "instructions": {
-      "failureThreshold": "Circuit breaker opens when consecutive failures reach this count",
-      "timeout": "After circuit breaker opens, wait this time before attempting half-open",
-      "successThreshold": "In half-open state, close circuit breaker when successes reach this count",
-      "errorRate": "Circuit breaker opens when error rate exceeds this value",
-      "minRequests": "Error rate is only calculated after request count reaches this value"
-    }
   },
   "universalProvider": {
     "duplicate": "Duplicate",
