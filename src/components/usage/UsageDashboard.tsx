@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { UsageHero } from "./UsageHero";
-import { UsageTrendChart } from "./UsageTrendChart";
+import { TrendSection } from "./TrendSection";
 import { RequestLogTable } from "./RequestLogTable";
 import { ProviderStatsTable } from "./ProviderStatsTable";
 import { ModelStatsTable } from "./ModelStatsTable";
@@ -375,7 +375,7 @@ export function UsageDashboard({
         refreshIntervalMs={refreshIntervalMs}
       />
 
-      <UsageTrendChart
+      <TrendSection
         range={range}
         rangeLabel={rangeLabel}
         appType={appType}

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   AreaChart,
@@ -27,6 +28,8 @@ interface UsageTrendChartProps {
   providerName?: string;
   model?: string;
   refreshIntervalMs: number;
+  /** Rendered next to the title (hosts the usage/quota switch). */
+  titleSlot?: ReactNode;
 }
 
 export function UsageTrendChart({
@@ -36,6 +39,7 @@ export function UsageTrendChart({
   providerName,
   model,
   refreshIntervalMs,
+  titleSlot,
 }: UsageTrendChartProps) {
   const { t, i18n } = useTranslation();
   const { startDate, endDate } = resolveUsageRange(range);
@@ -119,9 +123,12 @@ export function UsageTrendChart({
   return (
     <div className="rounded-xl border border-border/50 bg-card/40 p-6 backdrop-blur-sm">
       <div className="mb-6 flex items-center justify-between">
-        <h3 className="text-lg font-semibold">
-          {t("usage.trends", "使用趋势")}
-        </h3>
+        <div className="flex items-center gap-4">
+          <h3 className="text-lg font-semibold">
+            {t("usage.trends", "使用趋势")}
+          </h3>
+          {titleSlot}
+        </div>
         <p className="text-sm text-muted-foreground">{rangeLabel}</p>
       </div>
 

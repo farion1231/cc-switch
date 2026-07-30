@@ -1542,6 +1542,9 @@ pub fn run() {
             commands::sync_session_usage,
             commands::rebuild_codex_usage,
             commands::get_usage_data_sources,
+            // Quota history (fork)
+            commands::record_quota_history,
+            commands::get_quota_history,
             // Stream health check
             commands::stream_check_provider,
             commands::stream_check_all_providers,

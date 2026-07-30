@@ -41,6 +41,21 @@ const success = <T>(payload: T) => HttpResponse.json(payload as any);
 
 export const handlers = [
   http.post(`${TAURI_ENDPOINT}/get_migration_result`, () => success(false)),
+  // 额度历史探针在 App 挂载时就会查询订阅额度；无凭据是后端的正常返回，
+  // 给个 not_found 让它静默落地，避免每个集成用例刷未处理请求告警。
+  http.post(`${TAURI_ENDPOINT}/get_subscription_quota`, async ({ request }) => {
+    const { tool } = await withJson<{ tool: string }>(request);
+    return success({
+      tool,
+      credentialStatus: "not_found",
+      credentialMessage: null,
+      success: false,
+      tiers: [],
+      extraUsage: null,
+      error: null,
+      queriedAt: null,
+    });
+  }),
   http.post(`${TAURI_ENDPOINT}/get_skills_migration_result`, () =>
     success(null),
   ),
