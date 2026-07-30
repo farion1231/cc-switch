@@ -681,6 +681,8 @@
     "enableClaudePluginIntegrationDescription": "When enabled, the VS Code Claude Code extension provider will switch with this app",
     "skipClaudeOnboarding": "Skip Claude Code first-run confirmation",
     "skipClaudeOnboardingDescription": "When enabled, Claude Code will skip the first-run confirmation",
+    "slimClaudeContext": "Slim Claude Code context",
+    "slimClaudeContextDescription": "When applying a provider, disable Claude Code bundled skills (incl. the ~230K-token claude-api skill) and the built-in anthropic-skills plugin, and turn on MCP tool search for on-demand discovery. Keys set explicitly in the provider or common config always win",
     "codexAuth": "Codex App Enhancements",
     "preserveCodexOfficialAuthOnSwitch": "Keep official login for direct switches",
     "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",

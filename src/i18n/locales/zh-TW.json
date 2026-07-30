@@ -681,6 +681,8 @@
     "enableClaudePluginIntegrationDescription": "開啟後 VS Code Claude Code 外掛程式的供應商將隨本軟體切換",
     "skipClaudeOnboarding": "跳過 Claude Code 初次安裝確認",
     "skipClaudeOnboardingDescription": "開啟後跳過 Claude Code 初次安裝確認",
+    "slimClaudeContext": "精簡 Claude Code 上下文",
+    "slimClaudeContextDescription": "套用供應商設定時關閉 Claude Code 內建技能（含約 23 萬 token 的 claude-api）與內建 anthropic-skills 外掛，並開啟 MCP tool search 按需探索。供應商或通用設定裡明確寫過的同名鍵始終優先",
     "codexAuth": "Codex 應用增強",
     "preserveCodexOfficialAuthOnSwitch": "非接管切換時保留官方登入",
     "preserveCodexOfficialAuthOnSwitchDescription": "控制未開啟本機路由時切換第三方供應商是否保留 Codex 官方登入；路由接管期間一律保留",

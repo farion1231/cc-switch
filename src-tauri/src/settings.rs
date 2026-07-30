@@ -354,6 +354,12 @@ pub struct AppSettings {
     /// 是否跳过 Claude Code 初次安装确认
     #[serde(default)]
     pub skip_claude_onboarding: bool,
+    /// 写入 Claude Code live 配置时默认精简上下文：关闭内置技能
+    /// （含 ~867KB/约 23 万 token 的 claude-api）与内置 anthropic-skills
+    /// 插件，并显式开启 MCP tool search 让工具按需发现。默认开启；
+    /// 供应商/通用配置里显式写过的同名键始终优先（见 live.rs 注入器）。
+    #[serde(default = "default_slim_claude_context")]
+    pub slim_claude_context: bool,
     /// 是否开机自启
     #[serde(default)]
     pub launch_on_startup: bool,
@@ -502,6 +508,10 @@ fn default_show_profile_switcher() -> bool {
     true
 }
 
+fn default_slim_claude_context() -> bool {
+    true
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -510,6 +520,7 @@ impl Default for AppSettings {
             use_app_window_controls: false,
             enable_claude_plugin_integration: false,
             skip_claude_onboarding: false,
+            slim_claude_context: true,
             launch_on_startup: false,
             silent_startup: false,
             enable_local_proxy: false,
