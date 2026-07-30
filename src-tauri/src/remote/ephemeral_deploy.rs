@@ -5,10 +5,12 @@ use std::sync::Arc;
 use super::embedded_agent::EphemeralAgentSpec;
 use super::models::{RemoteTargetConfig, RemoteTargetValidationError};
 
-const REMOTE_PATH_SETUP: &str = r#"PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"; export PATH"#;
+const REMOTE_PATH_SETUP: &str =
+    "PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'${PATH:+:$PATH}; export PATH";
 
 /// 为桌面端生成的远端命令建立确定性工具搜索路径，同时保留管理员提供的附加目录。
 /// 标准目录必须位于原 PATH 之前，避免用户环境中的同名程序接管完整性校验和临时文件清理。
+/// 脚本避免双引号，因为 Windows OpenSSH 会把 Rust 单参数中的双引号作为远端字面字符传递。
 fn with_remote_command_environment(command: String) -> String {
     format!("{REMOTE_PATH_SETUP}; {command}")
 }
@@ -51,17 +53,18 @@ pub fn build_scp_args(
 
 /// 远端 shell 仅插入本地生成的十六进制路径、十进制长度与 SHA-256，不包含任何用户输入。
 /// trap 覆盖正常退出和常见终止信号；桌面端清理守卫还会通过独立 SSH 做一次兜底删除。
+/// 变量名不能使用 zsh 与 PATH 绑定的特殊参数 path，否则赋值后所有外部校验命令都会失效。
 pub fn build_launch_command(spec: &EphemeralAgentSpec) -> String {
     let command = format!(
-        "path='{path}'; \
-cleanup() {{ command rm -f -- \"$path\"; }}; \
+        "cc_switch_agent_path='{path}'; \
+cleanup() {{ command rm -f -- $cc_switch_agent_path; }}; \
 trap cleanup EXIT HUP INT TERM; \
-actual_size=$(command wc -c < \"$path\" | command tr -d '[:space:]'); \
-if [ \"$actual_size\" != '{length}' ]; then echo 'AGENT_INTEGRITY_FAILED: size' >&2; exit 70; fi; \
-actual_sha=$(command sha256sum -- \"$path\" | command awk '{{print $1}}'); \
-if [ \"$actual_sha\" != '{sha256}' ]; then echo 'AGENT_INTEGRITY_FAILED: sha256' >&2; exit 71; fi; \
-command chmod 700 -- \"$path\" || exit 72; \
-\"$path\" --stdio",
+actual_size=$(command wc -c < $cc_switch_agent_path | command tr -d '[:space:]'); \
+if [ x$actual_size != x'{length}' ]; then echo 'AGENT_INTEGRITY_FAILED: size' >&2; exit 70; fi; \
+actual_sha=$(command sha256sum -- $cc_switch_agent_path | command awk '{{print $1}}'); \
+if [ x$actual_sha != x'{sha256}' ]; then echo 'AGENT_INTEGRITY_FAILED: sha256' >&2; exit 71; fi; \
+command chmod 700 -- $cc_switch_agent_path || exit 72; \
+$cc_switch_agent_path --stdio",
         path = spec.remote_path,
         length = spec.length,
         sha256 = spec.sha256,

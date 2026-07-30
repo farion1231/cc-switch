@@ -12,7 +12,8 @@ use cc_switch_lib::remote::ephemeral_deploy::{
 use cc_switch_lib::remote::models::RemoteTargetConfig;
 use cc_switch_lib::remote::ssh::RemoteSshError;
 
-const SAFE_REMOTE_COMMAND_PREFIX: &str = r#"PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"; export PATH; "#;
+const SAFE_REMOTE_COMMAND_PREFIX: &str =
+    "PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'${PATH:+:$PATH}; export PATH; ";
 
 fn target() -> RemoteTargetConfig {
     RemoteTargetConfig {
@@ -97,6 +98,35 @@ fn preflight_uses_the_same_safe_remote_environment() {
     // 预检和 Agent 生命周期命令必须保持同一环境契约，否则 PATH 异常会在不同阶段产生不一致错误。
     assert!(command.starts_with(SAFE_REMOTE_COMMAND_PREFIX));
     assert!(command.contains("command uname -s; command uname -m"));
+}
+
+#[test]
+fn launch_command_does_not_overwrite_zsh_path_parameter() {
+    let spec = EphemeralAgentSpec::for_architecture("x86_64", b"agent").expect("创建 Agent 规范");
+    let launch = build_launch_command(&spec);
+
+    // zsh 将小写 path 与 PATH 绑定；把临时文件写入该变量会清空命令搜索路径。
+    assert!(!launch
+        .split(';')
+        .any(|segment| segment.trim_start().starts_with("path=")));
+}
+
+#[test]
+fn remote_commands_avoid_double_quotes_preserved_by_windows_openssh() {
+    let spec = EphemeralAgentSpec::for_architecture("x86_64", b"agent").expect("创建 Agent 规范");
+    let commands = [
+        build_preflight_command(),
+        build_launch_command(&spec),
+        build_cleanup_command(&spec.remote_path),
+    ];
+
+    // Windows OpenSSH 会把 Rust 参数中的双引号传成远端字面字符，受控脚本必须使用单引号契约。
+    for command in commands {
+        assert!(
+            !command.contains('"'),
+            "远端命令不能包含 Windows OpenSSH 会误传的双引号: {command}"
+        );
+    }
 }
 
 #[derive(Default)]
