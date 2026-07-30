@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import type {
   UsageSummary,
   UsageSummaryByApp,
@@ -16,11 +15,18 @@ import type {
 import type { UsageResult } from "@/types";
 import type { AppId } from "./types";
 import type { TemplateType } from "@/config/constants";
+import { appInvoke } from "@/lib/runtime/invoke";
 
 export const usageApi = {
+  // 维护说明：每个 Usage 方法都必须显式声明 Agent RPC 名称；appInvoke 负责按当前 runtime
+  // 选择主机并阻断过渡/离线状态，禁止任何远端失败后写回本机数据库的隐式回退。
   // Provider usage script methods
   query: async (providerId: string, appId: AppId): Promise<UsageResult> => {
-    return invoke("queryProviderUsage", { providerId, app: appId });
+    return appInvoke(
+      "queryProviderUsage",
+      { providerId, app: appId },
+      { remoteCommand: "usage.provider_query" },
+    );
   },
 
   testScript: async (
@@ -34,17 +40,21 @@ export const usageApi = {
     userId?: string,
     templateType?: TemplateType,
   ): Promise<UsageResult> => {
-    return invoke("testUsageScript", {
-      providerId,
-      app: appId,
-      scriptCode,
-      timeout,
-      apiKey,
-      baseUrl,
-      accessToken,
-      userId,
-      templateType,
-    });
+    return appInvoke(
+      "testUsageScript",
+      {
+        providerId,
+        app: appId,
+        scriptCode,
+        timeout,
+        apiKey,
+        baseUrl,
+        accessToken,
+        userId,
+        templateType,
+      },
+      { remoteCommand: "usage.provider_test" },
+    );
   },
 
   // Proxy usage statistics methods
@@ -55,13 +65,11 @@ export const usageApi = {
     providerName?: string,
     model?: string,
   ): Promise<UsageSummary> => {
-    return invoke("get_usage_summary", {
-      startDate,
-      endDate,
-      appType,
-      providerName,
-      model,
-    });
+    return appInvoke(
+      "get_usage_summary",
+      { startDate, endDate, appType, providerName, model },
+      { remoteCommand: "usage.summary" },
+    );
   },
 
   getUsageSummaryByApp: async (
@@ -70,12 +78,11 @@ export const usageApi = {
     providerName?: string,
     model?: string,
   ): Promise<UsageSummaryByApp[]> => {
-    return invoke("get_usage_summary_by_app", {
-      startDate,
-      endDate,
-      providerName,
-      model,
-    });
+    return appInvoke(
+      "get_usage_summary_by_app",
+      { startDate, endDate, providerName, model },
+      { remoteCommand: "usage.summary_by_app" },
+    );
   },
 
   getUsageTrends: async (
@@ -85,13 +92,11 @@ export const usageApi = {
     providerName?: string,
     model?: string,
   ): Promise<DailyStats[]> => {
-    return invoke("get_usage_trends", {
-      startDate,
-      endDate,
-      appType,
-      providerName,
-      model,
-    });
+    return appInvoke(
+      "get_usage_trends",
+      { startDate, endDate, appType, providerName, model },
+      { remoteCommand: "usage.trends" },
+    );
   },
 
   getProviderStats: async (
@@ -101,13 +106,11 @@ export const usageApi = {
     providerName?: string,
     model?: string,
   ): Promise<ProviderStats[]> => {
-    return invoke("get_provider_stats", {
-      startDate,
-      endDate,
-      appType,
-      providerName,
-      model,
-    });
+    return appInvoke(
+      "get_provider_stats",
+      { startDate, endDate, appType, providerName, model },
+      { remoteCommand: "usage.provider_stats" },
+    );
   },
 
   getModelStats: async (
@@ -117,13 +120,11 @@ export const usageApi = {
     providerName?: string,
     model?: string,
   ): Promise<ModelStats[]> => {
-    return invoke("get_model_stats", {
-      startDate,
-      endDate,
-      appType,
-      providerName,
-      model,
-    });
+    return appInvoke(
+      "get_model_stats",
+      { startDate, endDate, appType, providerName, model },
+      { remoteCommand: "usage.model_stats" },
+    );
   },
 
   getRequestLogs: async (
@@ -131,19 +132,25 @@ export const usageApi = {
     page: number = 0,
     pageSize: number = 20,
   ): Promise<PaginatedLogs> => {
-    return invoke("get_request_logs", {
-      filters,
-      page,
-      pageSize,
-    });
+    return appInvoke(
+      "get_request_logs",
+      { filters, page, pageSize },
+      { remoteCommand: "usage.logs" },
+    );
   },
 
   getRequestDetail: async (requestId: string): Promise<RequestLog | null> => {
-    return invoke("get_request_detail", { requestId });
+    return appInvoke(
+      "get_request_detail",
+      { requestId },
+      { remoteCommand: "usage.detail" },
+    );
   },
 
   getModelPricing: async (): Promise<ModelPricing[]> => {
-    return invoke("get_model_pricing");
+    return appInvoke("get_model_pricing", undefined, {
+      remoteCommand: "usage.pricing.list",
+    });
   },
 
   updateModelPricing: async (
@@ -154,37 +161,55 @@ export const usageApi = {
     cacheReadCost: string,
     cacheCreationCost: string,
   ): Promise<void> => {
-    return invoke("update_model_pricing", {
-      modelId,
-      displayName,
-      inputCost,
-      outputCost,
-      cacheReadCost,
-      cacheCreationCost,
-    });
+    return appInvoke(
+      "update_model_pricing",
+      {
+        modelId,
+        displayName,
+        inputCost,
+        outputCost,
+        cacheReadCost,
+        cacheCreationCost,
+      },
+      { remoteCommand: "usage.pricing.update" },
+    );
   },
 
   deleteModelPricing: async (modelId: string): Promise<void> => {
-    return invoke("delete_model_pricing", { modelId });
+    return appInvoke(
+      "delete_model_pricing",
+      { modelId },
+      { remoteCommand: "usage.pricing.delete" },
+    );
   },
 
   checkProviderLimits: async (
     providerId: string,
     appType: string,
   ): Promise<ProviderLimitStatus> => {
-    return invoke("check_provider_limits", { providerId, appType });
+    return appInvoke(
+      "check_provider_limits",
+      { providerId, appType },
+      { remoteCommand: "usage.limits" },
+    );
   },
 
   // Session usage sync
   syncSessionUsage: async (): Promise<SessionSyncResult> => {
-    return invoke("sync_session_usage");
+    return appInvoke("sync_session_usage", undefined, {
+      remoteCommand: "usage.session_sync",
+    });
   },
 
   rebuildCodexUsage: async (): Promise<SessionSyncResult> => {
-    return invoke("rebuild_codex_usage");
+    return appInvoke("rebuild_codex_usage", undefined, {
+      remoteCommand: "usage.codex_rebuild",
+    });
   },
 
   getDataSourceBreakdown: async (): Promise<DataSourceSummary[]> => {
-    return invoke("get_usage_data_sources");
+    return appInvoke("get_usage_data_sources", undefined, {
+      remoteCommand: "usage.data_sources",
+    });
   },
 };

@@ -35,9 +35,12 @@ export async function appInvoke<T>(
     );
   }
 
+  // 远端请求必须携带读取业务路由时的同一代快照；后端会在发送前后各校验一次，
+  // 从而拒绝目标切换期间到达的旧响应，且绝不能把失败请求降级到本机执行。
   return await localInvoke<T>("remote_invoke", {
     command: options.remoteCommand,
     args: args ?? {},
+    generation: runtime.generation,
   });
 }
 

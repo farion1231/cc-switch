@@ -6,6 +6,15 @@ const TAURI_ENDPOINT = "http://tauri.local";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: async (command: string, payload: Record<string, unknown> = {}) => {
+    // 测试替身同步执行桌面网关的 generation 前置契约；这样集成测试不会因 MSW
+    // 忽略字段而放过无法被真实后端接受的远端请求。
+    if (
+      command === "remote_invoke" &&
+      (typeof payload.generation !== "number" || payload.generation < 0)
+    ) {
+      throw new Error("remote_invoke requires a non-negative generation");
+    }
+
     const response = await fetch(`${TAURI_ENDPOINT}/${command}`, {
       method: "POST",
       headers: {

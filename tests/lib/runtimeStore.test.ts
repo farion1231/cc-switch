@@ -57,6 +57,7 @@ describe("runtime-aware invocation", () => {
     expect(invokeMock).toHaveBeenCalledWith("remote_invoke", {
       command: "provider.list",
       args: { app: "codex" },
+      generation: 3,
     });
   });
 
