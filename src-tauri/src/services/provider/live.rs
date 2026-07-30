@@ -1014,156 +1014,75 @@ impl LiveSnapshot {
 
 /// Write live configuration snapshot for a provider
 pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
-    match app_type {
-        AppType::Claude => {
-            let path = get_claude_settings_path();
-            let settings = sanitize_claude_settings_for_live(&provider.settings_config);
-            write_json_file(&path, &settings)?;
-        }
-        AppType::ClaudeDesktop => {
-            return Err(AppError::localized(
-                "claude_desktop.live.requires_db_context",
-                "Claude Desktop 配置写入需要通过供应商切换流程执行",
-                "Claude Desktop configuration must be written through the provider switch flow",
-            ));
-        }
-        AppType::Codex => {
-            let obj = provider
-                .settings_config
-                .as_object()
-                .ok_or_else(|| AppError::Config("Codex 供应商配置必须是 JSON 对象".to_string()))?;
-            let auth = obj
-                .get("auth")
-                .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
-            let config_str = obj.get("config").and_then(|v| v.as_str());
-
-            // Native (direct) Responses and Anthropic providers must suppress Codex's
-            // freeform apply_patch custom tool via the generated catalog; chat/proxy
-            // providers keep the default tool set. Uses the same Anthropic detection as
-            // the proxy router (apiFormat meta/settings + TOML wire_api).
-            let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
-
-            crate::codex_config::write_codex_provider_live_with_catalog(
-                &provider.settings_config,
-                provider.category.as_deref(),
-                auth,
-                config_str,
-                profile,
-            )?;
-        }
-        AppType::Gemini => {
-            // Delegate to write_gemini_live which handles env file writing correctly
-            write_gemini_live(provider)?;
-        }
-        AppType::GrokBuild => {
-            crate::grok_config::write_grok_provider_live(provider)?;
-        }
-        AppType::OpenCode => {
-            // OpenCode uses additive mode - write provider to config
-            use crate::opencode_config;
-            use crate::provider::OpenCodeProviderConfig;
-
-            // Defensive check: if settings_config is a full config structure, extract provider fragment
-            let config_to_write = if let Some(obj) = provider.settings_config.as_object() {
-                // Detect full config structure (has $schema or top-level provider field)
-                if obj.contains_key("$schema") || obj.contains_key("provider") {
-                    log::warn!(
-                        "OpenCode provider '{}' has full config structure in settings_config, attempting to extract fragment",
-                        provider.id
-                    );
-                    // Try to extract from provider.{id}
-                    obj.get("provider")
-                        .and_then(|p| p.get(&provider.id))
-                        .cloned()
-                        .unwrap_or_else(|| provider.settings_config.clone())
-                } else {
-                    provider.settings_config.clone()
-                }
-            } else {
-                provider.settings_config.clone()
-            };
-
-            // Convert settings_config to OpenCodeProviderConfig
-            let opencode_config_result =
-                serde_json::from_value::<OpenCodeProviderConfig>(config_to_write.clone());
-
-            match opencode_config_result {
-                Ok(config) => {
-                    opencode_config::set_typed_provider(&provider.id, &config)?;
-                    log::info!("OpenCode provider '{}' written to live config", provider.id);
-                }
-                Err(e) => {
-                    log::warn!(
-                        "Failed to parse OpenCode provider config for '{}': {}",
-                        provider.id,
-                        e
-                    );
-                    // Only write if config looks like a valid provider fragment
-                    if config_to_write.get("npm").is_some()
-                        || config_to_write.get("options").is_some()
-                    {
-                        opencode_config::set_provider(&provider.id, config_to_write)?;
-                        log::info!(
-                            "OpenCode provider '{}' written as raw JSON to live config",
-                            provider.id
-                        );
-                    } else {
-                        return Err(AppError::Message(format!(
-                            "OpenCode provider '{}' has invalid config structure for live config (must contain 'npm' or 'options')",
-                            provider.id
-                        )));
-                    }
-                }
-            }
-        }
-        AppType::OpenClaw => {
-            // OpenClaw uses additive mode - write provider to config
-            use crate::openclaw_config;
-            use crate::openclaw_config::OpenClawProviderConfig;
-
-            // Convert settings_config to OpenClawProviderConfig
-            let openclaw_config_result =
-                serde_json::from_value::<OpenClawProviderConfig>(provider.settings_config.clone());
-
-            match openclaw_config_result {
-                Ok(config) => {
-                    openclaw_config::set_typed_provider(&provider.id, &config)?;
-                    log::info!("OpenClaw provider '{}' written to live config", provider.id);
-                }
-                Err(e) => {
-                    log::warn!(
-                        "Failed to parse OpenClaw provider config for '{}': {}",
-                        provider.id,
-                        e
-                    );
-                    // Try to write as raw JSON if it looks valid
-                    if provider.settings_config.get("baseUrl").is_some()
-                        || provider.settings_config.get("api").is_some()
-                        || provider.settings_config.get("models").is_some()
-                    {
-                        openclaw_config::set_provider(
-                            &provider.id,
-                            provider.settings_config.clone(),
-                        )?;
-                        log::info!(
-                            "OpenClaw provider '{}' written as raw JSON to live config",
-                            provider.id
-                        );
-                    } else {
-                        return Err(AppError::Message(format!(
-                            "OpenClaw provider '{}' has invalid config structure for live config (must contain 'baseUrl', 'api', or 'models')",
-                            provider.id
-                        )));
-                    }
-                }
-            }
-        }
-        AppType::Hermes => {
-            crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
-            log::debug!("Hermes provider '{}' written to live config", provider.id);
-        }
-    }
-    Ok(())
+    let home = crate::config::get_home_dir();
+    let context = cc_switch_core::LiveContext {
+        home: &home,
+        platform: cc_switch_core::TargetPlatform::current(),
+    };
+    // 桌面 ProviderMeta 先序列化为开放 JSON，保证 Core 不丢失未来字段；转换失败时不写盘。
+    let mut meta = provider
+        .meta
+        .as_ref()
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|error| AppError::Config(format!("Provider meta 序列化失败: {error}")))?
+        .unwrap_or_else(|| serde_json::json!({}));
+    // 桌面在进入 writer 前已合并公共配置，因此传给 Core 的是完整 live 快照；
+    // 这些控制字段只存在于本次 DTO，不能写回 Provider 数据库。
+    let paths = match app_type {
+        AppType::Claude => serde_json::json!({
+            "claudeSettings": crate::config::get_claude_settings_path().to_string_lossy()
+        }),
+        AppType::Codex => serde_json::json!({
+            "codexAuth": crate::codex_config::get_codex_auth_path().to_string_lossy(),
+            "codexConfig": crate::codex_config::get_codex_config_path().to_string_lossy()
+        }),
+        AppType::Gemini => serde_json::json!({
+            "geminiEnv": crate::gemini_config::get_gemini_env_path().to_string_lossy(),
+            "geminiSettings": crate::gemini_config::get_gemini_settings_path().to_string_lossy()
+        }),
+        AppType::GrokBuild => serde_json::json!({
+            "grokConfig": crate::grok_config::get_grok_config_path().to_string_lossy()
+        }),
+        AppType::OpenCode => serde_json::json!({
+            "opencodeConfig": crate::opencode_config::get_opencode_config_path().to_string_lossy()
+        }),
+        AppType::OpenClaw => serde_json::json!({
+            "openclawConfig": crate::openclaw_config::get_openclaw_config_path().to_string_lossy()
+        }),
+        AppType::Hermes => serde_json::json!({
+            "hermesConfig": crate::hermes_config::get_hermes_config_path().to_string_lossy()
+        }),
+        AppType::ClaudeDesktop => serde_json::json!({}),
+    };
+    meta["_ccLive"] = serde_json::json!({
+        "fullSnapshot": true,
+        "preserveCodexOfficialAuth": matches!(app_type, AppType::Codex)
+            && crate::settings::preserve_codex_official_auth_on_switch(),
+        "paths": paths
+    });
+    let record = cc_switch_core::ProviderRecord {
+        id: provider.id.clone(),
+        name: provider.name.clone(),
+        settings_config: provider.settings_config.clone(),
+        website_url: provider.website_url.clone(),
+        category: provider.category.clone(),
+        created_at: provider.created_at,
+        sort_index: provider.sort_index,
+        notes: provider.notes.clone(),
+        meta: Some(meta),
+        icon: provider.icon.clone(),
+        icon_color: provider.icon_color.clone(),
+        in_failover_queue: provider.in_failover_queue,
+    };
+    cc_switch_core::project_provider(&context, app_type.as_str(), &record)
+        .map(|_| ())
+        .map_err(|error| match error {
+            // 桌面既有调用方依赖 Config 分类展示可修复的 Provider 格式问题；
+            // Core 已保证错误文本不含 settings 正文或凭据，可以安全保留诊断信息。
+            cc_switch_core::CoreError::LiveWriteFailed(message) => AppError::Config(message),
+            other => AppError::Message(other.to_string()),
+        })
 }
 
 /// Sync all providers to live configuration (for additive mode apps)

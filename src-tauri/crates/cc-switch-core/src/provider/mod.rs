@@ -1,10 +1,10 @@
+pub mod live;
 mod model;
 mod repository;
 
-use serde_json::Value;
-
 use crate::{CoreError, HeadlessState};
 
+pub use live::{project_provider, LiveContext, SwitchResult, TargetPlatform};
 pub use model::{ProviderRecord, ProviderSortUpdate};
 
 /// Provider 领域门面：协调规范数据库事务与目标主机 live 配置投影。
@@ -32,11 +32,12 @@ impl ProviderService {
         _add_to_live: bool,
     ) -> Result<bool, CoreError> {
         let had_current = !repository::current(state, app)?.is_empty();
-        let settings = provider.settings_config.clone();
+        let projected_provider = provider.clone();
         let added = repository::add(state, app, provider)?;
         // 保持既有首项行为：独占模式首个 Provider 必须立即形成 live 配置。
-        if !had_current {
-            write_live(state, app, &settings)?;
+        if !had_current && should_project_implicitly(state, app) {
+            let context = live_context(state);
+            live::project_provider(&context, app, &projected_provider)?;
         }
         Ok(added)
     }
@@ -49,10 +50,11 @@ impl ProviderService {
         provider: ProviderRecord,
     ) -> Result<bool, CoreError> {
         let is_current = repository::current(state, app)? == original_id;
-        let settings = provider.settings_config.clone();
+        let projected_provider = provider.clone();
         let updated = repository::update(state, app, original_id, provider)?;
-        if is_current {
-            write_live(state, app, &settings)?;
+        if is_current && should_project_implicitly(state, app) {
+            let context = live_context(state);
+            live::project_provider(&context, app, &projected_provider)?;
         }
         Ok(updated)
     }
@@ -63,9 +65,12 @@ impl ProviderService {
     }
 
     /// 在数据库中原子切换当前项，并把选中配置投影到目标 HOME。
-    pub fn switch(state: &HeadlessState, app: &str, id: &str) -> Result<(), CoreError> {
+    pub fn switch(state: &HeadlessState, app: &str, id: &str) -> Result<SwitchResult, CoreError> {
+        let context = live_context(state);
+        // 条件能力必须在事务前检查；Linux 不可写 Claude Desktop 时数据库保持原 current。
+        live::ensure_projection_supported(&context, app)?;
         let provider = repository::switch(state, app, id)?;
-        write_live(state, app, &provider.settings_config)
+        live::project_provider(&context, app, &provider)
     }
 
     /// 原子更新同一应用的排序；任一未知 ID 都会回滚整批操作。
@@ -78,19 +83,16 @@ impl ProviderService {
     }
 }
 
-/// Task 5 会用各应用的无界面 writer 替换此兼容实现；当前仅维持已有 Claude/Gemini 回归。
-fn write_live(state: &HeadlessState, app: &str, settings: &Value) -> Result<(), CoreError> {
-    let path = match app {
-        "claude" => state.home().join(".claude").join("settings.json"),
-        "gemini" => state.home().join(".gemini").join("settings.json"),
-        _ => return Err(CoreError::LiveWriteUnsupported(app.to_string())),
-    };
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|source| CoreError::Io {
-            path: parent.to_path_buf(),
-            source,
-        })?;
+fn live_context(state: &HeadlessState) -> LiveContext<'_> {
+    // Context 只携带目标状态自身的信息，不能读取桌面宿主机 HOME 或环境覆盖。
+    LiveContext {
+        home: state.home(),
+        platform: state.platform(),
     }
-    let bytes = serde_json::to_vec_pretty(settings)?;
-    std::fs::write(&path, bytes).map_err(|source| CoreError::Io { path, source })
+}
+
+fn should_project_implicitly(state: &HeadlessState, app: &str) -> bool {
+    // Linux 可保存和编辑 Claude Desktop 数据，但没有可用客户端路径；只有显式 switch
+    // 需要向用户返回条件能力错误，普通 CRUD 不应在数据库成功后伪装成失败。
+    !(app == "claude-desktop" && state.platform() == TargetPlatform::Linux)
 }

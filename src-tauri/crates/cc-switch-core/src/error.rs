@@ -14,6 +14,10 @@ pub enum CoreError {
     UnsupportedApp(String),
     #[error("无界面模式尚未支持该应用的 live 写入: {0}")]
     LiveWriteUnsupported(String),
+    #[error("目标平台不支持该能力: {0}")]
+    CapabilityUnavailable(String),
+    #[error("目标主机 live 配置写入失败: {0}")]
+    LiveWriteFailed(String),
     #[error("供应商不存在: {0}")]
     ProviderNotFound(String),
     #[error("不能删除当前供应商")]
@@ -44,7 +48,10 @@ impl CoreError {
         match self {
             Self::StatePoisoned => "STATE_POISONED",
             Self::UnsupportedApp(_) | Self::InvalidProvider(_) => "INVALID_ARGUMENT",
-            Self::LiveWriteUnsupported(_) => "CAPABILITY_UNAVAILABLE",
+            Self::LiveWriteUnsupported(_) | Self::CapabilityUnavailable(_) => {
+                "CAPABILITY_UNAVAILABLE"
+            }
+            Self::LiveWriteFailed(_) => "LIVE_WRITE_FAILED",
             Self::ProviderNotFound(_) => "PROVIDER_NOT_FOUND",
             Self::CurrentProviderDeletion => "CURRENT_PROVIDER_DELETION",
             Self::ProviderIdChangeUnsupported => "PROVIDER_ID_CHANGE_UNSUPPORTED",

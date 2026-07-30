@@ -768,6 +768,7 @@ dependencies = [
  "base64 0.22.1",
  "brotli 7.0.0",
  "bytes",
+ "cc-switch-core",
  "cc-switch-protocol",
  "chrono",
  "dirs 5.0.1",
@@ -847,11 +848,15 @@ version = "3.18.0"
 dependencies = [
  "cc-switch-protocol",
  "indexmap 2.13.0",
+ "json5",
  "rusqlite",
  "serde",
  "serde_json",
+ "serde_yaml",
  "tempfile",
  "thiserror 2.0.18",
+ "toml 0.8.23",
+ "toml_edit 0.22.27",
 ]
 
 [[package]]

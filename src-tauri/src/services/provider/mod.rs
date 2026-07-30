@@ -108,12 +108,8 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
 /// Provider business logic service
 pub struct ProviderService;
 
-/// Result of a provider switch operation, including any non-fatal warnings
-#[derive(Debug, serde::Serialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct SwitchResult {
-    pub warnings: Vec<String>,
-}
+/// 桌面与 Agent 共用切换结果，避免两个传输边界的 warning 字段继续漂移。
+pub type SwitchResult = cc_switch_core::SwitchResult;
 
 #[cfg(test)]
 mod tests {

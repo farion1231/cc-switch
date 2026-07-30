@@ -135,6 +135,7 @@ pub fn get_providers() -> Result<Map<String, Value>, AppError> {
         .unwrap_or_default())
 }
 
+#[allow(dead_code)] // live 写入已下沉 Core；保留低层 API 供配置模块回归和兼容调用。
 pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
     let mut full_config = read_opencode_config()?;
 
@@ -188,6 +189,7 @@ pub fn get_typed_providers() -> Result<IndexMap<String, OpenCodeProviderConfig>,
     Ok(result)
 }
 
+#[allow(dead_code)] // 类型化包装仍用于模块测试，生产投影统一经过 cc-switch-core。
 pub fn set_typed_provider(id: &str, config: &OpenCodeProviderConfig) -> Result<(), AppError> {
     let value = serde_json::to_value(config).map_err(|e| AppError::JsonSerialize { source: e })?;
     set_provider(id, value)

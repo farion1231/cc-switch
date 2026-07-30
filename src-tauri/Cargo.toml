@@ -37,6 +37,7 @@ tauri-build = { version = "2.4.0", features = [] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 serde = { version = "1.0", features = ["derive"] }
 cc-switch-protocol = { path = "crates/cc-switch-protocol" }
+cc-switch-core = { path = "crates/cc-switch-core" }
 log = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 tauri = { version = "2.8.2", features = ["tray-icon", "protocol-asset", "image-png"] }
