@@ -1,7 +1,12 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { providersApi, sessionsApi, settingsApi, type AppId } from "@/lib/api";
+import {
+  providersApi,
+  sessionsApi,
+  settingsApi,
+  type ManagedAppId,
+} from "@/lib/api";
 import type { DeleteSessionOptions } from "@/lib/api/sessions";
 import type { SwitchResult } from "@/lib/api/providers";
 import type { Provider, SessionMeta, Settings } from "@/types";
@@ -15,7 +20,7 @@ import {
   GROKBUILD_OFFICIAL_PROVIDER_ID,
 } from "@/utils/providerCapabilities";
 
-export const useAddProviderMutation = (appId: AppId) => {
+export const useAddProviderMutation = (appId: ManagedAppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
 
@@ -155,7 +160,7 @@ export const useAddProviderMutation = (appId: AppId) => {
   });
 };
 
-export const useUpdateProviderMutation = (appId: AppId) => {
+export const useUpdateProviderMutation = (appId: ManagedAppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
 
@@ -209,7 +214,7 @@ export const useUpdateProviderMutation = (appId: AppId) => {
   });
 };
 
-export const useDeleteProviderMutation = (appId: AppId) => {
+export const useDeleteProviderMutation = (appId: ManagedAppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
 
@@ -275,7 +280,7 @@ export const useDeleteProviderMutation = (appId: AppId) => {
   });
 };
 
-export const useSwitchProviderMutation = (appId: AppId) => {
+export const useSwitchProviderMutation = (appId: ManagedAppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
 

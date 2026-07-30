@@ -24,14 +24,22 @@ pub struct UsageSummary {
     pub total_output_tokens: u64,
     pub total_cache_creation_tokens: u64,
     pub total_cache_read_tokens: u64,
+    /// 缓存字段可观测的请求数量。
+    pub cache_observed_requests: u64,
+    /// 仅缓存可观测请求中的新增输入 token。
+    pub cache_observed_input_tokens: u64,
+    /// 仅缓存可观测请求中的缓存创建 token。
+    pub cache_observed_creation_tokens: u64,
+    /// 仅缓存可观测请求中的缓存读取 token。
+    pub cache_observed_read_tokens: u64,
     pub success_rate: f32,
     /// input + output + cache_creation + cache_read — the total tokens
     /// actually processed by the model (including cache hits). Used as the
     /// headline "real consumption" number in the usage hero.
     pub real_total_tokens: u64,
-    /// cache_read / (input + cache_creation + cache_read). Range 0.0–1.0.
-    /// Reported as a fraction; multiply by 100 in UI for percentage display.
-    pub cache_hit_rate: f64,
+    /// cache_observed_read / (cache_observed_input + cache_observed_creation +
+    /// cache_observed_read)。没有可观测缓存数据时为 None。
+    pub cache_hit_rate: Option<f64>,
 }
 
 /// Per-app-type usage summary used by the dashboard breakdown rail.
@@ -42,20 +50,36 @@ pub struct UsageSummaryByApp {
     pub summary: UsageSummary,
 }
 
-/// Helper: compute (real_total, hit_rate) from the four token counters.
-/// All inputs must already be cache-normalized (i.e. input excludes cache).
-fn derive_real_total_and_hit_rate(
+#[derive(Debug, Clone, Copy)]
+struct TokenBuckets {
     fresh_input: u64,
     output: u64,
     cache_creation: u64,
     cache_read: u64,
-) -> (u64, f64) {
-    let real_total = fresh_input + output + cache_creation + cache_read;
-    let cacheable_input = fresh_input + cache_creation + cache_read;
-    let hit_rate = if cacheable_input > 0 {
-        cache_read as f64 / cacheable_input as f64
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ObservedCacheUsage {
+    requests: u64,
+    fresh_input: u64,
+    cache_creation: u64,
+    cache_read: u64,
+}
+
+/// Helper: compute (real_total, hit_rate) from cache-normalized token buckets.
+fn derive_real_total_and_hit_rate(
+    total: TokenBuckets,
+    observed: ObservedCacheUsage,
+) -> (u64, Option<f64>) {
+    let real_total = total.fresh_input + total.output + total.cache_creation + total.cache_read;
+    let observed_cacheable_input =
+        observed.fresh_input + observed.cache_creation + observed.cache_read;
+    let hit_rate = if observed.requests == 0 {
+        None
+    } else if observed_cacheable_input == 0 {
+        Some(0.0)
     } else {
-        0.0
+        Some(observed.cache_read as f64 / observed_cacheable_input as f64)
     };
     (real_total, hit_rate)
 }
@@ -137,9 +161,10 @@ pub struct RequestLogDetail {
     pub output_tokens: u32,
     pub cache_read_tokens: u32,
     pub cache_creation_tokens: u32,
-    /// Internal storage semantics; omitted from the UI/API payload.
-    #[serde(skip)]
+    /// 输入 token 的事件级口径：0=legacy、1=包含缓存、2=仅新输入。
     pub input_token_semantics: i64,
+    /// Token 来源：reported、estimated 或 missing。
+    pub token_usage_status: String,
     pub input_cost_usd: String,
     pub output_cost_usd: String,
     pub cache_read_cost_usd: String,
@@ -159,15 +184,15 @@ pub struct RequestLogDetail {
     pub pricing_model: Option<String>,
 }
 
-/// 把 26 列的查询结果映射为 `RequestLogDetail`。
+/// 把 27 列的查询结果映射为 `RequestLogDetail`。
 ///
-/// 调用方的 SELECT **必须**按以下顺序返回 26 列：
+/// 调用方的 SELECT **必须**按以下顺序返回 27 列：
 /// `request_id, provider_id, provider_name, app_type, model, request_model,
 ///  cost_multiplier, input_tokens, output_tokens, cache_read_tokens,
 ///  cache_creation_tokens, input_cost_usd, output_cost_usd, cache_read_cost_usd,
 ///  cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
 ///  first_token_ms, duration_ms, status_code, error_message, created_at,
-///  data_source, pricing_model, input_token_semantics`
+///  data_source, pricing_model, input_token_semantics, token_usage_status`
 ///
 /// 不需要 provider_name 时（如 backfill）SELECT `NULL AS provider_name` 占位即可。
 fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLogDetail> {
@@ -200,6 +225,7 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
         data_source: row.get(23)?,
         pricing_model: row.get(24)?,
         input_token_semantics: row.get::<_, i64>(25)?,
+        token_usage_status: row.get(26)?,
     })
 }
 
@@ -209,7 +235,7 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
 /// authoritative mapping from placeholder to readable name.
 fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
     format!(
-        "COALESCE({provider_alias}.name, CASE {log_alias}.provider_id \
+        "COALESCE(NULLIF({log_alias}.provider_name_snapshot, ''), {provider_alias}.name, CASE {log_alias}.provider_id \
          WHEN '_session' THEN 'Claude (Session)' \
          WHEN '_codex_session' THEN 'Codex (Session)' \
          WHEN '_gemini_session' THEN 'Gemini (Session)' \
@@ -670,6 +696,10 @@ impl Database {
                 COALESCE(d.total_output_tokens, 0) + COALESCE(r.total_output_tokens, 0),
                 COALESCE(d.total_cache_creation_tokens, 0) + COALESCE(r.total_cache_creation_tokens, 0),
                 COALESCE(d.total_cache_read_tokens, 0) + COALESCE(r.total_cache_read_tokens, 0),
+                COALESCE(d.cache_observed_requests, 0) + COALESCE(r.cache_observed_requests, 0),
+                COALESCE(d.cache_observed_input_tokens, 0) + COALESCE(r.cache_observed_input_tokens, 0),
+                COALESCE(d.cache_observed_creation_tokens, 0) + COALESCE(r.cache_observed_creation_tokens, 0),
+                COALESCE(d.cache_observed_read_tokens, 0) + COALESCE(r.cache_observed_read_tokens, 0),
                 COALESCE(d.success_count, 0) + COALESCE(r.success_count, 0)
             FROM
                 (SELECT
@@ -679,6 +709,10 @@ impl Database {
                     COALESCE(SUM(l.output_tokens), 0) as total_output_tokens,
                     COALESCE(SUM(l.cache_creation_tokens), 0) as total_cache_creation_tokens,
                     COALESCE(SUM(l.cache_read_tokens), 0) as total_cache_read_tokens,
+                    COALESCE(SUM(CASE WHEN l.cache_usage_observed = 1 THEN 1 ELSE 0 END), 0) as cache_observed_requests,
+                    COALESCE(SUM(CASE WHEN l.cache_usage_observed = 1 THEN {fresh_input_detail} ELSE 0 END), 0) as cache_observed_input_tokens,
+                    COALESCE(SUM(CASE WHEN l.cache_usage_observed = 1 THEN l.cache_creation_tokens ELSE 0 END), 0) as cache_observed_creation_tokens,
+                    COALESCE(SUM(CASE WHEN l.cache_usage_observed = 1 THEN l.cache_read_tokens ELSE 0 END), 0) as cache_observed_read_tokens,
                     COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) as success_count
                  FROM proxy_request_logs l {detail_join} {where_clause}) d,
                 (SELECT
@@ -688,6 +722,10 @@ impl Database {
                     COALESCE(SUM(r.output_tokens), 0) as total_output_tokens,
                     COALESCE(SUM(r.cache_creation_tokens), 0) as total_cache_creation_tokens,
                     COALESCE(SUM(r.cache_read_tokens), 0) as total_cache_read_tokens,
+                    COALESCE(SUM(r.cache_observed_request_count), 0) as cache_observed_requests,
+                    COALESCE(SUM(r.cache_observed_input_tokens), 0) as cache_observed_input_tokens,
+                    COALESCE(SUM(r.cache_observed_creation_tokens), 0) as cache_observed_creation_tokens,
+                    COALESCE(SUM(r.cache_observed_read_tokens), 0) as cache_observed_read_tokens,
                     COALESCE(SUM(r.success_count), 0) as success_count
                  FROM usage_daily_rollups r {rollup_join} {rollup_where}) r"
         );
@@ -704,7 +742,11 @@ impl Database {
             let total_output_tokens: i64 = row.get(3)?;
             let total_cache_creation_tokens: i64 = row.get(4)?;
             let total_cache_read_tokens: i64 = row.get(5)?;
-            let success_count: i64 = row.get(6)?;
+            let cache_observed_requests: i64 = row.get(6)?;
+            let cache_observed_input_tokens: i64 = row.get(7)?;
+            let cache_observed_creation_tokens: i64 = row.get(8)?;
+            let cache_observed_read_tokens: i64 = row.get(9)?;
+            let success_count: i64 = row.get(10)?;
 
             let success_rate = if total_requests > 0 {
                 (success_count as f32 / total_requests as f32) * 100.0
@@ -713,10 +755,18 @@ impl Database {
             };
 
             let (real_total_tokens, cache_hit_rate) = derive_real_total_and_hit_rate(
-                total_input_tokens as u64,
-                total_output_tokens as u64,
-                total_cache_creation_tokens as u64,
-                total_cache_read_tokens as u64,
+                TokenBuckets {
+                    fresh_input: total_input_tokens as u64,
+                    output: total_output_tokens as u64,
+                    cache_creation: total_cache_creation_tokens as u64,
+                    cache_read: total_cache_read_tokens as u64,
+                },
+                ObservedCacheUsage {
+                    requests: cache_observed_requests as u64,
+                    fresh_input: cache_observed_input_tokens as u64,
+                    cache_creation: cache_observed_creation_tokens as u64,
+                    cache_read: cache_observed_read_tokens as u64,
+                },
             );
 
             Ok(UsageSummary {
@@ -726,6 +776,10 @@ impl Database {
                 total_output_tokens: total_output_tokens as u64,
                 total_cache_creation_tokens: total_cache_creation_tokens as u64,
                 total_cache_read_tokens: total_cache_read_tokens as u64,
+                cache_observed_requests: cache_observed_requests as u64,
+                cache_observed_input_tokens: cache_observed_input_tokens as u64,
+                cache_observed_creation_tokens: cache_observed_creation_tokens as u64,
+                cache_observed_read_tokens: cache_observed_read_tokens as u64,
                 success_rate,
                 real_total_tokens,
                 cache_hit_rate,
@@ -816,6 +870,10 @@ impl Database {
                 SUM(output_t) as output_t,
                 SUM(cache_create_t) as cache_create_t,
                 SUM(cache_read_t) as cache_read_t,
+                SUM(cache_observed_requests) as cache_observed_requests,
+                SUM(cache_observed_input_t) as cache_observed_input_t,
+                SUM(cache_observed_create_t) as cache_observed_create_t,
+                SUM(cache_observed_read_t) as cache_observed_read_t,
                 SUM(success_count) as success_count
             FROM (
                 SELECT {detail_app_type} as app_type,
@@ -825,6 +883,10 @@ impl Database {
                     COALESCE(SUM(l.output_tokens), 0) as output_t,
                     COALESCE(SUM(l.cache_creation_tokens), 0) as cache_create_t,
                     COALESCE(SUM(l.cache_read_tokens), 0) as cache_read_t,
+                    COALESCE(SUM(CASE WHEN l.cache_usage_observed = 1 THEN 1 ELSE 0 END), 0) as cache_observed_requests,
+                    COALESCE(SUM(CASE WHEN l.cache_usage_observed = 1 THEN {fresh_input_detail} ELSE 0 END), 0) as cache_observed_input_t,
+                    COALESCE(SUM(CASE WHEN l.cache_usage_observed = 1 THEN l.cache_creation_tokens ELSE 0 END), 0) as cache_observed_create_t,
+                    COALESCE(SUM(CASE WHEN l.cache_usage_observed = 1 THEN l.cache_read_tokens ELSE 0 END), 0) as cache_observed_read_t,
                     COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) as success_count
                 FROM proxy_request_logs l {detail_join} {detail_where}
                 GROUP BY l.app_type
@@ -836,6 +898,10 @@ impl Database {
                     COALESCE(SUM(r.output_tokens), 0),
                     COALESCE(SUM(r.cache_creation_tokens), 0),
                     COALESCE(SUM(r.cache_read_tokens), 0),
+                    COALESCE(SUM(r.cache_observed_request_count), 0),
+                    COALESCE(SUM(r.cache_observed_input_tokens), 0),
+                    COALESCE(SUM(r.cache_observed_creation_tokens), 0),
+                    COALESCE(SUM(r.cache_observed_read_tokens), 0),
                     COALESCE(SUM(r.success_count), 0)
                 FROM usage_daily_rollups r {rollup_join} {rollup_where}
                 GROUP BY r.app_type
@@ -856,7 +922,11 @@ impl Database {
             let total_output_tokens: i64 = row.get(4)?;
             let total_cache_creation_tokens: i64 = row.get(5)?;
             let total_cache_read_tokens: i64 = row.get(6)?;
-            let success_count: i64 = row.get(7)?;
+            let cache_observed_requests: i64 = row.get(7)?;
+            let cache_observed_input_tokens: i64 = row.get(8)?;
+            let cache_observed_creation_tokens: i64 = row.get(9)?;
+            let cache_observed_read_tokens: i64 = row.get(10)?;
+            let success_count: i64 = row.get(11)?;
 
             let success_rate = if total_requests > 0 {
                 (success_count as f32 / total_requests as f32) * 100.0
@@ -864,10 +934,18 @@ impl Database {
                 0.0
             };
             let (real_total_tokens, cache_hit_rate) = derive_real_total_and_hit_rate(
-                total_input_tokens as u64,
-                total_output_tokens as u64,
-                total_cache_creation_tokens as u64,
-                total_cache_read_tokens as u64,
+                TokenBuckets {
+                    fresh_input: total_input_tokens as u64,
+                    output: total_output_tokens as u64,
+                    cache_creation: total_cache_creation_tokens as u64,
+                    cache_read: total_cache_read_tokens as u64,
+                },
+                ObservedCacheUsage {
+                    requests: cache_observed_requests as u64,
+                    fresh_input: cache_observed_input_tokens as u64,
+                    cache_creation: cache_observed_creation_tokens as u64,
+                    cache_read: cache_observed_read_tokens as u64,
+                },
             );
 
             Ok(UsageSummaryByApp {
@@ -879,6 +957,10 @@ impl Database {
                     total_output_tokens: total_output_tokens as u64,
                     total_cache_creation_tokens: total_cache_creation_tokens as u64,
                     total_cache_read_tokens: total_cache_read_tokens as u64,
+                    cache_observed_requests: cache_observed_requests as u64,
+                    cache_observed_input_tokens: cache_observed_input_tokens as u64,
+                    cache_observed_creation_tokens: cache_observed_creation_tokens as u64,
+                    cache_observed_read_tokens: cache_observed_read_tokens as u64,
                     success_rate,
                     real_total_tokens,
                     cache_hit_rate,
@@ -1604,7 +1686,7 @@ impl Database {
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
                     l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model,
-                    l.input_token_semantics
+                    l.input_token_semantics, l.token_usage_status
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              {where_clause}
@@ -1648,7 +1730,7 @@ impl Database {
                     input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                     is_streaming, latency_ms, first_token_ms, duration_ms,
                     status_code, error_message, created_at, l.data_source, l.pricing_model,
-                    l.input_token_semantics
+                    l.input_token_semantics, l.token_usage_status
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              WHERE l.request_id = ?"
@@ -1804,7 +1886,7 @@ impl Database {
                         input_cost_usd, output_cost_usd, cache_read_cost_usd,
                         cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
                         first_token_ms, duration_ms, status_code, error_message, created_at,
-                        data_source, pricing_model, input_token_semantics
+                        data_source, pricing_model, input_token_semantics, token_usage_status
              FROM proxy_request_logs
              WHERE CAST(total_cost_usd AS REAL) <= 0
                AND (input_tokens > 0 OR output_tokens > 0
@@ -1885,22 +1967,23 @@ impl Database {
         let million = rust_decimal::Decimal::from(1_000_000u64);
 
         // 与 CostCalculator::calculate_for_app 保持一致的计算逻辑：
-        // 1. 历史 cache-inclusive 行只包含 cache read；新 total 行还包含 cache write。
-        // 2. Claude/Anthropic 的 input_tokens 已经是 fresh input，不能再次扣减
-        // 3. 各项成本是基础成本（不含倍率），倍率只作用于最终总价
+        // 1. FRESH/TOTAL 是事件级硬契约，不依赖 app_type；Cursor 可混合两种协议。
+        // 2. 仅 legacy 行按旧应用白名单推断是否包含 cache read。
+        // 3. 各项成本是基础成本（不含倍率），倍率只作用于最终总价。
         let cache_inclusive_app =
             crate::services::sql_helpers::is_cache_inclusive_app(log.app_type.as_str());
-        let billable_input_tokens =
-            if !cache_inclusive_app || log.input_token_semantics == INPUT_TOKEN_SEMANTICS_FRESH {
-                log.input_tokens as u64
-            } else if log.input_token_semantics == INPUT_TOKEN_SEMANTICS_TOTAL {
-                (log.input_tokens as u64)
-                    .saturating_sub(log.cache_read_tokens as u64)
-                    .saturating_sub(log.cache_creation_tokens as u64)
-            } else {
-                // v12 and earlier: input included cache reads but excluded cache writes.
-                (log.input_tokens as u64).saturating_sub(log.cache_read_tokens as u64)
-            };
+        let billable_input_tokens = if log.input_token_semantics == INPUT_TOKEN_SEMANTICS_FRESH {
+            log.input_tokens as u64
+        } else if log.input_token_semantics == INPUT_TOKEN_SEMANTICS_TOTAL {
+            (log.input_tokens as u64)
+                .saturating_sub(log.cache_read_tokens as u64)
+                .saturating_sub(log.cache_creation_tokens as u64)
+        } else if cache_inclusive_app {
+            // v12 及更早版本：input 包含 cache read，但不包含 cache write。
+            (log.input_tokens as u64).saturating_sub(log.cache_read_tokens as u64)
+        } else {
+            log.input_tokens as u64
+        };
         let input_cost =
             rust_decimal::Decimal::from(billable_input_tokens) * pricing.input / million;
         let output_cost =
@@ -2402,6 +2485,7 @@ mod tests {
         conn.execute(
             "CREATE TABLE proxy_request_logs (
                 request_id TEXT PRIMARY KEY,
+                provider_name_snapshot TEXT,
                 app_type TEXT NOT NULL,
                 model TEXT NOT NULL,
                 input_tokens INTEGER NOT NULL,
@@ -2415,6 +2499,53 @@ mod tests {
             [],
         )?;
         Ok(())
+    }
+
+    #[test]
+    fn cache_hit_rate_distinguishes_unobserved_from_observed_zero() {
+        let total = TokenBuckets {
+            fresh_input: 100,
+            output: 10,
+            cache_creation: 0,
+            cache_read: 0,
+        };
+        let (_, unobserved) = derive_real_total_and_hit_rate(
+            total,
+            ObservedCacheUsage {
+                requests: 0,
+                fresh_input: 0,
+                cache_creation: 0,
+                cache_read: 0,
+            },
+        );
+        assert_eq!(unobserved, None);
+
+        let (_, observed_zero) = derive_real_total_and_hit_rate(
+            total,
+            ObservedCacheUsage {
+                requests: 1,
+                fresh_input: 0,
+                cache_creation: 0,
+                cache_read: 0,
+            },
+        );
+        assert_eq!(observed_zero, Some(0.0));
+
+        let (_, observed_hit) = derive_real_total_and_hit_rate(
+            TokenBuckets {
+                fresh_input: 100,
+                output: 10,
+                cache_creation: 25,
+                cache_read: 50,
+            },
+            ObservedCacheUsage {
+                requests: 1,
+                fresh_input: 100,
+                cache_creation: 25,
+                cache_read: 50,
+            },
+        );
+        assert_eq!(observed_hit, Some(50.0 / 175.0));
     }
 
     #[test]
@@ -3455,7 +3586,7 @@ mod tests {
         assert_eq!(summary.real_total_tokens, 807);
         // hit_rate = 60 / (610 + 12 + 60) = 60 / 682
         let expected_hit_rate = 60.0_f64 / 682.0_f64;
-        assert!((summary.cache_hit_rate - expected_hit_rate).abs() < 1e-9);
+        assert!((summary.cache_hit_rate.unwrap() - expected_hit_rate).abs() < 1e-9);
 
         let trends = db.get_daily_trends(Some(0), Some(40_000), None, None, None)?;
         assert_eq!(trends.iter().map(|stat| stat.request_count).sum::<u64>(), 4);

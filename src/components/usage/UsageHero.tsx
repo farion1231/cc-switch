@@ -69,6 +69,10 @@ const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
     accent: "text-purple-600 dark:text-purple-400",
     iconBg: "bg-purple-500/10",
   },
+  cursor: {
+    accent: "text-blue-600 dark:text-blue-400",
+    iconBg: "bg-blue-500/10",
+  },
 };
 
 /**
@@ -79,7 +83,7 @@ const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
  * `cacheHitRate` and `successRate` must be re-derived from the summed counts
  * rather than averaged across rows.
  */
-function aggregateSummaries(items: UsageSummary[]): UsageSummary {
+export function aggregateSummaries(items: UsageSummary[]): UsageSummary {
   let totalRequests = 0;
   let successCount = 0;
   let totalCostNum = 0;
@@ -87,6 +91,10 @@ function aggregateSummaries(items: UsageSummary[]): UsageSummary {
   let output = 0;
   let cacheCreation = 0;
   let cacheRead = 0;
+  let cacheObservedRequests = 0;
+  let cacheObservedInput = 0;
+  let cacheObservedCreation = 0;
+  let cacheObservedRead = 0;
 
   for (const s of items) {
     totalRequests += s.totalRequests;
@@ -96,9 +104,14 @@ function aggregateSummaries(items: UsageSummary[]): UsageSummary {
     output += s.totalOutputTokens;
     cacheCreation += s.totalCacheCreationTokens;
     cacheRead += s.totalCacheReadTokens;
+    cacheObservedRequests += s.cacheObservedRequests;
+    cacheObservedInput += s.cacheObservedInputTokens;
+    cacheObservedCreation += s.cacheObservedCreationTokens;
+    cacheObservedRead += s.cacheObservedReadTokens;
   }
 
-  const cacheableInput = input + cacheCreation + cacheRead;
+  const observedCacheableInput =
+    cacheObservedInput + cacheObservedCreation + cacheObservedRead;
   return {
     totalRequests,
     totalCost: totalCostNum.toFixed(6),
@@ -106,9 +119,18 @@ function aggregateSummaries(items: UsageSummary[]): UsageSummary {
     totalOutputTokens: output,
     totalCacheCreationTokens: cacheCreation,
     totalCacheReadTokens: cacheRead,
+    cacheObservedRequests,
+    cacheObservedInputTokens: cacheObservedInput,
+    cacheObservedCreationTokens: cacheObservedCreation,
+    cacheObservedReadTokens: cacheObservedRead,
     successRate: totalRequests > 0 ? (successCount / totalRequests) * 100 : 0,
     realTotalTokens: input + output + cacheCreation + cacheRead,
-    cacheHitRate: cacheableInput > 0 ? cacheRead / cacheableInput : 0,
+    cacheHitRate:
+      cacheObservedRequests === 0
+        ? null
+        : observedCacheableInput === 0
+          ? 0
+          : cacheObservedRead / observedCacheableInput,
   };
 }
 
@@ -133,11 +155,12 @@ type CacheWriteState = "ok" | "partial" | "na";
  */
 function deriveCacheWriteState(appTypes: string[]): CacheWriteState {
   if (appTypes.length === 0) return "ok";
+  const hasMixedProtocolApp = appTypes.includes("cursor");
   const inclusive = appTypes.filter((t) =>
     CACHE_INCLUSIVE_APP_TYPES.has(t),
   ).length;
-  if (inclusive === appTypes.length) return "na";
-  if (inclusive === 0) return "ok";
+  if (!hasMixedProtocolApp && inclusive === appTypes.length) return "na";
+  if (!hasMixedProtocolApp && inclusive === 0) return "ok";
   return "partial";
 }
 
@@ -202,9 +225,12 @@ export function UsageHero({
   const cacheWrite = summary?.totalCacheCreationTokens ?? 0;
   const cacheRead = summary?.totalCacheReadTokens ?? 0;
   const realTotal = summary?.realTotalTokens ?? 0;
-  const hitRate = summary?.cacheHitRate ?? 0;
+  const hitRate = summary?.cacheHitRate ?? null;
   const totalCost = parseFiniteNumber(summary?.totalCost);
   const requests = summary?.totalRequests ?? 0;
+  const cacheObservedRequests = summary?.cacheObservedRequests ?? 0;
+  const cacheCoveragePartial =
+    cacheObservedRequests > 0 && cacheObservedRequests < requests;
 
   const cacheWriteDisplay = {
     value:
@@ -234,8 +260,11 @@ export function UsageHero({
     );
   }
 
-  const hitPercent = Math.max(0, Math.min(100, hitRate * 100));
-  const hitPercentLabel = hitPercent.toFixed(hitPercent >= 99.95 ? 0 : 1);
+  const hitPercent = Math.max(0, Math.min(100, (hitRate ?? 0) * 100));
+  const hitPercentLabel =
+    hitRate == null
+      ? "N/A"
+      : `${hitPercent.toFixed(hitPercent >= 99.95 ? 0 : 1)}%`;
 
   return (
     <motion.div
@@ -341,15 +370,38 @@ export function UsageHero({
                   <span className="text-muted-foreground font-medium">
                     {t("usage.cacheHitRate", "缓存命中率")}
                   </span>
-                  <span className="font-bold text-emerald-500 tabular-nums">
-                    {hitPercentLabel}%
+                  <span
+                    className={cn(
+                      "font-bold tabular-nums",
+                      hitRate == null
+                        ? "text-muted-foreground/70"
+                        : "text-emerald-500",
+                    )}
+                  >
+                    {hitPercentLabel}
                   </span>
                 </div>
+                {cacheCoveragePartial && (
+                  <div
+                    className="text-[10px] text-amber-600 dark:text-amber-400 mb-1.5"
+                    title={t(
+                      "usage.cacheHitRatePartialHint",
+                      "命中率仅使用供应商明确返回缓存字段的请求计算",
+                    )}
+                  >
+                    {t("usage.cacheHitRatePartial", "仅基于部分请求")}
+                  </div>
+                )}
                 <div className="relative h-1.5 rounded-full bg-muted/60 overflow-hidden">
                   <motion.div
-                    className="absolute inset-y-0 left-0 bg-emerald-500 rounded-full"
+                    className={cn(
+                      "absolute inset-y-0 left-0 rounded-full",
+                      hitRate == null
+                        ? "bg-muted-foreground/30"
+                        : "bg-emerald-500",
+                    )}
                     initial={{ width: 0 }}
-                    animate={{ width: `${hitPercent}%` }}
+                    animate={{ width: hitRate == null ? 0 : `${hitPercent}%` }}
                     transition={{ duration: 0.8, ease: "easeOut" }}
                   />
                 </div>

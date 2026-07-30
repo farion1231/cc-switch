@@ -27,6 +27,16 @@ fn openai_cache_write_tokens(usage: &Value) -> u32 {
         .unwrap_or(0) as u32
 }
 
+fn openai_cache_read_observed(usage: &Value) -> bool {
+    usage.get("cache_read_input_tokens").is_some()
+        || usage
+            .pointer("/input_tokens_details/cached_tokens")
+            .is_some()
+        || usage
+            .pointer("/prompt_tokens_details/cached_tokens")
+            .is_some()
+}
+
 /// Session 日志 request_id 前缀，与 `session_usage.rs` 中的格式保持一致
 pub const SESSION_REQUEST_ID_PREFIX: &str = "session:";
 
@@ -44,6 +54,9 @@ pub struct TokenUsage {
     pub output_tokens: u32,
     pub cache_read_tokens: u32,
     pub cache_creation_tokens: u32,
+    /// 供应商是否明确返回缓存统计字段；数值为 0 也可以是可观测的真实 0。
+    #[serde(default)]
+    pub cache_usage_observed: bool,
     /// 从响应中提取的实际模型名称（如果可用）
     pub model: Option<String>,
     /// 从响应中提取的消息 ID（用于跨源去重）
@@ -114,6 +127,8 @@ impl TokenUsage {
                 .get("cache_creation_input_tokens")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
+            cache_usage_observed: usage.get("cache_read_input_tokens").is_some()
+                && usage.get("cache_creation_input_tokens").is_some(),
             model,
             message_id,
         })
@@ -126,6 +141,8 @@ impl TokenUsage {
         let mut model: Option<String> = None;
         let mut message_id: Option<String> = None;
         let mut input_from_delta = false;
+        let mut cache_read_present = false;
+        let mut cache_creation_present = false;
 
         for event in events {
             if let Some(event_type) = event.get("type").and_then(|v| v.as_str()) {
@@ -150,6 +167,10 @@ impl TokenUsage {
                             {
                                 usage.input_tokens = input as u32;
                             }
+                            cache_read_present |=
+                                msg_usage.get("cache_read_input_tokens").is_some();
+                            cache_creation_present |=
+                                msg_usage.get("cache_creation_input_tokens").is_some();
                             usage.cache_read_tokens = msg_usage
                                 .get("cache_read_input_tokens")
                                 .and_then(|v| v.as_u64())
@@ -183,6 +204,10 @@ impl TokenUsage {
                                 .get("cache_creation_input_tokens")
                                 .and_then(|v| v.as_u64())
                                 .map(|v| v as u32);
+                            cache_read_present |=
+                                delta_usage.get("cache_read_input_tokens").is_some();
+                            cache_creation_present |=
+                                delta_usage.get("cache_creation_input_tokens").is_some();
 
                             // 部分 Anthropic-compatible SSE provider 会在 message_start 上报完整上下文，
                             // 但在 message_delta 上报修正后的 fresh input。遇到更小的正数 delta input
@@ -232,6 +257,7 @@ impl TokenUsage {
         if usage.has_billable_tokens() {
             usage.model = model;
             usage.message_id = message_id;
+            usage.cache_usage_observed = cache_read_present && cache_creation_present;
             Some(usage)
         } else {
             None
@@ -247,6 +273,7 @@ impl TokenUsage {
             output_tokens: usage.get("completion_tokens")?.as_u64()? as u32,
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
+            cache_usage_observed: false,
             model: None,
             message_id: response_id(body, "id"),
         })
@@ -286,6 +313,7 @@ impl TokenUsage {
             output_tokens: output_tokens? as u32,
             cache_read_tokens: cached_tokens,
             cache_creation_tokens: cache_write_tokens,
+            cache_usage_observed: openai_cache_read_observed(usage),
             model,
             message_id: response_id(body, "id"),
         })
@@ -321,6 +349,7 @@ impl TokenUsage {
             output_tokens,
             cache_read_tokens: cached_tokens,
             cache_creation_tokens: cache_write_tokens,
+            cache_usage_observed: openai_cache_read_observed(usage),
             model,
             message_id: response_id(body, "id"),
         })
@@ -413,6 +442,7 @@ impl TokenUsage {
             output_tokens: completion_tokens as u32,
             cache_read_tokens: cached_tokens,
             cache_creation_tokens: cache_write_tokens,
+            cache_usage_observed: openai_cache_read_observed(usage),
             model,
             message_id: response_id(body, "id"),
         })
@@ -463,6 +493,7 @@ impl TokenUsage {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
             cache_creation_tokens: 0,
+            cache_usage_observed: usage.get("cachedContentTokenCount").is_some(),
             model,
             message_id: response_id(body, "responseId"),
         })
@@ -474,6 +505,7 @@ impl TokenUsage {
         let mut total_input = 0u32;
         let mut total_tokens = 0u32;
         let mut total_cache_read = 0u32;
+        let mut cache_read_observed = false;
         let mut model: Option<String> = None;
         let mut message_id: Option<String> = None;
 
@@ -492,6 +524,7 @@ impl TokenUsage {
                     .unwrap_or(0) as u32;
 
                 // 缓存读取 tokens
+                cache_read_observed |= usage.get("cachedContentTokenCount").is_some();
                 total_cache_read = usage
                     .get("cachedContentTokenCount")
                     .and_then(|v| v.as_u64())
@@ -518,6 +551,7 @@ impl TokenUsage {
                 output_tokens: total_output,
                 cache_read_tokens: total_cache_read,
                 cache_creation_tokens: 0,
+                cache_usage_observed: cache_read_observed,
                 model,
                 message_id,
             })
@@ -604,7 +638,75 @@ mod tests {
         assert_eq!(usage.output_tokens, 50);
         assert_eq!(usage.cache_read_tokens, 20);
         assert_eq!(usage.cache_creation_tokens, 10);
+        assert!(usage.cache_usage_observed);
         assert_eq!(usage.model, Some("claude-sonnet-4-20250514".to_string()));
+    }
+
+    #[test]
+    fn cache_observability_depends_on_field_presence_not_positive_values() {
+        let claude_zero = json!({
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 10,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0
+            }
+        });
+        let claude_missing = json!({
+            "usage": { "input_tokens": 100, "output_tokens": 10 }
+        });
+        assert!(
+            TokenUsage::from_claude_response(&claude_zero)
+                .unwrap()
+                .cache_usage_observed
+        );
+        assert!(
+            !TokenUsage::from_claude_response(&claude_missing)
+                .unwrap()
+                .cache_usage_observed
+        );
+
+        let openai_zero = json!({
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 10,
+                "prompt_tokens_details": { "cached_tokens": 0 }
+            }
+        });
+        let openai_missing = json!({
+            "usage": { "prompt_tokens": 100, "completion_tokens": 10 }
+        });
+        assert!(
+            TokenUsage::from_openai_response(&openai_zero)
+                .unwrap()
+                .cache_usage_observed
+        );
+        assert!(
+            !TokenUsage::from_openai_response(&openai_missing)
+                .unwrap()
+                .cache_usage_observed
+        );
+
+        let gemini_zero = json!({
+            "usageMetadata": {
+                "promptTokenCount": 100,
+                "totalTokenCount": 110,
+                "cachedContentTokenCount": 0
+            }
+        });
+        let gemini_missing = json!({
+            "usageMetadata": { "promptTokenCount": 100, "totalTokenCount": 110 }
+        });
+        assert!(
+            TokenUsage::from_gemini_response(&gemini_zero)
+                .unwrap()
+                .cache_usage_observed
+        );
+        assert!(
+            !TokenUsage::from_gemini_response(&gemini_missing)
+                .unwrap()
+                .cache_usage_observed
+        );
     }
 
     #[test]

@@ -11,10 +11,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import MarkdownEditor from "@/components/MarkdownEditor";
-import type { Prompt, AppId } from "@/lib/api";
+import type { Prompt, ManagedAppId } from "@/lib/api";
 
 interface PromptFormModalProps {
-  appId: AppId;
+  appId: ManagedAppId;
   editingId?: string;
   initialData?: Prompt;
   onSave: (id: string, prompt: Prompt) => Promise<void>;
@@ -30,7 +30,7 @@ const PromptFormModal: React.FC<PromptFormModalProps> = ({
 }) => {
   const { t } = useTranslation();
   const appName = t(`apps.${appId}`);
-  const filenameMap: Record<Exclude<AppId, "openclaw">, string> = {
+  const filenameMap: Record<Exclude<ManagedAppId, "openclaw">, string> = {
     claude: "CLAUDE.md",
     "claude-desktop": "CLAUDE.md",
     codex: "AGENTS.md",
@@ -39,7 +39,7 @@ const PromptFormModal: React.FC<PromptFormModalProps> = ({
     opencode: "AGENTS.md",
     hermes: "AGENTS.md",
   };
-  const filename = filenameMap[appId as Exclude<AppId, "openclaw">];
+  const filename = filenameMap[appId as Exclude<ManagedAppId, "openclaw">];
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");

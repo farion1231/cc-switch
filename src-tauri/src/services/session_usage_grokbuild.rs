@@ -63,6 +63,7 @@ struct GrokCounters {
     input: u64,
     output: u64,
     cached: u64,
+    cache_usage_observed: bool,
     api_ms: u64,
     model_calls: u64,
     /// CLI 自报本轮成本，1 tick = 1e-10 USD；0 = 上游未提供
@@ -340,6 +341,7 @@ fn parse_grok_counters(value: &serde_json::Value) -> GrokCounters {
         input: get("inputTokens"),
         output: get("outputTokens"),
         cached: get("cachedReadTokens"),
+        cache_usage_observed: value.get("cachedReadTokens").is_some(),
         api_ms: get("apiDurationMs"),
         model_calls: get("modelCalls"),
         cost_ticks: get("costUsdTicks"),
@@ -382,6 +384,7 @@ fn insert_grok_session_entry(
         output_tokens: clamp(turn.output),
         cache_read_tokens: clamp(turn.cached),
         cache_creation_tokens: 0,
+        cache_usage_observed: turn.cache_usage_observed,
         model: Some(model.to_string()),
         message_id: None,
     };
@@ -477,8 +480,8 @@ fn insert_grok_session_entry(
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source,
-            input_token_semantics
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
+            input_token_semantics, cache_usage_observed
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
         ON CONFLICT(request_id) DO UPDATE SET
             model = excluded.model,
             input_tokens = excluded.input_tokens,
@@ -489,7 +492,8 @@ fn insert_grok_session_entry(
             cache_read_cost_usd = excluded.cache_read_cost_usd,
             cache_creation_cost_usd = excluded.cache_creation_cost_usd,
             total_cost_usd = excluded.total_cost_usd,
-            latency_ms = excluded.latency_ms
+            latency_ms = excluded.latency_ms,
+            cache_usage_observed = excluded.cache_usage_observed
         WHERE data_source = 'grok_session'
           AND (input_tokens != excluded.input_tokens
            OR output_tokens != excluded.output_tokens
@@ -522,6 +526,7 @@ fn insert_grok_session_entry(
             created_at,
             "grok_session",      // data_source
             INPUT_TOKEN_SEMANTICS_TOTAL,
+            i64::from(turn.cache_usage_observed),
         ],
     )
     .map_err(|e| AppError::Database(format!("插入 Grok Build 会话日志失败: {e}")))?;
@@ -656,6 +661,7 @@ mod tests {
                 input: 16632,
                 output: 104,
                 cached: 0,
+                cache_usage_observed: true,
                 api_ms: 5342,
                 model_calls: 0,
                 cost_ticks: 338_880_000,

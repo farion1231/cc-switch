@@ -1,4 +1,4 @@
-import type { AppId } from "@/lib/api/types";
+import type { ManagedAppId } from "@/lib/api/types";
 import type {
   McpServer,
   Provider,
@@ -8,9 +8,9 @@ import type {
 } from "@/types";
 import { deepClone } from "@/utils/deepClone";
 
-type ProvidersByApp = Record<AppId, Record<string, Provider>>;
-type CurrentProviderState = Record<AppId, string>;
-type McpConfigState = Record<AppId, Record<string, McpServer>>;
+type ProvidersByApp = Record<ManagedAppId, Record<string, Provider>>;
+type CurrentProviderState = Record<ManagedAppId, string>;
+type McpConfigState = Record<ManagedAppId, Record<string, McpServer>>;
 type LiveProviderIdsByApp = Record<
   "opencode" | "openclaw" | "hermes",
   string[]
@@ -269,10 +269,11 @@ export const resetProviderState = () => {
   };
 };
 
-export const getProviders = (appType: AppId) =>
+export const getProviders = (appType: ManagedAppId) =>
   cloneProviders(providers)[appType] ?? {};
 
-export const getCurrentProviderId = (appType: AppId) => current[appType] ?? "";
+export const getCurrentProviderId = (appType: ManagedAppId) =>
+  current[appType] ?? "";
 
 export const getLiveProviderIds = (
   appType: "opencode" | "openclaw" | "hermes",
@@ -285,12 +286,15 @@ export const setLiveProviderIds = (
   liveProviderIds[appType] = [...ids];
 };
 
-export const setCurrentProviderId = (appType: AppId, providerId: string) => {
+export const setCurrentProviderId = (
+  appType: ManagedAppId,
+  providerId: string,
+) => {
   current[appType] = providerId;
 };
 
 export const updateProviders = (
-  appType: AppId,
+  appType: ManagedAppId,
   data: Record<string, Provider>,
 ) => {
   providers[appType] = cloneProviders({ [appType]: data } as ProvidersByApp)[
@@ -299,18 +303,18 @@ export const updateProviders = (
 };
 
 export const setProviders = (
-  appType: AppId,
+  appType: ManagedAppId,
   data: Record<string, Provider>,
 ) => {
   providers[appType] = deepClone(data) as Record<string, Provider>;
 };
 
-export const addProvider = (appType: AppId, provider: Provider) => {
+export const addProvider = (appType: ManagedAppId, provider: Provider) => {
   providers[appType] = providers[appType] ?? {};
   providers[appType][provider.id] = provider;
 };
 
-export const updateProvider = (appType: AppId, provider: Provider) => {
+export const updateProvider = (appType: ManagedAppId, provider: Provider) => {
   if (!providers[appType]) return;
   providers[appType][provider.id] = {
     ...providers[appType][provider.id],
@@ -318,7 +322,7 @@ export const updateProvider = (appType: AppId, provider: Provider) => {
   };
 };
 
-export const deleteProvider = (appType: AppId, providerId: string) => {
+export const deleteProvider = (appType: ManagedAppId, providerId: string) => {
   if (!providers[appType]) return;
   delete providers[appType][providerId];
   if (current[appType] === providerId) {
@@ -328,7 +332,7 @@ export const deleteProvider = (appType: AppId, providerId: string) => {
 };
 
 export const updateSortOrder = (
-  appType: AppId,
+  appType: ManagedAppId,
   updates: { id: string; sortIndex: number }[],
 ) => {
   if (!providers[appType]) return;
@@ -340,7 +344,7 @@ export const updateSortOrder = (
   });
 };
 
-export const listProviders = (appType: AppId) =>
+export const listProviders = (appType: ManagedAppId) =>
   deepClone(providers[appType] ?? {}) as Record<string, Provider>;
 
 export const getSettings = () => deepClone(settingsState) as Settings;
@@ -355,7 +359,7 @@ export const setAppConfigDirOverrideState = (value: string | null) => {
   appConfigDirOverride = value;
 };
 
-export const getMcpConfig = (appType: AppId) => {
+export const getMcpConfig = (appType: ManagedAppId) => {
   const servers = deepClone(mcpConfigs[appType] ?? {}) as Record<
     string,
     McpServer
@@ -367,14 +371,14 @@ export const getMcpConfig = (appType: AppId) => {
 };
 
 export const setMcpConfig = (
-  appType: AppId,
+  appType: ManagedAppId,
   value: Record<string, McpServer>,
 ) => {
   mcpConfigs[appType] = deepClone(value) as Record<string, McpServer>;
 };
 
 export const setMcpServerEnabled = (
-  appType: AppId,
+  appType: ManagedAppId,
   id: string,
   enabled: boolean,
 ) => {
@@ -386,7 +390,7 @@ export const setMcpServerEnabled = (
 };
 
 export const upsertMcpServer = (
-  appType: AppId,
+  appType: ManagedAppId,
   id: string,
   server: McpServer,
 ) => {
@@ -396,7 +400,7 @@ export const upsertMcpServer = (
   mcpConfigs[appType][id] = deepClone(server) as McpServer;
 };
 
-export const deleteMcpServer = (appType: AppId, id: string) => {
+export const deleteMcpServer = (appType: ManagedAppId, id: string) => {
   if (!mcpConfigs[appType]) return;
   delete mcpConfigs[appType][id];
 };

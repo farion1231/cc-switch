@@ -6,6 +6,7 @@ use std::sync::Arc;
 pub struct AppState {
     pub db: Arc<Database>,
     pub proxy_service: ProxyService,
+    pub cursor_runtime: crate::cursor::CursorRuntimeService,
     pub usage_cache: Arc<UsageCache>,
 }
 
@@ -13,10 +14,12 @@ impl AppState {
     /// 创建新的应用状态
     pub fn new(db: Arc<Database>) -> Self {
         let proxy_service = ProxyService::new(db.clone());
+        let cursor_runtime = crate::cursor::CursorRuntimeService::new(db.clone());
 
         Self {
             db,
             proxy_service,
+            cursor_runtime,
             usage_cache: Arc::new(UsageCache::new()),
         }
     }

@@ -45,6 +45,20 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // Cursor Endpoints 表。Endpoint 独立于模型存在，因此允许保留空模型集合。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS cursor_endpoints (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                provider_type TEXT NOT NULL,
+                base_url TEXT NOT NULL,
+                api_key TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 2. Provider Endpoints 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS provider_endpoints (
@@ -195,12 +209,15 @@ impl Database {
         // pricing_model = 写入时实际用于计价的模型名（pricing_model_source 解析结果），
         // 回填按它重算；NULL 表示 v11 之前的历史行，'' 表示未计价的错误行。
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_request_logs (
-            request_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, app_type TEXT NOT NULL, model TEXT NOT NULL,
+            request_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, provider_name_snapshot TEXT,
+            app_type TEXT NOT NULL, model TEXT NOT NULL,
             request_model TEXT,
             pricing_model TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
             input_token_semantics INTEGER NOT NULL DEFAULT 0,
+            token_usage_status TEXT NOT NULL DEFAULT 'reported',
+            cache_usage_observed INTEGER NOT NULL DEFAULT 1,
             input_cost_usd TEXT NOT NULL DEFAULT '0', output_cost_usd TEXT NOT NULL DEFAULT '0',
             cache_read_cost_usd TEXT NOT NULL DEFAULT '0', cache_creation_cost_usd TEXT NOT NULL DEFAULT '0',
             total_cost_usd TEXT NOT NULL DEFAULT '0', latency_ms INTEGER NOT NULL, first_token_ms INTEGER,
@@ -278,6 +295,7 @@ impl Database {
                 date TEXT NOT NULL,
                 app_type TEXT NOT NULL,
                 provider_id TEXT NOT NULL,
+                provider_name_snapshot TEXT,
                 model TEXT NOT NULL,
                 request_model TEXT NOT NULL DEFAULT '',
                 pricing_model TEXT NOT NULL DEFAULT '',
@@ -287,6 +305,10 @@ impl Database {
                 output_tokens INTEGER NOT NULL DEFAULT 0,
                 cache_read_tokens INTEGER NOT NULL DEFAULT 0,
                 cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_observed_request_count INTEGER NOT NULL DEFAULT 0,
+                cache_observed_input_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_observed_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_observed_creation_tokens INTEGER NOT NULL DEFAULT 0,
                 input_token_semantics INTEGER NOT NULL DEFAULT 0,
                 total_cost_usd TEXT NOT NULL DEFAULT '0',
                 avg_latency_ms INTEGER NOT NULL DEFAULT 0,
@@ -510,6 +532,26 @@ impl Database {
                         log::info!("迁移数据库从 v15 到 v16（重建 Codex 会话用量）");
                         Self::migrate_v15_to_v16(conn)?;
                         Self::set_user_version(conn, 16)?;
+                    }
+                    16 => {
+                        log::info!("迁移数据库从 v16 到 v17（保留 Provider 名称快照）");
+                        Self::migrate_v16_to_v17(conn)?;
+                        Self::set_user_version(conn, 17)?;
+                    }
+                    17 => {
+                        log::info!("迁移数据库从 v17 到 v18（Cursor Endpoint 独立持久化）");
+                        Self::migrate_v17_to_v18(conn)?;
+                        Self::set_user_version(conn, 18)?;
+                    }
+                    18 => {
+                        log::info!("迁移数据库从 v18 到 v19（记录 token 用量来源状态）");
+                        Self::migrate_v18_to_v19(conn)?;
+                        Self::set_user_version(conn, 19)?;
+                    }
+                    19 => {
+                        log::info!("迁移数据库从 v19 到 v20（记录缓存统计可观测性）");
+                        Self::migrate_v19_to_v20(conn)?;
+                        Self::set_user_version(conn, 20)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1521,6 +1563,235 @@ impl Database {
     fn migrate_v15_to_v16(conn: &Connection) -> Result<(), AppError> {
         let codex_dir = crate::codex_config::get_codex_config_dir();
         crate::services::session_usage_codex::reset_codex_usage_on_conn(conn, &codex_dir)
+    }
+
+    /// v16 -> v17: retain the Provider display name used when a request was
+    /// made, including after the Provider is renamed or deleted.
+    fn migrate_v16_to_v17(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "proxy_request_logs")? {
+            Self::add_column_if_missing(
+                conn,
+                "proxy_request_logs",
+                "provider_name_snapshot",
+                "TEXT",
+            )?;
+        }
+        if Self::table_exists(conn, "usage_daily_rollups")? {
+            Self::add_column_if_missing(
+                conn,
+                "usage_daily_rollups",
+                "provider_name_snapshot",
+                "TEXT",
+            )?;
+        }
+        Ok(())
+    }
+
+    fn migrate_v17_to_v18(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS cursor_endpoints (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                provider_type TEXT NOT NULL,
+                base_url TEXT NOT NULL,
+                api_key TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        if !Self::table_exists(conn, "providers")? {
+            return Ok(());
+        }
+
+        let (created_at_expression, order_by) =
+            if Self::has_column(conn, "providers", "created_at")? {
+                ("COALESCE(created_at, 0)", "created_at, id")
+            } else {
+                ("CAST(0 AS INTEGER)", "id")
+            };
+        let sql = format!(
+            "SELECT id, settings_config, {created_at_expression}
+             FROM providers WHERE app_type = 'cursor' ORDER BY {order_by}"
+        );
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        drop(stmt);
+
+        let mut endpoint_ids = std::collections::HashMap::<(String, String, String), String>::new();
+        for (provider_id, raw_config, created_at) in rows {
+            let mut config: serde_json::Value = serde_json::from_str(&raw_config)
+                .map_err(|e| AppError::Database(format!("解析 Cursor Provider 配置失败: {e}")))?;
+            let provider_type = config["type"].as_str().unwrap_or("openai").to_string();
+            let base_url = config["baseURL"]
+                .as_str()
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let normalized_url = url::Url::parse(&base_url)
+                .map(|mut value| {
+                    value.set_fragment(None);
+                    let trimmed_path = value.path().trim_end_matches('/').to_string();
+                    value.set_path(if trimmed_path.is_empty() {
+                        "/"
+                    } else {
+                        &trimmed_path
+                    });
+                    value.to_string().trim_end_matches('/').to_string()
+                })
+                .unwrap_or_else(|_| base_url.trim_end_matches('/').to_string());
+            let api_key = config["apiKey"].as_str().unwrap_or_default().to_string();
+            let group_key = (
+                provider_type.clone(),
+                normalized_url.clone(),
+                api_key.clone(),
+            );
+            let endpoint_id = endpoint_ids
+                .entry(group_key)
+                .or_insert_with(|| uuid::Uuid::new_v4().to_string())
+                .clone();
+            let name = config["providerGroup"]
+                .as_str()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(normalized_url.as_str())
+                .to_string();
+
+            conn.execute(
+                "INSERT OR IGNORE INTO cursor_endpoints
+                 (id, name, provider_type, base_url, api_key, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    endpoint_id,
+                    name,
+                    provider_type,
+                    base_url,
+                    api_key,
+                    created_at
+                ],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+            config["endpointId"] = serde_json::Value::String(endpoint_id);
+            conn.execute(
+                "UPDATE providers SET settings_config = ?1
+                 WHERE id = ?2 AND app_type = 'cursor'",
+                rusqlite::params![config.to_string(), provider_id],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn migrate_v18_to_v19(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "proxy_request_logs")? {
+            return Ok(());
+        }
+        Self::add_column_if_missing(
+            conn,
+            "proxy_request_logs",
+            "token_usage_status",
+            "TEXT NOT NULL DEFAULT 'reported'",
+        )?;
+        let required_columns = [
+            "data_source",
+            "status_code",
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "cache_creation_tokens",
+        ];
+        if required_columns
+            .into_iter()
+            .all(|column| Self::has_column(conn, "proxy_request_logs", column).unwrap_or(false))
+        {
+            conn.execute(
+                "UPDATE proxy_request_logs
+                 SET token_usage_status = 'missing'
+                 WHERE data_source = 'cursor_sidecar'
+                   AND status_code >= 200 AND status_code < 300
+                   AND input_tokens = 0 AND output_tokens = 0
+                   AND cache_read_tokens = 0 AND cache_creation_tokens = 0",
+                [],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn migrate_v19_to_v20(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "proxy_request_logs")? {
+            Self::add_column_if_missing(
+                conn,
+                "proxy_request_logs",
+                "cache_usage_observed",
+                "INTEGER NOT NULL DEFAULT 1",
+            )?;
+            if Self::has_column(conn, "proxy_request_logs", "status_code")? {
+                conn.execute(
+                    "UPDATE proxy_request_logs
+                     SET cache_usage_observed = 0
+                     WHERE status_code < 200 OR status_code >= 300",
+                    [],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            }
+            if Self::has_column(conn, "proxy_request_logs", "token_usage_status")? {
+                conn.execute(
+                    "UPDATE proxy_request_logs
+                     SET cache_usage_observed = 0
+                     WHERE token_usage_status <> 'reported'",
+                    [],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            }
+        }
+
+        if Self::table_exists(conn, "usage_daily_rollups")? {
+            for (column, definition) in [
+                ("cache_observed_request_count", "INTEGER NOT NULL DEFAULT 0"),
+                ("cache_observed_input_tokens", "INTEGER NOT NULL DEFAULT 0"),
+                ("cache_observed_read_tokens", "INTEGER NOT NULL DEFAULT 0"),
+                (
+                    "cache_observed_creation_tokens",
+                    "INTEGER NOT NULL DEFAULT 0",
+                ),
+            ] {
+                Self::add_column_if_missing(conn, "usage_daily_rollups", column, definition)?;
+            }
+            let required_columns = [
+                "request_count",
+                "input_tokens",
+                "cache_read_tokens",
+                "cache_creation_tokens",
+            ];
+            if required_columns.into_iter().all(|column| {
+                Self::has_column(conn, "usage_daily_rollups", column).unwrap_or(false)
+            }) {
+                conn.execute(
+                    "UPDATE usage_daily_rollups
+                     SET cache_observed_request_count = request_count,
+                         cache_observed_input_tokens = input_tokens,
+                         cache_observed_read_tokens = cache_read_tokens,
+                         cache_observed_creation_tokens = cache_creation_tokens",
+                    [],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            }
+        }
+        Ok(())
     }
 
     /// 插入默认模型定价数据
@@ -2940,6 +3211,210 @@ mod tests {
     use super::*;
 
     #[test]
+    fn migrate_v17_to_v18_creates_cursor_endpoints_and_links_models() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute("DELETE FROM cursor_endpoints", [])?;
+        for id in ["model-a", "model-b"] {
+            conn.execute(
+                "INSERT INTO providers
+                 (id, app_type, name, settings_config, meta)
+                 VALUES (?1, 'cursor', ?1, ?2, '{}')",
+                rusqlite::params![
+                    id,
+                    serde_json::json!({
+                        "enabled": true,
+                        "type": "openai",
+                        "providerGroup": "Example",
+                        "baseURL": "https://api.example.com/",
+                        "apiKey": "secret",
+                        "modelID": id
+                    })
+                    .to_string()
+                ],
+            )?;
+        }
+        Database::set_user_version(&conn, 17)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        let endpoint_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM cursor_endpoints", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(endpoint_count, 1);
+        let endpoint_id: String =
+            conn.query_row("SELECT id FROM cursor_endpoints", [], |row| row.get(0))?;
+        let linked_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM providers
+             WHERE app_type = 'cursor'
+               AND json_extract(settings_config, '$.endpointId') = ?1",
+            [&endpoint_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(linked_count, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v17_to_v18_groups_endpoints_by_type_url_and_api_key() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute("DELETE FROM cursor_endpoints", [])?;
+        for (id, base_url, api_key) in [
+            ("shared-a", "https://api.example.com/", "shared-key"),
+            ("shared-b", "https://api.example.com", "shared-key"),
+            ("other-key", "https://api.example.com", "other-key"),
+            ("other-url", "https://other.example.com", "shared-key"),
+        ] {
+            conn.execute(
+                "INSERT INTO providers
+                 (id, app_type, name, settings_config, meta)
+                 VALUES (?1, 'cursor', ?1, ?2, '{}')",
+                rusqlite::params![
+                    id,
+                    serde_json::json!({
+                        "enabled": true,
+                        "type": "openai",
+                        "providerGroup": "Example",
+                        "baseURL": base_url,
+                        "apiKey": api_key,
+                        "modelID": id
+                    })
+                    .to_string()
+                ],
+            )?;
+        }
+        Database::set_user_version(&conn, 17)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        let endpoint_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM cursor_endpoints", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(endpoint_count, 3);
+
+        let endpoint_id_for = |provider_id: &str| -> Result<String, rusqlite::Error> {
+            conn.query_row(
+                "SELECT json_extract(settings_config, '$.endpointId')
+                 FROM providers WHERE id = ?1 AND app_type = 'cursor'",
+                [provider_id],
+                |row| row.get(0),
+            )
+        };
+        let shared_endpoint = endpoint_id_for("shared-a")?;
+        assert_eq!(shared_endpoint, endpoint_id_for("shared-b")?);
+        assert_ne!(shared_endpoint, endpoint_id_for("other-key")?);
+        assert_ne!(shared_endpoint, endpoint_id_for("other-url")?);
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v19_to_v20_backfills_cache_observability_conservatively() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute_batch(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, input_tokens, output_tokens,
+                token_usage_status, latency_ms, status_code, created_at, data_source
+             ) VALUES
+                ('reported-success', 'proxy', 'claude', 'model', 10, 2, 'reported', 1, 200, 1, 'proxy'),
+                ('estimated-success', 'cursor', 'cursor', 'model', 10, 2, 'estimated', 1, 200, 2, 'cursor_sidecar'),
+                ('missing-success', 'cursor', 'cursor', 'model', 0, 0, 'missing', 1, 200, 3, 'cursor_sidecar'),
+                ('reported-failure', 'proxy', 'claude', 'model', 10, 0, 'reported', 1, 500, 4, 'proxy');
+             INSERT INTO usage_daily_rollups (
+                date, app_type, provider_id, model, request_count, success_count,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                total_cost_usd, avg_latency_ms
+             ) VALUES
+                ('2026-01-01', 'claude', 'proxy', 'model', 3, 3, 120, 10, 70, 30, '0', 1);",
+        )?;
+        conn.execute(
+            "ALTER TABLE proxy_request_logs DROP COLUMN cache_usage_observed",
+            [],
+        )?;
+        for column in [
+            "cache_observed_request_count",
+            "cache_observed_input_tokens",
+            "cache_observed_read_tokens",
+            "cache_observed_creation_tokens",
+        ] {
+            conn.execute(
+                &format!("ALTER TABLE usage_daily_rollups DROP COLUMN {column}"),
+                [],
+            )?;
+        }
+        Database::set_user_version(&conn, 19)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        let observed = [
+            "reported-success",
+            "estimated-success",
+            "missing-success",
+            "reported-failure",
+        ]
+        .into_iter()
+        .map(|request_id| {
+            conn.query_row(
+                "SELECT cache_usage_observed FROM proxy_request_logs WHERE request_id = ?1",
+                [request_id],
+                |row| row.get::<_, i64>(0),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(observed, [1, 0, 0, 0]);
+
+        let rollup: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT cache_observed_request_count, cache_observed_input_tokens,
+                    cache_observed_read_tokens, cache_observed_creation_tokens
+             FROM usage_daily_rollups",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(rollup, (3, 120, 70, 30));
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v18_to_v19_marks_only_unknown_cursor_usage_as_missing() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute_batch(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, latency_ms, status_code,
+                created_at, data_source
+             ) VALUES
+                ('cursor-missing', 'cursor', 'cursor', 'model', 0, 0, 0, 0, 1, 200, 1, 'cursor_sidecar'),
+                ('cursor-reported', 'cursor', 'cursor', 'model', 10, 2, 0, 0, 1, 200, 2, 'cursor_sidecar'),
+                ('proxy-zero', 'proxy', 'claude', 'model', 0, 0, 0, 0, 1, 200, 3, 'proxy');",
+        )?;
+        conn.execute(
+            "ALTER TABLE proxy_request_logs DROP COLUMN token_usage_status",
+            [],
+        )?;
+        Database::set_user_version(&conn, 18)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let statuses = ["cursor-missing", "cursor-reported", "proxy-zero"]
+            .into_iter()
+            .map(|request_id| {
+                conn.query_row(
+                    "SELECT token_usage_status FROM proxy_request_logs WHERE request_id = ?1",
+                    [request_id],
+                    |row| row.get::<_, String>(0),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(statuses, ["missing", "reported", "reported"]);
+        Ok(())
+    }
+
+    #[test]
     fn migrate_v12_to_v13_adds_input_token_semantics_columns() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         conn.execute(
@@ -3080,7 +3555,7 @@ mod tests {
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
-        assert_eq!(Database::get_user_version(&conn)?, 16);
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         let counts: (i64, i64, i64, i64) = conn.query_row(
             "SELECT
                 (SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'),

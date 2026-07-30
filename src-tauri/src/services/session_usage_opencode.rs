@@ -31,6 +31,7 @@ struct OpenCodeMessageData {
     reasoning_tokens: u32,
     cache_read_tokens: u32,
     cache_write_tokens: u32,
+    cache_usage_observed: bool,
     cost: f64,
     model_id: String,
     timestamp_ms: i64,
@@ -308,6 +309,8 @@ fn parse_message_data(value: &serde_json::Value) -> Option<OpenCodeMessageData> 
         reasoning_tokens,
         cache_read_tokens,
         cache_write_tokens,
+        cache_usage_observed: cache_obj
+            .is_some_and(|cache| cache.get("read").is_some() && cache.get("write").is_some()),
         cost,
         model_id,
         timestamp_ms,
@@ -368,6 +371,7 @@ fn insert_opencode_message(
                 output_tokens: output_with_reasoning,
                 cache_read_tokens: msg.cache_read_tokens,
                 cache_creation_tokens: msg.cache_write_tokens,
+                cache_usage_observed: msg.cache_usage_observed,
                 model: Some(msg.model_id.clone()),
                 message_id: None,
             };
@@ -402,10 +406,11 @@ fn insert_opencode_message(
         "INSERT OR IGNORE INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+            cache_usage_observed,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
         rusqlite::params![
             request_id,
             "_opencode_session",   // provider_id
@@ -416,6 +421,7 @@ fn insert_opencode_message(
             output_with_reasoning,
             msg.cache_read_tokens,
             msg.cache_write_tokens,
+            i64::from(msg.cache_usage_observed),
             input_cost,
             output_cost,
             cache_read_cost,

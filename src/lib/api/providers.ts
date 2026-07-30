@@ -5,7 +5,7 @@ import type {
   UniversalProvider,
   UniversalProvidersMap,
 } from "@/types";
-import type { AppId } from "./types";
+import type { ManagedAppId as AppId } from "./types";
 
 export interface ProviderSortUpdate {
   id: string;

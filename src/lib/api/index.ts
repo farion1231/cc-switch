@@ -1,4 +1,4 @@
-export type { AppId } from "./types";
+export type { AppId, ManagedAppId } from "./types";
 export { providersApi, universalProvidersApi } from "./providers";
 export { settingsApi } from "./settings";
 export { backupsApi } from "./settings";
@@ -12,6 +12,15 @@ export { vscodeApi } from "./vscode";
 export { proxyApi } from "./proxy";
 export { openclawApi } from "./openclaw";
 export { sessionsApi } from "./sessions";
+export { cursorApi, createCursorModelConfig } from "./cursor";
+export type {
+  CursorModelConfig,
+  CursorModelTestResult,
+  CursorProvider,
+  CursorProviderType,
+  CursorRuntimePhase,
+  CursorRuntimeState,
+} from "./cursor";
 export { workspaceApi } from "./workspace";
 export * as configApi from "./config";
 export * as authApi from "./auth";

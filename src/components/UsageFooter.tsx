@@ -1,7 +1,7 @@
 import React from "react";
 import { RefreshCw, AlertCircle, Clock } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { type AppId } from "@/lib/api";
+import { type ManagedAppId } from "@/lib/api";
 import { useUsageQuery } from "@/lib/query/queries";
 import { UsageData, Provider } from "@/types";
 import { TierBadge } from "@/components/SubscriptionQuotaFooter";
@@ -10,7 +10,7 @@ import type { QuotaTier } from "@/types/subscription";
 interface UsageFooterProps {
   provider: Provider;
   providerId: string;
-  appId: AppId;
+  appId: ManagedAppId;
   usageEnabled: boolean; // 是否启用了用量查询
   isCurrent: boolean; // 是否为当前激活的供应商
   isInConfig?: boolean; // OpenCode: 是否已添加到配置

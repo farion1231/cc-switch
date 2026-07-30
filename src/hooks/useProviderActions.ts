@@ -2,7 +2,12 @@ import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
-import { providersApi, settingsApi, openclawApi, type AppId } from "@/lib/api";
+import {
+  providersApi,
+  settingsApi,
+  openclawApi,
+  type ManagedAppId,
+} from "@/lib/api";
 import type {
   Provider,
   UsageScript,
@@ -36,7 +41,7 @@ import { isOAuthProviderType } from "@/config/constants";
  * Extracts business logic from App.tsx
  */
 export function useProviderActions(
-  activeApp: AppId,
+  activeApp: ManagedAppId,
   isProxyRunning?: boolean,
   isProxyTakeover?: boolean,
 ) {

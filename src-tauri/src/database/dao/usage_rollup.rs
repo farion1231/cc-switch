@@ -123,19 +123,25 @@ impl Database {
         // 明细行的这两列可能为 NULL（历史/手工数据），归一为 ''。
         let aggregation_sql = format!(
             "INSERT OR REPLACE INTO usage_daily_rollups
-                (date, app_type, provider_id, model, request_model, pricing_model,
+                (date, app_type, provider_id, provider_name_snapshot, model, request_model, pricing_model,
                  request_count, success_count,
                  input_tokens, output_tokens,
                  cache_read_tokens, cache_creation_tokens,
+                 cache_observed_request_count, cache_observed_input_tokens,
+                 cache_observed_read_tokens, cache_observed_creation_tokens,
                  input_token_semantics, total_cost_usd, avg_latency_ms)
             SELECT
-                d, a, p, m, rm, pm,
+                d, a, p, COALESCE(NULLIF(pn, ''), old.provider_name_snapshot), m, rm, pm,
                 COALESCE(old.request_count, 0) + new_req,
                 COALESCE(old.success_count, 0) + new_succ,
                 COALESCE({fresh_old_input}, 0) + new_in,
                 COALESCE(old.output_tokens, 0) + new_out,
                 COALESCE(old.cache_read_tokens, 0) + new_cr,
                 COALESCE(old.cache_creation_tokens, 0) + new_cc,
+                COALESCE(old.cache_observed_request_count, 0) + new_observed_req,
+                COALESCE(old.cache_observed_input_tokens, 0) + new_observed_in,
+                COALESCE(old.cache_observed_read_tokens, 0) + new_observed_cr,
+                COALESCE(old.cache_observed_creation_tokens, 0) + new_observed_cc,
                 {INPUT_TOKEN_SEMANTICS_FRESH},
                 CAST(COALESCE(CAST(old.total_cost_usd AS REAL), 0) + new_cost AS TEXT),
                 CASE WHEN COALESCE(old.request_count, 0) + new_req > 0
@@ -146,7 +152,9 @@ impl Database {
             FROM (
                 SELECT
                     date(l.created_at, 'unixepoch', 'localtime') as d,
-                    l.app_type as a, l.provider_id as p, l.model as m,
+                    l.app_type as a, l.provider_id as p,
+                    MAX(COALESCE(l.provider_name_snapshot, '')) as pn,
+                    l.model as m,
                     COALESCE(l.request_model, '') as rm,
                     COALESCE(l.pricing_model, '') as pm,
                     COUNT(*) as new_req,
@@ -155,6 +163,10 @@ impl Database {
                     COALESCE(SUM(l.output_tokens), 0) as new_out,
                     COALESCE(SUM(l.cache_read_tokens), 0) as new_cr,
                     COALESCE(SUM(l.cache_creation_tokens), 0) as new_cc,
+                    COALESCE(SUM(CASE WHEN l.cache_usage_observed = 1 THEN 1 ELSE 0 END), 0) as new_observed_req,
+                    COALESCE(SUM(CASE WHEN l.cache_usage_observed = 1 THEN {fresh_detail_input} ELSE 0 END), 0) as new_observed_in,
+                    COALESCE(SUM(CASE WHEN l.cache_usage_observed = 1 THEN l.cache_read_tokens ELSE 0 END), 0) as new_observed_cr,
+                    COALESCE(SUM(CASE WHEN l.cache_usage_observed = 1 THEN l.cache_creation_tokens ELSE 0 END), 0) as new_observed_cc,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as new_cost,
                     COALESCE(AVG(l.latency_ms), 0) as new_lat
                 FROM proxy_request_logs l
@@ -341,6 +353,58 @@ mod tests {
             })?;
         assert_eq!(remaining, 0);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_rollup_preserves_cache_observable_subset() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let old_ts = chrono::Utc::now().timestamp() - 40 * 86400;
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_token_semantics, cache_usage_observed, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES
+                    ('observed-cache', 'p1', 'cursor', 'model', 100, 10, 50, 25, 2, 1, '0', 1, 200, ?1),
+                    ('unobserved-cache', 'p1', 'cursor', 'model', 400, 20, 0, 0, 2, 0, '0', 1, 200, ?1)",
+                [old_ts],
+            )?;
+        }
+
+        assert_eq!(db.rollup_and_prune(30)?, 2);
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let rollup: (i64, i64, i64, i64, i64) = conn.query_row(
+            "SELECT request_count, cache_observed_request_count,
+                    cache_observed_input_tokens, cache_observed_read_tokens,
+                    cache_observed_creation_tokens
+             FROM usage_daily_rollups WHERE app_type = 'cursor'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )?;
+        assert_eq!(rollup, (2, 1, 100, 50, 25));
+        drop(conn);
+
+        let summary = db.get_usage_summary(None, None, Some("cursor"), None, None)?;
+        assert_eq!(summary.total_requests, 2);
+        assert_eq!(summary.cache_observed_requests, 1);
+        assert_eq!(summary.cache_observed_input_tokens, 100);
+        assert_eq!(summary.cache_observed_read_tokens, 50);
+        assert_eq!(summary.cache_observed_creation_tokens, 25);
+        assert_eq!(summary.cache_hit_rate, Some(50.0 / 175.0));
         Ok(())
     }
 
