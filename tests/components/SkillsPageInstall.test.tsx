@@ -112,6 +112,8 @@ const makeDiscoverableSkill = (
   description: "Skill from a configured repository",
   directory: "repo-skill",
   readmeUrl: "https://example.com/repo-skill",
+  repoSourceType: "github",
+  repoSourceHost: "github.com",
   repoOwner: "owner-a",
   repoName: "repo-a",
   repoBranch: "main",
@@ -119,6 +121,8 @@ const makeDiscoverableSkill = (
 });
 
 const makeSkillRepo = (overrides: Partial<SkillRepo> = {}): SkillRepo => ({
+  sourceType: "github",
+  sourceHost: "github.com",
   owner: "owner-a",
   name: "repo-a",
   branch: "main",

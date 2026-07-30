@@ -21,9 +21,10 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
-                        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at
+                "SELECT id, name, description, directory, repo_source_type, repo_source_host,
+                        repo_owner, repo_name, repo_branch, readme_url,
+                        enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode,
+                        enabled_hermes, installed_at, content_hash, updated_at
                  FROM skills ORDER BY name ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -35,21 +36,23 @@ impl Database {
                     name: row.get(1)?,
                     description: row.get(2)?,
                     directory: row.get(3)?,
-                    repo_owner: row.get(4)?,
-                    repo_name: row.get(5)?,
-                    repo_branch: row.get(6)?,
-                    readme_url: row.get(7)?,
+                    repo_source_type: row.get(4)?,
+                    repo_source_host: row.get(5)?,
+                    repo_owner: row.get(6)?,
+                    repo_name: row.get(7)?,
+                    repo_branch: row.get(8)?,
+                    readme_url: row.get(9)?,
                     apps: SkillApps {
-                        claude: row.get(8)?,
-                        codex: row.get(9)?,
-                        gemini: row.get(10)?,
-                        grokbuild: row.get(11)?,
-                        opencode: row.get(12)?,
-                        hermes: row.get(13)?,
+                        claude: row.get(10)?,
+                        codex: row.get(11)?,
+                        gemini: row.get(12)?,
+                        grokbuild: row.get(13)?,
+                        opencode: row.get(14)?,
+                        hermes: row.get(15)?,
                     },
-                    installed_at: row.get(14)?,
-                    content_hash: row.get(15)?,
-                    updated_at: row.get::<_, i64>(16).unwrap_or(0),
+                    installed_at: row.get(16)?,
+                    content_hash: row.get(17)?,
+                    updated_at: row.get::<_, i64>(18).unwrap_or(0),
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -67,9 +70,10 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
-                        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at
+                "SELECT id, name, description, directory, repo_source_type, repo_source_host,
+                        repo_owner, repo_name, repo_branch, readme_url,
+                        enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode,
+                        enabled_hermes, installed_at, content_hash, updated_at
                  FROM skills WHERE id = ?1",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -80,21 +84,23 @@ impl Database {
                 name: row.get(1)?,
                 description: row.get(2)?,
                 directory: row.get(3)?,
-                repo_owner: row.get(4)?,
-                repo_name: row.get(5)?,
-                repo_branch: row.get(6)?,
-                readme_url: row.get(7)?,
+                repo_source_type: row.get(4)?,
+                repo_source_host: row.get(5)?,
+                repo_owner: row.get(6)?,
+                repo_name: row.get(7)?,
+                repo_branch: row.get(8)?,
+                readme_url: row.get(9)?,
                 apps: SkillApps {
-                    claude: row.get(8)?,
-                    codex: row.get(9)?,
-                    gemini: row.get(10)?,
-                    grokbuild: row.get(11)?,
-                    opencode: row.get(12)?,
-                    hermes: row.get(13)?,
+                    claude: row.get(10)?,
+                    codex: row.get(11)?,
+                    gemini: row.get(12)?,
+                    grokbuild: row.get(13)?,
+                    opencode: row.get(14)?,
+                    hermes: row.get(15)?,
                 },
-                installed_at: row.get(14)?,
-                content_hash: row.get(15)?,
-                updated_at: row.get::<_, i64>(16).unwrap_or(0),
+                installed_at: row.get(16)?,
+                content_hash: row.get(17)?,
+                updated_at: row.get::<_, i64>(18).unwrap_or(0),
             })
         });
 
@@ -110,15 +116,18 @@ impl Database {
         let conn = lock_conn!(self.conn);
         conn.execute(
             "INSERT OR REPLACE INTO skills
-             (id, name, description, directory, repo_owner, repo_name, repo_branch,
-              readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
+             (id, name, description, directory, repo_source_type, repo_source_host,
+              repo_owner, repo_name, repo_branch, readme_url,
+              enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
               installed_at, content_hash, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 skill.id,
                 skill.name,
                 skill.description,
                 skill.directory,
+                skill.repo_source_type,
+                skill.repo_source_host,
                 skill.repo_owner,
                 skill.repo_name,
                 skill.repo_branch,
@@ -191,17 +200,21 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(
-                "SELECT owner, name, branch, enabled FROM skill_repos ORDER BY owner ASC, name ASC",
+                "SELECT source_type, source_host, owner, name, branch, enabled
+                 FROM skill_repos
+                 ORDER BY source_type ASC, source_host ASC, owner ASC, name ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let repo_iter = stmt
             .query_map([], |row| {
                 Ok(SkillRepo {
-                    owner: row.get(0)?,
-                    name: row.get(1)?,
-                    branch: row.get(2)?,
-                    enabled: row.get(3)?,
+                    source_type: row.get(0)?,
+                    source_host: row.get(1)?,
+                    owner: row.get(2)?,
+                    name: row.get(3)?,
+                    branch: row.get(4)?,
+                    enabled: row.get(5)?,
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -217,19 +230,35 @@ impl Database {
     pub fn save_skill_repo(&self, repo: &SkillRepo) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
-            "INSERT OR REPLACE INTO skill_repos (owner, name, branch, enabled) VALUES (?1, ?2, ?3, ?4)",
-            params![repo.owner, repo.name, repo.branch, repo.enabled],
+            "INSERT OR REPLACE INTO skill_repos
+             (source_type, source_host, owner, name, branch, enabled)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                repo.normalized_source_type(),
+                repo.normalized_source_host(),
+                repo.owner,
+                repo.name,
+                repo.branch,
+                repo.enabled
+            ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 
     /// 删除 Skill 仓库
-    pub fn delete_skill_repo(&self, owner: &str, name: &str) -> Result<(), AppError> {
+    pub fn delete_skill_repo(
+        &self,
+        source_type: &str,
+        source_host: &str,
+        owner: &str,
+        name: &str,
+    ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
-            "DELETE FROM skill_repos WHERE owner = ?1 AND name = ?2",
-            params![owner, name],
+            "DELETE FROM skill_repos
+             WHERE source_type = ?1 AND source_host = ?2 AND owner = ?3 AND name = ?4",
+            params![source_type, source_host, owner, name],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
@@ -260,5 +289,47 @@ impl Database {
 
         self.set_setting(INITIALIZED_KEY, "true")?;
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::skill::SkillStore;
+
+    #[test]
+    fn default_repo_init_preserves_existing_custom_branch() {
+        let db = Database::memory().expect("memory db");
+        let default_repo = SkillStore::default()
+            .repos
+            .into_iter()
+            .next()
+            .expect("default repo");
+        let custom_branch = "custom-branch".to_string();
+
+        db.save_skill_repo(&SkillRepo {
+            source_type: "github".to_string(),
+            source_host: "github.com".to_string(),
+            owner: default_repo.owner.clone(),
+            name: default_repo.name.clone(),
+            branch: custom_branch.clone(),
+            enabled: true,
+        })
+        .expect("save custom branch repo");
+
+        let inserted = db.init_default_skill_repos().expect("init default repos");
+        let repos = db.get_skill_repos().expect("get repos");
+        let matching_repo = repos
+            .iter()
+            .find(|repo| {
+                repo.normalized_source_type() == default_repo.normalized_source_type()
+                    && repo.normalized_source_host() == default_repo.normalized_source_host()
+                    && repo.owner == default_repo.owner
+                    && repo.name == default_repo.name
+            })
+            .expect("existing default repo identity");
+
+        assert_eq!(inserted, 0);
+        assert_eq!(matching_repo.branch, custom_branch);
     }
 }

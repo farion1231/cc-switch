@@ -87,6 +87,8 @@ impl Database {
             name TEXT NOT NULL,
             description TEXT,
             directory TEXT NOT NULL,
+            repo_source_type TEXT,
+            repo_source_host TEXT,
             repo_owner TEXT,
             repo_name TEXT,
             repo_branch TEXT DEFAULT 'main',
@@ -108,8 +110,13 @@ impl Database {
         // 6. Skill Repos 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skill_repos (
-            owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
-            enabled BOOLEAN NOT NULL DEFAULT 1, PRIMARY KEY (owner, name)
+            source_type TEXT NOT NULL DEFAULT 'github',
+            source_host TEXT NOT NULL DEFAULT 'github.com',
+            owner TEXT NOT NULL,
+            name TEXT NOT NULL,
+            branch TEXT NOT NULL DEFAULT 'main',
+            enabled BOOLEAN NOT NULL DEFAULT 1,
+            PRIMARY KEY (source_type, source_host, owner, name)
         )",
             [],
         )
@@ -510,6 +517,11 @@ impl Database {
                         log::info!("迁移数据库从 v15 到 v16（重建 Codex 会话用量）");
                         Self::migrate_v15_to_v16(conn)?;
                         Self::set_user_version(conn, 16)?;
+                    }
+                    16 => {
+                        log::info!("迁移数据库从 v16 到 v17（Skill 仓库来源支持）");
+                        Self::migrate_v16_to_v17(conn)?;
+                        Self::set_user_version(conn, 17)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1521,6 +1533,78 @@ impl Database {
     fn migrate_v15_to_v16(conn: &Connection) -> Result<(), AppError> {
         let codex_dir = crate::codex_config::get_codex_config_dir();
         crate::services::session_usage_codex::reset_codex_usage_on_conn(conn, &codex_dir)
+    }
+
+    /// v16 -> v17：Skill 仓库支持 GitHub/GitLab 来源。
+    ///
+    /// 该迁移保持幂等，以兼容曾运行过本地开发版（其 v12 已包含这些字段）的数据库。
+    fn migrate_v16_to_v17(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(conn, "skills", "repo_source_type", "TEXT")?;
+            Self::add_column_if_missing(conn, "skills", "repo_source_host", "TEXT")?;
+            if Self::has_column(conn, "skills", "repo_owner")?
+                && Self::has_column(conn, "skills", "repo_name")?
+            {
+                conn.execute(
+                    "UPDATE skills
+                     SET repo_source_type = 'github'
+                     WHERE repo_owner IS NOT NULL
+                       AND repo_name IS NOT NULL
+                       AND (repo_source_type IS NULL OR repo_source_type = '')",
+                    [],
+                )
+                .map_err(|e| {
+                    AppError::Database(format!("回填 skills.repo_source_type 失败: {e}"))
+                })?;
+                conn.execute(
+                    "UPDATE skills
+                     SET repo_source_host = 'github.com'
+                     WHERE repo_owner IS NOT NULL
+                       AND repo_name IS NOT NULL
+                       AND (repo_source_host IS NULL OR repo_source_host = '')",
+                    [],
+                )
+                .map_err(|e| {
+                    AppError::Database(format!("回填 skills.repo_source_host 失败: {e}"))
+                })?;
+            }
+        }
+
+        if !Self::table_exists(conn, "skill_repos")? {
+            return Ok(());
+        }
+
+        if Self::has_column(conn, "skill_repos", "source_type")?
+            && Self::has_column(conn, "skill_repos", "source_host")?
+        {
+            log::info!("v16 -> v17：skill_repos 已包含来源字段，跳过重建");
+            return Ok(());
+        }
+
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS skill_repos_v17;
+             ALTER TABLE skill_repos RENAME TO skill_repos_v17;
+             CREATE TABLE skill_repos (
+                 source_type TEXT NOT NULL DEFAULT 'github',
+                 source_host TEXT NOT NULL DEFAULT 'github.com',
+                 owner TEXT NOT NULL,
+                 name TEXT NOT NULL,
+                 branch TEXT NOT NULL DEFAULT 'main',
+                 enabled BOOLEAN NOT NULL DEFAULT 1,
+                 PRIMARY KEY (source_type, source_host, owner, name)
+             );
+             INSERT OR REPLACE INTO skill_repos
+                 (source_type, source_host, owner, name, branch, enabled)
+             SELECT 'github', 'github.com', owner, name,
+                    COALESCE(NULLIF(branch, ''), 'main'),
+                    COALESCE(enabled, 1)
+             FROM skill_repos_v17;
+             DROP TABLE skill_repos_v17;",
+        )
+        .map_err(|e| AppError::Database(format!("v16 -> v17 重建 skill_repos 失败: {e}")))?;
+
+        log::info!("v16 -> v17 迁移完成：Skill 仓库已支持来源类型和域名");
+        Ok(())
     }
 
     /// 插入默认模型定价数据
@@ -3080,7 +3164,7 @@ mod tests {
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
-        assert_eq!(Database::get_user_version(&conn)?, 16);
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         let counts: (i64, i64, i64, i64) = conn.query_row(
             "SELECT
                 (SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'),
