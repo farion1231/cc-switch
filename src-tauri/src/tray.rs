@@ -156,13 +156,26 @@ pub struct TrayAppSection {
 pub const AUTO_SUFFIX: &str = "auto";
 pub const TRAY_ID: &str = "cc-switch";
 
-pub const TRAY_SECTIONS: [TrayAppSection; 4] = [
+pub const TRAY_SECTIONS: [TrayAppSection; 5] = [
     TrayAppSection {
         app_type: AppType::Claude,
         prefix: "claude_",
         empty_id: "claude_empty",
         header_label: "Claude",
         log_name: "Claude",
+    },
+    TrayAppSection {
+        // 前缀必须用连字符 `claude-desktop_`：`handle_provider_tray_event` 按
+        // 顺序 strip_prefix 匹配，若改成 `claude_desktop_`，事件 id
+        // `claude_desktop_<id>` 会被前面的 `claude_` 段先吃掉、误切到 Claude Code。
+        // `claude_`（下划线）不是 `claude-desktop_`（连字符）的前缀，故无冲突。
+        // Claude Desktop 的切换与 Claude Code 共用 ProviderService::switch（3P profile 写入），
+        // 托盘只是补齐入口；其余菜单构建/标签刷新/用量拉取均按 app_type 通用处理。
+        app_type: AppType::ClaudeDesktop,
+        prefix: "claude-desktop_",
+        empty_id: "claude-desktop_empty",
+        header_label: "Claude Desktop",
+        log_name: "Claude Desktop",
     },
     TrayAppSection {
         app_type: AppType::Codex,
@@ -1203,6 +1216,38 @@ mod tests {
         assert_eq!(section.prefix, "grokbuild_");
         assert_eq!(section.empty_id, "grokbuild_empty");
         assert_eq!(section.header_label, "Grok Build");
+    }
+
+    #[test]
+    fn tray_sections_include_claude_desktop_provider_switching() {
+        let section = TRAY_SECTIONS
+            .iter()
+            .find(|section| section.app_type == AppType::ClaudeDesktop)
+            .expect("Claude Desktop tray section should exist");
+
+        assert_eq!(section.prefix, "claude-desktop_");
+        assert_eq!(section.empty_id, "claude-desktop_empty");
+        assert_eq!(section.header_label, "Claude Desktop");
+    }
+
+    #[test]
+    fn tray_section_prefixes_have_no_collision() {
+        // handle_provider_tray_event 按顺序 strip_prefix 匹配 section.prefix，
+        // 任一前缀不能是另一个的前缀，否则较短前缀会先吃掉较长前缀的事件 id。
+        // 重点防御：`claude_` 不能是 `claude-desktop_`（或 `claude_desktop_`）的前缀。
+        for (i, a) in TRAY_SECTIONS.iter().enumerate() {
+            for (j, b) in TRAY_SECTIONS.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                assert!(
+                    !b.prefix.starts_with(a.prefix),
+                    "tray prefix collision: {:?} is a prefix of {:?}",
+                    a.prefix,
+                    b.prefix
+                );
+            }
+        }
     }
 
     fn make_quota(tool: &str, success: bool, tiers: Vec<QuotaTier>) -> SubscriptionQuota {
