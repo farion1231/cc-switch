@@ -121,6 +121,20 @@ const renderCodexOauthForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) =>
     ...overrides,
   });
 
+/** 取某一档模型行（按输入框 id 定位）的 1M 复选框 */
+const getRoleOneMCheckbox = (container: HTMLElement, inputId: string) => {
+  const checkbox = container
+    .querySelector(`#${inputId}`)
+    ?.closest("div.grid")
+    ?.querySelector('[role="checkbox"]');
+
+  if (!checkbox) {
+    throw new Error(`未找到 ${inputId} 所在行的 1M 复选框`);
+  }
+
+  return checkbox;
+};
+
 describe("ClaudeFormFields", () => {
   beforeEach(() => {
     copilotApiMock.copilotGetModels.mockResolvedValue([]);
@@ -193,6 +207,66 @@ describe("ClaudeFormFields", () => {
     expect(onModelChange).toHaveBeenCalledWith(
       "CLAUDE_CODE_SUBAGENT_MODEL",
       "shared-model[1M]",
+    );
+  });
+
+  it("Haiku 档可以勾选声明支持 1M", () => {
+    const onModelChange = vi.fn();
+    const { container } = renderCopilotForm({
+      defaultHaikuModel: "glm-5.2",
+      defaultHaikuModelName: "GLM 5.2",
+      onModelChange,
+    });
+
+    fireEvent.click(getRoleOneMCheckbox(container, "claudeDefaultHaikuModel"));
+
+    expect(onModelChange).toHaveBeenCalledWith(
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      "glm-5.2[1M]",
+    );
+  });
+
+  it("Haiku 档已带 [1M] 时复选框为选中态，取消后剥离标记", () => {
+    const onModelChange = vi.fn();
+    const { container } = renderCopilotForm({
+      defaultHaikuModel: "glm-5.2[1M]",
+      defaultHaikuModelName: "GLM 5.2",
+      onModelChange,
+    });
+
+    const checkbox = getRoleOneMCheckbox(container, "claudeDefaultHaikuModel");
+    expect(checkbox).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(checkbox);
+
+    expect(onModelChange).toHaveBeenCalledWith(
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      "glm-5.2",
+    );
+  });
+
+  it("一键设置会把 [1M] 标记一并应用到 Haiku 档", () => {
+    const onModelChange = vi.fn();
+    renderCopilotForm({
+      claudeModel: "shared-model[1M]",
+      defaultSonnetModel: "",
+      defaultSonnetModelName: "",
+      onModelChange,
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "一键设置",
+      }),
+    );
+
+    expect(onModelChange).toHaveBeenCalledWith(
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      "shared-model[1M]",
+    );
+    expect(onModelChange).toHaveBeenCalledWith(
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+      "shared-model",
     );
   });
 });
