@@ -62,6 +62,24 @@ fn request(
 #[test]
 fn stdio_agent_completes_provider_vertical_slice_and_exits_on_eof() {
     let home = tempfile::tempdir().expect("创建隔离 HOME");
+    // 进程 fixture 必须位于 Agent 的显式 HOME；若实现误读桌面 HOME，下面的同步结果会保持 0。
+    let claude_project = home.path().join(".claude/projects/remote-project");
+    std::fs::create_dir_all(&claude_project).expect("创建远端 Claude 会话目录");
+    std::fs::write(
+        claude_project.join("remote-session.jsonl"),
+        serde_json::json!({
+            "type": "assistant",
+            "sessionId": "remote-claude-session",
+            "timestamp": "2026-07-30T12:00:00Z",
+            "message": {
+                "id": "remote-claude-message",
+                "model": "claude-sonnet-4-5",
+                "usage": { "input_tokens": 12, "output_tokens": 3 }
+            }
+        })
+        .to_string(),
+    )
+    .expect("写入远端 Claude fixture");
     let mut child = Command::new(env!("CARGO_BIN_EXE_cc-switch-agent"))
         .arg("--stdio")
         .env("CC_SWITCH_TEST_HOME", home.path())
@@ -103,6 +121,65 @@ fn stdio_agent_completes_provider_vertical_slice_and_exits_on_eof() {
     );
     assert_eq!(empty_summary["totalRequests"], 0);
     assert_eq!(empty_summary["realTotalTokens"], 0);
+
+    let sync = request(
+        &mut stdin,
+        &mut stdout,
+        "usage-session-sync",
+        "usage.session_sync",
+        json!({}),
+    );
+    assert_eq!(sync["imported"], 1);
+    assert_eq!(sync["filesScanned"], 1);
+    let synced_summary = request(
+        &mut stdin,
+        &mut stdout,
+        "usage-summary-after-sync",
+        "usage.summary",
+        json!({}),
+    );
+    assert_eq!(synced_summary["totalRequests"], 1);
+    assert_eq!(synced_summary["realTotalTokens"], 15);
+
+    assert_eq!(
+        request(
+            &mut stdin,
+            &mut stdout,
+            "pricing-update",
+            "usage.pricing.update",
+            json!({
+                "modelId": "remote-priced-model",
+                "displayName": "Remote Priced Model",
+                "inputCost": "1",
+                "outputCost": "2",
+                "cacheReadCost": "0.1",
+                "cacheCreationCost": "1.25"
+            }),
+        ),
+        Value::Bool(true)
+    );
+    let pricing = request(
+        &mut stdin,
+        &mut stdout,
+        "pricing-list",
+        "usage.pricing.list",
+        json!({}),
+    );
+    assert!(pricing
+        .as_array()
+        .expect("定价列表")
+        .iter()
+        .any(|item| item["modelId"] == "remote-priced-model"));
+    assert_eq!(
+        request(
+            &mut stdin,
+            &mut stdout,
+            "pricing-delete",
+            "usage.pricing.delete",
+            json!({ "modelId": "remote-priced-model" }),
+        ),
+        Value::Bool(true)
+    );
 
     for item in [
         provider("remote-a", "Remote A"),

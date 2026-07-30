@@ -1238,36 +1238,45 @@ pub fn run() {
                 });
 
                 // Session log usage sync: 启动时同步一次，之后每 60 秒检查
-                let db_for_session_sync = state.db.clone();
                 tauri::async_runtime::spawn(async move {
                     const SESSION_SYNC_INTERVAL_SECS: u64 = 60;
 
-                    async fn run_session_sync(db: std::sync::Arc<crate::database::Database>, backfill: bool) {
-                        let _guard = crate::services::session_usage::session_sync_mutex()
+                    async fn run_session_sync() {
+                        let _guard = crate::services::session_sync::session_sync_mutex()
                             .lock()
                             .await;
                         let task = tauri::async_runtime::spawn_blocking(move || {
-                            if backfill {
-                                if let Err(error) = db.backfill_missing_usage_costs() {
-                                    log::warn!("Usage cost startup backfill failed: {error}");
-                                }
-                            }
-                            crate::services::session_usage::sync_all_unlocked(&db)
+                            // 后台与手动命令必须共享同一 Core 导入器；这里只保留桌面调度、
+                            // 日志和事件职责，避免 60 秒轮询重新引入本地/远端行为分叉。
+                            let state = cc_switch_core::HeadlessState::open(
+                                crate::config::get_home_dir(),
+                            )?;
+                            cc_switch_core::UsageService::sync_sessions(
+                                &state,
+                                &cc_switch_core::OperationCancellation::active(),
+                            )
                         });
                         match task.await {
-                            Ok(result) if !result.errors.is_empty() => {
-                                log::warn!(
-                                    "Session usage sync completed with {} error(s)",
-                                    result.errors.len()
-                                );
+                            Ok(Ok(result)) => {
+                                if !result.errors.is_empty() {
+                                    log::warn!(
+                                        "Session usage sync completed with {} error(s)",
+                                        result.errors.len()
+                                    );
+                                }
+                                if result.imported > 0 {
+                                    crate::usage_events::notify_log_recorded();
+                                }
                             }
-                            Ok(_) => {}
+                            Ok(Err(error)) => {
+                                log::warn!("Session usage sync failed: {error}");
+                            }
                             Err(error) => log::warn!("Session usage blocking task failed: {error}"),
                         }
                     }
 
-                    // 首次同步（含费用回填）
-                    run_session_sync(db_for_session_sync.clone(), true).await;
+                    // Core 在每次同步末尾统一回填零成本行，首次调用无需桌面再做一遍。
+                    run_session_sync().await;
 
                     // 定期同步
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
@@ -1277,7 +1286,7 @@ pub fn run() {
                     interval.tick().await; // skip immediate first tick
                     loop {
                         interval.tick().await;
-                        run_session_sync(db_for_session_sync.clone(), false).await;
+                        run_session_sync().await;
                     }
                 });
             });

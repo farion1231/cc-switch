@@ -1,3 +1,7 @@
+use cc_switch_core::{
+    ProviderUsageInput, ProviderUsageTestInput, UsageResult as CoreUsageResult,
+    UsageService as CoreUsageService,
+};
 use indexmap::IndexMap;
 use tauri::{Emitter, Manager, State};
 
@@ -742,10 +746,23 @@ async fn query_provider_usage_inner(
         });
     }
 
-    // ── 通用 JS 脚本路径 ──
-    ProviderService::query_usage(state, app_type, provider_id)
-        .await
-        .map_err(|e| e.to_string())
+    // 通用 JS 脚本在 blocking worker 中执行；桌面事件循环不得承载 QuickJS 与同步 HTTP。
+    let db = state.db.clone();
+    let input = ProviderUsageInput {
+        provider_id: provider_id.to_string(),
+        app_type: app_type.as_str().to_string(),
+    };
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let connection = db
+            .conn
+            .lock()
+            .map_err(|error| format!("Usage 数据库锁失败: {error}"))?;
+        CoreUsageService::provider_query_on_connection(&connection, input)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("Usage worker 失败: {error}"))??;
+    Ok(desktop_usage_result(result))
 }
 
 #[allow(non_snake_case)]
@@ -764,20 +781,52 @@ pub async fn testUsageScript(
     #[allow(non_snake_case)] templateType: Option<String>,
 ) -> Result<crate::provider::UsageResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::test_usage_script(
-        state.inner(),
-        app_type,
-        &providerId,
-        &scriptCode,
-        timeout.unwrap_or(10),
-        apiKey.as_deref(),
-        baseUrl.as_deref(),
-        accessToken.as_deref(),
-        userId.as_deref(),
-        templateType.as_deref(),
-    )
+    let db = state.db.clone();
+    let input = ProviderUsageTestInput {
+        provider_id: providerId,
+        app_type: app_type.as_str().to_string(),
+        script_code: scriptCode,
+        timeout: timeout.unwrap_or(10),
+        api_key: apiKey,
+        base_url: baseUrl,
+        access_token: accessToken,
+        user_id: userId,
+        template_type: templateType,
+    };
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let connection = db
+            .conn
+            .lock()
+            .map_err(|error| format!("Usage 数据库锁失败: {error}"))?;
+        CoreUsageService::provider_test_on_connection(&connection, input)
+            .map_err(|error| error.to_string())
+    })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|error| format!("Usage worker 失败: {error}"))??;
+    Ok(desktop_usage_result(result))
+}
+
+/// Core DTO 与既有桌面 DTO 字段完全同构；显式映射避免 Tauri 命令公共类型发生路径变更。
+fn desktop_usage_result(result: CoreUsageResult) -> crate::provider::UsageResult {
+    crate::provider::UsageResult {
+        success: result.success,
+        data: result.data.map(|items| {
+            items
+                .into_iter()
+                .map(|item| crate::provider::UsageData {
+                    plan_name: item.plan_name,
+                    extra: item.extra,
+                    is_valid: item.is_valid,
+                    invalid_message: item.invalid_message,
+                    total: item.total,
+                    used: item.used,
+                    remaining: item.remaining,
+                    unit: item.unit,
+                })
+                .collect()
+        }),
+        error: result.error,
+    }
 }
 
 #[tauri::command]

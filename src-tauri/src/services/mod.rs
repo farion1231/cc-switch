@@ -14,10 +14,16 @@ pub mod proxy;
 pub mod s3;
 pub mod s3_auto_sync;
 pub mod s3_sync;
+pub mod session_sync;
+#[cfg(test)]
 pub mod session_usage;
+#[cfg(test)]
 pub mod session_usage_codex;
+#[cfg(test)]
 pub mod session_usage_gemini;
+#[cfg(test)]
 pub mod session_usage_grokbuild;
+#[cfg(test)]
 pub mod session_usage_opencode;
 pub mod skill;
 pub mod speedtest;

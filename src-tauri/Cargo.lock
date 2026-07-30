@@ -850,7 +850,10 @@ dependencies = [
  "chrono",
  "indexmap 2.13.0",
  "json5",
+ "reqwest 0.12.28",
+ "rquickjs",
  "rusqlite",
+ "rust_decimal",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -858,6 +861,7 @@ dependencies = [
  "thiserror 2.0.18",
  "toml 0.8.23",
  "toml_edit 0.22.27",
+ "url",
 ]
 
 [[package]]
@@ -4464,6 +4468,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "h2",

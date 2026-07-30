@@ -1,4 +1,8 @@
+#![allow(dead_code)]
 //! OpenCode 会话日志使用追踪
+//!
+//! 本模块仅在 `cfg(test)` 下保留，继续验证 SQLite message 解析样本；
+//! 生产同步统一由 Core 负责。
 //!
 //! 从 ~/.local/share/opencode/opencode.db (SQLite) 中提取精确 token 使用数据。
 //!

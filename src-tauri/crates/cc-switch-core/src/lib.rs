@@ -19,10 +19,11 @@ pub use schema::{SchemaError, DESKTOP_SCHEMA_VERSION};
 pub use state::HeadlessState;
 pub use usage::{
     fresh_input_sql, is_cache_inclusive_app, DailyStats, DataSourceSummary, LogFilters,
-    ModelPricingInfo, ModelStats, PaginatedLogs, ProviderStats, RequestLogDetail,
-    UsageQueryConnection, UsageScope, UsageService, UsageSummary, UsageSummaryByApp,
-    CACHE_INCLUSIVE_APP_TYPES, INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_LEGACY,
-    INPUT_TOKEN_SEMANTICS_TOTAL,
+    ModelPricingInfo, ModelStats, OperationCancellation, PaginatedLogs, PricingUpdate,
+    ProviderLimitStatus, ProviderStats, ProviderUsageInput, ProviderUsageTestInput,
+    RequestLogDetail, SessionSyncResult, UsageData, UsageQueryConnection, UsageResult, UsageScope,
+    UsageService, UsageSummary, UsageSummaryByApp, CACHE_INCLUSIVE_APP_TYPES,
+    INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_LEGACY, INPUT_TOKEN_SEMANTICS_TOTAL,
 };
 
 /// 协议握手的兼容导出；其值代表桌面规范数据库版本，不再维护 Agent 私有版本。

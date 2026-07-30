@@ -4,9 +4,10 @@ use crate::error::AppError;
 use crate::services::usage_stats::*;
 use crate::store::AppState;
 pub use cc_switch_core::ModelPricingInfo;
-use cc_switch_core::{DataSourceSummary, UsageService};
-use rust_decimal::Decimal;
-use std::str::FromStr;
+use cc_switch_core::{
+    DataSourceSummary, HeadlessState, OperationCancellation, PricingUpdate, SessionSyncResult,
+    UsageService,
+};
 use tauri::State;
 
 /// 获取使用量汇总
@@ -141,70 +142,19 @@ pub fn update_model_pricing(
     cache_read_cost: String,
     cache_creation_cost: String,
 ) -> Result<(), AppError> {
-    let db = state.db.clone();
-    let model_id = model_id.trim().to_string();
-    let display_name = display_name.trim().to_string();
-    if model_id.is_empty() {
-        return Err(AppError::localized(
-            "usage.modelIdRequired",
-            "模型 ID 不能为空",
-            "Model ID is required",
-        ));
-    }
-    if display_name.is_empty() {
-        return Err(AppError::localized(
-            "usage.displayNameRequired",
-            "显示名称不能为空",
-            "Display name is required",
-        ));
-    }
-
-    for (label, value) in [
-        ("input_cost", &input_cost),
-        ("output_cost", &output_cost),
-        ("cache_read_cost", &cache_read_cost),
-        ("cache_creation_cost", &cache_creation_cost),
-    ] {
-        let parsed = Decimal::from_str(value.trim()).map_err(|e| {
-            AppError::localized(
-                "usage.invalidPrice",
-                format!("{label} 价格无效: {value} - {e}"),
-                format!("{label} price is invalid: {value} - {e}"),
-            )
-        })?;
-        if parsed < Decimal::ZERO {
-            return Err(AppError::localized(
-                "usage.invalidPrice",
-                format!("{label} 价格必须为非负数: {value}"),
-                format!("{label} price must be non-negative: {value}"),
-            ));
-        }
-    }
-
-    {
-        let conn = crate::database::lock_conn!(db.conn);
-        conn.execute(
-            "INSERT OR REPLACE INTO model_pricing (
-                model_id, display_name, input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![
-                model_id,
-                display_name,
-                input_cost.trim(),
-                output_cost.trim(),
-                cache_read_cost.trim(),
-                cache_creation_cost.trim()
-            ],
-        )
-        .map_err(|e| AppError::Database(format!("更新模型定价失败: {e}")))?;
-    }
-
-    if let Err(e) = db.backfill_missing_usage_costs_for_model(&model_id) {
-        log::warn!("模型定价更新后回填历史用量成本失败 (model_id={model_id}): {e}");
-    }
-
-    Ok(())
+    let conn = crate::database::lock_conn!(state.db.conn);
+    UsageService::update_pricing_on_connection(
+        &conn,
+        PricingUpdate {
+            model_id,
+            display_name,
+            input_cost,
+            output_cost,
+            cache_read_cost,
+            cache_creation_cost,
+        },
+    )
+    .map_err(map_core_usage_error)
 }
 
 /// 检查 Provider 使用限额
@@ -214,46 +164,46 @@ pub fn check_provider_limits(
     provider_id: String,
     app_type: String,
 ) -> Result<crate::services::usage_stats::ProviderLimitStatus, AppError> {
-    state.db.check_provider_limits(&provider_id, &app_type)
+    let conn = crate::database::lock_conn!(state.db.conn);
+    UsageService::limits_on_connection(&conn, &provider_id, &app_type).map_err(map_core_usage_error)
 }
 
 /// 删除模型定价
 #[tauri::command]
 pub fn delete_model_pricing(state: State<'_, AppState>, model_id: String) -> Result<(), AppError> {
-    let db = state.db.clone();
-    let conn = crate::database::lock_conn!(db.conn);
-
-    conn.execute(
-        "DELETE FROM model_pricing WHERE model_id = ?1",
-        rusqlite::params![model_id],
-    )
-    .map_err(|e| AppError::Database(format!("删除模型定价失败: {e}")))?;
-
-    log::info!("已删除模型定价: {model_id}");
-    Ok(())
+    let conn = crate::database::lock_conn!(state.db.conn);
+    UsageService::delete_pricing_on_connection(&conn, &model_id).map_err(map_core_usage_error)
 }
 
 /// 手动触发会话日志同步
 #[tauri::command]
-pub async fn sync_session_usage(
-    state: State<'_, AppState>,
-) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
-    let db = state.db.clone();
-    let _guard = crate::services::session_usage::session_sync_mutex()
+pub async fn sync_session_usage(state: State<'_, AppState>) -> Result<SessionSyncResult, AppError> {
+    // 仍持有桌面进程级互斥锁，避免自动同步与手动同步同时扫描；实际文件和 SQLite
+    // 业务统一交给 Core，远端 Agent 因此得到相同的来源集合与写入语义。
+    let _db_lifetime = state.db.clone();
+    let _guard = crate::services::session_sync::session_sync_mutex()
         .lock()
         .await;
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::services::session_usage::sync_all_unlocked(&db)
+    tauri::async_runtime::spawn_blocking(move || -> Result<SessionSyncResult, AppError> {
+        let core =
+            HeadlessState::open(crate::config::get_home_dir()).map_err(map_core_usage_error)?;
+        UsageService::sync_sessions(&core, &OperationCancellation::active())
+            .map_err(map_core_usage_error)
     })
     .await
-    .map_err(|error| AppError::Message(format!("会话用量同步任务失败: {error}")))
+    .map_err(|error| AppError::Message(format!("会话用量同步任务失败: {error}")))?
+    .inspect(|result| {
+        if result.imported > 0 {
+            crate::usage_events::notify_log_recorded();
+        }
+    })
 }
 
 /// Codex reset 成功后，无论重导是否导入新行或返回错误，都必须通知前端刷新。
 /// 调用方应只在 reset 成功后调用，避免把未发生的数据变更误报为重建完成。
 fn finish_codex_rebuild(
-    result: Result<crate::services::session_usage::SessionSyncResult, AppError>,
-) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
+    result: Result<SessionSyncResult, AppError>,
+) -> Result<SessionSyncResult, AppError> {
     crate::usage_events::notify_log_recorded();
     result
 }
@@ -263,15 +213,18 @@ fn finish_codex_rebuild(
 #[tauri::command]
 pub async fn rebuild_codex_usage(
     state: State<'_, AppState>,
-) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
-    let db = state.db.clone();
-    let _guard = crate::services::session_usage::session_sync_mutex()
+) -> Result<SessionSyncResult, AppError> {
+    let _db_lifetime = state.db.clone();
+    let _guard = crate::services::session_sync::session_sync_mutex()
         .lock()
         .await;
-    tauri::async_runtime::spawn_blocking(move || {
-        db.backup_database_file()?;
-        db.reset_codex_usage()?;
-        let result = crate::services::session_usage_codex::sync_codex_usage(&db);
+    tauri::async_runtime::spawn_blocking(move || -> Result<SessionSyncResult, AppError> {
+        // Core 内部固定执行 backup -> reset -> import，并在每个破坏性边界检查取消；
+        // 桌面层只负责异步调度和刷新事件，不能重新拆开该序列。
+        let core =
+            HeadlessState::open(crate::config::get_home_dir()).map_err(map_core_usage_error)?;
+        let result = UsageService::rebuild_codex(&core, &OperationCancellation::active())
+            .map_err(map_core_usage_error);
         finish_codex_rebuild(result)
     })
     .await
@@ -295,10 +248,7 @@ mod tests {
     fn codex_rebuild_notifies_when_reimport_is_empty() {
         crate::usage_events::take_test_notify_count();
 
-        let result = finish_codex_rebuild(Ok(
-            crate::services::session_usage::SessionSyncResult::default(),
-        ))
-        .expect("空重导应成功");
+        let result = finish_codex_rebuild(Ok(SessionSyncResult::default())).expect("空重导应成功");
 
         assert_eq!(result.imported, 0);
         assert_eq!(crate::usage_events::take_test_notify_count(), 1);

@@ -1,4 +1,7 @@
+#![allow(dead_code)]
 //! Gemini CLI 会话日志使用追踪
+//!
+//! 本模块仅在 `cfg(test)` 下保留，继续验证旧解析样本；生产同步统一由 Core 负责。
 //!
 //! 从 ~/.gemini/tmp/<project_hash>/chats/session-*.json 中提取精确 token 使用数据。
 //!

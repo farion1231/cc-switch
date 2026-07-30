@@ -1,5 +1,8 @@
 mod model;
+mod mutation;
 mod query;
+mod script;
+mod session;
 mod sql;
 
 use rusqlite::Connection;
@@ -45,6 +48,87 @@ impl UsageQueryConnection for Connection {
 }
 
 impl UsageService {
+    pub fn update_pricing(state: &HeadlessState, input: PricingUpdate) -> Result<(), CoreError> {
+        state.with_connection(|connection| mutation::update_pricing(connection, input))
+    }
+
+    /// 桌面适配层已持有数据库锁时直接复用该连接，避免嵌套锁和第二条 SQLite 连接。
+    pub fn update_pricing_on_connection(
+        connection: &Connection,
+        input: PricingUpdate,
+    ) -> Result<(), CoreError> {
+        mutation::update_pricing(connection, input)
+    }
+
+    pub fn delete_pricing(state: &HeadlessState, model_id: &str) -> Result<(), CoreError> {
+        state.with_connection(|connection| mutation::delete_pricing(connection, model_id))
+    }
+
+    pub fn delete_pricing_on_connection(
+        connection: &Connection,
+        model_id: &str,
+    ) -> Result<(), CoreError> {
+        mutation::delete_pricing(connection, model_id)
+    }
+
+    pub fn limits(
+        state: &HeadlessState,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Result<ProviderLimitStatus, CoreError> {
+        state.with_connection(|connection| mutation::limits(connection, provider_id, app_type))
+    }
+
+    pub fn limits_on_connection(
+        connection: &Connection,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Result<ProviderLimitStatus, CoreError> {
+        mutation::limits(connection, provider_id, app_type)
+    }
+
+    pub fn provider_query(
+        state: &HeadlessState,
+        input: ProviderUsageInput,
+    ) -> Result<UsageResult, CoreError> {
+        state.with_connection(|connection| script::provider_query(connection, input))
+    }
+
+    pub fn provider_query_on_connection(
+        connection: &Connection,
+        input: ProviderUsageInput,
+    ) -> Result<UsageResult, CoreError> {
+        script::provider_query(connection, input)
+    }
+
+    pub fn provider_test(
+        state: &HeadlessState,
+        input: ProviderUsageTestInput,
+    ) -> Result<UsageResult, CoreError> {
+        state.with_connection(|connection| script::provider_test(connection, input))
+    }
+
+    pub fn provider_test_on_connection(
+        connection: &Connection,
+        input: ProviderUsageTestInput,
+    ) -> Result<UsageResult, CoreError> {
+        script::provider_test(connection, input)
+    }
+
+    pub fn sync_sessions(
+        state: &HeadlessState,
+        cancellation: &OperationCancellation,
+    ) -> Result<SessionSyncResult, CoreError> {
+        mutation::sync_sessions(state, cancellation)
+    }
+
+    pub fn rebuild_codex(
+        state: &HeadlessState,
+        cancellation: &OperationCancellation,
+    ) -> Result<SessionSyncResult, CoreError> {
+        mutation::rebuild_codex(state, cancellation)
+    }
+
     pub fn summary(
         source: &impl UsageQueryConnection,
         scope: UsageScope,
@@ -156,6 +240,49 @@ pub(crate) fn dispatch(
         }
         "usage.data_sources" => serialize(UsageService::data_sources(state)?),
         "usage.pricing.list" => serialize(UsageService::pricing(state)?),
+        "usage.provider_query" => {
+            let input = serde_json::from_value::<ProviderUsageInput>(args)
+                .map_err(|error| CommandError::InvalidArgument(error.to_string()))?;
+            serialize(UsageService::provider_query(state, input)?)
+        }
+        "usage.provider_test" => {
+            let input = serde_json::from_value::<ProviderUsageTestInput>(args)
+                .map_err(|error| CommandError::InvalidArgument(error.to_string()))?;
+            serialize(UsageService::provider_test(state, input)?)
+        }
+        "usage.pricing.update" => {
+            let input = serde_json::from_value::<PricingUpdate>(args)
+                .map_err(|error| CommandError::InvalidArgument(error.to_string()))?;
+            UsageService::update_pricing(state, input)?;
+            Ok(Value::Bool(true))
+        }
+        "usage.pricing.delete" => {
+            let args = serde_json::from_value::<ModelArgs>(args)
+                .map_err(|error| CommandError::InvalidArgument(error.to_string()))?;
+            UsageService::delete_pricing(state, &args.model_id)?;
+            Ok(Value::Bool(true))
+        }
+        "usage.limits" => {
+            let args = serde_json::from_value::<LimitArgs>(args)
+                .map_err(|error| CommandError::InvalidArgument(error.to_string()))?;
+            serialize(UsageService::limits(
+                state,
+                &args.provider_id,
+                &args.app_type,
+            )?)
+        }
+        "usage.session_sync" => {
+            // Task 8 先提供同步 RPC 入口；Task 9 的 Agent worker 会把请求级 token
+            // 传入同一服务，以便 Cancel 帧能中断目录扫描、备份和导入边界。
+            let cancellation = OperationCancellation::active();
+            serialize(UsageService::sync_sessions(state, &cancellation)?)
+        }
+        "usage.codex_rebuild" => {
+            // 重建顺序和取消检查统一封装在 Core，分发层不得自行拆开 backup/reset/import，
+            // 否则远程断线时可能留下无法解释的半完成状态。
+            let cancellation = OperationCancellation::active();
+            serialize(UsageService::rebuild_codex(state, &cancellation)?)
+        }
         _ => Err(CommandError::CapabilityUnavailable(command.to_string())),
     }
 }
@@ -175,6 +302,20 @@ struct LogsArgs {
 #[serde(rename_all = "camelCase")]
 struct RequestArgs {
     request_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelArgs {
+    model_id: String,
+}
+
+/// 同时接受前端沿用的 appType；远端协议始终在 Core 内转换为数据库 app_type。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LimitArgs {
+    provider_id: String,
+    app_type: String,
 }
 
 fn default_page_size() -> u32 {

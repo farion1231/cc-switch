@@ -1,4 +1,8 @@
+#![allow(dead_code)]
 //! Grok Build (Grok CLI) 会话用量追踪
+//!
+//! 本模块仅在 `cfg(test)` 下保留，继续约束结算窗口和上游自报成本语义；
+//! 生产同步统一由 Core 负责。
 //!
 //! 从 `~/.grok/{sessions,archived_sessions}/<enc-cwd>/<session-id>/updates.jsonl`
 //! 的 `turn_completed` 事件中提取用量，写入 proxy_request_logs，实现官方

@@ -4,11 +4,11 @@
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
+#[cfg(test)]
 use crate::proxy::usage::calculator::ModelPricing;
 use crate::services::sql_helpers::{INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL};
 use cc_switch_core::{CoreError, UsageScope, UsageService};
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -41,8 +41,8 @@ pub(crate) fn map_core_usage_error(error: CoreError) -> AppError {
 
 /// 桌面命令继续从本模块导出 DTO，但结构与序列化契约只由 Core 维护，避免本地/远程字段漂移。
 pub use cc_switch_core::{
-    DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderStats, RequestLogDetail,
-    UsageSummary, UsageSummaryByApp,
+    DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderLimitStatus, ProviderStats,
+    RequestLogDetail, UsageSummary, UsageSummaryByApp,
 };
 /// 把 26 列的查询结果映射为 `RequestLogDetail`。
 ///
@@ -140,6 +140,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
 /// `cache_creation_tokens`：Codex/Gemini session 日志不暴露该字段，调用方传 0
 /// 表示"未知"，匹配器会放行 proxy 侧任意 cache_creation_tokens 值。
 #[derive(Debug, Clone, Copy)]
+#[cfg(test)]
 pub(crate) struct DedupKey<'a> {
     pub app_type: &'a str,
     pub model: &'a str,
@@ -154,6 +155,7 @@ pub(crate) struct DedupKey<'a> {
 ///
 /// 命中以下任一条件即跳过插入：① `request_id` 已存在；② 时间窗口内存在
 /// 与 `key` 匹配的 proxy 日志（指纹去重）。
+#[cfg(test)]
 pub(crate) fn should_skip_session_insert(
     conn: &Connection,
     request_id: &str,
@@ -165,6 +167,7 @@ pub(crate) fn should_skip_session_insert(
     has_matching_proxy_usage_log(conn, key)
 }
 
+#[cfg(test)]
 fn proxy_request_id_exists(conn: &Connection, request_id: &str) -> Result<bool, AppError> {
     conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM proxy_request_logs WHERE request_id = ?1)",
@@ -174,6 +177,7 @@ fn proxy_request_id_exists(conn: &Connection, request_id: &str) -> Result<bool, 
     .map_err(|e| AppError::Database(format!("查询 request_id 失败: {e}")))
 }
 
+#[cfg(test)]
 pub(crate) fn has_matching_proxy_usage_log(
     conn: &Connection,
     key: &DedupKey,
@@ -233,6 +237,7 @@ pub(crate) fn has_matching_proxy_usage_log(
 /// 已知局限（有意取舍，方向保守只漏不双）：窗口不含 session 维度，任一
 /// grokbuild 代理行会给 ±窗口内的全部会话事件投下阴影——接管/官方两态在
 /// 十分钟内交替或并行使用时，官方侧轮次会被跳过（漏记而非双算）。
+#[cfg(test)]
 pub(crate) fn has_recent_grokbuild_proxy_activity(
     conn: &Connection,
     created_at: i64,
@@ -255,6 +260,7 @@ pub(crate) fn has_recent_grokbuild_proxy_activity(
     .map_err(|e| AppError::Database(format!("查询 Grok 接管活动失败: {e}")))
 }
 
+#[cfg(test)]
 pub(crate) fn has_suspected_codex_session_duplicate(
     conn: &Connection,
     request_id: &str,
@@ -396,107 +402,16 @@ impl Database {
         UsageService::detail(&*conn, request_id).map_err(map_core_usage_error)
     }
 
-    /// 检查 Provider 使用限额；该方法包含限额业务与实时窗口，仍由桌面写侧服务维护。
+    /// 检查 Provider 使用限额；桌面只负责连接锁，日/月窗口与 rollup 口径由 Core 维护。
     pub fn check_provider_limits(
         &self,
         provider_id: &str,
         app_type: &str,
     ) -> Result<ProviderLimitStatus, AppError> {
         let conn = lock_conn!(self.conn);
-
-        // 获取 provider 的限额设置
-        let (limit_daily, limit_monthly) = conn
-            .query_row(
-                "SELECT meta FROM providers WHERE id = ? AND app_type = ?",
-                params![provider_id, app_type],
-                |row| {
-                    let meta_str: String = row.get(0)?;
-                    Ok(meta_str)
-                },
-            )
-            .ok()
-            .and_then(|meta_str| serde_json::from_str::<serde_json::Value>(&meta_str).ok())
-            .map(|meta| {
-                let daily = meta
-                    .get("limitDailyUsd")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse::<f64>().ok());
-                let monthly = meta
-                    .get("limitMonthlyUsd")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse::<f64>().ok());
-                (daily, monthly)
-            })
-            .unwrap_or((None, None));
-
-        // 计算今日使用量 (detail logs + rollup)
-        let daily_usage: f64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(cost), 0) FROM (
-                    SELECT CAST(total_cost_usd AS REAL) as cost
-                    FROM proxy_request_logs
-                    WHERE provider_id = ? AND app_type = ?
-                      AND date(datetime(created_at, 'unixepoch', 'localtime')) = date('now', 'localtime')
-                    UNION ALL
-                    SELECT CAST(total_cost_usd AS REAL)
-                    FROM usage_daily_rollups
-                    WHERE provider_id = ? AND app_type = ?
-                      AND date = date('now', 'localtime')
-                )",
-                params![provider_id, app_type, provider_id, app_type],
-                |row| row.get(0),
-            )
-            .unwrap_or(0.0);
-
-        // 计算本月使用量 (detail logs + rollup)
-        let monthly_usage: f64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(cost), 0) FROM (
-                    SELECT CAST(total_cost_usd AS REAL) as cost
-                    FROM proxy_request_logs
-                    WHERE provider_id = ? AND app_type = ?
-                      AND strftime('%Y-%m', datetime(created_at, 'unixepoch', 'localtime')) = strftime('%Y-%m', 'now', 'localtime')
-                    UNION ALL
-                    SELECT CAST(total_cost_usd AS REAL)
-                    FROM usage_daily_rollups
-                    WHERE provider_id = ? AND app_type = ?
-                      AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now', 'localtime')
-                )",
-                params![provider_id, app_type, provider_id, app_type],
-                |row| row.get(0),
-            )
-            .unwrap_or(0.0);
-
-        let daily_exceeded = limit_daily
-            .map(|limit| daily_usage >= limit)
-            .unwrap_or(false);
-        let monthly_exceeded = limit_monthly
-            .map(|limit| monthly_usage >= limit)
-            .unwrap_or(false);
-
-        Ok(ProviderLimitStatus {
-            provider_id: provider_id.to_string(),
-            daily_usage: format!("{daily_usage:.6}"),
-            daily_limit: limit_daily.map(|l| format!("{l:.2}")),
-            daily_exceeded,
-            monthly_usage: format!("{monthly_usage:.6}"),
-            monthly_limit: limit_monthly.map(|l| format!("{l:.2}")),
-            monthly_exceeded,
-        })
+        UsageService::limits_on_connection(&conn, provider_id, app_type)
+            .map_err(map_core_usage_error)
     }
-}
-
-/// Provider 限额状态
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderLimitStatus {
-    pub provider_id: String,
-    pub daily_usage: String,
-    pub daily_limit: Option<String>,
-    pub daily_exceeded: bool,
-    pub monthly_usage: String,
-    pub monthly_limit: Option<String>,
-    pub monthly_exceeded: bool,
 }
 
 #[derive(Clone)]
@@ -509,12 +424,14 @@ struct PricingInfo {
 
 impl Database {
     /// Recalculate stored zero-cost usage rows once pricing becomes available.
+    #[cfg(test)]
     pub(crate) fn backfill_missing_usage_costs(&self) -> Result<u64, AppError> {
         let conn = lock_conn!(self.conn);
         Self::backfill_missing_usage_costs_on_conn(&conn, None)
     }
 
     /// 仅回填指定 model_id 相关的零成本行；用于单条定价更新后的精准回填。
+    #[cfg(test)]
     pub(crate) fn backfill_missing_usage_costs_for_model(
         &self,
         model_id: &str,
@@ -744,6 +661,7 @@ impl Database {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn find_model_pricing(conn: &Connection, model_id: &str) -> Option<ModelPricing> {
     find_model_pricing_row(conn, model_id)
         .ok()
