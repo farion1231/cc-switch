@@ -303,6 +303,7 @@ export interface WebDavSyncSettings {
   baseUrl?: string;
   username?: string;
   password?: string;
+  passwordConfigured?: boolean;
   remoteRoot?: string;
   profile?: string;
   status?: WebDavSyncStatus;

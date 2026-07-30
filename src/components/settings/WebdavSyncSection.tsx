@@ -147,6 +147,8 @@ const S3_PRESETS: S3Preset[] = [
   },
 ];
 
+const SAVED_PASSWORD_PLACEHOLDER = "••••••••";
+
 /** Format an RFC 3339 date string for display; falls back to raw string. */
 function formatDate(rfc3339: string): string {
   const d = new Date(rfc3339);
@@ -155,20 +157,6 @@ function formatDate(rfc3339: string): string {
 
 function formatDbCompatVersion(version?: number | null): string | null {
   return typeof version === "number" ? `db-v${version}` : null;
-}
-
-function buildPasswordPreservationKey(values: {
-  baseUrl?: string | null;
-  username?: string | null;
-  remoteRoot?: string | null;
-  profile?: string | null;
-}) {
-  return JSON.stringify({
-    baseUrl: values.baseUrl ?? "",
-    username: values.username ?? "",
-    remoteRoot: values.remoteRoot ?? "cc-switch-sync",
-    profile: values.profile ?? "default",
-  });
 }
 
 // ─── Types ──────────────────────────────────────────────────
@@ -244,10 +232,6 @@ export function WebdavSyncSection({
   const [passwordTouched, setPasswordTouched] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const justSavedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingPasswordPreservationRef = useRef<{
-    key: string;
-    password: string;
-  } | null>(null);
 
   // ─── Sync type selector ────────────────────────────────────
   const [syncType, setSyncType] = useState<SyncType>(() =>
@@ -309,6 +293,8 @@ export function WebdavSyncSection({
   );
 
   const activePreset = WEBDAV_PRESETS.find((p) => p.id === presetId);
+  const showSavedPasswordPlaceholder =
+    !!config?.passwordConfigured && !passwordTouched && !form.password;
 
   // Confirmation dialog state
   const [dialogType, setDialogType] = useState<DialogType>(null);
@@ -337,36 +323,13 @@ export function WebdavSyncSection({
   // Sync form when config is loaded/updated from backend, but not while user is editing
   useEffect(() => {
     if (!config || dirty) return;
-    setForm(() => {
-      const nextBaseUrl = config.baseUrl ?? "";
-      const nextUsername = config.username ?? "";
-      const nextRemoteRoot = config.remoteRoot ?? "cc-switch-sync";
-      const nextProfile = config.profile ?? "default";
-      const nextKey = buildPasswordPreservationKey({
-        baseUrl: nextBaseUrl,
-        username: nextUsername,
-        remoteRoot: nextRemoteRoot,
-        profile: nextProfile,
-      });
-      const shouldPreserveRedactedPassword =
-        !config.password &&
-        pendingPasswordPreservationRef.current?.key === nextKey &&
-        !!pendingPasswordPreservationRef.current.password;
-
-      const nextPassword = shouldPreserveRedactedPassword
-        ? pendingPasswordPreservationRef.current!.password
-        : (config.password ?? "");
-
-      pendingPasswordPreservationRef.current = null;
-
-      return {
-        baseUrl: nextBaseUrl,
-        username: nextUsername,
-        password: nextPassword,
-        remoteRoot: nextRemoteRoot,
-        profile: nextProfile,
-        autoSync: config.autoSync ?? false,
-      };
+    setForm({
+      baseUrl: config.baseUrl ?? "",
+      username: config.username ?? "",
+      password: config.password ?? "",
+      remoteRoot: config.remoteRoot ?? "cc-switch-sync",
+      profile: config.profile ?? "default",
+      autoSync: config.autoSync ?? false,
     });
     setPasswordTouched(false);
     setPresetId(detectPreset(config.baseUrl ?? ""));
@@ -497,12 +460,6 @@ export function WebdavSyncSection({
       return;
     }
     setActionState("saving");
-    pendingPasswordPreservationRef.current = form.password
-      ? {
-          key: buildPasswordPreservationKey(settings),
-          password: form.password,
-        }
-      : null;
     try {
       await settingsApi.webdavSyncSaveSettings(settings, passwordTouched);
       setDirty(false);
@@ -516,7 +473,6 @@ export function WebdavSyncSection({
       }, 2000);
       await queryClient.invalidateQueries();
     } catch (error) {
-      pendingPasswordPreservationRef.current = null;
       toast.error(
         t("settings.webdavSync.saveFailed", {
           error: (error as Error)?.message ?? String(error),
@@ -1057,7 +1013,11 @@ export function WebdavSyncSection({
                 type="password"
                 value={form.password}
                 onChange={(e) => updateField("password", e.target.value)}
-                placeholder={t("settings.webdavSync.passwordPlaceholder")}
+                placeholder={
+                  showSavedPasswordPlaceholder
+                    ? SAVED_PASSWORD_PLACEHOLDER
+                    : t("settings.webdavSync.passwordPlaceholder")
+                }
                 className="text-xs flex-1"
                 autoComplete="off"
                 disabled={isLoading}
