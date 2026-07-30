@@ -45,6 +45,7 @@ interface ProviderCardProps {
   isOmo?: boolean;
   isOmoSlim?: boolean;
   onSwitch: (provider: Provider) => void;
+  onStopUsing?: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onRemoveFromConfig?: (provider: Provider) => void;
@@ -144,6 +145,7 @@ export function ProviderCard({
   isOmo = false,
   isOmoSlim = false,
   onSwitch,
+  onStopUsing,
   onEdit,
   onDelete,
   onRemoveFromConfig,
@@ -567,6 +569,7 @@ export function ProviderCard({
               isReadOnly={isHermesReadOnly}
               isOmo={isAnyOmo}
               onSwitch={() => onSwitch(provider)}
+              onStopUsing={onStopUsing ? () => onStopUsing(provider) : undefined}
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
               onTest={
