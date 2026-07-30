@@ -9,6 +9,7 @@ use cc_switch_protocol::protocol::{
 use serde_json::{json, Value};
 
 fn provider(id: &str, name: &str) -> ProviderRecord {
+    // 进程级 fixture 使用完整 Provider DTO，确保 Agent 的 JSON 边界不会遗漏桌面字段。
     ProviderRecord {
         id: id.to_string(),
         name: name.to_string(),
@@ -23,7 +24,10 @@ fn provider(id: &str, name: &str) -> ProviderRecord {
         created_at: None,
         sort_index: None,
         notes: None,
+        icon: None,
+        icon_color: None,
         meta: None,
+        in_failover_queue: false,
     }
 }
 

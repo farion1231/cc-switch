@@ -2,6 +2,7 @@ use cc_switch_core::{HeadlessState, ProviderRecord, ProviderService, ProviderSor
 use serde_json::json;
 
 fn provider(id: &str, name: &str, token: &str) -> ProviderRecord {
+    // 测试构造器显式覆盖完整 DTO，字段扩展时这里会促使 CRUD 回归同步更新。
     ProviderRecord {
         id: id.to_string(),
         name: name.to_string(),
@@ -16,7 +17,10 @@ fn provider(id: &str, name: &str, token: &str) -> ProviderRecord {
         created_at: None,
         sort_index: None,
         notes: None,
+        icon: None,
+        icon_color: None,
         meta: None,
+        in_failover_queue: false,
     }
 }
 
