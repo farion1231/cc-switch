@@ -733,6 +733,36 @@ export function DeepLinkImportDialog() {
                           </div>
                         )}
 
+                      {/* Usage Access Token (if present) */}
+                      {request.usageAccessToken && (
+                        <div className="grid grid-cols-3 items-center gap-4">
+                          <div className="font-medium text-sm text-muted-foreground">
+                            {t("deeplink.usageAccessToken", {
+                              defaultValue: "用量访问令牌",
+                            })}
+                          </div>
+                          <div className="col-span-2 text-sm font-mono text-muted-foreground">
+                            {request.usageAccessToken.length > 4
+                              ? `${request.usageAccessToken.substring(0, 4)}${"*".repeat(12)}`
+                              : "****"}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Usage User ID (if present) */}
+                      {request.usageUserId && (
+                        <div className="grid grid-cols-3 items-center gap-4">
+                          <div className="font-medium text-sm text-muted-foreground">
+                            {t("deeplink.usageUserId", {
+                              defaultValue: "用量用户 ID",
+                            })}
+                          </div>
+                          <div className="col-span-2 text-sm font-mono break-all">
+                            {request.usageUserId}
+                          </div>
+                        </div>
+                      )}
+
                       {/* Auto Query Interval */}
                       {request.usageAutoInterval &&
                         request.usageAutoInterval > 0 && (
