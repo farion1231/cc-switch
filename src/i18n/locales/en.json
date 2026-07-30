@@ -998,7 +998,7 @@
   },
   "providerForm": {
     "subscriptionPassthroughLabel": "Claude subscription passthrough",
-    "subscriptionPassthroughHint": "When enabled, model roles left empty above use your Claude subscription quota directly: requests are passed through to the official API with Claude Code's own subscription login, and CC Switch never touches the credentials. Requires proxy takeover and an active subscription login in Claude Code. If the default fallback model is set, every request still goes to this provider.",
+    "subscriptionPassthroughHint": "When enabled, model roles left empty below use your Claude subscription quota directly: requests are passed through to the official API with Claude Code's own subscription login, and CC Switch never touches the credentials. Requires proxy takeover and an active subscription login in Claude Code. If the default fallback model is set, every request still goes to this provider.",
     "supplierName": "Provider Name",
     "supplierNameRequired": "Provider Name *",
     "supplierNamePlaceholder": "e.g., Anthropic Official",

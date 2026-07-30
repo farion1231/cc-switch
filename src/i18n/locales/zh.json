@@ -998,7 +998,7 @@
   },
   "providerForm": {
     "subscriptionPassthroughLabel": "Claude 订阅透传",
-    "subscriptionPassthroughHint": "开启后，上方未填写模型的角色直接使用 Claude 订阅额度：请求透传官方接口并保留 Claude Code 自带的订阅登录，CC Switch 不经手凭据。需开启本地代理接管，且已在 Claude Code 登录订阅。填写了默认兜底模型时所有请求仍会命中该供应商。",
+    "subscriptionPassthroughHint": "开启后，下方未填写模型的角色直接使用 Claude 订阅额度：请求透传官方接口并保留 Claude Code 自带的订阅登录，CC Switch 不经手凭据。需开启本地代理接管，且已在 Claude Code 登录订阅。填写了默认兜底模型时所有请求仍会命中该供应商。",
     "supplierName": "供应商名称",
     "supplierNameRequired": "供应商名称 *",
     "supplierNamePlaceholder": "例如：Anthropic 官方",

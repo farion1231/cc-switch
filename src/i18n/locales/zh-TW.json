@@ -969,7 +969,7 @@
   },
   "providerForm": {
     "subscriptionPassthroughLabel": "Claude 訂閱透傳",
-    "subscriptionPassthroughHint": "開啟後，上方未填寫模型的角色直接使用 Claude 訂閱額度：請求透傳官方介面並保留 Claude Code 自帶的訂閱登入，CC Switch 不經手憑證。需開啟代理接管，且已在 Claude Code 登入訂閱。填寫了備用模型時所有請求仍會命中該供應商。",
+    "subscriptionPassthroughHint": "開啟後，下方未填寫模型的角色直接使用 Claude 訂閱額度：請求透傳官方介面並保留 Claude Code 自帶的訂閱登入，CC Switch 不經手憑證。需開啟代理接管，且已在 Claude Code 登入訂閱。填寫了備用模型時所有請求仍會命中該供應商。",
     "supplierName": "供應商名稱",
     "supplierNameRequired": "供應商名稱 *",
     "supplierNamePlaceholder": "例如：Anthropic 官方",

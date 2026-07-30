@@ -243,6 +243,7 @@ export function ClaudeFormFields({
     defaultOpusModel ||
     defaultFableModel ||
     subagentModel ||
+    claudeSubscriptionPassthrough ||
     (!isXaiOauthPreset && apiFormat !== "anthropic") ||
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
     customUserAgent ||
@@ -974,6 +975,29 @@ export function ClaudeFormFields({
               <p className="text-xs text-muted-foreground">
                 {t("providerForm.modelMappingHint")}
               </p>
+
+              {onClaudeSubscriptionPassthroughChange && (
+                <div className="space-y-2 pt-2">
+                  <div className="flex items-center justify-between gap-4">
+                    <FormLabel htmlFor="claude-subscription-passthrough">
+                      {t("providerForm.subscriptionPassthroughLabel", {
+                        defaultValue: "Claude 订阅透传",
+                      })}
+                    </FormLabel>
+                    <Switch
+                      id="claude-subscription-passthrough"
+                      checked={claudeSubscriptionPassthrough ?? false}
+                      onCheckedChange={onClaudeSubscriptionPassthroughChange}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {t("providerForm.subscriptionPassthroughHint", {
+                      defaultValue:
+                        "开启后，下方未填写模型的角色直接使用 Claude 订阅额度：请求透传官方接口并保留 Claude Code 自带的订阅登录，CC Switch 不经手凭据。需开启本地代理接管，且已在 Claude Code 登录订阅。填写了默认兜底模型时所有请求仍会命中该供应商。",
+                    })}
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="space-y-3">
@@ -1110,29 +1134,6 @@ export function ClaudeFormFields({
                 })}
               </p>
             </div>
-
-            {onClaudeSubscriptionPassthroughChange && (
-              <div className="space-y-2 border-t pt-4">
-                <div className="flex items-center justify-between gap-4">
-                  <FormLabel htmlFor="claude-subscription-passthrough">
-                    {t("providerForm.subscriptionPassthroughLabel", {
-                      defaultValue: "Claude 订阅透传",
-                    })}
-                  </FormLabel>
-                  <Switch
-                    id="claude-subscription-passthrough"
-                    checked={claudeSubscriptionPassthrough ?? false}
-                    onCheckedChange={onClaudeSubscriptionPassthroughChange}
-                  />
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {t("providerForm.subscriptionPassthroughHint", {
-                    defaultValue:
-                      "开启后，上方未填写模型的角色直接使用 Claude 订阅额度：请求透传官方接口并保留 Claude Code 自带的订阅登录，CC Switch 不经手凭据。需开启本地代理接管，且已在 Claude Code 登录订阅。填写了默认兜底模型时所有请求仍会命中该供应商。",
-                  })}
-                </p>
-              </div>
-            )}
 
             <CustomUserAgentField
               id="claude-custom-user-agent"
