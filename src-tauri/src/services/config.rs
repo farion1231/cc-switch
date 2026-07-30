@@ -135,6 +135,9 @@ impl ConfigService {
                 // OpenClaw uses additive mode, no live sync needed
                 // OpenClaw providers are managed directly in the config file
             }
+            AppType::KimiCode => {
+                // Additive: providers already merged on write/switch
+            }
             AppType::Hermes => {
                 // Hermes uses additive mode, no live sync needed
             }

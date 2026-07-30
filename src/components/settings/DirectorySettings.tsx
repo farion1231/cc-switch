@@ -21,6 +21,7 @@ interface DirectorySettingsProps {
   opencodeDir?: string;
   openclawDir?: string;
   hermesDir?: string;
+  kimicodeDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -39,6 +40,7 @@ export function DirectorySettings({
   opencodeDir,
   openclawDir,
   hermesDir,
+  kimicodeDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -170,6 +172,17 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("hermes", val)}
           onBrowse={() => onBrowseDirectory("hermes")}
           onReset={() => onResetDirectory("hermes")}
+        />
+
+        <DirectoryInput
+          label={t("settings.kimiCodeConfigDir")}
+          description={undefined}
+          value={kimicodeDir}
+          resolvedValue={resolvedDirs.kimicode}
+          placeholder={t("settings.browsePlaceholderKimiCode")}
+          onChange={(val) => onDirectoryChange("kimicode", val)}
+          onBrowse={() => onBrowseDirectory("kimicode")}
+          onReset={() => onResetDirectory("kimicode")}
         />
       </section>
     </div>

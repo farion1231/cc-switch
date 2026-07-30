@@ -181,6 +181,18 @@ impl StreamCheckService {
             }
             AppType::OpenClaw => Self::extract_openclaw_base_url(provider),
             AppType::Hermes => Self::extract_hermes_base_url(provider),
+            AppType::KimiCode => {
+                let (base_url, _) = provider.resolve_usage_credentials(&AppType::KimiCode);
+                if base_url.trim().is_empty() {
+                    Err(AppError::localized(
+                        "provider.kimicode.base_url.missing",
+                        "Kimi Code 供应商缺少 base_url",
+                        "Kimi Code provider is missing base_url",
+                    ))
+                } else {
+                    Ok(base_url)
+                }
+            }
             AppType::ClaudeDesktop => ClaudeAdapter::new()
                 .extract_base_url(provider)
                 .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}"))),

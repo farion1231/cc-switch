@@ -944,6 +944,12 @@ pub fn get_opencode_live_provider_ids() -> Result<Vec<String>, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Get provider ids present in Kimi Code live config.toml.
+#[tauri::command]
+pub fn get_kimi_code_live_provider_ids() -> Result<Vec<String>, String> {
+    crate::kimi_code_config::list_live_provider_ids().map_err(|e| e.to_string())
+}
+
 // ============================================================================
 // OpenClaw 专属命令 → 已迁移至 commands/openclaw.rs
 // ============================================================================

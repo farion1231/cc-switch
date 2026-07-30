@@ -15,6 +15,14 @@ import {
   GROKBUILD_OFFICIAL_PROVIDER_ID,
 } from "@/utils/providerCapabilities";
 
+async function invalidateKimiCodeProviderCaches(
+  queryClient: ReturnType<typeof useQueryClient>,
+) {
+  await queryClient.invalidateQueries({
+    queryKey: ["kimicodeLiveProviderIds"],
+  });
+}
+
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
@@ -70,7 +78,14 @@ export const useAddProviderMutation = (appId: AppId) => {
 
       let id: string;
 
-      if (appId === "opencode" || appId === "openclaw" || appId === "hermes") {
+      // Kimi Code fragments key live TOML by provider id; the DB row id must match
+      // the entered providerKey (same pattern as OpenCode/OpenClaw/Hermes).
+      if (
+        appId === "opencode" ||
+        appId === "openclaw" ||
+        appId === "hermes" ||
+        appId === "kimicode"
+      ) {
         if (
           providerInput.category === "omo" ||
           providerInput.category === "omo-slim"
@@ -123,6 +138,10 @@ export const useAddProviderMutation = (appId: AppId) => {
 
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
+      }
+
+      if (appId === "kimicode") {
+        await invalidateKimiCodeProviderCaches(queryClient);
       }
 
       try {
@@ -188,6 +207,9 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
+      if (appId === "kimicode") {
+        await invalidateKimiCodeProviderCaches(queryClient);
+      }
       toast.success(
         t("notifications.updateSuccess", {
           defaultValue: "供应商更新成功",
@@ -243,6 +265,10 @@ export const useDeleteProviderMutation = (appId: AppId) => {
 
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
+      }
+
+      if (appId === "kimicode") {
+        await invalidateKimiCodeProviderCaches(queryClient);
       }
 
       try {
@@ -317,6 +343,9 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       }
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
+      }
+      if (appId === "kimicode") {
+        await invalidateKimiCodeProviderCaches(queryClient);
       }
 
       try {
