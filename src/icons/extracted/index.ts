@@ -3,6 +3,7 @@
 
 import _a6api from "./a6-icon.png";
 import _apikeyfun from "./apikeyfun.png";
+import _arcrouter from "./arcrouter.svg?url";
 import _apinebula from "./apinebula_icon.png";
 import _atlascloud from "./atlascloud_icon.png";
 import _claudeapi from "./ClaudeApi.png";
@@ -107,6 +108,7 @@ export const iconUrls: Record<string, string> = {
   a6api: _a6api,
   apikeyfun: _apikeyfun,
   apinebula: _apinebula,
+  arcrouter: _arcrouter,
   atlascloud: _atlascloud,
   byteplus: _byteplus,
   ccsub: _ccsub,
