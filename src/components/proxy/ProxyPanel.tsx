@@ -9,6 +9,7 @@ import {
   Loader2,
   Zap,
   Power,
+  ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -34,6 +35,8 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 interface ProxyPanelProps {
   enableLocalProxy: boolean;
   onEnableLocalProxyChange: (checked: boolean) => void;
+  interceptClaudeDesktopStartupProbe: boolean;
+  onInterceptClaudeDesktopStartupProbeChange: (checked: boolean) => void;
   onToggleProxy: (checked: boolean) => Promise<void>;
   isProxyPending: boolean;
 }
@@ -41,6 +44,8 @@ interface ProxyPanelProps {
 export function ProxyPanel({
   enableLocalProxy,
   onEnableLocalProxyChange,
+  interceptClaudeDesktopStartupProbe,
+  onInterceptClaudeDesktopStartupProbeChange,
   onToggleProxy,
   isProxyPending,
 }: ProxyPanelProps) {
@@ -256,6 +261,18 @@ export function ProxyPanel({
             disabled={isProxyPending}
           />
         </div>
+
+        <ToggleRow
+          icon={<ShieldCheck className="h-4 w-4 text-blue-500" />}
+          title={t(
+            "settings.advanced.proxy.interceptClaudeDesktopStartupProbe",
+          )}
+          description={t(
+            "settings.advanced.proxy.interceptClaudeDesktopStartupProbeDescription",
+          )}
+          checked={interceptClaudeDesktopStartupProbe}
+          onCheckedChange={onInterceptClaudeDesktopStartupProbeChange}
+        />
 
         {/* [3] App takeover switches — animated, visible only when proxy is running */}
         <AnimatePresence>

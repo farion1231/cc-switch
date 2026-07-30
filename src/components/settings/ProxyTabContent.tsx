@@ -125,6 +125,12 @@ export function ProxyTabContent({
               onEnableLocalProxyChange={(checked) =>
                 onAutoSave({ enableLocalProxy: checked })
               }
+              interceptClaudeDesktopStartupProbe={
+                settings?.interceptClaudeDesktopStartupProbe ?? false
+              }
+              onInterceptClaudeDesktopStartupProbeChange={(checked) =>
+                onAutoSave({ interceptClaudeDesktopStartupProbe: checked })
+              }
               onToggleProxy={handleToggleProxy}
               isProxyPending={isProxyPending}
             />

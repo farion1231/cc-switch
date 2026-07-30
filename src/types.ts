@@ -358,6 +358,8 @@ export interface Settings {
   silentStartup?: boolean;
   // 是否启用主页面本地代理功能（默认关闭）
   enableLocalProxy?: boolean;
+  // 在本机响应 Claude Desktop 的固定启动探针，不转发给供应商
+  interceptClaudeDesktopStartupProbe?: boolean;
   // User has confirmed the local proxy first-run notice
   proxyConfirmed?: boolean;
   // User has confirmed the usage query first-run notice
