@@ -81,6 +81,9 @@ impl CoreError {
             Self::Schema(_) => "DATABASE_INCOMPATIBLE",
             Self::Database(_) => "DATABASE_ERROR",
             Self::Json(_) => "SERIALIZATION_ERROR",
+            Self::Io { source, .. } if source.kind() == std::io::ErrorKind::PermissionDenied => {
+                "REMOTE_PERMISSION_DENIED"
+            }
             Self::Io { .. } => "IO_ERROR",
         }
     }

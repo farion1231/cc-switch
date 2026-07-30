@@ -6,6 +6,33 @@ use super::models::{RemoteConnectionStatus, RemoteRuntimeSnapshot, RemoteTargetC
 use super::ssh::{preflight, OpenSshSession, RemotePlatform, RemoteSshError};
 use super::target_store::{RemoteTargetStore, TargetStoreError};
 
+/// 跨 Core、Agent、SSH 客户端与 runtime generation 的公开错误契约。
+///
+/// 前端可按这些 code 决定重试、重新连接或提示修复权限；维护时新增跨进程错误码必须先登记，
+/// 禁止退回解析本地化 message 的脆弱做法。
+pub const DOCUMENTED_REMOTE_ERROR_CODES: &[&str] = &[
+    "AUTH_FAILED",
+    "CAPABILITY_UNAVAILABLE",
+    "COMMAND_NOT_EXPOSED",
+    "DATABASE_BUSY",
+    "DATABASE_INCOMPATIBLE",
+    "INVALID_ARGUMENT",
+    "LIVE_WRITE_FAILED",
+    "PROVIDER_NOT_FOUND",
+    "REMOTE_BUSINESS_ERROR",
+    "REMOTE_CONNECTION_ERROR",
+    "REMOTE_OFFLINE",
+    "REMOTE_OPERATION_CANCELLED",
+    "REMOTE_OPERATION_TIMEOUT",
+    "REMOTE_PERMISSION_DENIED",
+    "REMOTE_UNREACHABLE",
+    "STALE_RUNTIME",
+];
+
+pub fn documented_error_codes() -> &'static [&'static str] {
+    DOCUMENTED_REMOTE_ERROR_CODES
+}
+
 trait RuntimeCommandSession: Send + Sync {
     fn invoke(
         &self,
