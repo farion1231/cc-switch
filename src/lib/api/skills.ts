@@ -22,6 +22,7 @@ export interface SkillApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  codefree?: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */
