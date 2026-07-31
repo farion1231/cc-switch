@@ -110,7 +110,7 @@ fn grokbuild_import_and_switch_write_live_config() {
 }
 
 #[test]
-fn pi_default_import_preserves_live_provider_identity() {
+fn pi_default_import_reads_the_full_registry_and_maps_the_current_provider() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
     let home = ensure_test_home();
@@ -122,15 +122,28 @@ fn pi_default_import_preserves_live_provider_identity() {
             "providers": {
                 "packy": {
                     "baseURL": "https://api.packy.example/v1",
-                    "apiKey": "sk-packy",
                     "api": "openai-completions",
                     "models": [{ "id": "gpt-5.5", "name": "GPT 5.5" }]
+                },
+                "secondary": {
+                    "baseUrl": "https://secondary.example/v1",
+                    "api": "extension-owned-api",
+                    "models": [{ "id": "secondary-model" }]
                 }
             }
         }))
         .expect("serialize Pi models"),
     )
     .expect("seed Pi models.json");
+    std::fs::write(
+        pi_dir.join("auth.json"),
+        serde_json::to_string_pretty(&json!({
+            "packy": { "type": "api_key", "key": "sk-packy" },
+            "secondary": { "type": "api_key", "key": "sk-secondary" }
+        }))
+        .expect("serialize Pi auth"),
+    )
+    .expect("seed Pi auth.json");
     std::fs::write(
         pi_dir.join("settings.json"),
         serde_json::to_string_pretty(&json!({
@@ -156,6 +169,10 @@ fn pi_default_import_preserves_live_provider_identity() {
         "the imported provider should keep Pi's defaultProvider id"
     );
     assert!(
+        providers.contains_key("secondary"),
+        "Pi import must include non-default providers"
+    );
+    assert!(
         !providers.contains_key("default"),
         "Pi import must not invent a replacement provider id"
     );
@@ -166,6 +183,25 @@ fn pi_default_import_preserves_live_provider_identity() {
             .and_then(|meta| meta.live_config_managed),
         Some(true),
         "an explicitly imported Pi provider is managed by CC Switch"
+    );
+    assert_eq!(
+        providers["packy"].settings_config.get("apiKey"),
+        Some(&json!("sk-packy"))
+    );
+    assert_eq!(
+        providers["packy"].settings_config.get("defaultModel"),
+        Some(&json!("gpt-5.5"))
+    );
+    assert_eq!(
+        providers["secondary"].settings_config.get("apiKey"),
+        Some(&json!("sk-secondary"))
+    );
+    assert!(
+        providers["secondary"]
+            .settings_config
+            .get("defaultModel")
+            .is_none(),
+        "only Pi's selected provider receives settings.json.defaultModel"
     );
     assert_eq!(
         state
@@ -205,12 +241,17 @@ fn pi_add_preserves_registry_and_switches_default_separately() {
     assert!(models.pointer("/providers/cc-switch-one").is_some());
     assert!(models.pointer("/providers/cc-switch-two").is_some());
 
-    let settings: serde_json::Value =
-        read_json_file(&pi_dir.join("settings.json")).expect("read Pi settings");
+    assert!(
+        !pi_dir.join("settings.json").exists(),
+        "adding providers must not create or change Pi defaults"
+    );
     assert_eq!(
-        settings.get("defaultProvider"),
-        Some(&json!("cc-switch-one")),
-        "adding another provider must not implicitly switch Pi"
+        state
+            .db
+            .get_current_provider(AppType::Pi.as_str())
+            .expect("read Pi current provider"),
+        None,
+        "adding providers must not select a CC Switch current item"
     );
 
     switch_provider_test_hook(&state, AppType::Pi, "cc-switch-two").expect("switch Pi provider");
@@ -259,9 +300,23 @@ fn pi_delete_removes_only_managed_inactive_provider() {
         read_json_file(&home.join(".pi/agent/models.json")).expect("read Pi models");
     assert!(models.pointer("/providers/cc-switch-one").is_none());
     assert!(models.pointer("/providers/cc-switch-two").is_some());
+    let auth: serde_json::Value =
+        read_json_file(&home.join(".pi/agent/auth.json")).expect("read Pi auth");
+    assert!(auth.get("cc-switch-one").is_none());
+    assert_eq!(
+        auth.pointer("/cc-switch-two/key"),
+        Some(&json!("sk-cc-switch-two"))
+    );
 
     ProviderService::delete(&state, AppType::Pi, "cc-switch-two")
         .expect_err("active Pi provider deletion must be blocked");
+    let auth: serde_json::Value =
+        read_json_file(&home.join(".pi/agent/auth.json")).expect("re-read Pi auth");
+    assert_eq!(
+        auth.pointer("/cc-switch-two/key"),
+        Some(&json!("sk-cc-switch-two")),
+        "failed deletion must preserve the active provider credential"
+    );
 }
 
 #[test]

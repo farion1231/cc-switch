@@ -70,7 +70,7 @@ fn writes_provider_and_defaults_without_clobbering_existing_pi_config() {
     "existing": {
       "baseURL": "https://existing.example/v1",
       "apiKey": "keep",
-      "models": ["existing-model"]
+      "models": [{ "id": "existing-model" }]
     }
   },
   "metadata": {
@@ -146,6 +146,30 @@ fn writes_provider_and_defaults_without_clobbering_existing_pi_config() {
         models.pointer("/providers/packy/defaultModel").is_none(),
         "defaultModel is a settings.json concern and should not be written into provider config"
     );
+    assert!(
+        models.pointer("/providers/packy/apiKey").is_none(),
+        "managed API keys must not be written inline"
+    );
+
+    let auth: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(pi_dir.join("auth.json")).unwrap()).unwrap();
+    assert_eq!(
+        auth.pointer("/packy"),
+        Some(&json!({ "type": "api_key", "key": "sk-packy" }))
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(pi_dir.join("auth.json"))
+                .expect("auth metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600,
+            "new auth.json must be private"
+        );
+    }
 
     let settings: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(pi_dir.join("settings.json")).unwrap()).unwrap();
@@ -217,7 +241,7 @@ fn read_live_settings_returns_current_provider_fragment() {
       "baseURL": "https://api.packy.example/v1",
       "apiKey": "sk-packy",
       "api": "openai-completions",
-      "models": ["gpt-5.5"]
+      "models": [{ "id": "gpt-5.5" }]
     }
   }
 }"#,
@@ -243,7 +267,171 @@ fn read_live_settings_returns_current_provider_fragment() {
     assert_eq!(
         settings.pointer("/providerConfig/models/0/id"),
         Some(&json!("gpt-5.5")),
-        "model ids should be converted into the CC Switch form shape"
+        "model ids should retain the CC Switch form shape"
+    );
+    assert_eq!(
+        settings.pointer("/providerConfig/apiKey"),
+        Some(&json!("sk-packy")),
+        "legacy inline keys remain readable until a managed update migrates them"
+    );
+}
+
+#[test]
+#[serial]
+fn managed_update_migrates_a_legacy_inline_key_to_auth_json() {
+    let home = TempHome::new();
+    let pi_dir = home.dir.path().join(".pi").join("agent");
+    fs::create_dir_all(&pi_dir).expect("create pi config dir");
+    fs::write(
+        pi_dir.join("models.json"),
+        r#"// keep this file comment
+{
+  "providers": {
+    "packy": {
+      "baseUrl": "https://api.packy.example/v1",
+      "apiKey": "legacy-inline",
+      "api": "openai-completions",
+      "models": [{ "id": "gpt-5.5" }],
+    },
+  },
+}
+"#,
+    )
+    .expect("seed models");
+    fs::write(
+        pi_dir.join("settings.json"),
+        r#"{"defaultProvider":"packy","defaultModel":"gpt-5.5"}"#,
+    )
+    .expect("seed settings");
+
+    let live = cc_switch_lib::pi_config::read_pi_live_settings().expect("read legacy provider");
+    let provider = cc_switch_lib::Provider::with_id(
+        "packy".to_string(),
+        "Packy".to_string(),
+        live["providerConfig"].clone(),
+        None,
+    );
+    cc_switch_lib::pi_config::upsert_pi_live_provider(&provider, true).expect("migrate legacy key");
+
+    let models_text = fs::read_to_string(pi_dir.join("models.json")).expect("read models");
+    assert!(models_text.contains("// keep this file comment"));
+    let models = cc_switch_lib::pi_config::read_pi_live_settings().expect("re-read provider");
+    assert_eq!(
+        models.pointer("/providerConfig/apiKey"),
+        Some(&json!("legacy-inline")),
+        "the migrated auth key remains available to the form"
+    );
+    let raw_models = fs::read_to_string(pi_dir.join("models.json")).expect("read raw models");
+    assert!(
+        !raw_models.contains("\"apiKey\""),
+        "the managed provider must no longer contain an inline key"
+    );
+    let auth: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(pi_dir.join("auth.json")).unwrap()).unwrap();
+    assert_eq!(
+        auth.pointer("/packy"),
+        Some(&json!({ "type": "api_key", "key": "legacy-inline" }))
+    );
+}
+
+#[test]
+#[serial]
+fn pi_directory_override_takes_priority_over_environment_and_default() {
+    struct ResetSettings;
+    impl Drop for ResetSettings {
+        fn drop(&mut self) {
+            let _ = cc_switch_lib::update_settings(cc_switch_lib::AppSettings::default());
+        }
+    }
+
+    let home = TempHome::new();
+    let _reset_settings = ResetSettings;
+    let env_dir = home.dir.path().join("pi-from-env");
+    std::env::set_var("PI_CODING_AGENT_DIR", &env_dir);
+    assert_eq!(cc_switch_lib::pi_config::get_pi_dir(), env_dir);
+
+    let override_dir = home.dir.path().join("pi-from-settings");
+    cc_switch_lib::update_settings(cc_switch_lib::AppSettings {
+        pi_config_dir: Some(override_dir.to_string_lossy().to_string()),
+        ..Default::default()
+    })
+    .expect("set Pi directory override");
+    assert_eq!(
+        cc_switch_lib::pi_config::get_pi_dir(),
+        override_dir,
+        "the explicit CC Switch directory must win over PI_CODING_AGENT_DIR"
+    );
+
+    cc_switch_lib::update_settings(cc_switch_lib::AppSettings::default())
+        .expect("clear Pi directory override");
+    std::env::remove_var("PI_CODING_AGENT_DIR");
+    assert_eq!(
+        cc_switch_lib::pi_config::get_pi_dir(),
+        home.dir.path().join(".pi").join("agent")
+    );
+}
+
+#[test]
+#[serial]
+fn auth_json_api_key_takes_priority_and_oauth_is_never_overwritten() {
+    let home = TempHome::new();
+    let pi_dir = home.dir.path().join(".pi").join("agent");
+    fs::create_dir_all(&pi_dir).expect("create pi config dir");
+    fs::write(
+        pi_dir.join("models.json"),
+        r#"{
+  "providers": {
+    "packy": {
+      "baseUrl": "https://api.packy.example/v1",
+      "apiKey": "legacy-inline",
+      "api": "openai-completions",
+      "models": [{ "id": "gpt-5.5" }]
+    }
+  }
+}"#,
+    )
+    .expect("seed models");
+    fs::write(
+        pi_dir.join("auth.json"),
+        r#"{
+  "packy": {
+    "type": "oauth",
+    "accessToken": "keep-oauth"
+  }
+}"#,
+    )
+    .expect("seed auth");
+    fs::write(
+        pi_dir.join("settings.json"),
+        r#"{"defaultProvider":"packy","defaultModel":"gpt-5.5"}"#,
+    )
+    .expect("seed settings");
+
+    let live = cc_switch_lib::pi_config::read_pi_live_settings().expect("read OAuth provider");
+    assert_eq!(
+        live.pointer("/providerConfig/apiKey"),
+        Some(&json!("legacy-inline")),
+        "non-api-key auth entries must not be exposed as API keys"
+    );
+    let mut provider = cc_switch_lib::Provider::with_id(
+        "packy".to_string(),
+        "Packy".to_string(),
+        live["providerConfig"].clone(),
+        None,
+    );
+    provider.settings_config["apiKey"] = json!("new-key");
+    let error = cc_switch_lib::pi_config::write_pi_live_provider(&provider)
+        .expect_err("OAuth must not be overwritten");
+    assert!(error.to_string().contains("will not overwrite"));
+
+    provider.settings_config["apiKey"] = json!("");
+    cc_switch_lib::pi_config::write_pi_live_provider(&provider)
+        .expect("an empty key preserves OAuth while updating models");
+    let auth: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(pi_dir.join("auth.json")).unwrap()).unwrap();
+    assert_eq!(
+        auth.pointer("/packy/accessToken"),
+        Some(&json!("keep-oauth"))
     );
 }
 

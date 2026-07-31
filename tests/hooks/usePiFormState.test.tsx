@@ -13,7 +13,7 @@ const PI_CONFIG_B = JSON.stringify({
   baseURL: "https://b.example/v1",
   apiKey: "$PI_KEY",
   api: "google-generative-ai",
-  models: ["gemma-4"],
+  models: [{ id: "gemma-4" }],
   defaultModel: "gemma-4",
 });
 
