@@ -344,8 +344,7 @@ fn save_pending_entry(
     entry: &PendingEntry,
 ) -> Result<(), AppError> {
     let reason_json = serde_json::to_string(&entry.reason)
-        .map_err(|error| AppError::Config(format!("序列化 Codex pending 状态失败: {error}")))?;
-    let child_size = i64::try_from(entry.size).unwrap_or(i64::MAX);
+        .map_err(|source| AppError::JsonSerialize { source })?;
     let updated_at = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|duration| duration.as_secs() as i64)
