@@ -26,6 +26,7 @@ use crate::services::usage_stats::{
 };
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -34,6 +35,8 @@ use std::os::unix::fs::MetadataExt;
 #[cfg(windows)]
 use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 #[cfg(windows)]
@@ -42,6 +45,10 @@ use windows_sys::Win32::Storage::FileSystem::{
 };
 
 const CODEX_THREAD_REQUEST_ID_PREFIX: &str = "codex_session:thread-v1";
+const CODEX_JSONL_BUFFER_CAPACITY: usize = 256 * 1024;
+
+#[cfg(test)]
+static CODEX_FILE_PARSE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// 累计 token 用量（跟踪 total_token_usage 字段）
 #[derive(Debug, Clone, Default)]
@@ -86,7 +93,7 @@ struct TimestampedTokenSignature {
     signature: TokenUsageSignature,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 struct ParentFileStamp {
     modified_nanos: i64,
     size: u64,
@@ -98,6 +105,24 @@ struct ParentFileStamp {
     volume_serial: u64,
     #[cfg(windows)]
     file_id: [u8; 16],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ParentDependency {
+    path: String,
+    stamp: Option<ParentFileStamp>,
+}
+
+impl ParentDependency {
+    fn snapshot(path: &Path) -> Self {
+        let stamp = fs::File::open(path)
+            .ok()
+            .and_then(|file| ParentFileStamp::from_file(&file));
+        Self {
+            path: path.to_string_lossy().to_string(),
+            stamp,
+        }
+    }
 }
 
 impl ParentFileStamp {
@@ -151,21 +176,23 @@ impl ParentTokenTimeline {
         &self,
         parent_path: &Path,
         cutoff: DateTime<Utc>,
-    ) -> Result<Vec<TokenUsageSignature>, String> {
+        allow_behind_cutoff: bool,
+    ) -> Result<Vec<TokenUsageSignature>, ParentTimelineError> {
         if self.has_token_without_timestamp {
-            return Err(format!(
+            return Err(ParentTimelineError::Invalid(format!(
                 "父 rollout {} 的 token_count 缺少有效 timestamp",
                 parent_path.display()
-            ));
+            )));
         }
-        if self
-            .max_timestamp
-            .is_none_or(|timestamp| timestamp < cutoff)
+        if !allow_behind_cutoff
+            && self
+                .max_timestamp
+                .is_none_or(|timestamp| timestamp < cutoff)
         {
-            return Err(format!(
+            return Err(ParentTimelineError::BehindCutoff(format!(
                 "父 rollout {} 尚未写到 child fork 时刻",
                 parent_path.display()
-            ));
+            )));
         }
         Ok(self
             .events
@@ -174,6 +201,25 @@ impl ParentTokenTimeline {
             .map(|event| event.signature.clone())
             .collect())
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ParentTimelineError {
+    BehindCutoff(String),
+    Invalid(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParentResolveFailureKind {
+    BehindCutoff,
+    Retryable,
+}
+
+#[derive(Debug)]
+struct ParentResolveFailure {
+    kind: ParentResolveFailureKind,
+    reason: String,
+    dependencies: Vec<ParentDependency>,
 }
 
 #[derive(Debug)]
@@ -217,11 +263,20 @@ struct ParsedCodexFile {
     has_billable_tokens: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum PendingReason {
     MissingParent(String),
     Stable(String),
-    Retryable(String),
+    ParentBehindCutoff {
+        parent_id: String,
+        reason: String,
+        dependencies: Vec<ParentDependency>,
+    },
+    Retryable {
+        parent_id: String,
+        reason: String,
+        dependencies: Vec<ParentDependency>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -235,7 +290,6 @@ struct PendingEntry {
 struct CodexReplayCaches {
     parent_timelines: HashMap<PathBuf, CachedParentTimeline>,
     replay_prefixes: HashMap<PathBuf, CachedReplayPrefix>,
-    pending: HashMap<PathBuf, PendingEntry>,
 }
 
 static CODEX_REPLAY_CACHES: OnceLock<Mutex<CodexReplayCaches>> = OnceLock::new();
@@ -248,6 +302,96 @@ pub(crate) fn clear_codex_replay_caches() {
     if let Ok(mut caches) = replay_caches().lock() {
         *caches = CodexReplayCaches::default();
     }
+}
+
+fn load_pending_entry(db: &Database, file_path: &str) -> Result<Option<PendingEntry>, AppError> {
+    let conn = lock_conn!(db.conn);
+    let row = conn.query_row(
+        "SELECT child_modified, child_size, reason_json
+         FROM codex_pending_sync WHERE file_path = ?1",
+        [file_path],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        },
+    );
+    drop(conn);
+
+    match row {
+        Ok((modified, size, reason_json)) => {
+            let reason = serde_json::from_str(&reason_json).map_err(|error| {
+                AppError::Database(format!("解析 Codex pending 状态失败: {error}"))
+            })?;
+            Ok(Some(PendingEntry {
+                modified,
+                size: u64::try_from(size).unwrap_or(0),
+                reason,
+            }))
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(error) => Err(AppError::Database(format!(
+            "查询 Codex pending 状态失败: {error}"
+        ))),
+    }
+}
+
+fn save_pending_entry(
+    db: &Database,
+    file_path: &str,
+    entry: &PendingEntry,
+) -> Result<(), AppError> {
+    let reason_json = serde_json::to_string(&entry.reason)
+        .map_err(|error| AppError::Config(format!("序列化 Codex pending 状态失败: {error}")))?;
+    let child_size = i64::try_from(entry.size).unwrap_or(i64::MAX);
+    let updated_at = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0);
+    let conn = lock_conn!(db.conn);
+    conn.execute(
+        "INSERT INTO codex_pending_sync
+            (file_path, child_modified, child_size, reason_json, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(file_path) DO UPDATE SET
+            child_modified = excluded.child_modified,
+            child_size = excluded.child_size,
+            reason_json = excluded.reason_json,
+            updated_at = excluded.updated_at",
+        rusqlite::params![
+            file_path,
+            entry.modified,
+            child_size,
+            reason_json,
+            updated_at
+        ],
+    )
+    .map_err(|error| AppError::Database(format!("保存 Codex pending 状态失败: {error}")))?;
+    Ok(())
+}
+
+fn delete_pending_entry(db: &Database, file_path: &str) -> Result<(), AppError> {
+    let conn = lock_conn!(db.conn);
+    conn.execute(
+        "DELETE FROM codex_pending_sync WHERE file_path = ?1",
+        [file_path],
+    )
+    .map_err(|error| AppError::Database(format!("清理 Codex pending 状态失败: {error}")))?;
+    Ok(())
+}
+
+fn snapshot_parent_dependencies(
+    parent_id: &str,
+    rollout_index: &RolloutIndex,
+) -> Vec<ParentDependency> {
+    rollout_index
+        .get(parent_id)
+        .into_iter()
+        .flatten()
+        .map(|path| ParentDependency::snapshot(path))
+        .collect()
 }
 
 fn is_rollout_filename(file_name: &str) -> bool {
@@ -352,6 +496,10 @@ pub(crate) fn reset_codex_usage_on_conn(
             )
             .map_err(|error| AppError::Database(format!("清理 Codex 同步 cursor 失败: {error}")))?;
         }
+    }
+    if sqlite_table_exists(conn, "codex_pending_sync")? {
+        conn.execute("DELETE FROM codex_pending_sync", [])
+            .map_err(|error| AppError::Database(format!("清理 Codex pending 状态失败: {error}")))?;
     }
     Ok(())
 }
@@ -697,9 +845,11 @@ fn parse_codex_file(
     file_path: &Path,
     root_thread_id: Option<String>,
 ) -> Result<ParsedCodexFile, AppError> {
+    #[cfg(test)]
+    CODEX_FILE_PARSE_COUNT.fetch_add(1, Ordering::SeqCst);
     let file =
         fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
-    let reader = BufReader::new(file);
+    let reader = BufReader::with_capacity(CODEX_JSONL_BUFFER_CAPACITY, file);
     let mut root_meta_seen = false;
     let mut root_timestamp = None;
     let mut parent = ParentResolution::None;
@@ -873,10 +1023,21 @@ fn parse_codex_file(
 fn parent_signatures_before(
     parent_path: &Path,
     cutoff: DateTime<Utc>,
-) -> Result<Vec<TokenUsageSignature>, String> {
-    let file = fs::File::open(parent_path)
-        .map_err(|error| format!("无法打开父 rollout {}: {error}", parent_path.display()))?;
+    allow_behind_cutoff: bool,
+) -> Result<Vec<TokenUsageSignature>, ParentTimelineError> {
+    let file = fs::File::open(parent_path).map_err(|error| {
+        ParentTimelineError::Invalid(format!(
+            "无法打开父 rollout {}: {error}",
+            parent_path.display()
+        ))
+    })?;
     let stamp = ParentFileStamp::from_file(&file);
+    let file_was_closed_by_cutoff = stamp.is_some_and(|stamp| {
+        cutoff
+            .timestamp_nanos_opt()
+            .is_some_and(|cutoff_nanos| stamp.modified_nanos <= cutoff_nanos)
+    });
+    let allow_behind_cutoff = allow_behind_cutoff || file_was_closed_by_cutoff;
     let cached_timeline = stamp.and_then(|stamp| {
         replay_caches().lock().ok().and_then(|caches| {
             caches
@@ -887,7 +1048,7 @@ fn parent_signatures_before(
         })
     });
     if let Some(timeline) = cached_timeline {
-        return timeline.signatures_before(parent_path, cutoff);
+        return timeline.signatures_before(parent_path, cutoff, allow_behind_cutoff);
     }
 
     let mut events = Vec::new();
@@ -896,7 +1057,7 @@ fn parent_signatures_before(
 
     // 必须扫描完整父文件，不能在首个未来时间戳处 break：rollout 写入顺序
     // 不承诺时间戳严格单调。缓存完整时间线后，不同 child cutoff 只需内存过滤。
-    for line in BufReader::new(file).lines() {
+    for line in BufReader::with_capacity(CODEX_JSONL_BUFFER_CAPACITY, file).lines() {
         let Ok(line) = line else {
             continue;
         };
@@ -941,7 +1102,7 @@ fn parent_signatures_before(
         max_timestamp,
         has_token_without_timestamp,
     });
-    let result = timeline.signatures_before(parent_path, cutoff);
+    let result = timeline.signatures_before(parent_path, cutoff, allow_behind_cutoff);
     if let (Some(stamp), Ok(mut caches)) = (stamp, replay_caches().lock()) {
         caches.parent_timelines.insert(
             parent_path.to_path_buf(),
@@ -958,22 +1119,54 @@ fn resolve_parent_signatures(
     parent_id: &str,
     cutoff: DateTime<Utc>,
     rollout_index: &RolloutIndex,
-) -> Result<Vec<TokenUsageSignature>, String> {
+    allow_behind_cutoff: bool,
+) -> Result<Vec<TokenUsageSignature>, ParentResolveFailure> {
     let Some(candidates) = rollout_index.get(parent_id) else {
-        return Err(format!("找不到父 rollout: {parent_id}"));
+        return Err(ParentResolveFailure {
+            kind: ParentResolveFailureKind::Retryable,
+            reason: format!("找不到父 rollout: {parent_id}"),
+            dependencies: Vec::new(),
+        });
     };
+
+    let dependencies = candidates
+        .iter()
+        .map(|candidate| ParentDependency::snapshot(candidate))
+        .collect::<Vec<_>>();
 
     let mut snapshots = Vec::with_capacity(candidates.len());
     for candidate in candidates {
-        snapshots.push(parent_signatures_before(candidate, cutoff)?);
+        match parent_signatures_before(candidate, cutoff, allow_behind_cutoff) {
+            Ok(snapshot) => snapshots.push(snapshot),
+            Err(ParentTimelineError::BehindCutoff(reason)) => {
+                return Err(ParentResolveFailure {
+                    kind: ParentResolveFailureKind::BehindCutoff,
+                    reason,
+                    dependencies,
+                });
+            }
+            Err(ParentTimelineError::Invalid(reason)) => {
+                return Err(ParentResolveFailure {
+                    kind: ParentResolveFailureKind::Retryable,
+                    reason,
+                    dependencies,
+                });
+            }
+        }
     }
     let Some(first) = snapshots.first() else {
-        return Err(format!("找不到父 rollout: {parent_id}"));
+        return Err(ParentResolveFailure {
+            kind: ParentResolveFailureKind::Retryable,
+            reason: format!("找不到父 rollout: {parent_id}"),
+            dependencies,
+        });
     };
     if snapshots.iter().skip(1).any(|snapshot| snapshot != first) {
-        return Err(format!(
-            "父 rollout UUID {parent_id} 对应多个内容不一致的文件"
-        ));
+        return Err(ParentResolveFailure {
+            kind: ParentResolveFailureKind::Retryable,
+            reason: format!("父 rollout UUID {parent_id} 对应多个内容不一致的文件"),
+            dependencies,
+        });
     }
     Ok(first.clone())
 }
@@ -995,37 +1188,33 @@ fn matching_replay_prefix(child: &[ParsedTokenEvent], parent: &[TokenUsageSignat
 }
 
 fn mark_deferred(
+    db: &Database,
     file_path: &Path,
     modified: i64,
     size: u64,
     reason: PendingReason,
-) -> CodexFileSyncResult {
+) -> Result<CodexFileSyncResult, AppError> {
+    let file_path_str = file_path.to_string_lossy().to_string();
     let entry = PendingEntry {
         modified,
         size,
         reason,
     };
-    let should_warn = replay_caches()
-        .lock()
-        .ok()
-        .and_then(|mut caches| {
-            caches
-                .pending
-                .insert(file_path.to_path_buf(), entry.clone())
-        })
-        .as_ref()
-        != Some(&entry);
+    let should_warn = load_pending_entry(db, &file_path_str)?.as_ref() != Some(&entry);
+    save_pending_entry(db, &file_path_str, &entry)?;
     if should_warn {
         let reason = match &entry.reason {
             PendingReason::MissingParent(parent) => format!("找不到父 rollout {parent}"),
-            PendingReason::Stable(reason) | PendingReason::Retryable(reason) => reason.clone(),
+            PendingReason::Stable(reason)
+            | PendingReason::ParentBehindCutoff { reason, .. }
+            | PendingReason::Retryable { reason, .. } => reason.clone(),
         };
         log::warn!("[CODEX-SYNC] deferred {}: {reason}", file_path.display());
     }
-    CodexFileSyncResult {
+    Ok(CodexFileSyncResult {
         deferred: true,
         ..CodexFileSyncResult::default()
-    }
+    })
 }
 
 /// 同步单个 Codex JSONL 文件。
@@ -1047,78 +1236,110 @@ fn sync_single_codex_file(
 
     // 文件未变化则跳过
     if file_modified <= last_modified {
+        delete_pending_entry(db, &file_path_str)?;
         return Ok(CodexFileSyncResult::default());
     }
 
-    if let Ok(mut caches) = replay_caches().lock() {
-        if let Some(pending) = caches.pending.get(file_path).cloned() {
-            if pending.modified == file_modified && pending.size == file_size {
-                match &pending.reason {
-                    PendingReason::MissingParent(parent) if !rollout_index.contains_key(parent) => {
-                        return Ok(CodexFileSyncResult {
-                            deferred: true,
-                            ..CodexFileSyncResult::default()
-                        });
-                    }
-                    PendingReason::Stable(_) => {
-                        return Ok(CodexFileSyncResult {
-                            deferred: true,
-                            ..CodexFileSyncResult::default()
-                        });
-                    }
-                    PendingReason::Retryable(_) => {
-                        caches.pending.remove(file_path);
-                    }
-                    _ => {
-                        caches.pending.remove(file_path);
+    let mut allow_behind_cutoff = false;
+    if let Some(pending) = load_pending_entry(db, &file_path_str)? {
+        if pending.modified == file_modified && pending.size == file_size {
+            match &pending.reason {
+                PendingReason::MissingParent(parent) if !rollout_index.contains_key(parent) => {
+                    return Ok(CodexFileSyncResult {
+                        deferred: true,
+                        ..CodexFileSyncResult::default()
+                    });
+                }
+                PendingReason::Stable(_) => {
+                    return Ok(CodexFileSyncResult {
+                        deferred: true,
+                        ..CodexFileSyncResult::default()
+                    });
+                }
+                PendingReason::ParentBehindCutoff {
+                    parent_id,
+                    dependencies,
+                    ..
+                } => {
+                    let current = snapshot_parent_dependencies(parent_id, rollout_index);
+                    if &current == dependencies {
+                        // 第二次看到完全相同的父文件快照时，父 rollout 可视为稳定。
+                        // 允许它早于 child fork 结束，并完成一次最终 replay 对齐。
+                        allow_behind_cutoff = true;
+                    } else {
+                        delete_pending_entry(db, &file_path_str)?;
                     }
                 }
+                PendingReason::Retryable {
+                    parent_id,
+                    dependencies,
+                    ..
+                } => {
+                    let current = snapshot_parent_dependencies(parent_id, rollout_index);
+                    if &current == dependencies {
+                        return Ok(CodexFileSyncResult {
+                            deferred: true,
+                            ..CodexFileSyncResult::default()
+                        });
+                    }
+                    delete_pending_entry(db, &file_path_str)?;
+                }
+                PendingReason::MissingParent(_) => {
+                    delete_pending_entry(db, &file_path_str)?;
+                }
             }
+        } else {
+            delete_pending_entry(db, &file_path_str)?;
         }
     }
 
     let parsed = parse_codex_file(file_path, thread_id_from_filename(file_path))?;
     if !parsed.has_billable_tokens {
         update_sync_state(db, &file_path_str, file_modified, parsed.line_offset)?;
+        delete_pending_entry(db, &file_path_str)?;
         return Ok(CodexFileSyncResult::default());
     }
     let Some(root_thread_id) = parsed.root_thread_id.as_deref() else {
-        return Ok(mark_deferred(
+        return mark_deferred(
+            db,
             file_path,
             file_modified,
             file_size,
             PendingReason::Stable("文件名缺少有效的尾部 UUID".to_string()),
-        ));
+        );
     };
     if !parsed.root_meta_seen {
-        return Ok(mark_deferred(
+        return mark_deferred(
+            db,
             file_path,
             file_modified,
             file_size,
             PendingReason::Stable("含计费 token 但尚无 session_meta".to_string()),
-        ));
+        );
     }
 
     let replay_prefix = match &parsed.parent {
         ParentResolution::None => 0,
         ParentResolution::Deferred(reason) => {
-            return Ok(mark_deferred(
+            return mark_deferred(
+                db,
                 file_path,
                 file_modified,
                 file_size,
                 PendingReason::Stable(reason.clone()),
-            ));
+            );
         }
         ParentResolution::Parent(parent_id) => {
             let Some(cutoff) = parsed.root_timestamp else {
-                return Ok(mark_deferred(
+                return mark_deferred(
+                    db,
                     file_path,
                     file_modified,
                     file_size,
                     PendingReason::Stable(
                         "parented rollout 的 root meta 缺少有效 timestamp".to_string(),
                     ),
-                ));
+                );
             };
             if let Ok(caches) = replay_caches().lock() {
                 if let Some(prefix) = caches
@@ -1130,23 +1351,43 @@ fn sync_single_codex_file(
                     prefix
                 } else {
                     drop(caches);
-                    let parent_signatures =
-                        match resolve_parent_signatures(parent_id, cutoff, rollout_index) {
-                            Ok(signatures) => signatures,
-                            Err(reason) => {
-                                let pending_reason = if rollout_index.contains_key(parent_id) {
-                                    PendingReason::Retryable(reason)
-                                } else {
-                                    PendingReason::MissingParent(parent_id.clone())
-                                };
-                                return Ok(mark_deferred(
-                                    file_path,
-                                    file_modified,
-                                    file_size,
-                                    pending_reason,
-                                ));
-                            }
-                        };
+                    let parent_signatures = match resolve_parent_signatures(
+                        parent_id,
+                        cutoff,
+                        rollout_index,
+                        allow_behind_cutoff,
+                    ) {
+                        Ok(signatures) => signatures,
+                        Err(failure) => {
+                            let pending_reason = if rollout_index.contains_key(parent_id) {
+                                match failure.kind {
+                                    ParentResolveFailureKind::BehindCutoff => {
+                                        PendingReason::ParentBehindCutoff {
+                                            parent_id: parent_id.clone(),
+                                            reason: failure.reason,
+                                            dependencies: failure.dependencies,
+                                        }
+                                    }
+                                    ParentResolveFailureKind::Retryable => {
+                                        PendingReason::Retryable {
+                                            parent_id: parent_id.clone(),
+                                            reason: failure.reason,
+                                            dependencies: failure.dependencies,
+                                        }
+                                    }
+                                }
+                            } else {
+                                PendingReason::MissingParent(parent_id.clone())
+                            };
+                            return mark_deferred(
+                                db,
+                                file_path,
+                                file_modified,
+                                file_size,
+                                pending_reason,
+                            );
+                        }
+                    };
                     let prefix = matching_replay_prefix(&parsed.token_events, &parent_signatures);
                     if let Ok(mut caches) = replay_caches().lock() {
                         caches.replay_prefixes.insert(
@@ -1161,16 +1402,17 @@ fn sync_single_codex_file(
                     prefix
                 }
             } else {
-                let parent_signatures = resolve_parent_signatures(parent_id, cutoff, rollout_index)
-                    .map_err(AppError::Config)?;
+                let parent_signatures = resolve_parent_signatures(
+                    parent_id,
+                    cutoff,
+                    rollout_index,
+                    allow_behind_cutoff,
+                )
+                .map_err(|failure| AppError::Config(failure.reason))?;
                 matching_replay_prefix(&parsed.token_events, &parent_signatures)
             }
         }
     };
-
-    if let Ok(mut caches) = replay_caches().lock() {
-        caches.pending.remove(file_path);
-    }
 
     let mut result = CodexFileSyncResult::default();
     for (token_offset, event) in parsed.token_events.iter().enumerate() {
@@ -1207,6 +1449,7 @@ fn sync_single_codex_file(
     }
 
     update_sync_state(db, &file_path_str, file_modified, parsed.line_offset)?;
+    delete_pending_entry(db, &file_path_str)?;
     Ok(result)
 }
 
@@ -1444,6 +1687,17 @@ mod tests {
         sync_single_codex_file(db, file, &build_rollout_index(&files))
     }
 
+    fn database_at(path: &Path) -> Result<Database, AppError> {
+        let conn = rusqlite::Connection::open(path)
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let db = Database {
+            conn: std::sync::Mutex::new(conn),
+        };
+        db.create_tables()?;
+        db.ensure_model_pricing_seeded()?;
+        Ok(db)
+    }
+
     #[test]
     fn test_delta_first_event() {
         let prev = None;
@@ -1598,6 +1852,234 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn historical_fork_parent_ended_before_cutoff_is_imported() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        CODEX_FILE_PARSE_COUNT.store(0, Ordering::SeqCst);
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let parent = rollout_path(temp.path(), PARENT_ID);
+        let child = rollout_path(temp.path(), CHILD_A_ID);
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
+            ],
+        );
+        let parent_file = fs::OpenOptions::new().write(true).open(&parent).unwrap();
+        let modified = SystemTime::UNIX_EPOCH
+            + std::time::Duration::from_secs(
+                "2026-07-10T03:00:02Z"
+                    .parse::<DateTime<Utc>>()
+                    .unwrap()
+                    .timestamp() as u64,
+            );
+        parent_file
+            .set_times(fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        drop(parent_file);
+        write_jsonl(
+            &child,
+            &[
+                session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:10:00Z"),
+                token_count_at(100, 50, 10, "2026-07-10T03:10:01Z"),
+                token_count_at(160, 80, 16, "2026-07-10T03:10:02Z"),
+            ],
+        );
+
+        let first = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert_eq!(
+            (first.imported, first.skipped, first.deferred),
+            (1, 1, false)
+        );
+        let second = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert_eq!(
+            (second.imported, second.skipped, second.deferred),
+            (0, 0, false)
+        );
+
+        let conn = lock_conn!(db.conn);
+        let values: (i64, i64) = conn.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'),
+                (SELECT COUNT(*) FROM codex_pending_sync)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(values, (1, 0));
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn unchanged_parent_behind_cutoff_finishes_on_second_observation() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        CODEX_FILE_PARSE_COUNT.store(0, Ordering::SeqCst);
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let parent = rollout_path(temp.path(), PARENT_ID);
+        let child = rollout_path(temp.path(), CHILD_A_ID);
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
+            ],
+        );
+        let parent_file = fs::OpenOptions::new().write(true).open(&parent).unwrap();
+        let modified = SystemTime::UNIX_EPOCH
+            + std::time::Duration::from_secs(
+                "2026-07-10T04:00:00Z"
+                    .parse::<DateTime<Utc>>()
+                    .unwrap()
+                    .timestamp() as u64,
+            );
+        parent_file
+            .set_times(fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        drop(parent_file);
+        write_jsonl(
+            &child,
+            &[
+                session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:10:00Z"),
+                token_count_at(100, 50, 10, "2026-07-10T03:10:01Z"),
+                token_count_at(160, 80, 16, "2026-07-10T03:10:02Z"),
+            ],
+        );
+
+        let first = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert!(first.deferred);
+        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
+        clear_codex_replay_caches();
+
+        let second = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert_eq!(
+            (second.imported, second.skipped, second.deferred),
+            (1, 1, false)
+        );
+        assert_ne!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn unchanged_retryable_is_not_reparsed() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        CODEX_FILE_PARSE_COUNT.store(0, Ordering::SeqCst);
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let parent = rollout_path(temp.path(), PARENT_ID);
+        let child = rollout_path(temp.path(), CHILD_A_ID);
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_without_timestamp(100, 50, 10),
+            ],
+        );
+        write_jsonl(
+            &child,
+            &[
+                session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:10:00Z"),
+                token_count_at(100, 50, 10, "2026-07-10T03:10:01Z"),
+            ],
+        );
+
+        assert!(sync_test_file(&db, &child, &[&parent, &child])?.deferred);
+        let parses_after_first = CODEX_FILE_PARSE_COUNT.load(Ordering::SeqCst);
+        clear_codex_replay_caches();
+        assert!(sync_test_file(&db, &child, &[&parent, &child])?.deferred);
+        assert_eq!(
+            CODEX_FILE_PARSE_COUNT.load(Ordering::SeqCst),
+            parses_after_first
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn parent_change_retries_pending_child() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        CODEX_FILE_PARSE_COUNT.store(0, Ordering::SeqCst);
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let parent = rollout_path(temp.path(), PARENT_ID);
+        let child = rollout_path(temp.path(), CHILD_A_ID);
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_without_timestamp(100, 50, 10),
+            ],
+        );
+        write_jsonl(
+            &child,
+            &[
+                session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:00:05Z"),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:06Z"),
+                token_count_at(180, 80, 18, "2026-07-10T03:00:07Z"),
+            ],
+        );
+
+        assert!(sync_test_file(&db, &child, &[&parent, &child])?.deferred);
+        let parses_after_first = CODEX_FILE_PARSE_COUNT.load(Ordering::SeqCst);
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
+                turn_context_at("2026-07-10T03:00:10Z"),
+            ],
+        );
+        clear_codex_replay_caches();
+
+        let recovered = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert_eq!((recovered.imported, recovered.deferred), (1, false));
+        assert!(CODEX_FILE_PARSE_COUNT.load(Ordering::SeqCst) > parses_after_first);
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn pending_survives_database_reopen() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        CODEX_FILE_PARSE_COUNT.store(0, Ordering::SeqCst);
+        let temp = tempdir().unwrap();
+        let db_path = temp.path().join("cc-switch-test.db");
+        let parent = rollout_path(temp.path(), PARENT_ID);
+        let child = rollout_path(temp.path(), CHILD_A_ID);
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_without_timestamp(100, 50, 10),
+            ],
+        );
+        write_jsonl(
+            &child,
+            &[
+                session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:10:00Z"),
+                token_count_at(100, 50, 10, "2026-07-10T03:10:01Z"),
+            ],
+        );
+
+        let db = database_at(&db_path)?;
+        assert!(sync_test_file(&db, &child, &[&parent, &child])?.deferred);
+        let parses_after_first = CODEX_FILE_PARSE_COUNT.load(Ordering::SeqCst);
+        drop(db);
+        clear_codex_replay_caches();
+
+        let reopened = database_at(&db_path)?;
+        assert!(sync_test_file(&reopened, &child, &[&parent, &child])?.deferred);
+        assert_eq!(
+            CODEX_FILE_PARSE_COUNT.load(Ordering::SeqCst),
+            parses_after_first
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn test_filtered_parent_events_use_subsequence_prefix_alignment() -> Result<(), AppError> {
         clear_codex_replay_caches();
         let db = Database::memory()?;
@@ -1647,10 +2129,20 @@ mod tests {
 
         let early = "2026-07-10T03:00:05Z".parse::<DateTime<Utc>>().unwrap();
         let late = "2026-07-10T03:00:15Z".parse::<DateTime<Utc>>().unwrap();
-        assert_eq!(parent_signatures_before(&parent, early).unwrap().len(), 1);
+        assert_eq!(
+            parent_signatures_before(&parent, early, false)
+                .unwrap()
+                .len(),
+            1
+        );
         let first_timeline =
             Arc::clone(&replay_caches().lock().unwrap().parent_timelines[&parent].timeline);
-        assert_eq!(parent_signatures_before(&parent, late).unwrap().len(), 2);
+        assert_eq!(
+            parent_signatures_before(&parent, late, false)
+                .unwrap()
+                .len(),
+            2
+        );
 
         let caches = replay_caches().lock().unwrap();
         assert_eq!(caches.parent_timelines.len(), 1);
@@ -1676,7 +2168,12 @@ mod tests {
                 turn_context_at("2026-07-10T03:00:20Z"),
             ],
         );
-        assert_eq!(parent_signatures_before(&parent, cutoff).unwrap().len(), 1);
+        assert_eq!(
+            parent_signatures_before(&parent, cutoff, false)
+                .unwrap()
+                .len(),
+            1
+        );
 
         write_jsonl(
             &parent,
@@ -1687,7 +2184,12 @@ mod tests {
                 turn_context_at("2026-07-10T03:00:20Z"),
             ],
         );
-        assert_eq!(parent_signatures_before(&parent, cutoff).unwrap().len(), 2);
+        assert_eq!(
+            parent_signatures_before(&parent, cutoff, false)
+                .unwrap()
+                .len(),
+            2
+        );
 
         let caches = replay_caches().lock().unwrap();
         assert_eq!(caches.parent_timelines.len(), 1);
@@ -1710,19 +2212,26 @@ mod tests {
             ],
         );
 
-        let first_error = parent_signatures_before(&parent, cutoff).unwrap_err();
-        assert!(first_error.contains("token_count 缺少有效 timestamp"));
+        let first_error = parent_signatures_before(&parent, cutoff, false).unwrap_err();
+        assert!(matches!(
+            &first_error,
+            ParentTimelineError::Invalid(reason)
+                if reason.contains("token_count 缺少有效 timestamp")
+        ));
         let cached_timeline =
             || Arc::clone(&replay_caches().lock().unwrap().parent_timelines[&parent].timeline);
         let first_timeline = cached_timeline();
 
-        let second_error = parent_signatures_before(&parent, cutoff).unwrap_err();
+        let second_error = parent_signatures_before(&parent, cutoff, false).unwrap_err();
         assert_eq!(second_error, first_error);
         assert!(Arc::ptr_eq(&first_timeline, &cached_timeline()));
 
         fs::remove_file(&parent).unwrap();
-        let open_error = parent_signatures_before(&parent, cutoff).unwrap_err();
-        assert!(open_error.contains("无法打开父 rollout"));
+        let open_error = parent_signatures_before(&parent, cutoff, false).unwrap_err();
+        assert!(matches!(
+            open_error,
+            ParentTimelineError::Invalid(reason) if reason.contains("无法打开父 rollout")
+        ));
     }
 
     #[test]
@@ -1746,10 +2255,15 @@ mod tests {
         let after = "2026-07-10T03:00:00.000000700Z"
             .parse::<DateTime<Utc>>()
             .unwrap();
-        assert!(parent_signatures_before(&parent, before)
+        assert!(parent_signatures_before(&parent, before, false)
             .unwrap()
             .is_empty());
-        assert_eq!(parent_signatures_before(&parent, after).unwrap().len(), 1);
+        assert_eq!(
+            parent_signatures_before(&parent, after, false)
+                .unwrap()
+                .len(),
+            1
+        );
         assert_eq!(replay_caches().lock().unwrap().parent_timelines.len(), 1);
     }
 
@@ -2220,6 +2734,15 @@ mod tests {
                     [path],
                 )?;
             }
+            conn.execute(
+                "INSERT INTO codex_pending_sync
+                    (file_path, child_modified, child_size, reason_json, updated_at)
+                 VALUES (?1, 1, 1, ?2, 1)",
+                rusqlite::params![
+                    current_codex.to_string_lossy().to_string(),
+                    serde_json::to_string(&PendingReason::Stable("test".to_string())).unwrap()
+                ],
+            )?;
 
             reset_codex_usage_on_conn(&conn, wide_dir)?;
             let codex_rows: i64 = conn.query_row(
@@ -2241,8 +2764,13 @@ mod tests {
                 conn.query_row("SELECT COUNT(*) FROM session_log_sync", [], |row| {
                     row.get(0)
                 })?;
+            let pending_rows: i64 =
+                conn.query_row("SELECT COUNT(*) FROM codex_pending_sync", [], |row| {
+                    row.get(0)
+                })?;
             assert_eq!((codex_rows, gemini_rows, codex_rollups), (0, 1, 0));
             assert_eq!(remaining_cursors, 2);
+            assert_eq!(pending_rows, 0);
         }
         Ok(())
     }
