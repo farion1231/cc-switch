@@ -145,6 +145,16 @@ impl ParentFileStamp {
     }
 }
 
+fn parent_file_was_closed_by_cutoff(stamp: ParentFileStamp, cutoff: &DateTime<Utc>) -> bool {
+    // `metadata_modified_nanos` uses 0 when the platform mtime is unavailable.
+    // Treat that sentinel as unknown instead of as the UNIX epoch; otherwise an
+    // unstable parent could bypass the BehindCutoff guard.
+    stamp.modified_nanos != 0
+        && cutoff
+            .timestamp_nanos_opt()
+            .is_some_and(|cutoff_nanos| stamp.modified_nanos <= cutoff_nanos)
+}
+
 #[cfg(windows)]
 fn windows_file_identity(file: &fs::File) -> Option<(u64, [u8; 16])> {
     let mut information = FILE_ID_INFO::default();
@@ -1040,11 +1050,8 @@ fn parent_signatures_before(
         ))
     })?;
     let stamp = ParentFileStamp::from_file(&file);
-    let file_was_closed_by_cutoff = stamp.is_some_and(|stamp| {
-        cutoff
-            .timestamp_nanos_opt()
-            .is_some_and(|cutoff_nanos| stamp.modified_nanos <= cutoff_nanos)
-    });
+    let file_was_closed_by_cutoff =
+        stamp.is_some_and(|stamp| parent_file_was_closed_by_cutoff(stamp, &cutoff));
     let allow_behind_cutoff = allow_behind_cutoff || file_was_closed_by_cutoff;
     let cached_timeline = stamp.and_then(|stamp| {
         replay_caches().lock().ok().and_then(|caches| {
@@ -2351,6 +2358,27 @@ mod tests {
             (replacement_stamp.size, replacement_stamp.modified_nanos)
         );
         assert_ne!(original_stamp, replacement_stamp);
+    }
+
+    #[test]
+    fn unknown_parent_mtime_does_not_mark_file_closed_by_cutoff() {
+        let cutoff = "2026-07-10T03:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let mut stamp = ParentFileStamp {
+            modified_nanos: 0,
+            size: 1,
+            #[cfg(unix)]
+            device: 1,
+            #[cfg(unix)]
+            inode: 1,
+            #[cfg(windows)]
+            volume_serial: 1,
+            #[cfg(windows)]
+            file_id: [0; 16],
+        };
+
+        assert!(!parent_file_was_closed_by_cutoff(stamp, &cutoff));
+        stamp.modified_nanos = 1;
+        assert!(parent_file_was_closed_by_cutoff(stamp, &cutoff));
     }
 
     #[test]
