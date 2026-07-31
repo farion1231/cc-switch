@@ -279,6 +279,74 @@ impl S3SyncSettings {
     }
 }
 
+fn default_workspace_remote_root() -> String {
+    "cc-switch-workspace".to_string()
+}
+
+/// 工作区数据同步设置（session/task/plan/memory 等）。
+///
+/// 传输凭据复用已配置的 WebDAV/S3 设置，这里只保存传输方式、要同步的端、
+/// 远端子根与 profile。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSyncSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    /// "webdav" | "s3" —— 复用对应的已配置凭据。
+    #[serde(default = "default_workspace_transport")]
+    pub transport: String,
+    /// 要纳入同步的端标识（workspace provider 线格式："claude"/"codex"/
+    /// "grokbuild"/"opencode"/"cursor"）。
+    #[serde(default)]
+    pub providers: Vec<String>,
+    #[serde(default = "default_workspace_remote_root")]
+    pub remote_root: String,
+    #[serde(default = "default_profile")]
+    pub profile: String,
+    #[serde(default)]
+    pub status: WebDavSyncStatus,
+}
+
+fn default_workspace_transport() -> String {
+    "webdav".to_string()
+}
+
+impl Default for WorkspaceSyncSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            transport: default_workspace_transport(),
+            providers: Vec::new(),
+            remote_root: default_workspace_remote_root(),
+            profile: default_profile(),
+            status: WebDavSyncStatus::default(),
+        }
+    }
+}
+
+impl WorkspaceSyncSettings {
+    pub fn normalize(&mut self) {
+        self.transport = self.transport.trim().to_lowercase();
+        if self.transport != "s3" {
+            self.transport = "webdav".to_string();
+        }
+        self.remote_root = self.remote_root.trim().to_string();
+        if self.remote_root.is_empty() {
+            self.remote_root = default_workspace_remote_root();
+        }
+        self.profile = self.profile.trim().to_string();
+        if self.profile.is_empty() {
+            self.profile = default_profile();
+        }
+        // De-dup providers preserving order.
+        let mut seen = std::collections::HashSet::new();
+        self.providers.retain(|p| seen.insert(p.trim().to_lowercase()));
+        for p in self.providers.iter_mut() {
+            *p = p.trim().to_lowercase();
+        }
+    }
+}
+
 /// 本机自动迁移状态。
 ///
 /// 这里记录的是本机启动时执行过的一次性迁移；标记不随数据库同步。
@@ -467,6 +535,10 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub s3_sync: Option<S3SyncSettings>,
 
+    // ===== 工作区数据同步设置 =====
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_sync: Option<WorkspaceSyncSettings>,
+
     // ===== WebDAV 备份设置（旧版，保留向后兼容）=====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webdav_backup: Option<serde_json::Value>,
@@ -548,6 +620,7 @@ impl Default for AppSettings {
             skill_storage_location: SkillStorageLocation::default(),
             webdav_sync: None,
             s3_sync: None,
+            workspace_sync: None,
             webdav_backup: None,
             backup_interval_hours: None,
             backup_retain_count: None,
@@ -1150,6 +1223,28 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
     mutate_settings(|current| {
         if let Some(s3) = current.s3_sync.as_mut() {
             s3.status = status;
+        }
+    })
+}
+
+// ===== 工作区数据同步设置管理函数 =====
+
+pub fn get_workspace_sync_settings() -> Option<WorkspaceSyncSettings> {
+    settings_store().read().ok()?.workspace_sync.clone()
+}
+
+pub fn set_workspace_sync_settings(
+    settings: Option<WorkspaceSyncSettings>,
+) -> Result<(), AppError> {
+    mutate_settings(|current| {
+        current.workspace_sync = settings;
+    })
+}
+
+pub fn update_workspace_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
+    mutate_settings(|current| {
+        if let Some(ws) = current.workspace_sync.as_mut() {
+            ws.status = status;
         }
     })
 }

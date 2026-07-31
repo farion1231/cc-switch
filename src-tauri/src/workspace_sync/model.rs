@@ -10,6 +10,42 @@ pub enum WorkspaceProviderId {
     Cursor,
 }
 
+impl WorkspaceProviderId {
+    /// Stable wire/string value (matches serde `rename_all = "lowercase"`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            WorkspaceProviderId::Claude => "claude",
+            WorkspaceProviderId::Codex => "codex",
+            WorkspaceProviderId::GrokBuild => "grokbuild",
+            WorkspaceProviderId::OpenCode => "opencode",
+            WorkspaceProviderId::Cursor => "cursor",
+        }
+    }
+
+    /// Parse from a wire string; accepts a few grok aliases.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "claude" => Some(Self::Claude),
+            "codex" => Some(Self::Codex),
+            "grokbuild" | "grok-build" | "grok_build" | "grok" => Some(Self::GrokBuild),
+            "opencode" => Some(Self::OpenCode),
+            "cursor" => Some(Self::Cursor),
+            _ => None,
+        }
+    }
+
+    /// All supported providers.
+    pub fn all() -> [Self; 5] {
+        [
+            Self::Claude,
+            Self::Codex,
+            Self::GrokBuild,
+            Self::OpenCode,
+            Self::Cursor,
+        ]
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DataKind {

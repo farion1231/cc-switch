@@ -8,6 +8,8 @@ pub mod blobs;
 
 pub mod crypto;
 
+pub mod engine;
+
 pub mod manifest;
 
 pub mod merge;
