@@ -203,7 +203,13 @@ fn normalize_content(content: &mut SnapshotContent) -> Result<(), AppError> {
     content.parents.sort();
     content.parents.dedup();
 
-    for snapshot in content.providers.values_mut() {
+    for (provider, snapshot) in &mut content.providers {
+        if *provider != snapshot.provider {
+            return Err(invalid_input(format!(
+                "workspace provider map key does not match snapshot provider: key={provider:?}, snapshot={:?}",
+                snapshot.provider
+            )));
+        }
         normalize_provider_items(snapshot)?;
     }
 
@@ -244,10 +250,17 @@ fn normalize_provider_items(snapshot: &mut ProviderSnapshot) -> Result<(), AppEr
     let mut unique = BTreeMap::new();
 
     for mut item in std::mem::take(&mut snapshot.items) {
+        if item.provider != snapshot.provider {
+            return Err(invalid_input(format!(
+                "workspace item provider does not match snapshot provider: snapshot={:?}, item={:?}, kind={:?}, logical_id={}",
+                snapshot.provider, item.provider, item.kind, item.logical_id
+            )));
+        }
+
         item.object_ids.sort();
         item.object_ids.dedup();
         let key = (
-            item.provider,
+            snapshot.provider,
             data_kind_rank(item.kind),
             item.logical_id.clone(),
         );
@@ -477,6 +490,109 @@ mod tests {
             SnapshotManifest::new(changed, "device-a", 1).expect("changed should be valid");
 
         assert_ne!(original.snapshot_id, changed.snapshot_id);
+    }
+
+    #[test]
+    fn provider_map_key_must_match_snapshot_provider() {
+        let snapshot = provider_snapshot(vec![item(
+            WorkspaceProviderId::Codex,
+            DataKind::Session,
+            "session-1",
+            "sessions/1.jsonl",
+            "hash-a",
+            &["object-a"],
+        )]);
+
+        let content = SnapshotContent {
+            parents: vec![],
+            providers: BTreeMap::from([(WorkspaceProviderId::Claude, snapshot)]),
+            tombstones: vec![],
+        };
+
+        let result = SnapshotManifest::new(content, "device-a", 1);
+        assert!(matches!(
+            result,
+            Err(crate::error::AppError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn item_provider_must_match_owning_snapshot_provider() {
+        let wrong_provider_item = item(
+            WorkspaceProviderId::Codex,
+            DataKind::Session,
+            "session-1",
+            "sessions/1.jsonl",
+            "hash-a",
+            &["object-a"],
+        );
+        let content = SnapshotContent {
+            parents: vec![],
+            providers: BTreeMap::from([(
+                WorkspaceProviderId::Claude,
+                ProviderSnapshot {
+                    provider: WorkspaceProviderId::Claude,
+                    adapter_version: 1,
+                    native_version: Some("1.0.0".to_string()),
+                    schema_fingerprint: Some("schema-v1".to_string()),
+                    items: vec![wrong_provider_item],
+                },
+            )]),
+            tombstones: vec![],
+        };
+
+        let result = SnapshotManifest::new(content, "device-a", 1);
+        assert!(matches!(
+            result,
+            Err(crate::error::AppError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn duplicate_logical_key_cannot_hide_in_wrong_provider_container() {
+        let codex_item = item(
+            WorkspaceProviderId::Codex,
+            DataKind::Session,
+            "session-1",
+            "sessions/1.jsonl",
+            "hash-a",
+            &["object-a"],
+        );
+        let hidden_duplicate = item(
+            WorkspaceProviderId::Codex,
+            DataKind::Session,
+            "session-1",
+            "sessions/1-copy.jsonl",
+            "hash-b",
+            &["object-b"],
+        );
+
+        let content = SnapshotContent {
+            parents: vec![],
+            providers: BTreeMap::from([
+                (
+                    WorkspaceProviderId::Codex,
+                    provider_snapshot(vec![codex_item]),
+                ),
+                (
+                    WorkspaceProviderId::Claude,
+                    ProviderSnapshot {
+                        provider: WorkspaceProviderId::Claude,
+                        adapter_version: 1,
+                        native_version: Some("1.0.0".to_string()),
+                        schema_fingerprint: Some("schema-v1".to_string()),
+                        items: vec![hidden_duplicate],
+                    },
+                ),
+            ]),
+            tombstones: vec![],
+        };
+
+        let result = SnapshotManifest::new(content, "device-a", 1);
+        assert!(matches!(
+            result,
+            Err(crate::error::AppError::InvalidInput(_))
+        ));
     }
 
     #[test]
