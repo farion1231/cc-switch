@@ -43,6 +43,16 @@ interface RequestLogTableProps {
   onRangeChange?: (range: UsageRangeSelection) => void;
 }
 
+function formatReasoningEffort(
+  reasoningEffort?: string,
+  reasoningEffortSource?: string,
+) {
+  if (!reasoningEffort) return "-";
+  return reasoningEffortSource
+    ? `${reasoningEffortSource} -> ${reasoningEffort}`
+    : reasoningEffort;
+}
+
 export function RequestLogTable({
   range,
   rangeLabel,
@@ -176,6 +186,9 @@ export function RequestLogTable({
                     {t("usage.timingInfo")}
                   </TableHead>
                   <TableHead className="text-center whitespace-nowrap">
+                    {t("usage.reasoningEffort", { defaultValue: "思考强度" })}
+                  </TableHead>
+                  <TableHead className="text-center whitespace-nowrap">
                     {t("usage.status")}
                   </TableHead>
                   <TableHead className="text-center whitespace-nowrap">
@@ -187,7 +200,7 @@ export function RequestLogTable({
                 {logs.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={9}
+                      colSpan={10}
                       className="text-center text-muted-foreground"
                     >
                       {t("usage.noData")}
@@ -296,6 +309,12 @@ export function RequestLogTable({
                             <span className="text-muted-foreground">
                               /{(log.firstTokenMs / 1000).toFixed(1)}s
                             </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-center font-mono text-xs">
+                          {formatReasoningEffort(
+                            log.reasoningEffort,
+                            log.reasoningEffortSource,
                           )}
                         </TableCell>
                         <TableCell className="text-center">

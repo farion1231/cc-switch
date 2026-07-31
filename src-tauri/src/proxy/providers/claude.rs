@@ -405,12 +405,19 @@ pub fn transform_claude_request_for_api_format(
             // Codex OAuth (ChatGPT Plus/Pro 反代) 需要在请求体里强制 store: false
             // + include: ["reasoning.encrypted_content"]，由 transform 层统一处理。
             let codex_fast_mode = provider.codex_fast_mode_enabled();
-            let mut result = super::transform_responses::anthropic_to_responses(
-                body,
-                cache_key,
-                is_codex_oauth,
-                codex_fast_mode,
-            )?;
+            let effort_map = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.claude_chat_reasoning.as_ref())
+                .map(|config| &config.effort_map);
+            let mut result =
+                super::transform_responses::anthropic_to_responses_with_reasoning_effort_overrides(
+                    body,
+                    cache_key,
+                    is_codex_oauth,
+                    codex_fast_mode,
+                    effort_map,
+                )?;
             if provider.is_xai_oauth() {
                 const REASONING_MARKER: &str = "reasoning.encrypted_content";
                 let mut include = result
@@ -431,10 +438,17 @@ pub fn transform_claude_request_for_api_format(
         "openai_chat" => {
             let preserve_reasoning_content =
                 should_preserve_reasoning_content_for_openai_chat(provider, &body);
-            let mut result = super::transform::anthropic_to_openai_with_reasoning_content(
-                body,
-                preserve_reasoning_content,
-            )?;
+            let effort_map = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.claude_chat_reasoning.as_ref())
+                .map(|config| &config.effort_map);
+            let mut result =
+                super::transform::anthropic_to_openai_with_reasoning_content_and_effort_overrides(
+                    body,
+                    preserve_reasoning_content,
+                    effort_map,
+                )?;
             // Inject prompt_cache_key only if explicitly configured in meta
             if let Some(key) = provider
                 .meta
@@ -1023,7 +1037,7 @@ impl ProviderAdapter for ClaudeAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::ProviderMeta;
+    use crate::provider::{ClaudeChatReasoningConfig, ProviderMeta};
     use serde_json::json;
 
     fn create_provider(config: serde_json::Value) -> Provider {
@@ -1792,6 +1806,75 @@ mod tests {
             transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
                 .unwrap();
         assert!(transformed.get("stream_options").is_none());
+    }
+
+    #[test]
+    fn test_transform_openai_chat_uses_provider_effort_mapping_for_gpt_5_6_sol() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": { "ANTHROPIC_BASE_URL": "https://api.example.com" }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                claude_chat_reasoning: Some(ClaudeChatReasoningConfig {
+                    effort_map: std::collections::HashMap::from([(
+                        "max".to_string(),
+                        "max".to_string(),
+                    )]),
+                }),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.6-sol",
+            "output_config": { "effort": "max" },
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        assert_eq!(transformed["model"], "gpt-5.6-sol");
+        assert_eq!(transformed["reasoning_effort"], "max");
+    }
+
+    #[test]
+    fn test_transform_openai_responses_uses_provider_effort_mapping_for_gpt_5_6_sol() {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": { "ANTHROPIC_BASE_URL": "https://api.example.com" }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                claude_chat_reasoning: Some(ClaudeChatReasoningConfig {
+                    effort_map: std::collections::HashMap::from([(
+                        "max".to_string(),
+                        "ultra".to_string(),
+                    )]),
+                }),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "gpt-5.6-sol",
+            "output_config": { "effort": "max" },
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(transformed["model"], "gpt-5.6-sol");
+        assert_eq!(transformed["reasoning"]["effort"], "ultra");
     }
 
     #[test]

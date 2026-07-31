@@ -1,9 +1,33 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RequestLogTable } from "@/components/usage/RequestLogTable";
-import type { UsageRangeSelection } from "@/types/usage";
+import type { RequestLog, UsageRangeSelection } from "@/types/usage";
 
 const useRequestLogsMock = vi.hoisted(() => vi.fn());
+
+const requestLogWithEffort: RequestLog = {
+  requestId: "req-effort",
+  providerId: "provider-1",
+  providerName: "OpenAI Compatible",
+  appType: "claude",
+  model: "gpt-5.6-sol",
+  reasoningEffort: "xhigh",
+  reasoningEffortSource: "max",
+  costMultiplier: "1",
+  inputTokens: 100,
+  outputTokens: 50,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  inputCostUsd: "0.0001",
+  outputCostUsd: "0.0002",
+  cacheReadCostUsd: "0",
+  cacheCreationCostUsd: "0",
+  totalCostUsd: "0.0003",
+  isStreaming: false,
+  latencyMs: 100,
+  statusCode: 200,
+  createdAt: 1_710_000_000,
+};
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -157,5 +181,29 @@ describe("RequestLogTable", () => {
         }),
       );
     });
+  });
+
+  it("显示最终出站请求的思考强度", () => {
+    useRequestLogsMock.mockImplementationOnce(() => ({
+      data: {
+        data: [requestLogWithEffort],
+        total: 1,
+        page: 0,
+        pageSize: 20,
+      },
+      isLoading: false,
+    }));
+
+    render(
+      <RequestLogTable
+        range={{ preset: "today" }}
+        rangeLabel="Today"
+        appType="all"
+        refreshIntervalMs={0}
+      />,
+    );
+
+    expect(screen.getByText("思考强度")).toBeInTheDocument();
+    expect(screen.getByText("max -> xhigh")).toBeInTheDocument();
   });
 });

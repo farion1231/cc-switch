@@ -16,6 +16,7 @@ use crate::proxy::{
     },
 };
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
 use super::reasoning_bridge::{
     anthropic_block_from_openai_reasoning_item, openai_reasoning_item_from_anthropic_block,
@@ -295,6 +296,26 @@ pub fn anthropic_to_responses(
     is_codex_oauth: bool,
     codex_fast_mode: bool,
 ) -> Result<Value, ProxyError> {
+    anthropic_to_responses_with_reasoning_effort_overrides(
+        body,
+        cache_key,
+        is_codex_oauth,
+        codex_fast_mode,
+        None,
+    )
+}
+
+/// Anthropic 请求 → OpenAI Responses 请求，支持 provider 级思考强度覆盖。
+///
+/// 覆盖项以 Claude 入站的原始强度为键，因此可让支持扩展强度等级的
+/// Responses 后端将 Claude `max` 发送为 `max` 或 `ultra`。
+pub fn anthropic_to_responses_with_reasoning_effort_overrides(
+    body: Value,
+    cache_key: Option<&str>,
+    is_codex_oauth: bool,
+    codex_fast_mode: bool,
+    effort_map: Option<&HashMap<String, String>>,
+) -> Result<Value, ProxyError> {
     let mut result = json!({});
 
     // NOTE: 模型映射由上游统一处理（proxy::model_mapper），格式转换层只做结构转换。
@@ -346,7 +367,9 @@ pub fn anthropic_to_responses(
     // Map Anthropic thinking → OpenAI Responses reasoning.effort
     if let Some(model_name) = body.get("model").and_then(|m| m.as_str()) {
         if super::transform::supports_reasoning_effort(model_name) {
-            if let Some(effort) = super::transform::resolve_reasoning_effort(&body) {
+            if let Some(effort) =
+                super::transform::resolve_reasoning_effort_with_overrides(&body, effort_map)
+            {
                 result["reasoning"] = json!({ "effort": effort });
             }
         }
