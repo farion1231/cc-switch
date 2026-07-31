@@ -1574,7 +1574,23 @@ impl Database {
                 "0.50",
                 "6.25",
             ),
-            // Claude 4.6 系列
+            // Claude 4.6 系列（裸 id 行覆盖无日期后缀的日志变体，与 dated 行同价）
+            (
+                "claude-opus-4-6",
+                "Claude Opus 4.6",
+                "5",
+                "25",
+                "0.50",
+                "6.25",
+            ),
+            (
+                "claude-sonnet-4-6",
+                "Claude Sonnet 4.6",
+                "3",
+                "15",
+                "0.30",
+                "3.75",
+            ),
             (
                 "claude-opus-4-6-20260206",
                 "Claude Opus 4.6",
@@ -1661,15 +1677,16 @@ impl Database {
             // GPT-5.6 系列（Sol / Terra / Luna，2026-06 发布）
             // 5.6 家族起 cache write 收 1.25× 输入价（此前 GPT 模型写缓存免费，勿回填旧系列）
             ("gpt-5.6-sol", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
+            // 2026-07-30 OpenAI 降价：luna -80%、terra -20%，sol 不变（Fast mode 2× 价不入表）
+            ("gpt-5.6-terra", "GPT-5.6 Terra", "2", "12", "0.20", "2.50"),
             (
-                "gpt-5.6-terra",
-                "GPT-5.6 Terra",
-                "2.50",
-                "15",
+                "gpt-5.6-luna",
+                "GPT-5.6 Luna",
+                "0.20",
+                "1.20",
+                "0.02",
                 "0.25",
-                "3.125",
             ),
-            ("gpt-5.6-luna", "GPT-5.6 Luna", "1", "6", "0.10", "1.25"),
             // 裸名 gpt-5.6 是 sol 的官方别名；effort 后缀对齐 gpt-5.5 系列的记账形态
             ("gpt-5.6", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
             ("gpt-5.6-low", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
@@ -1729,6 +1746,14 @@ impl Database {
             ),
             // GPT-5.3 Codex 系列
             ("gpt-5.3-codex", "GPT-5.3 Codex", "1.75", "14", "0.175", "0"),
+            (
+                "gpt-5.3-codex-spark",
+                "GPT-5.3 Codex Spark",
+                "1.75",
+                "14",
+                "0.175",
+                "0",
+            ),
             (
                 "gpt-5.3-codex-low",
                 "GPT-5.3 Codex",
@@ -1871,6 +1896,14 @@ impl Database {
                 "1.50",
                 "9.00",
                 "0.15",
+                "0",
+            ),
+            (
+                "gemini-3.5-flash-lite",
+                "Gemini 3.5 Flash Lite",
+                "0.30",
+                "2.50",
+                "0.03",
                 "0",
             ),
             // Gemini 3.1 系列
@@ -2062,20 +2095,21 @@ impl Database {
                 "0",
             ),
             ("deepseek-v3", "DeepSeek V3", "0.28", "1.11", "0.028", "0"),
+            // deepseek-chat / deepseek-reasoner 自 2026-07 起为 V4 Flash 的 legacy 别名（同价）
             (
                 "deepseek-chat",
                 "DeepSeek Chat",
-                "0.27",
-                "1.10",
-                "0.07",
+                "0.14",
+                "0.28",
+                "0.0028",
                 "0",
             ),
             (
                 "deepseek-reasoner",
                 "DeepSeek Reasoner",
-                "0.55",
-                "2.19",
                 "0.14",
+                "0.28",
+                "0.0028",
                 "0",
             ),
             // DeepSeek V4 系列（官方 CNY 按 1 USD ≈ 7.14 折算）
@@ -2123,6 +2157,15 @@ impl Database {
                 "0.19",
                 "0",
             ),
+            // HighSpeed 加速档=本体 2 倍价（Kimi 官方一贯模式，同 K2 Turbo）
+            (
+                "kimi-k2.7-code-highspeed",
+                "Kimi K2.7 Code HighSpeed",
+                "1.90",
+                "8.00",
+                "0.38",
+                "0",
+            ),
             ("kimi-k3", "Kimi K3", "3.00", "15.00", "0.30", "0"),
             // Kimi For Coding 套餐里 K3 的裸名（无 kimi- 前缀），同标准 list 价
             ("k3", "Kimi K3", "3.00", "15.00", "0.30", "0"),
@@ -2165,13 +2208,15 @@ impl Database {
                 "0.06",
                 "0.375",
             ),
-            ("minimax-m3", "MiniMax M3", "0.60", "2.40", "0.12", "0"),
+            ("minimax-m3", "MiniMax M3", "0.30", "1.20", "0.06", "0"),
             // GLM (智谱)
             ("glm-4.7", "GLM-4.7", "0.6", "2.2", "0.11", "0"),
             ("glm-4.6", "GLM-4.6", "0.6", "2.2", "0.11", "0"),
             ("glm-5", "GLM-5", "1", "3.2", "0.2", "0"),
             ("glm-5.1", "GLM-5.1", "1.4", "4.4", "0.26", "0"),
             ("glm-5.2", "GLM-5.2", "1.4", "4.4", "0.26", "0"),
+            ("glm-5-turbo", "GLM-5-Turbo", "1.2", "4", "0.24", "0"),
+            ("glm-5v-turbo", "GLM-5V-Turbo", "1.2", "4", "0.24", "0"),
             // MiMo (小米)
             (
                 "mimo-v2-flash",
@@ -2200,6 +2245,14 @@ impl Database {
                 "0.325",
                 "1.95",
                 "0.065",
+                "0",
+            ),
+            (
+                "qwen3.6-flash",
+                "Qwen3.6 Flash",
+                "0.1875",
+                "1.125",
+                "0.0375",
                 "0",
             ),
             ("qwen3.5-plus", "Qwen3.5 Plus", "0.26", "1.56", "0.052", "0"),
@@ -2429,6 +2482,95 @@ impl Database {
 
     fn repair_current_model_pricing(conn: &Connection) -> Result<(), AppError> {
         let pricing_fixes = [
+            // 2026-07-30 OpenAI GPT-5.6 降价：luna -80%、terra -20%（sol 不变）。
+            // 每档两条守卫：主守卫匹配 ≥v3.19（已跑过 07-12 cache_write 修正），
+            // 0 态守卫匹配 <v3.19 直升用户（cache_write 仍为旧 seed 的 0）
+            (
+                "gpt-5.6-luna",
+                "GPT-5.6 Luna",
+                "0.20",
+                "1.20",
+                "0.02",
+                "0.25",
+                "1",
+                "6",
+                "0.10",
+                "1.25",
+            ),
+            (
+                "gpt-5.6-luna",
+                "GPT-5.6 Luna",
+                "0.20",
+                "1.20",
+                "0.02",
+                "0.25",
+                "1",
+                "6",
+                "0.10",
+                "0",
+            ),
+            (
+                "gpt-5.6-terra",
+                "GPT-5.6 Terra",
+                "2",
+                "12",
+                "0.20",
+                "2.50",
+                "2.50",
+                "15",
+                "0.25",
+                "3.125",
+            ),
+            (
+                "gpt-5.6-terra",
+                "GPT-5.6 Terra",
+                "2",
+                "12",
+                "0.20",
+                "2.50",
+                "2.50",
+                "15",
+                "0.25",
+                "0",
+            ),
+            // 2026-07-31 models.dev 审计核价：DeepSeek V4 发布后 chat/reasoner 降为 V4 Flash
+            // 别名价；MiniMax M3 官方 standard 档 0.3/1.2（旧值疑似录了加速档）
+            (
+                "deepseek-chat",
+                "DeepSeek Chat",
+                "0.14",
+                "0.28",
+                "0.0028",
+                "0",
+                "0.27",
+                "1.10",
+                "0.07",
+                "0",
+            ),
+            (
+                "deepseek-reasoner",
+                "DeepSeek Reasoner",
+                "0.14",
+                "0.28",
+                "0.0028",
+                "0",
+                "0.55",
+                "2.19",
+                "0.14",
+                "0",
+            ),
+            (
+                "minimax-m3",
+                "MiniMax M3",
+                "0.30",
+                "1.20",
+                "0.06",
+                "0",
+                "0.60",
+                "2.40",
+                "0.12",
+                "0",
+            ),
             // 2026-07-12 GPT-5.6 家族 cache write=1.25× 输入价（OpenAI 5.6 起的新规），
             // 修正早期 seed 的 0 值；只匹配未被用户改过的行
             (
