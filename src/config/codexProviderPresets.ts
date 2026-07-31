@@ -1100,6 +1100,50 @@ requires_openai_auth = true`,
     iconColor: "#624AFF",
   },
   {
+    name: "Tencent Hunyuan",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/apikey",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "hy3_tokenhub",
+      "https://tokenhub.tencentmaas.com/v1",
+      "hy3",
+    ),
+    // 官方备用域名 tencentmaas.cn（文档 1823/130078）；国际站 tokenhub-intl
+    // 属不同地域，API Key 不跨站通用，不作候选
+    endpointCandidates: [
+      "https://tokenhub.tencentmaas.com/v1",
+      "https://tokenhub.tencentmaas.cn/v1",
+    ],
+    // 腾讯 TokenHub 官方 Codex 文档（cloud.tencent.com/document/product/1823/133532）：
+    // hy3 原生 Responses（wire_api=responses；官方硬性要求的
+    // disable_response_storage=true 已由 generateThirdPartyConfig 输出）。
+    // ⚠️ 须用 TokenHub API Key（创建时范围需勾选 Hy3）；Coding Plan / Token Plan
+    // 订阅 Key 只能走各自 chat 端点，对本预设的 /v1 不通。
+    // hy3 在带 tools 的请求里会把 reasoning_effort=low 服务端自动升为 high
+    // （Codex 恒带 tools），默认 high 即真实行为。
+    apiFormat: "openai_responses",
+    // 无官方 catalog：合成 MiMo 式（shell_command 编辑、不发 freeform apply_patch）
+    modelCatalog: modelCatalog([
+      {
+        model: "hy3",
+        displayName: "Hy3",
+        contextWindow: 256000,
+        // hy3 不在官方多模态理解模型名单（1823/130988），纯文本
+        inputModalities: ["text"],
+      },
+      {
+        model: "hy3-preview",
+        displayName: "Hy3 Preview",
+        contextWindow: 256000,
+        inputModalities: ["text"],
+      },
+    ]),
+    category: "cn_official",
+    icon: "hunyuan",
+    iconColor: "#0055E9",
+  },
+  {
     name: "StepFun",
     websiteUrl: "https://platform.stepfun.com/step-plan",
     apiKeyUrl: "https://platform.stepfun.com/interface-key",
