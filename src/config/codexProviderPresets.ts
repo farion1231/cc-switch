@@ -969,27 +969,25 @@ requires_openai_auth = true`,
       "deepseek-v4-flash",
     ),
     endpointCandidates: ["https://api.deepseek.com"],
-    apiFormat: "openai_chat",
+    // DeepSeek 官方 Codex 文档（api-docs.deepseek.com → agent_integrations/codex）：
+    // deepseek-v4-flash 原生 Responses（wire_api=responses 对自家 base_url），无需路由接管转换。
+    // 后端按 deepseek.com host 直接镜像官方 models.json（freeform apply_patch +
+    // GPT-5 harness + low/high/max 思考档，需 codex >= 0.144.0），这里只保留行清单与展示名。
+    apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
       {
         model: "deepseek-v4-flash",
         displayName: "DeepSeek V4 Flash",
-        contextWindow: 1000000,
+        contextWindow: 1048576,
       },
+      // 官方预计 2026-08 初开通 pro 的 Codex 集成（官方 models.json 已含该条目），
+      // 在那之前切到 pro 会上游报错
       {
         model: "deepseek-v4-pro",
         displayName: "DeepSeek V4 Pro",
-        contextWindow: 1000000,
+        contextWindow: 1048576,
       },
     ]),
-    codexChatReasoning: {
-      supportsThinking: true,
-      supportsEffort: true,
-      thinkingParam: "thinking",
-      effortParam: "reasoning_effort",
-      effortValueMode: "deepseek",
-      outputFormat: "reasoning_content",
-    },
     category: "cn_official",
     icon: "deepseek",
     iconColor: "#1E88E5",
