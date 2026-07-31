@@ -876,7 +876,26 @@
       "defaultCostMultiplierRequired": "預設倍率不能為空",
       "defaultCostMultiplierInvalid": "預設倍率格式不正確"
     },
-    "saveFailedGeneric": "儲存失敗，請重試"
+    "saveFailedGeneric": "儲存失敗，請重試",
+    "workspaceSync": {
+      "title": "工作區資料同步",
+      "description": "備份 / 合併各端的工作階段、任務、計畫、記憶等本機資料到雲端",
+      "enable": "啟用工作區同步",
+      "enableHint": "重用已設定的 WebDAV / S3 雲端憑證",
+      "transport": "傳輸方式",
+      "transportHint": "使用「雲端同步」中已設定的連線",
+      "providers": "同步範圍",
+      "refresh": "重新整理",
+      "itemCount": "{{count}} 項",
+      "notInstalled": "未安裝",
+      "backup": "備份到雲端",
+      "merge": "從雲端拉取並合併",
+      "saved": "工作區同步設定已儲存",
+      "backupDone": "備份完成：{{items}} 項，上傳 {{blobs}} 個檔案",
+      "mergeDone": "合併完成：寫入 {{files}} 個檔案，{{conflicts}} 處衝突",
+      "reportSummary": "已掃描 {{providers}} 個端 · {{items}} 項 · 寫入 {{files}} 個檔案 · 上傳 {{blobs}} 個檔案",
+      "conflicts": "{{count}} 處衝突（已保留雙份，請手動處理）"
+    }
   },
   "apps": {
     "claude": "Claude",

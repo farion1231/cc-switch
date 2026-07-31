@@ -875,7 +875,26 @@
       "defaultCostMultiplierRequired": "Default multiplier is required",
       "defaultCostMultiplierInvalid": "Invalid multiplier format"
     },
-    "saveFailedGeneric": "Save failed, please try again"
+    "saveFailedGeneric": "Save failed, please try again",
+    "workspaceSync": {
+      "title": "Workspace Data Sync",
+      "description": "Back up / merge each tool's local sessions, tasks, plans, and memory to the cloud",
+      "enable": "Enable workspace sync",
+      "enableHint": "Reuses your configured WebDAV / S3 credentials",
+      "transport": "Transport",
+      "transportHint": "Uses the connection configured under Cloud Sync",
+      "providers": "Scope",
+      "refresh": "Refresh",
+      "itemCount": "{{count}} items",
+      "notInstalled": "Not installed",
+      "backup": "Back up to cloud",
+      "merge": "Pull & merge from cloud",
+      "saved": "Workspace sync settings saved",
+      "backupDone": "Backup complete: {{items}} items, {{blobs}} files uploaded",
+      "mergeDone": "Merge complete: {{files}} files written, {{conflicts}} conflicts",
+      "reportSummary": "Scanned {{providers}} providers · {{items}} items · {{files}} files written · {{blobs}} files uploaded",
+      "conflicts": "{{count}} conflicts (both copies kept — resolve manually)"
+    }
   },
   "apps": {
     "claude": "Claude",

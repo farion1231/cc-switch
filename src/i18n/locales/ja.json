@@ -875,7 +875,26 @@
       "defaultCostMultiplierRequired": "デフォルト倍率は必須です",
       "defaultCostMultiplierInvalid": "デフォルト倍率の形式が正しくありません"
     },
-    "saveFailedGeneric": "保存に失敗しました。もう一度お試しください"
+    "saveFailedGeneric": "保存に失敗しました。もう一度お試しください",
+    "workspaceSync": {
+      "title": "ワークスペースデータ同期",
+      "description": "各ツールのセッション・タスク・プラン・メモリをクラウドへバックアップ／マージ",
+      "enable": "ワークスペース同期を有効化",
+      "enableHint": "設定済みの WebDAV / S3 認証情報を再利用します",
+      "transport": "転送方式",
+      "transportHint": "「クラウド同期」で設定した接続を使用します",
+      "providers": "同期対象",
+      "refresh": "更新",
+      "itemCount": "{{count}} 件",
+      "notInstalled": "未インストール",
+      "backup": "クラウドへバックアップ",
+      "merge": "クラウドから取得してマージ",
+      "saved": "ワークスペース同期設定を保存しました",
+      "backupDone": "バックアップ完了：{{items}} 件、{{blobs}} ファイルをアップロード",
+      "mergeDone": "マージ完了：{{files}} ファイル書き込み、{{conflicts}} 件の競合",
+      "reportSummary": "{{providers}} プロバイダーをスキャン · {{items}} 件 · {{files}} ファイル書き込み · {{blobs}} ファイルアップロード",
+      "conflicts": "{{count}} 件の競合（両方保持されました。手動で解決してください）"
+    }
   },
   "apps": {
     "claude": "Claude",
