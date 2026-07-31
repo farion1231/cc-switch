@@ -109,6 +109,24 @@ impl ObjectStorage for WebDavObjectStorage {
         }))
     }
 
+    async fn ensure_container(&self, container_key: &str) -> Result<(), AppError> {
+        // MKCOL the full directory chain so subsequent GETs on missing children
+        // return 404 rather than 409 (Jianguoyun). Every segment is a directory.
+        let segs: Vec<String> = path_segments(container_key).map(str::to_string).collect();
+        if segs.is_empty() {
+            return Ok(());
+        }
+        {
+            let guard = self.ensured_dirs.lock().await;
+            if guard.contains(&segs.join("/")) {
+                return Ok(());
+            }
+        }
+        ensure_remote_directories(&self.base_url, &segs, &self.auth).await?;
+        self.ensured_dirs.lock().await.insert(segs.join("/"));
+        Ok(())
+    }
+
     async fn put(&self, key: &str, bytes: Bytes) -> Result<PutResult, AppError> {
         self.put_unconditional(key, bytes).await
     }

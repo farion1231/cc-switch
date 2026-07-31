@@ -31,6 +31,16 @@ pub trait ObjectStorage: Send + Sync {
 
     async fn put(&self, key: &str, bytes: Bytes) -> Result<PutResult, AppError>;
 
+    /// Ensure the remote container/directory chain for `container_key` exists.
+    ///
+    /// Object stores (S3, memory) have no directories and default to a no-op.
+    /// WebDAV overrides this to MKCOL the chain, which some servers (e.g.
+    /// Jianguoyun) require before a GET on a not-yet-existing child returns a
+    /// clean 404 instead of `409 Conflict`.
+    async fn ensure_container(&self, _container_key: &str) -> Result<(), AppError> {
+        Ok(())
+    }
+
     async fn put_if_match(
         &self,
         key: &str,

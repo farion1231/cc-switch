@@ -191,6 +191,10 @@ pub async fn backup(
     let device = device_name();
     let providers = selected_providers(settings);
 
+    // Create the remote directory chain first so the head GET below returns a
+    // clean 404 (not 409) on WebDAV servers like Jianguoyun.
+    storage.ensure_container(&prefix).await?;
+
     let prev_head = read_head(storage, &prefix).await?;
     let parents = prev_head
         .as_ref()
@@ -270,6 +274,8 @@ pub async fn merge(
     let prefix = remote_prefix(settings);
     let device = device_name();
     let providers = selected_providers(settings);
+
+    storage.ensure_container(&prefix).await?;
 
     let Some((remote_head, head_etag)) = read_head(storage, &prefix).await? else {
         // No remote yet → merge degenerates to a backup.
