@@ -138,6 +138,42 @@ describe("useAddProviderMutation", () => {
     ).toEqual(["deepseek/deepseek-v4-pro-pg", "deepseek/deepseek-v4-flash-pg"]);
   });
 
+  it("uses a manually entered model ID for a supported Qoder provider", async () => {
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useAddProviderMutation("qodercli"), {
+      wrapper,
+    });
+
+    const provider = await act(async () =>
+      result.current.mutateAsync({
+        name: "Kimi custom model",
+        providerKey: "kimi",
+        category: "cn_official",
+        settingsConfig: {
+          provider: "kimi",
+          apiKey: "sk-test",
+          models: [
+            {
+              model: "moonshot-v1-custom",
+              type: "cp",
+              format: "openai",
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(provider.id).toBe("kimi/moonshot-v1-custom");
+    expect(apiMocks.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "kimi/moonshot-v1-custom",
+        name: "Kimi custom model",
+      }),
+      "qodercli",
+      undefined,
+    );
+  });
+
   it("duplicates Claude Desktop official providers with a fresh id", async () => {
     const { wrapper } = createWrapper();
     const { result } = renderHook(

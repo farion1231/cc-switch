@@ -3,6 +3,8 @@ import {
   buildQoderCliModelProviderId,
   getQoderCliModelDisplayLabel,
   getQoderCliPlanLabel,
+  getQoderCliSupportedPlanTypes,
+  isQoderCliAllowedModel,
   isQoderCliSupportedModel,
   isQoderCliSupportedProvider,
   qodercliProviderPresets,
@@ -13,10 +15,10 @@ import {
 } from "@/components/providers/forms/helpers/qodercliFormUtils";
 
 describe("Qoder CLI official BYOK catalog", () => {
-  it("shows full plan names and leaves pay-as-you-go unlabeled", () => {
+  it("shows every plan name in full", () => {
     expect(getQoderCliPlanLabel("cp")).toBe("Coding Plan");
     expect(getQoderCliPlanLabel("tp")).toBe("Token Plan");
-    expect(getQoderCliPlanLabel("pg")).toBe("");
+    expect(getQoderCliPlanLabel("pg")).toBe("Pay As You Go");
     expect(
       getQoderCliModelDisplayLabel({
         displayName: "Qwen 3.7 Plus",
@@ -34,7 +36,7 @@ describe("Qoder CLI official BYOK catalog", () => {
         displayName: "DeepSeek V4 Pro",
         type: "pg",
       }),
-    ).toBe("DeepSeek V4 Pro");
+    ).toBe("DeepSeek V4 Pro · Pay As You Go");
   });
 
   it("contains only Qoder-supported provider keys", () => {
@@ -67,6 +69,31 @@ describe("Qoder CLI official BYOK catalog", () => {
         expect(isQoderCliSupportedModel(preset.providerKey, model)).toBe(true);
       }
     }
+  });
+
+  it("allows another model ID only within the provider's supported plan types", () => {
+    expect(getQoderCliSupportedPlanTypes("kimi")).toEqual(["pg", "cp"]);
+    expect(
+      isQoderCliAllowedModel("kimi", {
+        model: "moonshot-v1-custom",
+        type: "cp",
+        format: "openai",
+      }),
+    ).toBe(true);
+    expect(
+      isQoderCliAllowedModel("kimi", {
+        model: "moonshot-v1-custom",
+        type: "tp",
+        format: "openai",
+      }),
+    ).toBe(false);
+    expect(
+      isQoderCliAllowedModel("openai", {
+        model: "gpt-4o",
+        type: "pg",
+        format: "openai",
+      }),
+    ).toBe(false);
   });
 
   it("builds a Qoder config without an arbitrary base URL", () => {
@@ -110,6 +137,49 @@ describe("Qoder CLI official BYOK catalog", () => {
       provider: "",
       apiKey: "sk-test",
       models: [],
+    });
+  });
+
+  it("round-trips another model from an official provider and plan", () => {
+    const parsed = parseQoderCliConfig({
+      provider: "kimi",
+      apiKey: "sk-test",
+      models: [
+        {
+          model: "moonshot-v1-custom",
+          type: "cp",
+          format: "openai",
+        },
+      ],
+    });
+    expect(parsed).toEqual({
+      provider: "kimi",
+      apiKey: "sk-test",
+      models: [
+        {
+          model: "moonshot-v1-custom",
+          type: "cp",
+          format: "openai",
+          displayName: "moonshot-v1-custom",
+        },
+      ],
+    });
+
+    expect(
+      JSON.parse(
+        buildQoderCliConfigJson(parsed.provider, parsed.apiKey, parsed.models),
+      ),
+    ).toEqual({
+      provider: "kimi",
+      apiKey: "sk-test",
+      models: [
+        {
+          model: "moonshot-v1-custom",
+          type: "cp",
+          format: "openai",
+          displayName: "moonshot-v1-custom",
+        },
+      ],
     });
   });
 });

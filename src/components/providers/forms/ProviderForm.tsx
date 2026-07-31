@@ -51,7 +51,7 @@ import {
   type HermesProviderPreset,
 } from "@/config/hermesProviderPresets";
 import {
-  isQoderCliSupportedModel,
+  isQoderCliAllowedModel,
   isQoderCliSupportedProvider,
   qodercliProviderPresets,
   type QoderCliProviderPreset,
@@ -1398,14 +1398,15 @@ function ProviderFormFull({
       }
       if (
         qodercliModels.length !== 1 ||
-        !isQoderCliSupportedModel(
+        !isQoderCliAllowedModel(
           qodercliProviderKey,
           qodercliModels[0] ?? { model: "", type: "pg", format: "openai" },
         )
       ) {
         issues.push(
           t("providerForm.modelRequired", {
-            defaultValue: "请选择该供应商在 Qoder 官方目录中的模型。",
+            defaultValue:
+              "请选择官方预设模型，或填写该供应商实际支持的模型 ID。",
           }),
         );
       }
@@ -2099,7 +2100,7 @@ function ProviderFormFull({
                 appId === "qodercli"
                   ? t("qodercli.catalogProviderHint", {
                       defaultValue:
-                        "💡 供应商、模型和套餐类型均来自 Qoder 官方 BYOK 目录，只需填写对应的 API Key。",
+                        "💡 供应商和套餐类型来自 Qoder 官方 BYOK 目录；模型可选择官方预设，也可手动填写该供应商支持的其他模型。",
                     })
                   : undefined
               }

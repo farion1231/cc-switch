@@ -12,7 +12,7 @@ export type QoderCliPlanType = "cp" | "tp" | "pg";
 export function getQoderCliPlanLabel(type: QoderCliPlanType): string {
   if (type === "cp") return "Coding Plan";
   if (type === "tp") return "Token Plan";
-  return "";
+  return "Pay As You Go";
 }
 
 export interface QoderCliPresetModel {
@@ -20,7 +20,7 @@ export interface QoderCliPresetModel {
   type: QoderCliPlanType;
   format: "openai";
   displayName: string;
-  maxInputTokens: number;
+  maxInputTokens?: number;
   isVl?: boolean;
   isReasoning?: boolean;
 }
@@ -156,7 +156,7 @@ const kimiModels = [
     true,
   ),
   qoderModel("kimi-k2.6-cp", "Kimi K2.6", "cp", 256_000, true),
-  qoderModel("kimi-for-coding-cp", "Kimi for Coding", "cp", 256_000),
+  qoderModel("kimi-for-coding-cp", "Kimi for Coding", "cp", 256_000, true),
 ];
 
 const minimaxModels = [
@@ -327,6 +327,30 @@ export function isQoderCliSupportedModel(
         item.type === model.type &&
         item.format === model.format,
     ) ?? false
+  );
+}
+
+export function getQoderCliSupportedPlanTypes(
+  provider: string,
+): QoderCliPlanType[] {
+  const planTypes = getQoderCliPreset(provider)?.models.map(
+    (model) => model.type,
+  );
+  return [...new Set(planTypes ?? [])];
+}
+
+/**
+ * Qoder restricts BYOK providers and plan types to its catalog, but its CLI
+ * also allows users to enter another model ID within a supported group.
+ */
+export function isQoderCliAllowedModel(
+  provider: string,
+  model: Pick<QoderCliPresetModel, "model" | "type" | "format">,
+): boolean {
+  return (
+    model.model.trim().length > 0 &&
+    model.format === "openai" &&
+    getQoderCliSupportedPlanTypes(provider).includes(model.type)
   );
 }
 

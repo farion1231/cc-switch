@@ -1,8 +1,9 @@
 //! Qoder CLI configuration support.
 //!
-//! Qoder BYOK is catalog-backed. A custom model entry is usable only when its
-//! `provider`, `model`, and plan `type` match Qoder's server-side catalog.
-//! Arbitrary OpenAI-compatible base URLs are intentionally not supported here.
+//! Qoder BYOK is catalog-backed. Providers and plan `type` values must match
+//! Qoder's catalog, while the CLI also permits another model ID within a
+//! supported provider/type group. Arbitrary OpenAI-compatible base URLs are
+//! intentionally not supported here.
 
 use crate::config::{get_home_dir, read_json_file, write_json_file};
 use crate::error::AppError;
@@ -136,22 +137,19 @@ fn validate_model(provider: &str, model: &QoderCliModel) -> Result<(), AppError>
     let model_id = model.id.trim();
     let plan_type = model.plan_type.trim();
     let format = model.format.trim();
-    let is_supported = provider_catalog(provider).is_some_and(|catalog| {
-        catalog
-            .iter()
-            .any(|(id, kind)| *id == model_id && *kind == plan_type)
-    });
-    if is_supported && format == "openai" {
+    let is_supported_type = provider_catalog(provider)
+        .is_some_and(|catalog| catalog.iter().any(|(_, kind)| *kind == plan_type));
+    if !model_id.is_empty() && is_supported_type && format == "openai" {
         return Ok(());
     }
 
     Err(AppError::localized(
         "provider.qodercli.model.unsupported",
         format!(
-            "模型 '{model_id}'（{plan_type}/{format}）不在 Qoder 供应商 '{provider}' 的官方目录中"
+            "模型 '{model_id}' 的套餐或格式（{plan_type}/{format}）不受 Qoder 供应商 '{provider}' 支持"
         ),
         format!(
-            "Model '{model_id}' ({plan_type}/{format}) is not in Qoder's official catalog for provider '{provider}'"
+            "Model '{model_id}' uses a plan or format ({plan_type}/{format}) not supported by Qoder provider '{provider}'"
         ),
     ))
 }
@@ -469,7 +467,7 @@ pub fn get_typed_providers() -> Result<IndexMap<String, QoderCliProviderConfig>,
         };
         if validate_model(provider, &model).is_err() {
             log::debug!(
-                "Ignoring model '{}' because it is not valid for Qoder provider '{provider}'",
+                "Ignoring model '{}' because its plan or format is not valid for Qoder provider '{provider}'",
                 model.id
             );
             continue;
@@ -523,8 +521,8 @@ pub fn set_typed_provider(
     if config.models.is_empty() {
         return Err(AppError::localized(
             "provider.qodercli.models.empty",
-            "请至少选择一个 Qoder 官方模型",
-            "Select at least one official Qoder model",
+            "请选择一个 Qoder 官方预设模型，或添加该供应商支持的其他模型",
+            "Select an official Qoder model preset or add another model supported by the provider",
         ));
     }
     for model in &config.models {
@@ -776,12 +774,16 @@ mod tests {
     }
 
     #[test]
-    fn catalog_rejects_arbitrary_provider_model_and_type() {
+    fn catalog_restricts_provider_type_and_format_but_allows_other_model_ids() {
         assert!(validate_provider("deepseek").is_ok());
         assert!(validate_provider("my-openai").is_err());
         assert!(validate_model("deepseek", &qoder_model("deepseek-v4-pro-pg", "pg")).is_ok());
         assert!(validate_model("deepseek", &qoder_model("deepseek-v4-pro-pg", "tp")).is_err());
-        assert!(validate_model("deepseek", &qoder_model("gpt-4o", "pg")).is_err());
+        assert!(validate_model("deepseek", &qoder_model("deepseek-chat", "pg")).is_ok());
+        assert!(validate_model("deepseek", &qoder_model("", "pg")).is_err());
+        let mut wrong_format = qoder_model("deepseek-chat", "pg");
+        wrong_format.format = "anthropic".to_string();
+        assert!(validate_model("deepseek", &wrong_format).is_err());
     }
 
     #[test]
@@ -940,6 +942,45 @@ mod tests {
 
     #[test]
     #[serial]
+    fn manually_entered_model_roundtrips_for_a_supported_provider_and_plan() {
+        let (_temp, original) = isolate_home();
+        let config = QoderCliProviderConfig {
+            provider: "kimi".to_string(),
+            apiKey: "test-api-key".to_string(),
+            models: vec![qoder_model("moonshot-v1-custom", "cp")],
+            baseURL: None,
+            extra: Map::new(),
+        };
+
+        set_typed_provider("kimi/moonshot-v1-custom", &config).expect("set custom model");
+        let entries = get_custom_models().expect("entries");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].get("provider").and_then(Value::as_str),
+            Some("kimi")
+        );
+        assert_eq!(
+            entries[0].get("model").and_then(Value::as_str),
+            Some("moonshot-v1-custom")
+        );
+        assert_eq!(entries[0].get("type").and_then(Value::as_str), Some("cp"));
+
+        let providers = get_providers().expect("providers");
+        assert!(providers.contains_key("kimi/moonshot-v1-custom"));
+        apply_switch_defaults(
+            "kimi/moonshot-v1-custom",
+            &serde_json::to_value(&config).unwrap(),
+        )
+        .expect("switch custom model");
+        assert_eq!(
+            get_active_model_name().expect("active").as_deref(),
+            Some("kimi/moonshot-v1-custom")
+        );
+        restore_home(original);
+    }
+
+    #[test]
+    #[serial]
     fn remove_provider_cleans_only_its_entries() {
         let (_temp, original) = isolate_home();
         set_typed_provider("deepseek", &sample_config()).expect("set");
@@ -979,15 +1020,15 @@ mod tests {
 
     #[test]
     #[serial]
-    fn set_rejects_non_catalog_configuration_without_writing() {
+    fn set_rejects_unknown_provider_invalid_plan_or_key_without_writing() {
         let (_temp, original) = isolate_home();
         let mut bad_provider = sample_config();
         bad_provider.provider = "openai".to_string();
         assert!(set_typed_provider("openai", &bad_provider).is_err());
 
-        let mut bad_model = sample_config();
-        bad_model.models = vec![qoder_model("deepseek-chat", "pg")];
-        assert!(set_typed_provider("deepseek", &bad_model).is_err());
+        let mut bad_plan = sample_config();
+        bad_plan.models = vec![qoder_model("deepseek-chat", "tp")];
+        assert!(set_typed_provider("deepseek", &bad_plan).is_err());
 
         let mut bad_key = sample_config();
         bad_key.apiKey = "${API_KEY}".to_string();

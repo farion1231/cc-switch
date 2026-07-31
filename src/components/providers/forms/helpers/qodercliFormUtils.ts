@@ -1,6 +1,8 @@
 import {
   getQoderCliPreset,
+  isQoderCliAllowedModel,
   qodercliProviderPresets,
+  type QoderCliPlanType,
   type QoderCliPresetModel,
   type QoderCliProviderConfig,
 } from "@/config/qodercliProviderPresets";
@@ -19,9 +21,16 @@ export interface ParsedQoderCliConfig {
   models: QoderCliPresetModel[];
 }
 
+const QODERCLI_PLAN_TYPES: QoderCliPlanType[] = ["pg", "cp", "tp"];
+
+function isQoderCliPlanType(value: string): value is QoderCliPlanType {
+  return QODERCLI_PLAN_TYPES.includes(value as QoderCliPlanType);
+}
+
 /**
- * Read the current official shape. Legacy arbitrary-endpoint fields are
- * intentionally ignored; they are not accepted by Qoder's BYOK service.
+ * Read Qoder's catalog-backed shape. Legacy arbitrary-endpoint fields remain
+ * ignored, while model IDs entered through Qoder's "Add model name" flow are
+ * preserved when their provider and plan type are supported.
  */
 export function parseQoderCliConfig(
   value?: string | Record<string, unknown>,
@@ -42,15 +51,51 @@ export function parseQoderCliConfig(
           !!item && typeof item === "object",
       )
       .map((item) => {
-        const model = typeof item.model === "string" ? item.model : "";
+        const model = typeof item.model === "string" ? item.model.trim() : "";
         const type = typeof item.type === "string" ? item.type : "";
-        const format = typeof item.format === "string" ? item.format : "";
-        return preset?.models.find(
+        const format = typeof item.format === "string" ? item.format : "openai";
+        if (!isQoderCliPlanType(type)) {
+          return undefined;
+        }
+
+        if (
+          format !== "openai" ||
+          !isQoderCliAllowedModel(provider, {
+            model,
+            type,
+            format,
+          })
+        ) {
+          return undefined;
+        }
+
+        const officialModel = preset?.models.find(
           (candidate) =>
             candidate.model === model &&
             candidate.type === type &&
             candidate.format === format,
         );
+        if (officialModel) {
+          return officialModel;
+        }
+
+        const displayName =
+          typeof item.displayName === "string" && item.displayName.trim()
+            ? item.displayName.trim()
+            : model;
+        return {
+          model,
+          type,
+          format: "openai" as const,
+          displayName,
+          ...(typeof item.maxInputTokens === "number"
+            ? { maxInputTokens: item.maxInputTokens }
+            : {}),
+          ...(typeof item.isVl === "boolean" ? { isVl: item.isVl } : {}),
+          ...(typeof item.isReasoning === "boolean"
+            ? { isReasoning: item.isReasoning }
+            : {}),
+        } satisfies QoderCliPresetModel;
       })
       .filter((item): item is QoderCliPresetModel => item !== undefined);
 
@@ -69,21 +114,21 @@ export function buildQoderCliConfigJson(
   apiKey: string,
   models: QoderCliPresetModel[],
 ): string {
-  const preset = getQoderCliPreset(provider);
   const selected = models[0];
-  const officialModel = selected
-    ? preset?.models.find(
-        (candidate) =>
-          candidate.model === selected.model &&
-          candidate.type === selected.type &&
-          candidate.format === selected.format,
-      )
-    : undefined;
+  const allowedModel =
+    selected && isQoderCliAllowedModel(provider, selected)
+      ? {
+          ...selected,
+          model: selected.model.trim(),
+          displayName: selected.displayName.trim() || selected.model.trim(),
+          format: "openai" as const,
+        }
+      : undefined;
 
   const config: QoderCliProviderConfig = {
     provider: provider.trim(),
     apiKey: apiKey.trim(),
-    models: officialModel ? [officialModel] : [],
+    models: allowedModel ? [allowedModel] : [],
   };
   return JSON.stringify(config, null, 2);
 }
