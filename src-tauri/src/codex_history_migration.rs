@@ -1206,25 +1206,26 @@ fn migrate_codex_state_db_legacy_thread_names(
     let tx = conn
         .transaction()
         .map_err(|e| AppError::Database(format!("开启 Codex thread rename 迁移事务失败: {e}")))?;
+    let mut migrated = 0;
     for (thread_id, thread_name) in &candidates {
         let changed = tx
             .execute(
                 "UPDATE threads SET name = ?1
                  WHERE id = ?2 AND COALESCE(name, '') = ''
                    AND title = ?1
-                   AND (first_user_message IS NULL OR first_user_message <> ?1)",
+                   AND (first_user_message IS NULL OR TRIM(first_user_message) <> TRIM(?1))",
                 (thread_name, thread_id),
             )
             .map_err(|e| AppError::Database(format!("迁移 Codex thread rename 失败: {e}")))?;
         if changed != 1 {
-            return Err(AppError::Database(format!(
-                "Codex thread rename changed during migration: {thread_id}"
-            )));
+            log::warn!("Skipping Codex thread rename for {thread_id}: row changed since scan");
+            continue;
         }
+        migrated += 1;
     }
     tx.commit()
         .map_err(|e| AppError::Database(format!("提交 Codex thread rename 迁移事务失败: {e}")))?;
-    Ok(candidates.len())
+    Ok(migrated)
 }
 
 fn codex_legacy_thread_name_candidates(
@@ -1248,12 +1249,13 @@ fn codex_legacy_thread_name_candidates(
         if line.trim().is_empty() {
             continue;
         }
-        let value: Value = serde_json::from_str(&line).map_err(|e| {
-            AppError::Message(format!(
-                "Invalid Codex session_index.jsonl line {}: {e}",
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            log::warn!(
+                "Skipping invalid Codex session_index.jsonl line {}",
                 line_index + 1
-            ))
-        })?;
+            );
+            continue;
+        };
         if let (Some(id), Some(name)) = (
             value.get("id").and_then(Value::as_str),
             value.get("thread_name").and_then(Value::as_str),
@@ -1269,7 +1271,7 @@ fn codex_legacy_thread_name_candidates(
         .prepare(
             "SELECT name FROM threads
              WHERE id = ?1 AND title = ?2
-               AND (first_user_message IS NULL OR first_user_message <> ?2)",
+               AND (first_user_message IS NULL OR TRIM(first_user_message) <> TRIM(?2))",
         )
         .map_err(|e| AppError::Database(format!("读取 Codex thread rename 元数据失败: {e}")))?;
     for (thread_id, thread_name) in legacy_names {
@@ -1280,7 +1282,7 @@ fn codex_legacy_thread_name_candidates(
             row.get::<_, Option<String>>(0)
         });
         match row {
-            Ok(name) if name.as_deref().unwrap_or("").trim().is_empty() => {
+            Ok(name) if name.as_deref().unwrap_or("").is_empty() => {
                 candidates.push((thread_id, thread_name));
             }
             Ok(_) | Err(rusqlite::Error::QueryReturnedNoRows) => {}
@@ -2244,11 +2246,14 @@ base_url = "https://proxy.example/v1"
         fs::write(
             codex_dir.join("session_index.jsonl"),
             concat!(
+                "not json\n",
                 "{\"id\":\"renamed\",\"thread_name\":\"old name\"}\n",
                 "{\"id\":\"renamed\",\"thread_name\":\"my project\"}\n",
                 "{\"id\":\"generated\",\"thread_name\":\"generated title\"}\n",
                 "{\"id\":\"existing\",\"thread_name\":\"legacy name\"}\n",
-                "{\"id\":\"nullable\",\"thread_name\":\"nullable name\"}\n"
+                "{\"id\":\"nullable\",\"thread_name\":\"nullable name\"}\n",
+                "{\"id\":\"whitespace\",\"thread_name\":\"whitespace name\"}\n",
+                "{\"id\":\"trimmed-generated\",\"thread_name\":\"generated with spaces\"}\n"
             ),
         )
         .expect("write session index");
@@ -2267,7 +2272,9 @@ base_url = "https://proxy.example/v1"
                 ('renamed', 'openai', NULL, 'my project', 'help me'),
                 ('generated', 'openai', NULL, 'generated title', 'generated title'),
                 ('existing', 'openai', 'keep me', 'legacy name', 'help me'),
-                ('nullable', 'openai', NULL, 'nullable name', NULL);",
+                ('nullable', 'openai', NULL, 'nullable name', NULL),
+                ('whitespace', 'openai', ' ', 'whitespace name', 'help me'),
+                ('trimmed-generated', 'openai', NULL, 'generated with spaces', '  generated with spaces  ');",
         )
         .expect("seed state db");
         drop(conn);
@@ -2289,10 +2296,71 @@ base_url = "https://proxy.example/v1"
         assert_eq!(thread_name("generated"), None);
         assert_eq!(thread_name("existing").as_deref(), Some("keep me"));
         assert_eq!(thread_name("nullable").as_deref(), Some("nullable name"));
+        assert_eq!(thread_name("whitespace").as_deref(), Some(" "));
+        assert_eq!(thread_name("trimmed-generated"), None);
         assert!(backup_root
             .join("state")
             .join(CODEX_STATE_DB_FILENAME)
             .exists());
+
+        drop(conn);
+        let rerun_backup_root = dir.path().join("rerun-backup");
+        let rerun =
+            migrate_codex_state_db_legacy_thread_names(&db_path, &codex_dir, &rerun_backup_root)
+                .expect("rerun thread name migration");
+        assert_eq!(rerun, 0);
+        assert!(!rerun_backup_root.exists());
+    }
+
+    #[test]
+    fn skips_legacy_thread_name_changed_after_candidate_scan() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        fs::write(
+            codex_dir.join("session_index.jsonl"),
+            "{\"id\":\"raced\",\"thread_name\":\"legacy name\"}\n",
+        )
+        .expect("write session index");
+
+        let db_path = codex_dir.join(CODEX_STATE_DB_FILENAME);
+        let conn = Connection::open(&db_path).expect("open db");
+        conn.execute_batch(
+            "CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                model_provider TEXT NOT NULL,
+                name TEXT,
+                title TEXT NOT NULL,
+                first_user_message TEXT
+            );
+            INSERT INTO threads VALUES
+                ('raced', 'openai', NULL, 'legacy name', 'help me');
+            CREATE TRIGGER change_name_before_migration
+            BEFORE UPDATE OF name ON threads
+            WHEN OLD.id = 'raced' AND NEW.name = 'legacy name'
+            BEGIN
+                UPDATE threads SET name = 'concurrent name' WHERE id = OLD.id;
+                SELECT RAISE(IGNORE);
+            END;",
+        )
+        .expect("seed state db");
+        drop(conn);
+
+        let changed = migrate_codex_state_db_legacy_thread_names(
+            &db_path,
+            &codex_dir,
+            &dir.path().join("backup"),
+        )
+        .expect("migrate raced thread name");
+
+        assert_eq!(changed, 0);
+        let conn = Connection::open(&db_path).expect("reopen db");
+        let name: String = conn
+            .query_row("SELECT name FROM threads WHERE id = 'raced'", [], |row| {
+                row.get(0)
+            })
+            .expect("read raced thread name");
+        assert_eq!(name, "concurrent name");
     }
 
     #[test]
