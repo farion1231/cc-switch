@@ -1316,6 +1316,7 @@ fn sync_current_provider_for_app_respecting_takeover(
         return Ok(());
     }
 
+    let _ = sync_common_config_snippet_from_live_simple(state, app_type, provider);
     write_live_with_common_config(state.db.as_ref(), app_type, provider)
 }
 

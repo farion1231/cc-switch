@@ -148,6 +148,40 @@ fn sync_current_provider_to_live_preserves_live_statusline_via_common_config() {
 }
 
 #[test]
+fn global_sync_current_to_live_preserves_live_statusline_via_common_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    seed_dirty_claude_live("node /custom/statusline.mjs");
+
+    let mut config = MultiAppConfig::default();
+    let provider = claude_provider_with_common_config("p1");
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "p1".to_string();
+        manager.providers.insert("p1".to_string(), provider);
+    }
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    // Global entry point (manual "sync current providers" command and
+    // post-import sync) routes switch-mode apps through
+    // sync_current_provider_for_app_respecting_takeover, whose non-takeover
+    // branch must also refresh the snippet before writing.
+    ProviderService::sync_current_to_live(&state).expect("global sync current to live");
+
+    let live_after: serde_json::Value =
+        read_json_file(&get_claude_settings_path()).expect("read live after global sync");
+    assert_eq!(
+        live_after["statusLine"]["command"],
+        "node /custom/statusline.mjs",
+        "sync_current_to_live must preserve the live-side shared statusLine via pre-write snippet sync"
+    );
+}
+
+#[test]
 fn reapply_codex_official_preserves_live_shared_config_field() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
