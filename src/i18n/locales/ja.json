@@ -884,7 +884,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "qodercli": "Qoder CLI"
   },
   "grokBuild": {
     "apiBackend": "API Backend",
@@ -1437,6 +1438,23 @@
     "modelOptionKeyPlaceholder": "provider",
     "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
   },
+  "qodercli": {
+    "model": "Qoder モデル",
+    "selectModel": "Qoder が公式にサポートするモデルを選択してください",
+    "catalogHint": "Qoder 公式 BYOK カタログのみ使用できます。Coding Plan と Token Plan は選択したモデルと一緒に保存され、通常の API Key にはプラン名を表示しません。エンドポイントとモデル ID は手動で変更できません。",
+    "models": "モデル設定",
+    "modelsHint": "利用可能なモデルと表示名を設定します",
+    "addModel": "モデルを追加",
+    "removeModel": "モデルを削除",
+    "modelId": "モデル ID",
+    "modelName": "表示名",
+    "noModels": "モデルがありません。「モデルを追加」で追加してください。",
+    "toggleModelDetails": "モデル詳細の表示切替",
+    "maxInputTokens": "最大入力トークン",
+    "isReasoning": "推論モデル",
+    "isVl": "ビジョンモデル",
+    "defaultModelHint": "最初のモデルが切り替え後のデフォルトモデルになります。"
+  },
   "providerPreset": {
     "label": "プロバイダータイプ",
     "custom": "カスタム設定",
@@ -1503,7 +1521,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "grokbuild": "Grok Build"
+      "grokbuild": "Grok Build",
+      "qodercli": "Qoder CLI"
     },
     "rawInputLabel": "原始",
     "rebuildCodex": {

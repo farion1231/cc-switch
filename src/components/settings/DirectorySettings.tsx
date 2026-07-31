@@ -21,6 +21,7 @@ interface DirectorySettingsProps {
   opencodeDir?: string;
   openclawDir?: string;
   hermesDir?: string;
+  qodercliDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -39,6 +40,7 @@ export function DirectorySettings({
   opencodeDir,
   openclawDir,
   hermesDir,
+  qodercliDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -170,6 +172,17 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("hermes", val)}
           onBrowse={() => onBrowseDirectory("hermes")}
           onReset={() => onResetDirectory("hermes")}
+        />
+
+        <DirectoryInput
+          label={t("settings.qodercliConfigDir")}
+          description={undefined}
+          value={qodercliDir}
+          resolvedValue={resolvedDirs.qodercli}
+          placeholder={t("settings.browsePlaceholderQodercli")}
+          onChange={(val) => onDirectoryChange("qodercli", val)}
+          onBrowse={() => onBrowseDirectory("qodercli")}
+          onReset={() => onResetDirectory("qodercli")}
         />
       </section>
     </div>

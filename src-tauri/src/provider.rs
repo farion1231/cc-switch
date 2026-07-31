@@ -196,6 +196,12 @@ impl Provider {
                 str_at(settings.get("baseUrl")),
                 str_at(settings.get("apiKey")),
             ),
+            // qodercli (~/.qoder/settings.json) flattens credentials at the top level.
+            // Current shape uses `baseURL` (capital URL); fall back to legacy `baseUrl`.
+            AppType::QoderCli => (
+                str_at(settings.get("baseURL").or_else(|| settings.get("baseUrl"))),
+                str_at(settings.get("apiKey")),
+            ),
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
             AppType::OpenCode => {
                 let options = settings.get("options");

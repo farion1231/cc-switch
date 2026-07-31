@@ -88,7 +88,8 @@ type ProviderFilter =
   | "opencode"
   | "openclaw"
   | "gemini"
-  | "hermes";
+  | "hermes"
+  | "qodercli";
 
 type SessionListViewMode = "flat" | "grouped";
 
@@ -1126,6 +1127,16 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                   size={14}
                                 />
                                 <span>Gemini CLI</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="qodercli">
+                              <div className="flex items-center gap-2">
+                                <ProviderIcon
+                                  icon="qoder"
+                                  name="qodercli"
+                                  size={14}
+                                />
+                                <span>Qoder CLI</span>
                               </div>
                             </SelectItem>
                           </SelectContent>

@@ -114,6 +114,7 @@ export function useSettings(): UseSettingsResult {
       opencode: sanitizeDir(data?.opencodeConfigDir),
       openclaw: sanitizeDir(data?.openclawConfigDir),
       hermes: sanitizeDir(data?.hermesConfigDir),
+      qodercli: sanitizeDir(data?.qodercliConfigDir),
     });
     setRequiresRestart(false);
   }, [

@@ -4,10 +4,11 @@ import type { ProviderPreset } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
 import type { ProviderMeta, EndpointCandidate } from "@/types";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import type { QoderCliProviderPreset } from "@/config/qodercliProviderPresets";
 
 type PresetEntry = {
   id: string;
-  preset: ProviderPreset | CodexProviderPreset;
+  preset: ProviderPreset | CodexProviderPreset | QoderCliProviderPreset;
 };
 
 interface UseSpeedTestEndpointsProps {
@@ -42,8 +43,10 @@ export function useSpeedTestEndpoints({
   initialData,
 }: UseSpeedTestEndpointsProps) {
   const claudeEndpoints = useMemo<EndpointCandidate[]>(() => {
-    // Reuse this branch for Claude and Gemini (non-Codex)
-    if (appId !== "claude" && appId !== "gemini") return [];
+    // Reuse this branch for non-Codex providers with a direct Base URL.
+    if (appId !== "claude" && appId !== "gemini" && appId !== "qodercli") {
+      return [];
+    }
 
     const map = new Map<string, EndpointCandidate>();
     // 候选端点标记为 isCustom: false，表示来自预设或配置
@@ -63,9 +66,11 @@ export function useSpeedTestEndpoints({
     // 2. 编辑模式：初始数据中的 URL
     if (initialData && typeof initialData.settingsConfig === "object") {
       const configEnv = initialData.settingsConfig as {
+        baseUrl?: string;
         env?: { ANTHROPIC_BASE_URL?: string; GOOGLE_GEMINI_BASE_URL?: string };
       };
       const envUrls = [
+        configEnv.baseUrl,
         configEnv.env?.ANTHROPIC_BASE_URL,
         configEnv.env?.GOOGLE_GEMINI_BASE_URL,
       ];
@@ -79,7 +84,10 @@ export function useSpeedTestEndpoints({
       const entry = presetEntries.find((item) => item.id === selectedPresetId);
       if (entry) {
         const preset = entry.preset as ProviderPreset & {
-          settingsConfig?: { env?: { GOOGLE_GEMINI_BASE_URL?: string } };
+          settingsConfig?: {
+            baseUrl?: string;
+            env?: { GOOGLE_GEMINI_BASE_URL?: string };
+          };
           endpointCandidates?: string[];
         };
         // 添加预设自己的 baseUrl（兼容 Claude/Gemini）
@@ -88,8 +96,10 @@ export function useSpeedTestEndpoints({
             ANTHROPIC_BASE_URL?: string;
             GOOGLE_GEMINI_BASE_URL?: string;
           };
+          baseUrl?: string;
         };
         const presetUrls = [
+          presetEnv?.baseUrl,
           presetEnv?.env?.ANTHROPIC_BASE_URL,
           presetEnv?.env?.GOOGLE_GEMINI_BASE_URL,
         ];

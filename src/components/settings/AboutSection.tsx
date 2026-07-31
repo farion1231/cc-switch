@@ -67,6 +67,7 @@ const TOOL_NAMES = [
   "opencode",
   "openclaw",
   "hermes",
+  "qodercli",
 ] as const;
 type ToolName = (typeof TOOL_NAMES)[number];
 type ToolLifecycleAction = "install" | "update";
@@ -138,7 +139,9 @@ ${posixScriptInstallCommand("https://opencode.ai/install")} || npm i -g opencode
 # OpenClaw
 npm i -g openclaw@latest
 # Hermes
-${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh")}`;
+${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh")}
+# Qoder CLI
+${posixScriptInstallCommand("https://qoder.com/install")} || npm i -g @qoder-ai/qodercli@latest`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 npm i -g @anthropic-ai/claude-code@latest
@@ -153,7 +156,9 @@ npm i -g opencode-ai@latest
 # OpenClaw
 npm i -g openclaw@latest
 # Hermes
-${HERMES_WINDOWS_INSTALL_COMMAND}`;
+${HERMES_WINDOWS_INSTALL_COMMAND}
+# Qoder CLI
+npm i -g @qoder-ai/qodercli@latest`;
 
 const ONE_CLICK_INSTALL_COMMANDS = isWindows()
   ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
@@ -167,6 +172,7 @@ const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   opencode: "OpenCode",
   openclaw: "OpenClaw",
   hermes: "Hermes",
+  qodercli: "Qoder CLI",
 };
 
 // 后端返回的 tool 是 string；这里收敛唯一的 ToolName 断言与兜底，供升级确认
@@ -183,6 +189,7 @@ const TOOL_APP_IDS: Record<ToolName, AppId> = {
   opencode: "opencode",
   openclaw: "openclaw",
   hermes: "hermes",
+  qodercli: "qodercli",
 };
 
 // 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。
@@ -217,18 +224,31 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   const { t } = useTranslation();
   // 惰性初始化自模块缓存：重挂时首帧即渲染上次的值，避免 loading 闪烁；首次挂载缓存
   // 为空则回退到原始初值（null / loading）。
-  const [version, setVersion] = useState<string | null>(() => appVersionCache);
+  const isBrowserPreview =
+    import.meta.env.VITE_BROWSER_PREVIEW === "true";
+  const previewToolVersions: ToolVersion[] = TOOL_NAMES.map((name) => ({
+    name,
+    version: null,
+    latest_version: null,
+    error: null,
+    installed_but_broken: false,
+    env_type: "windows",
+    wsl_distro: null,
+  }));
+  const [version, setVersion] = useState<string | null>(
+    () => appVersionCache ?? (isBrowserPreview ? "3.18.0" : null),
+  );
   const [isLoadingVersion, setIsLoadingVersion] = useState(
-    () => appVersionCache === null,
+    () => !isBrowserPreview && appVersionCache === null,
   );
   const [isDownloading, setIsDownloading] = useState(false);
   const [toolVersions, setToolVersions] = useState<ToolVersion[]>(
-    () => toolVersionsCache?.data ?? [],
+    () => toolVersionsCache?.data ?? (isBrowserPreview ? previewToolVersions : []),
   );
   // 有缓存（哪怕已超期）就先展示旧值、初始不 loading；超期时由挂载副作用触发后台
   // 重查（stale-while-revalidate）。无缓存（首次）才从 loading 起步。
   const [isLoadingTools, setIsLoadingTools] = useState(
-    () => toolVersionsCache === null,
+    () => !isBrowserPreview && toolVersionsCache === null,
   );
   const [toolActions, setToolActions] = useState<
     Partial<Record<ToolName, ToolLifecycleAction>>
@@ -389,6 +409,13 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
 
   useEffect(() => {
     let active = true;
+    if (isBrowserPreview) {
+      setIsLoadingVersion(false);
+      setIsLoadingTools(false);
+      return () => {
+        active = false;
+      };
+    }
 
     // 本软件自身版本走本地调用（getVersion，无网络，毫秒级），与工具版本探测彼此独立。
     // 之前两者被塞进同一个 Promise.all，导致 setVersion / setIsLoadingVersion 被压在

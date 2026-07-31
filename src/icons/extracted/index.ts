@@ -20,6 +20,7 @@ import _nekocode from "./nekocode-icon.png";
 import _pateway from "./pateway.jpg";
 import _pipellm from "./pipellm.png";
 import _qiniu from "./qiniu.png";
+import _qoder from "./qoder.svg?url";
 import _relaxcode from "./relaxcode.png";
 import _runapi from "./runapi.jpg";
 import _shengsuanyun from "./shengsuanyun.svg?url";
@@ -123,6 +124,7 @@ export const iconUrls: Record<string, string> = {
   pateway: _pateway,
   pipellm: _pipellm,
   qiniu: _qiniu,
+  qoder: _qoder,
   relaxcode: _relaxcode,
   runapi: _runapi,
   shengsuanyun: _shengsuanyun,

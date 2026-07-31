@@ -69,6 +69,75 @@ beforeEach(() => {
 });
 
 describe("useAddProviderMutation", () => {
+  it("uses the official Qoder provider/model key instead of a generated UUID", async () => {
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useAddProviderMutation("qodercli"), {
+      wrapper,
+    });
+
+    const provider = await act(async () =>
+      result.current.mutateAsync({
+        name: "DeepSeek",
+        providerKey: "deepseek",
+        category: "cn_official",
+        settingsConfig: {
+          provider: "deepseek",
+          apiKey: "sk-test",
+          models: [
+            {
+              model: "deepseek-v4-pro-pg",
+              type: "pg",
+              format: "openai",
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(provider.id).toBe("deepseek/deepseek-v4-pro-pg");
+    expect(uuidMocks.generateUUID).not.toHaveBeenCalled();
+    expect(apiMocks.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "deepseek/deepseek-v4-pro-pg",
+        name: "DeepSeek",
+      }),
+      "qodercli",
+      undefined,
+    );
+  });
+
+  it("keeps two models from the same Qoder supplier as separate records", async () => {
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useAddProviderMutation("qodercli"), {
+      wrapper,
+    });
+
+    const makeInput = (model: string) => ({
+      name: "DeepSeek",
+      providerKey: "deepseek",
+      category: "cn_official" as const,
+      settingsConfig: {
+        provider: "deepseek",
+        apiKey: "sk-test",
+        models: [{ model, type: "pg", format: "openai" }],
+      },
+    });
+
+    const pro = await act(async () =>
+      result.current.mutateAsync(makeInput("deepseek-v4-pro-pg")),
+    );
+    const flash = await act(async () =>
+      result.current.mutateAsync(makeInput("deepseek-v4-flash-pg")),
+    );
+
+    expect(pro.id).toBe("deepseek/deepseek-v4-pro-pg");
+    expect(flash.id).toBe("deepseek/deepseek-v4-flash-pg");
+    expect(apiMocks.add).toHaveBeenCalledTimes(2);
+    expect(
+      apiMocks.add.mock.calls.map(([saved]) => (saved as Provider).id),
+    ).toEqual(["deepseek/deepseek-v4-pro-pg", "deepseek/deepseek-v4-flash-pg"]);
+  });
+
   it("duplicates Claude Desktop official providers with a fresh id", async () => {
     const { wrapper } = createWrapper();
     const { result } = renderHook(

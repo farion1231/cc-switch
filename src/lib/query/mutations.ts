@@ -14,6 +14,7 @@ import {
   CODEX_OFFICIAL_PROVIDER_ID,
   GROKBUILD_OFFICIAL_PROVIDER_ID,
 } from "@/utils/providerCapabilities";
+import { buildQoderCliModelProviderId } from "@/config/qodercliProviderPresets";
 
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
@@ -70,7 +71,28 @@ export const useAddProviderMutation = (appId: AppId) => {
 
       let id: string;
 
-      if (appId === "opencode" || appId === "openclaw" || appId === "hermes") {
+      if (appId === "qodercli") {
+        const config = rest.settingsConfig as {
+          provider?: unknown;
+          models?: Array<{ model?: unknown }>;
+        };
+        const provider =
+          typeof config.provider === "string"
+            ? config.provider
+            : providerInput.providerKey;
+        const model = config.models?.[0]?.model;
+        id =
+          typeof provider === "string" && typeof model === "string"
+            ? buildQoderCliModelProviderId(provider, { model })
+            : "";
+        if (!id) {
+          throw new Error("Qoder provider and model are required");
+        }
+      } else if (
+        appId === "opencode" ||
+        appId === "openclaw" ||
+        appId === "hermes"
+      ) {
         if (
           providerInput.category === "omo" ||
           providerInput.category === "omo-slim"

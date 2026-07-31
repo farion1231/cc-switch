@@ -152,6 +152,9 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
+        // qodercli 供应商级结构（baseURL/apiKey/models），写入 live 时展开为
+        // modelConfigs.customModels 条目，与 OpenClaw 的扁平 camelCase 不同。
+        AppType::QoderCli => build_qodercli_settings(request),
     };
 
     // Build usage script configuration if provided
@@ -537,6 +540,31 @@ fn build_additive_app_settings(request: &DeepLinkImportRequest) -> serde_json::V
             "models".to_string(),
             json!([{ "id": model, "name": model }]),
         );
+    }
+
+    json!(config)
+}
+
+/// Build settings for qodercli (supplier-level structure).
+/// Format: { baseURL, apiKey, models: [{ model }] }
+///
+/// 与 qoder CLI 1.1.x 的 `modelConfigs.customModels` 解析字段对齐（`baseURL`
+/// 大写 URL）；写入 live 时由 qodercli_config 展开为每个模型一条的条目。
+fn build_qodercli_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let endpoint = get_primary_endpoint(request);
+
+    let mut config = serde_json::Map::new();
+
+    if !endpoint.is_empty() {
+        config.insert("baseURL".to_string(), json!(endpoint));
+    }
+
+    if let Some(api_key) = &request.api_key {
+        config.insert("apiKey".to_string(), json!(api_key));
+    }
+
+    if let Some(model) = &request.model {
+        config.insert("models".to_string(), json!([{ "model": model }]));
     }
 
     json!(config)

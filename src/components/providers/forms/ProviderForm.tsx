@@ -50,9 +50,21 @@ import {
   hermesProviderPresets,
   type HermesProviderPreset,
 } from "@/config/hermesProviderPresets";
+import {
+  isQoderCliSupportedModel,
+  isQoderCliSupportedProvider,
+  qodercliProviderPresets,
+  type QoderCliProviderPreset,
+} from "@/config/qodercliProviderPresets";
+import {
+  buildQoderCliConfigJson,
+  parseQoderCliConfig,
+  QODERCLI_DEFAULT_CONFIG,
+} from "./helpers/qodercliFormUtils";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import { HermesFormFields } from "./HermesFormFields";
+import { QoderCliFormFields } from "./QoderCliFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import {
   applyTemplateValues,
@@ -124,6 +136,8 @@ import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
 
+/** qodercli 的配置解析/迁移/组装逻辑见 helpers/qodercliFormUtils.ts。 */
+
 type PresetEntry = {
   id: string;
   preset:
@@ -132,7 +146,8 @@ type PresetEntry = {
     | GeminiProviderPreset
     | OpenCodeProviderPreset
     | OpenClawProviderPreset
-    | HermesProviderPreset;
+    | HermesProviderPreset
+    | QoderCliProviderPreset;
 };
 
 export const normalizeCodexCatalogModelsForSave = (
@@ -290,7 +305,7 @@ function ProviderFormFull({
   };
 
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
-    initialData ? null : "custom",
+    initialData ? null : appId === "qodercli" ? "qodercli-0" : "custom",
   );
   const [activePreset, setActivePreset] = useState<{
     id: string;
@@ -343,7 +358,9 @@ function ProviderFormFull({
   const isAnyOmoCategory = isOmoCategory || isOmoSlimCategory;
 
   useEffect(() => {
-    setSelectedPresetId(initialData ? null : "custom");
+    setSelectedPresetId(
+      initialData ? null : appId === "qodercli" ? "qodercli-0" : "custom",
+    );
     setActivePreset(null);
 
     if (!initialData) {
@@ -379,8 +396,12 @@ function ProviderFormFull({
 
   const defaultValues: ProviderFormData = useMemo(
     () => ({
-      name: initialData?.name ?? "",
-      websiteUrl: initialData?.websiteUrl ?? "",
+      name:
+        initialData?.name ??
+        (appId === "qodercli" ? qodercliProviderPresets[0].name : ""),
+      websiteUrl:
+        initialData?.websiteUrl ??
+        (appId === "qodercli" ? qodercliProviderPresets[0].websiteUrl : ""),
       notes: initialData?.notes ?? "",
       settingsConfig: initialData?.settingsConfig
         ? JSON.stringify(initialData.settingsConfig, null, 2)
@@ -394,9 +415,15 @@ function ProviderFormFull({
                 ? OPENCLAW_DEFAULT_CONFIG
                 : appId === "hermes"
                   ? HERMES_DEFAULT_CONFIG
-                  : CLAUDE_DEFAULT_CONFIG,
-      icon: initialData?.icon ?? "",
-      iconColor: initialData?.iconColor ?? "",
+                  : appId === "qodercli"
+                    ? QODERCLI_DEFAULT_CONFIG
+                    : CLAUDE_DEFAULT_CONFIG,
+      icon:
+        initialData?.icon ??
+        (appId === "qodercli" ? qodercliProviderPresets[0].icon : ""),
+      iconColor:
+        initialData?.iconColor ??
+        (appId === "qodercli" ? qodercliProviderPresets[0].iconColor : ""),
     }),
     [initialData, appId],
   );
@@ -708,6 +735,11 @@ function ProviderFormFull({
         id: `hermes-${index}`,
         preset,
       }));
+    } else if (appId === "qodercli") {
+      return qodercliProviderPresets.map<PresetEntry>((preset, index) => ({
+        id: `qodercli-${index}`,
+        preset,
+      }));
     }
     return providerPresets
       .filter((p) => !p.hidden)
@@ -1015,6 +1047,23 @@ function ProviderFormFull({
   ]);
 
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
+  const initialQoderCliConfig = useMemo(
+    () => parseQoderCliConfig(initialData?.settingsConfig),
+    [initialData?.settingsConfig],
+  );
+  const [qodercliProviderKey, setQodercliProviderKey] = useState(
+    () =>
+      initialQoderCliConfig.provider ||
+      (providerId && isQoderCliSupportedProvider(providerId)
+        ? providerId
+        : qodercliProviderPresets[0].providerKey),
+  );
+  const [qodercliApiKey, setQodercliApiKey] = useState(
+    initialQoderCliConfig.apiKey,
+  );
+  const [qodercliModels, setQodercliModels] = useState(
+    initialQoderCliConfig.models,
+  );
 
   const shouldApplyLocalProxyRequestOverrides =
     (appId === "claude" || appId === "codex") && category !== "official";
@@ -1329,6 +1378,39 @@ function ProviderFormFull({
       }
     }
 
+    if (
+      appId === "qodercli" &&
+      !isQoderCliSupportedProvider(qodercliProviderKey.trim())
+    ) {
+      issues.push(
+        t("providerForm.providerKeyInvalid", {
+          defaultValue: "请选择 Qoder 官方支持的供应商。",
+        }),
+      );
+    }
+    if (appId === "qodercli") {
+      if (!qodercliApiKey.trim()) {
+        issues.push(
+          t("providerForm.apiKeyRequired", {
+            defaultValue: "请填写 API Key",
+          }),
+        );
+      }
+      if (
+        qodercliModels.length !== 1 ||
+        !isQoderCliSupportedModel(
+          qodercliProviderKey,
+          qodercliModels[0] ?? { model: "", type: "pg", format: "openai" },
+        )
+      ) {
+        issues.push(
+          t("providerForm.modelRequired", {
+            defaultValue: "请选择该供应商在 Qoder 官方目录中的模型。",
+          }),
+        );
+      }
+    }
+
     if (issues.length > 0) {
       // 弹确认框让用户决定是否仍要保存
       setSoftIssues(issues);
@@ -1445,6 +1527,12 @@ function ProviderFormFull({
         }
       }
       settingsConfig = JSON.stringify(omoConfig);
+    } else if (appId === "qodercli") {
+      settingsConfig = buildQoderCliConfigJson(
+        qodercliProviderKey,
+        qodercliApiKey,
+        qodercliModels,
+      );
     } else {
       settingsConfig = values.settingsConfig.trim();
     }
@@ -1469,6 +1557,8 @@ function ProviderFormFull({
       payload.providerKey = openclawForm.openclawProviderKey;
     } else if (appId === "hermes") {
       payload.providerKey = hermesForm.hermesProviderKey;
+    } else if (appId === "qodercli") {
+      payload.providerKey = qodercliProviderKey.trim();
     }
 
     if (isAnyOmoCategory && !payload.presetCategory) {
@@ -1748,6 +1838,19 @@ function ProviderFormFull({
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
 
+  const {
+    shouldShowApiKeyLink: shouldShowQoderCliApiKeyLink,
+    websiteUrl: qoderCliWebsiteUrl,
+    isPartner: isQoderCliPartner,
+    partnerPromotionKey: qoderCliPartnerPromotionKey,
+  } = useApiKeyLink({
+    appId: "qodercli",
+    category,
+    selectedPresetId,
+    presetEntries,
+    formWebsiteUrl: form.watch("websiteUrl") || "",
+  });
+
   // 使用端点测速候选 hook
   const speedTestEndpoints = useSpeedTestEndpoints({
     appId,
@@ -1787,6 +1890,12 @@ function ProviderFormFull({
       }
       if (appId === "hermes") {
         hermesForm.resetHermesState();
+      }
+      if (appId === "qodercli") {
+        setQodercliProviderKey(qodercliProviderPresets[0].providerKey);
+        const config = parseQoderCliConfig(QODERCLI_DEFAULT_CONFIG);
+        setQodercliApiKey(config.apiKey);
+        setQodercliModels(config.models);
       }
       return;
     }
@@ -1916,6 +2025,22 @@ function ProviderFormFull({
       return;
     }
 
+    if (appId === "qodercli") {
+      const preset = entry.preset as QoderCliProviderPreset;
+      setQodercliProviderKey(preset.providerKey);
+      setQodercliApiKey(preset.settingsConfig.apiKey);
+      setQodercliModels(preset.settingsConfig.models ?? []);
+      form.reset({
+        name: preset.nameKey ? t(preset.nameKey) : preset.name,
+        websiteUrl: preset.websiteUrl ?? "",
+        notes: form.getValues("notes"),
+        settingsConfig: JSON.stringify(preset.settingsConfig, null, 2),
+        icon: preset.icon ?? "",
+        iconColor: preset.iconColor ?? "",
+      });
+      return;
+    }
+
     const preset = entry.preset as ProviderPreset;
     const config = applyTemplateValues(
       preset.settingsConfig,
@@ -1960,7 +2085,7 @@ function ProviderFormFull({
           onSubmit={form.handleSubmit(handleSubmit)}
           className="space-y-6 glass rounded-xl p-6 border border-white/10"
         >
-          {!initialData && (
+          {(!initialData || appId === "qodercli") && (
             <ProviderPresetSelector
               selectedPresetId={selectedPresetId}
               presetEntries={presetEntries}
@@ -1969,6 +2094,15 @@ function ProviderFormFull({
               onUniversalPresetSelect={onUniversalPresetSelect}
               onManageUniversalProviders={onManageUniversalProviders}
               category={category}
+              showCustomPreset={appId !== "qodercli"}
+              hintOverride={
+                appId === "qodercli"
+                  ? t("qodercli.catalogProviderHint", {
+                      defaultValue:
+                        "💡 供应商、模型和套餐类型均来自 Qoder 官方 BYOK 目录，只需填写对应的 API Key。",
+                    })
+                  : undefined
+              }
             />
           )}
 
@@ -2179,6 +2313,26 @@ function ProviderFormFull({
                             })}
                       </p>
                     )}
+                </div>
+              ) : appId === "qodercli" ? (
+                <div className="space-y-2">
+                  <Label htmlFor="qodercli-key">
+                    {t("providerForm.providerKey", {
+                      defaultValue: "供应商标识",
+                    })}
+                    <span className="text-destructive ml-1">*</span>
+                  </Label>
+                  <Input
+                    id="qodercli-key"
+                    value={qodercliProviderKey}
+                    readOnly
+                    disabled
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t("providerForm.providerKeyHint", {
+                      defaultValue: "由 Qoder 官方目录决定，不能自定义。",
+                    })}
+                  </p>
                 </div>
               ) : undefined
             }
@@ -2535,6 +2689,36 @@ function ProviderFormFull({
                 />
               </div>
               {settingsConfigErrorField}
+            </>
+          ) : appId === "qodercli" ? (
+            <>
+              <QoderCliFormFields
+                providerKey={qodercliProviderKey}
+                apiKey={qodercliApiKey}
+                onApiKeyChange={setQodercliApiKey}
+                category={category}
+                shouldShowApiKeyLink={shouldShowQoderCliApiKeyLink}
+                websiteUrl={qoderCliWebsiteUrl}
+                isPartner={isQoderCliPartner}
+                partnerPromotionKey={qoderCliPartnerPromotionKey}
+                models={qodercliModels}
+                onModelsChange={setQodercliModels}
+              />
+              <div className="space-y-2">
+                <Label>{t("provider.configJson")}</Label>
+                <JsonEditor
+                  value={buildQoderCliConfigJson(
+                    qodercliProviderKey,
+                    qodercliApiKey,
+                    qodercliModels,
+                  )}
+                  onChange={() => {}}
+                  rows={12}
+                  showValidation={false}
+                  language="json"
+                  darkMode={isDarkMode}
+                />
+              </div>
             </>
           ) : appId === "openclaw" || appId === "hermes" ? (
             <>

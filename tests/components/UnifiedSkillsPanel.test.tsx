@@ -13,6 +13,14 @@ const importSkillsMock = vi.fn();
 const installFromZipMock = vi.fn();
 const deleteSkillBackupMock = vi.fn();
 const restoreSkillBackupMock = vi.fn();
+const sharedSkill = {
+  directory: "shared-skill",
+  name: "Shared Skill",
+  description: "Imported from Grok Build",
+  foundIn: ["grokbuild"],
+  path: "/tmp/shared-skill",
+};
+let unmanagedSkillsMockData = [sharedSkill];
 
 vi.mock("sonner", () => ({
   toast: {
@@ -47,15 +55,7 @@ vi.mock("@/hooks/useSkills", () => ({
     mutateAsync: uninstallSkillMock,
   }),
   useScanUnmanagedSkills: () => ({
-    data: [
-      {
-        directory: "shared-skill",
-        name: "Shared Skill",
-        description: "Imported from Grok Build",
-        foundIn: ["grokbuild"],
-        path: "/tmp/shared-skill",
-      },
-    ],
+    data: unmanagedSkillsMockData,
     refetch: scanUnmanagedMock,
   }),
   useImportSkillsFromApps: () => ({
@@ -77,16 +77,9 @@ vi.mock("@/hooks/useSkills", () => ({
 
 describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
+    unmanagedSkillsMockData = [sharedSkill];
     scanUnmanagedMock.mockResolvedValue({
-      data: [
-        {
-          directory: "shared-skill",
-          name: "Shared Skill",
-          description: "Imported from Grok Build",
-          foundIn: ["grokbuild"],
-          path: "/tmp/shared-skill",
-        },
-      ],
+      data: unmanagedSkillsMockData,
     });
     toggleSkillAppMock.mockReset();
     uninstallSkillMock.mockReset();
@@ -126,6 +119,47 @@ describe("UnifiedSkillsPanel", () => {
         {
           directory: "shared-skill",
           apps: expect.objectContaining({ grokbuild: true }),
+        },
+      ]);
+    });
+  });
+
+  it("preserves Qoder CLI as the source app when importing a discovered skill", async () => {
+    unmanagedSkillsMockData = [
+      {
+        directory: "qoder-skill",
+        name: "Qoder Skill",
+        description: "Imported from Qoder CLI",
+        foundIn: ["qodercli"],
+        path: "C:\\Users\\test\\.qoder\\skills\\qoder-skill",
+      },
+    ];
+    scanUnmanagedMock.mockResolvedValue({
+      data: unmanagedSkillsMockData,
+    });
+
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="qodercli"
+      />,
+    );
+
+    await act(async () => {
+      await ref.current?.openImport();
+    });
+
+    await act(async () => {
+      screen.getByText("skills.importSelected").click();
+    });
+
+    await waitFor(() => {
+      expect(importSkillsMock).toHaveBeenCalledWith([
+        {
+          directory: "qoder-skill",
+          apps: expect.objectContaining({ qodercli: true }),
         },
       ]);
     });

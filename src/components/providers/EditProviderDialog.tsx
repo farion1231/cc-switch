@@ -9,6 +9,7 @@ import {
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
 import { openclawApi, providersApi, vscodeApi, type AppId } from "@/lib/api";
+import { buildQoderCliModelProviderId } from "@/config/qodercliProviderPresets";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -188,11 +189,28 @@ export function EditProviderDialog({
         string,
         unknown
       >;
+      const qoderModel = Array.isArray(parsedConfig.models)
+        ? (parsedConfig.models[0] as { model?: unknown } | undefined)
+        : undefined;
+      const qoderProvider =
+        typeof parsedConfig.provider === "string"
+          ? parsedConfig.provider
+          : values.providerKey;
+      const qoderProviderId =
+        appId === "qodercli" &&
+        typeof qoderProvider === "string" &&
+        typeof qoderModel?.model === "string"
+          ? buildQoderCliModelProviderId(qoderProvider, {
+              model: qoderModel.model,
+            })
+          : "";
       const nextProviderId =
-        (appId === "opencode" || appId === "openclaw") &&
-        values.providerKey?.trim()
-          ? values.providerKey.trim()
-          : provider.id;
+        appId === "qodercli"
+          ? qoderProviderId || provider.id
+          : (appId === "opencode" || appId === "openclaw") &&
+              values.providerKey?.trim()
+            ? values.providerKey.trim()
+            : provider.id;
 
       const updatedProvider: Provider = {
         ...provider,

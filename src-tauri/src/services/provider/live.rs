@@ -186,6 +186,8 @@ pub(crate) fn provider_exists_in_live_config(
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::QoderCli => crate::qodercli_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
         _ => Ok(false),
     }
 }
@@ -527,6 +529,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
+        | AppType::QoderCli
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -601,6 +604,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
+        | AppType::QoderCli
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
@@ -660,6 +664,7 @@ fn apply_common_config_to_settings(
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
+        | AppType::QoderCli
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
@@ -1162,6 +1167,25 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::QoderCli => {
+            use crate::qodercli_config;
+
+            // 类型化解析（内部会先迁移旧版 baseUrl/model 结构），随后按
+            // customModels 数组展开写入（带校验）。解析失败直接报错——旧结构
+            // 都能被 migrate_legacy 覆盖，到这里失败说明配置确实不完整。
+            match qodercli_config::parse_provider_config(&provider.settings_config) {
+                Ok(config) => {
+                    qodercli_config::set_typed_provider(&provider.id, &config)?;
+                    log::info!("qodercli provider '{}' written to live config", provider.id);
+                }
+                Err(e) => {
+                    return Err(AppError::Message(format!(
+                        "qodercli provider '{}' has invalid config structure for live config (must contain 'baseURL', 'apiKey', and a non-empty 'models' list): {e}",
+                        provider.id
+                    )));
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -1417,6 +1441,19 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = crate::hermes_config::yaml_to_json(&yaml_config)?;
             Ok(config)
         }
+        AppType::QoderCli => {
+            use crate::qodercli_config::{get_qodercli_settings_path, read_qodercli_settings};
+
+            let config_path = get_qodercli_settings_path();
+            if !config_path.exists() {
+                return Err(AppError::localized(
+                    "qodercli.config.missing",
+                    "qoder CLI 配置文件不存在",
+                    "qoder CLI configuration file not found",
+                ));
+            }
+            read_qodercli_settings()
+        }
     }
 }
 
@@ -1525,8 +1562,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
-        // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+        // OpenCode, OpenClaw, Hermes and qodercli use additive mode and are handled by early return above
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::QoderCli => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1969,6 +2006,153 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 
     openclaw_config::remove_provider(provider_id)?;
     log::info!("OpenClaw provider '{provider_id}' removed from live config");
+
+    Ok(())
+}
+
+/// Import all providers from qoder CLI live config to database.
+///
+/// Reads `modelConfigs.customModels` from `~/.qoder/settings.json`, groups entries
+/// by `provider`, and imports each group into the cc-switch database as a qodercli
+/// provider (supplier-level structure: baseURL/apiKey/models).
+pub fn import_qodercli_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    use crate::qodercli_config;
+
+    let providers = qodercli_config::get_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+    let live_ids = providers
+        .keys()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
+    let active_live_id = qodercli_config::get_active_model_name()?;
+
+    let mut imported = 0;
+    let mut updated = 0;
+    let existing_ids = state.db.get_provider_ids("qodercli")?;
+
+    for (name, config) in providers {
+        if name.trim().is_empty() {
+            log::warn!("Skipping qodercli provider with empty id");
+            continue;
+        }
+
+        if existing_ids.contains(&name) {
+            match state.db.get_provider_by_id(&name, "qodercli") {
+                Ok(Some(existing)) => {
+                    if existing.settings_config != config {
+                        let mut provider = existing;
+                        provider.settings_config = config;
+                        if let Err(e) = state.db.save_provider("qodercli", &provider) {
+                            log::warn!(
+                                "Failed to update qodercli provider '{name}' from live config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated qodercli provider '{name}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("qodercli provider '{name}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up qodercli provider '{name}': {e}"),
+            }
+            continue;
+        }
+
+        let supplier_name = config
+            .get("provider")
+            .and_then(Value::as_str)
+            .unwrap_or(&name)
+            .to_string();
+        let model_name = config
+            .get("models")
+            .and_then(Value::as_array)
+            .and_then(|models| models.first())
+            .and_then(|model| model.get("displayName"))
+            .and_then(Value::as_str);
+        let display_name = model_name
+            .map(|model| format!("{supplier_name} · {model}"))
+            .unwrap_or(supplier_name);
+        let mut provider = Provider::with_id(name.clone(), display_name, config, None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        if let Err(e) = state.db.save_provider("qodercli", &provider) {
+            log::warn!("Failed to import qodercli provider '{name}': {e}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported qodercli provider '{name}' from live config");
+    }
+
+    // CC Switch builds before per-model switching used the bare supplier key
+    // (for example `deepseek`) as the database ID. Once all replacement model
+    // rows are available, migrate that row and its current pointer.
+    let mut migrated = 0;
+    for legacy_id in existing_ids.iter().filter(|id| !id.contains('/')) {
+        let Some(legacy_provider) = state.db.get_provider_by_id(legacy_id, "qodercli")? else {
+            continue;
+        };
+        let Ok(legacy_config) =
+            qodercli_config::parse_provider_config(&legacy_provider.settings_config)
+        else {
+            continue;
+        };
+        let replacement_ids = legacy_config
+            .models
+            .iter()
+            .map(|model| qodercli_config::model_record_id(&legacy_config.provider, &model.id))
+            .collect::<Vec<_>>();
+        if replacement_ids.is_empty()
+            || !replacement_ids
+                .iter()
+                .all(|replacement| live_ids.contains(replacement))
+        {
+            continue;
+        }
+
+        let local_current = crate::settings::get_current_provider(&AppType::QoderCli);
+        let database_current = state.db.get_current_provider("qodercli")?;
+        let was_current = local_current.as_deref() == Some(legacy_id.as_str())
+            || database_current.as_deref() == Some(legacy_id.as_str());
+        if was_current {
+            let replacement = active_live_id
+                .as_ref()
+                .filter(|active| replacement_ids.contains(active))
+                .cloned()
+                .unwrap_or_else(|| replacement_ids[0].clone());
+            state.db.set_current_provider("qodercli", &replacement)?;
+            crate::settings::set_current_provider(&AppType::QoderCli, Some(&replacement))?;
+        }
+
+        state.db.delete_provider("qodercli", legacy_id)?;
+        migrated += 1;
+        log::info!("Migrated legacy qodercli provider '{legacy_id}' to per-model records");
+    }
+
+    Ok(imported + updated + migrated)
+}
+
+/// Remove a qodercli provider from live config.
+///
+/// A per-model ID removes only that model; legacy bare supplier IDs still
+/// remove all matching `modelConfigs.customModels` entries.
+pub fn remove_qodercli_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+    use crate::qodercli_config;
+
+    if !qodercli_config::get_qodercli_dir().exists() {
+        log::debug!("qodercli config directory doesn't exist, skipping removal of '{provider_id}'");
+        return Ok(());
+    }
+
+    qodercli_config::remove_provider(provider_id)?;
+    log::info!("qodercli provider '{provider_id}' removed from live config");
 
     Ok(())
 }

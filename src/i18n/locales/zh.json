@@ -884,7 +884,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "qodercli": "Qoder CLI"
   },
   "grokBuild": {
     "apiBackend": "API Backend",
@@ -1437,6 +1438,23 @@
     "modelOptionKeyPlaceholder": "provider",
     "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
   },
+  "qodercli": {
+    "model": "Qoder 模型",
+    "selectModel": "请选择 Qoder 官方支持的模型",
+    "catalogHint": "仅使用 Qoder 官方 BYOK 目录。Coding Plan 和 Token Plan 会随模型一起写入；普通 API Key 不显示套餐类型，接口地址和模型名不能手动修改。",
+    "models": "模型配置",
+    "modelsHint": "配置可用的模型及其显示名称",
+    "addModel": "添加模型",
+    "removeModel": "删除模型",
+    "modelId": "模型 ID",
+    "modelName": "显示名称",
+    "noModels": "暂无模型，点击「添加模型」新增一个。",
+    "toggleModelDetails": "展开或收起模型详情",
+    "maxInputTokens": "最大输入 Tokens",
+    "isReasoning": "推理模型",
+    "isVl": "视觉模型",
+    "defaultModelHint": "第一个模型将作为切换后的默认模型。"
+  },
   "providerPreset": {
     "label": "预设供应商",
     "custom": "自定义配置",
@@ -1503,7 +1521,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "grokbuild": "Grok Build"
+      "grokbuild": "Grok Build",
+      "qodercli": "Qoder CLI"
     },
     "rawInputLabel": "原始",
     "rebuildCodex": {

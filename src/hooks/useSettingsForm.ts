@@ -101,37 +101,58 @@ export function useSettingsForm(): UseSettingsFormResult {
 
   // 初始化设置数据
   useEffect(() => {
-    if (!data) return;
+    const source =
+      data ??
+      (import.meta.env.VITE_BROWSER_PREVIEW === "true"
+        ? ({
+            language: readPersistedLanguage(),
+            showInTray: true,
+            minimizeToTrayOnClose: true,
+            visibleApps: {
+              claude: true,
+              "claude-desktop": true,
+              codex: true,
+              gemini: true,
+              grokbuild: true,
+              opencode: true,
+              openclaw: true,
+              hermes: true,
+              qodercli: true,
+            },
+            qodercliConfigDir: ".qoder",
+          } as Settings)
+        : null);
+    if (!source) return;
 
     const normalizedLanguage = normalizeLanguage(
-      data.language ?? readPersistedLanguage(),
+      source.language ?? readPersistedLanguage(),
     );
 
     const normalized: SettingsFormState = {
-      ...data,
-      showInTray: data.showInTray ?? true,
-      minimizeToTrayOnClose: data.minimizeToTrayOnClose ?? true,
-      useAppWindowControls: data.useAppWindowControls ?? false,
+      ...source,
+      showInTray: source.showInTray ?? true,
+      minimizeToTrayOnClose: source.minimizeToTrayOnClose ?? true,
+      useAppWindowControls: source.useAppWindowControls ?? false,
       enableClaudePluginIntegration:
-        data.enableClaudePluginIntegration ?? false,
-      silentStartup: data.silentStartup ?? false,
-      skipClaudeOnboarding: data.skipClaudeOnboarding ?? false,
+        source.enableClaudePluginIntegration ?? false,
+      silentStartup: source.silentStartup ?? false,
+      skipClaudeOnboarding: source.skipClaudeOnboarding ?? false,
       preserveCodexOfficialAuthOnSwitch:
-        data.preserveCodexOfficialAuthOnSwitch ?? false,
-      unifyCodexSessionHistory: data.unifyCodexSessionHistory ?? false,
-      claudeConfigDir: sanitizeDir(data.claudeConfigDir),
-      codexConfigDir: sanitizeDir(data.codexConfigDir),
-      geminiConfigDir: sanitizeDir(data.geminiConfigDir),
-      grokConfigDir: sanitizeDir(data.grokConfigDir),
-      opencodeConfigDir: sanitizeDir(data.opencodeConfigDir),
-      openclawConfigDir: sanitizeDir(data.openclawConfigDir),
+        source.preserveCodexOfficialAuthOnSwitch ?? false,
+      unifyCodexSessionHistory: source.unifyCodexSessionHistory ?? false,
+      claudeConfigDir: sanitizeDir(source.claudeConfigDir),
+      codexConfigDir: sanitizeDir(source.codexConfigDir),
+      geminiConfigDir: sanitizeDir(source.geminiConfigDir),
+      grokConfigDir: sanitizeDir(source.grokConfigDir),
+      opencodeConfigDir: sanitizeDir(source.opencodeConfigDir),
+      openclawConfigDir: sanitizeDir(source.openclawConfigDir),
       language: normalizedLanguage,
     };
 
     setSettingsState(normalized);
     initialLanguageRef.current = normalizedLanguage;
     syncLanguage(normalizedLanguage);
-  }, [data, readPersistedLanguage, syncLanguage]);
+  }, [data, isLoading, readPersistedLanguage, syncLanguage]);
 
   const updateSettings = useCallback(
     (updates: Partial<SettingsFormState>) => {
