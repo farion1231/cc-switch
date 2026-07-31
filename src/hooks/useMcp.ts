@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { mcpApi } from "@/lib/api/mcp";
 import type { McpServer } from "@/types";
 import type { AppId } from "@/lib/api/types";
+import { runSequentialBulkAction } from "@/lib/utils/sequentialBulkAction";
 
 /**
  * 查询所有 MCP 服务器（统一管理）
@@ -26,6 +27,27 @@ export function useUpsertMcpServer() {
   });
 }
 
+/** Toggle multiple MCP servers serially to avoid lost whole-file writes. */
+export function useBulkToggleMcpApp() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      serverIds,
+      app,
+      enabled,
+    }: {
+      serverIds: string[];
+      app: AppId;
+      enabled: boolean;
+    }) =>
+      runSequentialBulkAction(serverIds, (serverId) =>
+        mcpApi.toggleApp(serverId, app, enabled),
+      ),
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: ["mcp", "all"] }),
+  });
+}
+
 /**
  * 切换 MCP 服务器在特定应用的启用状态
  */
@@ -41,7 +63,9 @@ export function useToggleMcpApp() {
       app: AppId;
       enabled: boolean;
     }) => mcpApi.toggleApp(serverId, app, enabled),
-    onSuccess: () => {
+    // The backend may update the database before a live-config write fails.
+    // Always refresh so the UI reflects the persisted state after an error.
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp", "all"] });
     },
   });
