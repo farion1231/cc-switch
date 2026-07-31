@@ -13,6 +13,31 @@ use super::super::{lock_conn, Database};
 pub(crate) const PRICING_SOURCE_RESPONSE: &str = "response";
 pub(crate) const PRICING_SOURCE_REQUEST: &str = "request";
 
+/// claude-science 的代理配置不写入 proxy_config 表（保持与官方一致的 v16 schema，
+/// 其 CHECK 不含 claude-science），而是以 JSON 形式存于 settings 表的该键下。
+pub(crate) const CLAUDE_SCIENCE_PROXY_CONFIG_KEY: &str = "proxy_config:claude-science";
+/// claude-science 的默认成本倍率 / 计费模式来源同样改存 settings 表。
+const CLAUDE_SCIENCE_COST_MULTIPLIER_KEY: &str = "proxy_config:claude-science:cost_multiplier";
+const CLAUDE_SCIENCE_PRICING_SOURCE_KEY: &str = "proxy_config:claude-science:pricing_source";
+
+/// claude-science 代理配置默认值（Messages 协议，与原 v17 seed 相同，同 claude）。
+fn default_claude_science_proxy_config() -> AppProxyConfig {
+    AppProxyConfig {
+        app_type: "claude-science".to_string(),
+        enabled: false,
+        auto_failover_enabled: false,
+        max_retries: 6,
+        streaming_first_byte_timeout: 90,
+        streaming_idle_timeout: 180,
+        non_streaming_timeout: 600,
+        circuit_failure_threshold: 8,
+        circuit_success_threshold: 3,
+        circuit_timeout_seconds: 90,
+        circuit_error_rate_threshold: 0.7,
+        circuit_min_requests: 15,
+    }
+}
+
 pub(crate) fn validate_cost_multiplier(value: &str) -> Result<Decimal, AppError> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -122,6 +147,12 @@ impl Database {
 
     /// 获取默认成本倍率
     pub async fn get_default_cost_multiplier(&self, app_type: &str) -> Result<String, AppError> {
+        // claude-science：proxy_config 表无其行，改从 settings 表读取
+        if app_type == "claude-science" {
+            return Ok(self
+                .get_setting(CLAUDE_SCIENCE_COST_MULTIPLIER_KEY)?
+                .unwrap_or_else(|| "1".to_string()));
+        }
         let result = {
             let conn = lock_conn!(self.conn);
             conn.query_row(
@@ -150,6 +181,11 @@ impl Database {
         validate_cost_multiplier(value)?;
         let trimmed = value.trim();
 
+        // claude-science：proxy_config 表无其行，改存 settings 表
+        if app_type == "claude-science" {
+            return self.set_setting(CLAUDE_SCIENCE_COST_MULTIPLIER_KEY, trimmed);
+        }
+
         // 确保行存在
         self.ensure_proxy_config_row_exists(app_type)?;
 
@@ -168,6 +204,12 @@ impl Database {
 
     /// 获取计费模式来源
     pub async fn get_pricing_model_source(&self, app_type: &str) -> Result<String, AppError> {
+        // claude-science：proxy_config 表无其行，改从 settings 表读取
+        if app_type == "claude-science" {
+            return Ok(self
+                .get_setting(CLAUDE_SCIENCE_PRICING_SOURCE_KEY)?
+                .unwrap_or_else(|| PRICING_SOURCE_RESPONSE.to_string()));
+        }
         let result = {
             let conn = lock_conn!(self.conn);
             conn.query_row(
@@ -195,6 +237,11 @@ impl Database {
     ) -> Result<(), AppError> {
         let trimmed = validate_pricing_source(value)?;
 
+        // claude-science：proxy_config 表无其行，改存 settings 表
+        if app_type == "claude-science" {
+            return self.set_setting(CLAUDE_SCIENCE_PRICING_SOURCE_KEY, trimmed);
+        }
+
         // 确保行存在
         self.ensure_proxy_config_row_exists(app_type)?;
 
@@ -211,11 +258,29 @@ impl Database {
         Ok(())
     }
 
+    /// 读取 claude-science 的代理配置（settings 表 JSON，缺省或解析失败回退默认值）
+    fn get_claude_science_proxy_config(&self) -> Result<AppProxyConfig, AppError> {
+        match self.get_setting(CLAUDE_SCIENCE_PROXY_CONFIG_KEY)? {
+            Some(json) => match serde_json::from_str::<AppProxyConfig>(&json) {
+                Ok(config) => Ok(config),
+                Err(e) => {
+                    log::warn!("解析 claude-science 代理配置失败，回退默认值: {e}");
+                    Ok(default_claude_science_proxy_config())
+                }
+            },
+            None => Ok(default_claude_science_proxy_config()),
+        }
+    }
+
     /// 获取应用级代理配置
     pub async fn get_proxy_config_for_app(
         &self,
         app_type: &str,
     ) -> Result<AppProxyConfig, AppError> {
+        // claude-science：配置存 settings 表，proxy_config 保持与官方 v16 一致
+        if app_type == "claude-science" {
+            return self.get_claude_science_proxy_config();
+        }
         // 使用 block 限制 conn 的作用域，避免跨 await 持有锁
         let app_type_owned = app_type.to_string();
         let result = {
@@ -276,6 +341,13 @@ impl Database {
         &self,
         config: AppProxyConfig,
     ) -> Result<(), AppError> {
+        // claude-science：配置写 settings 表，不触碰 proxy_config（v16 CHECK 不含它）
+        if config.app_type == "claude-science" {
+            let json = serde_json::to_string(&config).map_err(|e| {
+                AppError::Database(format!("序列化 claude-science 代理配置失败: {e}"))
+            })?;
+            return self.set_setting(CLAUDE_SCIENCE_PROXY_CONFIG_KEY, &json);
+        }
         let conn = lock_conn!(self.conn);
 
         conn.execute(
@@ -317,6 +389,11 @@ impl Database {
     ///
     /// 使用与 schema.rs seed 相同的 per-app 默认值
     fn ensure_proxy_config_row_exists(&self, app_type: &str) -> Result<(), AppError> {
+        if app_type == "claude-science" {
+            // claude-science 的配置存 settings 表，无需也不能插入 proxy_config 行
+            // （v16 CHECK 不含该 app_type，插入会违反约束）。
+            return Ok(());
+        }
         let conn = self
             .conn
             .lock()
@@ -509,6 +586,9 @@ impl Database {
     ///
     /// 检查是否有任一 app 的 enabled = true
     pub async fn is_live_takeover_active(&self) -> Result<bool, AppError> {
+        // claude-science 的接管开关存 settings 表（get_setting 内部自加自放锁，
+        // 需在下方锁 conn 之前读取，避免锁嵌套）
+        let science_enabled = self.get_claude_science_proxy_config()?.enabled;
         let conn = lock_conn!(self.conn);
         let count: i64 = conn
             .query_row(
@@ -517,24 +597,30 @@ impl Database {
                 |row| row.get(0),
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(count > 0)
+        Ok(count > 0 || science_enabled)
     }
 
     /// 同步版本：检查是否有任一 app 的 enabled = true
     ///
     /// 用于 `ProfileService::apply` 等 sync 路径判断是否需要停止代理服务。
     pub fn is_live_takeover_active_sync(&self) -> bool {
+        // 同 is_live_takeover_active：先读 settings 表中的 claude-science 开关
+        let science_enabled = self
+            .get_claude_science_proxy_config()
+            .map(|config| config.enabled)
+            .unwrap_or(false);
         let conn = match self.conn.lock() {
             Ok(c) => c,
             Err(_) => return false,
         };
-        conn.query_row(
-            "SELECT COUNT(*) FROM proxy_config WHERE enabled = 1",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap_or(0)
-            > 0
+        let count = conn
+            .query_row(
+                "SELECT COUNT(*) FROM proxy_config WHERE enabled = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0);
+        count > 0 || science_enabled
     }
 
     // ==================== Provider Health ====================
