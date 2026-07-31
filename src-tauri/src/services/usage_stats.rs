@@ -230,6 +230,12 @@ fn data_source_expr(log_alias: &str) -> String {
     format!("COALESCE({log_alias}.data_source, 'proxy')")
 }
 
+fn dedup_app_type_match_sql(left: &str, right: &str) -> String {
+    format!(
+        "{left} IN ({right}, CASE WHEN {right} = 'claude' THEN 'claude-desktop' ELSE {right} END)"
+    )
+}
+
 /// SQL 标量表达式：把 Claude Desktop 网关的 `claude-desktop` app_type 在“展示口径”
 /// 上折叠进 `claude`，其余 app_type 原样返回。
 ///
@@ -243,8 +249,8 @@ fn data_source_expr(log_alias: &str) -> String {
 /// 而不改动任何已存储的行（详情面板仍读原始 `app_type`）。
 ///
 /// 注意：包裹后该列上的索引在此比较中失效，但这些都是已带时间过滤的聚合扫描，
-/// app_type 本就不是主访问路径，可接受。仅用于读侧；去重匹配（`has_matching_
-/// proxy_usage_log`）与额度检查（`check_provider_limits`）必须保留原始精确比较。
+/// app_type 本就不是主访问路径，可接受。仅用于读侧；跨源去重使用更窄的
+/// [`dedup_app_type_match_sql`]，额度检查（`check_provider_limits`）仍保留原始精确比较。
 fn folded_app_type_sql(column: &str) -> String {
     format!("CASE WHEN {column} = 'claude-desktop' THEN 'claude' ELSE {column} END")
 }
@@ -298,6 +304,8 @@ fn push_provider_model_filters(
 pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     let data_source = data_source_expr(log_alias);
     let proxy_data_source = data_source_expr("proxy_dedup");
+    let app_type_match =
+        dedup_app_type_match_sql("proxy_dedup.app_type", &format!("{log_alias}.app_type"));
     format!(
         "NOT (
             {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
@@ -305,7 +313,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
                 WHERE {proxy_data_source} = 'proxy'
-                  AND proxy_dedup.app_type = {log_alias}.app_type
+                  AND {app_type_match}
                   AND proxy_dedup.status_code >= 200
                   AND proxy_dedup.status_code < 300
                   AND proxy_dedup.input_tokens = {log_alias}.input_tokens
@@ -378,12 +386,13 @@ pub(crate) fn has_matching_proxy_usage_log(
         matches!(key.app_type, "codex" | "gemini" | "opencode") && key.cache_creation_tokens == 0;
 
     let l_data_source = data_source_expr("l");
+    let app_type_match = dedup_app_type_match_sql("l.app_type", "?1");
     let sql = format!(
         "SELECT EXISTS (
             SELECT 1
             FROM proxy_request_logs l
             WHERE {l_data_source} = 'proxy'
-              AND l.app_type = ?1
+              AND {app_type_match}
               AND l.status_code >= 200
               AND l.status_code < 300
               AND l.input_tokens = ?3
@@ -2459,6 +2468,75 @@ mod tests {
             created_at: 1000,
         };
         assert!(has_matching_proxy_usage_log(&conn, &key)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_matching_proxy_log_matches_claude_desktop_for_claude_session() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        create_legacy_nullable_logs_table(&conn)?;
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, app_type, model, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, status_code, created_at, data_source
+            ) VALUES ('desktop-proxy', 'claude-desktop', 'claude-sonnet-4-5', 100, 20, 10, 5, 200, 1000, 'proxy')",
+            [],
+        )?;
+
+        let key = DedupKey {
+            app_type: "claude",
+            model: "claude-sonnet-4-5",
+            input_tokens: 100,
+            output_tokens: 20,
+            cache_read_tokens: 10,
+            cache_creation_tokens: 5,
+            created_at: 1060,
+        };
+        assert!(has_matching_proxy_usage_log(&conn, &key)?);
+
+        let mut outside_window = key;
+        outside_window.created_at = 1_601;
+        assert!(!has_matching_proxy_usage_log(&conn, &outside_window)?);
+
+        let mut different_model = key;
+        different_model.model = "claude-opus-4-5";
+        assert!(!has_matching_proxy_usage_log(&conn, &different_model)?);
+
+        let mut different_input = key;
+        different_input.input_tokens += 1;
+        assert!(!has_matching_proxy_usage_log(&conn, &different_input)?);
+
+        let mut different_cache_creation = key;
+        different_cache_creation.cache_creation_tokens += 1;
+        assert!(!has_matching_proxy_usage_log(
+            &conn,
+            &different_cache_creation
+        )?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_effective_filter_dedups_claude_session_against_desktop_proxy() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        create_legacy_nullable_logs_table(&conn)?;
+        conn.execute_batch(
+            "INSERT INTO proxy_request_logs (
+                request_id, app_type, model, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, status_code, created_at, data_source
+            ) VALUES
+                ('desktop-proxy', 'claude-desktop', 'claude-sonnet-4-5', 100, 20, 10, 5, 200, 1000, 'proxy'),
+                ('claude-session', 'claude', 'claude-sonnet-4-5', 100, 20, 10, 5, 200, 1060, 'session_log');",
+        )?;
+
+        let filter = effective_usage_log_filter("l");
+        let sql = format!("SELECT request_id FROM proxy_request_logs l WHERE {filter}");
+        let request_ids = conn
+            .prepare(&sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(request_ids, vec!["desktop-proxy"]);
 
         Ok(())
     }
