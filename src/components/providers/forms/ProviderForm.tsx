@@ -22,6 +22,8 @@ import type {
   CodexCatalogModel,
   CodexChatReasoning,
   ClaudeChatReasoning,
+  ClaudeChatReasoningSourceEffort,
+  ClaudeChatReasoningTargetEffort,
   PromptCacheRoutingMode,
   ClaudeApiKeyField,
 } from "@/types";
@@ -215,13 +217,48 @@ const normalizeCodexChatReasoningForSave = (
   };
 };
 
-const normalizeClaudeChatReasoningForSave = (
+const CLAUDE_CHAT_REASONING_SOURCE_EFFORTS =
+  new Set<ClaudeChatReasoningSourceEffort>([
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+  ]);
+
+const CLAUDE_CHAT_REASONING_TARGET_EFFORTS =
+  new Set<ClaudeChatReasoningTargetEffort>([
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "ultra",
+  ]);
+
+export const normalizeClaudeChatReasoningForSave = (
   value?: ClaudeChatReasoning,
 ): ClaudeChatReasoning | undefined => {
-  const entries = Object.entries(value?.effortMap ?? {});
-  return entries.length > 0
-    ? { effortMap: Object.fromEntries(entries) }
-    : undefined;
+  const effortMap: NonNullable<ClaudeChatReasoning["effortMap"]> = {};
+
+  for (const [source, target] of Object.entries(value?.effortMap ?? {})) {
+    if (
+      !CLAUDE_CHAT_REASONING_SOURCE_EFFORTS.has(
+        source as ClaudeChatReasoningSourceEffort,
+      ) ||
+      typeof target !== "string" ||
+      !CLAUDE_CHAT_REASONING_TARGET_EFFORTS.has(
+        target as ClaudeChatReasoningTargetEffort,
+      )
+    ) {
+      continue;
+    }
+
+    effortMap[source as ClaudeChatReasoningSourceEffort] =
+      target as ClaudeChatReasoningTargetEffort;
+  }
+
+  return Object.keys(effortMap).length > 0 ? { effortMap } : undefined;
 };
 
 type LocalProxyRequestOverridesBuildResult = ReturnType<

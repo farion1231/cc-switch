@@ -590,8 +590,8 @@ mod tests {
             "test-model".to_string(),
             "req-model".to_string(),
             "test-model".to_string(),
-            Some("max".to_string()),
             Some("xhigh".to_string()),
+            Some("max".to_string()),
             usage,
             Decimal::from(1),
             100,
@@ -619,8 +619,8 @@ mod tests {
             .unwrap();
         assert_eq!(count, 1);
         assert_eq!(request_model, "req-model");
-        assert_eq!(reasoning_effort.as_deref(), Some("max"));
-        assert_eq!(reasoning_effort_source.as_deref(), Some("xhigh"));
+        assert_eq!(reasoning_effort.as_deref(), Some("xhigh"));
+        assert_eq!(reasoning_effort_source.as_deref(), Some("max"));
         Ok(())
     }
 

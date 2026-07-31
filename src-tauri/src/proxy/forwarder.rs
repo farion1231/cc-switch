@@ -1640,12 +1640,11 @@ impl RequestForwarder {
             outbound_model = Some(m.to_string());
         }
         let outbound_reasoning_effort = extract_outbound_reasoning_effort(&filtered_body);
-        let outbound_reasoning_effort_source =
-            if model_was_routed && outbound_reasoning_effort.is_some() {
-                inbound_reasoning_effort
-            } else {
-                None
-            };
+        let outbound_reasoning_effort_source = reasoning_effort_source_for_log(
+            model_was_routed,
+            inbound_reasoning_effort,
+            outbound_reasoning_effort.as_deref(),
+        );
         log_prompt_cache_trace(
             app_type,
             provider,
@@ -3368,6 +3367,22 @@ fn extract_outbound_reasoning_effort(body: &Value) -> Option<String> {
     })
 }
 
+/// 判断路由请求日志是否应保留入站思考强度。
+///
+/// `max -> max` 之类的恒等映射也会保留：来源字段不仅表示强度值发生变化，
+/// 还用于表明模型路由已经命中。
+fn reasoning_effort_source_for_log(
+    model_was_routed: bool,
+    inbound_effort: Option<String>,
+    outbound_effort: Option<&str>,
+) -> Option<String> {
+    if model_was_routed && outbound_effort.is_some() {
+        inbound_effort
+    } else {
+        None
+    }
+}
+
 /// 从入站请求读取用户指定的思考强度。
 ///
 /// 这个值只会在模型路由实际改变模型时写入日志，用于与最终出站值组成
@@ -3755,6 +3770,26 @@ mod tests {
             Some("xhigh".to_string())
         );
         assert_eq!(extract_outbound_reasoning_effort(&json!({})), None);
+    }
+
+    #[test]
+    fn preserves_identity_effort_mapping_when_model_route_matches() {
+        assert_eq!(
+            reasoning_effort_source_for_log(true, Some("max".to_string()), Some("max")),
+            Some("max".to_string())
+        );
+    }
+
+    #[test]
+    fn omits_effort_source_without_model_route_or_outbound_effort() {
+        assert_eq!(
+            reasoning_effort_source_for_log(false, Some("max".to_string()), Some("xhigh")),
+            None
+        );
+        assert_eq!(
+            reasoning_effort_source_for_log(true, Some("max".to_string()), None),
+            None
+        );
     }
 
     #[test]
