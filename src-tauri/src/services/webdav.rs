@@ -181,9 +181,45 @@ pub async fn ensure_remote_directories(
             format!("{url}/")
         };
 
+        mkcol_one_with_retry(&client, &dir_url, auth).await?;
+    }
+    Ok(())
+}
+
+/// Whether a status is worth retrying (transient server/rate-limit errors).
+fn is_transient_status(status: StatusCode) -> bool {
+    status == StatusCode::TOO_MANY_REQUESTS
+        || status == StatusCode::SERVICE_UNAVAILABLE
+        || status == StatusCode::INTERNAL_SERVER_ERROR
+        || status == StatusCode::BAD_GATEWAY
+        || status == StatusCode::GATEWAY_TIMEOUT
+}
+
+/// MKCOL a single directory, retrying transient failures with backoff.
+///
+/// Jianguoyun frequently returns `503 Service Unavailable` under mild rate
+/// limiting; a couple of backed-off retries clear it. On the final attempt a
+/// transient status still falls back to a PROPFIND existence check so an
+/// already-created directory does not fail the operation.
+async fn mkcol_one_with_retry(
+    client: &reqwest::Client,
+    dir_url: &str,
+    auth: &WebDavAuth,
+) -> Result<(), AppError> {
+    const MAX_ATTEMPTS: u32 = 4;
+    // 400ms, 800ms, 1600ms between attempts.
+    const BASE_BACKOFF_MS: u64 = 400;
+
+    let mut last_status: Option<StatusCode> = None;
+    for attempt in 0..MAX_ATTEMPTS {
+        if attempt > 0 {
+            let backoff = BASE_BACKOFF_MS * (1u64 << (attempt - 1));
+            tokio::time::sleep(Duration::from_millis(backoff)).await;
+        }
+
         let resp = apply_auth(
             client
-                .request(method_mkcol(), &dir_url)
+                .request(method_mkcol(), dir_url)
                 .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
             auth,
         )
@@ -194,7 +230,7 @@ pub async fn ensure_remote_directories(
                 "webdav.mkcol_failed",
                 "MKCOL 请求",
                 "MKCOL request",
-                &dir_url,
+                dir_url,
                 &e,
             )
         })?;
@@ -202,23 +238,47 @@ pub async fn ensure_remote_directories(
         let status = resp.status();
         match status {
             s if s == StatusCode::CREATED || s.is_success() => {
-                log::info!("[WebDAV] MKCOL ok: {}", redact_url(&dir_url));
+                log::info!("[WebDAV] MKCOL ok: {}", redact_url(dir_url));
+                return Ok(());
             }
-            // Ambiguous — verify directory actually exists via PROPFIND
+            // Ambiguous — directory may already exist; verify via PROPFIND.
             s if s == StatusCode::METHOD_NOT_ALLOWED
                 || s == StatusCode::CONFLICT
                 || s.is_redirection() =>
             {
-                if !propfind_exists(&client, &dir_url, auth).await? {
-                    return Err(webdav_status_error("MKCOL", status, &dir_url));
+                if propfind_exists(client, dir_url, auth).await? {
+                    return Ok(());
                 }
+                return Err(webdav_status_error("MKCOL", status, dir_url));
+            }
+            // Transient — back off and retry.
+            s if is_transient_status(s) => {
+                log::warn!(
+                    "[WebDAV] MKCOL transient {} (attempt {}/{}): {}",
+                    s,
+                    attempt + 1,
+                    MAX_ATTEMPTS,
+                    redact_url(dir_url)
+                );
+                last_status = Some(s);
+                continue;
             }
             _ => {
-                return Err(webdav_status_error("MKCOL", status, &dir_url));
+                return Err(webdav_status_error("MKCOL", status, dir_url));
             }
         }
     }
-    Ok(())
+
+    // Exhausted retries on a transient status: last-ditch existence check —
+    // the directory may have been created by a concurrent/earlier request.
+    if propfind_exists(client, dir_url, auth).await.unwrap_or(false) {
+        return Ok(());
+    }
+    Err(webdav_status_error(
+        "MKCOL",
+        last_status.unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
+        dir_url,
+    ))
 }
 
 /// PUT bytes to a remote WebDAV URL.
