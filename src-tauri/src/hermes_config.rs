@@ -46,14 +46,53 @@ use std::sync::{Mutex, OnceLock};
 
 /// 获取 Hermes 配置目录
 ///
-/// 默认路径: `~/.hermes/`
-/// 可通过 settings.hermes_config_dir 覆盖
+/// 解析顺序对齐 Hermes 自身的 `get_hermes_home()`:
+///   1. CCS 设置 `hermes_config_dir`(显式覆盖)
+///   2. `HERMES_HOME` 环境变量(trim 后非空;按原样,不展开 `~`,与 Hermes `Path(val)` 一致)
+///   3. 平台默认(Windows: `%LOCALAPPDATA%\hermes`,Mac/Linux: `~/.hermes`)
 pub fn get_hermes_dir() -> PathBuf {
     if let Some(override_dir) = get_hermes_override_dir() {
         return override_dir;
     }
 
+    if let Some(raw) = std::env::var_os("HERMES_HOME") {
+        let value = raw.to_string_lossy();
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+
+    default_hermes_dir()
+}
+
+/// 平台默认 Hermes 目录(Windows):对齐 Hermes `_get_platform_default_hermes_home()`——
+/// 读 `LOCALAPPDATA` 环境变量,缺失/空时回退 `~\AppData\Local`,再拼 `hermes`。
+#[cfg(target_os = "windows")]
+fn default_hermes_dir() -> PathBuf {
+    windows_local_hermes_dir(
+        std::env::var_os("LOCALAPPDATA").as_deref(),
+        &crate::config::get_home_dir(),
+    )
+}
+
+/// 平台默认 Hermes 目录(Mac/Linux):`~/.hermes`。
+#[cfg(not(target_os = "windows"))]
+fn default_hermes_dir() -> PathBuf {
     crate::config::get_home_dir().join(".hermes")
+}
+
+/// Windows `%LOCALAPPDATA%\hermes` 路径计算(纯函数,便于跨平台单测)。
+/// 对齐 Hermes 的 `os.environ.get("LOCALAPPDATA", "").strip()`:trim 后为空
+/// (缺失/空/纯空白)则回退 `<home>\AppData\Local\hermes`。
+#[cfg(any(target_os = "windows", test))]
+fn windows_local_hermes_dir(localappdata: Option<&std::ffi::OsStr>, home: &Path) -> PathBuf {
+    localappdata
+        .map(|value| value.to_string_lossy().trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join("AppData").join("Local"))
+        .join("hermes")
 }
 
 /// 获取 Hermes 配置文件路径
@@ -1120,7 +1159,22 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
         std::env::set_var("CC_SWITCH_TEST_HOME", tmp.path());
+        // Neutralize the env vars get_hermes_dir() consults, so an ambient
+        // HERMES_HOME / LOCALAPPDATA (e.g. set by a Hermes install) can't make
+        // tests escape the temp home. Restored below.
+        let old_hermes_home = std::env::var_os("HERMES_HOME");
+        let old_local_appdata = std::env::var_os("LOCALAPPDATA");
+        std::env::remove_var("HERMES_HOME");
+        std::env::remove_var("LOCALAPPDATA");
         let result = test_fn();
+        match old_local_appdata {
+            Some(value) => std::env::set_var("LOCALAPPDATA", value),
+            None => std::env::remove_var("LOCALAPPDATA"),
+        }
+        match old_hermes_home {
+            Some(value) => std::env::set_var("HERMES_HOME", value),
+            None => std::env::remove_var("HERMES_HOME"),
+        }
         match old_test_home {
             Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
             None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
@@ -2192,5 +2246,199 @@ user_profile_enabled: false
         assert_eq!(memory, MemoryKind::Memory);
         assert_eq!(user, MemoryKind::User);
         assert!(serde_json::from_str::<MemoryKind>("\"bogus\"").is_err());
+    }
+
+    // ---- get_hermes_dir resolution (platform default + HERMES_HOME) ----
+
+    #[test]
+    #[serial]
+    fn hermes_home_env_takes_precedence_over_platform_default() {
+        with_test_home(|| {
+            // Clear any settings override so resolution reaches the HERMES_HOME branch.
+            let mut s = crate::settings::get_settings();
+            s.hermes_config_dir = None;
+            crate::settings::update_settings(s).unwrap();
+
+            let old = std::env::var_os("HERMES_HOME");
+            let custom = std::env::temp_dir().join("ccs-hermes-home-precedence");
+            std::env::set_var("HERMES_HOME", &custom);
+
+            let dir = get_hermes_dir();
+
+            match old {
+                Some(v) => std::env::set_var("HERMES_HOME", v),
+                None => std::env::remove_var("HERMES_HOME"),
+            }
+
+            assert_eq!(
+                dir, custom,
+                "HERMES_HOME should take precedence over the platform default, got {dir:?}"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn settings_override_takes_precedence_over_hermes_home() {
+        with_test_home(|| {
+            let custom = tempfile::tempdir().unwrap();
+            let custom_path = custom.path().to_path_buf();
+
+            let mut s = crate::settings::get_settings();
+            s.hermes_config_dir = Some(custom_path.to_string_lossy().to_string());
+            crate::settings::update_settings(s).unwrap();
+
+            let old = std::env::var_os("HERMES_HOME");
+            std::env::set_var("HERMES_HOME", "/tmp/should-be-ignored");
+
+            let dir = get_hermes_dir();
+
+            match old {
+                Some(v) => std::env::set_var("HERMES_HOME", v),
+                None => std::env::remove_var("HERMES_HOME"),
+            }
+            let mut s = crate::settings::get_settings();
+            s.hermes_config_dir = None;
+            crate::settings::update_settings(s).unwrap();
+
+            assert_eq!(
+                dir, custom_path,
+                "settings override should win over HERMES_HOME, got {dir:?}"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn blank_hermes_home_falls_through_to_platform_default() {
+        with_test_home(|| {
+            let mut s = crate::settings::get_settings();
+            s.hermes_config_dir = None;
+            crate::settings::update_settings(s).unwrap();
+
+            let old = std::env::var_os("HERMES_HOME");
+            std::env::set_var("HERMES_HOME", "   ");
+
+            let dir = get_hermes_dir();
+
+            match old {
+                Some(v) => std::env::set_var("HERMES_HOME", v),
+                None => std::env::remove_var("HERMES_HOME"),
+            }
+
+            // Blank HERMES_HOME is ignored (matches Hermes' `.strip()` non-empty check),
+            // so resolution must reach the platform default, never the literal blank path.
+            assert_ne!(dir, PathBuf::from("   "));
+            assert_eq!(dir, default_hermes_dir());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn default_hermes_dir_without_override_is_platform_correct() {
+        with_test_home(|| {
+            let mut s = crate::settings::get_settings();
+            s.hermes_config_dir = None;
+            crate::settings::update_settings(s).unwrap();
+
+            let old = std::env::var_os("HERMES_HOME");
+            std::env::remove_var("HERMES_HOME");
+
+            let dir = get_hermes_dir();
+
+            if let Some(v) = old {
+                std::env::set_var("HERMES_HOME", v);
+            }
+
+            #[cfg(target_os = "windows")]
+            assert!(
+                dir.ends_with("hermes") && dir.to_string_lossy().to_lowercase().contains("local"),
+                "Windows default should be %LOCALAPPDATA%\\hermes, got {dir:?}"
+            );
+            #[cfg(not(target_os = "windows"))]
+            assert!(
+                dir.ends_with(".hermes"),
+                "Unix default should be ~/.hermes, got {dir:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn windows_local_hermes_dir_uses_localappdata_when_set() {
+        let local = std::ffi::OsString::from("C:\\Users\\tester\\AppData\\Local");
+        let home = Path::new("C:\\Users\\tester");
+        // Uses LOCALAPPDATA (ignoring home) and appends `hermes`. Build the expected
+        // path with `join` so the separator matches the host OS.
+        assert_eq!(
+            windows_local_hermes_dir(Some(local.as_os_str()), home),
+            PathBuf::from(&local).join("hermes"),
+        );
+    }
+
+    #[test]
+    fn windows_local_hermes_dir_falls_back_to_home_when_localappdata_missing_or_empty() {
+        let home = Path::new("C:\\Users\\tester");
+        let expected = home.join("AppData").join("Local").join("hermes");
+        assert_eq!(windows_local_hermes_dir(None, home), expected);
+        let empty = std::ffi::OsString::from("");
+        assert_eq!(
+            windows_local_hermes_dir(Some(empty.as_os_str()), home),
+            expected,
+        );
+    }
+
+    #[test]
+    fn windows_local_hermes_dir_trims_localappdata() {
+        // Mirror Hermes' `os.environ.get("LOCALAPPDATA", "").strip()`.
+        let home = Path::new("C:\\Users\\tester");
+        // Whitespace-only -> treated as unset, fall back to <home>\AppData\Local.
+        let blank = std::ffi::OsString::from("   ");
+        assert_eq!(
+            windows_local_hermes_dir(Some(blank.as_os_str()), home),
+            home.join("AppData").join("Local").join("hermes"),
+        );
+        // Padded value -> trimmed before use.
+        let padded = std::ffi::OsString::from("  C:\\Custom\\Local  ");
+        assert_eq!(
+            windows_local_hermes_dir(Some(padded.as_os_str()), home),
+            PathBuf::from("C:\\Custom\\Local").join("hermes"),
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn with_test_home_neutralizes_hermes_env_vars() {
+        // An ambient HERMES_HOME / LOCALAPPDATA (e.g. set by a Hermes install)
+        // must not leak into the test home — otherwise other tests in this
+        // module would read/write a real Hermes config via get_hermes_config_path().
+        let saved_hh = std::env::var_os("HERMES_HOME");
+        let saved_la = std::env::var_os("LOCALAPPDATA");
+        std::env::set_var("HERMES_HOME", "/ambient/hermes-home");
+        std::env::set_var("LOCALAPPDATA", "/ambient/local-appdata");
+
+        let inside = with_test_home(|| {
+            (
+                std::env::var_os("HERMES_HOME"),
+                std::env::var_os("LOCALAPPDATA"),
+            )
+        });
+
+        match saved_hh {
+            Some(v) => std::env::set_var("HERMES_HOME", v),
+            None => std::env::remove_var("HERMES_HOME"),
+        }
+        match saved_la {
+            Some(v) => std::env::set_var("LOCALAPPDATA", v),
+            None => std::env::remove_var("LOCALAPPDATA"),
+        }
+
+        assert_eq!(
+            inside.0, None,
+            "with_test_home must clear ambient HERMES_HOME"
+        );
+        assert_eq!(
+            inside.1, None,
+            "with_test_home must clear ambient LOCALAPPDATA"
+        );
     }
 }

@@ -172,7 +172,7 @@ export function CommonConfigEditor({
               />
               <span>
                 {t("claudeConfig.writeCommonConfig", {
-                  defaultValue: "写入通用配置",
+                  defaultValue: "应用通用配置",
                 })}
               </span>
             </label>

@@ -142,6 +142,21 @@ impl ProxyResponse {
             .unwrap_or(false)
     }
 
+    /// Check whether the response explicitly declares a JSON media type.
+    pub fn is_json(&self) -> bool {
+        self.content_type()
+            .map(|content_type| {
+                let media_type = content_type
+                    .split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase();
+                media_type == "application/json" || media_type.ends_with("+json")
+            })
+            .unwrap_or(false)
+    }
+
     /// Consume the response and collect the full body into `Bytes`.
     pub async fn bytes(self) -> Result<Bytes, ProxyError> {
         match self {
@@ -226,8 +241,13 @@ impl ProxyResponse {
 /// `proxy_url`: optional upstream HTTP proxy URL (e.g. `http://127.0.0.1:7890`).
 /// When set, the raw write path uses HTTP CONNECT tunneling through the proxy,
 /// so header-case preservation works even when an upstream proxy is configured.
+///
+/// `log_display` is a caller-supplied, already-sanitized string used only for
+/// logging; this layer never derives a log value from the raw `uri`.
+#[allow(clippy::too_many_arguments)]
 pub async fn send_request(
     uri: http::Uri,
+    log_display: &str,
     method: http::Method,
     headers: http::HeaderMap,
     original_extensions: http::Extensions,
@@ -241,13 +261,13 @@ pub async fn send_request(
         .as_ref()
         .map(|c| !c.cases.is_empty())
         .unwrap_or(false);
-
     log::debug!(
-        "[HyperClient] Sending request: uri={uri}, header_count={}, \
+        "[HyperClient] Sending request: target={}, header_count={}, \
          has_host={}, has_original_cases={has_cases}, proxy={:?}",
+        log_display,
         headers.len(),
         headers.contains_key(http::header::HOST),
-        proxy_url,
+        proxy_url.map(super::http_client::mask_url),
     );
 
     if let Some(original_cases) = original_cases
@@ -735,5 +755,29 @@ impl<S: Unpin> tokio::io::AsyncWrite for WriteFilter<S> {
         _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         std::task::Poll::Ready(Ok(()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn buffered_with_content_type(content_type: Option<&str>) -> ProxyResponse {
+        let mut headers = http::HeaderMap::new();
+        if let Some(content_type) = content_type {
+            headers.insert(
+                http::header::CONTENT_TYPE,
+                http::HeaderValue::from_str(content_type).unwrap(),
+            );
+        }
+        ProxyResponse::buffered(http::StatusCode::OK, headers, Bytes::new())
+    }
+
+    #[test]
+    fn json_content_type_detection_accepts_json_suffixes() {
+        assert!(buffered_with_content_type(Some("application/json; charset=utf-8")).is_json());
+        assert!(buffered_with_content_type(Some("application/problem+json")).is_json());
+        assert!(!buffered_with_content_type(Some("text/event-stream")).is_json());
+        assert!(!buffered_with_content_type(None).is_json());
     }
 }

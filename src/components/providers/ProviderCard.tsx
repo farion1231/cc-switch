@@ -14,6 +14,7 @@ import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
+import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
@@ -21,11 +22,14 @@ import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBa
 import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
-  extractCodexWireApi,
-  isCodexChatWireApi,
 } from "@/utils/providerConfigUtils";
+import {
+  supportsOfficialProxyTakeover,
+  providerNeedsRouting,
+} from "@/utils/providerCapabilities";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
+import { resolveProviderIcon } from "@/utils/providerIcon";
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -194,7 +198,7 @@ export function ProviderCard({
   const usageEnabled = provider.meta?.usage_script?.enabled ?? false;
   const isOfficial = isOfficialProvider(provider, appId);
   const supportsOfficialSubscription =
-    isOfficial && ["claude", "codex", "gemini"].includes(appId);
+    isOfficial && ["claude", "codex", "gemini", "grokbuild"].includes(appId);
   const isOfficialSubscriptionUsage =
     provider.meta?.usage_script?.templateType ===
     TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
@@ -208,8 +212,14 @@ export function ProviderCard({
   //     并不兑现（绕过 UI 即可切换）→ 属虚保护，却以误伤 category 缺失的自定义供应商为代价。
   //  3) 预设导入的官方一定带 category="official"，category 缺失的「真官方」现实中≈不存在。
   // 真官方就该有显式 category；手动新建官方应引导标注，而不是靠空字段猜。
+  const supportsOfficialRouting = supportsOfficialProxyTakeover(
+    appId,
+    provider,
+  );
   const isOfficialBlockedByProxy =
-    isProxyTakeover && provider.category === "official";
+    isProxyTakeover &&
+    provider.category === "official" &&
+    !supportsOfficialRouting;
   const isCopilot =
     provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
     provider.meta?.usage_script?.templateType === "github_copilot";
@@ -219,20 +229,12 @@ export function ProviderCard({
     appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
   const isCodexOauth =
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
-  const codexNeedsRouting = useMemo(() => {
-    if (appId !== "codex" || provider.category === "official") return false;
-    if (provider.meta?.apiFormat === "openai_chat") return true;
-    const config = (provider.settingsConfig as Record<string, any>)?.config;
-    return (
-      typeof config === "string" &&
-      isCodexChatWireApi(extractCodexWireApi(config))
-    );
-  }, [
-    appId,
-    provider.category,
-    provider.meta?.apiFormat,
-    (provider.settingsConfig as Record<string, any>)?.config,
-  ]);
+  // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
+  const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
+  // 统一权威谓词（详见 providerNeedsRouting）：以 providerType 为准，不受
+  // apiFormat 被改动/缺省影响。此 badge 仅在 Codex 视图渲染，故加 appId 守卫。
+  const codexNeedsRouting =
+    appId === "codex" && providerNeedsRouting(appId, provider);
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用（OpenCode/OpenClaw/Hermes/Kilo）：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery =
@@ -324,7 +326,7 @@ export function ProviderCard({
         )}
       />
       <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-1 items-center gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <button
             type="button"
             className={cn(
@@ -339,16 +341,20 @@ export function ProviderCard({
             <GripVertical className="h-4 w-4" />
           </button>
 
-          <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300">
+          <div className="h-8 w-8 flex-shrink-0 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300">
             <ProviderIcon
-              icon={provider.icon}
+              icon={resolveProviderIcon(
+                appId,
+                provider.icon,
+                provider.iconColor,
+              )}
               name={provider.name}
               color={provider.iconColor}
               size={20}
             />
           </div>
 
-          <div className="space-y-1">
+          <div className="min-w-0 flex-1 space-y-1">
             <div className="flex flex-wrap items-center gap-2 min-h-7">
               <h3 className="text-base font-semibold leading-none">
                 {provider.name}
@@ -367,8 +373,7 @@ export function ProviderCard({
               )}
 
               {appId === "claude-desktop" &&
-                provider.category !== "official" &&
-                provider.meta?.claudeDesktopMode === "proxy" && (
+                providerNeedsRouting(appId, provider) && (
                   <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
                     {t("claudeDesktop.modeProxy", {
                       defaultValue: "需要路由",
@@ -376,16 +381,13 @@ export function ProviderCard({
                   </span>
                 )}
 
-              {appId === "claude" &&
-                provider.category !== "official" &&
-                provider.meta?.apiFormat &&
-                provider.meta.apiFormat !== "anthropic" && (
-                  <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                    {t("claudeCode.needsRouting", {
-                      defaultValue: "需要路由",
-                    })}
-                  </span>
-                )}
+              {appId === "claude" && providerNeedsRouting(appId, provider) && (
+                <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                  {t("claudeCode.needsRouting", {
+                    defaultValue: "需要路由",
+                  })}
+                </span>
+              )}
 
               {codexNeedsRouting && (
                 <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
@@ -403,13 +405,27 @@ export function ProviderCard({
                 </span>
               )}
 
-              {appId === "codex" && provider.category === "official" && (
-                <span className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200">
-                  {t("codex.noRoutingSupport", {
-                    defaultValue: "不支持路由",
-                  })}
+              {appId === "codex" && supportsOfficialRouting && (
+                <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                  {isProxyTakeover
+                    ? t("codex.officialRouting", {
+                        defaultValue: "官方账号路由",
+                      })
+                    : t("codex.nativeLogin", {
+                        defaultValue: "Codex 登录",
+                      })}
                 </span>
               )}
+
+              {appId === "codex" &&
+                provider.category === "official" &&
+                !supportsOfficialRouting && (
+                  <span className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200">
+                    {t("codex.noRoutingSupport", {
+                      defaultValue: "不支持路由",
+                    })}
+                  </span>
+                )}
 
               {isProxyRunning && isInFailoverQueue && health && (
                 <ProviderHealthBadge
@@ -455,7 +471,7 @@ export function ProviderCard({
                 type="button"
                 onClick={handleOpenWebsite}
                 className={cn(
-                  "inline-flex items-center text-sm max-w-[280px]",
+                  "inline-flex max-w-full items-center overflow-hidden text-left text-sm",
                   isClickableUrl
                     ? "text-blue-500 transition-colors hover:underline dark:text-blue-400 cursor-pointer"
                     : "text-muted-foreground cursor-default",
@@ -463,7 +479,7 @@ export function ProviderCard({
                 title={displayUrl}
                 disabled={!isClickableUrl}
               >
-                <span className="truncate">{displayUrl}</span>
+                <span className="min-w-0 truncate">{displayUrl}</span>
               </button>
             )}
           </div>
@@ -480,6 +496,12 @@ export function ProviderCard({
                 />
               ) : isCodexOauth ? (
                 <CodexOauthQuotaFooter
+                  meta={provider.meta}
+                  inline={true}
+                  isCurrent={isCurrent}
+                />
+              ) : isXaiOauth ? (
+                <XaiOauthQuotaFooter
                   meta={provider.meta}
                   inline={true}
                   isCurrent={isCurrent}
@@ -564,7 +586,8 @@ export function ProviderCard({
               onConfigureUsage={
                 (isOfficial && !supportsOfficialSubscription) ||
                 isCopilot ||
-                isCodexOauth
+                isCodexOauth ||
+                isXaiOauth
                   ? undefined
                   : () => onConfigureUsage(provider)
               }

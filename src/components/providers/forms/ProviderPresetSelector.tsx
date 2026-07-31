@@ -87,15 +87,41 @@ export function sortPresetEntries(
   sortMode: PresetSortMode,
   t: PresetTranslator,
 ): PresetEntry[] {
-  if (sortMode === PresetSortMode.Original) {
-    return [...entries];
-  }
-
-  return [...entries].sort((a, b) =>
+  const byDisplayName = (a: PresetEntry, b: PresetEntry) =>
     getPresetDisplayName(a.preset, t).localeCompare(
       getPresetDisplayName(b.preset, t),
-    ),
-  );
+    );
+
+  if (sortMode === PresetSortMode.Original) {
+    // 置顶优先级：官方分类 > 尊享合作伙伴（Kimi）> 其余赞助商 > 非赞助商。
+    // 前三组用分区拼接而非排序，保持各自在预设文件里的相对顺序
+    // （赞助商的文件顺序与 README 赞助商表对齐）；非赞助商按显示名排序。
+    // 排他条件保证同时命中多组的预设只归入最前面的组、不被重复。
+    const official = entries.filter(
+      (entry) => entry.preset.category === "official",
+    );
+    const prime = entries.filter(
+      (entry) =>
+        entry.preset.category !== "official" && entry.preset.primePartner,
+    );
+    const partner = entries.filter(
+      (entry) =>
+        entry.preset.category !== "official" &&
+        !entry.preset.primePartner &&
+        entry.preset.isPartner,
+    );
+    const rest = entries
+      .filter(
+        (entry) =>
+          entry.preset.category !== "official" &&
+          !entry.preset.primePartner &&
+          !entry.preset.isPartner,
+      )
+      .sort(byDisplayName);
+    return [...official, ...prime, ...partner, ...rest];
+  }
+
+  return [...entries].sort(byDisplayName);
 }
 
 export interface PresetVisibilityOptions {

@@ -152,8 +152,71 @@ pub fn read_gemini_env() -> Result<HashMap<String, String>, AppError> {
     Ok(parse_env_file(&content))
 }
 
+/// 从 .env 原文中按「键名 + 值」双匹配删除若干行，其余内容逐字保留
+///
+/// 不走 `parse_env_file` → `serialize_env_file` 的往返：那对函数会丢掉注释、空行、
+/// 无法识别的行和重复定义，并按键名重排整个文件。全量投影时这无所谓（本来就要重写
+/// 整份），但用来做**定向**清理就等于顺手把用户手写的东西一起删了。
+///
+/// 按值匹配而非按键名：只清掉扩散出去的那一份，用户自己写的同名不同值的行保留。
+/// 同一个键有重复定义时也只删命中的那条，被它遮住的上一条会重新生效——这正是想要的
+/// 结果，因为遮住它的恰恰是泄漏值。
+///
+/// 返回 `None` 表示没有任何一行命中，调用方据此跳过写盘。
+pub fn remove_env_entries_preserving_layout(
+    content: &str,
+    doomed: &HashMap<String, String>,
+) -> Option<String> {
+    let mut removed = false;
+    let mut kept: Vec<&str> = Vec::new();
+
+    for line in content.split('\n') {
+        let trimmed = line.trim();
+        let hit = !trimmed.is_empty()
+            && !trimmed.starts_with('#')
+            && trimmed.split_once('=').is_some_and(|(key, value)| {
+                doomed
+                    .get(key.trim())
+                    .is_some_and(|doomed_value| doomed_value == value.trim())
+            });
+
+        if hit {
+            removed = true;
+        } else {
+            kept.push(line);
+        }
+    }
+
+    removed.then(|| kept.join("\n"))
+}
+
+/// 从 `~/.gemini/.env` 中定向删除「键=值」完全匹配的行，返回是否真的改了文件
+pub fn remove_gemini_env_entries(doomed: &HashMap<String, String>) -> Result<bool, AppError> {
+    let path = get_gemini_env_path();
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let content = fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?;
+    match remove_env_entries_preserving_layout(&content, doomed) {
+        Some(cleaned) => {
+            write_gemini_env_text_atomic(&cleaned)?;
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
 /// 写入 Gemini .env 文件（原子操作）
 pub fn write_gemini_env_atomic(map: &HashMap<String, String>) -> Result<(), AppError> {
+    write_gemini_env_text_atomic(&serialize_env_file(map))
+}
+
+/// 写入 Gemini .env 文件（原子操作，内容逐字落盘）
+///
+/// 与 `write_gemini_env_atomic` 共用目录/文件权限处理，区别只在于内容不经
+/// `serialize_env_file` 归一化——供保序的定向删除使用。
+pub fn write_gemini_env_text_atomic(content: &str) -> Result<(), AppError> {
     let path = get_gemini_env_path();
 
     // 确保目录存在
@@ -172,8 +235,7 @@ pub fn write_gemini_env_atomic(map: &HashMap<String, String>) -> Result<(), AppE
         }
     }
 
-    let content = serialize_env_file(map);
-    write_text_file(&path, &content)?;
+    write_text_file(&path, content)?;
 
     // 设置文件权限为 600（仅所有者可读写）
     #[cfg(unix)]

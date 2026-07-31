@@ -135,7 +135,7 @@ export const GeminiCommonConfigModal: React.FC<
           value={draftValue}
           onChange={setDraftValue}
           placeholder={`{
-  "GEMINI_MODEL": "gemini-3.5-flash"
+  "GEMINI_MODEL": "gemini-3.6-flash"
 }`}
           darkMode={isDarkMode}
           rows={16}

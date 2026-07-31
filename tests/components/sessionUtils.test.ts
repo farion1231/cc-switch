@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   extractCodexPromptPreview,
   formatSessionMessagePreview,
+  groupSessionsByProviderAndDirectory,
   shouldHideCodexMessageFromToc,
 } from "@/components/sessions/utils";
+import type { SessionMeta } from "@/types";
 
 describe("session utils", () => {
   it("extracts Codex VS Code prompts after the request marker", () => {
@@ -114,5 +116,109 @@ describe("session utils", () => {
     expect(formatSessionMessagePreview("a".repeat(51))).toBe(
       `${"a".repeat(50)}...`,
     );
+  });
+
+  it("groups sessions by provider and project directory", () => {
+    const sessions: SessionMeta[] = [
+      {
+        providerId: "codex",
+        sessionId: "codex-1",
+        projectDir: "/workspace/app",
+      },
+      {
+        providerId: "codex",
+        sessionId: "codex-2",
+        projectDir: "/workspace/app",
+      },
+      {
+        providerId: "claude",
+        sessionId: "claude-1",
+        projectDir: "/workspace/docs",
+      },
+    ];
+
+    const groups = groupSessionsByProviderAndDirectory(sessions, "未知目录");
+
+    expect(groups).toHaveLength(2);
+    expect(groups[0].providerId).toBe("codex");
+    expect(groups[0].sessions.map((session) => session.sessionId)).toEqual([
+      "codex-1",
+      "codex-2",
+    ]);
+    expect(groups[0].directories).toHaveLength(1);
+    expect(groups[0].directories[0]).toMatchObject({
+      projectDir: "/workspace/app",
+      label: "app",
+    });
+    expect(
+      groups[0].directories[0].sessions.map((session) => session.sessionId),
+    ).toEqual(["codex-1", "codex-2"]);
+    expect(groups[1].providerId).toBe("claude");
+    expect(groups[1].directories[0].label).toBe("docs");
+  });
+
+  it("uses an unknown directory group for sessions without project directories", () => {
+    const sessions: SessionMeta[] = [
+      {
+        providerId: "codex",
+        sessionId: "codex-1",
+        projectDir: null,
+      },
+      {
+        providerId: "codex",
+        sessionId: "codex-2",
+        projectDir: "   ",
+      },
+    ];
+
+    const groups = groupSessionsByProviderAndDirectory(sessions, "未知目录");
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].directories).toHaveLength(1);
+    expect(groups[0].directories[0]).toMatchObject({
+      projectDir: null,
+      label: "未知目录",
+    });
+    expect(
+      groups[0].directories[0].sessions.map((session) => session.sessionId),
+    ).toEqual(["codex-1", "codex-2"]);
+  });
+
+  it("preserves filtered session order inside provider and directory groups", () => {
+    const sessions: SessionMeta[] = [
+      {
+        providerId: "codex",
+        sessionId: "newest",
+        projectDir: "/workspace/app",
+        lastActiveAt: 30,
+      },
+      {
+        providerId: "codex",
+        sessionId: "middle",
+        projectDir: "/workspace/docs",
+        lastActiveAt: 20,
+      },
+      {
+        providerId: "codex",
+        sessionId: "oldest",
+        projectDir: "/workspace/app",
+        lastActiveAt: 10,
+      },
+    ];
+
+    const groups = groupSessionsByProviderAndDirectory(sessions, "未知目录");
+
+    expect(groups[0].sessions.map((session) => session.sessionId)).toEqual([
+      "newest",
+      "middle",
+      "oldest",
+    ]);
+    expect(groups[0].directories.map((group) => group.label)).toEqual([
+      "app",
+      "docs",
+    ]);
+    expect(
+      groups[0].directories[0].sessions.map((session) => session.sessionId),
+    ).toEqual(["newest", "oldest"]);
   });
 });

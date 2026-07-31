@@ -4,6 +4,8 @@ import { Badge } from "@/components/ui/badge";
 import { CodexIcon } from "@/components/BrandIcons";
 import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
+import { XaiOAuthSection } from "@/components/providers/forms/XaiOAuthSection";
+import { ProviderIcon } from "@/components/ProviderIcon";
 
 export function AuthCenterPanel() {
   const { t } = useTranslation();
@@ -68,6 +70,24 @@ export function AuthCenterPanel() {
         </div>
 
         <CodexOAuthSection />
+      </section>
+
+      <section className="rounded-xl border border-border/60 bg-card/60 p-6">
+        <div className="mb-4 flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted">
+            <ProviderIcon icon="xai" name="xAI" size={20} />
+          </div>
+          <div>
+            <h4 className="font-medium">xAI (Grok OAuth)</h4>
+            <p className="text-sm text-muted-foreground">
+              {t("settings.authCenter.xaiOauthDescription", {
+                defaultValue: "管理 xAI / Grok 账号",
+              })}
+            </p>
+          </div>
+        </div>
+
+        <XaiOAuthSection />
       </section>
     </div>
   );

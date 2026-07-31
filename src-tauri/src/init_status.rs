@@ -5,6 +5,17 @@ use std::sync::{OnceLock, RwLock};
 pub struct InitErrorPayload {
     pub path: String,
     pub error: String,
+    /// 错误类别。`Some("db_version_too_new")` 表示数据库版本过新（应用过旧），
+    /// 前端据此展示「升级应用」恢复界面而非直接退出。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// 磁盘上数据库的 user_version（数据库版本过新时填充）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub db_version: Option<i32>,
+    /// 当前应用支持的 SCHEMA_VERSION（数据库版本过新时填充）。
+    /// 当升级到最新版后 db_version 仍 > supported_version，说明可能由第三方客户端创建。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supported_version: Option<i32>,
 }
 
 static INIT_ERROR: OnceLock<RwLock<Option<InitErrorPayload>>> = OnceLock::new();
@@ -13,7 +24,6 @@ fn cell() -> &'static RwLock<Option<InitErrorPayload>> {
     INIT_ERROR.get_or_init(|| RwLock::new(None))
 }
 
-#[allow(dead_code)]
 pub fn set_init_error(payload: InitErrorPayload) {
     #[allow(clippy::unwrap_used)]
     if let Ok(mut guard) = cell().write() {
@@ -102,6 +112,9 @@ mod tests {
         let payload = InitErrorPayload {
             path: "/tmp/config.json".into(),
             error: "broken json".into(),
+            kind: None,
+            db_version: None,
+            supported_version: None,
         };
         set_init_error(payload.clone());
         let got = get_init_error().expect("should get payload back");

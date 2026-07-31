@@ -35,7 +35,6 @@ import { useUpdate } from "@/contexts/UpdateContext";
 import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
 import appIcon from "@/assets/icons/app-icon.png";
-import fable5VerifiedBanner from "@/assets/fable5-verified.png";
 import { APP_ICON_MAP } from "@/config/appConfig";
 import type { AppId } from "@/lib/api/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -64,6 +63,7 @@ const TOOL_NAMES = [
   "claude",
   "codex",
   "gemini",
+  "grok",
   "opencode",
   "openclaw",
   "hermes",
@@ -132,6 +132,8 @@ ${posixScriptInstallCommand("https://claude.ai/install.sh")} || npm i -g @anthro
 npm i -g @openai/codex@latest
 # Gemini CLI
 npm i -g @google/gemini-cli@latest
+# Grok Build
+npm i -g @xai-official/grok@latest
 # OpenCode
 ${posixScriptInstallCommand("https://opencode.ai/install")} || npm i -g opencode-ai@latest
 # OpenClaw
@@ -147,6 +149,8 @@ npm i -g @anthropic-ai/claude-code@latest
 npm i -g @openai/codex@latest
 # Gemini CLI
 npm i -g @google/gemini-cli@latest
+# Grok Build
+npm i -g @xai-official/grok@latest
 # OpenCode
 npm i -g opencode-ai@latest
 # OpenClaw
@@ -164,6 +168,7 @@ const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   claude: "Claude Code",
   codex: "Codex",
   gemini: "Gemini CLI",
+  grok: "Grok Build",
   opencode: "OpenCode",
   openclaw: "OpenClaw",
   hermes: "Hermes",
@@ -180,6 +185,7 @@ const TOOL_APP_IDS: Record<ToolName, AppId> = {
   claude: "claude",
   codex: "codex",
   gemini: "gemini",
+  grok: "grokbuild",
   opencode: "opencode",
   openclaw: "openclaw",
   hermes: "hermes",
@@ -861,12 +867,6 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                 )}
               </div>
             </div>
-            <img
-              src={fable5VerifiedBanner}
-              alt="Fable 5 Verified"
-              className="h-16 w-auto shrink-0 select-none"
-              draggable={false}
-            />
           </div>
 
           <div className="flex items-center gap-2">

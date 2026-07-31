@@ -10,7 +10,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 import {
   Popover,
@@ -471,6 +470,19 @@ export function OmoFormFields({
     const firstIsUnavailable =
       Boolean(currentVariant) &&
       !(modelVariantsMap[currentModel] || []).includes(currentVariant);
+    const defaultVariantLabel = t("omo.defaultWrapped", {
+      defaultValue: "(Default)",
+    });
+    const getVariantLabel = (variant: string, index: number) =>
+      firstIsUnavailable && index === 0
+        ? t("omo.currentValueUnavailable", {
+            value: variant,
+            defaultValue: "{{value}} (current value, unavailable)",
+          })
+        : variant;
+    const selectedVariantLabel = currentVariant
+      ? getVariantLabel(currentVariant, 0)
+      : defaultVariantLabel;
 
     return (
       <Select
@@ -479,25 +491,21 @@ export function OmoFormFields({
           onChange(value === EMPTY_VARIANT_VALUE ? "" : value)
         }
       >
-        <SelectTrigger className="w-28 h-8 text-xs shrink-0">
-          <SelectValue
-            placeholder={t("omo.variantPlaceholder", {
-              defaultValue: "variant",
-            })}
-          />
+        <SelectTrigger
+          className="w-28 min-w-0 h-8 overflow-hidden text-xs shrink-0"
+          title={selectedVariantLabel}
+        >
+          <span className="min-w-0 flex-1 truncate text-left">
+            {selectedVariantLabel}
+          </span>
         </SelectTrigger>
         <SelectContent className="max-h-72">
           <SelectItem value={EMPTY_VARIANT_VALUE}>
-            {t("omo.defaultWrapped", { defaultValue: "(Default)" })}
+            {defaultVariantLabel}
           </SelectItem>
           {variantOptions.map((variant, index) => (
             <SelectItem key={`${variant}-${index}`} value={variant}>
-              {firstIsUnavailable && index === 0
-                ? t("omo.currentValueUnavailable", {
-                    value: variant,
-                    defaultValue: "{{value}} (current value, unavailable)",
-                  })
-                : variant}
+              {getVariantLabel(variant, index)}
             </SelectItem>
           ))}
         </SelectContent>

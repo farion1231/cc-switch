@@ -15,7 +15,6 @@ import {
   Book,
   Brain,
   Wrench,
-  RefreshCw,
   History,
   BarChart2,
   Download,
@@ -30,7 +29,7 @@ import {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
-import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
+import { proxyKeys, useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
   providersApi,
   settingsApi,
@@ -43,10 +42,10 @@ import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
 import { hermesApi } from "@/lib/api/hermes";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
-import { useAutoCompact } from "@/hooks/useAutoCompact";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
+import { useScanUnmanagedSkills } from "@/hooks/useSkills";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { deepClone } from "@/utils/deepClone";
@@ -58,6 +57,7 @@ import {
   DRAG_REGION_STYLE,
 } from "@/lib/platform";
 import { AppSwitcher } from "@/components/AppSwitcher";
+import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
@@ -71,7 +71,11 @@ import { FailoverToggle } from "@/components/proxy/FailoverToggle";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import PromptPanel from "@/components/prompts/PromptPanel";
-import { SkillsPage } from "@/components/skills/SkillsPage";
+import {
+  SkillsPage,
+  getSkillsPageHeaderActions,
+  type SkillsPageSource,
+} from "@/components/skills/SkillsPage";
 import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
@@ -122,6 +126,7 @@ const VALID_APPS: AppId[] = [
   "claude-desktop",
   "codex",
   "gemini",
+  "grokbuild",
   "opencode",
   "openclaw",
   "hermes",
@@ -170,6 +175,8 @@ function App() {
   const sharedFeatureApp: AppId =
     activeApp === "claude-desktop" ? "claude" : activeApp;
   const [currentView, setCurrentView] = useState<View>(getInitialView);
+  const [skillsDiscoverySource, setSkillsDiscoverySource] =
+    useState<SkillsPageSource>("repos");
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
@@ -188,6 +195,7 @@ function App() {
     "claude-desktop": true,
     codex: true,
     gemini: true,
+    grokbuild: true,
     opencode: true,
     openclaw: true,
     hermes: true,
@@ -203,6 +211,7 @@ function App() {
     if (visibleApps["claude-desktop"]) return "claude-desktop";
     if (visibleApps.codex) return "codex";
     if (visibleApps.gemini) return "gemini";
+    if (visibleApps.grokbuild) return "grokbuild";
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";
@@ -222,6 +231,7 @@ function App() {
       currentView === "sessions" &&
       sharedFeatureApp !== "claude" &&
       sharedFeatureApp !== "codex" &&
+      sharedFeatureApp !== "grokbuild" &&
       sharedFeatureApp !== "opencode" &&
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
@@ -244,15 +254,16 @@ function App() {
   const effectiveEditingProvider = useLastValidValue(editingProvider);
   const effectiveUsageProvider = useLastValidValue(usageProvider);
 
-  const toolbarRef = useRef<HTMLDivElement>(null);
-  const isToolbarCompact = useAutoCompact(toolbarRef);
-
   useUsageCacheBridge();
 
   const promptPanelRef = useRef<any>(null);
   const mcpPanelRef = useRef<any>(null);
   const skillsPageRef = useRef<any>(null);
   const unifiedSkillsPanelRef = useRef<any>(null);
+  // 订阅未管理 Skill 的共享缓存（实际扫描由 UnifiedSkillsPanel 进入页面时触发）。
+  // 这里 enabled 默认 false，仅用于「导入」按钮的绿点提示，不主动发起扫描。
+  const { data: unmanagedSkills } = useScanUnmanagedSkills();
+  const hasUnmanagedSkills = (unmanagedSkills?.length ?? 0) > 0;
   const addActionButtonClass =
     "bg-orange-500 hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-600 text-white shadow-lg shadow-orange-500/30 dark:shadow-orange-500/40 rounded-full w-8 h-8";
 
@@ -288,6 +299,7 @@ function App() {
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||
+    sharedFeatureApp === "grokbuild" ||
     sharedFeatureApp === "opencode" ||
     sharedFeatureApp === "openclaw" ||
     sharedFeatureApp === "gemini" ||
@@ -378,6 +390,21 @@ function App() {
     } catch (error) {
       console.error("[App] Failed to update tray menu", error);
     }
+  });
+
+  // 应用项目后刷新相关缓存（providers 由既有 provider-switched 监听承接；
+  // proxy 状态由后端直接改 DB，不走 mutation，必须显式刷新）
+  useTauriEvent("profile-applied", async () => {
+    await queryClient.invalidateQueries({ queryKey: ["profiles"] });
+    await queryClient.invalidateQueries({ queryKey: ["mcp", "all"] });
+    await queryClient.invalidateQueries({ queryKey: ["skills"] });
+    await queryClient.invalidateQueries({
+      queryKey: proxyKeys.takeoverStatus,
+    });
+    await queryClient.invalidateQueries({ queryKey: proxyKeys.status });
+    await queryClient.invalidateQueries({
+      queryKey: ["providers", "claude-desktop"],
+    });
   });
 
   useTauriEvent<SyncStatusUpdatedPayload | null | undefined>(
@@ -876,6 +903,11 @@ function App() {
     }
   };
 
+  const handleOpenSkillsDiscovery = () => {
+    setSkillsDiscoverySource("repos");
+    setCurrentView("skillsDiscovery");
+  };
+
   const renderContent = () => {
     const content = (() => {
       switch (currentView) {
@@ -903,7 +935,7 @@ function App() {
           return (
             <UnifiedSkillsPanel
               ref={unifiedSkillsPanelRef}
-              onOpenDiscovery={() => setCurrentView("skillsDiscovery")}
+              onOpenDiscovery={handleOpenSkillsDiscovery}
               currentApp={
                 sharedFeatureApp === "openclaw" ? "claude" : sharedFeatureApp
               }
@@ -916,6 +948,7 @@ function App() {
               initialApp={
                 sharedFeatureApp === "openclaw" ? "claude" : sharedFeatureApp
               }
+              onSourceChange={setSkillsDiscoverySource}
             />
           );
         case "mcp":
@@ -1254,10 +1287,16 @@ function App() {
                     )}
                 </div>
               )}
-            <div
-              ref={toolbarRef}
-              className="flex flex-1 min-w-0 overflow-x-hidden items-center py-4 pr-2"
-            >
+            {currentView === "providers" &&
+              (settingsData?.showProfileSwitcher ?? true) && (
+                <div
+                  className="flex shrink-0 items-center"
+                  style={{ WebkitAppRegion: "no-drag" } as any}
+                >
+                  <ProfileSwitcher activeApp={activeApp} />
+                </div>
+              )}
+            <div className="flex flex-1 min-w-0 overflow-x-hidden items-center py-4 pr-2">
               <div
                 className="flex shrink-0 items-center gap-1.5 ml-auto"
                 style={{ WebkitAppRegion: "no-drag" } as any}
@@ -1325,15 +1364,26 @@ function App() {
                       onClick={() =>
                         unifiedSkillsPanelRef.current?.openImport()
                       }
-                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                      className="relative hover:bg-black/5 dark:hover:bg-white/5"
+                      title={
+                        hasUnmanagedSkills
+                          ? t("skills.unmanagedAvailable")
+                          : undefined
+                      }
                     >
                       <Download className="w-4 h-4 mr-2" />
                       {t("skills.import")}
+                      {hasUnmanagedSkills && (
+                        <span
+                          className="absolute top-1 right-1 h-2 w-2 rounded-full bg-green-500"
+                          aria-hidden="true"
+                        />
+                      )}
                     </Button>
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => setCurrentView("skillsDiscovery")}
+                      onClick={handleOpenSkillsDiscovery}
                       className="hover:bg-black/5 dark:hover:bg-white/5"
                     >
                       <Search className="w-4 h-4 mr-2" />
@@ -1343,24 +1393,20 @@ function App() {
                 )}
                 {currentView === "skillsDiscovery" && (
                   <>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => skillsPageRef.current?.refresh()}
-                      className="hover:bg-black/5 dark:hover:bg-white/5"
-                    >
-                      <RefreshCw className="w-4 h-4 mr-2" />
-                      {t("skills.refresh")}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => skillsPageRef.current?.openRepoManager()}
-                      className="hover:bg-black/5 dark:hover:bg-white/5"
-                    >
-                      <Settings className="w-4 h-4 mr-2" />
-                      {t("skills.repoManager")}
-                    </Button>
+                    {getSkillsPageHeaderActions(skillsDiscoverySource).map(
+                      ({ key, labelKey, Icon, execute }) => (
+                        <Button
+                          key={key}
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => execute(skillsPageRef.current)}
+                          className="hover:bg-black/5 dark:hover:bg-white/5"
+                        >
+                          <Icon className="w-4 h-4 mr-2" />
+                          {t(labelKey)}
+                        </Button>
+                      ),
+                    )}
                   </>
                 )}
                 {currentView === "providers" && (
@@ -1369,7 +1415,6 @@ function App() {
                       activeApp={activeApp}
                       onSwitch={setActiveApp}
                       visibleApps={visibleApps}
-                      compact={isToolbarCompact}
                     />
 
                     <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
@@ -1380,7 +1425,9 @@ function App() {
                               ? "openclaw"
                               : activeApp === "hermes"
                                 ? "hermes"
-                                : "default"
+                                : activeApp === "grokbuild"
+                                  ? "grokbuild"
+                                  : "default"
                           }
                           className="flex items-center gap-1"
                           initial={{ opacity: 0 }}

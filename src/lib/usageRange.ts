@@ -49,7 +49,9 @@ export function resolveUsageRange(
       };
     case "custom": {
       const startDate = selection.customStartDate ?? endDate - DAY_SECONDS;
-      const customEndDate = selection.customEndDate ?? endDate;
+      const customEndDate = selection.liveEndTime
+        ? endDate
+        : (selection.customEndDate ?? endDate);
       return {
         startDate,
         endDate: customEndDate,

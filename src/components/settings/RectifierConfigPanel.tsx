@@ -22,7 +22,6 @@ export function RectifierConfigPanel() {
     enabled: false,
     thinkingOptimizer: true,
     cacheInjection: true,
-    cacheTtl: "1h",
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -204,31 +203,6 @@ export function RectifierConfigPanel() {
                 }
               />
             </div>
-
-            {optimizerConfig.cacheInjection && (
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label>{t("settings.advanced.optimizer.cacheTtl")}</Label>
-                </div>
-                <select
-                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                  value={optimizerConfig.cacheTtl}
-                  disabled={
-                    !optimizerConfig.enabled || !optimizerConfig.cacheInjection
-                  }
-                  onChange={(e) =>
-                    handleOptimizerChange({ cacheTtl: e.target.value })
-                  }
-                >
-                  <option value="5m">
-                    {t("settings.advanced.optimizer.cacheTtl5m")}
-                  </option>
-                  <option value="1h">
-                    {t("settings.advanced.optimizer.cacheTtl1h")}
-                  </option>
-                </select>
-              </div>
-            )}
           </div>
         </div>
       </div>

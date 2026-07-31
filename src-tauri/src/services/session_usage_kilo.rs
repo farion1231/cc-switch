@@ -41,6 +41,7 @@ pub fn sync_kilo_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
             skipped: 0,
             files_scanned: 0,
             errors: vec![],
+            ..Default::default()
         });
     }
 
@@ -63,6 +64,7 @@ pub fn sync_kilo_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
             skipped: 0,
             files_scanned: 1,
             errors: vec![],
+            ..Default::default()
         });
     }
 
@@ -75,6 +77,7 @@ pub fn sync_kilo_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         skipped: 0,
         files_scanned: 1,
         errors: vec![],
+        ..Default::default()
     };
     let mut has_sync_errors = false;
 

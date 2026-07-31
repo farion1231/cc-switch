@@ -49,13 +49,14 @@ pub async fn get_codex_oauth_quota(
         }
     };
 
-    Ok(query_codex_quota(
+    // 瞬时传输失败以 Err 传播（前端 reject → retry + 保留上次成功值）。
+    query_codex_quota(
         &token,
         Some(&id),
         "codex_oauth",
         "Codex OAuth access token expired or rejected. Please re-login via cc-switch.",
     )
-    .await)
+    .await
 }
 
 /// 获取 Codex OAuth (ChatGPT Plus/Pro) 可用模型列表

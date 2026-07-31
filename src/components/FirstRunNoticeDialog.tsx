@@ -20,7 +20,7 @@ export function FirstRunNoticeDialog() {
   const { data: settings } = useSettingsQuery();
 
   // 后端启动时已经决定好要不要弹：条件不满足的话字段会立即被写成 true，
-  // 所以前端这里只需要判空即可——完全对齐 streamCheckConfirmed 等既有 flag 的模式。
+  // 所以前端这里只需要判空即可——与其他既有确认标记的模式一致。
   const isOpen = settings != null && settings.firstRunNoticeConfirmed !== true;
 
   const handleAcknowledge = async () => {

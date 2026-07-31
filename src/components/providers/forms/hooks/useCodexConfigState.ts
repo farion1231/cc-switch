@@ -2,7 +2,9 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
+  extractCodexModelName,
   setCodexBaseUrl as setCodexBaseUrlInConfig,
+  setCodexModelName as setCodexModelNameInConfig,
   updateCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
 import { normalizeTomlText } from "@/utils/textNormalization";
@@ -36,12 +38,14 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
   const [codexConfig, setCodexConfigState] = useState("");
   const [codexApiKey, setCodexApiKey] = useState("");
   const [codexBaseUrl, setCodexBaseUrl] = useState("");
+  const [codexModel, setCodexModel] = useState("");
   const [codexCatalogModels, setCodexCatalogModels] = useState<
     CodexCatalogModel[]
   >([]);
   const [codexAuthError, setCodexAuthError] = useState("");
 
   const isUpdatingCodexBaseUrlRef = useRef(false);
+  const isUpdatingCodexModelRef = useRef(false);
 
   // 初始化 Codex 配置（编辑模式）
   useEffect(() => {
@@ -66,23 +70,51 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
         : [];
       setCodexCatalogModels(
         rawCatalogModels
-          .map((item: any) => ({
-            model: typeof item?.model === "string" ? item.model : "",
-            displayName:
-              typeof item?.displayName === "string"
-                ? item.displayName
-                : typeof item?.display_name === "string"
-                  ? item.display_name
-                  : "",
-            contextWindow:
-              typeof item?.contextWindow === "string" ||
-              typeof item?.contextWindow === "number"
-                ? item.contextWindow
-                : typeof item?.context_window === "string" ||
-                    typeof item?.context_window === "number"
-                  ? item.context_window
-                  : "",
-          }))
+          .map((item: any) => {
+            // 隐藏字段（原生 Responses profile 用）不在行 UI 暴露，但必须 load→save
+            // 原样保留，否则编辑保存 MiMo/MiniMax 等会丢官方 base_instructions、
+            // 并行工具、图像模态。DB SSOT 为 camelCase、live 反解兜底可能为 snake_case，
+            // 双格式兼容（与 displayName/contextWindow 一致）。
+            const supportsParallelToolCalls =
+              typeof item?.supportsParallelToolCalls === "boolean"
+                ? item.supportsParallelToolCalls
+                : typeof item?.supports_parallel_tool_calls === "boolean"
+                  ? item.supports_parallel_tool_calls
+                  : undefined;
+            const inputModalities = Array.isArray(item?.inputModalities)
+              ? item.inputModalities
+              : Array.isArray(item?.input_modalities)
+                ? item.input_modalities
+                : undefined;
+            const baseInstructions =
+              typeof item?.baseInstructions === "string"
+                ? item.baseInstructions
+                : typeof item?.base_instructions === "string"
+                  ? item.base_instructions
+                  : undefined;
+            return {
+              model: typeof item?.model === "string" ? item.model : "",
+              displayName:
+                typeof item?.displayName === "string"
+                  ? item.displayName
+                  : typeof item?.display_name === "string"
+                    ? item.display_name
+                    : "",
+              contextWindow:
+                typeof item?.contextWindow === "string" ||
+                typeof item?.contextWindow === "number"
+                  ? item.contextWindow
+                  : typeof item?.context_window === "string" ||
+                      typeof item?.context_window === "number"
+                    ? item.context_window
+                    : "",
+              ...(supportsParallelToolCalls !== undefined
+                ? { supportsParallelToolCalls }
+                : {}),
+              ...(inputModalities ? { inputModalities } : {}),
+              ...(baseInstructions ? { baseInstructions } : {}),
+            };
+          })
           .filter((item: CodexCatalogModel) => item.model.trim()),
       );
 
@@ -103,6 +135,15 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     }
     const extracted = extractCodexBaseUrl(codexConfig) || "";
     setCodexBaseUrl((prev) => (prev === extracted ? prev : extracted));
+  }, [codexConfig]);
+
+  // 与 TOML 配置保持默认模型同步（顶层 model 键）
+  useEffect(() => {
+    if (isUpdatingCodexModelRef.current) {
+      return;
+    }
+    const extracted = extractCodexModelName(codexConfig) || "";
+    setCodexModel((prev) => (prev === extracted ? prev : extracted));
   }, [codexConfig]);
 
   // 获取 API Key（从 auth JSON）
@@ -198,6 +239,22 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     [setCodexConfig],
   );
 
+  // 处理默认模型变化（写回 TOML 顶层 model；清空则删掉该行，交回 Codex 内置默认）
+  // 剥控制字符：值可能来自 /models 下拉（远端数据），换行等会破坏单行 TOML 语义
+  const handleCodexModelChange = useCallback(
+    (model: string) => {
+      const sanitized = model.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+      setCodexModel(sanitized);
+
+      isUpdatingCodexModelRef.current = true;
+      setCodexConfig((prev) => setCodexModelNameInConfig(prev, sanitized));
+      setTimeout(() => {
+        isUpdatingCodexModelRef.current = false;
+      }, 0);
+    },
+    [setCodexConfig],
+  );
+
   // 处理 config 变化（同步 Base URL）
   const handleCodexConfigChange = useCallback(
     (value: string) => {
@@ -240,6 +297,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     codexConfig,
     codexApiKey,
     codexBaseUrl,
+    codexModel,
     codexCatalogModels,
     codexAuthError,
     setCodexAuth,
@@ -247,6 +305,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     setCodexCatalogModels,
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
+    handleCodexModelChange,
     handleCodexConfigChange,
     resetCodexConfig,
     getCodexAuthApiKey,

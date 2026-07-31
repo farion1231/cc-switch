@@ -3,6 +3,7 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
+import { proxyKeys } from "@/lib/query/proxy";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
 const toastSuccessMock = vi.fn();
@@ -81,6 +82,7 @@ describe("useProxyStatus", () => {
           claude: false,
           codex: false,
           gemini: false,
+          grokbuild: false,
           opencode: false,
           openclaw: false,
         });
@@ -98,12 +100,19 @@ describe("useProxyStatus", () => {
     });
   });
 
+  it("keeps the established proxy query key shapes", () => {
+    expect(proxyKeys.status).toEqual(["proxyStatus"]);
+    expect(proxyKeys.takeoverStatus).toEqual(["proxyTakeoverStatus"]);
+    expect(proxyKeys.globalConfig).toEqual(["globalProxyConfig"]);
+    expect(proxyKeys.appConfig("claude")).toEqual(["appProxyConfig", "claude"]);
+  });
+
   it("shows interpolated address and port after proxy server starts", async () => {
     const { wrapper } = createWrapper();
     const { result } = renderHook(() => useProxyStatus(), { wrapper });
 
     await waitFor(() => {
-      expect(result.current.isLoading).toBe(false);
+      expect(result.current.status).toBeDefined();
     });
 
     await act(async () => {
@@ -114,5 +123,12 @@ describe("useProxyStatus", () => {
       "代理服务已启动 - 127.0.0.1:15721",
       { closeButton: true },
     );
+
+    await act(async () => {
+      await result.current.stopProxyServer();
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("start_proxy_server");
+    expect(invokeMock).toHaveBeenCalledWith("stop_proxy_server");
   });
 });
