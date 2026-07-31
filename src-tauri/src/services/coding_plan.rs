@@ -18,7 +18,7 @@ enum CodingPlanProvider {
     MiniMaxEn,
     ZenMux,
     /// 火山方舟 Agent Plan / Coding Plan（base_url 形如
-    /// `https://ark.cn-beijing.volces.com/api/coding[/v3]`）。
+    /// `https://ark.cn-beijing.volces.com/api/{coding,plan}[/v3]`）。
     Volcengine,
 }
 
@@ -36,7 +36,7 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         Some(CodingPlanProvider::MiniMaxEn)
     } else if url.contains("zenmux") {
         Some(CodingPlanProvider::ZenMux)
-    } else if url.contains("volces.com/api/coding") {
+    } else if url.contains("volces.com/api/coding") || url.contains("volces.com/api/plan") {
         // 仅匹配 Coding/Agent Plan 入口；DouBaoSeed 按量付费走 /api/v3 与
         // /api/compatible，没有套餐额度，不在此命中。
         Some(CodingPlanProvider::Volcengine)

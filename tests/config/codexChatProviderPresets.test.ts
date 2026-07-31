@@ -13,7 +13,7 @@ const expectedChatPresets = new Map<
   [
     "火山Agentplan",
     {
-      baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
+      baseUrl: "https://ark.cn-beijing.volces.com/api/plan/v3",
       contextWindows: { "ark-code-latest": 256000 },
     },
   ],
