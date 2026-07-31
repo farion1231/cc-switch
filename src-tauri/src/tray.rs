@@ -152,6 +152,16 @@ pub struct TrayAppSection {
     pub log_name: &'static str,
 }
 
+impl TrayAppSection {
+    /// Claude Desktop 的配置文件仅支持 macOS 和 Windows。
+    fn is_supported_on_current_platform(&self) -> bool {
+        match &self.app_type {
+            AppType::ClaudeDesktop => cfg!(any(target_os = "macos", target_os = "windows")),
+            _ => true,
+        }
+    }
+}
+
 /// Auto 菜单项后缀
 pub const AUTO_SUFFIX: &str = "auto";
 pub const TRAY_ID: &str = "cc-switch";
@@ -486,6 +496,9 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
 /// 处理供应商托盘事件
 pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool {
     for section in TRAY_SECTIONS.iter() {
+        if !section.is_supported_on_current_platform() {
+            continue;
+        }
         if let Some(suffix) = event_id.strip_prefix(section.prefix) {
             // 处理 Auto 点击
             if suffix == AUTO_SUFFIX {
@@ -692,7 +705,9 @@ pub fn create_tray_menu(
 
     // 每个应用类型折叠为子菜单，避免供应商过多时菜单过长
     for section in TRAY_SECTIONS.iter() {
-        if !visible_apps.is_visible(&section.app_type) {
+        if !section.is_supported_on_current_platform()
+            || !visible_apps.is_visible(&section.app_type)
+        {
             continue;
         }
 
@@ -898,6 +913,9 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
     };
 
     for section in TRAY_SECTIONS.iter() {
+        if !section.is_supported_on_current_platform() {
+            continue;
+        }
         let Some(submenu) = handles.get(&section.app_type) else {
             continue;
         };
@@ -1042,8 +1060,8 @@ pub fn schedule_tray_refresh(app: &tauri::AppHandle) {
 /// `schedule_tray_refresh` 做合并。内部 10 秒节流防止鼠标悬停反复进出时
 /// 雪崩请求；互斥锁被毒化时以上次状态为准继续推进，不会永久阻塞。
 ///
-/// 刷新面与 `format_usage_suffix` 的展示面严格对齐 —— 每次悬停最多发
-/// `TRAY_SECTIONS.len()` 次外部请求；只有显式启用的用量查询（含官方订阅、
+/// 刷新面与 `format_usage_suffix` 的展示面严格对齐 —— 每次悬停最多为每个
+/// 支持且可见的分区发起一次外部请求；只有显式启用的用量查询（含官方订阅、
 /// coding_plan / balance / Copilot / 自定义脚本）才会发请求。
 pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     use crate::commands::CopilotAuthState;
@@ -1075,7 +1093,9 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     let mut script_futures = Vec::new();
 
     for section in TRAY_SECTIONS.iter() {
-        if !visible_apps.is_visible(&section.app_type) {
+        if !section.is_supported_on_current_platform()
+            || !visible_apps.is_visible(&section.app_type)
+        {
             continue;
         }
 
@@ -1228,6 +1248,19 @@ mod tests {
         assert_eq!(section.prefix, "claude-desktop_");
         assert_eq!(section.empty_id, "claude-desktop_empty");
         assert_eq!(section.header_label, "Claude Desktop");
+    }
+
+    #[test]
+    fn tray_sections_only_include_platform_supported_apps() {
+        let claude_desktop = TRAY_SECTIONS
+            .iter()
+            .find(|section| section.app_type == AppType::ClaudeDesktop)
+            .expect("Claude Desktop tray section should exist");
+
+        assert_eq!(
+            claude_desktop.is_supported_on_current_platform(),
+            cfg!(any(target_os = "macos", target_os = "windows"))
+        );
     }
 
     #[test]
