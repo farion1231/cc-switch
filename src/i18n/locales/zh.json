@@ -1001,6 +1001,7 @@
     "aggregate": {
       "title": "聚合供应商",
       "hint": "将 Haiku、Sonnet、Opus、Fable 请求分别路由到不同供应商的模型。使用时必须开启代理接管。",
+      "hintCodex": "按请求模型名精确匹配，将不同模型的请求路由到不同供应商。使用时必须开启代理接管。",
       "tier": "模型档位",
       "targetProvider": "目标供应商",
       "targetModel": "实际请求模型",
@@ -1010,6 +1011,11 @@
       "noTargets": "请先添加至少一个可用于本地路由的第三方 Claude 供应商，再配置聚合路由。",
       "empty": "请至少配置一条聚合路由。",
       "incomplete": "{{tier}} 档必须同时选择供应商并填写模型。",
+      "requestModel": "请求模型",
+      "requestModelPlaceholder": "例如：gpt-5.5",
+      "upstreamModelPlaceholder": "例如：kimi-k2",
+      "addRoute": "添加路由",
+      "duplicateKey": "模型名重复：{{key}}",
       "tiers": {
         "haiku": "Haiku",
         "sonnet": "Sonnet",

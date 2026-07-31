@@ -146,17 +146,28 @@ impl RequestContext {
                 _ => ProxyError::DatabaseError(e.to_string()),
             })?;
 
-        // 聚合供应商：按请求模型的档位，把链上的聚合供应商替换为其路由目标 provider。
-        // 展开后目标 provider 复用自身端点/认证，模型 env 已被覆写为路由模型名；
-        // 未覆盖该档的聚合供应商被丢弃，由链上后续 provider 自动回退。
+        // 聚合供应商：把链上的聚合供应商替换为其路由目标 provider。
+        // Claude 按请求模型分类出的档位查路由；Codex 按请求模型名精确匹配。
+        // 展开后目标 provider 复用自身端点/认证，模型配置已被覆写为路由模型名；
+        // 未命中路由的聚合供应商被丢弃，由链上后续 provider 自动回退。
         let mut routed_provider_sources = std::collections::HashMap::new();
-        let providers = if app_type_str == "claude" {
-            let tier = crate::proxy::model_mapper::classify_claude_tier(&request_model);
+        let route_key = match app_type_str {
+            "claude" => Some(
+                crate::proxy::provider_router::AggregateRouteKey::ClaudeTier(
+                    crate::proxy::model_mapper::classify_claude_tier(&request_model),
+                ),
+            ),
+            "codex" => {
+                Some(crate::proxy::provider_router::AggregateRouteKey::CodexModel(&request_model))
+            }
+            _ => None,
+        };
+        let providers = if let Some(route_key) = route_key {
             let expansion = state
                 .provider_router
                 .expand_aggregate_routes(
                     providers,
-                    tier,
+                    route_key,
                     app_type_str,
                     app_config.auto_failover_enabled,
                 )

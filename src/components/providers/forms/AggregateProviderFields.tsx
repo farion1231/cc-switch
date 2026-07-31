@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Layers3 } from "lucide-react";
+import { Layers3, Plus, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -26,30 +27,44 @@ import {
 import type { AggregateRoutes, Provider } from "@/types";
 import {
   AGGREGATE_ROUTE_TIERS,
+  CODEX_OFFICIAL_MODEL_SUGGESTIONS,
+  codexConfiguredModelsOf,
   configuredModelsOf,
+  customRoutesToRows,
   getAggregateRouteConnection,
   getAggregateRouteTargets,
+  getCodexAggregateRouteConnection,
+  rowsToCustomRoutes,
+  type AggregateCustomRouteRow,
+  type AggregateRouteConnection,
   type AggregateRouteTier,
 } from "@/utils/aggregateRoutes";
 
 const EMPTY_PROVIDER = "__none__";
 
 interface AggregateProviderFieldsProps {
+  appId: "claude" | "codex";
   enabled: boolean;
   onEnabledChange: (enabled: boolean) => void;
   routes: AggregateRoutes;
   onRoutesChange: (routes: AggregateRoutes) => void;
   providers: Provider[];
   currentProviderId?: string;
+  // Codex 模式的有序行态（重复 key 只能在列表形态下保留，提交校验依赖它）
+  customRows?: AggregateCustomRouteRow[];
+  onCustomRowsChange?: (rows: AggregateCustomRouteRow[]) => void;
 }
 
 export function AggregateProviderFields({
+  appId,
   enabled,
   onEnabledChange,
   routes,
   onRoutesChange,
   providers,
   currentProviderId,
+  customRows,
+  onCustomRowsChange,
 }: AggregateProviderFieldsProps) {
   const { t } = useTranslation();
   const targets = useMemo(
@@ -74,8 +89,27 @@ export function AggregateProviderFields({
     });
   };
 
-  const fetchModels = async (provider: Provider) => {
-    const connection = getAggregateRouteConnection(provider);
+  // Codex：行列表 -> custom Record 同步写回 routes；行态本身由父组件持有
+  const rows = customRows ?? customRoutesToRows(routes.custom);
+  const updateRows = (next: AggregateCustomRouteRow[]) => {
+    onCustomRowsChange?.(next);
+    onRoutesChange({ ...routes, custom: rowsToCustomRoutes(next) });
+  };
+  const patchRow = (
+    index: number,
+    patch: Partial<AggregateCustomRouteRow>,
+  ) => {
+    updateRows(
+      rows.map((row, rowIndex) =>
+        rowIndex === index ? { ...row, ...patch } : row,
+      ),
+    );
+  };
+
+  const fetchModels = async (
+    provider: Provider,
+    connection: AggregateRouteConnection,
+  ) => {
     if (!connection.baseUrl || !connection.apiKey) {
       showFetchModelsError(null, t, {
         hasApiKey: Boolean(connection.apiKey),
@@ -121,10 +155,15 @@ export function AggregateProviderFields({
             })}
           </Label>
           <p className="text-xs leading-relaxed text-muted-foreground">
-            {t("providerForm.aggregate.hint", {
-              defaultValue:
-                "Route Haiku, Sonnet, Opus, and Fable requests to models from different providers. Proxy takeover is required.",
-            })}
+            {appId === "codex"
+              ? t("providerForm.aggregate.hintCodex", {
+                  defaultValue:
+                    "Route requests to different providers by exact request model name. Proxy takeover is required.",
+                })
+              : t("providerForm.aggregate.hint", {
+                  defaultValue:
+                    "Route Haiku, Sonnet, Opus, and Fable requests to models from different providers. Proxy takeover is required.",
+                })}
           </p>
         </div>
         <Switch
@@ -136,7 +175,7 @@ export function AggregateProviderFields({
         />
       </div>
 
-      {enabled && (
+      {enabled && appId === "claude" && (
         <div className="space-y-3 border-t border-border-default pt-4">
           {targets.length === 0 && (
             <p className="text-sm text-destructive">
@@ -249,7 +288,15 @@ export function AggregateProviderFields({
                   })}
                   fetchedModels={models}
                   isLoading={loadingProviderId === target?.id}
-                  onFetch={target ? () => void fetchModels(target) : undefined}
+                  onFetch={
+                    target
+                      ? () =>
+                          void fetchModels(
+                            target,
+                            getAggregateRouteConnection(target),
+                          )
+                      : undefined
+                  }
                 />
                 <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
                   <Checkbox
@@ -272,6 +319,154 @@ export function AggregateProviderFields({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {enabled && appId === "codex" && (
+        <div className="space-y-3 border-t border-border-default pt-4">
+          {targets.length === 0 && (
+            <p className="text-sm text-destructive">
+              {t("providerForm.aggregate.noTargets", {
+                defaultValue:
+                  "Add at least one regular provider before configuring aggregate routes.",
+              })}
+            </p>
+          )}
+
+          <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+            <span>
+              {t("providerForm.aggregate.requestModel", {
+                defaultValue: "Request model",
+              })}
+            </span>
+            <span>
+              {t("providerForm.aggregate.targetProvider", {
+                defaultValue: "Target provider",
+              })}
+            </span>
+            <span>
+              {t("providerForm.aggregate.targetModel", {
+                defaultValue: "Upstream model",
+              })}
+            </span>
+            <span />
+          </div>
+
+          {rows.map((row, index) => {
+            const target = targets.find((item) => item.id === row.providerId);
+            const configuredModels = target
+              ? codexConfiguredModelsOf(target).map((id) => ({
+                  id,
+                  ownedBy: target.name,
+                }))
+              : [];
+            const models = target
+              ? [
+                  ...configuredModels,
+                  ...(fetchedModels[target.id] ?? []),
+                ].filter(
+                  (model, modelIndex, all) =>
+                    all.findIndex(
+                      (candidate) => candidate.id === model.id,
+                    ) === modelIndex,
+                )
+              : [];
+
+            return (
+              <div
+                key={index}
+                className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_36px] md:items-center"
+              >
+                <ModelInputWithFetch
+                  id={`aggregate-custom-${index}-key`}
+                  value={row.key}
+                  onChange={(key) => patchRow(index, { key })}
+                  placeholder={t(
+                    "providerForm.aggregate.requestModelPlaceholder",
+                    { defaultValue: "e.g. gpt-5.5" },
+                  )}
+                  fetchedModels={CODEX_OFFICIAL_MODEL_SUGGESTIONS}
+                  isLoading={false}
+                />
+                <Select
+                  value={row.providerId || EMPTY_PROVIDER}
+                  onValueChange={(providerId) =>
+                    patchRow(index, {
+                      providerId:
+                        providerId === EMPTY_PROVIDER ? "" : providerId,
+                    })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue
+                      placeholder={t("providerForm.aggregate.selectProvider", {
+                        defaultValue: "Select provider",
+                      })}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={EMPTY_PROVIDER}>
+                      {t("providerForm.aggregate.notConfigured", {
+                        defaultValue: "Not configured",
+                      })}
+                    </SelectItem>
+                    {targets.map((provider) => (
+                      <SelectItem key={provider.id} value={provider.id}>
+                        {provider.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <ModelInputWithFetch
+                  id={`aggregate-custom-${index}-model`}
+                  value={row.model}
+                  onChange={(model) => patchRow(index, { model })}
+                  placeholder={t(
+                    "providerForm.aggregate.upstreamModelPlaceholder",
+                    { defaultValue: "e.g. kimi-k2" },
+                  )}
+                  fetchedModels={models}
+                  isLoading={loadingProviderId === target?.id}
+                  onFetch={
+                    target
+                      ? () =>
+                          void fetchModels(
+                            target,
+                            getCodexAggregateRouteConnection(target),
+                          )
+                      : undefined
+                  }
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t("common.delete", { defaultValue: "Delete" })}
+                  onClick={() =>
+                    updateRows(
+                      rows.filter((_, rowIndex) => rowIndex !== index),
+                    )
+                  }
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            );
+          })}
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              updateRows([...rows, { key: "", providerId: "", model: "" }])
+            }
+          >
+            <Plus className="mr-1 h-4 w-4" />
+            {t("providerForm.aggregate.addRoute", {
+              defaultValue: "Add route",
+            })}
+          </Button>
         </div>
       )}
     </div>

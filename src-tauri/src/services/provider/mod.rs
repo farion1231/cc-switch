@@ -885,7 +885,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn validate_aggregate_routes_rejects_non_claude_app() {
+    fn validate_aggregate_routes_rejects_unsupported_app() {
         with_test_home(|state, _| {
             let agg = aggregate_provider_with_routes(
                 "agg",
@@ -898,8 +898,140 @@ mod tests {
                 },
             );
 
+            ProviderService::validate_aggregate_routes(state.db.as_ref(), &AppType::Gemini, &agg)
+                .expect_err("unsupported app should be rejected");
+        });
+    }
+
+    // ==================== Codex 聚合路由（custom 精确匹配）校验 ====================
+
+    fn codex_custom_routes(entries: &[(&str, &str, &str)]) -> AggregateRoutes {
+        let mut custom = std::collections::BTreeMap::new();
+        for (key, target_id, model) in entries {
+            custom.insert(
+                key.to_string(),
+                AggregateRoute {
+                    provider_id: target_id.to_string(),
+                    model: model.to_string(),
+                },
+            );
+        }
+        AggregateRoutes {
+            custom: Some(custom),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn validate_aggregate_routes_codex_accepts_valid_custom() {
+        with_test_home(|state, _| {
+            let openai = Provider::with_id("openai".into(), "OpenAI".into(), json!({}), None);
+            state.db.save_provider("codex", &openai).unwrap();
+
+            let agg = aggregate_provider_with_routes(
+                "agg",
+                codex_custom_routes(&[("gpt-5.1", "openai", "gpt-5.1-codex")]),
+            );
+
             ProviderService::validate_aggregate_routes(state.db.as_ref(), &AppType::Codex, &agg)
-                .expect_err("non-Claude app should be rejected");
+                .expect("valid custom routes should pass");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn validate_aggregate_routes_codex_rejects_empty_model_key() {
+        with_test_home(|state, _| {
+            let openai = Provider::with_id("openai".into(), "OpenAI".into(), json!({}), None);
+            state.db.save_provider("codex", &openai).unwrap();
+
+            let agg = aggregate_provider_with_routes(
+                "agg",
+                codex_custom_routes(&[("   ", "openai", "gpt-5.1-codex")]),
+            );
+
+            let err = ProviderService::validate_aggregate_routes(
+                state.db.as_ref(),
+                &AppType::Codex,
+                &agg,
+            )
+            .expect_err("empty model key should be rejected");
+            assert!(err.to_string().contains("模型名不能为空"), "got {err:?}");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn validate_aggregate_routes_codex_rejects_missing_target() {
+        with_test_home(|state, _| {
+            let agg = aggregate_provider_with_routes(
+                "agg",
+                codex_custom_routes(&[("gpt-5.1", "ghost", "gpt-5.1-codex")]),
+            );
+
+            let err = ProviderService::validate_aggregate_routes(
+                state.db.as_ref(),
+                &AppType::Codex,
+                &agg,
+            )
+            .expect_err("missing target should be rejected");
+            assert!(err.to_string().contains("ghost"), "got {err:?}");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn validate_aggregate_routes_codex_rejects_nested_aggregate() {
+        with_test_home(|state, _| {
+            let inner = aggregate_provider_with_routes(
+                "inner",
+                codex_custom_routes(&[("gpt-5.1", "ghost", "gpt-5.1-codex")]),
+            );
+            state.db.save_provider("codex", &inner).unwrap();
+
+            let agg = aggregate_provider_with_routes(
+                "agg",
+                codex_custom_routes(&[("gpt-5.1", "inner", "gpt-5.1-codex")]),
+            );
+
+            let err = ProviderService::validate_aggregate_routes(
+                state.db.as_ref(),
+                &AppType::Codex,
+                &agg,
+            )
+            .expect_err("nested aggregate should be rejected");
+            assert!(err.to_string().contains("inner"), "got {err:?}");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn add_codex_aggregate_provider_with_placeholder_settings_succeeds() {
+        with_test_home(|state, _| {
+            let target = Provider::with_id(
+                "kimi".into(),
+                "Kimi".into(),
+                json!({"auth": {"OPENAI_API_KEY": "sk"}, "config": ""}),
+                None,
+            );
+            state.db.save_provider("codex", &target).unwrap();
+
+            // 聚合供应商的 settings_config 是占位空配置（{}）：不应被 Codex 的
+            // auth 必填校验拦截。
+            let aggregate = aggregate_provider_with_routes(
+                "agg",
+                codex_custom_routes(&[("gpt-5.5", "kimi", "kimi-k2")]),
+            );
+
+            ProviderService::add(state, AppType::Codex, aggregate, false)
+                .expect("codex aggregate with placeholder settings should be saved");
+            let saved = state
+                .db
+                .get_provider_by_id("agg", "codex")
+                .unwrap()
+                .unwrap();
+            assert!(saved.is_aggregate());
         });
     }
 
@@ -1028,6 +1160,33 @@ mod tests {
             assert!(state
                 .db
                 .get_provider_by_id("kimi", "claude")
+                .unwrap()
+                .is_some());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn codex_delete_referenced_aggregate_target_is_rejected() {
+        with_test_home(|state, _| {
+            let target = Provider::with_id("openai".into(), "OpenAI".into(), json!({}), None);
+            let aggregate = aggregate_provider_with_routes(
+                "aggregate",
+                codex_custom_routes(&[("gpt-5.1", "openai", "gpt-5.1-codex")]),
+            );
+            state.db.save_provider("codex", &target).unwrap();
+            state.db.save_provider("codex", &aggregate).unwrap();
+
+            let error = ProviderService::delete(state, AppType::Codex, "openai")
+                .expect_err("referenced target must not be deleted");
+            let message = error.to_string();
+            assert!(
+                message.contains("聚合") || message.contains("aggregate"),
+                "got {error:?}"
+            );
+            assert!(state
+                .db
+                .get_provider_by_id("openai", "codex")
                 .unwrap()
                 .is_some());
         });
@@ -2929,7 +3088,7 @@ impl ProviderService {
             ));
         }
 
-        if matches!(app_type, AppType::Claude) {
+        if matches!(app_type, AppType::Claude | AppType::Codex) {
             let dependent = Self::find_aggregate_dependent(state.db.as_ref(), &app_type, id)?;
             if let Some(provider) = dependent {
                 return Err(AppError::localized(
@@ -3969,6 +4128,12 @@ impl ProviderService {
                     )
                 })?;
 
+                // 聚合供应商的 settings 是占位空配置（{}），端点与凭据由路由
+                // 目标 provider 提供，跳过 auth/config 必填校验。
+                if provider.is_aggregate() {
+                    return Ok(());
+                }
+
                 let auth = settings.get("auth").ok_or_else(|| {
                     AppError::localized(
                         "provider.codex.auth.missing",
@@ -4080,8 +4245,10 @@ impl ProviderService {
         Ok(())
     }
 
-    /// 校验聚合供应商路由：仅 Claude 应用支持；每档的目标 provider 必须存在、
-    /// 不指向自身、且不能也是聚合供应商（禁止嵌套）；模型名非空。
+    /// 校验聚合供应商路由：仅 Claude / Codex 应用支持；约定 Claude 只校验
+    /// 四档（tiers）路由、Codex 只校验 custom（自由键）路由，互相忽略。
+    /// 每条路由的目标 provider 必须存在、不指向自身、且不能也是聚合供应商
+    /// （禁止嵌套）；模型名非空。
     fn validate_aggregate_routes(
         db: &crate::database::Database,
         app_type: &AppType,
@@ -4093,11 +4260,11 @@ impl ProviderService {
         if !routes.has_any_route() {
             return Ok(());
         }
-        if !matches!(app_type, AppType::Claude) {
+        if !matches!(app_type, AppType::Claude | AppType::Codex) {
             return Err(AppError::localized(
                 "provider.aggregate.unsupported_app",
-                "聚合供应商仅支持 Claude 应用",
-                "Aggregate providers are only supported for the Claude app",
+                "聚合供应商仅支持 Claude / Codex 应用",
+                "Aggregate providers are only supported for the Claude / Codex apps",
             ));
         }
         if let Some(dependent) = Self::find_aggregate_dependent(db, app_type, provider.id.as_str())?
@@ -4115,29 +4282,23 @@ impl ProviderService {
             ));
         }
 
-        for (tier, route) in [
-            ("haiku", routes.haiku.as_ref()),
-            ("sonnet", routes.sonnet.as_ref()),
-            ("opus", routes.opus.as_ref()),
-            ("fable", routes.fable.as_ref()),
-        ] {
-            let Some(route) = route else {
-                continue;
-            };
-
+        // 单条路由校验：Claude 四档与 Codex custom 共用，label 为档位名或模型键
+        let validate_route = |label: &str,
+                              route: &crate::provider::AggregateRoute|
+         -> Result<(), AppError> {
             if route.model.trim().is_empty() {
                 return Err(AppError::localized(
                     "provider.aggregate.model_empty",
-                    format!("聚合供应商 {tier} 档的模型名不能为空"),
-                    format!("Aggregate route model for tier '{tier}' cannot be empty"),
+                    format!("聚合供应商 {label} 档的模型名不能为空"),
+                    format!("Aggregate route model for tier '{label}' cannot be empty"),
                 ));
             }
             if route.provider_id == provider.id {
                 return Err(AppError::localized(
                     "provider.aggregate.self_reference",
-                    format!("聚合供应商 {tier} 档不能指向自身"),
+                    format!("聚合供应商 {label} 档不能指向自身"),
                     format!(
-                        "Aggregate route for tier '{tier}' cannot point to the provider itself"
+                        "Aggregate route for tier '{label}' cannot point to the provider itself"
                     ),
                 ));
             }
@@ -4147,11 +4308,11 @@ impl ProviderService {
                     AppError::localized(
                         "provider.aggregate.target_missing",
                         format!(
-                            "聚合供应商 {tier} 档的目标供应商 {} 不存在",
+                            "聚合供应商 {label} 档的目标供应商 {} 不存在",
                             route.provider_id
                         ),
                         format!(
-                            "Aggregate route target '{}' for tier '{tier}' does not exist",
+                            "Aggregate route target '{}' for tier '{label}' does not exist",
                             route.provider_id
                         ),
                     )
@@ -4160,11 +4321,11 @@ impl ProviderService {
                 return Err(AppError::localized(
                     "provider.aggregate.nested",
                     format!(
-                        "聚合供应商 {tier} 档的目标 {} 也是聚合供应商，不支持嵌套",
+                        "聚合供应商 {label} 档的目标 {} 也是聚合供应商，不支持嵌套",
                         target.name
                     ),
                     format!(
-                        "Aggregate route target '{}' for tier '{tier}' is itself an aggregate provider",
+                        "Aggregate route target '{}' for tier '{label}' is itself an aggregate provider",
                         target.name
                     ),
                 ));
@@ -4175,15 +4336,48 @@ impl ProviderService {
                 return Err(AppError::localized(
                     "provider.aggregate.official_target",
                     format!(
-                        "聚合供应商 {tier} 档不能使用官方供应商 {}；官方供应商不允许经过本地路由",
+                        "聚合供应商 {label} 档不能使用官方供应商 {}；官方供应商不允许经过本地路由",
                         target.name
                     ),
                     format!(
-                        "Aggregate route tier '{tier}' cannot use official provider '{}'; official providers are not allowed through local routing",
+                        "Aggregate route tier '{label}' cannot use official provider '{}'; official providers are not allowed through local routing",
                         target.name
                     ),
                 ));
             }
+            Ok(())
+        };
+
+        match app_type {
+            AppType::Claude => {
+                for (tier, route) in [
+                    ("haiku", routes.haiku.as_ref()),
+                    ("sonnet", routes.sonnet.as_ref()),
+                    ("opus", routes.opus.as_ref()),
+                    ("fable", routes.fable.as_ref()),
+                ] {
+                    let Some(route) = route else {
+                        continue;
+                    };
+                    validate_route(tier, route)?;
+                }
+            }
+            AppType::Codex => {
+                // Codex：仅校验 custom 条目（空 custom 视为无路由放行）
+                if let Some(custom) = &routes.custom {
+                    for (key, route) in custom {
+                        if key.trim().is_empty() {
+                            return Err(AppError::localized(
+                                "provider.aggregate.model_key_empty",
+                                "聚合路由的模型名不能为空",
+                                "Aggregate route model name cannot be empty",
+                            ));
+                        }
+                        validate_route(key, route)?;
+                    }
+                }
+            }
+            _ => {}
         }
         Ok(())
     }

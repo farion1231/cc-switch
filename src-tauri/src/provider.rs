@@ -434,12 +434,20 @@ pub struct AggregateRoutes {
     pub opus: Option<AggregateRoute>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fable: Option<AggregateRoute>,
+    /// Codex 聚合路由：自由键 map（客户端模型名 → 路由目标）。
+    /// 按请求模型名精确匹配；与 Claude 四档路由互相独立、互不影响。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom: Option<std::collections::BTreeMap<String, AggregateRoute>>,
 }
 
 impl AggregateRoutes {
-    /// 是否配置了至少一档路由
+    /// 是否配置了至少一档路由（Claude 四档任一或 Codex custom 非空）
     pub fn has_any_route(&self) -> bool {
-        self.haiku.is_some() || self.sonnet.is_some() || self.opus.is_some() || self.fable.is_some()
+        self.haiku.is_some()
+            || self.sonnet.is_some()
+            || self.opus.is_some()
+            || self.fable.is_some()
+            || self.custom.as_ref().is_some_and(|c| !c.is_empty())
     }
 
     /// 是否有任一档引用指定 provider。
@@ -452,7 +460,13 @@ impl AggregateRoutes {
         ]
         .into_iter()
         .flatten()
+        .chain(self.custom.iter().flat_map(|c| c.values()))
         .any(|route| route.provider_id == provider_id)
+    }
+
+    /// Codex 聚合路由：按请求模型名在 custom 中精确匹配。
+    pub fn route_for_codex_model(&self, model: &str) -> Option<&AggregateRoute> {
+        self.custom.as_ref()?.get(model)
     }
 }
 

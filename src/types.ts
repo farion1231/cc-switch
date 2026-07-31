@@ -177,13 +177,16 @@ export interface AggregateRoute {
 }
 
 // 聚合供应商的模型分层路由表（JSON camelCase，与后端一致）。
-// 聚合供应商自身没有端点；任一档位非空即视为聚合供应商，
-// 代理接管模式下按请求模型的档位（Haiku/Sonnet/Opus/Fable）分流。
+// 聚合供应商自身没有端点；任一档位（或 custom 任一条目）非空即视为聚合供应商。
+// Claude 走档位路由：按请求模型的档位（Haiku/Sonnet/Opus/Fable）分流；
+// Codex 走 custom 自由键路由：请求模型名精确匹配后分流。
 export interface AggregateRoutes {
   haiku?: AggregateRoute;
   sonnet?: AggregateRoute;
   opus?: AggregateRoute;
   fable?: AggregateRoute;
+  // Codex 专用：请求模型名 -> 目标路由（上游模型为发往目标 provider 的模型名）
+  custom?: Record<string, AggregateRoute>;
 }
 
 // 供应商元数据（字段名与后端一致，保持 snake_case）
@@ -196,7 +199,7 @@ export interface ProviderMeta {
   claudeDesktopMode?: "direct" | "proxy";
   // Claude Desktop 本地路由模式：Claude-safe route -> upstream model
   claudeDesktopModelRoutes?: Record<string, ClaudeDesktopModelRoute>;
-  // 聚合供应商的模型分层路由表（仅 Claude）；非空即视为聚合供应商
+  // 聚合供应商的模型路由表（Claude 用四档，Codex 用 custom 自由键）；非空即视为聚合供应商
   aggregateRoutes?: AggregateRoutes;
   // 用量查询脚本配置
   usage_script?: UsageScript;

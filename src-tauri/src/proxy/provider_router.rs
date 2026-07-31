@@ -31,6 +31,13 @@ pub struct AggregateExpansion {
     pub routed_provider_sources: HashMap<String, (String, String)>,
 }
 
+/// 聚合路由的查表键：Claude 按请求模型分类出的档位、Codex 按请求模型名精确匹配。
+#[derive(Debug, Clone, Copy)]
+pub enum AggregateRouteKey<'a> {
+    ClaudeTier(Option<ClaudeTier>),
+    CodexModel(&'a str),
+}
+
 impl ProviderRouter {
     /// 创建新的供应商路由器
     pub fn new(db: Arc<Database>) -> Self {
@@ -119,22 +126,24 @@ impl ProviderRouter {
         Ok(result)
     }
 
-    /// 展开链上的聚合供应商：按请求模型的档位（tier）将其替换为目标 provider。
+    /// 展开链上的聚合供应商：按 `route_key` 将其替换为目标 provider。
     ///
+    /// - `route_key` 为 [`AggregateRouteKey::ClaudeTier`] 时按档位查四档路由；
+    ///   为 [`AggregateRouteKey::CodexModel`] 时按请求模型名在 custom 中精确匹配；
     /// - 非聚合 provider 原样保留；
-    /// - 聚合 provider 在以下情况从链上丢弃（并 log）：模型无法分类 / 该档未配置路由、
+    /// - 聚合 provider 在以下情况从链上丢弃（并 log）：未命中路由 / 该档未配置路由、
     ///   目标 provider 已删除、目标也是聚合供应商（禁止嵌套）；
     /// - `check_breaker` 为 true（故障转移开启）时，目标熔断中同样丢弃，
     ///   由链上后续 provider 自动回退。
     ///
-    /// 命中路由时克隆目标 provider 并改写其模型 env（见
+    /// 命中路由时克隆目标 provider 并改写其模型配置（见
     /// [`Self::synthesize_routed_provider`]），目标 id → 来源聚合供应商记入返回的
     /// `routed_provider_sources`，供 forwarder 决定"当前供应商"切换目标。
     /// 同一 id 只保留首次出现（去重）。
     pub async fn expand_aggregate_routes(
         &self,
         providers: Vec<Provider>,
-        tier: Option<ClaudeTier>,
+        route_key: AggregateRouteKey<'_>,
         app_type: &str,
         check_breaker: bool,
     ) -> AggregateExpansion {
@@ -150,18 +159,21 @@ impl ProviderRouter {
                 continue;
             };
 
-            let route = tier.and_then(|t| match t {
-                ClaudeTier::Haiku => routes.haiku.as_ref(),
-                ClaudeTier::Sonnet => routes.sonnet.as_ref(),
-                ClaudeTier::Opus => routes.opus.as_ref(),
-                ClaudeTier::Fable => routes.fable.as_ref(),
-            });
+            let route = match route_key {
+                AggregateRouteKey::ClaudeTier(tier) => tier.and_then(|t| match t {
+                    ClaudeTier::Haiku => routes.haiku.as_ref(),
+                    ClaudeTier::Sonnet => routes.sonnet.as_ref(),
+                    ClaudeTier::Opus => routes.opus.as_ref(),
+                    ClaudeTier::Fable => routes.fable.as_ref(),
+                }),
+                AggregateRouteKey::CodexModel(model) => routes.route_for_codex_model(model),
+            };
 
             let Some(route) = route else {
                 log::warn!(
-                    "[{app_type}] 聚合供应商 {} 未配置 {:?} 档路由，跳过",
+                    "[{app_type}] 聚合供应商 {} 未命中 {:?} 路由，跳过",
                     provider.name,
-                    tier
+                    route_key
                 );
                 continue;
             };
@@ -170,9 +182,9 @@ impl ProviderRouter {
             let target_model = route.model.trim();
             if target_id.is_empty() || target_model.is_empty() {
                 log::warn!(
-                    "[{app_type}] 聚合供应商 {} 的 {:?} 档路由不完整，跳过",
+                    "[{app_type}] 聚合供应商 {} 的 {:?} 路由不完整，跳过",
                     provider.name,
-                    tier
+                    route_key
                 );
                 continue;
             }
@@ -181,9 +193,9 @@ impl ProviderRouter {
                 Ok(Some(p)) => p,
                 Ok(None) => {
                     log::warn!(
-                        "[{app_type}] 聚合供应商 {} 的 {:?} 档目标 provider {} 已删除，跳过",
+                        "[{app_type}] 聚合供应商 {} 的 {:?} 目标 provider {} 已删除，跳过",
                         provider.name,
-                        tier,
+                        route_key,
                         target_id
                     );
                     continue;
@@ -199,9 +211,9 @@ impl ProviderRouter {
 
             if target.is_aggregate() {
                 log::warn!(
-                    "[{app_type}] 聚合供应商 {} 的 {:?} 档目标 {} 也是聚合供应商，跳过（禁止嵌套）",
+                    "[{app_type}] 聚合供应商 {} 的 {:?} 目标 {} 也是聚合供应商，跳过（禁止嵌套）",
                     provider.name,
-                    tier,
+                    route_key,
                     target.name
                 );
                 continue;
@@ -220,13 +232,13 @@ impl ProviderRouter {
             }
 
             log::debug!(
-                "[{app_type}] 聚合路由: {} {:?} 档 → {} (model={})",
+                "[{app_type}] 聚合路由: {} {:?} → {} (model={})",
                 provider.name,
-                tier,
+                route_key,
                 target.name,
                 target_model
             );
-            let routed = Self::synthesize_routed_provider(&target, target_model);
+            let routed = Self::synthesize_routed_provider(&target, target_model, app_type);
             if seen_ids.insert(routed.id.clone()) {
                 routed_sources.insert(
                     routed.id.clone(),
@@ -242,10 +254,14 @@ impl ProviderRouter {
         }
     }
 
-    /// 克隆目标 provider 并覆写模型 env：清除分层/子代理模型键，将
-    /// `ANTHROPIC_MODEL` 设为路由模型名。下游 model_mapper 因此会把任意档别名
-    /// 统一映射到该模型，目标 provider 的端点/认证/归一化逻辑全部复用。
-    fn synthesize_routed_provider(target: &Provider, model: &str) -> Provider {
+    /// 克隆目标 provider 并按 app 覆写模型配置：
+    /// - Claude：清除分层/子代理模型键，将 `ANTHROPIC_MODEL` 设为路由模型名，
+    ///   下游 model_mapper 因此会把任意档别名统一映射到该模型；
+    /// - Codex：将 `settings_config.model` 设为路由的上游模型名
+    ///   （`codex_provider_upstream_model` 优先读它），并移除 `modelCatalog`，
+    ///   否则 `apply_codex_upstream_model` 的 catalog 白名单会跳过上流模型改写。
+    /// 目标 provider 的端点/认证/归一化逻辑全部复用。
+    fn synthesize_routed_provider(target: &Provider, model: &str, app_type: &str) -> Provider {
         const TIER_MODEL_KEYS: [&str; 6] = [
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -263,6 +279,16 @@ impl ProviderRouter {
             .settings_config
             .as_object_mut()
             .expect("settings_config normalized to object");
+
+        if app_type == "codex" {
+            root.insert(
+                "model".to_string(),
+                serde_json::Value::String(model.to_string()),
+            );
+            root.remove("modelCatalog");
+            return routed;
+        }
+
         let env_value = root
             .entry("env".to_string())
             .or_insert_with(|| serde_json::json!({}));
@@ -744,7 +770,12 @@ mod tests {
 
         let router = ProviderRouter::new(db.clone());
         let expansion = router
-            .expand_aggregate_routes(vec![agg], Some(ClaudeTier::Fable), "claude", false)
+            .expand_aggregate_routes(
+                vec![agg],
+                AggregateRouteKey::ClaudeTier(Some(ClaudeTier::Fable)),
+                "claude",
+                false,
+            )
             .await;
 
         assert_eq!(expansion.providers.len(), 1);
@@ -792,7 +823,12 @@ mod tests {
         let router = ProviderRouter::new(db.clone());
         // 只配置了 Fable 档，Haiku 档请求 → 聚合供应商被丢弃
         let expansion = router
-            .expand_aggregate_routes(vec![agg], Some(ClaudeTier::Haiku), "claude", false)
+            .expand_aggregate_routes(
+                vec![agg],
+                AggregateRouteKey::ClaudeTier(Some(ClaudeTier::Haiku)),
+                "claude",
+                false,
+            )
             .await;
 
         assert!(expansion.providers.is_empty());
@@ -812,7 +848,12 @@ mod tests {
 
         let router = ProviderRouter::new(db.clone());
         let expansion = router
-            .expand_aggregate_routes(vec![agg], None, "claude", false)
+            .expand_aggregate_routes(
+                vec![agg],
+                AggregateRouteKey::ClaudeTier(None),
+                "claude",
+                false,
+            )
             .await;
 
         assert!(expansion.providers.is_empty());
@@ -828,7 +869,12 @@ mod tests {
 
         let router = ProviderRouter::new(db.clone());
         let expansion = router
-            .expand_aggregate_routes(vec![agg], Some(ClaudeTier::Fable), "claude", false)
+            .expand_aggregate_routes(
+                vec![agg],
+                AggregateRouteKey::ClaudeTier(Some(ClaudeTier::Fable)),
+                "claude",
+                false,
+            )
             .await;
 
         assert!(expansion.providers.is_empty());
@@ -849,7 +895,12 @@ mod tests {
 
         let router = ProviderRouter::new(db.clone());
         let expansion = router
-            .expand_aggregate_routes(vec![agg], Some(ClaudeTier::Fable), "claude", false)
+            .expand_aggregate_routes(
+                vec![agg],
+                AggregateRouteKey::ClaudeTier(Some(ClaudeTier::Fable)),
+                "claude",
+                false,
+            )
             .await;
 
         assert!(expansion.providers.is_empty());
@@ -873,7 +924,7 @@ mod tests {
         let expansion = router
             .expand_aggregate_routes(
                 vec![plain, agg, kimi],
-                Some(ClaudeTier::Fable),
+                AggregateRouteKey::ClaudeTier(Some(ClaudeTier::Fable)),
                 "claude",
                 false,
             )
@@ -913,7 +964,7 @@ mod tests {
                     "agg",
                     single_fable_route("kimi", "k3"),
                 )],
-                Some(ClaudeTier::Fable),
+                AggregateRouteKey::ClaudeTier(Some(ClaudeTier::Fable)),
                 "claude",
                 true,
             )
@@ -927,12 +978,153 @@ mod tests {
                     "agg",
                     single_fable_route("kimi", "k3"),
                 )],
-                Some(ClaudeTier::Fable),
+                AggregateRouteKey::ClaudeTier(Some(ClaudeTier::Fable)),
                 "claude",
                 false,
             )
             .await;
         assert_eq!(expansion.providers.len(), 1);
         assert_eq!(expansion.providers[0].id, "kimi");
+    }
+
+    // ==================== Codex 聚合路由（custom 精确匹配） ====================
+
+    fn custom_routes(entries: &[(&str, &str, &str)]) -> AggregateRoutes {
+        let mut custom = std::collections::BTreeMap::new();
+        for (key, target_id, model) in entries {
+            custom.insert(
+                key.to_string(),
+                AggregateRoute {
+                    provider_id: target_id.to_string(),
+                    model: model.to_string(),
+                },
+            );
+        }
+        AggregateRoutes {
+            custom: Some(custom),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_expand_aggregate_routes_codex_exact_match_overrides_model() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let openai = Provider::with_id(
+            "openai".to_string(),
+            "OpenAI".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-openai" },
+                "config": "model_provider = \"openai\"\n",
+                "modelCatalog": { "models": [{ "model": "gpt-5" }] }
+            }),
+            None,
+        );
+        db.save_provider("codex", &openai).unwrap();
+
+        let agg = make_aggregate_provider(
+            "agg",
+            custom_routes(&[("gpt-5.1", "openai", "gpt-5.1-codex")]),
+        );
+
+        let router = ProviderRouter::new(db.clone());
+        let expansion = router
+            .expand_aggregate_routes(
+                vec![agg],
+                AggregateRouteKey::CodexModel("gpt-5.1"),
+                "codex",
+                false,
+            )
+            .await;
+
+        assert_eq!(expansion.providers.len(), 1);
+        let routed = &expansion.providers[0];
+        assert_eq!(routed.id, "openai");
+        assert_eq!(
+            expansion.routed_provider_sources.get("openai"),
+            Some(&("agg".to_string(), "Aggregate agg".to_string())),
+            "routed target should record its source aggregate provider"
+        );
+
+        // settings_config.model 覆写为路由的上游模型，modelCatalog 被移除
+        // （否则 catalog 白名单会让 apply_codex_upstream_model 跳过改写）
+        assert_eq!(
+            routed.settings_config.get("model").unwrap(),
+            "gpt-5.1-codex"
+        );
+        assert!(routed.settings_config.get("modelCatalog").is_none());
+        // 端点与凭据原样保留
+        assert_eq!(
+            routed
+                .settings_config
+                .get("auth")
+                .and_then(|a| a.get("OPENAI_API_KEY"))
+                .unwrap(),
+            "sk-openai"
+        );
+        assert!(routed.settings_config.get("config").is_some());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_expand_aggregate_routes_codex_miss_drops_provider() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let openai = Provider::with_id("openai".to_string(), "OpenAI".to_string(), json!({}), None);
+        db.save_provider("codex", &openai).unwrap();
+
+        let agg = make_aggregate_provider(
+            "agg",
+            custom_routes(&[("gpt-5.1", "openai", "gpt-5.1-codex")]),
+        );
+
+        let router = ProviderRouter::new(db.clone());
+        // custom 中只配置了 gpt-5.1，请求 o4-mini → 未命中，聚合供应商被丢弃
+        let expansion = router
+            .expand_aggregate_routes(
+                vec![agg],
+                AggregateRouteKey::CodexModel("o4-mini"),
+                "codex",
+                false,
+            )
+            .await;
+
+        assert!(expansion.providers.is_empty());
+        assert!(expansion.routed_provider_sources.is_empty());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_expand_aggregate_routes_codex_rejects_nested_aggregate() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        // 目标自身也是聚合供应商 → 禁止嵌套，丢弃
+        let inner = make_aggregate_provider(
+            "inner",
+            custom_routes(&[("gpt-5.1", "ghost", "gpt-5.1-codex")]),
+        );
+        db.save_provider("codex", &inner).unwrap();
+
+        let agg = make_aggregate_provider(
+            "agg",
+            custom_routes(&[("gpt-5.1", "inner", "gpt-5.1-codex")]),
+        );
+
+        let router = ProviderRouter::new(db.clone());
+        let expansion = router
+            .expand_aggregate_routes(
+                vec![agg],
+                AggregateRouteKey::CodexModel("gpt-5.1"),
+                "codex",
+                false,
+            )
+            .await;
+
+        assert!(expansion.providers.is_empty());
+        assert!(expansion.routed_provider_sources.is_empty());
     }
 }

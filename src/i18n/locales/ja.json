@@ -1001,6 +1001,7 @@
     "aggregate": {
       "title": "集約プロバイダー",
       "hint": "Haiku、Sonnet、Opus、Fable のリクエストを別々のプロバイダーのモデルへ振り分けます。プロキシ引き継ぎが必要です。",
+      "hintCodex": "リクエストモデル名の完全一致で、モデルごとに異なるプロバイダーへルーティングします。プロキシ接管が必要です。",
       "tier": "モデル階層",
       "targetProvider": "対象プロバイダー",
       "targetModel": "実際のモデル",
@@ -1010,6 +1011,11 @@
       "noTargets": "先にローカルルーティングで利用可能なサードパーティ Claude プロバイダーを1つ以上追加してください。",
       "empty": "集約ルートを1つ以上設定してください。",
       "incomplete": "{{tier}} にはプロバイダーとモデルの両方が必要です。",
+      "requestModel": "リクエストモデル",
+      "requestModelPlaceholder": "例: gpt-5.5",
+      "upstreamModelPlaceholder": "例: kimi-k2",
+      "addRoute": "ルートを追加",
+      "duplicateKey": "モデル名が重複しています: {{key}}",
       "tiers": {
         "haiku": "Haiku",
         "sonnet": "Sonnet",

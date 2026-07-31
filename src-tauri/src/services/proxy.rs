@@ -21,6 +21,18 @@ use tokio::sync::RwLock;
 /// 用于接管 Live 配置时的占位符（避免客户端提示缺少 key，同时不泄露真实 Token）
 const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
 
+/// Codex 聚合供应商接管时的种子 TOML：聚合的 settings 是占位空配置，
+/// 先播种合法的 model_provider 结构，投影时 base_url/wire_api 才会落入
+/// `[model_providers.cc-switch-aggregate]` 表（Codex CLI 只认表内字段）。
+/// 形状参照前端 generateThirdPartyConfig。
+const CODEX_AGGREGATE_SEED_TOML: &str = r#"model_provider = "cc-switch-aggregate"
+disable_response_storage = true
+
+[model_providers.cc-switch-aggregate]
+name = "cc-switch Aggregate"
+requires_openai_auth = true
+"#;
+
 /// 代理接管模式下需要从 Claude Live 配置中移除的"模型覆盖"字段。
 ///
 /// 原因：接管模式下 `*_MODEL` 必须由 CC Switch 写成稳定的 Claude 角色别名，
@@ -927,7 +939,7 @@ impl ProxyService {
         // 逻辑路由目标。若在它仍为当前供应商时关闭接管，备份恢复后 Live 是旧
         // 供应商的配置，而 current 仍指向聚合供应商，UI/路由口径不一致。
         // 要求先热切换到常规供应商，再关闭接管。
-        if matches!(app, AppType::Claude) {
+        if matches!(app, AppType::Claude | AppType::Codex) {
             if let Ok(Some(current_id)) =
                 crate::settings::get_effective_current_provider(&self.db, &app)
             {
@@ -2860,6 +2872,9 @@ impl ProxyService {
         proxy_base_url: &str,
         provider: &Provider,
     ) -> Result<(), String> {
+        if provider.is_aggregate() {
+            return Self::apply_codex_aggregate_takeover_fields(settings, proxy_base_url, provider);
+        }
         Self::apply_codex_takeover_auth_placeholder(settings, Some(provider));
         let config_text = settings
             .get("config")
@@ -2873,6 +2888,57 @@ impl ProxyService {
         )?;
         settings["config"] = json!(projected);
         Self::attach_codex_model_catalog_from_provider(settings, Some(provider));
+        Ok(())
+    }
+
+    /// 聚合供应商的 Codex 接管字段：聚合的 settings 是占位空配置，自身没有
+    /// 上游端点/凭据/模型，接管时写入：
+    /// - auth 占位符（代理统一鉴权）；
+    /// - TOML base_url/wire_api 指向本地代理；model 写为第一个 custom 路由键，
+    ///   使 Codex 客户端默认发出可精确命中的模型名；
+    /// - modelCatalog 由路由表合成：客户端模型列表只出现已配置路由的模型。
+    fn apply_codex_aggregate_takeover_fields(
+        settings: &mut Value,
+        proxy_base_url: &str,
+        provider: &Provider,
+    ) -> Result<(), String> {
+        Self::apply_codex_takeover_auth_placeholder(settings, Some(provider));
+        let config_text = settings
+            .get("config")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string();
+        // 聚合 provider 的 settings 是占位空配置：update_codex_toml_field 只有在
+        // TOML 里存在顶层 model_provider 键时才会把 base_url/wire_api 写入
+        // [model_providers.<key>] 表（Codex CLI 只认该表下的字段，顶层无效），
+        // 否则回退写顶层。空 config 先播种一段合法的 model_provider 结构
+        // （形状参照前端 generateThirdPartyConfig），再走现有投影。
+        let seeded_config = if config_text.trim().is_empty() {
+            CODEX_AGGREGATE_SEED_TOML.to_string()
+        } else {
+            config_text
+        };
+        // 聚合 provider 无上游模型，该函数不会写 model，仅取 base_url/wire_api。
+        let mut projected = Self::apply_codex_proxy_toml_config_for_provider(
+            &seeded_config,
+            proxy_base_url,
+            Some(provider),
+        )?;
+        let custom = provider.aggregate_routes().and_then(|r| r.custom.as_ref());
+        if let Some(first_key) = custom.and_then(|c| c.keys().next()) {
+            projected =
+                crate::codex_config::update_codex_toml_field(&projected, "model", first_key)
+                    .map_err(|e| format!("更新 Codex 默认模型失败: {e}"))?;
+        }
+        settings["config"] = json!(projected);
+
+        // 由路由表合成 modelCatalog：Codex 客户端模型列表只出现已配置路由的模型
+        let models: Vec<Value> = custom
+            .map(|c| c.keys().map(|k| json!({ "model": k })).collect())
+            .unwrap_or_default();
+        if let Some(root) = settings.as_object_mut() {
+            root.insert("modelCatalog".to_string(), json!({ "models": models }));
+        }
         Ok(())
     }
 
@@ -3645,6 +3711,182 @@ mod tests {
         );
         assert!(db
             .get_live_backup("claude")
+            .await
+            .expect("read backup")
+            .is_some());
+    }
+
+    fn codex_aggregate_provider(id: &str, entries: &[(&str, &str, &str)]) -> Provider {
+        let mut custom = std::collections::BTreeMap::new();
+        for (key, target_id, model) in entries {
+            custom.insert(
+                key.to_string(),
+                AggregateRoute {
+                    provider_id: target_id.to_string(),
+                    model: model.to_string(),
+                },
+            );
+        }
+        let mut provider = Provider::with_id(
+            id.to_string(),
+            format!("Aggregate {id}"),
+            // 聚合供应商的 settings_config 是占位空配置
+            json!({}),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            aggregate_routes: Some(AggregateRoutes {
+                custom: Some(custom),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        provider
+    }
+
+    #[test]
+    fn codex_aggregate_takeover_fields_synthesize_catalog_and_model() {
+        let provider = codex_aggregate_provider(
+            "agg",
+            &[
+                ("gpt-5", "openai", "gpt-5-codex"),
+                ("gpt-5.1", "openai", "gpt-5.1-codex"),
+            ],
+        );
+
+        let mut live_config = json!({});
+        ProxyService::apply_codex_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        )
+        .expect("codex aggregate takeover fields");
+
+        // auth 占位符
+        assert_eq!(
+            live_config
+                .get("auth")
+                .and_then(|auth| auth.get("OPENAI_API_KEY"))
+                .and_then(|value| value.as_str()),
+            Some(PROXY_TOKEN_PLACEHOLDER)
+        );
+
+        // TOML：播种合法的 model_provider 结构，base_url/wire_api 必须落在
+        // [model_providers.cc-switch-aggregate] 表内（Codex CLI 只认表内字段，
+        // 顶层无效），model 写顶层第一个 custom 路由键
+        let config = live_config
+            .get("config")
+            .and_then(|value| value.as_str())
+            .expect("config should exist");
+        assert!(
+            config.contains("model_provider = \"cc-switch-aggregate\""),
+            "got {config}"
+        );
+        let table_header = "[model_providers.cc-switch-aggregate]";
+        let table_pos = config
+            .find(table_header)
+            .unwrap_or_else(|| panic!("missing {table_header} in {config}"));
+        assert!(
+            config.contains("requires_openai_auth = true"),
+            "got {config}"
+        );
+        assert!(
+            config.contains("disable_response_storage = true"),
+            "got {config}"
+        );
+        let base_url = "base_url = \"http://127.0.0.1:15721\"";
+        let base_url_pos = config
+            .find(base_url)
+            .unwrap_or_else(|| panic!("missing {base_url} in {config}"));
+        assert!(
+            base_url_pos > table_pos,
+            "base_url must be inside {table_header}, got {config}"
+        );
+        let wire_api = "wire_api = \"responses\"";
+        let wire_api_pos = config
+            .find(wire_api)
+            .unwrap_or_else(|| panic!("missing {wire_api} in {config}"));
+        assert!(
+            wire_api_pos > table_pos,
+            "wire_api must be inside {table_header}, got {config}"
+        );
+        let model = "model = \"gpt-5\"";
+        let model_pos = config
+            .find(model)
+            .unwrap_or_else(|| panic!("missing {model} in {config}"));
+        assert!(
+            model_pos < table_pos,
+            "model must be a top-level field, got {config}"
+        );
+
+        // modelCatalog 由路由表合成：只出现已配置路由的模型
+        let catalog = live_config
+            .get("modelCatalog")
+            .and_then(|catalog| catalog.get("models"))
+            .and_then(|models| models.as_array())
+            .expect("modelCatalog.models should exist");
+        let names: Vec<&str> = catalog
+            .iter()
+            .filter_map(|model| model.get("model").and_then(|value| value.as_str()))
+            .collect();
+        assert_eq!(names, ["gpt-5", "gpt-5.1"]);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn disable_takeover_with_codex_aggregate_current_is_rejected() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let target = Provider::with_id(
+            "openai".to_string(),
+            "OpenAI".to_string(),
+            json!({"auth": {"OPENAI_API_KEY": "sk-openai"}}),
+            None,
+        );
+        db.save_provider("codex", &target)
+            .expect("save target provider");
+
+        let aggregate = codex_aggregate_provider("agg", &[("gpt-5", "openai", "gpt-5-codex")]);
+        db.save_provider("codex", &aggregate)
+            .expect("save aggregate provider");
+
+        db.set_current_provider("codex", "agg")
+            .expect("set db current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some("agg"))
+            .expect("set local current provider");
+
+        // 接管开启 + 备份存在
+        let mut app_config = db
+            .get_proxy_config_for_app("codex")
+            .await
+            .expect("read app proxy config");
+        app_config.enabled = true;
+        db.update_proxy_config_for_app(app_config)
+            .await
+            .expect("enable takeover");
+        db.save_live_backup("codex", r#"{"auth":{"OPENAI_API_KEY":"sk-openai"}}"#)
+            .await
+            .expect("seed live backup");
+
+        let err = service
+            .set_takeover_for_app("codex", false)
+            .await
+            .expect_err("disabling takeover with aggregate current must be rejected");
+        assert!(err.contains("聚合"), "got {err}");
+
+        // 接管状态与备份保持不变
+        assert!(
+            db.get_proxy_config_for_app("codex")
+                .await
+                .expect("read app proxy config")
+                .enabled
+        );
+        assert!(db
+            .get_live_backup("codex")
             .await
             .expect("read backup")
             .is_some());

@@ -1189,6 +1189,15 @@ impl RequestForwarder {
             super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
         }
 
+        // Codex 聚合路由：命中路由的 provider（由聚合路由合成）需要把请求模型
+        // 改写为路由的上游模型。原生 Responses 透传路径此前不改写 model，
+        // 这里补上；chat/anthropic 转换路径的后续调用幂等无害。
+        if matches!(app_type, AppType::Codex)
+            && self.routed_provider_sources.contains_key(&provider.id)
+        {
+            super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+        }
+
         if is_copilot {
             mapped_body =
                 super::providers::copilot_model_map::apply_copilot_model_normalization(mapped_body);
