@@ -431,3 +431,148 @@ fn source_item(
 ) -> crate::workspace_sync::model::DataItem {
     target_item(provider, native_path, "")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workspace_sync::storage::memory::MemoryStorage;
+    use serial_test::serial;
+    use std::fs;
+    use std::path::PathBuf;
+
+    struct TestHome {
+        _dir: tempfile::TempDir,
+        prev: Option<String>,
+        home: PathBuf,
+    }
+
+    impl TestHome {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let home = dir.path().to_path_buf();
+            let prev = std::env::var("CC_SWITCH_TEST_HOME").ok();
+            std::env::set_var("CC_SWITCH_TEST_HOME", &home);
+            Self {
+                _dir: dir,
+                prev,
+                home,
+            }
+        }
+
+        fn claude_dir(&self) -> PathBuf {
+            self.home.join(".claude")
+        }
+
+        fn write(&self, rel: &str, content: &str) {
+            let path = self.claude_dir().join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, content).unwrap();
+        }
+
+        fn read(&self, rel: &str) -> Option<String> {
+            fs::read_to_string(self.claude_dir().join(rel)).ok()
+        }
+    }
+
+    impl Drop for TestHome {
+        fn drop(&mut self) {
+            match &self.prev {
+                Some(v) => std::env::set_var("CC_SWITCH_TEST_HOME", v),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+
+    fn settings() -> WorkspaceSyncSettings {
+        WorkspaceSyncSettings {
+            enabled: true,
+            transport: "webdav".to_string(),
+            providers: vec!["claude".to_string()],
+            remote_root: "cc-switch-workspace".to_string(),
+            profile: "default".to_string(),
+            status: Default::default(),
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn backup_then_merge_roundtrip_pulls_remote_only_file() {
+        // Device A backs up a plan; a fresh local (device B) merges it down.
+        let home = TestHome::new();
+        home.write("plans/roadmap.md", "phase 1");
+
+        let storage = MemoryStorage::default();
+        let s = settings();
+
+        let backup = backup(&storage, &s, 1000).await.expect("backup");
+        assert_eq!(backup.providers_scanned, 1);
+        assert!(backup.items_total >= 1);
+        assert!(backup.blobs_uploaded >= 1);
+
+        // Simulate device B: remove local file, then merge should restore it.
+        fs::remove_file(home.claude_dir().join("plans/roadmap.md")).unwrap();
+        let merged = merge(&storage, &s, 2000).await.expect("merge");
+        assert_eq!(
+            home.read("plans/roadmap.md").as_deref(),
+            Some("phase 1"),
+            "merge should pull the remote-only file back to disk"
+        );
+        assert!(merged.files_written >= 1);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn merge_keeps_both_on_text_conflict() {
+        let home = TestHome::new();
+        home.write("plans/note.md", "local edits");
+
+        let storage = MemoryStorage::default();
+        let s = settings();
+
+        // Seed remote with a different version of the same logical file by
+        // backing up, then changing the local file so hashes diverge.
+        home.write("plans/note.md", "remote version");
+        backup(&storage, &s, 1000).await.expect("seed remote");
+
+        // Now local diverges again.
+        home.write("plans/note.md", "local edits again");
+        let merged = merge(&storage, &s, 3000).await.expect("merge");
+
+        // Local file preserved untouched.
+        assert_eq!(
+            home.read("plans/note.md").as_deref(),
+            Some("local edits again")
+        );
+        // A conflict copy of the remote version was written and reported.
+        assert!(
+            !merged.conflicts.is_empty(),
+            "text divergence should produce a conflict"
+        );
+        let conflict = &merged.conflicts[0];
+        let cpath = conflict.conflict_path.clone().expect("conflict path");
+        assert!(cpath.contains(".conflict-"));
+        assert_eq!(
+            home.read(&cpath).as_deref(),
+            Some("remote version"),
+            "remote version should be saved to the conflict sibling"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn merge_result_can_be_backed_up_again() {
+        let home = TestHome::new();
+        home.write("plans/a.md", "content");
+        let storage = MemoryStorage::default();
+        let s = settings();
+
+        backup(&storage, &s, 1000).await.expect("backup");
+        let merged = merge(&storage, &s, 2000).await.expect("merge");
+        // Head now points at the merged snapshot; a follow-up backup succeeds
+        // and parents it correctly (no panic, valid snapshot id).
+        let again = backup(&storage, &s, 3000).await.expect("re-backup");
+        assert!(!again.snapshot_id.is_empty());
+        assert_ne!(again.snapshot_id, merged.snapshot_id);
+    }
+}
+

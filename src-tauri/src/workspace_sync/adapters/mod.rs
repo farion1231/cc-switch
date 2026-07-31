@@ -307,10 +307,14 @@ fn build_item(
 /// is not under the (canonicalized) root.
 fn relative_path(canonical_root: &Path, file: &Path) -> String {
     let canonical_file = fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
-    let rel = canonical_file
-        .strip_prefix(canonical_root)
-        .unwrap_or_else(|_| Path::new(file.file_name().unwrap_or_default().into()));
-    rel.to_string_lossy().replace('\\', "/")
+    match canonical_file.strip_prefix(canonical_root) {
+        Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
+        Err(_) => file
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .replace('\\', "/"),
+    }
 }
 
 /// All adapters for the given providers (installed or not — callers filter).
