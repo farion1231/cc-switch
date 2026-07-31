@@ -17,6 +17,11 @@ export const sessionsApi = {
     return await invoke("list_sessions");
   },
 
+  /** Codex sessions for one Managed Target (Windows host path or WSL). */
+  async listForManagedTarget(targetId: string): Promise<SessionMeta[]> {
+    return await invoke("list_sessions_for_managed_target", { targetId });
+  },
+
   async getMessages(
     providerId: string,
     sourcePath: string,

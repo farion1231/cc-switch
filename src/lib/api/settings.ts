@@ -4,6 +4,9 @@ import type {
   WebDavSyncSettings,
   S3SyncSettings,
   RemoteSnapshotInfo,
+  ManagedTarget,
+  TargetInspection,
+  WslTargetDiscovery,
 } from "@/types";
 import type { AppId } from "./types";
 
@@ -26,6 +29,13 @@ export interface CodexUnifyHistoryRestoreResult {
   skippedReason?: string;
 }
 
+export interface TargetHistoryMigrationResult {
+  changedJsonlFiles: number;
+  changedStateRows: number;
+  backupPath?: string;
+  skippedReason?: string;
+}
+
 export interface WebDavSyncResult {
   status: string;
 }
@@ -37,6 +47,58 @@ export const settingsApi = {
 
   async save(settings: Settings): Promise<boolean> {
     return await invoke("save_settings", { settings });
+  },
+
+  async listManagedTargets(): Promise<ManagedTarget[]> {
+    return await invoke("listManagedTargets");
+  },
+
+  async inspectManagedTarget(targetId: string): Promise<TargetInspection> {
+    return await invoke("inspectManagedTarget", { targetId });
+  },
+
+  async discoverWslTargets(): Promise<WslTargetDiscovery[]> {
+    return await invoke("discoverWslTargets");
+  },
+
+  async registerDiscoveredWslTarget(distro: string): Promise<ManagedTarget> {
+    return await invoke("registerDiscoveredWslTarget", { distro });
+  },
+
+  async linkManagedTargetProvider(
+    targetId: string,
+    providerId: string | null,
+  ): Promise<ManagedTarget> {
+    return await invoke("linkManagedTargetProvider", {
+      targetId,
+      providerId,
+    });
+  },
+
+  async activateWslManagedTarget(targetId: string): Promise<ManagedTarget> {
+    return await invoke("activateWslManagedTarget", { targetId });
+  },
+
+  async switchManagedTargetProvider(
+    targetId: string,
+    providerId: string,
+  ): Promise<ManagedTarget> {
+    return await invoke("switchManagedTargetProvider", {
+      targetId,
+      providerId,
+    });
+  },
+
+  async migrateManagedTargetCodexHistory(
+    targetId: string,
+  ): Promise<TargetHistoryMigrationResult> {
+    return await invoke("migrateManagedTargetCodexHistory", { targetId });
+  },
+
+  async restoreManagedTargetCodexHistory(
+    targetId: string,
+  ): Promise<TargetHistoryMigrationResult> {
+    return await invoke("restoreManagedTargetCodexHistory", { targetId });
   },
 
   /** 是否存在统一 Codex 会话历史的迁移备份（关闭弹窗据此显示"恢复备份"勾选） */

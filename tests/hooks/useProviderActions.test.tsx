@@ -44,13 +44,16 @@ const switchProviderMutation = {
 const useAddProviderMutationMock = vi.fn(() => addProviderMutation);
 const useUpdateProviderMutationMock = vi.fn(() => updateProviderMutation);
 const useDeleteProviderMutationMock = vi.fn(() => deleteProviderMutation);
-const useSwitchProviderMutationMock = vi.fn(() => switchProviderMutation);
+const useSwitchProviderMutationMock = vi.fn(
+  (_appId?: string, _managedTargetId?: string) => switchProviderMutation,
+);
 
 vi.mock("@/lib/query", () => ({
   useAddProviderMutation: () => useAddProviderMutationMock(),
   useUpdateProviderMutation: () => useUpdateProviderMutationMock(),
   useDeleteProviderMutation: () => useDeleteProviderMutationMock(),
-  useSwitchProviderMutation: () => useSwitchProviderMutationMock(),
+  useSwitchProviderMutation: (appId: string, managedTargetId?: string) =>
+    useSwitchProviderMutationMock(appId, managedTargetId),
 }));
 
 const providersApiUpdateMock = vi.fn();
@@ -135,6 +138,19 @@ beforeEach(() => {
 });
 
 describe("useProviderActions", () => {
+  it("passes the selected Managed Target to the switch module", () => {
+    const { wrapper } = createWrapper();
+    renderHook(
+      () => useProviderActions("codex", false, false, "wsl-ubuntu-m1kasa"),
+      { wrapper },
+    );
+
+    expect(useSwitchProviderMutationMock).toHaveBeenCalledWith(
+      "codex",
+      "wsl-ubuntu-m1kasa",
+    );
+  });
+
   it("should trigger mutation when calling addProvider", async () => {
     addProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();

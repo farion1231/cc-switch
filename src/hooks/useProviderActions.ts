@@ -39,6 +39,7 @@ export function useProviderActions(
   activeApp: AppId,
   isProxyRunning?: boolean,
   isProxyTakeover?: boolean,
+  managedTargetId?: string,
 ) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -46,7 +47,10 @@ export function useProviderActions(
   const addProviderMutation = useAddProviderMutation(activeApp);
   const updateProviderMutation = useUpdateProviderMutation(activeApp);
   const deleteProviderMutation = useDeleteProviderMutation(activeApp);
-  const switchProviderMutation = useSwitchProviderMutation(activeApp);
+  const switchProviderMutation = useSwitchProviderMutation(
+    activeApp,
+    managedTargetId,
+  );
 
   // Claude 插件同步逻辑
   const syncClaudePlugin = useCallback(

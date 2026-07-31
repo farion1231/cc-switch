@@ -23,6 +23,8 @@ interface ConfirmDialogProps {
   /** 可选勾选项：提供 label 即显示，勾选状态经 onConfirm 参数回传 */
   checkboxLabel?: string;
   checkboxDefaultChecked?: boolean;
+  /** Disable confirm while a parent mutation is already running. */
+  confirmDisabled?: boolean;
   onConfirm: (checkboxChecked: boolean) => void;
   onCancel: () => void;
 }
@@ -37,6 +39,7 @@ export function ConfirmDialog({
   zIndex = "alert",
   checkboxLabel,
   checkboxDefaultChecked = false,
+  confirmDisabled = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -90,10 +93,12 @@ export function ConfirmDialog({
           </Button>
           <Button
             variant={variant === "info" ? "default" : "destructive"}
-            onClick={() =>
+            disabled={confirmDisabled}
+            onClick={() => {
+              if (confirmDisabled) return;
               // 未渲染勾选框时不得回传 defaultChecked 残留值
-              onConfirm(checkboxLabel ? checkboxChecked : false)
-            }
+              onConfirm(checkboxLabel ? checkboxChecked : false);
+            }}
           >
             {confirmText || t("common.confirm")}
           </Button>

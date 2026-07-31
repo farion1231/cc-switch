@@ -304,11 +304,19 @@ export const useUsageQuery = (
   };
 };
 
-export const useSessionsQuery = () => {
+export const useSessionsQuery = (options?: {
+  /** When set for Codex, list only that Managed Target's sessions. */
+  codexTargetId?: string | null;
+}) => {
+  const codexTargetId = options?.codexTargetId ?? null;
   return useQuery<SessionMeta[]>({
-    queryKey: ["sessions"],
-    queryFn: async () => sessionsApi.list(),
+    queryKey: ["sessions", codexTargetId ?? "all"],
+    queryFn: async () =>
+      codexTargetId
+        ? sessionsApi.listForManagedTarget(codexTargetId)
+        : sessionsApi.list(),
     staleTime: 30 * 1000,
+    enabled: options?.codexTargetId === undefined || Boolean(codexTargetId),
   });
 };
 

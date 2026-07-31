@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -186,10 +193,26 @@ const filterSetToAllowedValues = (
   return changed ? next : current;
 };
 
-export function SessionManagerPage({ appId }: { appId: string }) {
+export function SessionManagerPage({
+  appId,
+  codexTargetId = null,
+  codexTargetSelector = null,
+}: {
+  appId: string;
+  /** When app is Codex, scope the list to this Managed Target. */
+  codexTargetId?: string | null;
+  /** Optional environment selector rendered above the session toolbar. */
+  codexTargetSelector?: ReactNode;
+}) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { data, isLoading, refetch } = useSessionsQuery();
+  const isCodexApp = appId === "codex";
+  const {
+    data,
+    isLoading,
+    refetch,
+    isError: sessionsQueryError,
+  } = useSessionsQuery(isCodexApp ? { codexTargetId } : undefined);
   const sessions = data ?? [];
   const detailRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -794,6 +817,22 @@ export function SessionManagerPage({ appId }: { appId: string }) {
         onWheel={(e) => e.stopPropagation()}
       >
         <div className="flex-1 overflow-hidden flex flex-col gap-4">
+          {codexTargetSelector}
+          {isCodexApp && !codexTargetId ? (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+              {t("sessionManager.noManagedTarget", {
+                defaultValue:
+                  "请先在设置中启用一个 Codex 运行环境，然后再查看该环境的会话。",
+              })}
+            </div>
+          ) : null}
+          {sessionsQueryError ? (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-sm text-red-600">
+              {t("sessionManager.loadFailed", {
+                defaultValue: "加载会话列表失败",
+              })}
+            </div>
+          ) : null}
           {/* 主内容区域 - 左右分栏 */}
           <div className="flex-1 overflow-hidden grid gap-4 md:grid-cols-[320px_1fr]">
             {/* 左侧会话列表 */}

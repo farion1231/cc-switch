@@ -45,6 +45,7 @@ import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
+import { useManagedTargetSelection } from "@/hooks/useManagedTargetSelection";
 import { useScanUnmanagedSkills } from "@/hooks/useSkills";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
@@ -59,6 +60,7 @@ import {
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
+import { ManagedTargetSelector } from "@/components/providers/ManagedTargetSelector";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -276,7 +278,27 @@ function App() {
     isProxyRunning,
   });
   const providers = useMemo(() => data?.providers ?? {}, [data]);
-  const currentProviderId = data?.currentProviderId ?? "";
+  const providerNames = useMemo(() => {
+    const names: Record<string, string> = {};
+    for (const provider of Object.values(providers)) {
+      names[provider.id] = provider.name;
+    }
+    return names;
+  }, [providers]);
+  const codexTargetSelection = useManagedTargetSelection(
+    activeApp === "codex" ||
+      (currentView === "sessions" && sharedFeatureApp === "codex"),
+  );
+  const isSelectedCodexWindowsTakeover =
+    activeApp === "codex" &&
+    isCurrentAppTakeoverActive &&
+    codexTargetSelection.selectedTarget?.kind.type === "localWindows";
+  const currentProviderId =
+    activeApp === "codex" &&
+    codexTargetSelection.selectedTarget &&
+    !isSelectedCodexWindowsTakeover
+      ? (codexTargetSelection.selectedTarget.currentProviderId ?? "")
+      : (data?.currentProviderId ?? "");
   const isOpenClawView =
     activeApp === "openclaw" &&
     (currentView === "providers" ||
@@ -308,6 +330,9 @@ function App() {
     activeApp,
     isProxyRunning,
     isProxyRunning && isCurrentAppTakeoverActive,
+    activeApp === "codex" && !isSelectedCodexWindowsTakeover
+      ? (codexTargetSelection.selectedTargetId ?? undefined)
+      : undefined,
   );
 
   const disableOmoMutation = useDisableCurrentOmo();
@@ -889,6 +914,24 @@ function App() {
     setCurrentView("skillsDiscovery");
   };
 
+  const handleManageEnvironments = () => {
+    setSettingsDefaultTab("advanced");
+    setCurrentView("settings");
+  };
+
+  const handleProviderSwitch = async (provider: Provider) => {
+    if (
+      activeApp === "codex" &&
+      codexTargetSelection.selectedTarget &&
+      isCurrentAppTakeoverActive &&
+      codexTargetSelection.selectedTarget.kind.type !== "localWindows"
+    ) {
+      toast.error(t("settings.environments.proxyTakeoverUnsupported"));
+      return;
+    }
+    await switchProvider(provider);
+  };
+
   const renderContent = () => {
     const content = (() => {
       switch (currentView) {
@@ -955,6 +998,28 @@ function App() {
             <SessionManagerPage
               key={sharedFeatureApp}
               appId={sharedFeatureApp}
+              codexTargetId={
+                sharedFeatureApp === "codex"
+                  ? codexTargetSelection.selectedTargetId
+                  : null
+              }
+              codexTargetSelector={
+                sharedFeatureApp === "codex" ? (
+                  <ManagedTargetSelector
+                    targets={codexTargetSelection.managedTargets}
+                    selectedTargetId={codexTargetSelection.selectedTargetId}
+                    onSelect={codexTargetSelection.selectTarget}
+                    onManage={handleManageEnvironments}
+                    isLoading={codexTargetSelection.isLoading}
+                    providerNames={providerNames}
+                    error={
+                      codexTargetSelection.isError
+                        ? extractErrorMessage(codexTargetSelection.error)
+                        : undefined
+                    }
+                  />
+                ) : null
+              }
             />
           );
         case "workspace":
@@ -968,6 +1033,21 @@ function App() {
         default:
           return (
             <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
+              {activeApp === "codex" ? (
+                <ManagedTargetSelector
+                  targets={codexTargetSelection.managedTargets}
+                  selectedTargetId={codexTargetSelection.selectedTargetId}
+                  onSelect={codexTargetSelection.selectTarget}
+                  onManage={handleManageEnvironments}
+                  isLoading={codexTargetSelection.isLoading}
+                  providerNames={providerNames}
+                  error={
+                    codexTargetSelection.isError
+                      ? extractErrorMessage(codexTargetSelection.error)
+                      : undefined
+                  }
+                />
+              ) : null}
               <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
                 <AnimatePresence mode="wait">
                   <motion.div
@@ -988,7 +1068,7 @@ function App() {
                         isProxyRunning && isCurrentAppTakeoverActive
                       }
                       activeProviderId={activeProviderId}
-                      onSwitch={switchProvider}
+                      onSwitch={handleProviderSwitch}
                       onEdit={(provider) => {
                         setEditingProvider(provider);
                       }}

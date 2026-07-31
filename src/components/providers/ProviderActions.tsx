@@ -13,12 +13,14 @@ import {
   Zap,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useMutationState } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { AppId } from "@/lib/api";
 
 interface ProviderActionsProps {
   appId?: AppId;
+  providerId: string;
   isCurrent: boolean;
   isInConfig?: boolean;
   isTesting?: boolean;
@@ -58,6 +60,7 @@ interface MainButtonState {
 
 export function ProviderActions({
   appId,
+  providerId,
   isCurrent,
   isInConfig = false,
   isTesting,
@@ -83,6 +86,15 @@ export function ProviderActions({
 }: ProviderActionsProps) {
   const { t } = useTranslation();
   const iconButtonClass = "h-8 w-8 p-1";
+  const switchingProviderIds = useMutationState({
+    filters: {
+      mutationKey: ["switch-provider", appId],
+      status: "pending",
+    },
+    select: (mutation) => mutation.state.variables as string | undefined,
+  });
+  const isSwitching = switchingProviderIds.length > 0;
+  const isSwitchingThisProvider = switchingProviderIds.includes(providerId);
 
   // 累加模式应用（OpenCode 非 OMO / OpenClaw / Hermes）
   const isAdditiveMode =
@@ -120,6 +132,24 @@ export function ProviderActions({
   };
 
   const getMainButtonState = (): MainButtonState => {
+    if (isSwitching) {
+      return {
+        disabled: true,
+        variant: isSwitchingThisProvider ? "secondary" : "default",
+        className: isSwitchingThisProvider
+          ? "bg-gray-200 text-muted-foreground dark:bg-gray-700"
+          : "opacity-50",
+        icon: isSwitchingThisProvider ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Play className="h-4 w-4" />
+        ),
+        text: isSwitchingThisProvider
+          ? t("provider.switching", { defaultValue: "切换中" })
+          : t("provider.enable"),
+      };
+    }
+
     if (isOmo) {
       if (isCurrent) {
         return {

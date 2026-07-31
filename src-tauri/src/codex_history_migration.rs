@@ -18,7 +18,7 @@ use chrono::{Local, Utc};
 use rusqlite::{backup::Backup, params_from_iter, Connection};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -32,14 +32,25 @@ const OFFICIAL_UNIFY_RESTORE_BACKUP_NAME: &str = "codex-official-history-unify-r
 /// SQLite 变量上限保守值，IN 列表按此分块。
 const STATE_DB_ID_CHUNK: usize = 500;
 
-/// 串行化官方历史的迁移与还原：开启迁移（启动重试 + 设置保存后台任务）和
-/// 关闭还原可能在毫秒级先后被触发，对同一批 jsonl / state DB 双向改写。
-static CODEX_OFFICIAL_HISTORY_OP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+type TargetHistoryProviderLedger = (BTreeMap<String, String>, BTreeMap<String, String>);
 
-fn lock_codex_official_history_op() -> std::sync::MutexGuard<'static, ()> {
-    CODEX_OFFICIAL_HISTORY_OP_LOCK
+/// 串行化全部 Codex 历史改写：官方 unify/restore、Target-aware migrate/restore，
+/// 以及（同一进程内）可能指向同一 Windows Codex home 的重叠操作。
+static CODEX_HISTORY_OP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Acquire the process-wide Codex history rewrite lock.
+///
+/// Official unify/restore and Target-aware migrate/restore share this lock so
+/// concurrent UI actions (or a background official unify racing a target
+/// migration on the same Windows Codex home) cannot tear JSONL / state rows.
+pub(crate) fn lock_codex_history_op() -> std::sync::MutexGuard<'static, ()> {
+    CODEX_HISTORY_OP_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn lock_codex_official_history_op() -> std::sync::MutexGuard<'static, ()> {
+    lock_codex_history_op()
 }
 /// Codex 内建默认 provider id：config.toml 没有 `model_provider` 键时会话归入此桶。
 /// 官方订阅（ChatGPT OAuth / OpenAI API key）的历史会话都记录这个 id。
@@ -751,6 +762,459 @@ fn migration_backup_root(migration_name: &str) -> PathBuf {
         .join("backups")
         .join(migration_name)
         .join(Local::now().format("%Y%m%d_%H%M%S").to_string())
+}
+
+/// Explicit, Target-scoped history normalization used by the multi-environment
+/// manager. Unlike the startup migration above, this user-initiated operation
+/// intentionally accepts every non-`custom` bucket found in the selected
+/// Target. The original files and state database are copied into one backup
+/// generation before their labels are changed.
+pub fn migrate_codex_target_history_at(
+    codex_dir: &Path,
+    config_text: &str,
+    backup_root: &Path,
+) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
+    let _op_guard = lock_codex_history_op();
+    if !codex_config_text_routes_custom(config_text) {
+        return Ok(CodexHistoryProviderBucketMigrationOutcome {
+            skipped_reason: Some("live_not_unified".to_string()),
+            ..Default::default()
+        });
+    }
+    let mut source_provider_ids = collect_non_custom_jsonl_provider_ids(codex_dir);
+    let state_db_paths = codex_state_db_paths(codex_dir, config_text);
+    for db_path in &state_db_paths {
+        collect_non_custom_state_provider_ids(db_path, &mut source_provider_ids)?;
+    }
+
+    if source_provider_ids.is_empty() {
+        return Ok(CodexHistoryProviderBucketMigrationOutcome {
+            skipped_reason: Some("already_unified".to_string()),
+            ..Default::default()
+        });
+    }
+
+    // Persist the ledger identity before the first write. Each existing helper
+    // backs up an individual target immediately before changing it, so a crash
+    // or later SQLite failure still leaves enough evidence for precise restore.
+    let pending_manifest = serde_json::json!({
+        "version": 1,
+        "codexConfigDir": canonical_dir_string(codex_dir),
+        "sourceProviderIds": source_provider_ids,
+        "status": "in_progress",
+    });
+    let pending_bytes = serde_json::to_vec_pretty(&pending_manifest)
+        .map_err(|source| AppError::JsonSerialize { source })?;
+    atomic_write(&backup_root.join("manifest.json"), &pending_bytes)?;
+
+    let migrated_jsonl_files =
+        match migrate_codex_jsonl_files(codex_dir, &source_provider_ids, backup_root) {
+            Ok(count) => count,
+            Err(error) => {
+                let _ = mark_target_history_manifest_failed(
+                    backup_root,
+                    codex_dir,
+                    &source_provider_ids,
+                    0,
+                    0,
+                    &error,
+                );
+                return Err(error);
+            }
+        };
+    let mut migrated_state_rows = 0;
+    for db_path in state_db_paths {
+        match migrate_codex_state_db_provider_bucket(
+            &db_path,
+            codex_dir,
+            &source_provider_ids,
+            backup_root,
+        ) {
+            Ok(count) => migrated_state_rows += count,
+            Err(error) => {
+                let _ = mark_target_history_manifest_failed(
+                    backup_root,
+                    codex_dir,
+                    &source_provider_ids,
+                    migrated_jsonl_files,
+                    migrated_state_rows,
+                    &error,
+                );
+                return Err(AppError::Message(format!(
+                    "Target history migration failed after rewriting {migrated_jsonl_files} JSONL file(s) and {migrated_state_rows} state row(s). A backup generation is at {}. Use Restore from the migration ledger after resolving the error. Cause: {error}",
+                    backup_root.display()
+                )));
+            }
+        }
+    }
+
+    if migrated_jsonl_files > 0 || migrated_state_rows > 0 {
+        let manifest = serde_json::json!({
+            "version": 1,
+            "codexConfigDir": canonical_dir_string(codex_dir),
+            "sourceProviderIds": source_provider_ids,
+            "migratedJsonlFiles": migrated_jsonl_files,
+            "migratedStateRows": migrated_state_rows,
+            "status": "complete",
+        });
+        let bytes = serde_json::to_vec_pretty(&manifest)
+            .map_err(|source| AppError::JsonSerialize { source })?;
+        atomic_write(&backup_root.join("manifest.json"), &bytes)?;
+    }
+
+    Ok(CodexHistoryProviderBucketMigrationOutcome {
+        source_provider_ids: source_provider_ids.into_iter().collect(),
+        migrated_jsonl_files,
+        migrated_state_rows,
+        skipped_reason: None,
+    })
+}
+
+/// Best-effort marker so a mid-flight failure is visible in the backup ledger.
+/// Restore remains driven by per-file/state backups under the same generation.
+fn mark_target_history_manifest_failed(
+    backup_root: &Path,
+    codex_dir: &Path,
+    source_provider_ids: &BTreeSet<String>,
+    migrated_jsonl_files: usize,
+    migrated_state_rows: usize,
+    error: &AppError,
+) -> Result<(), AppError> {
+    let manifest = serde_json::json!({
+        "version": 1,
+        "codexConfigDir": canonical_dir_string(codex_dir),
+        "sourceProviderIds": source_provider_ids,
+        "migratedJsonlFiles": migrated_jsonl_files,
+        "migratedStateRows": migrated_state_rows,
+        "status": "failed",
+        "error": error.to_string(),
+    });
+    let bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|source| AppError::JsonSerialize { source })?;
+    atomic_write(&backup_root.join("manifest.json"), &bytes)
+}
+
+/// Restore only sessions and state rows proven by a Target migration ledger.
+/// Each item returns to its own original bucket; items born in `custom` are not
+/// present in the ledger and are therefore never changed.
+pub fn restore_codex_target_history_at(
+    codex_dir: &Path,
+    config_text: &str,
+    ledger_parent: &Path,
+    restore_backup_root: &Path,
+) -> Result<CodexOfficialHistoryRestoreOutcome, AppError> {
+    let _op_guard = lock_codex_history_op();
+    let (session_providers, thread_providers) =
+        collect_target_history_ledger(ledger_parent, &canonical_dir_string(codex_dir))?;
+    if session_providers.is_empty() && thread_providers.is_empty() {
+        return Ok(CodexOfficialHistoryRestoreOutcome {
+            skipped_reason: Some("no_backup_ledger".to_string()),
+            ..Default::default()
+        });
+    }
+
+    let mut files = Vec::new();
+    collect_jsonl_files(&codex_dir.join("sessions"), &mut files, 0, 8);
+    collect_jsonl_files(&codex_dir.join("archived_sessions"), &mut files, 0, 4);
+    let mut restored_jsonl_files = 0;
+    for file_path in files {
+        if rewrite_codex_session_file_lines(&file_path, codex_dir, restore_backup_root, |line| {
+            rewrite_target_session_meta_line_for_restore(line, &session_providers)
+        })? {
+            restored_jsonl_files += 1;
+        }
+    }
+
+    let mut restored_state_rows = 0;
+    for db_path in codex_state_db_paths(codex_dir, config_text) {
+        restored_state_rows += restore_target_state_db_threads(
+            &db_path,
+            codex_dir,
+            &thread_providers,
+            restore_backup_root,
+        )?;
+    }
+
+    if restored_jsonl_files == 0 && restored_state_rows == 0 {
+        return Ok(CodexOfficialHistoryRestoreOutcome {
+            skipped_reason: Some("nothing_to_restore".to_string()),
+            ..Default::default()
+        });
+    }
+
+    let manifest = serde_json::json!({
+        "version": 1,
+        "action": "restore",
+        "codexConfigDir": canonical_dir_string(codex_dir),
+        "restoredJsonlFiles": restored_jsonl_files,
+        "restoredStateRows": restored_state_rows,
+    });
+    let bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|source| AppError::JsonSerialize { source })?;
+    atomic_write(&restore_backup_root.join("manifest.json"), &bytes)?;
+
+    Ok(CodexOfficialHistoryRestoreOutcome {
+        restored_jsonl_files,
+        restored_state_rows,
+        skipped_reason: None,
+    })
+}
+
+fn collect_target_history_ledger(
+    ledger_parent: &Path,
+    codex_dir_key: &str,
+) -> Result<TargetHistoryProviderLedger, AppError> {
+    let mut generations = match fs::read_dir(ledger_parent) {
+        Ok(entries) => entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect::<Vec<_>>(),
+        Err(_) => return Ok((BTreeMap::new(), BTreeMap::new())),
+    };
+    generations.sort();
+
+    let mut session_providers = BTreeMap::new();
+    let mut thread_providers = BTreeMap::new();
+    for generation in generations {
+        let Ok(manifest_text) = fs::read_to_string(generation.join("manifest.json")) else {
+            continue;
+        };
+        let Ok(manifest) = serde_json::from_str::<Value>(&manifest_text) else {
+            continue;
+        };
+        if manifest.get("version").and_then(Value::as_u64) != Some(1)
+            || manifest.get("codexConfigDir").and_then(Value::as_str) != Some(codex_dir_key)
+        {
+            continue;
+        }
+
+        let mut jsonl_backups = Vec::new();
+        collect_jsonl_files(&generation.join("jsonl"), &mut jsonl_backups, 0, 10);
+        for backup in jsonl_backups {
+            collect_session_provider_ledger(&backup, &mut session_providers);
+        }
+
+        let mut state_backups = Vec::new();
+        collect_files_with_extension(
+            &generation.join("state"),
+            "sqlite",
+            &mut state_backups,
+            0,
+            4,
+        );
+        for backup in state_backups {
+            collect_thread_provider_ledger(&backup, &mut thread_providers)?;
+        }
+    }
+    Ok((session_providers, thread_providers))
+}
+
+fn collect_session_provider_ledger(path: &Path, ledger: &mut BTreeMap<String, String>) {
+    let Ok(content) = fs::read_to_string(path) else {
+        return;
+    };
+    for line in content.lines() {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) != Some("session_meta") {
+            continue;
+        }
+        let Some(payload) = value.get("payload") else {
+            continue;
+        };
+        let Some(session_id) = payload.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(provider_id) = payload
+            .get("model_provider")
+            .and_then(Value::as_str)
+            .filter(|provider_id| *provider_id != CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+        else {
+            continue;
+        };
+        ledger
+            .entry(session_id.to_string())
+            .or_insert_with(|| provider_id.to_string());
+    }
+}
+
+fn collect_thread_provider_ledger(
+    db_path: &Path,
+    ledger: &mut BTreeMap<String, String>,
+) -> Result<(), AppError> {
+    let conn = Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(|error| AppError::Database(format!("打开 Codex state DB 备份失败: {error}")))?;
+    if !Database::table_exists(&conn, "threads")?
+        || !Database::has_column(&conn, "threads", "model_provider")?
+    {
+        return Ok(());
+    }
+    let mut statement = conn
+        .prepare(
+            "SELECT id, model_provider FROM threads \
+             WHERE model_provider IS NOT NULL AND model_provider != ?1",
+        )
+        .map_err(|error| AppError::Database(format!("读取 Codex state DB 备份失败: {error}")))?;
+    let rows = statement
+        .query_map([CC_SWITCH_CODEX_MODEL_PROVIDER_ID], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| AppError::Database(format!("读取 Codex state DB 备份失败: {error}")))?;
+    for row in rows {
+        let (thread_id, provider_id) = row.map_err(|error| {
+            AppError::Database(format!("读取 Codex state DB 备份行失败: {error}"))
+        })?;
+        ledger.entry(thread_id).or_insert(provider_id);
+    }
+    Ok(())
+}
+
+fn rewrite_target_session_meta_line_for_restore(
+    line: &str,
+    session_providers: &BTreeMap<String, String>,
+) -> Option<String> {
+    let mut value = serde_json::from_str::<Value>(line).ok()?;
+    if value.get("type").and_then(Value::as_str) != Some("session_meta") {
+        return None;
+    }
+    let payload = value.get_mut("payload")?.as_object_mut()?;
+    if payload.get("model_provider")?.as_str()? != CC_SWITCH_CODEX_MODEL_PROVIDER_ID {
+        return None;
+    }
+    let original_provider = session_providers.get(payload.get("id")?.as_str()?)?;
+    payload.insert(
+        "model_provider".to_string(),
+        Value::String(original_provider.clone()),
+    );
+    serde_json::to_string(&value).ok()
+}
+
+fn restore_target_state_db_threads(
+    db_path: &Path,
+    codex_dir: &Path,
+    thread_providers: &BTreeMap<String, String>,
+    backup_root: &Path,
+) -> Result<usize, AppError> {
+    if !db_path.is_file() || thread_providers.is_empty() {
+        return Ok(0);
+    }
+    let mut conn = Connection::open(db_path)
+        .map_err(|error| AppError::Database(format!("打开 Codex state DB 失败: {error}")))?;
+    conn.busy_timeout(Duration::from_secs(5))
+        .map_err(|error| AppError::Database(format!("设置 Codex state DB 超时失败: {error}")))?;
+    if !Database::table_exists(&conn, "threads")?
+        || !Database::has_column(&conn, "threads", "model_provider")?
+    {
+        return Ok(0);
+    }
+
+    let mut matching_rows = 0;
+    for thread_id in thread_providers.keys() {
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM threads WHERE id = ?1 AND model_provider = ?2",
+                [thread_id.as_str(), CC_SWITCH_CODEX_MODEL_PROVIDER_ID],
+                |row| row.get(0),
+            )
+            .map_err(|error| AppError::Database(format!("统计 Codex 待恢复行失败: {error}")))?;
+        matching_rows += count as usize;
+    }
+    if matching_rows == 0 {
+        return Ok(0);
+    }
+
+    backup_codex_state_db(db_path, codex_dir, backup_root, &conn)?;
+    let transaction = conn
+        .transaction()
+        .map_err(|error| AppError::Database(format!("开启 Codex 恢复事务失败: {error}")))?;
+    let mut changed = 0;
+    for (thread_id, original_provider) in thread_providers {
+        changed += transaction
+            .execute(
+                "UPDATE threads SET model_provider = ?1 \
+                 WHERE id = ?2 AND model_provider = ?3",
+                [
+                    original_provider.as_str(),
+                    thread_id.as_str(),
+                    CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+                ],
+            )
+            .map_err(|error| AppError::Database(format!("恢复 Codex provider 桶失败: {error}")))?;
+    }
+    transaction
+        .commit()
+        .map_err(|error| AppError::Database(format!("提交 Codex 恢复事务失败: {error}")))?;
+    Ok(changed)
+}
+
+fn collect_non_custom_jsonl_provider_ids(codex_dir: &Path) -> BTreeSet<String> {
+    let mut files = Vec::new();
+    collect_jsonl_files(&codex_dir.join("sessions"), &mut files, 0, 8);
+    collect_jsonl_files(&codex_dir.join("archived_sessions"), &mut files, 0, 4);
+
+    let mut provider_ids = BTreeSet::new();
+    for path in files {
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        for line in content.lines() {
+            let Ok(value) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            if value.get("type").and_then(Value::as_str) != Some("session_meta") {
+                continue;
+            }
+            let Some(provider_id) = value
+                .get("payload")
+                .and_then(|payload| payload.get("model_provider"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|provider_id| {
+                    !provider_id.is_empty() && *provider_id != CC_SWITCH_CODEX_MODEL_PROVIDER_ID
+                })
+            else {
+                continue;
+            };
+            provider_ids.insert(provider_id.to_string());
+        }
+    }
+    provider_ids
+}
+
+fn collect_non_custom_state_provider_ids(
+    db_path: &Path,
+    provider_ids: &mut BTreeSet<String>,
+) -> Result<(), AppError> {
+    if !db_path.is_file() {
+        return Ok(());
+    }
+    let conn = Connection::open(db_path)
+        .map_err(|error| AppError::Database(format!("打开 Codex state DB 失败: {error}")))?;
+    if !Database::table_exists(&conn, "threads")?
+        || !Database::has_column(&conn, "threads", "model_provider")?
+    {
+        return Ok(());
+    }
+    let mut statement = conn
+        .prepare(
+            "SELECT DISTINCT model_provider FROM threads \
+             WHERE model_provider IS NOT NULL AND model_provider != ?1",
+        )
+        .map_err(|error| AppError::Database(format!("读取 Codex provider 桶失败: {error}")))?;
+    let rows = statement
+        .query_map([CC_SWITCH_CODEX_MODEL_PROVIDER_ID], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(|error| AppError::Database(format!("读取 Codex provider 桶失败: {error}")))?;
+    for provider_id in rows.flatten() {
+        let provider_id = provider_id.trim();
+        if !provider_id.is_empty() {
+            provider_ids.insert(provider_id.to_string());
+        }
+    }
+    Ok(())
 }
 
 fn is_known_cc_switch_legacy_codex_model_provider_id(provider_id: &str) -> bool {
@@ -2626,5 +3090,148 @@ model_provider = "aihubmix"
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert!(!ids.contains("my-local-relay"));
+    }
+
+    #[test]
+    fn target_migration_marks_failed_after_jsonl_when_state_backup_path_is_blocked() {
+        // Inject a mid-flight failure after JSONL rewrite: pre-create
+        // backup_root/state as a file so SQLite backup cannot create its tree.
+        let fixture = tempdir().expect("fixture");
+        let codex_dir = fixture.path().join(".codex");
+        let sessions = codex_dir.join("sessions/2026/07/22");
+        fs::create_dir_all(&sessions).expect("session tree");
+        fs::write(
+            codex_dir.join("config.toml"),
+            "model_provider = \"custom\"\n",
+        )
+        .expect("config");
+        let session_path = sessions.join("official.jsonl");
+        fs::write(
+            &session_path,
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"official\",\"model_provider\":\"openai\"}}\n",
+        )
+        .expect("session");
+        let state_path = codex_dir.join(CODEX_STATE_DB_FILENAME);
+        let state = Connection::open(&state_path).expect("state db");
+        state
+            .execute_batch(
+                "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT NOT NULL);
+                 INSERT INTO threads VALUES ('official', 'openai');",
+            )
+            .expect("state rows");
+        drop(state);
+
+        let ledger_parent = fixture.path().join("ledger");
+        let backup_root = ledger_parent.join("generation");
+        fs::create_dir_all(&backup_root).expect("generation");
+        fs::write(backup_root.join("state"), b"not-a-directory").expect("block state backups");
+
+        let error = migrate_codex_target_history_at(
+            &codex_dir,
+            "model_provider = \"custom\"\n",
+            &backup_root,
+        )
+        .expect_err("state backup path must fail after JSONL rewrite");
+        let message = error.to_string();
+        assert!(
+            message.contains("after rewriting 1 JSONL file") || message.contains("JSONL file(s)"),
+            "partial progress should be surfaced: {message}"
+        );
+
+        let session = fs::read_to_string(&session_path).expect("session after partial migrate");
+        assert!(
+            session.contains("\"model_provider\":\"custom\""),
+            "JSONL should already have been rewritten before the state failure"
+        );
+
+        let manifest: Value = serde_json::from_str(
+            &fs::read_to_string(backup_root.join("manifest.json")).expect("manifest"),
+        )
+        .expect("manifest json");
+        assert_eq!(
+            manifest.get("status").and_then(Value::as_str),
+            Some("failed")
+        );
+        assert_eq!(
+            manifest.get("migratedJsonlFiles").and_then(Value::as_u64),
+            Some(1)
+        );
+
+        // JSONL backups under the failed generation still allow precise restore.
+        let restored = restore_codex_target_history_at(
+            &codex_dir,
+            "model_provider = \"custom\"\n",
+            &ledger_parent,
+            &fixture.path().join("restore-generation"),
+        )
+        .expect("restore from failed generation ledger");
+        assert_eq!(restored.restored_jsonl_files, 1);
+        assert!(
+            fs::read_to_string(&session_path)
+                .expect("session after restore")
+                .contains("\"model_provider\":\"openai\""),
+            "failed-generation ledger should still restore original labels"
+        );
+
+        let second = restore_codex_target_history_at(
+            &codex_dir,
+            "model_provider = \"custom\"\n",
+            &ledger_parent,
+            &fixture.path().join("restore-generation-2"),
+        )
+        .expect("repeat restore");
+        assert_eq!(second.skipped_reason.as_deref(), Some("nothing_to_restore"));
+    }
+
+    #[test]
+    fn target_restore_reports_no_backup_ledger_when_parent_is_empty() {
+        let fixture = tempdir().expect("fixture");
+        let codex_dir = fixture.path().join(".codex");
+        fs::create_dir_all(&codex_dir).expect("codex dir");
+        fs::write(
+            codex_dir.join("config.toml"),
+            "model_provider = \"custom\"\n",
+        )
+        .expect("config");
+
+        let outcome = restore_codex_target_history_at(
+            &codex_dir,
+            "model_provider = \"custom\"\n",
+            &fixture.path().join("missing-ledger"),
+            &fixture.path().join("restore-gen"),
+        )
+        .expect("empty ledger is a skip, not an error");
+        assert_eq!(outcome.skipped_reason.as_deref(), Some("no_backup_ledger"));
+        assert_eq!(outcome.restored_jsonl_files, 0);
+        assert_eq!(outcome.restored_state_rows, 0);
+    }
+
+    #[test]
+    fn target_migration_detects_session_changed_during_rewrite() {
+        let fixture = tempdir().expect("fixture");
+        let codex_dir = fixture.path().join(".codex");
+        let sessions = codex_dir.join("sessions/2026/07/22");
+        fs::create_dir_all(&sessions).expect("session tree");
+        let session_path = sessions.join("race.jsonl");
+        fs::write(
+            &session_path,
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"race\",\"model_provider\":\"openai\"}}\n",
+        )
+        .expect("session");
+
+        let metadata = fs::metadata(&session_path).expect("meta");
+        let modified = metadata.modified().ok();
+        let len = metadata.len();
+        fs::write(
+            &session_path,
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"race\",\"model_provider\":\"openai\"}}\nextra\n",
+        )
+        .expect("concurrent rewrite");
+        let error = ensure_codex_session_file_unchanged(&session_path, modified, len)
+            .expect_err("changed session must be rejected");
+        assert!(
+            error.to_string().contains("changed during migration"),
+            "unexpected error: {error}"
+        );
     }
 }
