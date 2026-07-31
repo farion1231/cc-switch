@@ -96,13 +96,20 @@ impl HealthChecker {
             };
 
             for (provider, state) in providers {
-                if state != CircuitState::Open {
+                // 探测 Open 与 HalfOpen：Open 需主动转 HalfOpen，HalfOpen 需继续 probe
+                // 累计成功直到 Closed，否则无真实流量时会永久卡在 HalfOpen，
+                // 只能靠人工关闭/开启代理来恢复。
+                if state != CircuitState::Open && state != CircuitState::HalfOpen {
                     continue;
                 }
                 if self.probe(&provider, app_type_str).await {
                     let circuit_key = format!("{app_type_str}:{}", provider.id);
                     if let Some(breaker) = self.router.get_breaker(&circuit_key).await {
+                        // Open → HalfOpen（已是 HalfOpen 时为 no-op，不重置累计成功数）
                         breaker.force_half_open().await;
+                        // 把 probe 成功反馈为一次 HalfOpen 探测成功，达 success_threshold
+                        // 后自动转 Closed，使无真实流量场景也能完全自动恢复。
+                        breaker.record_success(false).await;
                     }
                 }
             }
@@ -471,6 +478,60 @@ mod tests {
 
         // 探测成功后：force_half_open → HalfOpen
         assert_eq!(breaker.get_state().await, CircuitState::HalfOpen);
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scan_once_recovers_to_closed_after_successful_probe() {
+        // 无真实流量时，probe 成功应自动反馈 record_success 使 HalfOpen→Closed，
+        // 免去人工关闭/开启代理才能恢复。success_threshold=1：一次 probe 成功即恢复。
+        let _home = TempHome::new();
+        let (base_url, handle) = spawn_once_server(200);
+
+        let db = Arc::new(Database::memory().unwrap());
+        db.update_circuit_breaker_config(&CircuitBreakerConfig {
+            failure_threshold: 1,
+            success_threshold: 1,
+            timeout_seconds: 3600,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        let provider = claude_provider_with(&base_url);
+        db.save_provider("claude", &provider).unwrap();
+        db.add_to_failover_queue("claude", &provider.id).unwrap();
+
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = Arc::new(ProviderRouter::new(db.clone()));
+        router
+            .record_result(
+                &provider.id,
+                "claude",
+                false,
+                false,
+                Some("boom".to_string()),
+            )
+            .await
+            .unwrap();
+
+        let checker = HealthChecker::new(router.clone(), db, test_client());
+
+        let circuit_key = format!("claude:{}", provider.id);
+        let breaker = router
+            .get_breaker(&circuit_key)
+            .await
+            .expect("breaker exists");
+        assert_eq!(breaker.get_state().await, CircuitState::Open);
+
+        checker.scan_once().await;
+
+        // probe 成功后应自动恢复到 Closed（而非卡在 HalfOpen 等真实流量）
+        assert_eq!(breaker.get_state().await, CircuitState::Closed);
         handle.join().expect("server thread");
     }
 
