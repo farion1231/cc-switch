@@ -703,21 +703,20 @@ mod tests {
     }
 
     #[test]
-    fn validate_provider_settings_uses_pi_schema_validator() {
+    fn validate_provider_settings_accepts_extension_owned_pi_api() {
         let provider = Provider::with_id(
             "pi-custom".into(),
             "Pi Custom".into(),
             json!({
                 "baseUrl": "https://example.com/v1",
-                "api": "openai-chat",
+                "api": "extension-owned-api",
                 "models": [{ "id": "model-1" }]
             }),
             None,
         );
 
-        let error = ProviderService::validate_provider_settings(&AppType::Pi, &provider)
-            .expect_err("unsupported Pi API must be rejected at the service boundary");
-        assert!(error.to_string().contains("unsupported API"));
+        ProviderService::validate_provider_settings(&AppType::Pi, &provider)
+            .expect("non-empty extension-owned Pi APIs should pass the service boundary");
     }
 
     #[test]
@@ -2586,27 +2585,16 @@ impl ProviderService {
         state.db.save_provider(app_type.as_str(), &provider)?;
 
         // Pi combines an additive provider registry with an active default.
+        // Adding to the registry must not select it; selection is an explicit
+        // switch operation, including for the first provider.
         if matches!(app_type, AppType::Pi) {
             if !add_to_live {
                 return Ok(true);
             }
 
-            let current = crate::settings::get_effective_current_provider(&state.db, &app_type)?;
-            let live_result = if current.is_none() {
-                crate::pi_config::activate_pi_live_provider(&provider, false)
-            } else {
-                crate::pi_config::upsert_pi_live_provider(&provider, false)
-            };
-            if let Err(error) = live_result {
+            if let Err(error) = crate::pi_config::upsert_pi_live_provider(&provider, false) {
                 let _ = state.db.delete_provider(app_type.as_str(), &provider.id);
                 return Err(error);
-            }
-
-            if current.is_none() {
-                state
-                    .db
-                    .set_current_provider(app_type.as_str(), &provider.id)?;
-                crate::settings::set_current_provider(&app_type, Some(&provider.id))?;
             }
             return Ok(true);
         }

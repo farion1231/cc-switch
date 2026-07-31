@@ -53,10 +53,6 @@ function parsePiConfig(rawConfig: string): PiProviderConfig | null {
     if (config.models !== undefined) {
       if (!Array.isArray(config.models)) return null;
       for (const entry of config.models) {
-        if (typeof entry === "string") {
-          models.push({ id: entry, name: entry });
-          continue;
-        }
         if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
           return null;
         }

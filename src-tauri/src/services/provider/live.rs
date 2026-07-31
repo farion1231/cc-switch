@@ -1456,21 +1456,36 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
     }
 }
 
-fn pi_provider_config_from_live_settings(live_settings: Value) -> Value {
-    let mut provider_config = live_settings
-        .get("providerConfig")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-
-    if let Some(default_model) = live_settings.get("defaultModel").cloned() {
-        if !default_model.is_null() {
-            if let Some(obj) = provider_config.as_object_mut() {
-                obj.insert("defaultModel".to_string(), default_model);
-            }
-        }
+fn import_pi_providers_from_live(state: &AppState) -> Result<bool, AppError> {
+    let registry = crate::pi_config::read_pi_live_providers()?;
+    if registry.providers.is_empty() {
+        return Ok(false);
     }
 
-    provider_config
+    let imported_ids = registry
+        .providers
+        .iter()
+        .map(|provider| provider.id.clone())
+        .collect::<std::collections::HashSet<_>>();
+    for mut provider in registry.providers {
+        provider.category = Some("custom".to_string());
+        provider
+            .meta
+            .get_or_insert_with(Default::default)
+            .live_config_managed = Some(true);
+        state.db.save_provider(AppType::Pi.as_str(), &provider)?;
+    }
+
+    if let Some(default_provider) = registry
+        .default_provider
+        .filter(|provider_id| imported_ids.contains(provider_id))
+    {
+        state
+            .db
+            .set_current_provider(AppType::Pi.as_str(), &default_provider)?;
+        crate::settings::set_current_provider(&AppType::Pi, Some(&default_provider))?;
+    }
+    Ok(true)
 }
 
 /// Import default configuration from live files
@@ -1508,7 +1523,11 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         ));
     }
 
-    let mut imported_provider_id = "default".to_string();
+    if matches!(app_type, AppType::Pi) {
+        return import_pi_providers_from_live(state);
+    }
+
+    let imported_provider_id = "default".to_string();
     let settings_config = match app_type {
         AppType::Codex => crate::codex_config::read_codex_live_settings()?,
         AppType::GrokBuild => {
@@ -1579,15 +1598,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
-        AppType::Pi => {
-            let live_settings = crate::pi_config::read_pi_live_settings()?;
-            imported_provider_id = live_settings
-                .get("defaultProvider")
-                .and_then(Value::as_str)
-                .unwrap_or("default")
-                .to_string();
-            pi_provider_config_from_live_settings(live_settings)
-        }
+        AppType::Pi => unreachable!("Pi imports its complete provider registry above"),
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
             unreachable!("additive mode apps are handled by early return")
@@ -1626,13 +1637,6 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         }
         .to_string(),
     );
-    if matches!(app_type, AppType::Pi) {
-        provider
-            .meta
-            .get_or_insert_with(Default::default)
-            .live_config_managed = Some(true);
-    }
-
     state.db.save_provider(app_type.as_str(), &provider)?;
     state
         .db
@@ -2683,30 +2687,5 @@ base_url = "https://a.example/v1"
 
         assert!(!config_text.contains("mcp_servers"));
         assert!(config_text.contains("model = \"grok-4.5\""));
-    }
-
-    #[test]
-    fn pi_import_provider_config_preserves_default_model() {
-        let live_settings = json!({
-            "defaultProvider": "packy",
-            "defaultModel": "gpt-5.5-mini",
-            "providerConfig": {
-                "baseUrl": "https://api.packy.example/v1",
-                "apiKey": "sk-packy",
-                "api": "openai-completions",
-                "models": [
-                    { "id": "gpt-5.5" },
-                    { "id": "gpt-5.5-mini" }
-                ]
-            }
-        });
-
-        let provider_config = pi_provider_config_from_live_settings(live_settings);
-
-        assert_eq!(
-            provider_config.get("defaultModel"),
-            Some(&json!("gpt-5.5-mini")),
-            "Pi import must preserve settings.json defaultModel inside stored provider config"
-        );
     }
 }

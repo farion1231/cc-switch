@@ -46,7 +46,7 @@ pub struct VisibleApps {
     pub openclaw: bool,
     #[serde(default)]
     pub hermes: bool,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub pi: bool,
 }
 
@@ -61,7 +61,7 @@ impl Default for VisibleApps {
             opencode: true,
             openclaw: true,
             hermes: false, // 默认不显示，需用户手动启用
-            pi: true,
+            pi: false,     // 默认不显示，需用户手动启用
         }
     }
 }
@@ -1189,6 +1189,10 @@ mod tests {
         .expect("visible apps");
 
         assert!(visible.is_visible(&AppType::ClaudeDesktop));
+        assert!(
+            !visible.is_visible(&AppType::Pi),
+            "Pi remains opt-in when older settings have no Pi field"
+        );
     }
 
     #[test]

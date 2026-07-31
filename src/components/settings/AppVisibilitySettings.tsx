@@ -42,7 +42,7 @@ const DEFAULT_VISIBLE_APPS: VisibleApps = {
   opencode: true,
   openclaw: true,
   hermes: true,
-  pi: true,
+  pi: false,
 };
 
 export function AppVisibilitySettings({
