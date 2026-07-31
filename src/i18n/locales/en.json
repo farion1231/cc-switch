@@ -291,7 +291,12 @@
     "undoWarning": "This removes only the records this migration installed, using its ledger. Sessions and tasks you created after migrating are never touched.",
     "undoCheckbox": "I understand only the migrated records will be removed",
     "undoConfirm": "Confirm undo",
-    "undoBack": "Back"
+    "undoBack": "Back",
+    "ambiguousPickTitle": "Multiple candidate directories found",
+    "ambiguousPickDescription": "Choose the account root to use for this component. The rest of the plan is rebuilt after your choice.",
+    "ambiguousPickAgain": "No candidates are currently available — check the directories and try again.",
+    "applyErrorTitle": "Migration completed with errors",
+    "applyErrorDescription": "Some records were installed before a later step failed. The backup and ledger are intact — you can verify what was installed or undo only the migrated records."
   },
   "notifications": {
     "providerAdded": "Provider added",

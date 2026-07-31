@@ -46,6 +46,14 @@ const COMPONENT_IDS = [
 ] as const;
 type ComponentId = (typeof COMPONENT_IDS)[number];
 
+/** Explicit account-root choices sent alongside plan/apply/verify. */
+type RootOverrideSelection = {
+  sourceCodeRoot?: string;
+  targetCodeRoot?: string;
+  sourceCoworkRoot?: string;
+  targetCoworkRoot?: string;
+};
+
 type Step = "audit" | "plan" | "confirm" | "applying" | "done";
 
 function formatBytes(bytes: number): string {
@@ -99,6 +107,8 @@ export function ClaudeDesktopMigrationDialog({
     useState<ClaudeDesktopMigrationRestoreResult | null>(null);
   const [showUndo, setShowUndo] = useState(false);
   const [undoConsent, setUndoConsent] = useState(false);
+  const [rootOverrides, setRootOverrides] = useState<RootOverrideSelection>({});
+  const [appliedComponents, setAppliedComponents] = useState<string[]>([]);
 
   // Reset and run the read-only audit each time the dialog opens.
   useEffect(() => {
@@ -115,6 +125,8 @@ export function ClaudeDesktopMigrationDialog({
     setRestoreResult(null);
     setShowUndo(false);
     setUndoConsent(false);
+    setRootOverrides({});
+    setAppliedComponents([]);
     setSelected(["code", "cowork", "schedules", "projects", "artifacts"]);
     claudeDesktopMigrationApi
       .audit()
@@ -123,19 +135,25 @@ export function ClaudeDesktopMigrationDialog({
       .finally(() => setBusy(false));
   }, [isOpen]);
 
-  const buildPlan = useCallback(async (maps: PathMapping[]) => {
-    setBusy(true);
-    setError("");
-    try {
-      const result = await claudeDesktopMigrationApi.plan({ pathMaps: maps });
-      setPlan(result);
-      setStep("plan");
-    } catch (e) {
-      setError(extractErrorMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  }, []);
+  const buildPlan = useCallback(
+    async (maps: PathMapping[], overrides?: RootOverrideSelection) => {
+      setBusy(true);
+      setError("");
+      try {
+        const result = await claudeDesktopMigrationApi.plan({
+          pathMaps: maps,
+          ...(overrides ?? rootOverrides),
+        });
+        setPlan(result);
+        setStep("plan");
+      } catch (e) {
+        setError(extractErrorMessage(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [rootOverrides],
+  );
 
   const runApply = useCallback(async () => {
     setStep("applying");
@@ -146,8 +164,12 @@ export function ClaudeDesktopMigrationDialog({
         pathMaps,
         components: selected,
         confirmed: true,
+        ...rootOverrides,
       });
       setApplyResult(result);
+      // Snapshot what actually ran so one-click verification checks only the
+      // components that were applied (never the deselected ones).
+      setAppliedComponents(selected);
       setStep("done");
     } catch (e) {
       setError(extractErrorMessage(e));
@@ -155,26 +177,34 @@ export function ClaudeDesktopMigrationDialog({
     } finally {
       setBusy(false);
     }
-  }, [pathMaps, selected]);
+  }, [pathMaps, selected, rootOverrides]);
 
   const runVerify = useCallback(async () => {
     setBusy(true);
     setError("");
     try {
-      const result = await claudeDesktopMigrationApi.verify({ pathMaps });
+      const result = await claudeDesktopMigrationApi.verify(
+        { pathMaps, ...rootOverrides },
+        appliedComponents,
+      );
       setVerifyResult(result);
     } catch (e) {
       setError(extractErrorMessage(e));
     } finally {
       setBusy(false);
     }
-  }, [pathMaps]);
+  }, [pathMaps, rootOverrides, appliedComponents]);
 
   const runRestore = useCallback(async () => {
     setBusy(true);
     setError("");
     try {
-      const result = await claudeDesktopMigrationApi.restore();
+      // Target the exact ledger that owns this apply's writes. When a later
+      // component failed, the newest ledger on disk may be an unrelated
+      // skip-only retry; restoring must use the ledger that installed records.
+      const result = await claudeDesktopMigrationApi.restore(
+        applyResult?.ledgerPath,
+      );
       setRestoreResult(result);
       setShowUndo(false);
     } catch (e) {
@@ -182,7 +212,7 @@ export function ClaudeDesktopMigrationDialog({
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [applyResult?.ledgerPath]);
 
   const toggleComponent = (id: ComponentId, checked: boolean) => {
     setSelected((prev) =>
@@ -289,6 +319,58 @@ export function ClaudeDesktopMigrationDialog({
       ) : null}
     </li>
   );
+
+  /** Candidate picker shown when account-root discovery is ambiguous. Picking a
+   *  candidate pins it as an explicit override and rebuilds the plan. */
+  const renderCandidatePicker = (
+    component: ComponentPlan,
+    overrideKey: keyof RootOverrideSelection,
+  ) => {
+    if (
+      component.status !== "ambiguous-source" &&
+      component.status !== "ambiguous-target"
+    ) {
+      return null;
+    }
+    return (
+      <div className="mt-2 space-y-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+        <div className="text-xs font-medium text-amber-900 dark:text-amber-200">
+          {t("claudeDesktopMigration.ambiguousPickTitle")}
+        </div>
+        <p className="text-xs leading-relaxed text-amber-900/90 dark:text-amber-200/90">
+          {t("claudeDesktopMigration.ambiguousPickDescription")}
+        </p>
+        {component.candidates.length > 0 ? (
+          component.candidates.map((candidate) => {
+            const checked = rootOverrides[overrideKey] === candidate;
+            return (
+              <label
+                key={candidate}
+                className="flex cursor-pointer select-none items-start gap-2 rounded border border-border/60 bg-background px-2 py-1.5 text-xs"
+              >
+                <input
+                  type="radio"
+                  name={`root-${overrideKey}`}
+                  className="mt-0.5"
+                  checked={checked}
+                  onChange={() => {
+                    const next = { ...rootOverrides, [overrideKey]: candidate };
+                    setRootOverrides(next);
+                    buildPlan(pathMaps, next);
+                  }}
+                />
+                <span className="break-all font-mono">{candidate}</span>
+              </label>
+            );
+          })
+        ) : (
+          <p className="text-xs text-amber-900/70 dark:text-amber-200/70">
+            {t("claudeDesktopMigration.ambiguousPickAgain")}
+          </p>
+        )}
+      </div>
+    );
+  };
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -416,6 +498,12 @@ export function ClaudeDesktopMigrationDialog({
                         {renderStatusBadge(component.status)}
                       </label>
                       {ready ? renderComponentPlan(component) : null}
+                      {id === "code"
+                        ? renderCandidatePicker(component, "sourceCodeRoot")
+                        : renderCandidatePicker(component, "sourceCoworkRoot")}
+                      {id === "code"
+                        ? renderCandidatePicker(component, "targetCodeRoot")
+                        : renderCandidatePicker(component, "targetCoworkRoot")}
                     </div>
                   );
                 })}
@@ -599,6 +687,20 @@ export function ClaudeDesktopMigrationDialog({
           {/* -- Step: done ------------------------------------------------- */}
           {step === "done" && applyResult ? (
             <div className="space-y-4">
+              {applyResult.applyError ? (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3">
+                  <div className="flex items-center gap-2 text-sm font-medium text-destructive">
+                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                    {t("claudeDesktopMigration.applyErrorTitle")}
+                  </div>
+                  <p className="mt-1 text-xs leading-relaxed text-destructive/90">
+                    {t("claudeDesktopMigration.applyErrorDescription")}
+                  </p>
+                  <p className="mt-1 break-all font-mono text-xs text-destructive/90">
+                    {applyResult.applyError}
+                  </p>
+                </div>
+              ) : null}
               <div className="grid grid-cols-3 gap-3 text-center">
                 <StatCard
                   label={t("claudeDesktopMigration.doneInstalled")}

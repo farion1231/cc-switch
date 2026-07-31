@@ -84,6 +84,7 @@ export interface MigrationRecord {
   targetSession?: string;
   target?: string;
   fingerprint?: string;
+  metadataFingerprint?: string;
   reason?: string;
   error?: string;
 }
@@ -95,6 +96,7 @@ export interface ClaudeDesktopMigrationApplyResult {
   skippedCount: number;
   failedCount: number;
   failed: MigrationRecord[];
+  applyError?: string;
 }
 
 export interface MigrationVerifyCheck {
@@ -163,8 +165,12 @@ export const claudeDesktopMigrationApi = {
   /** Read-only structural verification after a migration. */
   async verify(
     request: MigrationRootsRequest,
+    components?: string[],
   ): Promise<ClaudeDesktopMigrationVerifyResult> {
-    return await invoke("verify_claude_desktop_data_migration", { request });
+    return await invoke("verify_claude_desktop_data_migration", {
+      request,
+      components,
+    });
   },
 
   /** Undo exactly what a migration installed (ledger-driven). */

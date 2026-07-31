@@ -291,7 +291,12 @@
     "undoWarning": "此操作只会根据迁移账本移除本次迁移安装的记录，绝不会触碰你在迁移后新建的会话或任务。",
     "undoCheckbox": "我明白只会移除本次迁移的记录",
     "undoConfirm": "确认撤销",
-    "undoBack": "返回"
+    "undoBack": "返回",
+    "ambiguousPickTitle": "发现多个候选目录",
+    "ambiguousPickDescription": "请为当前组件选择要使用的账户根目录。选择后会重新生成迁移计划。",
+    "ambiguousPickAgain": "当前没有可用的候选目录 —— 请检查目录后重试。",
+    "applyErrorTitle": "迁移完成，但有错误",
+    "applyErrorDescription": "部分记录已安装，但后续步骤失败。备份与迁移台账仍然完整 —— 你可以验证已安装的内容，或仅撤销本次迁移安装的记录。"
   },
   "notifications": {
     "providerAdded": "供应商已添加",

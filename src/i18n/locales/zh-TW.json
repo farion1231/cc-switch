@@ -291,7 +291,12 @@
     "undoWarning": "此操作只會根據遷移帳本移除本次遷移安裝的記錄，絕不會觸碰你在遷移後新建的工作階段或任務。",
     "undoCheckbox": "我明白只會移除本次遷移的記錄",
     "undoConfirm": "確認復原",
-    "undoBack": "返回"
+    "undoBack": "返回",
+    "ambiguousPickTitle": "發現多個候選目錄",
+    "ambiguousPickDescription": "請為目前元件選擇要使用的帳戶根目錄。選擇後會重新產生遷移計畫。",
+    "ambiguousPickAgain": "目前沒有可用的候選目錄 —— 請檢查目錄後重試。",
+    "applyErrorTitle": "遷移完成，但有錯誤",
+    "applyErrorDescription": "部分記錄已安裝，但後續步驟失敗。備份與遷移帳本仍然完整 —— 你可以驗證已安裝的內容，或僅復原本次遷移安裝的記錄。"
   },
   "notifications": {
     "providerAdded": "供應商已新增",
