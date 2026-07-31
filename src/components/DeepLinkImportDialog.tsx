@@ -550,10 +550,8 @@ export function DeepLinkImportDialog() {
                                   <div className="text-xs text-muted-foreground">
                                     TOML Config:
                                   </div>
-                                  <pre className="text-xs font-mono bg-background p-2 rounded overflow-x-auto max-h-24 whitespace-pre-wrap">
-                                    {parsedConfig.tomlConfig.substring(0, 300)}
-                                    {parsedConfig.tomlConfig.length > 300 &&
-                                      "..."}
+                                  <pre className="text-xs font-mono bg-background p-2 rounded overflow-auto max-h-24 whitespace-pre-wrap break-all">
+                                    {parsedConfig.tomlConfig}
                                   </pre>
                                 </div>
                               )}

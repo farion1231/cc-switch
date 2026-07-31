@@ -1,6 +1,7 @@
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import type { DeepLinkImportRequest } from "@/lib/api/deeplink";
 import { decodeBase64Utf8 } from "@/lib/utils/base64";
+import { isSensitiveConfigKey, maskSensitiveValue } from "@/utils/deeplinkRisk";
 
 export interface ParsedDeepLinkConfig {
   type: "claude" | "codex" | "gemini" | "grokbuild";
@@ -9,41 +10,24 @@ export interface ParsedDeepLinkConfig {
   tomlConfig?: string;
 }
 
-const SENSITIVE_KEY_MARKERS = [
-  "TOKEN",
-  "KEY",
-  "SECRET",
-  "PASSWORD",
-  "AUTHORIZATION",
-  "COOKIE",
-  "CREDENTIAL",
-];
-const SENSITIVE_KEY_NAMES = new Set(["AUTH", "BEARER"]);
-
-const isSensitiveKey = (key: string) => {
-  const normalizedKey = key.toUpperCase();
-  return (
-    SENSITIVE_KEY_NAMES.has(normalizedKey) ||
-    SENSITIVE_KEY_MARKERS.some((marker) => normalizedKey.includes(marker))
-  );
-};
-
-const maskSensitiveValue = (value: string) =>
-  value.length > 4 ? `${value.slice(0, 4)}${"*".repeat(12)}` : "****";
-
-const maskStructuredSecrets = (value: unknown, key = ""): unknown => {
+const maskStructuredSecrets = (
+  value: unknown,
+  key = "",
+  inheritedSensitive = false,
+): unknown => {
+  const sensitive = inheritedSensitive || isSensitiveConfigKey(key);
   if (typeof value === "string") {
-    return isSensitiveKey(key) ? maskSensitiveValue(value) : value;
+    return sensitive ? maskSensitiveValue(value) : value;
   }
   if (Array.isArray(value)) {
-    return value.map((item) => maskStructuredSecrets(item, key));
+    return value.map((item) => maskStructuredSecrets(item, key, sensitive));
   }
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>).map(
         ([childKey, childValue]) => [
           childKey,
-          maskStructuredSecrets(childValue, childKey),
+          maskStructuredSecrets(childValue, childKey, sensitive),
         ],
       ),
     );

@@ -101,6 +101,33 @@ headers = { Authorization = "Bearer top-secret", Cookie = "session=secret", cred
     expect(preview?.tomlConfig).toContain("visible");
   });
 
+  it("inherits sensitivity through nested tables and arrays of tables", () => {
+    const config = `${grokConfig}
+[model."grok-4.5".auth]
+value = "nested-auth-secret"
+short = "tiny"
+empty = ""
+nested = { value = "inline-nested-secret" }
+
+[[model."grok-4.5".credentials]]
+value = "array-table-secret"
+`;
+    const preview = parseDeepLinkConfigPreview({
+      app: "grokbuild",
+      config: encodeBase64(config),
+      configFormat: "toml",
+    });
+
+    expect(preview?.tomlConfig).not.toContain("nested-auth-secret");
+    expect(preview?.tomlConfig).not.toContain("inline-nested-secret");
+    expect(preview?.tomlConfig).not.toContain("array-table-secret");
+    expect(preview?.tomlConfig).toContain("nest************");
+    expect(preview?.tomlConfig).toContain("inli************");
+    expect(preview?.tomlConfig).toContain("arra************");
+    expect(preview?.tomlConfig).toContain('short = "****"');
+    expect(preview?.tomlConfig).toContain('empty = ""');
+  });
+
   it("also masks secrets in Codex TOML previews", () => {
     const preview = parseDeepLinkConfigPreview({
       app: "codex",
