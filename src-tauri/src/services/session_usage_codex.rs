@@ -325,9 +325,12 @@ fn load_pending_entry(db: &Database, file_path: &str) -> Result<Option<PendingEn
             let reason = serde_json::from_str(&reason_json).map_err(|error| {
                 AppError::Database(format!("解析 Codex pending 状态失败: {error}"))
             })?;
+            let size = u64::try_from(size).map_err(|_| {
+                AppError::Database(format!("Codex pending child_size 超出范围: {size}"))
+            })?;
             Ok(Some(PendingEntry {
                 modified,
-                size: u64::try_from(size).unwrap_or(0),
+                size,
                 reason,
             }))
         }
@@ -345,6 +348,12 @@ fn save_pending_entry(
 ) -> Result<(), AppError> {
     let reason_json = serde_json::to_string(&entry.reason)
         .map_err(|source| AppError::JsonSerialize { source })?;
+    let child_size = i64::try_from(entry.size).map_err(|_| {
+        AppError::Database(format!(
+            "Codex pending 文件大小无法写入 SQLite INTEGER: {}",
+            entry.size
+        ))
+    })?;
     let updated_at = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|duration| duration.as_secs() as i64)
@@ -1695,6 +1704,57 @@ mod tests {
         db.create_tables()?;
         db.ensure_model_pricing_seeded()?;
         Ok(db)
+    }
+
+    #[test]
+    fn pending_entry_rejects_negative_child_size() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let file_path = "negative-child-size.jsonl";
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO codex_pending_sync
+                    (file_path, child_modified, child_size, reason_json, updated_at)
+                 VALUES (?1, 1, -1, ?2, 1)",
+                rusqlite::params![
+                    file_path,
+                    serde_json::to_string(&PendingReason::Stable("test".to_string())).unwrap()
+                ],
+            )?;
+        }
+
+        let error = load_pending_entry(&db, file_path).unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::Database(message)
+                if message.contains("Codex pending child_size 超出范围: -1")
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn pending_entry_rejects_size_above_sqlite_integer_range() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let entry = PendingEntry {
+            modified: 1,
+            size: i64::MAX as u64 + 1,
+            reason: PendingReason::Stable("test".to_string()),
+        };
+
+        let error = save_pending_entry(&db, "oversized-child.jsonl", &entry).unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::Database(message)
+                if message.contains("Codex pending 文件大小无法写入 SQLite INTEGER")
+        ));
+        let conn = lock_conn!(db.conn);
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM codex_pending_sync WHERE file_path = ?1",
+            ["oversized-child.jsonl"],
+            |row| row.get(0),
+        )?;
+        assert_eq!(count, 0);
+        Ok(())
     }
 
     #[test]
