@@ -95,10 +95,7 @@ export function AggregateProviderFields({
     onCustomRowsChange?.(next);
     onRoutesChange({ ...routes, custom: rowsToCustomRoutes(next) });
   };
-  const patchRow = (
-    index: number,
-    patch: Partial<AggregateCustomRouteRow>,
-  ) => {
+  const patchRow = (index: number, patch: Partial<AggregateCustomRouteRow>) => {
     updateRows(
       rows.map((row, rowIndex) =>
         rowIndex === index ? { ...row, ...patch } : row,
@@ -366,9 +363,8 @@ export function AggregateProviderFields({
                   ...(fetchedModels[target.id] ?? []),
                 ].filter(
                   (model, modelIndex, all) =>
-                    all.findIndex(
-                      (candidate) => candidate.id === model.id,
-                    ) === modelIndex,
+                    all.findIndex((candidate) => candidate.id === model.id) ===
+                    modelIndex,
                 )
               : [];
 
@@ -443,9 +439,7 @@ export function AggregateProviderFields({
                   size="icon"
                   aria-label={t("common.delete", { defaultValue: "Delete" })}
                   onClick={() =>
-                    updateRows(
-                      rows.filter((_, rowIndex) => rowIndex !== index),
-                    )
+                    updateRows(rows.filter((_, rowIndex) => rowIndex !== index))
                   }
                 >
                   <Trash2 className="h-4 w-4" />

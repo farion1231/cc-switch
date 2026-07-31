@@ -211,9 +211,9 @@ describe("aggregate route helpers", () => {
         (model) => model.ownedBy === "OpenAI" && model.id.trim() !== "",
       ),
     ).toBe(true);
-    expect(
-      CODEX_OFFICIAL_MODEL_SUGGESTIONS.map((model) => model.id),
-    ).toContain("gpt-5.5");
+    expect(CODEX_OFFICIAL_MODEL_SUGGESTIONS.map((model) => model.id)).toContain(
+      "gpt-5.5",
+    );
   });
 
   it("builds codex route connection from TOML config and auth", () => {
@@ -243,9 +243,7 @@ describe("aggregate route helpers", () => {
   });
 
   it("falls back to empty strings when codex config/auth is missing", () => {
-    expect(
-      getCodexAggregateRouteConnection(provider("kimi", "Kimi")),
-    ).toEqual({
+    expect(getCodexAggregateRouteConnection(provider("kimi", "Kimi"))).toEqual({
       baseUrl: "",
       apiKey: "",
       isFullUrl: undefined,

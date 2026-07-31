@@ -286,8 +286,7 @@ function ProviderFormFull({
   const isEditMode = Boolean(initialData);
   const supportsAggregate = appId === "claude" || appId === "codex";
   const [aggregateEnabled, setAggregateEnabled] = useState(
-    supportsAggregate &&
-      hasAggregateRoutes(initialData?.meta?.aggregateRoutes),
+    supportsAggregate && hasAggregateRoutes(initialData?.meta?.aggregateRoutes),
   );
   const [aggregateRoutes, setAggregateRoutes] = useState<AggregateRoutes>(
     initialData?.meta?.aggregateRoutes ?? {},

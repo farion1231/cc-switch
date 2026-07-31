@@ -163,8 +163,7 @@ export function validateAggregateRoutes(
     const rows =
       customRows ??
       customRoutesToRows(routes.custom).filter(
-        (row) =>
-          row.key.trim() || row.providerId.trim() || row.model.trim(),
+        (row) => row.key.trim() || row.providerId.trim() || row.model.trim(),
       );
 
     const seenKeys = new Set<string>();
