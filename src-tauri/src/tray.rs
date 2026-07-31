@@ -155,10 +155,8 @@ pub struct TrayAppSection {
 impl TrayAppSection {
     /// Claude Desktop 的配置文件仅支持 macOS 和 Windows。
     fn is_supported_on_current_platform(&self) -> bool {
-        match &self.app_type {
-            AppType::ClaudeDesktop => cfg!(any(target_os = "macos", target_os = "windows")),
-            _ => true,
-        }
+        !matches!(&self.app_type, AppType::ClaudeDesktop)
+            || cfg!(any(target_os = "macos", target_os = "windows"))
     }
 }
 
