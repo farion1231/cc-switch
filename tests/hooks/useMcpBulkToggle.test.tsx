@@ -2,13 +2,26 @@ import type { PropsWithChildren } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useBulkToggleMcpApp, useToggleMcpApp } from "@/hooks/useMcp";
+import {
+  useBulkToggleMcpApp,
+  useDeleteMcpServer,
+  useImportMcpFromApps,
+  useToggleMcpApp,
+  useUpsertMcpServer,
+} from "@/hooks/useMcp";
+import type { McpServer } from "@/types";
 
 const toggleAppMock = vi.hoisted(() => vi.fn());
+const upsertServerMock = vi.hoisted(() => vi.fn());
+const deleteServerMock = vi.hoisted(() => vi.fn());
+const importFromAppsMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/api/mcp", () => ({
   mcpApi: {
     toggleApp: toggleAppMock,
+    upsertUnifiedServer: upsertServerMock,
+    deleteUnifiedServer: deleteServerMock,
+    importFromApps: importFromAppsMock,
   },
 }));
 
@@ -20,9 +33,12 @@ function createWrapper(queryClient: QueryClient) {
   };
 }
 
-describe("MCP toggle hooks", () => {
+describe("MCP management mutation hooks", () => {
   beforeEach(() => {
     toggleAppMock.mockReset();
+    upsertServerMock.mockReset();
+    deleteServerMock.mockReset();
+    importFromAppsMock.mockReset();
   });
 
   it("runs bulk writes serially and invalidates the list once", async () => {
@@ -121,6 +137,99 @@ describe("MCP toggle hooks", () => {
         app: "claude",
         enabled: true,
       });
+    });
+
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1));
+    expect(result.current.isPending).toBe(true);
+
+    releaseInvalidation?.();
+    await act(async () => {
+      await mutation;
+    });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+  });
+
+  it("refreshes and stays pending when an upsert fails after persistence", async () => {
+    let releaseInvalidation: (() => void) | undefined;
+    const invalidationPending = new Promise<void>((resolve) => {
+      releaseInvalidation = resolve;
+    });
+    upsertServerMock.mockRejectedValueOnce(new Error("live sync failed"));
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    });
+    const invalidateSpy = vi
+      .spyOn(queryClient, "invalidateQueries")
+      .mockImplementation(() => invalidationPending);
+    const { result } = renderHook(() => useUpsertMcpServer(), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    let mutation!: Promise<unknown>;
+    act(() => {
+      mutation = result.current.mutateAsync({ id: "alpha" } as McpServer);
+    });
+
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1));
+    expect(result.current.isPending).toBe(true);
+
+    releaseInvalidation?.();
+    await act(async () => {
+      await expect(mutation).rejects.toThrow("live sync failed");
+    });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+  });
+
+  it("refreshes and stays pending when deletion fails after persistence", async () => {
+    let releaseInvalidation: (() => void) | undefined;
+    const invalidationPending = new Promise<void>((resolve) => {
+      releaseInvalidation = resolve;
+    });
+    deleteServerMock.mockRejectedValueOnce(new Error("live cleanup failed"));
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    });
+    const invalidateSpy = vi
+      .spyOn(queryClient, "invalidateQueries")
+      .mockImplementation(() => invalidationPending);
+    const { result } = renderHook(() => useDeleteMcpServer(), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    let mutation!: Promise<unknown>;
+    act(() => {
+      mutation = result.current.mutateAsync("alpha");
+    });
+
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1));
+    expect(result.current.isPending).toBe(true);
+
+    releaseInvalidation?.();
+    await act(async () => {
+      await expect(mutation).rejects.toThrow("live cleanup failed");
+    });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+  });
+
+  it("keeps an import pending until the complete server list is refreshed", async () => {
+    let releaseInvalidation: (() => void) | undefined;
+    const invalidationPending = new Promise<void>((resolve) => {
+      releaseInvalidation = resolve;
+    });
+    importFromAppsMock.mockResolvedValueOnce(2);
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    });
+    const invalidateSpy = vi
+      .spyOn(queryClient, "invalidateQueries")
+      .mockImplementation(() => invalidationPending);
+    const { result } = renderHook(() => useImportMcpFromApps(), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    let mutation!: Promise<unknown>;
+    act(() => {
+      mutation = result.current.mutateAsync();
     });
 
     await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1));

@@ -21,9 +21,10 @@ export function useUpsertMcpServer() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (server: McpServer) => mcpApi.upsertUnifiedServer(server),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["mcp", "all"] });
-    },
+    // The database is updated before live configs are synchronized, so an
+    // error can still leave a persisted change that the list must reflect.
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: ["mcp", "all"] }),
   });
 }
 
@@ -77,9 +78,10 @@ export function useDeleteMcpServer() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => mcpApi.deleteUnifiedServer(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["mcp", "all"] });
-    },
+    // Deletion reaches the database before live-config cleanup, so refresh
+    // after both success and failure to avoid operating on a removed entry.
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: ["mcp", "all"] }),
   });
 }
 
@@ -92,8 +94,7 @@ export function useImportMcpFromApps() {
     mutationFn: () => mcpApi.importFromApps(),
     // 后端是 best-effort 导入：部分应用失败会返回错误，但其余应用的
     // 服务器已经入库，失败时也要刷新列表。
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["mcp", "all"] });
-    },
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: ["mcp", "all"] }),
   });
 }

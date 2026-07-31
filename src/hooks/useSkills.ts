@@ -158,10 +158,11 @@ export function useRestoreSkillBackup() {
       backupId: string;
       currentApp: AppId;
     }) => skillsApi.restoreBackup(backupId, currentApp),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
-      queryClient.invalidateQueries({ queryKey: ["skills", "backups"] });
-    },
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
+        queryClient.invalidateQueries({ queryKey: ["skills", "backups"] }),
+      ]),
   });
 }
 
