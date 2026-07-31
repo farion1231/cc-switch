@@ -68,6 +68,7 @@ import {
 } from "@/utils/providerConfigUtils";
 import { isNonNegativeDecimalString } from "@/types/usage";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
+import { normalizeCodexCatalogCapabilities } from "@/utils/codexCatalogCapabilities";
 import CodexConfigEditor from "./CodexConfigEditor";
 import { CommonConfigEditor } from "./CommonConfigEditor";
 import GeminiConfigEditor from "./GeminiConfigEditor";
@@ -155,24 +156,14 @@ export const normalizeCodexCatalogModelsForSave = (
       ? Number.parseInt(rawContextWindow, 10)
       : undefined;
 
-    const inputModalities = item.inputModalities?.filter(
-      (m) => typeof m === "string" && m.trim(),
-    );
-
-    const baseInstructions = item.baseInstructions?.trim();
+    const capabilities = normalizeCodexCatalogCapabilities(item);
 
     normalized.push({
       model,
       ...(displayName ? { displayName } : {}),
       ...(contextWindow && contextWindow > 0 ? { contextWindow } : {}),
-      // Native Responses profile overrides (ignored by the chat/proxy profile).
-      ...(typeof item.supportsParallelToolCalls === "boolean"
-        ? { supportsParallelToolCalls: item.supportsParallelToolCalls }
-        : {}),
-      ...(inputModalities && inputModalities.length > 0
-        ? { inputModalities }
-        : {}),
-      ...(baseInstructions ? { baseInstructions } : {}),
+      // 原生 Responses profile 的隐藏能力；Chat/代理 profile 会忽略这些字段。
+      ...capabilities,
     });
   }
 

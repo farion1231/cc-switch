@@ -3,7 +3,9 @@
 //! 定义各 API 处理器的配置结构和使用量解析器
 
 use crate::app_config::AppType;
-use crate::proxy::usage::parser::TokenUsage;
+use crate::proxy::usage::parser::{
+    codex_stream_contains_terminal_event, is_codex_responses_terminal_event_type, TokenUsage,
+};
 use serde_json::Value;
 
 /// 使用量解析器类型别名
@@ -48,7 +50,7 @@ fn openai_stream_usage_event_filter(data: &str) -> bool {
 }
 
 pub fn codex_stream_usage_event_filter(data: &str) -> bool {
-    data.contains("\"response.completed\"") || data.contains("\"usage\"")
+    codex_stream_contains_terminal_event(data) || data.contains("\"usage\"")
 }
 
 fn gemini_stream_usage_event_filter(data: &str) -> bool {
@@ -97,11 +99,11 @@ fn codex_auto_model_extractor(events: &[Value], fallback_model: &str) -> String 
             return model;
         }
     }
-    // 回退：从 response.completed 事件中提取
+    // 回退：从 Responses 终态事件中提取
     events
         .iter()
         .find_map(|e| {
-            if e.get("type")?.as_str()? == "response.completed" {
+            if is_codex_responses_terminal_event_type(e.get("type")?.as_str()?) {
                 e.get("response")?
                     .get("model")?
                     .as_str()
@@ -226,3 +228,69 @@ pub const GEMINI_HANDLER_CONFIG: HandlerConfig = HandlerConfig {
     app_type_str: "gemini",
     parser_config: &GEMINI_PARSER_CONFIG,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_usage_filter_keeps_incomplete_without_usage() {
+        // 即使上游省略 usage，也要保留终态供实际模型提取器使用。
+        let event = r#"{"type":"response.incomplete","response":{"model":"deepseek-v4-flash"}}"#;
+
+        assert!(codex_stream_usage_event_filter(event));
+    }
+
+    #[test]
+    fn codex_usage_filter_keeps_failed_without_usage() {
+        // 失败终态可能没有 usage，但仍可能包含上游实际模型。
+        let event = r#"{"type":"response.failed","response":{"model":"deepseek-v4-flash"}}"#;
+
+        assert!(codex_stream_usage_event_filter(event));
+    }
+
+    #[test]
+    fn codex_model_extractor_reads_incomplete_response_model() {
+        let events = vec![serde_json::json!({
+            "type": "response.incomplete",
+            "response": {
+                "model": "deepseek-v4-flash"
+            }
+        })];
+
+        assert_eq!(
+            codex_auto_model_extractor(&events, "request-alias"),
+            "deepseek-v4-flash"
+        );
+    }
+
+    #[test]
+    fn codex_model_extractor_reads_failed_response_model() {
+        let events = vec![serde_json::json!({
+            "type": "response.failed",
+            "response": {
+                "model": "deepseek-v4-flash"
+            }
+        })];
+
+        assert_eq!(
+            codex_auto_model_extractor(&events, "request-alias"),
+            "deepseek-v4-flash"
+        );
+    }
+
+    #[test]
+    fn codex_model_extractor_falls_back_when_terminal_model_is_empty() {
+        let events = vec![serde_json::json!({
+            "type": "response.incomplete",
+            "response": {
+                "model": ""
+            }
+        })];
+
+        assert_eq!(
+            codex_auto_model_extractor(&events, "request-alias"),
+            "request-alias"
+        );
+    }
+}

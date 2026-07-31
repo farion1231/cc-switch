@@ -119,10 +119,9 @@ const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
 /// - `ProxyChat`: cc-switch's proxy takes over and converts Responses<->Chat,
 ///   so the catalog keeps Codex's default tool set (incl. the freeform
 ///   `apply_patch` custom tool, which the proxy rewrites to a function tool).
-/// - `NativeResponses`: Codex talks directly to a provider's native
-///   `/responses` endpoint (no proxy). Such gateways (e.g. Xiaomi MiMo,
-///   MiniMax) reject `type=="custom"` tools, so the catalog must suppress the
-///   freeform `apply_patch` and rely on `shell_type="shell_command"` for edits.
+/// - `NativeResponses`：Codex 直连供应商的 `/responses`。默认按不支持
+///   `type=="custom"` 的网关保守生成；只有模型元数据显式声明时才恢复
+///   freeform `apply_patch`、Web Search 等原生能力。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodexCatalogToolProfile {
     ProxyChat,
@@ -146,8 +145,7 @@ impl CodexCatalogToolProfile {
     pub fn from_api_format(api_format: Option<&str>) -> Self {
         match api_format {
             Some("anthropic") => CodexCatalogToolProfile::Anthropic,
-            // Native (direct) Responses gateways reject Codex's freeform custom
-            // tools (apply_patch, etc.); strip them via the NativeResponses profile.
+            // 原生 Responses 默认使用保守工具集；模型级显式能力会在生成目录时恢复。
             Some("openai_responses") => CodexCatalogToolProfile::NativeResponses,
             _ => CodexCatalogToolProfile::ProxyChat,
         }
@@ -442,6 +440,85 @@ fn parse_codex_positive_u64(value: Option<&Value>) -> Option<u64> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CodexReasoningLevel {
+    effort: String,
+    description: String,
+}
+
+impl CodexReasoningLevel {
+    fn to_json(&self) -> Value {
+        json!({
+            "effort": self.effort,
+            "description": self.description,
+        })
+    }
+}
+
+fn codex_reasoning_levels_to_json(levels: &[CodexReasoningLevel]) -> Value {
+    Value::Array(levels.iter().map(CodexReasoningLevel::to_json).collect())
+}
+
+fn parse_codex_reasoning_levels(value: Option<&Value>) -> Option<Vec<CodexReasoningLevel>> {
+    let levels = value?.as_array()?;
+    let parsed = levels
+        .iter()
+        .filter_map(|level| {
+            let effort = level.get("effort")?.as_str()?.trim().to_string();
+            let description = level.get("description")?.as_str()?.trim().to_string();
+            if effort.is_empty() || description.is_empty() {
+                return None;
+            }
+            Some(CodexReasoningLevel {
+                effort,
+                description,
+            })
+        })
+        .collect::<Vec<_>>();
+    (!parsed.is_empty()).then_some(parsed)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexTruncationMode {
+    Tokens,
+    Bytes,
+}
+
+impl CodexTruncationMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Tokens => "tokens",
+            Self::Bytes => "bytes",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CodexTruncationPolicy {
+    mode: CodexTruncationMode,
+    limit: u64,
+}
+
+impl CodexTruncationPolicy {
+    fn to_json(&self) -> Value {
+        json!({
+            "mode": self.mode.as_str(),
+            "limit": self.limit,
+        })
+    }
+}
+
+fn parse_codex_truncation_policy(value: Option<&Value>) -> Option<CodexTruncationPolicy> {
+    let policy = value?.as_object()?;
+    let mode = match policy.get("mode")?.as_str()?.trim() {
+        "tokens" => CodexTruncationMode::Tokens,
+        "bytes" => CodexTruncationMode::Bytes,
+        _ => return None,
+    };
+    let limit = parse_codex_positive_u64(policy.get("limit"))?;
+    Some(CodexTruncationPolicy { mode, limit })
+}
+
 fn extract_codex_top_level_u64(config_text: &str, field: &str) -> Option<u64> {
     let doc = config_text.parse::<toml::Value>().ok()?;
     doc.get(field)
@@ -496,11 +573,9 @@ fn codex_catalog_model_entry(
     );
 
     if profile != CodexCatalogToolProfile::ProxyChat {
-        // Native `/responses` and Anthropic gateways reject / drop Codex's freeform
-        // `apply_patch` (type=="custom") tool. Strip any key that would make Codex
-        // emit a custom/freeform tool, and rely on shell_type="shell_command" for
-        // edits. Defensive even though the native template is already clean
-        // (guards against template drift / an accidental gpt-5.5 clone).
+        // 先删除会让 Codex 发出 custom / hosted tools 的模板字段，以保守能力集
+        // 为基线；NativeResponses 可在下方按模型显式元数据恢复，Anthropic 不恢复。
+        // 即使原生模板当前已清理，这里仍防止模板漂移或误用 GPT 模板。
         //
         // NOTE: `base_instructions` is NOT stripped — Codex's catalog parser
         // treats it as a REQUIRED field and refuses to load the file without
@@ -515,6 +590,7 @@ fn codex_catalog_model_entry(
             entry_obj.remove(key);
         }
         entry_obj.insert("shell_type".to_string(), json!("shell_command"));
+        entry_obj.insert("supports_search_tool".to_string(), json!(false));
 
         if let Some(base_instructions) = spec
             .base_instructions
@@ -527,12 +603,50 @@ fn codex_catalog_model_entry(
         if let Some(parallel) = spec.supports_parallel_tool_calls {
             entry_obj.insert("supports_parallel_tool_calls".to_string(), json!(parallel));
         }
+
+        // 仅原生 Responses 可以按模型显式恢复这些能力。Anthropic 桥接会
+        // 丢弃 custom / hosted tools，不能因为目录元数据而重新暴露它们。
+        if profile == CodexCatalogToolProfile::NativeResponses {
+            if let Some(tool_type) = &spec.apply_patch_tool_type {
+                entry_obj.insert("apply_patch_tool_type".to_string(), json!(tool_type));
+            }
+            if let Some(tool_type) = &spec.web_search_tool_type {
+                entry_obj.insert("web_search_tool_type".to_string(), json!(tool_type));
+            }
+            if let Some(supports_search) = spec.supports_search_tool {
+                entry_obj.insert("supports_search_tool".to_string(), json!(supports_search));
+            }
+            if let Some(levels) = &spec.supported_reasoning_levels {
+                entry_obj.insert(
+                    "supported_reasoning_levels".to_string(),
+                    codex_reasoning_levels_to_json(levels),
+                );
+            }
+            if let Some(default_level) = &spec.default_reasoning_level {
+                entry_obj.insert("default_reasoning_level".to_string(), json!(default_level));
+            }
+            if let Some(policy) = &spec.truncation_policy {
+                entry_obj.insert("truncation_policy".to_string(), policy.to_json());
+            }
+            if let Some(support_verbosity) = spec.support_verbosity {
+                entry_obj.insert("support_verbosity".to_string(), json!(support_verbosity));
+            }
+            if let Some(default_verbosity) = &spec.default_verbosity {
+                entry_obj.insert("default_verbosity".to_string(), json!(default_verbosity));
+            }
+            if let Some(version) = &spec.multi_agent_version {
+                entry_obj.insert("multi_agent_version".to_string(), json!(version));
+            }
+            if let Some(version) = &spec.minimal_client_version {
+                entry_obj.insert("minimal_client_version".to_string(), json!(version));
+            }
+        }
     }
 
     entry
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct CodexCatalogModelSpec {
     model: String,
     display_name: String,
@@ -550,6 +664,16 @@ struct CodexCatalogModelSpec {
     /// back to the template default when absent. Only consulted for
     /// `NativeResponses`.
     base_instructions: Option<String>,
+    apply_patch_tool_type: Option<String>,
+    web_search_tool_type: Option<String>,
+    supports_search_tool: Option<bool>,
+    supported_reasoning_levels: Option<Vec<CodexReasoningLevel>>,
+    default_reasoning_level: Option<String>,
+    truncation_policy: Option<CodexTruncationPolicy>,
+    support_verbosity: Option<bool>,
+    default_verbosity: Option<String>,
+    multi_agent_version: Option<String>,
+    minimal_client_version: Option<String>,
 }
 
 fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCatalogModelSpec> {
@@ -619,6 +743,67 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
             .filter(|text| !text.is_empty())
             .map(str::to_string);
 
+        let apply_patch_tool_type = model_config
+            .get("applyPatchToolType")
+            .or_else(|| model_config.get("apply_patch_tool_type"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| *value == "freeform")
+            .map(str::to_string);
+        let web_search_tool_type = model_config
+            .get("webSearchToolType")
+            .or_else(|| model_config.get("web_search_tool_type"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| matches!(*value, "text" | "text_and_image"))
+            .map(str::to_string);
+        let supports_search_tool = model_config
+            .get("supportsSearchTool")
+            .or_else(|| model_config.get("supports_search_tool"))
+            .and_then(|value| value.as_bool());
+        let supported_reasoning_levels = parse_codex_reasoning_levels(
+            model_config
+                .get("supportedReasoningLevels")
+                .or_else(|| model_config.get("supported_reasoning_levels")),
+        );
+        let default_reasoning_level = model_config
+            .get("defaultReasoningLevel")
+            .or_else(|| model_config.get("default_reasoning_level"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let truncation_policy = parse_codex_truncation_policy(
+            model_config
+                .get("truncationPolicy")
+                .or_else(|| model_config.get("truncation_policy")),
+        );
+        let support_verbosity = model_config
+            .get("supportVerbosity")
+            .or_else(|| model_config.get("support_verbosity"))
+            .and_then(|value| value.as_bool());
+        let default_verbosity = model_config
+            .get("defaultVerbosity")
+            .or_else(|| model_config.get("default_verbosity"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let multi_agent_version = model_config
+            .get("multiAgentVersion")
+            .or_else(|| model_config.get("multi_agent_version"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let minimal_client_version = model_config
+            .get("minimalClientVersion")
+            .or_else(|| model_config.get("minimal_client_version"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+
         specs.push(CodexCatalogModelSpec {
             model: model.to_string(),
             display_name: display_name.to_string(),
@@ -626,6 +811,16 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
             supports_parallel_tool_calls,
             input_modalities,
             base_instructions,
+            apply_patch_tool_type,
+            web_search_tool_type,
+            supports_search_tool,
+            supported_reasoning_levels,
+            default_reasoning_level,
+            truncation_policy,
+            support_verbosity,
+            default_verbosity,
+            multi_agent_version,
+            minimal_client_version,
         });
     }
 
@@ -879,13 +1074,9 @@ fn load_codex_model_template_static() -> Option<Value> {
     }
 }
 
-/// Bundled clean template for native `/responses` providers. Unlike the
-/// gpt-5.5 template it carries NO freeform `apply_patch` / `web_search` tool
-/// declarations and no GPT-5 base_instructions, so Codex never emits a
-/// `type=="custom"` tool that native gateways (MiMo/MiniMax/…) reject. Edits
-/// flow through `shell_type="shell_command"` instead. We deliberately do NOT
-/// fall back to `models_cache.json` here (that would reintroduce gpt-5.5's
-/// freeform apply_patch).
+/// 原生 `/responses` 的保守基础模板。它不携带 freeform `apply_patch`、
+/// `web_search` 或 GPT-5 身份；支持这些能力的模型由行级元数据显式恢复。
+/// 这里不回退到 `models_cache.json`，避免意外继承 GPT 模型工具集。
 fn load_codex_native_responses_template() -> Value {
     let text = include_str!("resources/codex_native_responses_template.json");
     serde_json::from_str(text).expect("bundled codex native responses template must be valid JSON")
@@ -993,9 +1184,8 @@ fn codex_model_catalog_from_settings(
         return Ok(None);
     }
 
-    // Native providers use the bundled clean template (no freeform apply_patch,
-    // no cache dependency); proxy-chat providers keep cloning Codex's gpt-5.5
-    // entry so the proxy can rewrite custom<->function tools as before.
+    // 原生与 Anthropic profile 从保守模板开始；原生模型随后可按显式元数据
+    // 恢复能力。ProxyChat 继续复制 GPT 模板，由代理转换 custom<->function。
     let template = match profile {
         CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
             load_codex_native_responses_template()
@@ -1236,6 +1426,69 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
             if !mods.is_empty() && mods != inferred {
                 obj.insert("inputModalities".to_string(), json!(mods));
             }
+        }
+
+        if let Some(tool_type) = entry
+            .get("apply_patch_tool_type")
+            .and_then(|v| v.as_str())
+            .filter(|value| *value == "freeform")
+        {
+            obj.insert("applyPatchToolType".to_string(), json!(tool_type));
+        }
+        if let Some(tool_type) = entry
+            .get("web_search_tool_type")
+            .and_then(|v| v.as_str())
+            .filter(|value| matches!(*value, "text" | "text_and_image"))
+        {
+            obj.insert("webSearchToolType".to_string(), json!(tool_type));
+        }
+        if let Some(supports_search) = entry.get("supports_search_tool").and_then(|v| v.as_bool()) {
+            obj.insert("supportsSearchTool".to_string(), json!(supports_search));
+        }
+        if let Some(levels) = parse_codex_reasoning_levels(entry.get("supported_reasoning_levels"))
+        {
+            obj.insert(
+                "supportedReasoningLevels".to_string(),
+                codex_reasoning_levels_to_json(&levels),
+            );
+        }
+        if let Some(default_level) = entry
+            .get("default_reasoning_level")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            obj.insert("defaultReasoningLevel".to_string(), json!(default_level));
+        }
+        if let Some(policy) = parse_codex_truncation_policy(entry.get("truncation_policy")) {
+            obj.insert("truncationPolicy".to_string(), policy.to_json());
+        }
+        if let Some(support_verbosity) = entry.get("support_verbosity").and_then(|v| v.as_bool()) {
+            obj.insert("supportVerbosity".to_string(), json!(support_verbosity));
+        }
+        if let Some(default_verbosity) = entry
+            .get("default_verbosity")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            obj.insert("defaultVerbosity".to_string(), json!(default_verbosity));
+        }
+        if let Some(version) = entry
+            .get("multi_agent_version")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            obj.insert("multiAgentVersion".to_string(), json!(version));
+        }
+        if let Some(version) = entry
+            .get("minimal_client_version")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            obj.insert("minimalClientVersion".to_string(), json!(version));
         }
 
         entries.push(Value::Object(obj));
@@ -2840,6 +3093,7 @@ base_url = "https://production.api/v1"
             supports_parallel_tool_calls: None,
             input_modalities: None,
             base_instructions: None,
+            ..Default::default()
         }];
         let catalog =
             codex_model_catalog_from_specs(&specs, &template, CodexCatalogToolProfile::ProxyChat);
@@ -3023,6 +3277,137 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
+    fn catalog_structured_capability_parsers_reject_invalid_shapes() {
+        let levels = parse_codex_reasoning_levels(Some(&json!([
+            { "effort": " low ", "description": " Light reasoning " },
+            { "effort": "", "description": "missing effort" },
+            { "effort": "high", "description": "   " }
+        ])))
+        .expect("至少应保留一个有效 reasoning level");
+        assert_eq!(
+            levels,
+            vec![CodexReasoningLevel {
+                effort: "low".to_string(),
+                description: "Light reasoning".to_string(),
+            }]
+        );
+        assert_eq!(
+            codex_reasoning_levels_to_json(&levels),
+            json!([{ "effort": "low", "description": "Light reasoning" }])
+        );
+
+        assert_eq!(
+            parse_codex_truncation_policy(Some(&json!({
+                "mode": "tokens",
+                "limit": 10_000
+            }))),
+            Some(CodexTruncationPolicy {
+                mode: CodexTruncationMode::Tokens,
+                limit: 10_000,
+            })
+        );
+        assert!(parse_codex_truncation_policy(Some(&json!({
+            "mode": "characters",
+            "limit": 10_000
+        })))
+        .is_none());
+    }
+
+    #[test]
+    fn native_responses_profile_applies_explicit_catalog_capabilities() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-flash",
+                        "displayName": "DeepSeek V4 Flash",
+                        "contextWindow": 1_048_576,
+                        "supportsParallelToolCalls": true,
+                        "inputModalities": ["text"],
+                        "applyPatchToolType": "freeform",
+                        "webSearchToolType": "text",
+                        "supportsSearchTool": true,
+                        "defaultReasoningLevel": "high",
+                        "supportedReasoningLevels": [
+                            {
+                                "effort": "low",
+                                "description": "Fast responses with lighter reasoning"
+                            },
+                            {
+                                "effort": "high",
+                                "description": "Extra high reasoning depth for complex problems"
+                            },
+                            {
+                                "effort": "max",
+                                "description": "Maximum reasoning depth for the hardest problems"
+                            }
+                        ],
+                        "truncationPolicy": { "mode": "tokens", "limit": 10_000 },
+                        "supportVerbosity": true,
+                        "defaultVerbosity": "low",
+                        "multiAgentVersion": "v2",
+                        "minimalClientVersion": "0.144.0"
+                    }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("native catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+        let entry = &catalog["models"][0];
+
+        assert_eq!(entry["apply_patch_tool_type"], json!("freeform"));
+        assert_eq!(entry["web_search_tool_type"], json!("text"));
+        assert_eq!(entry["supports_search_tool"], json!(true));
+        assert_eq!(entry["supports_parallel_tool_calls"], json!(true));
+        assert_eq!(entry["input_modalities"], json!(["text"]));
+        assert_eq!(entry["default_reasoning_level"], json!("high"));
+        assert_eq!(
+            entry["supported_reasoning_levels"],
+            settings["modelCatalog"]["models"][0]["supportedReasoningLevels"]
+        );
+        assert_eq!(
+            entry["truncation_policy"],
+            json!({ "mode": "tokens", "limit": 10_000 })
+        );
+        assert_eq!(entry["support_verbosity"], json!(true));
+        assert_eq!(entry["default_verbosity"], json!("low"));
+        assert_eq!(entry["multi_agent_version"], json!("v2"));
+        assert_eq!(entry["minimal_client_version"], json!("0.144.0"));
+    }
+
+    #[test]
+    fn anthropic_profile_ignores_native_tool_capability_overrides() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-flash",
+                        "applyPatchToolType": "freeform",
+                        "webSearchToolType": "text",
+                        "supportsSearchTool": true
+                    }
+                ]
+            }
+        });
+
+        let catalog =
+            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::Anthropic)
+                .expect("Anthropic catalog generation should not error")
+                .expect("non-empty modelCatalog must yield a catalog");
+        let entry = &catalog["models"][0];
+
+        assert!(entry.get("apply_patch_tool_type").is_none());
+        assert!(entry.get("web_search_tool_type").is_none());
+        assert_eq!(entry["supports_search_tool"], json!(false));
+    }
+
+    #[test]
     fn catalog_infers_image_input_independently_of_tool_profile() {
         // Start from a deliberately text-only template to prove that every
         // profile overwrites template defaults with shared capability logic.
@@ -3038,6 +3423,7 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
+                ..Default::default()
             },
             CodexCatalogModelSpec {
                 model: "deepseek/deepseek-v4-pro".to_string(),
@@ -3046,6 +3432,7 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
+                ..Default::default()
             },
             CodexCatalogModelSpec {
                 model: "glm-5.2v".to_string(),
@@ -3054,6 +3441,7 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
+                ..Default::default()
             },
             CodexCatalogModelSpec {
                 model: "deepseek-v4-flash".to_string(),
@@ -3062,6 +3450,7 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: Some(vec!["text".to_string(), "image".to_string()]),
                 base_instructions: None,
+                ..Default::default()
             },
             CodexCatalogModelSpec {
                 model: "custom-text-alias".to_string(),
@@ -3070,6 +3459,7 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: Some(vec!["text".to_string()]),
                 base_instructions: None,
+                ..Default::default()
             },
         ];
 
@@ -3141,6 +3531,7 @@ base_url = "https://production.api/v1"
             supports_parallel_tool_calls: None,
             input_modalities: None,
             base_instructions: None,
+            ..Default::default()
         }];
         // Using a gpt-5.5-shaped template under ProxyChat must NOT strip
         // apply_patch_tool_type. (The native template lacks it, so synthesize
@@ -3190,9 +3581,7 @@ name = "any"
 
     #[test]
     fn native_web_search_field_disables_at_top_level() {
-        // Native `/responses` gateways reject the web_search tool, so the
-        // NativeResponses profile must write the top-level disable line even
-        // when sections are present (it must NOT land inside a section).
+        // 对拒绝 Web Search 的原生网关，禁用项必须写在顶层，不能落入 section。
         let input = r#"model_provider = "custom"
 
 [model_providers.custom]
@@ -3340,6 +3729,7 @@ web_search = "disabled"
                 "doubao-seed-2-1-pro-260628",
                 "https://ark.cn-beijing.volces.com/api/v3",
             ),
+            ("deepseek-v4-flash", "https://api.deepseek.com"),
             ("Pro/moonshotai/Kimi-K2.6", "https://api.siliconflow.cn/v1"),
         ] {
             assert!(
@@ -3482,6 +3872,53 @@ web_search = "disabled"
             Some(&json!(["text", "image"])),
             "an explicit image override for a registered text-only model must round-trip"
         );
+    }
+
+    #[test]
+    fn build_simplified_catalog_preserves_native_response_capabilities() {
+        let catalog = r#"{
+            "models": [
+                {
+                    "slug": "deepseek-v4-flash",
+                    "apply_patch_tool_type": "freeform",
+                    "web_search_tool_type": "text",
+                    "supports_search_tool": true,
+                    "supported_reasoning_levels": [
+                        { "effort": "low", "description": "Fast responses" },
+                        { "effort": "high", "description": "Deep reasoning" }
+                    ],
+                    "default_reasoning_level": "high",
+                    "truncation_policy": { "mode": "tokens", "limit": 10000 },
+                    "support_verbosity": true,
+                    "default_verbosity": "low",
+                    "multi_agent_version": "v2",
+                    "minimal_client_version": "0.144.0"
+                }
+            ]
+        }"#;
+
+        let result = build_simplified_catalog_from_texts("", catalog).expect("entry");
+        let entry = &result["models"][0];
+
+        assert_eq!(entry["applyPatchToolType"], json!("freeform"));
+        assert_eq!(entry["webSearchToolType"], json!("text"));
+        assert_eq!(entry["supportsSearchTool"], json!(true));
+        assert_eq!(
+            entry["supportedReasoningLevels"],
+            json!([
+                { "effort": "low", "description": "Fast responses" },
+                { "effort": "high", "description": "Deep reasoning" }
+            ])
+        );
+        assert_eq!(entry["defaultReasoningLevel"], json!("high"));
+        assert_eq!(
+            entry["truncationPolicy"],
+            json!({ "mode": "tokens", "limit": 10000 })
+        );
+        assert_eq!(entry["supportVerbosity"], json!(true));
+        assert_eq!(entry["defaultVerbosity"], json!("low"));
+        assert_eq!(entry["multiAgentVersion"], json!("v2"));
+        assert_eq!(entry["minimalClientVersion"], json!("0.144.0"));
     }
 
     #[test]

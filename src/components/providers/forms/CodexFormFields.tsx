@@ -46,6 +46,10 @@ import type {
   ProviderCategory,
 } from "@/types";
 import type { AppId } from "@/lib/api";
+import {
+  codexCatalogCapabilitiesEqual,
+  normalizeCodexCatalogCapabilities,
+} from "@/utils/codexCatalogCapabilities";
 
 interface EndpointCandidate {
   url: string;
@@ -126,22 +130,12 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
     model: seed?.model ?? "",
     displayName: seed?.displayName ?? "",
     contextWindow: seed?.contextWindow ?? "",
-    // Carry native-profile overrides verbatim (not user-editable in the row UI,
-    // but must survive load->save so the official catalog fidelity is kept).
-    ...(seed?.supportsParallelToolCalls !== undefined
-      ? { supportsParallelToolCalls: seed.supportsParallelToolCalls }
-      : {}),
-    ...(seed?.inputModalities ? { inputModalities: seed.inputModalities } : {}),
-    ...(seed?.baseInstructions
-      ? { baseInstructions: seed.baseInstructions }
-      : {}),
+    // 隐藏能力不可在行 UI 中编辑，但必须随可见字段一起完成 load→save。
+    ...normalizeCodexCatalogCapabilities(seed),
   };
 }
 
-// Compares rows (with rowId) to incoming models (without) by data fields only,
-// so both sync effects can use the same equality definition. Hidden native-profile
-// fields are included so switching between providers with identical visible fields
-// but different base_instructions / tools / modalities still rebuilds the rows.
+// 仅比较持久化字段；切换到可见字段相同、隐藏能力不同的预设时也要重建行。
 function catalogRowsMatchModels(
   rows: CodexCatalogModel[],
   models: CodexCatalogModel[],
@@ -154,11 +148,7 @@ function catalogRowsMatchModels(
       (row.displayName ?? "") === (incoming.displayName ?? "") &&
       String(row.contextWindow ?? "") ===
         String(incoming.contextWindow ?? "") &&
-      (row.supportsParallelToolCalls ?? null) ===
-        (incoming.supportsParallelToolCalls ?? null) &&
-      (row.baseInstructions ?? "") === (incoming.baseInstructions ?? "") &&
-      JSON.stringify(row.inputModalities ?? []) ===
-        JSON.stringify(incoming.inputModalities ?? [])
+      codexCatalogCapabilitiesEqual(row, incoming)
     );
   });
 }

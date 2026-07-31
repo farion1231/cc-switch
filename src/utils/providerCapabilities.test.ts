@@ -1,7 +1,15 @@
 import { describe, it, expect } from "vitest";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
+import {
+  codexProviderPresets,
+  type CodexProviderPreset,
+} from "@/config/codexProviderPresets";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
+import {
+  extractCodexModelName,
+  extractCodexWireApi,
+} from "@/utils/providerConfigUtils";
 
 function mkProvider(overrides: Partial<Provider> = {}): Provider {
   return { id: "p1", name: "Test", settingsConfig: {}, ...overrides };
@@ -10,6 +18,30 @@ function mkProvider(overrides: Partial<Provider> = {}): Provider {
 // wire_api 取自 config.toml；chat_completions 需转换（需路由），responses 直连。
 const codexConfig = (wireApi: "chat_completions" | "responses") =>
   `model_provider = "custom"\n\n[model_providers.custom]\nname = "X"\nbase_url = "https://x.example/v1"\nwire_api = "${wireApi}"\n`;
+
+function requireCodexPreset(name: string): CodexProviderPreset {
+  const preset = codexProviderPresets.find((item) => item.name === name);
+  if (!preset) throw new Error(`缺少 Codex 预设：${name}`);
+  return preset;
+}
+
+function providerFromCodexPreset(preset: CodexProviderPreset): Provider {
+  return mkProvider({
+    id: `codex-preset-${preset.name}`,
+    name: preset.name,
+    category: preset.category,
+    settingsConfig: {
+      auth: preset.auth,
+      config: preset.config,
+      modelCatalog: { models: preset.modelCatalog ?? [] },
+    },
+    meta: {
+      apiFormat: preset.apiFormat,
+      providerType: preset.providerType,
+      codexChatReasoning: preset.codexChatReasoning,
+    },
+  });
+}
 
 describe("providerNeedsRouting", () => {
   it("官方供应商一律不需要路由（即便 providerType 是 OAuth）", () => {
@@ -174,6 +206,42 @@ describe("providerNeedsRouting", () => {
           mkProvider({ settingsConfig: { config: codexConfig("responses") } }),
         ),
       ).toBe(false);
+    });
+  });
+
+  describe("DeepSeek 真实 Codex 预设路由", () => {
+    it("Flash 原生 Responses 直连，Pro 通过 OpenAI Chat 本地路由", () => {
+      const flashPreset = requireCodexPreset("DeepSeek");
+      const proPreset = requireCodexPreset("DeepSeek V4 Pro");
+
+      // Codex 对两者都发送 Responses；apiFormat 决定是否转换成上游 Chat。
+      expect(extractCodexWireApi(flashPreset.config)).toBe("responses");
+      expect(extractCodexWireApi(proPreset.config)).toBe("responses");
+      expect(flashPreset.apiFormat).toBe("openai_responses");
+      expect(proPreset.apiFormat).toBe("openai_chat");
+
+      expect(
+        providerNeedsRouting("codex", providerFromCodexPreset(flashPreset)),
+      ).toBe(false);
+      expect(
+        providerNeedsRouting("codex", providerFromCodexPreset(proPreset)),
+      ).toBe(true);
+    });
+
+    it("Flash 与 Pro 的默认模型和模型目录彼此隔离", () => {
+      const flashPreset = requireCodexPreset("DeepSeek");
+      const proPreset = requireCodexPreset("DeepSeek V4 Pro");
+
+      expect(extractCodexModelName(flashPreset.config)).toBe(
+        "deepseek-v4-flash",
+      );
+      expect(extractCodexModelName(proPreset.config)).toBe("deepseek-v4-pro");
+      expect(flashPreset.modelCatalog?.map((model) => model.model)).toEqual([
+        "deepseek-v4-flash",
+      ]);
+      expect(proPreset.modelCatalog?.map((model) => model.model)).toEqual([
+        "deepseek-v4-pro",
+      ]);
     });
   });
 

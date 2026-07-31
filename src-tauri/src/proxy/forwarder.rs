@@ -3570,7 +3570,7 @@ mod tests {
     use super::*;
     use crate::database::Database;
     use crate::provider::LocalProxyRequestOverrides;
-    use axum::http::header::{HeaderValue, ACCEPT};
+    use axum::http::header::{HeaderValue, ACCEPT, CONTENT_TYPE};
     use axum::http::HeaderMap;
     use bytes::Bytes;
     use http::StatusCode;
@@ -3932,6 +3932,133 @@ mod tests {
             prepared.bytes().await.unwrap(),
             Bytes::from_static(b"firstsecond")
         );
+    }
+
+    #[tokio::test]
+    async fn deepseek_native_responses_preserves_request_and_sse_for_both_paths() {
+        const SSE: &str = concat!(
+            ": keep-alive\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\",\"sequence_number\":1}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}},\"sequence_number\":2}\n\n",
+        );
+
+        let (capture_tx, mut capture_rx) = tokio::sync::mpsc::channel(2);
+        let app = axum::Router::new().fallback(axum::routing::post({
+            let capture_tx = capture_tx.clone();
+            move |uri: http::Uri, body: axum::body::Bytes| {
+                let capture_tx = capture_tx.clone();
+                async move {
+                    let body: Value = serde_json::from_slice(&body).expect("上游应收到合法 JSON");
+                    capture_tx
+                        .send((uri.path().to_string(), body))
+                        .await
+                        .expect("测试接收端应保持在线");
+                    ([(CONTENT_TYPE, "text/event-stream")], SSE)
+                }
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("应能绑定本地测试端口");
+        let address = listener.local_addr().expect("应能读取本地测试地址");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("本地测试上游应正常运行");
+        });
+
+        let base_url = format!("http://{address}");
+        let mut provider = test_provider_with_type(None);
+        provider.name = "DeepSeek".to_string();
+        provider.settings_config = json!({
+            "auth": { "OPENAI_API_KEY": "sk-test" },
+            "config": format!(r#"
+model_provider = "deepseek"
+model = "deepseek-v4-flash"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "{base_url}"
+wire_api = "responses"
+requires_openai_auth = true
+"#)
+        });
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("openai_responses".to_string()),
+            ..Default::default()
+        });
+
+        let request_body = json!({
+            "model": "deepseek-v4-flash",
+            "stream": true,
+            "input": [
+                { "role": "user", "content": "Use the workspace tool" },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "done"
+                }
+            ],
+            "reasoning": { "effort": "high" },
+            "tools": [
+                {
+                    "type": "namespace",
+                    "name": "workspace",
+                    "tools": [
+                        {
+                            "type": "function",
+                            "name": "read_file",
+                            "parameters": { "type": "object", "properties": {} }
+                        }
+                    ]
+                },
+                { "type": "custom", "name": "apply_patch" },
+                { "type": "web_search" }
+            ]
+        });
+        let mut headers = HeaderMap::new();
+        headers.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        let forwarder = test_forwarder(Duration::from_secs(2), Duration::from_secs(2));
+        let adapter = super::super::providers::CodexAdapter::new();
+
+        for endpoint in ["/responses", "/v1/responses"] {
+            let (response, api_format, outbound_model) = forwarder
+                .forward(
+                    &AppType::Codex,
+                    &http::Method::POST,
+                    &provider,
+                    endpoint,
+                    &request_body,
+                    &headers,
+                    &Extensions::new(),
+                    &adapter,
+                )
+                .await
+                .expect("DeepSeek 原生 Responses 应成功透传");
+
+            let (path, captured_body) =
+                tokio::time::timeout(Duration::from_secs(1), capture_rx.recv())
+                    .await
+                    .expect("应及时收到上游请求")
+                    .expect("上游捕获通道不应提前关闭");
+            assert_eq!(path, "/v1/responses");
+            assert_eq!(
+                captured_body, request_body,
+                "{endpoint} 的 Responses items、call_id、reasoning 与工具声明必须原样到达上游"
+            );
+            assert_eq!(api_format, None);
+            assert_eq!(outbound_model.as_deref(), Some("deepseek-v4-flash"));
+            assert_eq!(
+                response.bytes().await.expect("应能读取 SSE 响应"),
+                Bytes::from_static(SSE.as_bytes()),
+                "{endpoint} 的命名事件、keep-alive 与 sequence_number 必须原样返回"
+            );
+        }
+
+        server.abort();
     }
 
     #[tokio::test]

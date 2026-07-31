@@ -1,101 +1,97 @@
-# Using DeepSeek-Style Chat APIs in Codex: CC Switch Local Routing Guide
+# Using DeepSeek V4 Pro in Codex: CC Switch Local Routing Guide
 
-> Applies to CC Switch 3.16.0 and nearby versions. This guide is based on the repository documentation and code, and uses DeepSeek as an example of an OpenAI Chat Completions-compatible API. Screenshots are generated from the current frontend UI with de-identified sample data to avoid exposing a real API key or account balance.
+> **Important:** The built-in `DeepSeek` preset now contains only DeepSeek V4 Flash and connects directly through the native Responses API, so it **does not need local routing**. This guide applies only to the separate `DeepSeek V4 Pro` preset. V4 Pro currently uses Chat Completions and requires CC Switch to convert the protocol locally.
 
-## Why local routing is needed
+> Saved DeepSeek providers are not migrated automatically when a built-in preset changes. To use native Responses for Flash or the new Pro Chat configuration, select the corresponding preset again or create a new provider.
 
-The newer Codex CLI targets the OpenAI Responses API, while DeepSeek, Kimi, MiniMax, SiliconFlow, and many other providers expose the OpenAI Chat Completions shape, usually `/chat/completions`. These two protocols use different request bodies, streaming events, and response structures. If you put a Chat endpoint directly into Codex configuration, common results include an incorrect model list, 404/400 requests, or streaming responses that Codex cannot parse correctly.
+## Choose the right preset first
 
-CC Switch solves this by making Codex always talk to a local route and continue sending Responses API requests. The route detects whether the active provider is Chat-format, rewrites the request into Chat Completions for the upstream provider, and finally converts the Chat response back into the Responses shape that Codex understands.
+| Preset | Model | Upstream protocol | Local routing required |
+|--------|-------|-------------------|------------------------|
+| `DeepSeek` | `deepseek-v4-flash` | Native Responses | No |
+| `DeepSeek V4 Pro` | `deepseek-v4-pro` | Chat Completions | Yes |
 
-![Needs routing marker in the Codex provider list](../images/codex-deepseek-routing/01-codex-providers-require-routing.png)
+To use Flash, select `DeepSeek`, enter the API key, and save. Its Codex model catalog already declares function calling, freeform `apply_patch`, text Web Search, parallel tool calls, and `low` / `high` / `max` reasoning levels.
 
-The chain has four main steps:
+The remaining steps apply only to `DeepSeek V4 Pro`.
 
-1. When Codex routing is enabled, the local configuration is written as `http://127.0.0.1:15721/v1`, while `wire_api = "responses"` is kept in place.
-2. The provider's `meta.apiFormat = "openai_chat"` tells the route that the real upstream is Chat Completions.
-3. The route rewrites `/responses` or `/v1/responses` to `/chat/completions`, and converts the Responses request body into a Chat request body.
-4. After the upstream responds, the route converts the Chat JSON or SSE stream back into Responses JSON/SSE.
+## Why V4 Pro needs local routing
+
+Codex CLI uses the OpenAI Responses API, while the V4 Pro preset currently uses Chat Completions. CC Switch lets Codex keep sending Responses requests and converts the protocol in both directions:
+
+1. After Codex takeover is enabled, the live configuration points to `http://127.0.0.1:15721/v1` and keeps `wire_api = "responses"`.
+2. The `DeepSeek V4 Pro` preset is marked as Chat Completions format.
+3. The local route converts each Responses request into Chat Completions and sends it to DeepSeek.
+4. After DeepSeek responds, the route converts the JSON or SSE stream back into the Responses format Codex understands.
 
 ## Prerequisites
 
-Prepare these three things first:
+You need:
 
 - CC Switch installed and able to start.
-- Codex CLI installed and run at least once, so the `~/.codex/config.toml` directory structure exists.
-- An API key from DeepSeek or another Chat Completions provider.
+- Codex CLI installed and run at least once.
+- A DeepSeek API key.
 
-DeepSeek's official documentation currently lists the OpenAI-compatible base URL as `https://api.deepseek.com` (other providers often use a base URL with a `/v1` suffix), and the Chat API path as `/chat/completions`. CC Switch's DeepSeek preset already contains these details, so prefer the preset and do not manually assemble the endpoint path.
+The preset already contains `https://api.deepseek.com` and the correct model name. Do not append `/chat/completions` to the base URL manually.
 
-## Step 1: Add a Codex provider
+## Step 1: Add the V4 Pro provider
 
-Open CC Switch, switch to the top-level `Codex` tab, and click the plus button in the upper-right corner to add a provider.
+Open CC Switch, switch to the top-level `Codex` tab, and click the plus button:
 
-Choose the built-in `DeepSeek` preset. You only need to do two things:
+1. Select the `DeepSeek V4 Pro` preset.
+2. Enter the DeepSeek API key.
+3. Save the provider.
 
-- Enter your DeepSeek API key.
-- Save the provider.
+The preset configures the Chat Completions format, the `deepseek-v4-pro` model catalog, and reasoning parameters automatically. You normally do not need to edit the advanced configuration.
 
-![Local routing mapping in the DeepSeek Codex provider form](../images/codex-deepseek-routing/02-deepseek-codex-routing-form.png)
+## Step 2: Enable local routing and Codex takeover
 
-The preset already includes DeepSeek's request base URL, default model, model menu, thinking/reasoning parameters, and automatically enables `Needs Local Routing`. You can adjust the default model or model display names if needed; the protocol conversion is handled by the routing layer.
+Open the `Routing` page in Settings and expand `Local Routing`:
 
-## Step 2: Enable local routing and route Codex
+1. Turn on the main routing switch to start the local service. Its default address is `127.0.0.1:15721`.
+2. Enable `Codex` under application routing.
 
-Go to the `Routing` page in Settings, expand `Local Routing`, and complete two toggles:
+After takeover is enabled, the Codex live configuration points to the local route. The real API key remains in the CC Switch provider configuration and is injected while forwarding.
 
-1. Turn on the main routing switch to start the local service. The default address is `127.0.0.1:15721`.
-2. Turn on `Codex` under `Routing Enabled`. If you only want Codex to use local routing, you can leave Claude and Gemini off.
+## Step 3: Enable the provider and restart Codex
 
-![Enabling Codex routing on the local routing page](../images/codex-deepseek-routing/03-local-route-codex-takeover.png)
+Return to the Codex provider list and enable `DeepSeek V4 Pro`. The preset is marked as requiring routing, so keep local routing running while it is in use.
 
-After routing is enabled, CC Switch points Codex's live configuration to the local route and manages authentication with a placeholder. The real DeepSeek key stays in the CC Switch provider configuration and is injected by the local route while forwarding requests, so you do not need to expose the key in Codex's live configuration.
+Restart the Codex terminal session after switching. The process may have already loaded the old `config.toml`, and the `/model` menu usually reloads `model_catalog_json` only in a new process.
 
-## Step 3: Switch providers and restart Codex
+Inside Codex, use `/model` to confirm that the current model is `DeepSeek V4 Pro`. Then send a small request and verify that it appears in the CC Switch routing or request logs.
 
-Return to the Codex provider list and click `Enable` on the DeepSeek provider. If you see the `Needs Routing` marker, that provider must be used while routing is running; when the route is not started, CC Switch shows a prompt saying the routing service is required.
+## Migrating an older DeepSeek configuration
 
-After switching, restart the current Codex terminal session. This is recommended because:
+Older versions put Flash and Pro in one Chat preset. Existing providers keep their saved values after upgrading and do not switch protocols automatically:
 
-- The Codex process may already have read the old `config.toml`.
-- After `model_catalog_json` is generated, the `/model` menu usually needs a fresh process before it refreshes.
+- For Flash, select the `DeepSeek` preset again or create a new provider. It connects directly through native Responses and does not need local routing.
+- For Pro, select the `DeepSeek V4 Pro` preset again or create a new provider, and keep Codex local routing enabled.
 
-Inside Codex, use `/model` to check whether the current model comes from the DeepSeek preset, such as `DeepSeek V4 Flash`. The Codex app currently does not support multi-model selection, so it defaults to the first configured model. Then send a small test prompt and confirm that the request count increases in the routing panel, or that a Codex request appears in usage/request logs.
-
-## How to handle other Chat providers
-
-DeepSeek, Kimi, MiniMax, SiliconFlow, and other common Chat-format providers already have presets in CC Switch, so use presets first. Only choose custom configuration for providers that are not covered by presets; in that case, fill in the API key, base URL, and models according to the provider's documentation, and set `API Format` to `OpenAI Chat Completions (requires routing)`.
-
-If the upstream provider directly supports the OpenAI Responses API, you do not need to enable `Needs Local Routing`; CC Switch can connect through Responses directly without Chat conversion.
+Restart Codex after changing presets so the live configuration and model catalog are refreshed.
 
 ## FAQ
 
-**Codex reports 404 or cannot find `/responses`**
+**Do I need Codex local routing if I only use V4 Flash?**
 
-Usually Codex routing is not enabled, or the upstream Chat base URL was written directly into Codex manually. Check whether `~/.codex/config.toml` points to `http://127.0.0.1:15721/v1`.
+No. Select the main `DeepSeek` preset. Flash supports Responses natively, so CC Switch does not perform Chat protocol conversion.
 
-**DeepSeek upstream reports 404**
+**V4 Pro reports 404 or cannot find `/responses`**
 
-If you are using the built-in DeepSeek preset, first confirm that the active provider really comes from the preset and that Codex routing is enabled. Only custom providers require extra base URL checks: the base URL should be the service root, not the full endpoint path with `/chat/completions`.
+Confirm that `DeepSeek V4 Pro` is selected, the local routing service is running, and Codex application routing is enabled. Do not write DeepSeek's Chat base URL directly into Codex configuration.
 
-**`/model` does not show DeepSeek models**
+**`/model` does not show a DeepSeek model**
 
-Restart Codex after saving the provider. CC Switch generates `cc-switch-model-catalog.json` and writes its path to `model_catalog_json`, but a running Codex process may not hot-load the model catalog.
-The Codex app currently does not support multi-model selection, so it uses the first configured model by default.
+Restart Codex after saving and enabling the provider. A running Codex process may not hot-load the model catalog.
 
-**Routing is enabled, but requests still go to the wrong provider**
+**Routing is enabled, but requests go to the wrong provider**
 
-Confirm that all three states match: the current provider under the Codex tab is DeepSeek; the local routing service is running; and the Codex toggle is enabled under `Routing Enabled`.
-
-**Can I use an official OpenAI Codex account through local routing?**
-
-Not recommended. CC Switch blocks switching to official providers while local routing takeover is enabled, because accessing official APIs through a proxy may create account risk. Routing is mainly intended for third-party, aggregator, or protocol-conversion scenarios.
+Confirm that `DeepSeek V4 Pro` is enabled on the Codex tab, the main routing switch is on, and Codex is enabled under application routing.
 
 ## References
 
 - [CC Switch User Manual: Add Provider](../user-manual/en/2-providers/2.1-add.md)
 - [CC Switch User Manual: Proxy Service](../user-manual/en/4-proxy/4.1-service.md)
 - [CC Switch User Manual: App Routing](../user-manual/en/4-proxy/4.2-routing.md)
-- [DeepSeek API Docs: Your First API Call](https://api-docs.deepseek.com/)
-- [DeepSeek API Docs: Create Chat Completion](https://api-docs.deepseek.com/api/create-chat-completion)
-- [DeepSeek API Docs: Multi-round Conversation](https://api-docs.deepseek.com/guides/multi_round_chat)
+- [DeepSeek: Using the Responses API](https://api-docs.deepseek.com/guides/responses_api)
+- [DeepSeek: Integrate with Codex](https://api-docs.deepseek.com/quick_start/agent_integrations/codex)

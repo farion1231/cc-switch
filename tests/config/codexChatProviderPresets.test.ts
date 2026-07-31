@@ -25,13 +25,10 @@ const expectedChatPresets = new Map<
     },
   ],
   [
-    "DeepSeek",
+    "DeepSeek V4 Pro",
     {
       baseUrl: "https://api.deepseek.com",
-      contextWindows: {
-        "deepseek-v4-flash": 1000000,
-        "deepseek-v4-pro": 1000000,
-      },
+      contextWindows: { "deepseek-v4-pro": 1048576 },
     },
   ],
   [
@@ -129,6 +126,48 @@ const expectedChatPresets = new Map<
 ]);
 
 describe("Codex Chat provider presets", () => {
+  it("declares DeepSeek V4 Flash native Responses capabilities", () => {
+    const flash = codexProviderPresets.find((item) => item.name === "DeepSeek");
+    const pro = codexProviderPresets.find(
+      (item) => item.name === "DeepSeek V4 Pro",
+    );
+
+    expect(flash?.modelCatalog).toEqual([
+      {
+        model: "deepseek-v4-flash",
+        displayName: "DeepSeek V4 Flash",
+        contextWindow: 1048576,
+        supportsParallelToolCalls: true,
+        inputModalities: ["text"],
+        applyPatchToolType: "freeform",
+        webSearchToolType: "text",
+        supportsSearchTool: true,
+        supportVerbosity: true,
+        defaultVerbosity: "low",
+        defaultReasoningLevel: "high",
+        supportedReasoningLevels: [
+          {
+            effort: "low",
+            description: "Fast responses with lighter reasoning",
+          },
+          {
+            effort: "high",
+            description: "Extra high reasoning depth for complex problems",
+          },
+          {
+            effort: "max",
+            description: "Maximum reasoning depth for the hardest problems",
+          },
+        ],
+        truncationPolicy: { mode: "tokens", limit: 10000 },
+        multiAgentVersion: "v2",
+        minimalClientVersion: "0.144.0",
+      },
+    ]);
+    expect(pro?.apiFormat).toBe("openai_chat");
+    expect(pro?.codexChatReasoning).toBeDefined();
+  });
+
   it("enables session-based prompt cache routing for Kimi Coding", () => {
     const preset = codexProviderPresets.find(
       (item) => item.name === "Kimi For Coding",
@@ -170,6 +209,7 @@ describe("Codex Chat provider presets", () => {
         "DouBaoSeed",
         { contextWindows: { "doubao-seed-2-1-pro-260628": 262144 } },
       ],
+      ["DeepSeek", { contextWindows: { "deepseek-v4-flash": 1048576 } }],
       ["Bailian", { contextWindows: { "qwen3-coder-plus": 1048576 } }],
       ["Longcat", { contextWindows: { "LongCat-2.0": 1048576 } }],
       ["MiniMax", { contextWindows: { "MiniMax-M3": 1000000 } }],
@@ -199,10 +239,9 @@ describe("Codex Chat provider presets", () => {
 
       expect(preset, `${name} preset`).toBeDefined();
       expect(preset?.apiFormat).toBe("openai_responses");
-      // 原生 Responses 预设现在带 modelCatalog：cc-switch 直连时据此生成
-      // ~/.codex 的 model-catalogs.json（shell_command 编辑、不发 freeform
-      // apply_patch）。带 catalog 不再强制开“本地路由映射”——前端已按
-      // apiFormat 解耦（openai_responses 默认不开接管）。
+      // 原生 Responses 预设带 modelCatalog：cc-switch 直连时据此生成
+      // ~/.codex 的 model-catalogs.json。目录以保守能力为默认值，模型可按
+      // 显式元数据恢复原生工具。带 catalog 不再强制开“本地路由映射”。
       expect((preset?.modelCatalog ?? []).length).toBeGreaterThan(0);
       expect(
         Object.fromEntries(

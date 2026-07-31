@@ -37,7 +37,7 @@ export interface CodexProviderPreset {
   providerType?: "xai_oauth";
   // OAuth 预设：隐藏 API Key 输入，保存前要求已登录托管账号
   requiresOAuth?: boolean;
-  // Codex Chat 本地路由模式下的模型目录
+  // Codex 生成模型目录所需的模型与隐藏能力元数据
   modelCatalog?: CodexCatalogModel[];
   // Codex Responses -> Chat Completions reasoning capability defaults
   codexChatReasoning?: CodexChatReasoning;
@@ -77,35 +77,10 @@ requires_openai_auth = true`;
 }
 
 function modelCatalog(
-  models: Array<
-    | string
-    | {
-        model: string;
-        displayName?: string;
-        contextWindow?: number;
-        // Native Responses (direct) overrides for the generated
-        // model-catalogs.json. Omitted input modalities are inferred by the
-        // backend: confirmed text-only models stay text-only; everything else
-        // defaults to text+image.
-        supportsParallelToolCalls?: boolean;
-        inputModalities?: string[];
-        // Vendor's OFFICIAL base_instructions; omit to inherit the neutral
-        // template default. Required by Codex, so the backend always emits one.
-        baseInstructions?: string;
-      }
-  >,
+  models: Array<string | CodexCatalogModel>,
 ): CodexCatalogModel[] {
   return models.map((entry) =>
-    typeof entry === "string"
-      ? { model: entry }
-      : {
-          model: entry.model,
-          displayName: entry.displayName,
-          contextWindow: entry.contextWindow,
-          supportsParallelToolCalls: entry.supportsParallelToolCalls,
-          inputModalities: entry.inputModalities,
-          baseInstructions: entry.baseInstructions,
-        },
+    typeof entry === "string" ? { model: entry } : { ...entry },
   );
 }
 
@@ -969,17 +944,60 @@ requires_openai_auth = true`,
       "deepseek-v4-flash",
     ),
     endpointCandidates: ["https://api.deepseek.com"],
-    apiFormat: "openai_chat",
+    apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
       {
         model: "deepseek-v4-flash",
         displayName: "DeepSeek V4 Flash",
-        contextWindow: 1000000,
+        contextWindow: 1048576,
+        supportsParallelToolCalls: true,
+        inputModalities: ["text"],
+        applyPatchToolType: "freeform",
+        webSearchToolType: "text",
+        supportsSearchTool: true,
+        supportVerbosity: true,
+        defaultVerbosity: "low",
+        defaultReasoningLevel: "high",
+        supportedReasoningLevels: [
+          {
+            effort: "low",
+            description: "Fast responses with lighter reasoning",
+          },
+          {
+            effort: "high",
+            description: "Extra high reasoning depth for complex problems",
+          },
+          {
+            effort: "max",
+            description: "Maximum reasoning depth for the hardest problems",
+          },
+        ],
+        truncationPolicy: { mode: "tokens", limit: 10000 },
+        multiAgentVersion: "v2",
+        minimalClientVersion: "0.144.0",
       },
+    ]),
+    category: "cn_official",
+    icon: "deepseek",
+    iconColor: "#1E88E5",
+  },
+  {
+    name: "DeepSeek V4 Pro",
+    websiteUrl: "https://platform.deepseek.com",
+    apiKeyUrl: "https://platform.deepseek.com/api_keys",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "deepseek",
+      "https://api.deepseek.com",
+      "deepseek-v4-pro",
+    ),
+    endpointCandidates: ["https://api.deepseek.com"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
       {
         model: "deepseek-v4-pro",
         displayName: "DeepSeek V4 Pro",
-        contextWindow: 1000000,
+        contextWindow: 1048576,
       },
     ]),
     codexChatReasoning: {

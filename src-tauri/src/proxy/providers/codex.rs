@@ -1369,6 +1369,43 @@ wire_api = "chat"
     }
 
     #[test]
+    fn deepseek_native_responses_paths_bypass_protocol_and_namespace_transforms() {
+        let mut provider = create_provider(json!({
+            "auth": { "OPENAI_API_KEY": "sk-test" },
+            "config": r#"
+model_provider = "deepseek"
+model = "deepseek-v4-flash"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+        }));
+        provider.name = "DeepSeek".to_string();
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("openai_responses".to_string()),
+            ..Default::default()
+        });
+
+        for endpoint in ["/responses", "/v1/responses"] {
+            assert!(
+                !should_convert_codex_responses_to_chat(&provider, endpoint),
+                "{endpoint} 不应进入 Responses → Chat 转换"
+            );
+            assert!(
+                !should_convert_codex_responses_to_anthropic(&provider, endpoint),
+                "{endpoint} 不应进入 Responses → Anthropic 转换"
+            );
+        }
+        assert!(
+            !provider_needs_responses_namespace_flatten(&provider),
+            "DeepSeek 原生 Responses 支持 custom/web_search，不能套用 xAI namespace 清洗"
+        );
+    }
+
+    #[test]
     fn test_apply_codex_chat_upstream_model_uses_provider_config_model() {
         let mut provider = create_provider(json!({
             "config": r#"

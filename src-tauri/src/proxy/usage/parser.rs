@@ -9,6 +9,20 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+const CODEX_RESPONSES_TERMINAL_EVENT_TYPES: [&str; 3] = [
+    "response.completed",
+    "response.incomplete",
+    "response.failed",
+];
+
+pub(crate) fn is_codex_responses_terminal_event_type(event_type: &str) -> bool {
+    CODEX_RESPONSES_TERMINAL_EVENT_TYPES.contains(&event_type)
+}
+
+pub(crate) fn codex_stream_contains_terminal_event(data: &str) -> bool {
+    data.split('"').any(is_codex_responses_terminal_event_type)
+}
+
 fn openai_cache_read_tokens(usage: &Value) -> u32 {
     usage
         .get("cache_read_input_tokens")
@@ -305,12 +319,12 @@ impl TokenUsage {
     pub fn from_codex_stream_events_auto(events: &[Value]) -> Option<Self> {
         log::debug!("[Codex] 智能解析流式事件，共 {} 个事件", events.len());
 
-        // 先尝试 Codex Responses API 格式 (response.completed 事件)
+        // 先尝试 Codex Responses API 格式；所有终态都可能携带已产生的 usage。
         for event in events {
             if let Some(event_type) = event.get("type").and_then(|v| v.as_str()) {
-                if event_type == "response.completed" {
+                if is_codex_responses_terminal_event_type(event_type) {
                     if let Some(response) = event.get("response") {
-                        log::debug!("[Codex] 找到 response.completed 事件");
+                        log::debug!("[Codex] 找到 Responses 终态事件: {event_type}");
                         return Self::from_codex_response_auto(response);
                     }
                 }
@@ -1070,6 +1084,86 @@ mod tests {
         assert_eq!(usage.output_tokens, 500);
         assert_eq!(usage.cache_read_tokens, 200);
         assert_eq!(usage.model, Some("o3".to_string()));
+    }
+
+    #[test]
+    fn test_codex_stream_events_auto_incomplete_format() {
+        // Responses 被输出上限截断时仍会在终态携带完整 usage，不能漏记。
+        let events = vec![json!({
+            "type": "response.incomplete",
+            "response": {
+                "id": "resp_incomplete",
+                "status": "incomplete",
+                "model": "deepseek-v4-flash",
+                "incomplete_details": {
+                    "reason": "max_output_tokens"
+                },
+                "usage": {
+                    "input_tokens": 23,
+                    "output_tokens": 8,
+                    "input_tokens_details": {
+                        "cached_tokens": 7
+                    }
+                }
+            }
+        })];
+
+        let usage = TokenUsage::from_codex_stream_events_auto(&events).unwrap();
+        assert_eq!(usage.input_tokens, 23);
+        assert_eq!(usage.output_tokens, 8);
+        assert_eq!(usage.cache_read_tokens, 7);
+        assert_eq!(usage.model.as_deref(), Some("deepseek-v4-flash"));
+        assert_eq!(usage.message_id.as_deref(), Some("resp_incomplete"));
+    }
+
+    #[test]
+    fn test_codex_stream_events_auto_failed_format_with_usage() {
+        // 上游失败前已经消耗 token 时，response.failed 中的完整 usage 仍应计入。
+        let events = vec![json!({
+            "type": "response.failed",
+            "response": {
+                "id": "resp_failed",
+                "status": "failed",
+                "model": "deepseek-v4-flash",
+                "error": {
+                    "type": "server_error",
+                    "message": "upstream failed"
+                },
+                "usage": {
+                    "input_tokens": 31,
+                    "output_tokens": 5,
+                    "input_tokens_details": {
+                        "cached_tokens": 11
+                    }
+                }
+            }
+        })];
+
+        let usage = TokenUsage::from_codex_stream_events_auto(&events).unwrap();
+        assert_eq!(usage.input_tokens, 31);
+        assert_eq!(usage.output_tokens, 5);
+        assert_eq!(usage.cache_read_tokens, 11);
+        assert_eq!(usage.model.as_deref(), Some("deepseek-v4-flash"));
+        assert_eq!(usage.message_id.as_deref(), Some("resp_failed"));
+    }
+
+    #[test]
+    fn test_codex_stream_events_auto_failed_without_usage_is_none() {
+        // 没有完整 usage 的失败终态不能凭空合成 token 数。
+        let events = vec![json!({
+            "type": "response.failed",
+            "response": {
+                "id": "resp_failed_without_usage",
+                "status": "failed",
+                "model": "deepseek-v4-flash",
+                "error": {
+                    "type": "server_error",
+                    "message": "upstream failed"
+                }
+            }
+        })];
+
+        assert!(TokenUsage::from_codex_stream_events_auto(&events).is_none());
     }
 
     #[test]

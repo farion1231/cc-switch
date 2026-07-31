@@ -269,6 +269,24 @@ export interface CodexCatalogModel {
   // Codex requires this field in every catalog entry; when omitted the backend
   // falls back to a neutral default. e.g. MiMo "developed by Xiaomi".
   baseInstructions?: string;
+  // 原生 Responses 模型显式声明后，后端才会恢复对应的 Codex 工具能力；
+  // 未声明时继续使用保守模板，避免不兼容网关收到 custom / hosted tools。
+  applyPatchToolType?: "freeform";
+  webSearchToolType?: "text" | "text_and_image";
+  supportsSearchTool?: boolean;
+  supportVerbosity?: boolean;
+  defaultVerbosity?: string;
+  supportedReasoningLevels?: Array<{
+    effort: string;
+    description: string;
+  }>;
+  defaultReasoningLevel?: string;
+  truncationPolicy?: {
+    mode: "tokens" | "bytes";
+    limit: number;
+  };
+  multiAgentVersion?: string;
+  minimalClientVersion?: string;
 }
 
 // Claude 认证字段类型
