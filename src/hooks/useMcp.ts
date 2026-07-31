@@ -65,9 +65,8 @@ export function useToggleMcpApp() {
     }) => mcpApi.toggleApp(serverId, app, enabled),
     // The backend may update the database before a live-config write fails.
     // Always refresh so the UI reflects the persisted state after an error.
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["mcp", "all"] });
-    },
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: ["mcp", "all"] }),
   });
 }
 

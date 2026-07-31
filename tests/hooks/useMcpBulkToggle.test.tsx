@@ -97,4 +97,39 @@ describe("MCP toggle hooks", () => {
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["mcp", "all"] });
   });
+
+  it("keeps a single toggle pending until the refreshed list is available", async () => {
+    let releaseInvalidation: (() => void) | undefined;
+    const invalidationPending = new Promise<void>((resolve) => {
+      releaseInvalidation = resolve;
+    });
+    toggleAppMock.mockResolvedValueOnce(undefined);
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    });
+    const invalidateSpy = vi
+      .spyOn(queryClient, "invalidateQueries")
+      .mockImplementation(() => invalidationPending);
+    const { result } = renderHook(() => useToggleMcpApp(), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    let mutation!: Promise<unknown>;
+    act(() => {
+      mutation = result.current.mutateAsync({
+        serverId: "alpha",
+        app: "claude",
+        enabled: true,
+      });
+    });
+
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1));
+    expect(result.current.isPending).toBe(true);
+
+    releaseInvalidation?.();
+    await act(async () => {
+      await mutation;
+    });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+  });
 });

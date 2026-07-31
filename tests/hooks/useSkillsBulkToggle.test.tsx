@@ -2,7 +2,7 @@ import type { PropsWithChildren } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useBulkToggleSkillApp } from "@/hooks/useSkills";
+import { useBulkToggleSkillApp, useToggleSkillApp } from "@/hooks/useSkills";
 
 const toggleAppMock = vi.hoisted(() => vi.fn());
 
@@ -61,6 +61,41 @@ describe("Skills bulk toggle hook", () => {
 
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["skills", "installed"],
+    });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+  });
+
+  it("keeps a single toggle pending until the refreshed list is available", async () => {
+    let releaseInvalidation: (() => void) | undefined;
+    const invalidationPending = new Promise<void>((resolve) => {
+      releaseInvalidation = resolve;
+    });
+    toggleAppMock.mockResolvedValueOnce(undefined);
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    });
+    const invalidateSpy = vi
+      .spyOn(queryClient, "invalidateQueries")
+      .mockImplementation(() => invalidationPending);
+    const { result } = renderHook(() => useToggleSkillApp(), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    let mutation!: Promise<unknown>;
+    act(() => {
+      mutation = result.current.mutateAsync({
+        id: "alpha",
+        app: "claude",
+        enabled: true,
+      });
+    });
+
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1));
+    expect(result.current.isPending).toBe(true);
+
+    releaseInvalidation?.();
+    await act(async () => {
+      await mutation;
     });
     await waitFor(() => expect(result.current.isPending).toBe(false));
   });

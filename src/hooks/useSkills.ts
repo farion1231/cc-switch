@@ -180,9 +180,8 @@ export function useToggleSkillApp() {
       app: AppId;
       enabled: boolean;
     }) => skillsApi.toggleApp(id, app, enabled),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
-    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
   });
 }
 
