@@ -417,6 +417,93 @@ pub fn codex_auth_has_oauth_login_material(auth: &Value) -> bool {
     })
 }
 
+/// True only when the auth carries material Codex itself authenticates with
+/// ahead of the API-key fallback: OAuth tokens or another first-class login
+/// carrier. Unlike `codex_auth_has_oauth_login_material`, pure metadata such
+/// as `last_refresh` or `tokens.account_id` does NOT count — metadata must not
+/// shield a stale third-party `OPENAI_API_KEY` from post-switch cleanup.
+pub fn codex_auth_has_credential_login_material(auth: &Value) -> bool {
+    let Some(obj) = auth.as_object() else {
+        return false;
+    };
+
+    let value_present = |value: &Value| match value {
+        Value::Null => false,
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+        _ => true,
+    };
+
+    if ["personal_access_token", "agent_identity", "bedrock_api_key"]
+        .iter()
+        .any(|key| obj.get(*key).is_some_and(value_present))
+    {
+        return true;
+    }
+
+    obj.get("tokens")
+        .and_then(Value::as_object)
+        .is_some_and(|tokens| {
+            ["id_token", "access_token", "refresh_token"]
+                .iter()
+                .any(|key| tokens.get(*key).is_some_and(value_present))
+        })
+}
+
+/// True when live `auth.json` is the shape a preserve-off third-party switch
+/// leaves behind: an `OPENAI_API_KEY` (possibly alongside metadata like
+/// `auth_mode` / `last_refresh`) with no real login credential next to it.
+pub fn codex_live_auth_is_stale_third_party_residue(live_auth: &Value) -> bool {
+    if codex_auth_has_credential_login_material(live_auth) {
+        return false;
+    }
+    live_auth
+        .get("OPENAI_API_KEY")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|key| !key.is_empty())
+}
+
+/// After a normal switch to an official provider that carries no login
+/// material of its own, delete a live `auth.json` that only holds a stale
+/// third-party API key, so Codex shows its login screen instead of sending
+/// the wrong key to the official endpoint (401 with no way to re-login).
+///
+/// Deleting the file — not writing `{}` — is deliberate: Codex resolves an
+/// empty object to ChatGPT mode without tokens and errors at bootstrap,
+/// while a missing file yields NotAuthenticated and the login screen,
+/// matching Codex's own logout.
+///
+/// Callers must only invoke this after the outgoing provider was
+/// successfully backfilled into the DB — that backfill holds the only other
+/// copy of the third-party key. The switch backfill intentionally lacks the
+/// proxy-side "no credentials in the builtin official row" guard
+/// (`services/proxy.rs` `sync_live_config_to_provider`): that asymmetry is
+/// what heals official API-key logins into the DB row, and this cleanup's
+/// safety depends on it — do not align the two guards.
+///
+/// Returns Ok(true) when the file was deleted.
+pub fn clear_stale_codex_live_auth_after_official_switch(
+    db_auth: &Value,
+) -> Result<bool, AppError> {
+    if codex_auth_has_login_material(db_auth) {
+        // A material-carrying official provider gets a full auth write;
+        // nothing stale can remain.
+        return Ok(false);
+    }
+    let auth_path = get_codex_auth_path();
+    if !auth_path.exists() {
+        return Ok(false);
+    }
+    let live_auth: Value = read_json_file(&auth_path)?;
+    if !codex_live_auth_is_stale_third_party_residue(&live_auth) {
+        return Ok(false);
+    }
+    delete_file(&auth_path)?;
+    Ok(true)
+}
+
 pub fn should_restore_codex_provider_token_for_backfill(
     category: Option<&str>,
     template_settings: &Value,
@@ -1424,7 +1511,9 @@ fn remove_codex_experimental_bearer_token(config_text: &str) -> Result<String, A
 /// Read the current Codex live settings as a `{ auth, config }` object.
 ///
 /// Missing `auth.json` collapses to `{}` so a config-only third-party install
-/// is still importable; both files empty is treated as "no live install".
+/// is still importable; both files missing is treated as "no live install".
+/// A `config.toml` that exists but is empty is a valid state — e.g. the
+/// official seed after stale-auth cleanup — and must stay readable.
 pub fn read_codex_live_settings() -> Result<Value, AppError> {
     let auth_path = get_codex_auth_path();
     let auth_present = auth_path.exists();
@@ -1434,7 +1523,7 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
         json!({})
     };
     let cfg_text = read_and_validate_codex_config_text()?;
-    if !auth_present && cfg_text.trim().is_empty() {
+    if !auth_present && !get_codex_config_path().exists() {
         return Err(AppError::localized(
             "codex.live.missing",
             "Codex 配置文件不存在",
@@ -2401,6 +2490,65 @@ experimental_bearer_token = "stale-table-key"
             !should_restore_codex_provider_token_for_backfill(Some("official"), &api_key_template),
             "official providers should never restore third-party bearer tokens"
         );
+    }
+
+    #[test]
+    fn credential_login_material_only_counts_real_credentials() {
+        assert!(codex_auth_has_credential_login_material(&json!({
+            "tokens": { "access_token": "t" }
+        })));
+        assert!(codex_auth_has_credential_login_material(&json!({
+            "tokens": { "refresh_token": "r" }
+        })));
+        assert!(codex_auth_has_credential_login_material(&json!({
+            "personal_access_token": "pat"
+        })));
+
+        // API key and pure metadata are not credentials in this predicate's
+        // sense — they must not shield a stale key from cleanup.
+        assert!(!codex_auth_has_credential_login_material(&json!({
+            "OPENAI_API_KEY": "sk-x"
+        })));
+        assert!(!codex_auth_has_credential_login_material(&json!({
+            "OPENAI_API_KEY": "sk-x",
+            "last_refresh": "2026-01-01T00:00:00Z",
+            "tokens": { "account_id": "acct-meta-only" }
+        })));
+        assert!(!codex_auth_has_credential_login_material(&json!({})));
+    }
+
+    #[test]
+    fn stale_third_party_residue_detection() {
+        // Shapes a preserve-off third-party switch leaves behind: cleared.
+        assert!(codex_live_auth_is_stale_third_party_residue(&json!({
+            "OPENAI_API_KEY": "sk-third-party"
+        })));
+        assert!(codex_live_auth_is_stale_third_party_residue(&json!({
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "sk-third-party"
+        })));
+        assert!(codex_live_auth_is_stale_third_party_residue(&json!({
+            "OPENAI_API_KEY": "sk-third-party",
+            "last_refresh": "2026-01-01T00:00:00Z",
+            "tokens": { "account_id": "acct-meta-only" }
+        })));
+
+        // Anything carrying a real credential must survive untouched.
+        assert!(!codex_live_auth_is_stale_third_party_residue(&json!({
+            "OPENAI_API_KEY": "sk-x",
+            "tokens": { "access_token": "t" }
+        })));
+        assert!(!codex_live_auth_is_stale_third_party_residue(&json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": { "access_token": "official-oauth-token" }
+        })));
+
+        // Nothing to clear.
+        assert!(!codex_live_auth_is_stale_third_party_residue(&json!({})));
+        assert!(!codex_live_auth_is_stale_third_party_residue(&json!({
+            "OPENAI_API_KEY": ""
+        })));
     }
 
     #[test]
