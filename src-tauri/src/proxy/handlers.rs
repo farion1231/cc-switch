@@ -418,6 +418,13 @@ async fn handle_claude_transform(
                 Some(ctx.session_id.clone()),
                 tool_schema_hints.clone(),
             )))
+        } else if api_format == "kiro" {
+            Box::new(Box::pin(
+                super::providers::streaming_kiro::create_anthropic_sse_stream_from_kiro_with_model(
+                    stream,
+                    Some(ctx.request_model.clone()),
+                ),
+            ))
         } else {
             Box::new(Box::pin(create_anthropic_sse_stream(stream)))
         };
@@ -520,7 +527,19 @@ async fn handle_claude_transform(
 
     let body_str = String::from_utf8_lossy(&body_bytes);
 
-    let upstream_response: Value = if aggregate_codex_oauth_responses_sse {
+    // Kiro 上游返回 application/vnd.amazon.eventstream（非 JSON）。对于非流式
+    // 客户端，在此将整个 eventstream 聚合成单个 Anthropic Messages JSON，后面
+    // api_format=="kiro" 的转换器分支会原样透传（已是 Anthropic 格式）。
+    let upstream_response: Value = if api_format == "kiro" {
+        super::providers::streaming_kiro::kiro_eventstream_to_anthropic_response(&body_bytes)
+            .map_err(|msg| {
+                log::error!("[Kiro] 上游 eventstream 返回错误事件: {msg}, body: {body_str}");
+                ProxyError::TransformError(format!(
+                    "Kiro upstream error: {msg} {}",
+                    body_diagnostics_suffix(&response_headers, &body_str)
+                ))
+            })?
+    } else if aggregate_codex_oauth_responses_sse {
         responses_sse_to_response_value(&body_str)?
     } else {
         match serde_json::from_slice(&body_bytes) {
@@ -576,8 +595,10 @@ async fn handle_claude_transform(
         })
     });
 
-    // 根据 api_format 选择非流式转换器
-    let transform_result = if api_format == "openai_responses" {
+    let transform_result = if api_format == "kiro" {
+        // Kiro 已在上方聚合成 Anthropic Messages JSON，原样透传
+        Ok(upstream_response)
+    } else if api_format == "openai_responses" {
         transform_responses::responses_to_anthropic(upstream_response)
     } else if api_format == "gemini_native" {
         transform_gemini::gemini_to_anthropic_with_shadow_and_hints(
@@ -845,7 +866,9 @@ async fn handle_responses_for_app(
     ctx.provider = result.provider;
     let response = result.response;
 
-    if super::providers::should_convert_codex_responses_to_anthropic(&ctx.provider, &endpoint) {
+    if super::providers::should_convert_codex_responses_to_kiro(&ctx.provider, &endpoint)
+        || super::providers::should_convert_codex_responses_to_anthropic(&ctx.provider, &endpoint)
+    {
         return handle_codex_anthropic_to_responses_transform(
             response,
             &ctx,
@@ -979,7 +1002,9 @@ async fn handle_responses_compact_for_app(
     ctx.provider = result.provider;
     let response = result.response;
 
-    if super::providers::should_convert_codex_responses_to_anthropic(&ctx.provider, &endpoint) {
+    if super::providers::should_convert_codex_responses_to_kiro(&ctx.provider, &endpoint)
+        || super::providers::should_convert_codex_responses_to_anthropic(&ctx.provider, &endpoint)
+    {
         return handle_codex_anthropic_to_responses_transform(
             response,
             &ctx,
@@ -1405,11 +1430,11 @@ async fn handle_codex_chat_to_responses_transform(
         })
 }
 
-/// Response-transform handler for the Codex (Responses) ↔ Anthropic Messages gateway.
+/// Response-transform handler for Codex Responses bridged through Anthropic Messages.
 ///
-/// Parallel to `handle_codex_chat_to_responses_transform`: the upstream speaks
-/// Anthropic Messages, and this converts the response back into the Responses form
-/// Codex expects (both streaming and non-streaming). Error bodies reuse
+/// The upstream either speaks Anthropic Messages directly, or Kiro eventstream
+/// which is first normalized to Anthropic. This then converts the response back
+/// into the Responses form Codex expects (both streaming and non-streaming). Error bodies reuse
 /// `handle_codex_chat_error_response` (whose extraction logic also works for
 /// Anthropic's `{"error":{type,message}}`). It does not involve codex_chat_history
 /// (tool ids round-trip natively through Anthropic).
@@ -1432,8 +1457,24 @@ async fn handle_codex_anthropic_to_responses_transform(
     // envelopes and gateways that ignore stream:true can be converted faithfully.
     if response.is_sse() || (is_stream && !response.is_json()) {
         let stream = response.bytes_stream();
-        let sse_stream =
-            create_responses_sse_stream_from_anthropic_with_context(stream, codex_tool_context);
+        let sse_stream: std::pin::Pin<
+            Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>,
+        > = if ctx.provider.is_kiro() {
+            let anthropic_stream =
+                super::providers::streaming_kiro::create_anthropic_sse_stream_from_kiro_with_model(
+                    stream,
+                    Some(ctx.request_model.clone()),
+                );
+            Box::pin(create_responses_sse_stream_from_anthropic_with_context(
+                anthropic_stream,
+                codex_tool_context,
+            ))
+        } else {
+            Box::pin(create_responses_sse_stream_from_anthropic_with_context(
+                stream,
+                codex_tool_context,
+            ))
+        };
         return build_codex_anthropic_sse_response(
             sse_stream,
             ctx,
@@ -1452,29 +1493,39 @@ async fn handle_codex_anthropic_to_responses_transform(
     let (mut response_headers, status, body_bytes) =
         read_decoded_body(response, ctx.tag, body_timeout).await?;
     let body_str = String::from_utf8_lossy(&body_bytes);
-    let anthropic_response: Value = match serde_json::from_slice(&body_bytes) {
-        Ok(value) => value,
-        // Fallback sniffing symmetric to the chat / claude side (#2234): when the
-        // upstream returns an Anthropic SSE body with an unmarked Content-Type,
-        // aggregate it back into a message before continuing the conversion.
-        Err(_) if body_looks_like_sse(&body_str) => {
-            log::warn!("[Codex] Upstream returned an unmarked Anthropic SSE body, falling back to aggregation");
-            transform_codex_anthropic::anthropic_sse_to_message_value(&body_str).map_err(|e| {
-                log::error!("[Codex] Failed to aggregate Anthropic SSE body: {e}");
-                e
-            })?
-        }
-        Err(e) => {
-            log::error!(
-                "[Codex] Failed to parse Anthropic upstream response: {e}, body_bytes={}",
-                body_bytes.len()
-            );
-            return Err(upstream_body_parse_error(
-                "Failed to parse upstream anthropic response",
-                &e,
-                &response_headers,
-                &body_str,
-            ));
+    let anthropic_response: Value = if ctx.provider.is_kiro() {
+        super::providers::streaming_kiro::kiro_eventstream_to_anthropic_response_with_model(
+            &body_bytes,
+            Some(&ctx.request_model),
+        )
+        .map_err(|message| ProxyError::TransformError(format!("Kiro upstream error: {message}")))?
+    } else {
+        match serde_json::from_slice(&body_bytes) {
+            Ok(value) => value,
+            // Fallback sniffing symmetric to the chat / claude side (#2234): when the
+            // upstream returns an Anthropic SSE body with an unmarked Content-Type,
+            // aggregate it back into a message before continuing the conversion.
+            Err(_) if body_looks_like_sse(&body_str) => {
+                log::warn!("[Codex] Upstream returned an unmarked Anthropic SSE body, falling back to aggregation");
+                transform_codex_anthropic::anthropic_sse_to_message_value(&body_str).map_err(
+                    |e| {
+                        log::error!("[Codex] Failed to aggregate Anthropic SSE body: {e}");
+                        e
+                    },
+                )?
+            }
+            Err(e) => {
+                log::error!(
+                    "[Codex] Failed to parse Anthropic upstream response: {e}, body_bytes={}",
+                    body_bytes.len()
+                );
+                return Err(upstream_body_parse_error(
+                    "Failed to parse upstream anthropic response",
+                    &e,
+                    &response_headers,
+                    &body_str,
+                ));
+            }
         }
     };
 
@@ -2003,7 +2054,12 @@ fn should_use_claude_transform_streaming(
     api_format: &str,
     is_codex_oauth: bool,
 ) -> bool {
-    requested_streaming || upstream_is_sse || (is_codex_oauth && api_format == "openai_responses")
+    // Kiro 上游始终返回 application/vnd.amazon.eventstream（非 text/event-stream，
+    // is_sse() 识别不了）。当客户端请求流式时走 Kiro 流式转换器；
+    // 非流式请求则在下方的非流式路径里聚合 Kiro eventstream 为单个 JSON。
+    requested_streaming
+        || (upstream_is_sse && api_format != "kiro")
+        || (is_codex_oauth && api_format == "openai_responses")
 }
 
 /// 把 OpenAI Responses SSE 流聚合成一个完整的 Responses JSON 对象，供下游转成 Anthropic

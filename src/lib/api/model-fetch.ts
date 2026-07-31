@@ -52,6 +52,17 @@ export async function fetchXaiOauthModels(
 }
 
 /**
+ * 获取 Kiro 可用模型列表
+ */
+export async function fetchKiroModels(
+  accountId?: string | null,
+): Promise<FetchedModel[]> {
+  return invoke("get_kiro_models", {
+    accountId: accountId || null,
+  });
+}
+
+/**
  * 根据错误类型显示对应的 toast 提示
  */
 export function showFetchModelsError(

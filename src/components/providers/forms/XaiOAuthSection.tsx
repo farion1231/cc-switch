@@ -219,7 +219,7 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
           variant="outline"
           className="w-full"
           disabled={isAddingAccount}
-          onClick={addAccount}
+          onClick={() => addAccount()}
         >
           {hasAnyAccount ? (
             <Plus className="mr-2 h-4 w-4" />
@@ -292,7 +292,7 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
               type="button"
               variant="outline"
               size="sm"
-              onClick={addAccount}
+              onClick={() => addAccount()}
             >
               {t("xaiOauth.retry", "重试")}
             </Button>

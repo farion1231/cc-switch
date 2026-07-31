@@ -24,12 +24,14 @@ pub mod copilot_model_map;
 mod gemini;
 pub(crate) mod gemini_schema;
 pub mod gemini_shadow;
+pub mod kiro_auth;
 pub mod models;
 pub(crate) mod reasoning_bridge;
 pub mod streaming;
 pub mod streaming_codex_anthropic;
 pub mod streaming_codex_chat;
 pub mod streaming_gemini;
+pub mod streaming_kiro;
 pub mod streaming_responses;
 pub mod transform;
 pub mod transform_codex_anthropic;
@@ -37,6 +39,7 @@ pub mod transform_codex_chat;
 pub mod transform_codex_responses_namespace;
 pub mod transform_codex_responses_xai_sanitize;
 pub mod transform_gemini;
+pub mod transform_kiro;
 pub mod transform_responses;
 pub mod xai_oauth_auth;
 
@@ -61,7 +64,7 @@ pub use codex::{
     inject_codex_chat_prompt_cache_key, is_codex_official_provider,
     provider_needs_responses_namespace_flatten, resolve_codex_catalog_tool_profile,
     resolve_codex_chat_reasoning_config, should_convert_codex_responses_to_anthropic,
-    should_convert_codex_responses_to_chat,
+    should_convert_codex_responses_to_chat, should_convert_codex_responses_to_kiro,
 };
 pub use gemini::GeminiAdapter;
 
@@ -90,6 +93,8 @@ pub enum ProviderType {
     CodexOAuth,
     /// xAI Grok OAuth（需要 Anthropic ↔ Responses API 转换）
     XaiOAuth,
+    /// Kiro (AWS CodeWhisperer/Q, requires OIDC)
+    Kiro,
 }
 
 impl ProviderType {
@@ -104,6 +109,7 @@ impl ProviderType {
             ProviderType::GitHubCopilot => true,
             ProviderType::CodexOAuth => true,
             ProviderType::XaiOAuth => true,
+            ProviderType::Kiro => true,
             ProviderType::OpenRouter => false,
             _ => false,
         }
@@ -122,6 +128,7 @@ impl ProviderType {
             ProviderType::GitHubCopilot => "https://api.githubcopilot.com",
             ProviderType::CodexOAuth => CHATGPT_CODEX_BASE_URL,
             ProviderType::XaiOAuth => XAI_API_BASE_URL,
+            ProviderType::Kiro => "https://runtime.us-east-1.kiro.dev",
         }
     }
 
@@ -151,6 +158,9 @@ impl ProviderType {
                     if meta.provider_type.as_deref() == Some("xai_oauth") {
                         return ProviderType::XaiOAuth;
                     }
+                    if meta.provider_type.as_deref() == Some("kiro") {
+                        return ProviderType::Kiro;
+                    }
                 }
 
                 // 检测 base_url 是否为 GitHub Copilot
@@ -158,6 +168,9 @@ impl ProviderType {
                 if let Ok(base_url) = adapter.extract_base_url(provider) {
                     if base_url.contains("githubcopilot.com") {
                         return ProviderType::GitHubCopilot;
+                    }
+                    if base_url.contains("kiro.dev") {
+                        return ProviderType::Kiro;
                     }
                     // 检测是否为 OpenRouter
                     if base_url.contains("openrouter.ai") {
@@ -187,7 +200,13 @@ impl ProviderType {
                 }
                 ProviderType::Claude
             }
-            AppType::Codex => ProviderType::Codex,
+            AppType::Codex => {
+                if provider.is_kiro() {
+                    ProviderType::Kiro
+                } else {
+                    ProviderType::Codex
+                }
+            }
             AppType::Gemini => {
                 // 检测是否为 CLI 模式（OAuth）
                 let adapter = GeminiAdapter::new();
@@ -204,7 +223,13 @@ impl ProviderType {
                 }
                 ProviderType::Gemini
             }
-            AppType::GrokBuild => ProviderType::Codex,
+            AppType::GrokBuild => {
+                if provider.is_kiro() {
+                    ProviderType::Kiro
+                } else {
+                    ProviderType::Codex
+                }
+            }
             AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => ProviderType::Codex,
         }
     }
@@ -221,6 +246,7 @@ impl ProviderType {
             ProviderType::GitHubCopilot => "github_copilot",
             ProviderType::CodexOAuth => "codex_oauth",
             ProviderType::XaiOAuth => "xai_oauth",
+            ProviderType::Kiro => "kiro",
         }
     }
 }
@@ -247,6 +273,7 @@ impl std::str::FromStr for ProviderType {
             }
             "codex_oauth" | "codex-oauth" | "codexoauth" => Ok(ProviderType::CodexOAuth),
             "xai_oauth" | "xai-oauth" | "xaioauth" => Ok(ProviderType::XaiOAuth),
+            "kiro" => Ok(ProviderType::Kiro),
             _ => Err(format!("Invalid provider type: {s}")),
         }
     }
@@ -272,7 +299,8 @@ pub fn get_adapter_for_provider_type(provider_type: &ProviderType) -> Box<dyn Pr
         | ProviderType::OpenRouter
         | ProviderType::GitHubCopilot
         | ProviderType::CodexOAuth
-        | ProviderType::XaiOAuth => Box::new(ClaudeAdapter::new()),
+        | ProviderType::XaiOAuth
+        | ProviderType::Kiro => Box::new(ClaudeAdapter::new()),
         ProviderType::Codex => Box::new(CodexAdapter::new()),
         ProviderType::Gemini | ProviderType::GeminiCli => Box::new(GeminiAdapter::new()),
     }

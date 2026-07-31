@@ -13,8 +13,25 @@ import type { CodexCatalogModel } from "@/types";
 interface UseCodexConfigStateProps {
   initialData?: {
     settingsConfig?: Record<string, unknown>;
+    meta?: {
+      providerType?: string;
+    };
   };
 }
+
+const KIRO_DEFAULT_MODELS = new Set([
+  "gpt-5-6-sol",
+  "gpt-5-6-terra",
+  "gpt-5-6-luna",
+]);
+const KIRO_REASONING_EFFORTS = [
+  "none",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
 
 // auth.json 缺 OPENAI_API_KEY 时回退到 config.toml 的 experimental_bearer_token
 // (Mobile 兼容形态：保留 ChatGPT 登录态但用第三方 token)
@@ -92,8 +109,23 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
                 : typeof item?.base_instructions === "string"
                   ? item.base_instructions
                   : undefined;
+            const reasoningEfforts = Array.isArray(item?.reasoningEfforts)
+              ? item.reasoningEfforts
+              : Array.isArray(item?.reasoning_efforts)
+                ? item.reasoning_efforts
+                : undefined;
+            const defaultReasoningEffort =
+              typeof item?.defaultReasoningEffort === "string"
+                ? item.defaultReasoningEffort
+                : typeof item?.default_reasoning_effort === "string"
+                  ? item.default_reasoning_effort
+                  : undefined;
+            const model = typeof item?.model === "string" ? item.model : "";
+            const shouldBackfillKiroReasoning =
+              initialData.meta?.providerType === "kiro" &&
+              KIRO_DEFAULT_MODELS.has(model);
             return {
-              model: typeof item?.model === "string" ? item.model : "",
+              model,
               displayName:
                 typeof item?.displayName === "string"
                   ? item.displayName
@@ -113,6 +145,16 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
                 : {}),
               ...(inputModalities ? { inputModalities } : {}),
               ...(baseInstructions ? { baseInstructions } : {}),
+              ...(reasoningEfforts
+                ? { reasoningEfforts }
+                : shouldBackfillKiroReasoning
+                  ? { reasoningEfforts: KIRO_REASONING_EFFORTS }
+                  : {}),
+              ...(defaultReasoningEffort
+                ? { defaultReasoningEffort }
+                : shouldBackfillKiroReasoning
+                  ? { defaultReasoningEffort: "high" }
+                  : {}),
             };
           })
           .filter((item: CodexCatalogModel) => item.model.trim()),
