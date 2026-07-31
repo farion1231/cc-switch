@@ -2715,16 +2715,17 @@ mod tests {
         });
         let result = responses_request_to_anthropic(input, 4096)
             .expect("invalid escape in historical arguments must not fail the request");
-        let has_tool_use = result["messages"]
-            .as_array()
-            .map_or(false, |msgs| {
-                msgs.iter().any(|m| {
-                    m["content"].as_array().map_or(false, |arr| {
-                        arr.iter().any(|b| b["type"] == "tool_use")
-                    })
-                })
-            });
-        assert!(has_tool_use, "tool_use block should remain after degrading arguments");
+        let has_tool_use = result["messages"].as_array().map_or(false, |msgs| {
+            msgs.iter().any(|m| {
+                m["content"]
+                    .as_array()
+                    .map_or(false, |arr| arr.iter().any(|b| b["type"] == "tool_use"))
+            })
+        });
+        assert!(
+            has_tool_use,
+            "tool_use block should remain after degrading arguments"
+        );
     }
 
     // ==================== SSE aggregation fallback ====================

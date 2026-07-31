@@ -92,7 +92,10 @@ fn repair_invalid_escapes(input: &str) -> String {
             i += 1;
         } else if b == b'\\' {
             let valid_next = i + 1 < bytes.len()
-                && matches!(bytes[i + 1], b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' | b'u');
+                && matches!(
+                    bytes[i + 1],
+                    b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' | b'u'
+                );
             if valid_next {
                 out.push(b);
                 out.push(bytes[i + 1]);
@@ -253,8 +256,8 @@ mod tests {
         // parseable document so the poisoned arguments cannot later fail the
         // strict parse on the request path and 400 the whole request.
         let repaired = canonicalize_tool_arguments_str(r#"{"plan":[{"step":"a\'b\'c"}]}"#);
-        let parsed: Value = serde_json::from_str(&repaired)
-            .expect("repaired arguments must parse as JSON");
+        let parsed: Value =
+            serde_json::from_str(&repaired).expect("repaired arguments must parse as JSON");
         assert_eq!(parsed["plan"][0]["step"], "a\\'b\\'c");
     }
 
@@ -262,6 +265,9 @@ mod tests {
     fn canonicalize_tool_arguments_str_passthrough_when_unrepairable() {
         // A structural error (not an invalid escape) cannot be repaired —
         // pass through verbatim rather than silently dropping content.
-        assert_eq!(canonicalize_tool_arguments_str(r#"{"plan":[}"#), r#"{"plan":[}"#);
+        assert_eq!(
+            canonicalize_tool_arguments_str(r#"{"plan":[}"#),
+            r#"{"plan":[}"#
+        );
     }
 }
