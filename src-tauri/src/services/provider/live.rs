@@ -489,7 +489,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
     }
 
     match app_type {
-        AppType::Claude => match serde_json::from_str::<Value>(trimmed) {
+        AppType::Claude | AppType::Antigravity => match serde_json::from_str::<Value>(trimmed) {
             Ok(source) if source.is_object() => json_is_subset(settings, &source),
             _ => false,
         },
@@ -559,9 +559,9 @@ pub(crate) fn remove_common_config_from_settings(
     }
 
     match app_type {
-        AppType::Claude => {
+        AppType::Claude | AppType::Antigravity => {
             let source = serde_json::from_str::<Value>(trimmed)
-                .map_err(|e| AppError::Message(format!("Invalid Claude common config: {e}")))?;
+                .map_err(|e| AppError::Message(format!("Invalid Claude or Antigravity common config: {e}")))?;
             let mut result = settings.clone();
             json_deep_remove(&mut result, &source);
             Ok(result)
@@ -616,9 +616,9 @@ fn apply_common_config_to_settings(
     }
 
     match app_type {
-        AppType::Claude => {
+        AppType::Claude | AppType::Antigravity => {
             let source = serde_json::from_str::<Value>(trimmed)
-                .map_err(|e| AppError::Message(format!("Invalid Claude common config: {e}")))?;
+                .map_err(|e| AppError::Message(format!("Invalid Claude or Antigravity common config: {e}")))?;
             let mut result = settings.clone();
             json_deep_merge(&mut result, &source);
             Ok(result)
@@ -1051,6 +1051,10 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 profile,
             )?;
         }
+        AppType::Antigravity => {
+            crate::antigravity_config::write_antigravity_live_config(&provider.settings_config)?;
+            crate::services::provider::antigravity_auth::ensure_google_oauth_security_flag(provider)?;
+        }
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly
             write_gemini_live(provider)?;
@@ -1340,6 +1344,18 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             "Claude Desktop 3P 配置不支持作为通用 live 配置导入，请使用“从 Claude 导入兼容供应商”。",
             "Claude Desktop 3P configuration cannot be imported as a generic live config. Use 'Import compatible providers from Claude' instead.",
         )),
+        AppType::Antigravity => {
+            let config_path = crate::antigravity_config::get_antigravity_config_path();
+            if !config_path.exists() {
+                return Err(AppError::localized(
+                    "antigravity.live.missing",
+                    "Antigravity 2.0 配置文件不存在",
+                    "Antigravity 2.0 configuration file not found",
+                ));
+            }
+            let config_obj = crate::config::read_json_file(&config_path)?;
+            Ok(serde_json::json!({ "config": config_obj }))
+        }
         AppType::Gemini => {
             use crate::gemini_config::{
                 env_to_json, get_gemini_env_path, get_gemini_settings_path, read_gemini_env,
@@ -1491,6 +1507,18 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "Claude Desktop 3P 配置不能通过通用导入读取，请使用“从 Claude 导入兼容供应商”。",
                 "Claude Desktop 3P config cannot be imported through the generic import flow. Use 'Import compatible providers from Claude' instead.",
             ));
+        }
+        AppType::Antigravity => {
+            let config_path = crate::antigravity_config::get_antigravity_config_path();
+            if !config_path.exists() {
+                return Err(AppError::localized(
+                    "antigravity.live.missing",
+                    "Antigravity 2.0 配置文件不存在",
+                    "Antigravity 2.0 configuration file is missing",
+                ));
+            }
+            let config_obj = crate::config::read_json_file(&config_path)?;
+            serde_json::json!({ "config": config_obj })
         }
         AppType::Gemini => {
             use crate::gemini_config::{

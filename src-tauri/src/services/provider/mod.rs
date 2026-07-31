@@ -4,6 +4,7 @@
 
 mod endpoints;
 mod gemini_auth;
+mod antigravity_auth;
 mod live;
 mod usage;
 

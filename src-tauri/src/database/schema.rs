@@ -66,8 +66,8 @@ impl Database {
             description TEXT, homepage TEXT, docs TEXT, tags TEXT NOT NULL DEFAULT '[]',
             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
-            enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
-            enabled_hermes BOOLEAN NOT NULL DEFAULT 0
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_antigravity BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -97,6 +97,7 @@ impl Database {
             enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_antigravity BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0
@@ -1280,6 +1281,12 @@ impl Database {
             "enabled_hermes",
             "BOOLEAN NOT NULL DEFAULT 0",
         )?;
+        Self::add_column_if_missing(
+            conn,
+            "mcp_servers",
+            "enabled_antigravity",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
 
         // skills table may not exist in databases migrated from very old versions
         if Self::table_exists(conn, "skills")? {
@@ -1287,6 +1294,12 @@ impl Database {
                 conn,
                 "skills",
                 "enabled_hermes",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "enabled_antigravity",
                 "BOOLEAN NOT NULL DEFAULT 0",
             )?;
         }

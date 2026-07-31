@@ -123,6 +123,7 @@ const UnifiedSkillsPanel = React.forwardRef<
       opencode: 0,
       openclaw: 0,
       hermes: 0,
+      antigravity: 0,
     };
     if (!skills) return counts;
     skills.forEach((skill) => {
@@ -751,6 +752,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           opencode: skill.foundIn.includes("opencode"),
           openclaw: false,
           hermes: skill.foundIn.includes("hermes"),
+          antigravity: skill.foundIn.includes("antigravity"),
         },
       ]),
     ),
@@ -778,6 +780,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           opencode: false,
           openclaw: false,
           hermes: false,
+          antigravity: false,
         },
       })),
     );
@@ -822,6 +825,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                           opencode: false,
                           openclaw: false,
                           hermes: false,
+                          antigravity: false,
                         }
                       }
                       onToggle={(app, enabled) => {
@@ -836,6 +840,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                               opencode: false,
                               openclaw: false,
                               hermes: false,
+                              antigravity: false,
                             }),
                             [app]: enabled,
                           },

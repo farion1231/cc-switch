@@ -69,6 +69,18 @@ const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
     accent: "text-purple-600 dark:text-purple-400",
     iconBg: "bg-purple-500/10",
   },
+  openclaw: {
+    accent: "text-cyan-600 dark:text-cyan-400",
+    iconBg: "bg-cyan-500/10",
+  },
+  hermes: {
+    accent: "text-pink-600 dark:text-pink-400",
+    iconBg: "bg-pink-500/10",
+  },
+  antigravity: {
+    accent: "text-blue-600 dark:text-blue-400",
+    iconBg: "bg-blue-500/10",
+  },
 };
 
 /**
