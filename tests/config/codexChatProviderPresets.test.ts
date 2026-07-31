@@ -10,28 +10,13 @@ const expectedChatPresets = new Map<
   string,
   { baseUrl: string; contextWindows: Record<string, number> }
 >([
-  [
-    "火山Agentplan",
-    {
-      baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
-      contextWindows: { "ark-code-latest": 256000 },
-    },
-  ],
+  // 火山Agentplan（国内站 coding/v3）已切原生 Responses，见下方 native 清单；
+  // BytePlus 国际站未核实，保持 Chat 路由
   [
     "BytePlus",
     {
       baseUrl: "https://ark.ap-southeast.bytepluses.com/api/coding/v3",
       contextWindows: { "ark-code-latest": 256000 },
-    },
-  ],
-  [
-    "DeepSeek",
-    {
-      baseUrl: "https://api.deepseek.com",
-      contextWindows: {
-        "deepseek-v4-flash": 1000000,
-        "deepseek-v4-pro": 1000000,
-      },
     },
   ],
   [
@@ -166,11 +151,29 @@ describe("Codex Chat provider presets", () => {
       string,
       { contextWindows: Record<string, number> }
     >([
+      // 官方 Codex 文档确认 Coding Plan /api/coding/v3 支持 Responses API
+      ["火山Agentplan", { contextWindows: { "ark-code-latest": 256000 } }],
       [
         "DouBaoSeed",
         { contextWindows: { "doubao-seed-2-1-pro-260628": 262144 } },
       ],
       ["Bailian", { contextWindows: { "qwen3-coder-plus": 1048576 } }],
+      // 腾讯 TokenHub 官方 Codex 文档确认 hy3 原生 Responses（2026-07-14）
+      [
+        "Tencent Hunyuan",
+        { contextWindows: { hy3: 256000, "hy3-preview": 256000 } },
+      ],
+      // DeepSeek 官方 Codex 文档确认 deepseek-v4-flash 原生 Responses；
+      // catalog 由后端按 deepseek.com host 镜像官方 models.json 生成
+      [
+        "DeepSeek",
+        {
+          contextWindows: {
+            "deepseek-v4-flash": 1048576,
+            "deepseek-v4-pro": 1048576,
+          },
+        },
+      ],
       ["Longcat", { contextWindows: { "LongCat-2.0": 1048576 } }],
       ["MiniMax", { contextWindows: { "MiniMax-M3": 1000000 } }],
       ["MiniMax en", { contextWindows: { "MiniMax-M3": 1000000 } }],

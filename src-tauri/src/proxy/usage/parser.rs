@@ -30,6 +30,16 @@ fn openai_cache_write_tokens(usage: &Value) -> u32 {
 /// Session 日志 request_id 前缀，与 `session_usage.rs` 中的格式保持一致
 pub const SESSION_REQUEST_ID_PREFIX: &str = "session:";
 
+/// Claude Code and Claude Desktop share Claude message ids with the session
+/// importer, so both use the bare `session:{message_id}` namespace. Other
+/// apps retain app/provider scoping to avoid collisions between upstreams.
+pub fn dedup_scope_for_app<'a>(
+    app_type: &'a str,
+    provider_id: &'a str,
+) -> Option<(&'a str, &'a str)> {
+    (!matches!(app_type, "claude" | "claude-desktop")).then_some((app_type, provider_id))
+}
+
 fn response_id(body: &Value, field: &str) -> Option<String> {
     body.get(field)
         .and_then(Value::as_str)
@@ -477,6 +487,25 @@ mod tests {
         assert!(!empty_usage
             .dedup_request_id(Some(("codex", "provider-a")))
             .starts_with("session:"));
+    }
+
+    #[test]
+    fn claude_apps_share_the_session_request_id_namespace() {
+        let usage = TokenUsage {
+            message_id: Some("msg_123".to_string()),
+            ..Default::default()
+        };
+
+        for app_type in ["claude", "claude-desktop"] {
+            assert_eq!(
+                usage.dedup_request_id(dedup_scope_for_app(app_type, "provider-a")),
+                "session:msg_123"
+            );
+        }
+        assert_eq!(
+            usage.dedup_request_id(dedup_scope_for_app("codex", "provider-a")),
+            "session:codex:provider-a:msg_123"
+        );
     }
 
     #[test]
