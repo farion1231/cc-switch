@@ -32,6 +32,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { useUsageSummary, usageKeys } from "@/lib/query/usage";
+import { modelsDevSyncConfigQueryKey } from "@/lib/modelsDevAutoSync";
 import {
   providerKeys,
   useProvidersQuery,
@@ -94,6 +95,10 @@ describe("runtime query scope", () => {
       "providers",
       ...scope,
       "codex",
+    ]);
+    expect(modelsDevSyncConfigQueryKey(scope)).toEqual([
+      "models-dev-sync-config",
+      ...scope,
     ]);
   });
 

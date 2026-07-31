@@ -152,6 +152,49 @@ pub struct ModelPricingInfo {
     pub cache_creation_cost_per_million: String,
 }
 
+fn default_true() -> bool {
+    true
+}
+
+/// models.dev 自动同步配置属于目标主机状态；远程模式下必须随显式 HOME 一起读写，
+/// 不能复用桌面宿主机的配置文件，否则切换目标会交叉污染模型选择和同步时间。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelsDevSyncConfig {
+    #[serde(default)]
+    pub auto_sync_enabled: bool,
+    #[serde(default = "default_true")]
+    pub include_common_models: bool,
+    #[serde(default)]
+    pub selected_model_keys: Vec<String>,
+    #[serde(default)]
+    pub excluded_common_model_keys: Vec<String>,
+    #[serde(default)]
+    pub last_sync_at: Option<i64>,
+    #[serde(default)]
+    pub last_sync_error: Option<String>,
+}
+
+impl Default for ModelsDevSyncConfig {
+    fn default() -> Self {
+        Self {
+            auto_sync_enabled: false,
+            include_common_models: true,
+            selected_model_keys: Vec::new(),
+            excluded_common_model_keys: Vec::new(),
+            last_sync_at: None,
+            last_sync_error: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelsDevSyncState {
+    pub config: ModelsDevSyncConfig,
+    pub config_path: String,
+}
+
 /// 模型定价写入参数保持字符串精度；Core 校验十进制与非负约束后才开启事务。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

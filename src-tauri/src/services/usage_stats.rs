@@ -423,15 +423,14 @@ struct PricingInfo {
 }
 
 impl Database {
-    /// Recalculate stored zero-cost usage rows once pricing becomes available.
-    #[cfg(test)]
+    /// 定价文件同步或批量写入后回填全部零成本历史行；生产写侧服务与测试共用此入口，
+    /// 不能仅在测试构建中开放，否则 models.dev 自动同步会在普通桌面构建中缺少回填能力。
     pub(crate) fn backfill_missing_usage_costs(&self) -> Result<u64, AppError> {
         let conn = lock_conn!(self.conn);
         Self::backfill_missing_usage_costs_on_conn(&conn, None)
     }
 
     /// 仅回填指定 model_id 相关的零成本行；用于单条定价更新后的精准回填。
-    #[cfg(test)]
     pub(crate) fn backfill_missing_usage_costs_for_model(
         &self,
         model_id: &str,

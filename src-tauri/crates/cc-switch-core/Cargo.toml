@@ -14,6 +14,7 @@ rust_decimal = "1.36"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
+tempfile = "3"
 thiserror = "2.0"
 toml = "0.8"
 toml_edit = "0.22"
@@ -21,6 +22,3 @@ json5 = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 rquickjs = { version = "0.8", features = ["array-buffer", "classes"] }
 url = "2.5"
-
-[dev-dependencies]
-tempfile = "3"

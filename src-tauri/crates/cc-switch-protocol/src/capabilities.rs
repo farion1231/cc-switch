@@ -55,7 +55,7 @@ fn provider_capabilities() -> [CommandCapability; 7] {
     ]
 }
 
-fn usage_capabilities() -> [CommandCapability; 16] {
+fn usage_capabilities() -> [CommandCapability; 20] {
     [
         capability("usage.summary", true, true, 30_000),
         capability("usage.summary_by_app", true, true, 30_000),
@@ -69,7 +69,11 @@ fn usage_capabilities() -> [CommandCapability; 16] {
         capability("usage.limits", true, true, 30_000),
         capability("usage.provider_query", true, true, 30_000),
         capability("usage.pricing.update", false, false, 30_000),
+        capability("usage.pricing.update_batch", false, false, 120_000),
         capability("usage.pricing.delete", false, false, 30_000),
+        capability("usage.models_dev_sync.get", true, true, 30_000),
+        capability("usage.models_dev_sync.save", false, false, 30_000),
+        capability("usage.models_dev_sync.record", false, false, 30_000),
         capability("usage.provider_test", false, false, 30_000),
         capability("usage.session_sync", false, false, 300_000),
         capability("usage.codex_rebuild", false, false, 300_000),

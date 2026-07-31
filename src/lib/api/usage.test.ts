@@ -169,6 +169,71 @@ const usageCalls: UsageCall[] = [
       usageApi.updateModelPricing("model-a", "Model A", "1", "2", "0.1", "0.2"),
   },
   {
+    name: "model pricing batch update",
+    localCommand: "update_model_pricing_batch",
+    remoteCommand: "usage.pricing.update_batch",
+    args: {
+      entries: [
+        {
+          modelId: "model-a",
+          displayName: "Model A",
+          inputCostPerMillion: "1",
+          outputCostPerMillion: "2",
+          cacheReadCostPerMillion: "0.1",
+          cacheCreationCostPerMillion: "0.2",
+        },
+      ],
+    },
+    invoke: () =>
+      usageApi.updateModelPricingBatch([
+        {
+          modelId: "model-a",
+          displayName: "Model A",
+          inputCostPerMillion: "1",
+          outputCostPerMillion: "2",
+          cacheReadCostPerMillion: "0.1",
+          cacheCreationCostPerMillion: "0.2",
+        },
+      ]),
+  },
+  {
+    name: "models.dev sync config read",
+    localCommand: "get_models_dev_sync_config",
+    remoteCommand: "usage.models_dev_sync.get",
+    invoke: () => usageApi.getModelsDevSyncConfig(),
+  },
+  {
+    name: "models.dev sync config save",
+    localCommand: "save_models_dev_sync_config",
+    remoteCommand: "usage.models_dev_sync.save",
+    args: {
+      config: {
+        autoSyncEnabled: true,
+        includeCommonModels: false,
+        selectedModelKeys: ["openai:gpt-5"],
+        excludedCommonModelKeys: [],
+        lastSyncAt: null,
+        lastSyncError: null,
+      },
+    },
+    invoke: () =>
+      usageApi.saveModelsDevSyncConfig({
+        autoSyncEnabled: true,
+        includeCommonModels: false,
+        selectedModelKeys: ["openai:gpt-5"],
+        excludedCommonModelKeys: [],
+        lastSyncAt: null,
+        lastSyncError: null,
+      }),
+  },
+  {
+    name: "models.dev sync result record",
+    localCommand: "record_models_dev_sync_result",
+    remoteCommand: "usage.models_dev_sync.record",
+    args: { syncedAt: 123, error: null },
+    invoke: () => usageApi.recordModelsDevSyncResult(123, null),
+  },
+  {
     name: "model pricing delete",
     localCommand: "delete_model_pricing",
     remoteCommand: "usage.pricing.delete",

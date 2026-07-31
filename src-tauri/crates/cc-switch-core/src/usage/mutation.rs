@@ -42,26 +42,59 @@ pub(super) fn update_pricing(
     connection: &Connection,
     input: PricingUpdate,
 ) -> Result<(), CoreError> {
-    let input = validate_pricing(input)?;
-    // 定价与历史成本回填必须同事务提交，避免远端断线后出现“新价格已写但旧账未修”的半状态。
+    update_pricing_batch(connection, vec![input]).map(|_| ())
+}
+
+/// models.dev 可能一次同步数百条定价；全部条目与历史成本回填共用一个事务，
+/// 避免逐条回填造成 O(模型数 × 历史行数) 的放大，也避免远端断线留下部分批次。
+pub(super) fn update_pricing_batch(
+    connection: &Connection,
+    inputs: Vec<PricingUpdate>,
+) -> Result<usize, CoreError> {
+    let mut normalized = std::collections::BTreeMap::new();
+    for input in inputs {
+        let input = validate_pricing(input)?;
+        normalized.insert(input.model_id.clone(), input);
+    }
+    if normalized.is_empty() {
+        return Ok(0);
+    }
+
     let transaction = connection.unchecked_transaction()?;
-    transaction.execute(
-        "INSERT OR REPLACE INTO model_pricing (
+    let mut changed = 0;
+    for input in normalized.into_values() {
+        changed += transaction.execute(
+            "INSERT INTO model_pricing (
                 model_id, display_name, input_cost_per_million, output_cost_per_million,
                 cache_read_cost_per_million, cache_creation_cost_per_million
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![
-            input.model_id,
-            input.display_name,
-            input.input_cost,
-            input.output_cost,
-            input.cache_read_cost,
-            input.cache_creation_cost,
-        ],
-    )?;
-    backfill_missing_costs(&transaction)?;
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(model_id) DO UPDATE SET
+                display_name = excluded.display_name,
+                input_cost_per_million = excluded.input_cost_per_million,
+                output_cost_per_million = excluded.output_cost_per_million,
+                cache_read_cost_per_million = excluded.cache_read_cost_per_million,
+                cache_creation_cost_per_million = excluded.cache_creation_cost_per_million
+             WHERE display_name <> excluded.display_name
+                OR input_cost_per_million <> excluded.input_cost_per_million
+                OR output_cost_per_million <> excluded.output_cost_per_million
+                OR cache_read_cost_per_million <> excluded.cache_read_cost_per_million
+                OR cache_creation_cost_per_million <> excluded.cache_creation_cost_per_million",
+            params![
+                input.model_id,
+                input.display_name,
+                input.input_cost,
+                input.output_cost,
+                input.cache_read_cost,
+                input.cache_creation_cost,
+            ],
+        )?;
+    }
+    // 与上游桌面写侧保持一致：定价内容未变化时不重复扫描全部零成本历史行。
+    if changed > 0 {
+        backfill_missing_costs(&transaction)?;
+    }
     transaction.commit()?;
-    Ok(())
+    Ok(changed)
 }
 
 pub(super) fn delete_pricing(connection: &Connection, model_id: &str) -> Result<(), CoreError> {

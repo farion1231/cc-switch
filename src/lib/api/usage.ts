@@ -7,6 +7,8 @@ import type {
   RequestLog,
   LogFilters,
   ModelPricing,
+  ModelsDevSyncConfig,
+  ModelsDevSyncState,
   ProviderLimitStatus,
   PaginatedLogs,
   SessionSyncResult,
@@ -172,6 +174,41 @@ export const usageApi = {
         cacheCreationCost,
       },
       { remoteCommand: "usage.pricing.update" },
+    );
+  },
+
+  updateModelPricingBatch: async (entries: ModelPricing[]): Promise<number> => {
+    return appInvoke(
+      "update_model_pricing_batch",
+      { entries },
+      { remoteCommand: "usage.pricing.update_batch" },
+    );
+  },
+
+  getModelsDevSyncConfig: async (): Promise<ModelsDevSyncState> => {
+    return appInvoke("get_models_dev_sync_config", undefined, {
+      remoteCommand: "usage.models_dev_sync.get",
+    });
+  },
+
+  saveModelsDevSyncConfig: async (
+    config: ModelsDevSyncConfig,
+  ): Promise<void> => {
+    return appInvoke(
+      "save_models_dev_sync_config",
+      { config },
+      { remoteCommand: "usage.models_dev_sync.save" },
+    );
+  },
+
+  recordModelsDevSyncResult: async (
+    syncedAt: number | null,
+    error: string | null,
+  ): Promise<void> => {
+    return appInvoke(
+      "record_models_dev_sync_result",
+      { syncedAt, error },
+      { remoteCommand: "usage.models_dev_sync.record" },
     );
   },
 

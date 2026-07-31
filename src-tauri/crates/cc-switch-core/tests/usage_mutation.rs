@@ -92,6 +92,37 @@ fn pricing_update_backfills_persisted_pricing_model_and_can_be_deleted() {
 }
 
 #[test]
+fn pricing_delete_records_target_home_tombstone() {
+    let home = tempfile::tempdir().expect("创建临时目标 HOME");
+    let state = HeadlessState::open(home.path()).expect("打开目标 HOME 数据库");
+
+    UsageService::update_pricing(
+        &state,
+        PricingUpdate {
+            model_id: "deleted-remote-model".to_string(),
+            display_name: "Deleted Remote Model".to_string(),
+            input_cost: "1".to_string(),
+            output_cost: "2".to_string(),
+            cache_read_cost: "0".to_string(),
+            cache_creation_cost: "0".to_string(),
+        },
+    )
+    .expect("写入目标主机定价覆盖");
+    UsageService::delete_pricing(&state, "deleted-remote-model").expect("删除目标主机定价");
+
+    let file: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(home.path().join(".cc-switch/model-pricing.json"))
+            .expect("读取目标主机定价覆盖文件"),
+    )
+    .expect("解析目标主机定价覆盖文件");
+    assert_eq!(
+        file["deletedModelIds"],
+        serde_json::json!(["deleted-remote-model"])
+    );
+    assert_eq!(file["models"], serde_json::json!([]));
+}
+
+#[test]
 fn pricing_backfill_normalizes_namespaces_dates_free_and_reasoning_suffixes() {
     let home = tempfile::tempdir().expect("创建临时 HOME");
     let state = HeadlessState::memory(home.path()).expect("创建 canonical Usage 数据库");
@@ -616,6 +647,85 @@ fn long_usage_commands_are_reachable_through_core_dispatch() {
             .file_name()
             .to_string_lossy()
             .contains("codex-rebuild")));
+}
+
+#[test]
+fn models_dev_commands_persist_inside_explicit_target_home() {
+    let home = tempfile::tempdir().expect("创建临时目标 HOME");
+    let state = HeadlessState::open(home.path()).expect("打开目标 HOME 数据库");
+
+    let initial = dispatch_command(&state, "usage.models_dev_sync.get", serde_json::json!({}))
+        .expect("读取 models.dev 初始配置");
+    assert_eq!(initial["config"]["autoSyncEnabled"], false);
+    assert_eq!(
+        initial["configPath"],
+        home.path()
+            .join(".cc-switch")
+            .join("model-pricing.json")
+            .display()
+            .to_string()
+    );
+
+    dispatch_command(
+        &state,
+        "usage.models_dev_sync.save",
+        serde_json::json!({
+            "config": {
+                "autoSyncEnabled": true,
+                "includeCommonModels": false,
+                "selectedModelKeys": ["openai:gpt-5", "openai:gpt-5"],
+                "excludedCommonModelKeys": [],
+                "lastSyncAt": null,
+                "lastSyncError": null
+            }
+        }),
+    )
+    .expect("保存目标主机 models.dev 配置");
+    dispatch_command(
+        &state,
+        "usage.models_dev_sync.record",
+        serde_json::json!({ "syncedAt": 123, "error": null }),
+    )
+    .expect("记录目标主机 models.dev 同步结果");
+
+    let changed = dispatch_command(
+        &state,
+        "usage.pricing.update_batch",
+        serde_json::json!({
+            "entries": [{
+                "modelId": "remote-batch-model",
+                "displayName": "Remote Batch Model",
+                "inputCostPerMillion": "1",
+                "outputCostPerMillion": "2",
+                "cacheReadCostPerMillion": "0.1",
+                "cacheCreationCostPerMillion": "0.2"
+            }]
+        }),
+    )
+    .expect("批量写入目标主机定价");
+    assert_eq!(changed, 1);
+
+    let saved = dispatch_command(&state, "usage.models_dev_sync.get", serde_json::json!({}))
+        .expect("重新读取目标主机 models.dev 配置");
+    assert_eq!(saved["config"]["autoSyncEnabled"], true);
+    assert_eq!(
+        saved["config"]["selectedModelKeys"],
+        serde_json::json!(["openai:gpt-5"])
+    );
+    assert_eq!(saved["config"]["lastSyncAt"], 123);
+
+    let pricing = dispatch_command(&state, "usage.pricing.list", serde_json::json!({}))
+        .expect("读取目标主机定价");
+    assert!(pricing
+        .as_array()
+        .expect("定价列表")
+        .iter()
+        .any(|item| item["modelId"] == "remote-batch-model"));
+    assert!(home
+        .path()
+        .join(".cc-switch")
+        .join("model-pricing.json")
+        .is_file());
 }
 
 #[test]

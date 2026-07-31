@@ -20,6 +20,11 @@ import {
   installGlobalErrorHandlers,
   reportFrontendError,
 } from "./lib/frontendLogger";
+import {
+  modelsDevSyncConfigQueryKey,
+  syncModelsDevPricingOnStartup,
+} from "./lib/modelsDevAutoSync";
+import { runtimeQueryScope } from "./lib/runtime/queryScope";
 
 installGlobalErrorHandlers();
 
@@ -128,6 +133,30 @@ async function bootstrap() {
       </FrontendErrorBoundary>
     </React.StrictMode>,
   );
+
+  // 启动同步与其缓存失效共用同一目标快照；中途切换会由同步守卫取消。
+  const modelsDevStartupScope = runtimeQueryScope();
+  const modelsDevStartupQueryKey = modelsDevSyncConfigQueryKey(
+    modelsDevStartupScope,
+  );
+  void syncModelsDevPricingOnStartup()
+    .then((result) => {
+      if (!result.skipped) {
+        return Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["usage"] }),
+          queryClient.invalidateQueries({
+            queryKey: modelsDevStartupQueryKey,
+          }),
+        ]);
+      }
+    })
+    .catch((error) => {
+      // 离线或 models.dev 暂时不可用不应阻塞应用启动。
+      reportFrontendError("models_dev_startup_sync", error);
+      void queryClient.invalidateQueries({
+        queryKey: modelsDevStartupQueryKey,
+      });
+    });
 }
 
 void bootstrap();

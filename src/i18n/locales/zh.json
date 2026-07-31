@@ -23,7 +23,6 @@
     "unknown": "未知",
     "enterValidValue": "请输入有效的内容",
     "clear": "清除",
-    "toggleTheme": "切换主题",
     "format": "格式化",
     "formatSuccess": "格式化成功",
     "formatError": "格式化失败：{{error}}",
@@ -1021,6 +1020,7 @@
     "providerKeyStatusLoading": "正在加载供应商标识状态，请稍后再试",
     "getApiKey": "获取 API Key",
     "partnerPromotion": {
+      "a6api": "A6API 是一家 Token 聚合站，内置实时价格排行自动筛选全网最低价，丝滑稳定不卡顿，简易操作省去比价繁琐，注册获得体验金！",
       "sudocode": "SudoCode 让 Claude Code 与 Claude Desktop 接入 Claude Opus 5，Codex 接入 GPT-5.6，一个 Key 统一使用。CC Switch 用户注册并加入 QQ 群 726213516，联系群主领取 ¥10 试用额度。",
       "code0": "code0.ai 是面向开发者的 AI 编程服务平台，支持 Claude Code、Codex、Gemini。CC Switch 用户专属福利：通过官网联系客服即可领取测试额度！",
       "nekocode": "NekoCode 为开发者提供稳定、高效、可靠的 Claude、Codex 等 AI 模型 API 中转服务，价格透明、按量计费。CC Switch 用户专享 9 折：通过上方链接注册，充值时输入优惠码 cc-switch 即享 9 折优惠！",
@@ -1507,24 +1507,6 @@
       "grokbuild": "Grok Build"
     },
     "rawInputLabel": "原始",
-    "dataSources": "数据来源",
-    "dataSource": {
-      "proxy": "路由",
-      "session_log": "会话日志",
-      "codex_db": "Codex 数据库",
-      "codex_session": "Codex 会话日志",
-      "gemini_session": "Gemini 会话日志",
-      "opencode_session": "OpenCode 会话日志",
-      "grok_session": "Grok Build 会话日志"
-    },
-    "sessionSync": {
-      "trigger": "同步会话日志",
-      "import": "导入会话",
-      "resync": "同步",
-      "imported": "从会话日志导入了 {{count}} 条记录",
-      "upToDate": "会话日志已是最新",
-      "failed": "会话同步失败"
-    },
     "rebuildCodex": {
       "title": "Codex 用量维护",
       "description": "从本地 rollout 日志重新构建 Codex 会话用量",
@@ -1634,6 +1616,40 @@
     "modelsDevNoResults": "没有匹配的模型",
     "modelsDevTruncated": "仅显示前 {{shown}} 条，共 {{total}} 条结果，请缩小搜索范围",
     "modelsDevDefaultHint": "默认展示最新发布的 {{shown}} 个模型（共 {{total}} 个），输入关键字可全量搜索",
+    "modelsDevAutoSync": {
+      "title": "自动同步 models.dev 定价",
+      "description": "开启后，CC Switch 会在启动时定期拉取所选模型的最新价格，并保存到本地定价文件。",
+      "enabled": "已开启",
+      "disabled": "已关闭",
+      "enableConfirmTitle": "开启自动同步定价？",
+      "enableConfirmMessage": "开启后，CC Switch 会在启动时定期从 models.dev 更新所选模型的价格（最多每 6 小时一次）。同一模型 ID 的软件内置价格和手动设置价格都会被覆盖。",
+      "enableConfirmAction": "开启自动同步",
+      "configure": "选择模型",
+      "configureTitle": "选择自动同步定价的模型",
+      "configureDescription": "通过搜索和供应商筛选选择需要自动更新的模型，选择结果保存在本地。",
+      "commonModels": "自动包含常用模型",
+      "commonModelsDescription": "自动选择 {{count}} 个近期 Claude、GPT、Gemini、Grok、DeepSeek、Qwen、MiMo、LongCat、Kimi、MiniMax 和 GLM 模型。",
+      "selectFiltered": "全选筛选结果（{{count}}）",
+      "clearFiltered": "清空筛选结果",
+      "selectedCount": "已选择 {{count}} 个模型",
+      "selectionHint": "归一化模型 ID 相同的选项只会导入一次。",
+      "commonBadge": "常用",
+      "selectionSaved": "自动定价同步选择已保存",
+      "syncSuccess": "定价同步完成：检查 {{imported}} 个模型，更新 {{changed}} 个",
+      "syncFailed": "定价同步失败：{{error}}",
+      "configLoadFailed": "加载本地定价配置失败：{{error}}",
+      "neverSynced": "从未同步",
+      "lastSync": "上次同步",
+      "commonStatus": "常用模型",
+      "lastError": "上次自动同步失败：{{error}}",
+      "localFile": "本地定价文件",
+      "openFolder": "打开目录",
+      "openFolderFailed": "打开本地定价文件目录失败：{{error}}",
+      "reloadLocalFile": "重新加载文件",
+      "localFileReloaded": "本地定价文件已重新加载",
+      "localFileReloadFailed": "重新加载本地定价文件失败：{{error}}",
+      "syncNow": "立即同步"
+    },
     "cacheReadCostPerMillion": "缓存读取成本 (每百万 tokens, USD)",
     "cacheCreationCostPerMillion": "缓存写入成本 (每百万 tokens, USD)"
   },
@@ -2450,7 +2466,11 @@
       "title": "批量导入 MCP Servers",
       "targetApps": "目标应用",
       "serverCount": "MCP Servers ({{count}} 个)",
-      "enabledWarning": "导入后将立即写入所有指定应用的配置文件"
+      "enabledWarning": "导入后将立即写入所有指定应用的配置文件",
+      "command": "命令",
+      "args": "参数",
+      "env": "环境",
+      "url": "地址"
     },
     "prompt": {
       "title": "导入系统提示词",
@@ -2472,10 +2492,17 @@
     "usageScript": "用量查询",
     "usageScriptEnabled": "已启用",
     "usageScriptDisabled": "未启用",
+    "usageScriptCode": "脚本代码",
+    "usageScriptWarning": "这是一段 JavaScript 代码，启用后会在查询用量时执行。请确认来源可信后再导入。",
     "usageApiKey": "用量 API Key",
     "usageBaseUrl": "用量查询地址",
     "usageAutoInterval": "自动查询",
-    "usageAutoIntervalValue": "每 {{minutes}} 分钟"
+    "usageAutoIntervalValue": "每 {{minutes}} 分钟",
+    "risk": {
+      "envHijack": "该配置包含可改变进程加载行为的环境变量（如注入动态库、替换 CA 证书），请确认来源可信。",
+      "privateEndpoint": "该地址指向本机或内网。若非你自建的本地服务，请勿导入。",
+      "shellCommand": "该配置通过 shell 执行一整段命令，实际运行的内容在参数里，请逐行核对。"
+    }
   },
   "iconPicker": {
     "search": "搜索图标",
@@ -2494,8 +2521,7 @@
     "selectIcon": "选择图标",
     "preview": "预览",
     "clickToChange": "点击更换图标",
-    "clickToSelect": "点击选择图标",
-    "color": "图标颜色"
+    "clickToSelect": "点击选择图标"
   },
   "migration": {
     "success": "配置迁移成功",
@@ -2736,33 +2762,6 @@
     "streamingFirstByte": "流式首字节超时",
     "streamingIdle": "流式静默超时",
     "nonStreaming": "非流式超时"
-  },
-  "circuitBreaker": {
-    "failureThreshold": "失败阈值",
-    "successThreshold": "成功阈值",
-    "timeoutSeconds": "超时时间（秒）",
-    "errorRateThreshold": "错误率阈值 (%)",
-    "minRequests": "最小请求数",
-    "validationFailed": "以下字段超出有效范围: {{fields}}",
-    "configSaved": "熔断器配置已保存",
-    "saveFailed": "保存失败",
-    "loading": "加载中...",
-    "title": "熔断器配置",
-    "description": "调整熔断器参数以控制故障检测和恢复行为",
-    "failureThresholdHint": "连续失败多少次后打开熔断器",
-    "timeoutSecondsHint": "熔断器打开后多久尝试恢复（半开状态）",
-    "successThresholdHint": "半开状态下成功多少次后关闭熔断器",
-    "errorRateThresholdHint": "错误率超过此值时打开熔断器",
-    "minRequestsHint": "计算错误率前的最小请求数",
-    "saveConfig": "保存配置",
-    "instructionsTitle": "配置说明",
-    "instructions": {
-      "failureThreshold": "连续失败达到此次数时，熔断器打开",
-      "timeout": "熔断器打开后，等待此时间后尝试半开",
-      "successThreshold": "半开状态下，成功达到此次数时关闭熔断器",
-      "errorRate": "错误率超过此值时，熔断器打开",
-      "minRequests": "只有请求数达到此值后才计算错误率"
-    }
   },
   "universalProvider": {
     "duplicate": "复制",

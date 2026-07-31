@@ -1,5 +1,6 @@
 mod model;
 mod mutation;
+mod pricing_file;
 mod query;
 mod script;
 mod session;
@@ -49,7 +50,14 @@ impl UsageQueryConnection for Connection {
 
 impl UsageService {
     pub fn update_pricing(state: &HeadlessState, input: PricingUpdate) -> Result<(), CoreError> {
-        state.with_connection(|connection| mutation::update_pricing(connection, input))
+        pricing_file::update_pricing(state, input).map(|_| ())
+    }
+
+    pub fn update_pricing_batch(
+        state: &HeadlessState,
+        entries: Vec<ModelPricingInfo>,
+    ) -> Result<usize, CoreError> {
+        pricing_file::update_pricing_batch(state, entries)
     }
 
     /// 桌面适配层已持有数据库锁时直接复用该连接，避免嵌套锁和第二条 SQLite 连接。
@@ -61,7 +69,7 @@ impl UsageService {
     }
 
     pub fn delete_pricing(state: &HeadlessState, model_id: &str) -> Result<(), CoreError> {
-        state.with_connection(|connection| mutation::delete_pricing(connection, model_id))
+        pricing_file::delete_pricing(state, model_id)
     }
 
     pub fn delete_pricing_on_connection(
@@ -189,6 +197,25 @@ impl UsageService {
     pub fn pricing(source: &impl UsageQueryConnection) -> Result<Vec<ModelPricingInfo>, CoreError> {
         query::pricing(source)
     }
+
+    pub fn models_dev_sync_state(state: &HeadlessState) -> Result<ModelsDevSyncState, CoreError> {
+        pricing_file::models_dev_sync_state(state)
+    }
+
+    pub fn save_models_dev_sync_config(
+        state: &HeadlessState,
+        config: ModelsDevSyncConfig,
+    ) -> Result<(), CoreError> {
+        pricing_file::save_models_dev_sync_config(state, config)
+    }
+
+    pub fn record_models_dev_sync_result(
+        state: &HeadlessState,
+        synced_at: Option<i64>,
+        error: Option<String>,
+    ) -> Result<(), CoreError> {
+        pricing_file::record_models_dev_sync_result(state, synced_at, error)
+    }
 }
 
 /// 将稳定 Usage RPC 名映射到共享只读服务；未迁移的写命令保持显式能力错误。
@@ -240,7 +267,10 @@ pub(crate) fn dispatch(
             serialize(UsageService::detail(state, &args.request_id)?)
         }
         "usage.data_sources" => serialize(UsageService::data_sources(state)?),
-        "usage.pricing.list" => serialize(UsageService::pricing(state)?),
+        "usage.pricing.list" => {
+            pricing_file::sync_to_database(state)?;
+            serialize(UsageService::pricing(state)?)
+        }
         "usage.provider_query" => {
             let input = serde_json::from_value::<ProviderUsageInput>(args)
                 .map_err(|error| CommandError::InvalidArgument(error.to_string()))?;
@@ -257,10 +287,28 @@ pub(crate) fn dispatch(
             UsageService::update_pricing(state, input)?;
             Ok(Value::Bool(true))
         }
+        "usage.pricing.update_batch" => {
+            let args = serde_json::from_value::<PricingBatchArgs>(args)
+                .map_err(|error| CommandError::InvalidArgument(error.to_string()))?;
+            serialize(UsageService::update_pricing_batch(state, args.entries)?)
+        }
         "usage.pricing.delete" => {
             let args = serde_json::from_value::<ModelArgs>(args)
                 .map_err(|error| CommandError::InvalidArgument(error.to_string()))?;
             UsageService::delete_pricing(state, &args.model_id)?;
+            Ok(Value::Bool(true))
+        }
+        "usage.models_dev_sync.get" => serialize(UsageService::models_dev_sync_state(state)?),
+        "usage.models_dev_sync.save" => {
+            let args = serde_json::from_value::<ModelsDevConfigArgs>(args)
+                .map_err(|error| CommandError::InvalidArgument(error.to_string()))?;
+            UsageService::save_models_dev_sync_config(state, args.config)?;
+            Ok(Value::Bool(true))
+        }
+        "usage.models_dev_sync.record" => {
+            let args = serde_json::from_value::<ModelsDevResultArgs>(args)
+                .map_err(|error| CommandError::InvalidArgument(error.to_string()))?;
+            UsageService::record_models_dev_sync_result(state, args.synced_at, args.error)?;
             Ok(Value::Bool(true))
         }
         "usage.limits" => {
@@ -303,6 +351,23 @@ struct RequestArgs {
 #[serde(rename_all = "camelCase")]
 struct ModelArgs {
     model_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PricingBatchArgs {
+    entries: Vec<ModelPricingInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelsDevConfigArgs {
+    config: ModelsDevSyncConfig,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelsDevResultArgs {
+    synced_at: Option<i64>,
+    error: Option<String>,
 }
 
 /// 同时接受前端沿用的 appType；远端协议始终在 Core 内转换为数据库 app_type。

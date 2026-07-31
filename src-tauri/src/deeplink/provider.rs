@@ -254,8 +254,18 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
         String::new()
     };
 
-    // Determine enabled state: explicit param > has code > false
-    let enabled = request.usage_enabled.unwrap_or(!code.is_empty());
+    // Determine enabled state: explicit param only, defaulting to disabled.
+    //
+    // 「携带了代码」不构成用户的启用决定。此处的输入来自 deeplink——即第三方
+    // 构造、经浏览器抵达的不可信载荷——而 `code` 是一段会在查询用量时执行的
+    // JavaScript。若以 `!code.is_empty()` 作默认，一条链接就能让脚本在用户
+    // 从未勾选过的情况下进入启用态。
+    //
+    // 要启用，链接必须显式携带 `usageEnabled=true`。注意该参数是**链接作者**的
+    // 请求，不构成用户的同意；用户的同意体现在确认框展示了完整脚本正文与启用
+    // 徽章之后仍点了导入——所以那两处展示是本设计的承重部分，不可省略。
+    // 用户在应用内手动配置的脚本不走这条路径。
+    let enabled = request.usage_enabled.unwrap_or(false);
 
     let usage_script = UsageScript {
         enabled,

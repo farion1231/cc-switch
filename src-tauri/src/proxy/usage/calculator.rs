@@ -29,7 +29,8 @@ pub struct ModelPricing {
 pub struct CostCalculator;
 
 impl CostCalculator {
-    /// 计算请求成本
+    /// 兼容旧 session 导入器与单元测试的 Claude/fresh-input 计算入口。
+    /// 生产请求必须调用 `calculate_for_app` 明确 token 语义，避免 OpenAI/Gemini 缓存 token 重复计费。
     ///
     /// # 参数
     /// - `usage`: Token 使用量
@@ -41,6 +42,7 @@ impl CostCalculator {
     /// - cache_read_cost: cache_read_tokens × 缓存读取价格
     /// - Claude/Anthropic 的 input_tokens 已经不包含 cache_read_tokens
     /// - total_cost: 各项成本之和 × 倍率（倍率只作用于最终总价）
+    #[cfg(test)]
     pub fn calculate(
         usage: &TokenUsage,
         pricing: &ModelPricing,
@@ -110,16 +112,6 @@ impl CostCalculator {
             cache_creation_cost,
             total_cost,
         }
-    }
-
-    /// 尝试计算成本，如果模型未知则返回 None
-    #[allow(dead_code)]
-    pub fn try_calculate(
-        usage: &TokenUsage,
-        pricing: Option<&ModelPricing>,
-        cost_multiplier: Decimal,
-    ) -> Option<CostBreakdown> {
-        pricing.map(|p| Self::calculate(usage, p, cost_multiplier))
     }
 
     pub fn try_calculate_for_app(
@@ -251,23 +243,6 @@ mod tests {
         assert_eq!(cost.input_cost, Decimal::from_str("0.003").unwrap());
         // total_cost: 基础价格 × 倍率 = 0.003 * 1.5 = 0.0045
         assert_eq!(cost.total_cost, Decimal::from_str("0.0045").unwrap());
-    }
-
-    #[test]
-    fn test_unknown_model_handling() {
-        let usage = TokenUsage {
-            input_tokens: 1000,
-            output_tokens: 500,
-            cache_read_tokens: 0,
-            cache_creation_tokens: 0,
-            model: None,
-            message_id: None,
-        };
-
-        let multiplier = Decimal::from_str("1.0").unwrap();
-        let cost = CostCalculator::try_calculate(&usage, None, multiplier);
-
-        assert!(cost.is_none());
     }
 
     #[test]

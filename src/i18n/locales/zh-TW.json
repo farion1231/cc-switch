@@ -23,7 +23,6 @@
     "unknown": "未知",
     "enterValidValue": "請輸入有效的內容",
     "clear": "清除",
-    "toggleTheme": "切換主題",
     "format": "格式化",
     "formatSuccess": "格式化成功",
     "formatError": "格式化失敗：{{error}}",
@@ -992,6 +991,7 @@
     "providerKeyStatusLoading": "正在載入供應商識別碼狀態，請稍後再試",
     "getApiKey": "取得 API Key",
     "partnerPromotion": {
+      "a6api": "A6API 是一家 Token 聚合站，內建即時價格排行自動篩選全網最低價，滑順穩定不卡頓，簡易操作省去比價繁瑣，註冊獲得體驗金！",
       "sudocode": "SudoCode 讓 Claude Code 與 Claude Desktop 使用 Claude Opus 5，Codex 使用 GPT-5.6，一個 Key 統一管理。CC Switch 使用者註冊並加入 QQ 群 726213516，聯絡群主領取人民幣 ¥10 試用額度。",
       "code0": "code0.ai 是面向開發者的 AI 程式設計服務平台，支援 Claude Code、Codex、Gemini。CC Switch 使用者專屬福利：透過官網聯繫客服即可領取測試額度！",
       "nekocode": "NekoCode 為開發者提供穩定、高效、可靠的 Claude、Codex 等 AI 模型 API 中轉服務，價格透明、按量計費。CC Switch 使用者專享 9 折：透過上方連結註冊，儲值時輸入優惠碼 cc-switch 即享 9 折優惠！",
@@ -1478,24 +1478,6 @@
       "grokbuild": "Grok Build"
     },
     "rawInputLabel": "原始",
-    "dataSources": "資料來源",
-    "dataSource": {
-      "proxy": "路由",
-      "session_log": "工作階段日誌",
-      "codex_db": "Codex 資料庫",
-      "codex_session": "Codex 工作階段日誌",
-      "gemini_session": "Gemini 工作階段日誌",
-      "opencode_session": "OpenCode 工作階段日誌",
-      "grok_session": "Grok Build 工作階段日誌"
-    },
-    "sessionSync": {
-      "trigger": "同步工作階段日誌",
-      "import": "匯入工作階段",
-      "resync": "同步",
-      "imported": "從工作階段日誌匯入了 {{count}} 筆紀錄",
-      "upToDate": "工作階段日誌已是最新",
-      "failed": "工作階段同步失敗"
-    },
     "rebuildCodex": {
       "title": "Codex 用量維護",
       "description": "從本機 rollout 日誌重新建構 Codex 工作階段用量",
@@ -1605,6 +1587,40 @@
     "modelsDevNoResults": "沒有符合的模型",
     "modelsDevTruncated": "僅顯示前 {{shown}} 條，共 {{total}} 條結果，請縮小搜尋範圍",
     "modelsDevDefaultHint": "預設展示最新發布的 {{shown}} 個模型（共 {{total}} 個），輸入關鍵字可全量搜尋",
+    "modelsDevAutoSync": {
+      "title": "自動同步 models.dev 定價",
+      "description": "開啟後，CC Switch 會在啟動時定期擷取所選模型的最新價格，並儲存到本機定價檔案。",
+      "enabled": "已開啟",
+      "disabled": "已關閉",
+      "enableConfirmTitle": "開啟自動同步定價？",
+      "enableConfirmMessage": "開啟後，CC Switch 會在啟動時定期從 models.dev 更新所選模型的價格（最多每 6 小時一次）。相同模型 ID 的軟體內建價格和手動設定價格都會被覆寫。",
+      "enableConfirmAction": "開啟自動同步",
+      "configure": "選擇模型",
+      "configureTitle": "選擇自動同步定價的模型",
+      "configureDescription": "透過搜尋和供應商篩選選擇需要自動更新的模型，選擇結果儲存在本機。",
+      "commonModels": "自動包含常用模型",
+      "commonModelsDescription": "自動選擇 {{count}} 個近期 Claude、GPT、Gemini、Grok、DeepSeek、Qwen、MiMo、LongCat、Kimi、MiniMax 和 GLM 模型。",
+      "selectFiltered": "全選篩選結果（{{count}}）",
+      "clearFiltered": "清除篩選結果",
+      "selectedCount": "已選擇 {{count}} 個模型",
+      "selectionHint": "標準化模型 ID 相同的選項只會匯入一次。",
+      "commonBadge": "常用",
+      "selectionSaved": "自動定價同步選擇已儲存",
+      "syncSuccess": "定價同步完成：檢查 {{imported}} 個模型，更新 {{changed}} 個",
+      "syncFailed": "定價同步失敗：{{error}}",
+      "configLoadFailed": "載入本機定價設定失敗：{{error}}",
+      "neverSynced": "從未同步",
+      "lastSync": "上次同步",
+      "commonStatus": "常用模型",
+      "lastError": "上次自動同步失敗：{{error}}",
+      "localFile": "本機定價檔案",
+      "openFolder": "開啟資料夾",
+      "openFolderFailed": "開啟本機定價檔案資料夾失敗：{{error}}",
+      "reloadLocalFile": "重新載入檔案",
+      "localFileReloaded": "本機定價檔案已重新載入",
+      "localFileReloadFailed": "重新載入本機定價檔案失敗：{{error}}",
+      "syncNow": "立即同步"
+    },
     "cacheReadCostPerMillion": "快取讀取成本 (每百萬 tokens, USD)",
     "cacheCreationCostPerMillion": "快取寫入成本 (每百萬 tokens, USD)"
   },
@@ -2421,7 +2437,11 @@
       "title": "批次匯入 MCP Servers",
       "targetApps": "目標應用程式",
       "serverCount": "MCP Servers ({{count}} 個)",
-      "enabledWarning": "匯入後將立即寫入所有指定應用程式的設定檔"
+      "enabledWarning": "匯入後將立即寫入所有指定應用程式的設定檔",
+      "command": "命令",
+      "args": "參數",
+      "env": "環境",
+      "url": "位址"
     },
     "prompt": {
       "title": "匯入系統提示詞",
@@ -2443,10 +2463,17 @@
     "usageScript": "用量查詢",
     "usageScriptEnabled": "已啟用",
     "usageScriptDisabled": "未啟用",
+    "usageScriptCode": "指令碼程式碼",
+    "usageScriptWarning": "這是一段 JavaScript 程式碼，啟用後會在查詢用量時執行。請確認來源可信後再匯入。",
     "usageApiKey": "用量 API Key",
     "usageBaseUrl": "用量查詢位址",
     "usageAutoInterval": "自動查詢",
-    "usageAutoIntervalValue": "每 {{minutes}} 分鐘"
+    "usageAutoIntervalValue": "每 {{minutes}} 分鐘",
+    "risk": {
+      "envHijack": "該設定包含可改變處理程序載入行為的環境變數（例如注入動態程式庫、替換 CA 憑證），請確認來源可信。",
+      "privateEndpoint": "該位址指向本機或內部網路。若非你自建的本機服務，請勿匯入。",
+      "shellCommand": "該設定透過 shell 執行整段命令，實際執行的內容在參數裡，請逐行核對。"
+    }
   },
   "iconPicker": {
     "search": "搜尋圖示",
@@ -2465,8 +2492,7 @@
     "selectIcon": "選擇圖示",
     "preview": "預覽",
     "clickToChange": "點擊更換圖示",
-    "clickToSelect": "點擊選擇圖示",
-    "color": "圖示顏色"
+    "clickToSelect": "點擊選擇圖示"
   },
   "migration": {
     "success": "設定遷移成功",
@@ -2707,33 +2733,6 @@
     "streamingFirstByte": "串流首位元組逾時",
     "streamingIdle": "串流閒置逾時",
     "nonStreaming": "非串流逾時"
-  },
-  "circuitBreaker": {
-    "failureThreshold": "失敗閾值",
-    "successThreshold": "成功閾值",
-    "timeoutSeconds": "逾時時間（秒）",
-    "errorRateThreshold": "錯誤率閾值 (%)",
-    "minRequests": "最小請求數",
-    "validationFailed": "以下欄位超出有效範圍：{{fields}}",
-    "configSaved": "斷路器設定已儲存",
-    "saveFailed": "儲存失敗",
-    "loading": "載入中...",
-    "title": "斷路器設定",
-    "description": "調整斷路器參數以控制故障檢測和恢復行為",
-    "failureThresholdHint": "連續失敗多少次後打開斷路器",
-    "timeoutSecondsHint": "斷路器打開後多久嘗試恢復（半開狀態）",
-    "successThresholdHint": "半開狀態下成功多少次後關閉斷路器",
-    "errorRateThresholdHint": "錯誤率超過此值時打開斷路器",
-    "minRequestsHint": "計算錯誤率前的最小請求數",
-    "saveConfig": "儲存設定",
-    "instructionsTitle": "設定說明",
-    "instructions": {
-      "failureThreshold": "連續失敗達到此次數時，斷路器打開",
-      "timeout": "斷路器打開後，等待此時間後嘗試半開",
-      "successThreshold": "半開狀態下，成功達到此次數時關閉斷路器",
-      "errorRate": "錯誤率超過此值時，斷路器打開",
-      "minRequests": "只有請求數達到此值後才計算錯誤率"
-    }
   },
   "universalProvider": {
     "duplicate": "複製",

@@ -112,6 +112,12 @@ fn stdio_agent_completes_provider_vertical_slice_and_exits_on_eof() {
     assert!(ack
         .capabilities
         .contains(&"usage.codex_rebuild".to_string()));
+    assert!(ack
+        .capabilities
+        .contains(&"usage.pricing.update_batch".to_string()));
+    assert!(ack
+        .capabilities
+        .contains(&"usage.models_dev_sync.get".to_string()));
 
     let empty_summary = request(
         &mut stdin,
@@ -158,6 +164,52 @@ fn stdio_agent_completes_provider_vertical_slice_and_exits_on_eof() {
             }),
         ),
         Value::Bool(true)
+    );
+    assert_eq!(
+        request(
+            &mut stdin,
+            &mut stdout,
+            "models-dev-config-save",
+            "usage.models_dev_sync.save",
+            json!({
+                "config": {
+                    "autoSyncEnabled": true,
+                    "includeCommonModels": false,
+                    "selectedModelKeys": ["openai:gpt-5"],
+                    "excludedCommonModelKeys": [],
+                    "lastSyncAt": null,
+                    "lastSyncError": null
+                }
+            }),
+        ),
+        Value::Bool(true)
+    );
+    let models_dev_state = request(
+        &mut stdin,
+        &mut stdout,
+        "models-dev-config-get",
+        "usage.models_dev_sync.get",
+        json!({}),
+    );
+    assert_eq!(models_dev_state["config"]["autoSyncEnabled"], true);
+    assert_eq!(
+        request(
+            &mut stdin,
+            &mut stdout,
+            "pricing-update-batch",
+            "usage.pricing.update_batch",
+            json!({
+                "entries": [{
+                    "modelId": "remote-batch-model",
+                    "displayName": "Remote Batch Model",
+                    "inputCostPerMillion": "1",
+                    "outputCostPerMillion": "2",
+                    "cacheReadCostPerMillion": "0.1",
+                    "cacheCreationCostPerMillion": "0.2"
+                }]
+            }),
+        ),
+        serde_json::json!(1)
     );
     let pricing = request(
         &mut stdin,
