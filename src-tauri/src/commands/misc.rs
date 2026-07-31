@@ -1840,11 +1840,13 @@ fn resolve_path_default(
         .filter(|s| is_valid_shell(s))
         .unwrap_or_else(|| "sh".to_string());
     let flag = default_flag_for_shell(&shell);
-    let child = Command::new(shell)
-        .arg(flag)
+    let mut cmd = Command::new(shell);
+    cmd.arg(flag)
         .arg(format!("command -v {tool}"))
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    isolate_child_process_group(&mut cmd);
+    let child = cmd
         .spawn()
         .map_err(|e| format!("Failed to locate {tool}: {e}"))?;
     let out = wait_child_output(child, deadline)?;
@@ -2494,7 +2496,17 @@ fn terminate_child_tree(child: &mut std::process::Child) -> bool {
 
 #[cfg(not(target_os = "windows"))]
 fn terminate_child_tree(child: &mut std::process::Child) -> bool {
-    child.kill().is_ok()
+    let process_group = -(child.id() as libc::pid_t);
+    // SAFETY: runtime commands are placed in a dedicated process group before spawn.
+    unsafe { libc::kill(process_group, libc::SIGKILL) == 0 }
+    || child.kill().is_ok()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn isolate_child_process_group(cmd: &mut std::process::Command) {
+    use std::os::unix::process::CommandExt;
+
+    cmd.process_group(0);
 }
 
 fn wait_child_output(
@@ -2559,6 +2571,30 @@ fn wait_child_output(
         }
     };
 
+    if let Some(deadline) = deadline {
+        while stdout_handle
+            .as_ref()
+            .is_some_and(|handle| !handle.is_finished())
+            || stderr_handle
+                .as_ref()
+                .is_some_and(|handle| !handle.is_finished())
+        {
+            let remaining = match deadline.remaining() {
+                Ok(remaining) => remaining,
+                Err(error) => {
+                    let _ = terminate_child_tree(&mut child);
+                    drop(stdout_handle);
+                    drop(stderr_handle);
+                    return Err(error);
+                }
+            };
+            std::thread::sleep(std::cmp::min(
+                std::time::Duration::from_millis(50),
+                remaining,
+            ));
+        }
+    }
+
     let stdout = stdout_handle
         .map(|handle| handle.join().unwrap_or_default())
         .unwrap_or_default();
@@ -2584,6 +2620,7 @@ pub(crate) fn run_detected_tool_command_with_timeout(
     args: &[&str],
     timeout: Option<std::time::Duration>,
     extra_env: &[(&str, String)],
+    working_dir: &Path,
 ) -> Result<std::process::Output, String> {
     if !VALID_TOOLS.contains(&tool) {
         return Err(format!("Unsupported tool: {tool}"));
@@ -2601,7 +2638,7 @@ pub(crate) fn run_detected_tool_command_with_timeout(
 
     #[cfg(target_os = "windows")]
     if let Some(distro) = wsl_distro_for_tool(tool) {
-        return run_wsl_tool_command(tool, args, &distro, deadline, extra_env);
+        return run_wsl_tool_command(tool, args, &distro, deadline, extra_env, working_dir);
     }
 
     // Runtime execution only needs the default entry point. Full installation
@@ -2622,6 +2659,7 @@ pub(crate) fn run_detected_tool_command_with_timeout(
             &format!("{};{current_path}", dir.display()),
             deadline,
             extra_env,
+            working_dir,
         )
     }
 
@@ -2632,9 +2670,11 @@ pub(crate) fn run_detected_tool_command_with_timeout(
         let mut cmd = Command::new(&tool_path);
         cmd.args(args)
             .env("PATH", format!("{}:{current_path}", dir.display()))
+            .current_dir(working_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         apply_extra_env(&mut cmd, extra_env);
+        isolate_child_process_group(&mut cmd);
         let child = cmd
             .spawn()
             .map_err(|e| format!("Failed to run {tool}: {e}"))?;
@@ -2649,6 +2689,7 @@ fn run_windows_tool_command_capture(
     new_path: &str,
     deadline: Option<CommandDeadline>,
     extra_env: &[(&str, String)],
+    working_dir: &Path,
 ) -> Result<std::process::Output, String> {
     use std::process::{Command, Stdio};
 
@@ -2683,7 +2724,9 @@ fn run_windows_tool_command_capture(
     };
 
     apply_extra_env(&mut cmd, extra_env);
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.current_dir(working_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let child = cmd
         .spawn()
         .map_err(|e| format!("Failed to run tool: {e}"))?;
@@ -2730,6 +2773,33 @@ fn wsl_unc_path_to_linux(path: &Path) -> Option<String> {
 }
 
 #[cfg(target_os = "windows")]
+fn build_wsl_env_argv(extra_env: &[(&str, String)]) -> Result<Vec<String>, String> {
+    let mut env_argv = Vec::new();
+    for (key, value) in extra_env {
+        if key.is_empty()
+            || key.contains('=')
+            || key.chars().any(|c| c.is_whitespace() || c.is_control())
+        {
+            return Err(format!("invalid env for {key}"));
+        }
+
+        let linux_value = if *key == "OPENCODE_CONFIG_DIR" {
+            let Some(value) = wsl_unc_path_to_linux(Path::new(value)) else {
+                continue;
+            };
+            value
+        } else {
+            value.clone()
+        };
+        if linux_value.chars().any(char::is_control) {
+            return Err(format!("invalid env for {key}"));
+        }
+        env_argv.push(format!("{key}={linux_value}"));
+    }
+    Ok(env_argv)
+}
+
+#[cfg(target_os = "windows")]
 fn build_wsl_tool_command(
     tool: &str,
     args: &[&str],
@@ -2761,6 +2831,7 @@ fn run_wsl_tool_command(
     distro: &str,
     deadline: Option<CommandDeadline>,
     extra_env: &[(&str, String)],
+    working_dir: &Path,
 ) -> Result<std::process::Output, String> {
     use std::process::{Command, Stdio};
 
@@ -2769,27 +2840,16 @@ fn run_wsl_tool_command(
     }
 
     let command = build_wsl_tool_command(tool, args, deadline)?;
-
-    // Translate host-side env values that are WSL UNC paths into Linux paths,
-    // then inject via `env` so they apply inside the distro process.
-    let mut env_argv: Vec<String> = Vec::new();
-    for (key, value) in extra_env {
-        let linux_value = wsl_unc_path_to_linux(Path::new(value)).unwrap_or_else(|| value.clone());
-        // Reject values that would break env KEY=VALUE parsing.
-        if key.is_empty()
-            || key.contains('=')
-            || key.chars().any(|c| c.is_whitespace())
-            || linux_value
-                .chars()
-                .any(|c| c.is_control() || c.is_whitespace())
-        {
-            return Err(format!("[WSL:{distro}] invalid env for {key}"));
-        }
-        env_argv.push(format!("{key}={linux_value}"));
-    }
+    let linux_working_dir = wsl_unc_path_to_linux(working_dir)
+        .ok_or_else(|| format!("[WSL:{distro}] invalid working directory"))?;
+    let env_argv = build_wsl_env_argv(extra_env).map_err(|e| format!("[WSL:{distro}] {e}"))?;
 
     let mut cmd = Command::new("wsl.exe");
-    cmd.arg("-d").arg(distro).arg("--");
+    cmd.arg("-d")
+        .arg(distro)
+        .arg("--cd")
+        .arg(linux_working_dir)
+        .arg("--");
     if !env_argv.is_empty() {
         cmd.arg("env");
         for item in &env_argv {
@@ -3977,6 +4037,43 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn wsl_env_allows_spaces_in_unc_config_path() {
+        let extra_env = [
+            (
+                "OPENCODE_CONFIG_DIR",
+                r"\\wsl$\Ubuntu\home\Jane Doe\.config\opencode".to_string(),
+            ),
+            ("OPENCODE_DISABLE_PROJECT_CONFIG", "true".to_string()),
+        ];
+
+        assert_eq!(
+            build_wsl_env_argv(&extra_env).unwrap(),
+            vec![
+                "OPENCODE_CONFIG_DIR=/home/Jane Doe/.config/opencode".to_string(),
+                "OPENCODE_DISABLE_PROJECT_CONFIG=true".to_string(),
+            ]
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn wsl_env_skips_host_config_path() {
+        let extra_env = [
+            (
+                "OPENCODE_CONFIG_DIR",
+                r"C:\Users\Jane Doe\.config\opencode".to_string(),
+            ),
+            ("OPENCODE_DISABLE_PROJECT_CONFIG", "true".to_string()),
+        ];
+
+        assert_eq!(
+            build_wsl_env_argv(&extra_env).unwrap(),
+            vec!["OPENCODE_DISABLE_PROJECT_CONFIG=true".to_string()]
+        );
+    }
 
     #[cfg(unix)]
     fn set_test_executable(path: &Path, executable: bool) {

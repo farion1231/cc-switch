@@ -283,6 +283,9 @@ export const useSwitchProviderMutation = (appId: AppId) => {
           queryKey: ["opencodeLiveProviderIds"],
         });
         await queryClient.invalidateQueries({
+          queryKey: ["opencode", "runtime-models"],
+        });
+        await queryClient.invalidateQueries({
           queryKey: ["omo", "current-provider-id"],
         });
         await queryClient.invalidateQueries({
@@ -389,6 +392,9 @@ export const useSaveSettingsMutation = () => {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      await queryClient.invalidateQueries({
+        queryKey: ["opencode", "runtime-models"],
+      });
     },
   });
 };

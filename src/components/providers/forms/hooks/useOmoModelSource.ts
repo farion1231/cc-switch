@@ -9,6 +9,9 @@ import type { OpenCodeProviderConfig } from "@/types";
 import { OPENCODE_PRESET_MODEL_VARIANTS } from "@/config/opencodeProviderPresets";
 import { parseOpencodeConfigStrict } from "../helpers/opencodeFormUtils";
 
+const EMPTY_DISCOVERED_MODELS: Awaited<ReturnType<typeof getOpenCodeModels>> =
+  [];
+
 interface UseOmoModelSourceParams {
   isOmoCategory: boolean;
   providerId?: string;
@@ -48,7 +51,7 @@ export function useOmoModelSource({
   const { t } = useTranslation();
 
   const {
-    data: discoveredModels = [],
+    data: discoveredModels = EMPTY_DISCOVERED_MODELS,
     isError: runtimeModelsFailed,
     error: runtimeModelsError,
   } = useQuery({

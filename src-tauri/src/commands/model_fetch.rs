@@ -26,12 +26,16 @@ pub async fn get_opencode_models() -> Result<Vec<OpenCodeModelRef>, String> {
         // cc-switch already uses for live read/write (settings override included).
         let config_dir = crate::opencode_config::get_opencode_dir();
         let config_dir_env = config_dir.to_string_lossy().into_owned();
-        let extra_env = [("OPENCODE_CONFIG_DIR", config_dir_env)];
+        let extra_env = [
+            ("OPENCODE_CONFIG_DIR", config_dir_env),
+            ("OPENCODE_DISABLE_PROJECT_CONFIG", "true".to_string()),
+        ];
         let output = super::misc::run_detected_tool_command_with_timeout(
             "opencode",
             &["models"],
             Some(OPENCODE_MODELS_TIMEOUT),
             &extra_env,
+            &config_dir,
         )?;
         if !output.status.success() {
             let stderr = super::misc::decode_command_output(&output.stderr);
@@ -66,7 +70,9 @@ fn parse_opencode_models(output: &str) -> Vec<OpenCodeModelRef> {
                 || !provider_id
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-                || model_id.chars().any(char::is_whitespace)
+                || model_id
+                    .chars()
+                    .any(|c| c.is_whitespace() || c.is_control())
             {
                 return None;
             }
@@ -133,7 +139,7 @@ mod tests {
     #[test]
     fn skips_malformed_output_lines() {
         assert!(parse_opencode_models(
-            "notice: loading models\n/model\nprovider/\nbad provider/model\nprovider/bad model\n"
+            "notice: loading models\n/model\nprovider/\nbad provider/model\nprovider/bad model\nprovider/bad\u{1b}[0m\n"
         )
         .is_empty());
     }
