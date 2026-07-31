@@ -1363,6 +1363,9 @@
     "reasoningModeHint": "上游 Chat Completions 接口支持开启或关闭 thinking 时启用。Kimi、GLM、Qwen 等通常属于这一类。",
     "reasoningEffortToggle": "支持思考等级",
     "reasoningEffortHint": "上游支持 low/high/max 等思考深度控制时启用。启用后会自动启用思考模式，并把 Codex 的 reasoning.effort 转成上游 Chat 参数。",
+    "claudeChatReasoningCustomToggle": "自定义思考强度映射",
+    "claudeChatReasoningDefaultHint": "使用 CCS 默认映射（max -> xhigh）。",
+    "claudeChatReasoningEffortMapHint": "仅保存与 CCS 默认映射不同的值；未配置的强度始终使用默认映射。",
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "预设供应商已自动配置；自定义供应商会按名称/地址自动推断。仅当自动识别不准时才需手动覆盖。",
     "advancedSectionHint": "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。"
@@ -1486,6 +1489,7 @@
     "cacheReadTokens": "缓存命中",
     "cacheCreationTokens": "缓存创建",
     "timingInfo": "用时/首字",
+    "reasoningEffort": "思考强度",
     "status": "状态",
     "multiplier": "倍率",
     "requestModel": "请求模型",

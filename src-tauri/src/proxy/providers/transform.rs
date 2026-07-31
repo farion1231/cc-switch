@@ -12,6 +12,7 @@ use crate::proxy::{
     },
 };
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
 const ANTHROPIC_BILLING_HEADER_PREFIX: &str = "x-anthropic-billing-header:";
 
@@ -80,18 +81,17 @@ pub fn supports_reasoning_effort(model: &str) -> bool {
         || normalized.starts_with("grok-build-")
 }
 
-/// Resolve the appropriate OpenAI `reasoning_effort` from an Anthropic request body.
+/// Resolve the Claude-side reasoning effort from an Anthropic request body.
 ///
 /// Priority:
 /// 1. Explicit `output_config.effort` — preserves the user's intent directly.
-///    `low`/`medium`/`high` map 1:1; `max` maps to `xhigh`
-///    (supported by mainstream GPT models). Unknown values are ignored.
+///    `low`/`medium`/`high`/`xhigh`/`max` are recognized. Unknown values are ignored.
 /// 2. Fallback: `thinking.type` + `budget_tokens`:
 ///    - `adaptive` → `xhigh` (adaptive = maximum reasoning effort)
 ///    - `enabled` with budget → `low` (<4 000) / `medium` (4 000–15 999) / `high` (≥16 000)
 ///    - `enabled` without budget → `high` (conservative default)
 ///    - `disabled` / absent → `None`
-pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
+fn resolve_reasoning_effort_source(body: &Value) -> Option<&'static str> {
     // --- Priority 1: explicit output_config.effort ---
     if let Some(effort) = body
         .pointer("/output_config/effort")
@@ -101,8 +101,9 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
             "low" => Some("low"),
             "medium" => Some("medium"),
             "high" => Some("high"),
-            "max" => Some("xhigh"), // OpenAI xhigh = maximum reasoning effort
-            _ => None,              // unknown value — do not inject
+            "xhigh" => Some("xhigh"),
+            "max" => Some("max"),
+            _ => None, // unknown value — do not inject
         };
     }
 
@@ -123,6 +124,43 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
     }
 }
 
+/// Resolve the default OpenAI-compatible `reasoning_effort` from an Anthropic request body.
+///
+/// Mainstream OpenAI-compatible Chat Completions backends use `xhigh` as the highest
+/// accepted value, so Claude's `max` defaults to `xhigh` unless the selected provider
+/// explicitly overrides it.
+pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
+    match resolve_reasoning_effort_source(body)? {
+        "max" => Some("xhigh"),
+        effort => Some(effort),
+    }
+}
+
+/// Resolve a provider-specific OpenAI Chat Completions `reasoning_effort`.
+///
+/// Overrides apply to the original Claude-side effort, so a provider can intentionally
+/// map Claude `max` to a backend-specific `max` or `ultra` instead of the default `xhigh`.
+pub fn resolve_reasoning_effort_with_overrides(
+    body: &Value,
+    effort_map: Option<&HashMap<String, String>>,
+) -> Option<String> {
+    let source = resolve_reasoning_effort_source(body)?;
+    let default = resolve_reasoning_effort(body)?;
+
+    effort_map
+        .and_then(|map| map.get(source))
+        .filter(|effort| is_supported_chat_reasoning_effort(effort))
+        .cloned()
+        .or_else(|| Some(default.to_string()))
+}
+
+fn is_supported_chat_reasoning_effort(effort: &str) -> bool {
+    matches!(
+        effort,
+        "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+    )
+}
+
 /// Anthropic 请求 → OpenAI Chat Completions 请求
 ///
 /// 转换工具库 API：当前无生产调用方（连通性检查不再发真实请求，曾是其唯一 crate 内
@@ -140,6 +178,19 @@ pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
 pub fn anthropic_to_openai_with_reasoning_content(
     body: Value,
     preserve_reasoning_content: bool,
+) -> Result<Value, ProxyError> {
+    anthropic_to_openai_with_reasoning_content_and_effort_overrides(
+        body,
+        preserve_reasoning_content,
+        None,
+    )
+}
+
+/// Anthropic 请求 → OpenAI Chat Completions 请求，支持 provider 级思考强度覆盖。
+pub fn anthropic_to_openai_with_reasoning_content_and_effort_overrides(
+    body: Value,
+    preserve_reasoning_content: bool,
+    effort_map: Option<&HashMap<String, String>>,
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
 
@@ -207,7 +258,7 @@ pub fn anthropic_to_openai_with_reasoning_content(
 
     // Map Anthropic thinking → OpenAI reasoning_effort
     if supports_reasoning_effort(model) {
-        if let Some(effort) = resolve_reasoning_effort(&body) {
+        if let Some(effort) = resolve_reasoning_effort_with_overrides(&body, effort_map) {
             result["reasoning_effort"] = json!(effort);
         }
     }
@@ -1775,9 +1826,37 @@ mod tests {
     }
 
     #[test]
+    fn test_output_config_xhigh_maps_to_reasoning_effort_xhigh() {
+        let body = json!({"output_config": {"effort": "xhigh"}});
+        assert_eq!(resolve_reasoning_effort(&body), Some("xhigh"));
+    }
+
+    #[test]
     fn test_output_config_max_maps_to_reasoning_effort_xhigh() {
         let body = json!({"output_config": {"effort": "max"}});
         assert_eq!(resolve_reasoning_effort(&body), Some("xhigh"));
+    }
+
+    #[test]
+    fn test_custom_effort_override_maps_max_to_ultra() {
+        let body = json!({"output_config": {"effort": "max"}});
+        let effort_map = HashMap::from([("max".to_string(), "ultra".to_string())]);
+
+        assert_eq!(
+            resolve_reasoning_effort_with_overrides(&body, Some(&effort_map)),
+            Some("ultra".to_string())
+        );
+    }
+
+    #[test]
+    fn test_invalid_custom_effort_override_falls_back_to_default() {
+        let body = json!({"output_config": {"effort": "max"}});
+        let effort_map = HashMap::from([("max".to_string(), "unsupported".to_string())]);
+
+        assert_eq!(
+            resolve_reasoning_effort_with_overrides(&body, Some(&effort_map)),
+            Some("xhigh".to_string())
+        );
     }
 
     #[test]

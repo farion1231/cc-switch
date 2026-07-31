@@ -216,6 +216,8 @@ async fn handle_messages_for_app(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    ctx.outbound_reasoning_effort = result.outbound_reasoning_effort.take();
+    ctx.outbound_reasoning_effort_source = result.outbound_reasoning_effort_source.take();
     ctx.provider = result.provider;
     let api_format = result
         .claude_api_format
@@ -287,6 +289,8 @@ struct ClaudeUsageLog {
     model: String,
     request_model: String,
     outbound_model: String,
+    reasoning_effort: Option<String>,
+    reasoning_effort_source: Option<String>,
     app_type: &'static str,
     provider_id: String,
     session_id: String,
@@ -320,6 +324,8 @@ fn prepare_claude_usage_log(
             .outbound_model
             .clone()
             .unwrap_or_else(|| ctx.request_model.clone()),
+        reasoning_effort: ctx.outbound_reasoning_effort.clone(),
+        reasoning_effort_source: ctx.outbound_reasoning_effort_source.clone(),
         app_type: ctx.app_type_str,
         provider_id: ctx.provider.id.clone(),
         session_id: ctx.session_id.clone(),
@@ -338,6 +344,8 @@ async fn write_claude_usage_log(state: &ProxyState, log: ClaudeUsageLog) {
         &log.model,
         &log.request_model,
         &log.outbound_model,
+        log.reasoning_effort,
+        log.reasoning_effort_source,
         log.usage,
         log.latency_ms,
         None,
@@ -433,6 +441,8 @@ async fn handle_claude_transform(
                 .outbound_model
                 .clone()
                 .unwrap_or_else(|| ctx.request_model.clone());
+            let reasoning_effort = ctx.outbound_reasoning_effort.clone();
+            let reasoning_effort_source = ctx.outbound_reasoning_effort_source.clone();
             let status_code = status.as_u16();
             let start_time = ctx.start_time;
             let session_id = ctx.session_id.clone();
@@ -456,6 +466,8 @@ async fn handle_claude_transform(
                         let session_id = session_id.clone();
                         let request_model = request_model.clone();
                         let outbound_model = fallback_model.clone();
+                        let reasoning_effort = reasoning_effort.clone();
+                        let reasoning_effort_source = reasoning_effort_source.clone();
 
                         tokio::spawn(async move {
                             log_usage(
@@ -465,6 +477,8 @@ async fn handle_claude_transform(
                                 &model,
                                 &request_model,
                                 &outbound_model,
+                                reasoning_effort,
+                                reasoning_effort_source,
                                 usage,
                                 latency_ms,
                                 first_token_ms,
@@ -747,6 +761,8 @@ pub async fn handle_chat_completions(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    ctx.outbound_reasoning_effort = result.outbound_reasoning_effort.take();
+    ctx.outbound_reasoning_effort_source = result.outbound_reasoning_effort_source.take();
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -842,6 +858,8 @@ async fn handle_responses_for_app(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    ctx.outbound_reasoning_effort = result.outbound_reasoning_effort.take();
+    ctx.outbound_reasoning_effort_source = result.outbound_reasoning_effort_source.take();
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -976,6 +994,8 @@ async fn handle_responses_compact_for_app(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    ctx.outbound_reasoning_effort = result.outbound_reasoning_effort.take();
+    ctx.outbound_reasoning_effort_source = result.outbound_reasoning_effort_source.take();
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -1119,6 +1139,8 @@ async fn handle_codex_responses_namespace_restore(
                     .outbound_model
                     .clone()
                     .unwrap_or_else(|| ctx.request_model.clone());
+                let reasoning_effort = ctx.outbound_reasoning_effort.clone();
+                let reasoning_effort_source = ctx.outbound_reasoning_effort_source.clone();
                 let app_type_str = ctx.app_type_str;
                 tokio::spawn({
                     let state = state.clone();
@@ -1133,6 +1155,8 @@ async fn handle_codex_responses_namespace_restore(
                             &model,
                             &request_model,
                             &outbound_model,
+                            reasoning_effort,
+                            reasoning_effort_source,
                             usage,
                             latency_ms,
                             None,
@@ -1205,6 +1229,8 @@ async fn handle_codex_chat_to_responses_transform(
                 .outbound_model
                 .clone()
                 .unwrap_or_else(|| ctx.request_model.clone());
+            let reasoning_effort = ctx.outbound_reasoning_effort.clone();
+            let reasoning_effort_source = ctx.outbound_reasoning_effort_source.clone();
             let app_type_str = ctx.app_type_str;
             let start_time = ctx.start_time;
             let session_id = ctx.session_id.clone();
@@ -1235,6 +1261,8 @@ async fn handle_codex_chat_to_responses_transform(
                     let provider_id = provider_id.clone();
                     let request_model = request_model.clone();
                     let outbound_model = fallback_model.clone();
+                    let reasoning_effort = reasoning_effort.clone();
+                    let reasoning_effort_source = reasoning_effort_source.clone();
                     let session_id = session_id.clone();
 
                     tokio::spawn(async move {
@@ -1245,6 +1273,8 @@ async fn handle_codex_chat_to_responses_transform(
                             &model,
                             &request_model,
                             &outbound_model,
+                            reasoning_effort,
+                            reasoning_effort_source,
                             usage,
                             latency_ms,
                             first_token_ms,
@@ -1352,6 +1382,8 @@ async fn handle_codex_chat_to_responses_transform(
             .outbound_model
             .clone()
             .unwrap_or_else(|| ctx.request_model.clone());
+        let reasoning_effort = ctx.outbound_reasoning_effort.clone();
+        let reasoning_effort_source = ctx.outbound_reasoning_effort_source.clone();
         let app_type_str = ctx.app_type_str;
         tokio::spawn({
             let state = state.clone();
@@ -1366,6 +1398,8 @@ async fn handle_codex_chat_to_responses_transform(
                     &model,
                     &request_model,
                     &outbound_model,
+                    reasoning_effort,
+                    reasoning_effort_source,
                     usage,
                     latency_ms,
                     None,
@@ -1517,6 +1551,8 @@ async fn handle_codex_anthropic_to_responses_transform(
             .outbound_model
             .clone()
             .unwrap_or_else(|| ctx.request_model.clone());
+        let reasoning_effort = ctx.outbound_reasoning_effort.clone();
+        let reasoning_effort_source = ctx.outbound_reasoning_effort_source.clone();
         let app_type_str = ctx.app_type_str;
         tokio::spawn({
             let state = state.clone();
@@ -1531,6 +1567,8 @@ async fn handle_codex_anthropic_to_responses_transform(
                     &model,
                     &request_model,
                     &outbound_model,
+                    reasoning_effort,
+                    reasoning_effort_source,
                     usage,
                     latency_ms,
                     None,
@@ -1584,6 +1622,8 @@ fn build_codex_anthropic_sse_response(
             .outbound_model
             .clone()
             .unwrap_or_else(|| ctx.request_model.clone());
+        let reasoning_effort = ctx.outbound_reasoning_effort.clone();
+        let reasoning_effort_source = ctx.outbound_reasoning_effort_source.clone();
         let app_type_str = ctx.app_type_str;
         let start_time = ctx.start_time;
         let session_id = ctx.session_id.clone();
@@ -1608,6 +1648,8 @@ fn build_codex_anthropic_sse_response(
                 let provider_id = provider_id.clone();
                 let request_model = request_model.clone();
                 let outbound_model = fallback_model.clone();
+                let reasoning_effort = reasoning_effort.clone();
+                let reasoning_effort_source = reasoning_effort_source.clone();
                 let session_id = session_id.clone();
 
                 tokio::spawn(async move {
@@ -1618,6 +1660,8 @@ fn build_codex_anthropic_sse_response(
                         &model,
                         &request_model,
                         &outbound_model,
+                        reasoning_effort,
+                        reasoning_effort_source,
                         usage,
                         latency_ms,
                         first_token_ms,
@@ -1984,6 +2028,8 @@ pub async fn handle_gemini(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    ctx.outbound_reasoning_effort = result.outbound_reasoning_effort.take();
+    ctx.outbound_reasoning_effort_source = result.outbound_reasoning_effort_source.take();
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -2607,6 +2653,8 @@ async fn log_usage(
     model: &str,
     request_model: &str,
     outbound_model: &str,
+    reasoning_effort: Option<String>,
+    reasoning_effort_source: Option<String>,
     usage: TokenUsage,
     latency_ms: u64,
     first_token_ms: Option<u64>,
@@ -2640,6 +2688,8 @@ async fn log_usage(
         model.to_string(),
         request_model.to_string(),
         pricing_model.to_string(),
+        reasoning_effort,
+        reasoning_effort_source,
         usage,
         multiplier,
         latency_ms,

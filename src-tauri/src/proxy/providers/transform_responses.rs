@@ -16,6 +16,7 @@ use crate::proxy::{
     },
 };
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
 use super::reasoning_bridge::{
     anthropic_block_from_openai_reasoning_item, openai_reasoning_item_from_anthropic_block,
@@ -289,11 +290,35 @@ pub(crate) fn sanitize_anthropic_tool_use_input_json(name: &str, raw: &str) -> S
 /// 以便在无服务端状态下保持多轮 reasoning 上下文。
 /// `codex_fast_mode`: 仅在 `is_codex_oauth` 为 true 时生效，控制是否注入
 /// `service_tier = "priority"`。
+///
+/// 保留无覆盖参数的转换器 API，供测试与后续复用；生产 Claude 路径调用带
+/// provider 覆盖的版本。
+#[allow(dead_code)]
 pub fn anthropic_to_responses(
     body: Value,
     cache_key: Option<&str>,
     is_codex_oauth: bool,
     codex_fast_mode: bool,
+) -> Result<Value, ProxyError> {
+    anthropic_to_responses_with_reasoning_effort_overrides(
+        body,
+        cache_key,
+        is_codex_oauth,
+        codex_fast_mode,
+        None,
+    )
+}
+
+/// Anthropic 请求 → OpenAI Responses 请求，支持 provider 级思考强度覆盖。
+///
+/// 覆盖项以 Claude 入站的原始强度为键，因此可让支持扩展强度等级的
+/// Responses 后端将 Claude `max` 发送为 `max` 或 `ultra`。
+pub fn anthropic_to_responses_with_reasoning_effort_overrides(
+    body: Value,
+    cache_key: Option<&str>,
+    is_codex_oauth: bool,
+    codex_fast_mode: bool,
+    effort_map: Option<&HashMap<String, String>>,
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
 
@@ -346,7 +371,9 @@ pub fn anthropic_to_responses(
     // Map Anthropic thinking → OpenAI Responses reasoning.effort
     if let Some(model_name) = body.get("model").and_then(|m| m.as_str()) {
         if super::transform::supports_reasoning_effort(model_name) {
-            if let Some(effort) = super::transform::resolve_reasoning_effort(&body) {
+            if let Some(effort) =
+                super::transform::resolve_reasoning_effort_with_overrides(&body, effort_map)
+            {
                 result["reasoning"] = json!({ "effort": effort });
             }
         }

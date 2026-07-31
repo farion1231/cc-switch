@@ -1363,6 +1363,9 @@
     "reasoningModeHint": "Enable when the upstream Chat Completions API supports toggling thinking on/off. Providers like Kimi, GLM and Qwen usually fall into this category.",
     "reasoningEffortToggle": "Supports Reasoning Effort",
     "reasoningEffortHint": "Enable when the upstream supports thinking-depth control such as low/high/max. Enabling this also turns on thinking mode and converts Codex's reasoning.effort into the upstream Chat parameter.",
+    "claudeChatReasoningCustomToggle": "Custom Reasoning Effort Mapping",
+    "claudeChatReasoningDefaultHint": "Uses the CCS default mapping (max -> xhigh).",
+    "claudeChatReasoningEffortMapHint": "Only values different from the CCS default mapping are saved; unconfigured efforts always use the default mapping.",
     "reasoningGroupTitle": "Reasoning Capability",
     "reasoningSectionHint": "Preset providers are configured automatically; custom providers are inferred from name/URL. Override manually only when auto-detection is wrong.",
     "advancedSectionHint": "Includes upstream format, model mapping, reasoning overrides and custom User-Agent. Providers using the Chat Completions protocol require routing takeover to be enabled."
@@ -1486,6 +1489,7 @@
     "cacheReadTokens": "Cache Hit",
     "cacheCreationTokens": "Cache Creation",
     "timingInfo": "Duration/TTFT",
+    "reasoningEffort": "Reasoning Effort",
     "status": "Status",
     "multiplier": "Multiplier",
     "requestModel": "Request Model",

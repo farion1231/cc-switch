@@ -106,6 +106,18 @@ export function RequestDetailPanel({
                 </dt>
                 <dd>{request.appType}</dd>
               </div>
+              {request.reasoningEffort && (
+                <div>
+                  <dt className="text-muted-foreground">
+                    {t("usage.reasoningEffort", "思考强度")}
+                  </dt>
+                  <dd className="font-mono">
+                    {request.reasoningEffortSource
+                      ? `${request.reasoningEffortSource} -> ${request.reasoningEffort}`
+                      : request.reasoningEffort}
+                  </dd>
+                </div>
+              )}
               <div>
                 <dt className="text-muted-foreground">
                   {t("usage.model", "模型")}

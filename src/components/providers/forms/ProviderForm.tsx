@@ -21,6 +21,7 @@ import type {
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
+  ClaudeChatReasoning,
   PromptCacheRoutingMode,
   ClaudeApiKeyField,
 } from "@/types";
@@ -214,6 +215,15 @@ const normalizeCodexChatReasoningForSave = (
   };
 };
 
+const normalizeClaudeChatReasoningForSave = (
+  value?: ClaudeChatReasoning,
+): ClaudeChatReasoning | undefined => {
+  const entries = Object.entries(value?.effortMap ?? {});
+  return entries.length > 0
+    ? { effortMap: Object.fromEntries(entries) }
+    : undefined;
+};
+
 type LocalProxyRequestOverridesBuildResult = ReturnType<
   typeof buildLocalProxyRequestOverrides
 >;
@@ -363,6 +373,7 @@ function ProviderFormFull({
       ),
     });
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
+    setClaudeChatReasoning(initialData?.meta?.claudeChatReasoning ?? {});
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
     setLocalProxyHeadersOverride(
@@ -547,6 +558,10 @@ function ProviderFormFull({
   const [codexChatReasoning, setCodexChatReasoning] =
     useState<CodexChatReasoning>(
       () => initialData?.meta?.codexChatReasoning ?? {},
+    );
+  const [claudeChatReasoning, setClaudeChatReasoning] =
+    useState<ClaudeChatReasoning>(
+      () => initialData?.meta?.claudeChatReasoning ?? {},
     );
   const [promptCacheRouting, setPromptCacheRouting] =
     useState<PromptCacheRoutingMode>(
@@ -1588,6 +1603,13 @@ function ProviderFormFull({
         localCodexApiFormat === "openai_chat"
           ? normalizeCodexChatReasoningForSave(codexChatReasoning)
           : undefined,
+      claudeChatReasoning:
+        appId === "claude" &&
+        category !== "official" &&
+        (localApiFormat === "openai_chat" ||
+          localApiFormat === "openai_responses")
+          ? normalizeClaudeChatReasoningForSave(claudeChatReasoning)
+          : undefined,
       promptCacheRouting:
         appId === "codex" &&
         category !== "official" &&
@@ -1774,6 +1796,9 @@ function ProviderFormFull({
             "openai_responses",
         );
       }
+      if (appId === "claude") {
+        setClaudeChatReasoning({});
+      }
       if (appId === "gemini") {
         resetGeminiConfig({}, {});
       }
@@ -1927,6 +1952,8 @@ function ProviderFormFull({
     } else {
       setLocalApiFormat("anthropic");
     }
+
+    setClaudeChatReasoning({});
 
     setLocalApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
     setLocalIsFullUrl(false);
@@ -2263,6 +2290,8 @@ function ProviderFormFull({
               speedTestEndpoints={speedTestEndpoints}
               apiFormat={localApiFormat}
               onApiFormatChange={handleApiFormatChange}
+              claudeChatReasoning={claudeChatReasoning}
+              onClaudeChatReasoningChange={setClaudeChatReasoning}
               apiKeyField={localApiKeyField}
               onApiKeyFieldChange={handleApiKeyFieldChange}
               isFullUrl={localIsFullUrl}

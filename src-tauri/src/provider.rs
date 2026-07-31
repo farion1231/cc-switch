@@ -392,6 +392,21 @@ pub struct CodexChatReasoningConfig {
     pub output_format: Option<String>,
 }
 
+/// Claude Messages -> OpenAI-compatible reasoning-effort overrides.
+///
+/// Keys are Claude-side effort values (`low`, `medium`, `high`, `xhigh`, `max`);
+/// values are the provider's accepted Chat Completions `reasoning_effort` or
+/// Responses `reasoning.effort` values.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ClaudeChatReasoningConfig {
+    #[serde(
+        rename = "effortMap",
+        default,
+        skip_serializing_if = "HashMap::is_empty"
+    )]
+    pub effort_map: HashMap<String, String>,
+}
+
 /// Local proxy request overrides applied after route/protocol transforms.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LocalProxyRequestOverrides {
@@ -489,6 +504,12 @@ pub struct ProviderMeta {
     /// Codex Responses -> Chat Completions reasoning capability metadata.
     #[serde(rename = "codexChatReasoning", skip_serializing_if = "Option::is_none")]
     pub codex_chat_reasoning: Option<CodexChatReasoningConfig>,
+    /// Claude Messages -> OpenAI-compatible reasoning-effort overrides.
+    #[serde(
+        rename = "claudeChatReasoning",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub claude_chat_reasoning: Option<ClaudeChatReasoningConfig>,
     /// Codex → Anthropic path: whether to emulate the Claude Code client
     /// (User-Agent / anthropic-beta / x-app + injecting the Claude Code system
     /// prompt first line). Disabled by default; only an explicit `true` enables it.
