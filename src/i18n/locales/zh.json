@@ -1469,6 +1469,7 @@
     "totalRequests": "总请求数",
     "totalCost": "总成本",
     "cost": "成本",
+    "unpriced": "未定价",
     "perMillion": "(每百万)",
     "trends": "使用趋势",
     "rangeToday": "过去 24 小时 (按小时)",

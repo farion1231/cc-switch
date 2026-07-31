@@ -1470,6 +1470,7 @@
     "totalRequests": "總請求數",
     "totalCost": "總成本",
     "cost": "成本",
+    "unpriced": "未定價",
     "perMillion": "(每百萬)",
     "trends": "使用趨勢",
     "rangeToday": "過去 24 小時 (按小時)",

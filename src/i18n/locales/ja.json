@@ -1469,6 +1469,7 @@
     "totalRequests": "総リクエスト数",
     "totalCost": "総コスト",
     "cost": "コスト",
+    "unpriced": "価格未設定",
     "perMillion": "(100万あたり)",
     "trends": "利用トレンド",
     "rangeToday": "直近24時間 (時間別)",

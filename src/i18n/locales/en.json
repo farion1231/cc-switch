@@ -1469,6 +1469,7 @@
     "totalRequests": "Total Requests",
     "totalCost": "Total Cost",
     "cost": "Cost",
+    "unpriced": "Unpriced",
     "perMillion": "(per million)",
     "trends": "Usage Trends",
     "rangeToday": "Last 24 hours (hourly)",
