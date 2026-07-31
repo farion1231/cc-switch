@@ -32,6 +32,7 @@ mod proxy;
 mod services;
 mod session_manager;
 mod settings;
+mod skill_env;
 mod store;
 
 mod tray;
@@ -475,6 +476,14 @@ pub fn run() {
                     // 若配置不完整（如缺少 pubkey），跳过 Updater 而不中断应用
                     log::warn!("初始化 Updater 插件失败，已跳过：{e}");
                 }
+            }
+
+            match crate::skill_env::apply_saved_to_current_process() {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Applied {count} saved Skill env variable(s) to current process");
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("✗ Failed to apply saved Skill env variables: {e}"),
             }
 
             // 注入 AppHandle 给 usage_events，让无 AppHandle 持有的写日志路径
@@ -1349,6 +1358,11 @@ pub fn run() {
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
+            commands::get_skill_env_state,
+            commands::save_skill_env,
+            commands::refresh_skill_env,
+            commands::get_default_skill_env_output_path,
+            commands::pick_skill_env_output_file,
             commands::has_codex_unify_history_backup,
             commands::restore_codex_unified_history,
             commands::get_rectifier_config,

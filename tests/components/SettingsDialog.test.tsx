@@ -133,6 +133,10 @@ vi.mock("@/hooks/useImportExport", () => ({
 vi.mock("@/lib/api", () => ({
   settingsApi: {
     restart: vi.fn().mockResolvedValue(true),
+    getDefaultSkillEnvOutputPath: vi
+      .fn()
+      .mockResolvedValue("/tmp/skill-env.env"),
+    pickSkillEnvOutputFile: vi.fn().mockResolvedValue(null),
   },
 }));
 
@@ -270,6 +274,8 @@ describe("SettingsPage Component", () => {
     toastErrorMock.mockReset();
     settingsApi = (await import("@/lib/api")).settingsApi;
     settingsApi.restart.mockClear();
+    settingsApi.getDefaultSkillEnvOutputPath.mockClear();
+    settingsApi.pickSkillEnvOutputFile.mockClear();
   });
 
   afterEach(() => {

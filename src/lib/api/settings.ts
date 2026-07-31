@@ -26,6 +26,19 @@ export interface CodexUnifyHistoryRestoreResult {
   skippedReason?: string;
 }
 
+export interface SkillEnvState {
+  sourcePath: string;
+  outputPath: string;
+  content: string;
+  parsedCount: number;
+}
+
+export interface SkillEnvSaveResult {
+  sourcePath: string;
+  outputPath: string;
+  parsedCount: number;
+}
+
 export interface WebDavSyncResult {
   status: string;
 }
@@ -37,6 +50,28 @@ export const settingsApi = {
 
   async save(settings: Settings): Promise<boolean> {
     return await invoke("save_settings", { settings });
+  },
+
+  async getDefaultSkillEnvOutputPath(): Promise<string> {
+    return await invoke("get_default_skill_env_output_path");
+  },
+
+  async pickSkillEnvOutputFile(
+    currentPath?: string | null,
+  ): Promise<string | null> {
+    return await invoke("pick_skill_env_output_file", { currentPath });
+  },
+
+  async getSkillEnvState(): Promise<SkillEnvState> {
+    return await invoke("get_skill_env_state");
+  },
+
+  async saveSkillEnv(content: string): Promise<SkillEnvSaveResult> {
+    return await invoke("save_skill_env", { content });
+  },
+
+  async refreshSkillEnv(): Promise<SkillEnvSaveResult> {
+    return await invoke("refresh_skill_env");
   },
 
   /** 是否存在统一 Codex 会话历史的迁移备份（关闭弹窗据此显示"恢复备份"勾选） */
