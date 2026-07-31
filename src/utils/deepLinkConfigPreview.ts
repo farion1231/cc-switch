@@ -1,5 +1,6 @@
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import type { DeepLinkImportRequest } from "@/lib/api/deeplink";
+import { decodeBase64Utf8 } from "@/lib/utils/base64";
 
 export interface ParsedDeepLinkConfig {
   type: "claude" | "codex" | "gemini" | "grokbuild";
@@ -53,15 +54,6 @@ const maskStructuredSecrets = (value: unknown, key = ""): unknown => {
 const sanitizeTomlForPreview = (configToml: string): string => {
   const parsed = parseToml(configToml) as Record<string, unknown>;
   return `${stringifyToml(maskStructuredSecrets(parsed) as Record<string, unknown>).trim()}\n`;
-};
-
-const decodeBase64Utf8 = (encoded: string): string => {
-  const binary = atob(encoded);
-  const bytes = Uint8Array.from(
-    binary,
-    (character) => character.codePointAt(0) ?? 0,
-  );
-  return new TextDecoder().decode(bytes);
 };
 
 export function parseDeepLinkConfigPreview(

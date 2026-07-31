@@ -31,25 +31,40 @@ pub fn check_env_conflicts(app: &str) -> Result<Vec<EnvConflict>, String> {
     Ok(conflicts)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EnvKeyword {
+    Exact(&'static str),
+    Prefix(&'static str),
+}
+
 /// Get relevant keywords for each app
-fn get_keywords_for_app(app: &str) -> Vec<&str> {
+fn get_keywords_for_app(app: &str) -> Vec<EnvKeyword> {
     match app.to_lowercase().as_str() {
-        "claude" => vec!["ANTHROPIC"],
-        "codex" => vec!["OPENAI"],
-        "gemini" => vec!["GEMINI", "GOOGLE_GEMINI"],
-        "grokbuild" | "grok" => vec!["XAI_API_KEY"],
+        "claude" => vec![EnvKeyword::Prefix("ANTHROPIC")],
+        "codex" => vec![EnvKeyword::Prefix("OPENAI")],
+        "gemini" => vec![
+            EnvKeyword::Prefix("GEMINI"),
+            EnvKeyword::Prefix("GOOGLE_GEMINI"),
+        ],
+        "grokbuild" | "grok" => vec![
+            EnvKeyword::Exact("XAI_API_KEY"),
+            EnvKeyword::Exact("GROK_DEFAULT_MODEL"),
+        ],
         _ => vec![],
     }
 }
 
-fn matches_env_keyword(name: &str, keywords: &[&str]) -> bool {
+fn matches_env_keyword(name: &str, keywords: &[EnvKeyword]) -> bool {
     let upper_name = name.to_uppercase();
-    keywords.iter().any(|keyword| upper_name.contains(keyword))
+    keywords.iter().any(|keyword| match keyword {
+        EnvKeyword::Exact(name) => upper_name == *name,
+        EnvKeyword::Prefix(prefix) => upper_name.starts_with(prefix),
+    })
 }
 
 /// Check system environment variables (Windows Registry or Unix env)
 #[cfg(target_os = "windows")]
-fn check_system_env(keywords: &[&str]) -> Result<Vec<EnvConflict>, String> {
+fn check_system_env(keywords: &[EnvKeyword]) -> Result<Vec<EnvConflict>, String> {
     let mut conflicts = Vec::new();
 
     // Check HKEY_CURRENT_USER\Environment
@@ -86,7 +101,7 @@ fn check_system_env(keywords: &[&str]) -> Result<Vec<EnvConflict>, String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn check_system_env(keywords: &[&str]) -> Result<Vec<EnvConflict>, String> {
+fn check_system_env(keywords: &[EnvKeyword]) -> Result<Vec<EnvConflict>, String> {
     let mut conflicts = Vec::new();
 
     // Check current process environment
@@ -106,7 +121,7 @@ fn check_system_env(keywords: &[&str]) -> Result<Vec<EnvConflict>, String> {
 
 /// Check shell configuration files for environment variable exports (Unix only)
 #[cfg(not(target_os = "windows"))]
-fn check_shell_configs(keywords: &[&str]) -> Result<Vec<EnvConflict>, String> {
+fn check_shell_configs(keywords: &[EnvKeyword]) -> Result<Vec<EnvConflict>, String> {
     let mut conflicts = Vec::new();
 
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
@@ -163,15 +178,33 @@ mod tests {
 
     #[test]
     fn test_get_keywords() {
-        assert_eq!(get_keywords_for_app("claude"), vec!["ANTHROPIC"]);
-        assert_eq!(get_keywords_for_app("codex"), vec!["OPENAI"]);
+        assert_eq!(
+            get_keywords_for_app("claude"),
+            vec![EnvKeyword::Prefix("ANTHROPIC")]
+        );
+        assert_eq!(
+            get_keywords_for_app("codex"),
+            vec![EnvKeyword::Prefix("OPENAI")]
+        );
         assert_eq!(
             get_keywords_for_app("gemini"),
-            vec!["GEMINI", "GOOGLE_GEMINI"]
+            vec![
+                EnvKeyword::Prefix("GEMINI"),
+                EnvKeyword::Prefix("GOOGLE_GEMINI")
+            ]
         );
-        assert_eq!(get_keywords_for_app("grokbuild"), vec!["XAI_API_KEY"]);
-        assert_eq!(get_keywords_for_app("grok"), vec!["XAI_API_KEY"]);
-        assert_eq!(get_keywords_for_app("unknown"), Vec::<&str>::new());
+        assert_eq!(
+            get_keywords_for_app("grokbuild"),
+            vec![
+                EnvKeyword::Exact("XAI_API_KEY"),
+                EnvKeyword::Exact("GROK_DEFAULT_MODEL")
+            ]
+        );
+        assert_eq!(
+            get_keywords_for_app("grok"),
+            get_keywords_for_app("grokbuild")
+        );
+        assert_eq!(get_keywords_for_app("unknown"), Vec::<EnvKeyword>::new());
     }
 
     #[test]
@@ -180,7 +213,23 @@ mod tests {
 
         assert!(matches_env_keyword("XAI_API_KEY", &keywords));
         assert!(matches_env_keyword("xai_api_key", &keywords));
+        assert!(matches_env_keyword("GROK_DEFAULT_MODEL", &keywords));
+        assert!(matches_env_keyword("grok_default_model", &keywords));
+        assert!(!matches_env_keyword("MY_XAI_API_KEY", &keywords));
+        assert!(!matches_env_keyword("XAI_API_KEY_BACKUP", &keywords));
+        assert!(!matches_env_keyword("MY_GROK_DEFAULT_MODEL", &keywords));
+        assert!(!matches_env_keyword("GROK_DEFAULT_MODEL_BACKUP", &keywords));
         assert!(!matches_env_keyword("GROK_BIN_DIR", &keywords));
         assert!(!matches_env_keyword("GROK_HOME", &keywords));
+    }
+
+    #[test]
+    fn broad_app_keywords_match_only_at_the_start() {
+        let keywords = get_keywords_for_app("claude");
+
+        assert!(matches_env_keyword("ANTHROPIC_API_KEY", &keywords));
+        assert!(matches_env_keyword("anthropic_base_url", &keywords));
+        assert!(!matches_env_keyword("MY_ANTHROPIC_API_KEY", &keywords));
+        assert!(!matches_env_keyword("NOT_ANTHROPIC", &keywords));
     }
 }
