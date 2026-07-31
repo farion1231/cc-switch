@@ -188,8 +188,33 @@ describe("aggregate route helpers", () => {
     );
 
     expect(
-      getAggregateRouteTargets([plain, official, aggregate], "aggregate"),
+      getAggregateRouteTargets(
+        [plain, official, aggregate],
+        "claude",
+        "aggregate",
+      ),
     ).toEqual([plain]);
+  });
+
+  it("keeps the built-in Codex official provider as an aggregate target", () => {
+    const plain = provider("kimi", "Kimi");
+    const codexOfficial: Provider = {
+      ...provider("codex-official", "OpenAI Official"),
+      category: "official",
+    };
+    const otherOfficial: Provider = {
+      ...provider("official", "Anthropic"),
+      category: "official",
+    };
+
+    // claude 下所有官方供应商仍被排除
+    expect(
+      getAggregateRouteTargets([plain, codexOfficial, otherOfficial], "claude"),
+    ).toEqual([plain]);
+    // codex 下仅放行内置官方供应商（与后端接管策略一致）
+    expect(
+      getAggregateRouteTargets([plain, codexOfficial, otherOfficial], "codex"),
+    ).toEqual([plain, codexOfficial]);
   });
 
   it("collects configured model names without duplicates", () => {

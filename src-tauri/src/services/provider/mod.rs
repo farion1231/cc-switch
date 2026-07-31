@@ -4716,13 +4716,28 @@ impl ProviderService {
         // 获取统一供应商（用于删除生成的子供应商）
         let provider = state.db.get_universal_provider(id)?;
 
-        // 生成的 Claude 子供应商若被聚合供应商引用，阻止删除
+        // 生成的 Claude/Codex 子供应商若被聚合供应商引用，阻止删除
         // （与 ProviderService::delete 的依赖检查保持一致）
         if let Some(p) = provider.as_ref() {
             if p.apps.claude {
                 let claude_id = format!("universal-claude-{id}");
                 if let Some(dependent) =
                     Self::find_aggregate_dependent(state.db.as_ref(), &AppType::Claude, &claude_id)?
+                {
+                    return Err(AppError::localized(
+                        "provider.aggregate.target_in_use",
+                        format!("供应商正被聚合供应商 {} 引用，无法删除", dependent.name),
+                        format!(
+                            "Provider is referenced by aggregate provider '{}' and cannot be deleted",
+                            dependent.name
+                        ),
+                    ));
+                }
+            }
+            if p.apps.codex {
+                let codex_id = format!("universal-codex-{id}");
+                if let Some(dependent) =
+                    Self::find_aggregate_dependent(state.db.as_ref(), &AppType::Codex, &codex_id)?
                 {
                     return Err(AppError::localized(
                         "provider.aggregate.target_in_use",
@@ -4803,7 +4818,21 @@ impl ProviderService {
             }
             state.db.save_provider("codex", &codex_provider)?;
         } else {
+            // 如果禁用了 Codex，删除对应的子供应商；但若它被聚合供应商引用，
+            // 阻止删除（与 Claude 分支的依赖检查保持一致）
             let codex_id = format!("universal-codex-{id}");
+            if let Some(dependent) =
+                Self::find_aggregate_dependent(state.db.as_ref(), &AppType::Codex, &codex_id)?
+            {
+                return Err(AppError::localized(
+                    "provider.aggregate.target_in_use",
+                    format!("供应商正被聚合供应商 {} 引用，无法删除", dependent.name),
+                    format!(
+                        "Provider is referenced by aggregate provider '{}' and cannot be deleted",
+                        dependent.name
+                    ),
+                ));
+            }
             let _ = state.db.delete_provider("codex", &codex_id);
         }
 

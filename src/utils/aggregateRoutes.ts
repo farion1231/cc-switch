@@ -1,6 +1,7 @@
 import type { AggregateRoute, AggregateRoutes, Provider } from "@/types";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import type { FetchedModel } from "@/lib/api/model-fetch";
 
 // 聚合供应商自身没有端点或凭据；接管时由后端注入本地路由地址和占位认证。
@@ -64,15 +65,19 @@ export function getAggregateRouteTargetIds(
 /**
  * 可作为聚合路由目标的供应商列表：
  * 排除聚合供应商自身（不允许嵌套）与当前正在编辑的供应商（不允许自指）。
+ * 官方供应商默认排除，但保留后端允许接管的目标（Codex 内置官方供应商，
+ * 与 Rust 端 official_provider_supports_proxy_takeover 保持一致）。
  */
 export function getAggregateRouteTargets(
   providers: Provider[],
+  appId: "claude" | "codex",
   excludeProviderId?: string,
 ): Provider[] {
   return providers.filter(
     (provider) =>
       provider.id !== excludeProviderId &&
-      provider.category !== "official" &&
+      (provider.category !== "official" ||
+        supportsOfficialProxyTakeover(appId, provider)) &&
       !isAggregateProvider(provider),
   );
 }

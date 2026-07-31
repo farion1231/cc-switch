@@ -68,8 +68,8 @@ export function AggregateProviderFields({
 }: AggregateProviderFieldsProps) {
   const { t } = useTranslation();
   const targets = useMemo(
-    () => getAggregateRouteTargets(providers, currentProviderId),
-    [providers, currentProviderId],
+    () => getAggregateRouteTargets(providers, appId, currentProviderId),
+    [providers, appId, currentProviderId],
   );
   const [fetchedModels, setFetchedModels] = useState<
     Record<string, FetchedModel[]>
