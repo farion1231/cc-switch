@@ -23,7 +23,6 @@
     "unknown": "不明",
     "enterValidValue": "有効な値を入力してください",
     "clear": "クリア",
-    "toggleTheme": "テーマを切り替え",
     "format": "フォーマット",
     "formatSuccess": "整形しました",
     "formatError": "整形に失敗しました: {{error}}",
@@ -173,7 +172,8 @@
         "oauthHint": "Google 公式は OAuth 個人認証を使用するため API Key は不要です。初回利用時にブラウザが開きます。",
         "apiKeyPlaceholder": "Gemini API Key を入力"
       }
-    }
+    },
+    "duplicateLiveIdsLoadFailed": "設定内のプロバイダー識別子を読み込めませんでした。設定を修正してから再度お試しください"
   },
   "claudeCode": {
     "needsRouting": "ルーティングが必要",
@@ -222,7 +222,8 @@
       "tooltip": {
         "active": "Claude Desktop ローカルルーティングは起動中です - {{address}}:{{port}}",
         "inactive": "モデルマッピングや形式変換が必要なプロバイダー向けに Claude Desktop ローカルルーティングを起動します。設定アドレス: {{address}}:{{port}}"
-      }
+      },
+      "stopBlockedByTakeover": "別のアプリがプロキシテイクオーバーを使用しています。設定で該当アプリのテイクオーバーを無効にしてから、ローカルルーティングを停止してください。"
     }
   },
   "notifications": {
@@ -271,7 +272,8 @@
     "backfillWarning": "切り替え成功しましたが、前のプロバイダーへの設定保存に失敗しました",
     "windowControlFailed": "ウィンドウ操作に失敗しました: {{error}}",
     "officialBlockedByProxy": "ローカルルーティングモード中は公式プロバイダーに切り替えできません。ルーティング経由で公式 API にアクセスするとアカウントが停止される可能性があります。",
-    "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。"
+    "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。",
+    "proxyReasonClaudeDesktop": "Claude Desktop ローカルルーティングモードを使用中"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
@@ -1020,6 +1022,7 @@
     "providerKeyStatusLoading": "プロバイダー識別子の状態を読み込んでいます。しばらくしてからもう一度お試しください",
     "getApiKey": "API Key を取得",
     "partnerPromotion": {
+      "a6api": "A6API はトークンアグリゲーションサイトです。リアルタイム価格ランキングを内蔵し、全ネット最安値を自動で選択。動作は滑らかで安定し、面倒な価格比較も不要。登録するだけで体験クレジットがもらえます！",
       "sudocode": "SudoCode の1つのキーで、Claude Code と Claude Desktop では Claude Opus 5、Codex では GPT-5.6 を利用できます。登録後 QQ グループ 726213516 に参加し、管理者へ連絡すると CNY ¥10 のトライアルクレジットを受け取れます。",
       "code0": "code0.ai は開発者向けの AI コーディングサービスプラットフォームで、Claude Code、Codex、Gemini に対応。CC Switch ユーザー限定特典：公式サイトからサポートに連絡してテストクレジットを受け取れます！",
       "nekocode": "NekoCode は Claude や Codex などの AI モデルに対応した、安定・高効率で信頼性の高い API 中継サービスを提供します。明瞭な従量課金制。CC Switch ユーザー限定 10%オフ：上のリンクから登録し、チャージ時にクーポンコード cc-switch を入力すると 10%オフ！",
@@ -1168,7 +1171,8 @@
     "fetchModelsAuthFailed": "API Key が無効か、権限がありません",
     "fetchModelsNotSupported": "このプロバイダーはモデル一覧の取得に対応していません",
     "fetchModelsEndpointNotFound": "利用可能なモデル一覧エンドポイントが見つかりません。Base URL を確認するか、プロバイダーが該当 API を公開しているかご確認ください",
-    "fetchModelsTimeout": "リクエストがタイムアウトしました。ネットワーク接続を確認してください"
+    "fetchModelsTimeout": "リクエストがタイムアウトしました。ネットワーク接続を確認してください",
+    "requiredFields": "プロバイダー名、API エンドポイント、API Key、モデルを入力してください"
   },
   "copilot": {
     "authSection": "GitHub Copilot 認証",
@@ -1365,7 +1369,8 @@
     "reasoningEffortHint": "上流が low/high/max などの思考の深さの制御に対応している場合に有効化します。有効にすると思考モードも自動的にオンになり、Codex の reasoning.effort を上流の Chat パラメータに変換します。",
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "プリセットの供給元は自動的に設定され、カスタム供給元は名前/URL から自動推論されます。自動識別が正しくない場合のみ手動で上書きしてください。",
-    "advancedSectionHint": "上流フォーマット、モデルマッピング、思考能力、カスタム User-Agent の設定を含みます。Chat Completions プロトコルを使用するプロバイダーはルーティング引き継ぎの有効化が必要です。"
+    "advancedSectionHint": "上流フォーマット、モデルマッピング、思考能力、カスタム User-Agent の設定を含みます。Chat Completions プロトコルを使用するプロバイダーはルーティング引き継ぎの有効化が必要です。",
+    "noCommonConfigToApply": "共通設定スニペットが空か、書き込む内容がありません"
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",
@@ -1464,6 +1469,7 @@
     "totalRequests": "総リクエスト数",
     "totalCost": "総コスト",
     "cost": "コスト",
+    "unpriced": "価格未設定",
     "perMillion": "(100万あたり)",
     "trends": "利用トレンド",
     "rangeToday": "直近24時間 (時間別)",
@@ -1506,24 +1512,6 @@
       "grokbuild": "Grok Build"
     },
     "rawInputLabel": "原始",
-    "dataSources": "データソース",
-    "dataSource": {
-      "proxy": "ルーティング",
-      "session_log": "セッションログ",
-      "codex_db": "Codex DB",
-      "codex_session": "Codex セッション",
-      "gemini_session": "Gemini セッション",
-      "opencode_session": "OpenCode セッション",
-      "grok_session": "Grok Build セッション"
-    },
-    "sessionSync": {
-      "trigger": "セッションログを同期",
-      "import": "セッションをインポート",
-      "resync": "同期",
-      "imported": "セッションログから {{count}} 件のレコードをインポートしました",
-      "upToDate": "セッションログは最新です",
-      "failed": "セッション同期に失敗しました"
-    },
     "rebuildCodex": {
       "title": "Codex 使用量メンテナンス",
       "description": "ローカルの rollout ログから Codex セッション使用量を再構築します",
@@ -2483,7 +2471,11 @@
       "title": "MCP サーバーを一括インポート",
       "targetApps": "ターゲットアプリ",
       "serverCount": "MCP サーバー（{{count}} 件）",
-      "enabledWarning": "インポート後、指定したすべてのアプリに即座に書き込まれます"
+      "enabledWarning": "インポート後、指定したすべてのアプリに即座に書き込まれます",
+      "command": "コマンド",
+      "args": "引数",
+      "env": "環境変数",
+      "url": "URL"
     },
     "prompt": {
       "title": "システムプロンプトをインポート",
@@ -2505,10 +2497,17 @@
     "usageScript": "使用量クエリ",
     "usageScriptEnabled": "有効",
     "usageScriptDisabled": "無効",
+    "usageScriptCode": "スクリプトコード",
+    "usageScriptWarning": "これは有効化すると使用量クエリ時に実行される JavaScript です。提供元が信頼できる場合のみインポートしてください。",
     "usageApiKey": "使用量 API キー",
     "usageBaseUrl": "使用量クエリ URL",
     "usageAutoInterval": "自動クエリ",
-    "usageAutoIntervalValue": "{{minutes}} 分ごと"
+    "usageAutoIntervalValue": "{{minutes}} 分ごと",
+    "risk": {
+      "envHijack": "この設定には、プロセスの読み込み動作を変える環境変数（ライブラリの注入、CA 証明書の差し替えなど）が含まれています。信頼できる提供元か確認してください。",
+      "privateEndpoint": "このアドレスはローカルホストまたは内部ネットワークを指しています。自分で立てたローカルサービス以外はインポートしないでください。",
+      "shellCommand": "この設定はシェル経由でコマンド全体を実行します。実際に動作する内容は引数にあります。1 行ずつ確認してください。"
+    }
   },
   "iconPicker": {
     "search": "アイコンを検索",
@@ -2527,8 +2526,7 @@
     "selectIcon": "アイコンを選択",
     "preview": "プレビュー",
     "clickToChange": "クリックでアイコンを変更",
-    "clickToSelect": "クリックでアイコンを選択",
-    "color": "アイコンカラー"
+    "clickToSelect": "クリックでアイコンを選択"
   },
   "migration": {
     "success": "設定の移行が完了しました",
@@ -2557,7 +2555,8 @@
     },
     "tooltip": {
       "enabled": "{{app}} フェイルオーバーが有効\nキューの優先度（P1→P2→...）で使用します",
-      "disabled": "{{app}} フェイルオーバーを有効にする\nキューの P1 に即時切替し、失敗時は次を順に試行します"
+      "disabled": "{{app}} フェイルオーバーを有効にする\nキューの P1 に即時切替し、失敗時は次を順に試行します",
+      "takeoverRequired": "先に {{app}} を引き継いでから、フェイルオーバーを有効にしてください"
     }
   },
   "proxy": {
@@ -2735,7 +2734,9 @@
     },
     "server": {
       "started": "ルーティングサービスが開始されました - {{address}}:{{port}}",
-      "startFailed": "ルーティングサービスの開始に失敗しました: {{detail}}"
+      "startFailed": "ルーティングサービスの開始に失敗しました: {{detail}}",
+      "stopped": "ルーティングサービスが停止しました",
+      "stopFailed": "ルーティングサービスの停止に失敗しました: {{detail}}"
     },
     "stoppedWithRestore": "ルーティングサービスが停止し、すべてのルーティング設定が復元されました",
     "stopWithRestoreFailed": "停止に失敗しました: {{detail}}"
@@ -2769,33 +2770,6 @@
     "streamingFirstByte": "ストリーミング初回バイトタイムアウト",
     "streamingIdle": "ストリーミングアイドルタイムアウト",
     "nonStreaming": "非ストリーミングタイムアウト"
-  },
-  "circuitBreaker": {
-    "failureThreshold": "失敗閾値",
-    "successThreshold": "成功閾値",
-    "timeoutSeconds": "タイムアウト（秒）",
-    "errorRateThreshold": "エラー率閾値 (%)",
-    "minRequests": "最小リクエスト数",
-    "validationFailed": "以下のフィールドが有効範囲外です: {{fields}}",
-    "configSaved": "サーキットブレーカー設定が保存されました",
-    "saveFailed": "保存に失敗しました",
-    "loading": "読み込み中...",
-    "title": "サーキットブレーカー設定",
-    "description": "サーキットブレーカーパラメータを調整して、障害検出と復旧動作を制御します",
-    "failureThresholdHint": "連続失敗後にサーキットブレーカーを開く回数",
-    "timeoutSecondsHint": "サーキットブレーカーを開いた後、復旧を試みるまでの時間（半開状態）",
-    "successThresholdHint": "半開状態で成功してサーキットブレーカーを閉じる回数",
-    "errorRateThresholdHint": "エラー率がこの値を超えるとサーキットブレーカーを開く",
-    "minRequestsHint": "エラー率を計算する前の最小リクエスト数",
-    "saveConfig": "設定を保存",
-    "instructionsTitle": "設定説明",
-    "instructions": {
-      "failureThreshold": "連続失敗がこの回数に達するとサーキットブレーカーが開く",
-      "timeout": "サーキットブレーカーを開いた後、この時間待機してから半開を試みる",
-      "successThreshold": "半開状態で成功がこの回数に達するとサーキットブレーカーを閉じる",
-      "errorRate": "エラー率がこの値を超えるとサーキットブレーカーが開く",
-      "minRequests": "リクエスト数がこの値に達した後にのみエラー率が計算される"
-    }
   },
   "universalProvider": {
     "duplicate": "複製",

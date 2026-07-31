@@ -342,6 +342,87 @@ fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
     assert_eq!(script.base_url, None);
 }
 
+/// 构造一个只带用量脚本字段的 provider 请求，其余保持最小。
+fn usage_script_request(code: &str, usage_enabled: Option<bool>) -> DeepLinkImportRequest {
+    DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("claude".to_string()),
+        name: Some("Test Claude".to_string()),
+        homepage: Some("https://example.com".to_string()),
+        endpoint: Some("https://api.example.com/v1/".to_string()),
+        api_key: Some("sk-main".to_string()),
+        icon: None,
+        model: None,
+        notes: None,
+        haiku_model: None,
+        sonnet_model: None,
+        opus_model: None,
+        config: None,
+        config_format: None,
+        config_url: None,
+        apps: None,
+        repo: None,
+        directory: None,
+        branch: None,
+        content: None,
+        description: None,
+        enabled: None,
+        usage_enabled,
+        usage_script: Some(BASE64_STANDARD.encode(code)),
+        usage_api_key: None,
+        usage_base_url: None,
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
+    }
+}
+
+#[test]
+fn test_deeplink_usage_script_is_not_enabled_merely_by_carrying_code() {
+    use super::provider::build_provider_from_request;
+
+    // deeplink 是第三方构造、经浏览器抵达的不可信载荷。「带了代码」不是用户的
+    // 启用决定——否则一条链接就能让这段 JS 在用户从未勾选的情况下进入启用态。
+    let code = "export async function query() { return { cost: 0 }; }";
+    let request = usage_script_request(code, None);
+
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let script = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.usage_script.as_ref())
+        .expect("usage script should still be created");
+
+    assert!(
+        !script.enabled,
+        "缺省必须是未启用；`带了代码`不构成用户的启用决定"
+    );
+    // 代码本身仍要保留：确认框要展示它，用户之后也可在应用内手动开启。
+    assert_eq!(script.code, code);
+}
+
+#[test]
+fn test_deeplink_usage_script_honors_an_explicit_enable_request_from_the_link() {
+    use super::provider::build_provider_from_request;
+
+    // `usageEnabled=true` 是**链接作者**的请求，不是用户的选择——用户的同意体现在
+    // 看过确认框里完整的脚本正文与启用状态之后点了导入。收紧默认值不能顺手把这条
+    // 正常通路改坏：合作伙伴的预设链接靠它一次性配好用量查询。
+    let code = "export async function query() { return { cost: 0 }; }";
+    let request = usage_script_request(code, Some(true));
+
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let script = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.usage_script.as_ref())
+        .expect("usage script should be created");
+
+    assert!(script.enabled);
+    assert_eq!(script.code, code);
+}
+
 #[test]
 fn test_deeplink_usage_script_omits_explicit_credentials_that_match_provider() {
     use super::provider::build_provider_from_request;
