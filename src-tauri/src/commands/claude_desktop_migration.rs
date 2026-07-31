@@ -163,11 +163,18 @@ pub async fn apply_claude_desktop_data_migration(
 #[tauri::command]
 pub async fn verify_claude_desktop_data_migration(
     request: MigrationRootsRequest,
+    components: Option<Vec<String>>,
 ) -> Result<MigrationVerifyResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let (home, source, target) =
             resolve_apps(request.roots_source_app(), request.roots_target_app())?;
-        engine::verify_migration(&home, &source, &target, &to_overrides(&request))
+        engine::verify_migration(
+            &home,
+            &source,
+            &target,
+            &to_overrides(&request),
+            &components.unwrap_or_default(),
+        )
     })
     .await
     .map_err(|e| e.to_string())?

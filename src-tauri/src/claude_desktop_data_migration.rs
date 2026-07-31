@@ -195,6 +195,10 @@ pub struct MigrationRecord {
     /// Fingerprint of the installed target, used to verify before restore.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fingerprint: Option<String>,
+    /// Fingerprint of the installed Cowork metadata file, verified separately
+    /// before restore removes it so a user-updated task is never orphaned.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata_fingerprint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -211,6 +215,7 @@ impl MigrationRecord {
             target_session: None,
             target: None,
             fingerprint: None,
+            metadata_fingerprint: None,
             reason: None,
             error: None,
         }
@@ -247,6 +252,12 @@ pub struct MigrationApplyResult {
     pub skipped_count: usize,
     pub failed_count: usize,
     pub failed: Vec<MigrationRecord>,
+    /// Set when a later component failed after earlier components had already
+    /// written records. The ledger is still persisted and the installed records
+    /// remain restorable, so the UI must surface this rather than an opaque
+    /// error that discards access to the ledger.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub apply_error: Option<String>,
 }
 
 /// One structural verification check.
@@ -479,10 +490,10 @@ fn collect_content_hashes(dir: &Path, out: &mut Vec<String>) {
     }
 }
 
-/// Fingerprint of a directory = hash over sorted `relative_path:size` lines of
-/// every regular file. Cheap (no content read) yet detects added/removed/
-/// resized files. Used to verify a session/cache dir is untouched before
-/// restore deletes it.
+/// Fingerprint of a directory = hash over sorted
+/// `relative_path:size:sha256` lines of every regular file. Includes the
+/// content hash so a same-size edit after migration is still detected, and
+/// restore refuses to delete a directory the user has since modified.
 fn dir_fingerprint(root: &Path) -> String {
     let mut lines = Vec::new();
     collect_dir_listing(root, root, &mut lines);
@@ -512,7 +523,8 @@ fn collect_dir_listing(root: &Path, dir: &Path, out: &mut Vec<String>) {
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .to_string();
-            out.push(format!("{rel}:{}", meta.len()));
+            let digest = sha256_file(&path).unwrap_or_else(|_| "err".to_string());
+            out.push(format!("{rel}:{}:{digest}", meta.len()));
         }
     }
 }
@@ -855,7 +867,7 @@ pub fn parse_path_maps(maps: &[PathMapping]) -> Result<Vec<(String, String)>, Ap
             new.trim_end_matches('/').to_string(),
         ));
     }
-    out.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    out.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
     Ok(out)
 }
 
@@ -1367,6 +1379,7 @@ fn install_cowork_sessions(
                 record.target_metadata = Some(target_meta.display().to_string());
                 record.target_session = Some(target_session.display().to_string());
                 record.fingerprint = Some(dir_fingerprint(&target_session));
+                record.metadata_fingerprint = fingerprint_file(&target_meta);
                 ledger.installed.push(record);
             }
             Err(e) => {
@@ -1768,7 +1781,14 @@ pub fn apply_migration(
     let _ = write_new_file_atomic(&plan_path, &plan_json);
     write_new_file_atomic(&ledger_path, &ledger_json)?;
 
-    apply_result?;
+    // A later component failing must not discard access to the ledger: earlier
+    // Code/Cowork records may already be installed, and the user needs Undo to
+    // target this exact ledger (a retry would otherwise write a newer
+    // skip-only ledger that latest-ledger discovery would prefer).
+    let apply_error = match apply_result {
+        Ok(()) => None,
+        Err(e) => Some(e.to_string()),
+    };
 
     Ok(MigrationApplyResult {
         backup_path: backup_dir.display().to_string(),
@@ -1777,6 +1797,7 @@ pub fn apply_migration(
         skipped_count: ledger.skipped.len(),
         failed_count: ledger.failed.len(),
         failed: ledger.failed.clone(),
+        apply_error,
     })
 }
 
@@ -1799,19 +1820,32 @@ fn compute_roots_fingerprint(code: Option<&Path>, cowork: Option<&Path>) -> Stri
 // ---------------------------------------------------------------------------
 
 /// Structural verification of the target after a migration. Read-only.
+///
+/// `components` restricts verification to the components that were applied
+/// (empty = all). Without this, a successful partial migration would report the
+/// intentionally-uninstalled source records as missing.
 pub fn verify_migration(
     home: &Path,
     source_app: &Path,
     target_app: &Path,
     overrides: &RootOverrides,
+    components: &[String],
 ) -> Result<MigrationVerifyResult, AppError> {
     let resolved = resolve_roots(source_app, target_app, overrides)?;
+    let selected: BTreeSet<String> = if components.is_empty() {
+        DEFAULT_COMPONENTS.iter().map(|s| s.to_string()).collect()
+    } else {
+        components.iter().cloned().collect()
+    };
     let mut checks: Vec<VerifyCheck> = Vec::new();
 
     for (component, resolution) in [
         (COMPONENT_CODE, &resolved.code),
         (COMPONENT_COWORK, &resolved.cowork),
     ] {
+        if !selected.contains(component) {
+            continue;
+        }
         let ComponentResolution::Ready { source, target } = resolution else {
             continue;
         };
@@ -1882,29 +1916,31 @@ pub fn verify_migration(
     }
 
     // Imported Scheduled definitions must remain disabled.
-    if let ComponentResolution::Ready { target, .. } = &resolved.cowork {
-        let scheduled_path = target.join("scheduled-tasks.json");
-        let mut enabled = 0;
-        if scheduled_path.is_file() {
-            if let Ok(data) = read_json_value(&scheduled_path) {
-                if let Some(tasks) = data.get("scheduledTasks").and_then(Value::as_array) {
-                    for task in tasks {
-                        if task.get("enabled").and_then(Value::as_bool) == Some(true) {
-                            enabled += 1;
+    if selected.contains(COMPONENT_SCHEDULES) {
+        if let ComponentResolution::Ready { target, .. } = &resolved.cowork {
+            let scheduled_path = target.join("scheduled-tasks.json");
+            let mut enabled = 0;
+            if scheduled_path.is_file() {
+                if let Ok(data) = read_json_value(&scheduled_path) {
+                    if let Some(tasks) = data.get("scheduledTasks").and_then(Value::as_array) {
+                        for task in tasks {
+                            if task.get("enabled").and_then(Value::as_bool) == Some(true) {
+                                enabled += 1;
+                            }
                         }
                     }
                 }
             }
+            checks.push(VerifyCheck {
+                name: "schedules: imported definitions remain disabled".to_string(),
+                ok: enabled == 0,
+                detail: if enabled == 0 {
+                    "没有处于启用状态的 Scheduled 定义".to_string()
+                } else {
+                    format!("{enabled} 条 Scheduled 定义处于启用状态，需要人工检查")
+                },
+            });
         }
-        checks.push(VerifyCheck {
-            name: "schedules: imported definitions remain disabled".to_string(),
-            ok: enabled == 0,
-            detail: if enabled == 0 {
-                "没有处于启用状态的 Scheduled 定义".to_string()
-            } else {
-                format!("{enabled} 条 Scheduled 定义处于启用状态，需要人工检查")
-            },
-        });
     }
 
     let passed = checks.iter().all(|c| c.ok);
@@ -1982,6 +2018,24 @@ fn remove_dir_if_matches(path: &Path, fingerprint: Option<&String>) -> Result<bo
     Ok(true)
 }
 
+/// True when `path` still matches the recorded fingerprint. A missing
+/// fingerprint means "not verifiable", which is treated as touched so restore
+/// never deletes something it cannot verify.
+fn file_untouched(path: &Path, fingerprint: Option<&String>) -> bool {
+    match fingerprint {
+        Some(fp) => fingerprint_file(path).as_ref() == Some(fp),
+        None => false,
+    }
+}
+
+/// Same as [`file_untouched`] for a directory fingerprint.
+fn dir_untouched(path: &Path, fingerprint: Option<&String>) -> bool {
+    match fingerprint {
+        Some(fp) => &dir_fingerprint(path) == fp,
+        None => false,
+    }
+}
+
 /// Undo exactly what a migration installed, driven by its ledger. Sessions or
 /// registry entries created *after* the migration are never touched.
 ///
@@ -2033,27 +2087,49 @@ pub fn restore_migration(
                 }
             }
             COMPONENT_COWORK => {
-                // Remove metadata first, then the session dir, mirroring install
-                // order in reverse.
-                if let Some(meta) = &record.target_metadata {
-                    match remove_file_if_matches(Path::new(meta), None) {
-                        Ok(true) => removed += 1,
-                        Ok(false) => kept += 1,
-                        Err(e) => return Err(e),
-                    }
-                }
-                if let Some(session) = &record.target_session {
-                    match remove_dir_if_matches(Path::new(session), record.fingerprint.as_ref()) {
-                        Ok(true) => removed += 1,
-                        Ok(false) => {
-                            kept += 1;
-                            notes.push(format!(
-                                "保留会话目录 {}（已不存在或已被修改）",
-                                record.id.clone().unwrap_or_default()
-                            ));
+                // A Cowork task is metadata + session dir. Undo a task only when
+                // both halves still match what was installed; if the user
+                // continued/renamed/updated either half after migration, the
+                // whole pair is kept so the task is never orphaned or split.
+                let meta_path = record.target_metadata.as_ref().map(Path::new);
+                let session_path = record.target_session.as_ref().map(Path::new);
+                let meta_ok = meta_path
+                    .is_some_and(|p| file_untouched(p, record.metadata_fingerprint.as_ref()));
+                let session_ok =
+                    session_path.is_some_and(|p| dir_untouched(p, record.fingerprint.as_ref()));
+                if meta_ok && session_ok {
+                    if let Some(meta) = meta_path {
+                        match remove_file_if_matches(Path::new(meta), None) {
+                            Ok(true) => removed += 1,
+                            Ok(false) => {
+                                kept += 1;
+                                notes.push(format!(
+                                    "保留任务 {}（元数据已不存在）",
+                                    record.id.clone().unwrap_or_default()
+                                ));
+                            }
+                            Err(e) => return Err(e),
                         }
-                        Err(e) => return Err(e),
                     }
+                    if let Some(session) = session_path {
+                        match remove_dir_if_matches(Path::new(session), None) {
+                            Ok(true) => removed += 1,
+                            Ok(false) => {
+                                kept += 1;
+                                notes.push(format!(
+                                    "保留会话目录 {}（已不存在）",
+                                    record.id.clone().unwrap_or_default()
+                                ));
+                            }
+                            Err(e) => return Err(e),
+                        }
+                    }
+                } else {
+                    kept += 1;
+                    notes.push(format!(
+                        "保留任务 {}（迁移后被修改，元数据与会话目录一并保留）",
+                        record.id.clone().unwrap_or_default()
+                    ));
                 }
             }
             COMPONENT_PROJECTS => {
@@ -2123,10 +2199,12 @@ fn revert_registry_removal(
         };
         if let Some(Value::Array(tasks)) = obj.get_mut("scheduledTasks") {
             tasks.retain(|t| {
-                let keep = t
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .is_some_and(|id| !id_set.contains(id));
+                // Remove only IDs this migration installed; entries without an
+                // id (e.g. in-progress drafts) must be preserved.
+                let keep = match t.get("id").and_then(Value::as_str) {
+                    Some(id) => !id_set.contains(id),
+                    None => true,
+                };
                 if !keep {
                     removed += 1;
                 }
@@ -2135,10 +2213,10 @@ fn revert_registry_removal(
         }
     } else if let Some(arr) = data.as_array_mut() {
         arr.retain(|item| {
-            let keep = item
-                .get("id")
-                .and_then(Value::as_str)
-                .is_some_and(|id| !id_set.contains(id));
+            let keep = match item.get("id").and_then(Value::as_str) {
+                Some(id) => !id_set.contains(id),
+                None => true,
+            };
             if !keep {
                 removed += 1;
             }
@@ -2934,8 +3012,14 @@ mod tests {
         // transcript, so a clean migration verifies cleanly.
         fx.add_shared_transcript("cli-seedcode");
         fx.apply(&all_components()).unwrap();
-        let verify =
-            verify_migration(&fx.home, &fx.source_app, &fx.target_app, &fx.no_overrides()).unwrap();
+        let verify = verify_migration(
+            &fx.home,
+            &fx.source_app,
+            &fx.target_app,
+            &fx.no_overrides(),
+            &all_components(),
+        )
+        .unwrap();
         assert!(verify.passed, "checks: {:?}", verify.checks);
     }
 
@@ -2950,8 +3034,14 @@ mod tests {
         );
         fx.seed_target();
         // No apply: source id is missing from target.
-        let verify =
-            verify_migration(&fx.home, &fx.source_app, &fx.target_app, &fx.no_overrides()).unwrap();
+        let verify = verify_migration(
+            &fx.home,
+            &fx.source_app,
+            &fx.target_app,
+            &fx.no_overrides(),
+            &all_components(),
+        )
+        .unwrap();
         assert!(!verify.passed);
         assert!(verify.checks.iter().any(|c| !c.ok));
     }
@@ -3004,5 +3094,227 @@ mod tests {
         assert_eq!(prefix_replace("/old/sub", "/old", "/new"), "/new/sub");
         // Not a boundary: "/oldish" must NOT match "/old".
         assert_eq!(prefix_replace("/oldish", "/old", "/new"), "/oldish");
+    }
+
+    // -- Codex review findings -------------------------------------------------
+
+    #[test]
+    fn partial_failure_returns_apply_error_and_persists_ledger() {
+        let fx = Fixture::new();
+        fx.add_cowork_session(
+            &fx.source_cowork_root(),
+            "c1",
+            &Fixture::cowork_meta("c1", "/work/p", &[]),
+            true,
+        );
+        fx.add_code_index(&fx.source_code_root(), "k1", "cli-k1");
+        fx.seed_target();
+        // Source definitions exist, but the target registry is malformed so
+        // merge_scheduled_tasks fails AFTER code/cowork already wrote records.
+        write_json(
+            &fx.source_cowork_root().join("scheduled-tasks.json"),
+            &json!({"scheduledTasks": [{"id": "task-1", "name": "one"}]}),
+        );
+        write_text(
+            &fx.target_cowork_root().join("scheduled-tasks.json"),
+            "{not-json",
+        );
+        let result = fx.apply(&all_components()).unwrap();
+        assert!(
+            result.apply_error.is_some(),
+            "later component failure must be reported, not discarded: {result:?}"
+        );
+        assert!(
+            result.installed_count >= 2,
+            "code/cowork records must remain installed"
+        );
+        // The ledger that owns the writes is on disk and drives a clean undo.
+        let ledger_path = latest_ledger_path(&fx.backup).unwrap();
+        let ledger = load_ledger(&ledger_path).unwrap();
+        assert!(ledger
+            .installed
+            .iter()
+            .any(|r| r.component == COMPONENT_CODE));
+        assert!(ledger
+            .installed
+            .iter()
+            .any(|r| r.component == COMPONENT_COWORK));
+        let restore = restore_migration(Some(&ledger_path), &fx.backup).unwrap();
+        assert!(restore.removed_count >= 3);
+        assert!(!fx.target_cowork_root().join("local_c1.json").exists());
+        assert!(!fx.target_cowork_root().join("local_c1").exists());
+        assert!(!fx.target_code_root().join("local_k1.json").exists());
+    }
+
+    #[test]
+    fn restore_keeps_task_whose_metadata_was_modified_after_migration() {
+        let fx = Fixture::new();
+        fx.add_cowork_session(
+            &fx.source_cowork_root(),
+            "c1",
+            &Fixture::cowork_meta("c1", "/work/p", &[]),
+            true,
+        );
+        fx.seed_target();
+        let apply = fx.apply(&["cowork".to_string()]).unwrap();
+        assert_eq!(apply.installed_count, 1);
+        // The user continues the migrated task: metadata gains a new field.
+        let meta_path = fx.target_cowork_root().join("local_c1.json");
+        let mut data = read_json_value(&meta_path).unwrap();
+        data.as_object_mut()
+            .unwrap()
+            .insert("continuedAt".to_string(), json!("2026-07-31T12:00:00Z"));
+        write_json(&meta_path, &data);
+        let ledger_path = latest_ledger_path(&fx.backup).unwrap();
+        let restore = restore_migration(Some(&ledger_path), &fx.backup).unwrap();
+        assert_eq!(restore.removed_count, 0);
+        assert!(restore.kept_count >= 1);
+        assert!(meta_path.exists(), "modified metadata must be preserved");
+        assert!(
+            fx.target_cowork_root().join("local_c1").is_dir(),
+            "paired session dir must be preserved (never orphan the task)"
+        );
+    }
+
+    #[test]
+    fn restore_keeps_session_dir_with_same_size_content_edit() {
+        let fx = Fixture::new();
+        fx.add_cowork_session(
+            &fx.source_cowork_root(),
+            "c1",
+            &Fixture::cowork_meta("c1", "/work/p", &[]),
+            true,
+        );
+        fx.seed_target();
+        fx.apply(&["cowork".to_string()]).unwrap();
+        // Same-size edit: same byte length, different content.
+        let audit = fx.target_cowork_root().join("local_c1/audit.jsonl");
+        fs::write(&audit, "{\"ev\":9}\n").unwrap();
+        let ledger_path = latest_ledger_path(&fx.backup).unwrap();
+        let restore = restore_migration(Some(&ledger_path), &fx.backup).unwrap();
+        assert_eq!(restore.removed_count, 0);
+        assert!(fx.target_cowork_root().join("local_c1").is_dir());
+    }
+
+    #[test]
+    fn restore_keeps_project_cache_with_same_size_edit() {
+        let fx = Fixture::new();
+        // The Cowork account root must be discoverable (needs a local_* meta).
+        fx.add_cowork_session(
+            &fx.source_cowork_root(),
+            "seed",
+            &json!({"sessionId": "seed"}),
+            true,
+        );
+        let src_cache = fx.source_cowork_root().join(".project-cache");
+        fs::create_dir_all(src_cache.join("proj-a")).unwrap();
+        write_text(&src_cache.join("proj-a/index.json"), "{\"k\":1}");
+        fx.seed_target();
+        let apply = fx.apply(&["projects".to_string()]).unwrap();
+        assert_eq!(apply.installed_count, 1);
+        // Same-size content edit after migration.
+        let index = fx
+            .target_cowork_root()
+            .join(".project-cache/proj-a/index.json");
+        fs::write(&index, "{\"k\":2}").unwrap();
+        let ledger_path = latest_ledger_path(&fx.backup).unwrap();
+        let restore = restore_migration(Some(&ledger_path), &fx.backup).unwrap();
+        assert_eq!(restore.removed_count, 0);
+        assert!(fx
+            .target_cowork_root()
+            .join(".project-cache/proj-a")
+            .is_dir());
+    }
+
+    #[test]
+    fn restore_preserves_registry_entries_lacking_an_id() {
+        let fx = Fixture::new();
+        // Make the Cowork account root discoverable.
+        fx.add_cowork_session(
+            &fx.source_cowork_root(),
+            "seed",
+            &json!({"sessionId": "seed"}),
+            true,
+        );
+        write_json(
+            &fx.source_cowork_root().join("scheduled-tasks.json"),
+            &json!({"scheduledTasks": [{"id": "task-src-1", "name": "one"}]}),
+        );
+        write_json(
+            &fx.source_cowork_root().join("artifacts.json"),
+            &json!([{"id": "art-src-1", "name": "a"}]),
+        );
+        // Artifact entities live under the shared Documents root; create the
+        // entity so the registry entry is actually installed.
+        fs::create_dir_all(fx.home.join("Documents/Claude/Artifacts/art-src-1")).unwrap();
+        fx.seed_target();
+        let apply = fx
+            .apply(&["schedules".to_string(), "artifacts".to_string()])
+            .unwrap();
+        assert_eq!(apply.installed_count, 2);
+        // In-progress entries created after the migration, without an id.
+        let sched_path = fx.target_cowork_root().join("scheduled-tasks.json");
+        let mut sched = read_json_value(&sched_path).unwrap();
+        sched["scheduledTasks"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name": "draft-no-id"}));
+        write_json(&sched_path, &sched);
+        let art_path = fx.target_cowork_root().join("artifacts.json");
+        let mut art = read_json_value(&art_path).unwrap();
+        art.as_array_mut()
+            .unwrap()
+            .push(json!({"name": "draft-artifact"}));
+        write_json(&art_path, &art);
+
+        let ledger_path = latest_ledger_path(&fx.backup).unwrap();
+        let restore = restore_migration(Some(&ledger_path), &fx.backup).unwrap();
+        assert!(restore.reverted_count >= 2);
+        // Installed ids removed; id-less entries survive.
+        let sched_after = read_json_value(&sched_path).unwrap();
+        let tasks = sched_after["scheduledTasks"].as_array().unwrap();
+        assert_eq!(tasks.len(), 1, "draft without id must survive undo");
+        assert!(tasks[0].get("id").is_none());
+        let art_after = read_json_value(&art_path).unwrap();
+        assert_eq!(art_after.as_array().unwrap().len(), 1);
+        assert!(art_after[0].get("id").is_none());
+    }
+
+    #[test]
+    fn verify_honors_selected_components() {
+        let fx = Fixture::new();
+        fx.add_cowork_session(
+            &fx.source_cowork_root(),
+            "c1",
+            &Fixture::cowork_meta("c1", "/work/p", &[]),
+            true,
+        );
+        fx.add_code_index(&fx.source_code_root(), "k1", "cli-k1");
+        fx.seed_target();
+        // Only Cowork is applied; Code is intentionally left unmigrated.
+        fx.apply(&["cowork".to_string()]).unwrap();
+        let partial = verify_migration(
+            &fx.home,
+            &fx.source_app,
+            &fx.target_app,
+            &fx.no_overrides(),
+            &["cowork".to_string()],
+        )
+        .unwrap();
+        assert!(
+            partial.passed,
+            "verification scoped to applied components must pass: {:?}",
+            partial.checks
+        );
+        // A full verification still flags the intentionally-unmigrated code ids.
+        let full = verify_migration(
+            &fx.home,
+            &fx.source_app,
+            &fx.target_app,
+            &fx.no_overrides(),
+            &all_components(),
+        )
+        .unwrap();
+        assert!(!full.passed);
     }
 }
