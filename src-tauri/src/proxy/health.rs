@@ -147,15 +147,18 @@ impl HealthChecker {
         match req.send().await {
             Ok(resp) => {
                 let status = resp.status().as_u16();
-                // 2xx 成功；401/403 表示鉴权失败但网络可达
-                let reachable = (200..300).contains(&status) || status == 401 || status == 403;
+                // 熔断器隔离的是"网络不可达/服务宕机"，而非"端点语义错误"。
+                // 任何 < 500 的 HTTP 响应（含 400 鉴权/参数错、404 端点未实现、405 方法不允许）
+                // 都说明网络层与应用层在正常处理请求 → 视为可达，放行真实流量探测恢复；
+                // 仅 5xx（服务端自身故障/网关错误）视为不可达。日志用 info 级确保默认可见。
+                let reachable = status < 500;
                 if reachable {
-                    log::debug!(
+                    log::info!(
                         "[Health] {app_type}/{} probe 可达 (HTTP {status})",
                         provider.id
                     );
                 } else {
-                    log::debug!(
+                    log::info!(
                         "[Health] {app_type}/{} probe 不可达 (HTTP {status})",
                         provider.id
                     );
@@ -163,7 +166,7 @@ impl HealthChecker {
                 reachable
             }
             Err(e) => {
-                log::debug!("[Health] {app_type}/{} probe 失败: {e}", provider.id);
+                log::info!("[Health] {app_type}/{} probe 失败: {e}", provider.id);
                 false
             }
         }
@@ -323,6 +326,70 @@ mod tests {
     async fn probe_returns_false_on_500() {
         let _home = TempHome::new();
         let (base_url, handle) = spawn_once_server(500);
+
+        let db = Arc::new(Database::memory().unwrap());
+        let router = Arc::new(ProviderRouter::new(db.clone()));
+        let checker = HealthChecker::new(router.clone(), db, test_client());
+
+        let provider = claude_provider_with(&base_url);
+        let reachable = checker.probe(&provider, "claude").await;
+        assert!(!reachable);
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn probe_returns_true_on_400_anthropic_style_bad_request() {
+        // Anthropic 端点用 Bearer 而非 x-api-key → 400；网络可达，鉴权交给真实流量
+        let _home = TempHome::new();
+        let (base_url, handle) = spawn_once_server(400);
+
+        let db = Arc::new(Database::memory().unwrap());
+        let router = Arc::new(ProviderRouter::new(db.clone()));
+        let checker = HealthChecker::new(router.clone(), db, test_client());
+
+        let provider = claude_provider_with(&base_url);
+        let reachable = checker.probe(&provider, "claude").await;
+        assert!(reachable);
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn probe_returns_true_on_404_endpoint_not_implemented() {
+        // 第三方中转常未实现 GET /v1/models → 404；网络层可达即应放行恢复
+        let _home = TempHome::new();
+        let (base_url, handle) = spawn_once_server(404);
+
+        let db = Arc::new(Database::memory().unwrap());
+        let router = Arc::new(ProviderRouter::new(db.clone()));
+        let checker = HealthChecker::new(router.clone(), db, test_client());
+
+        let provider = claude_provider_with(&base_url);
+        let reachable = checker.probe(&provider, "claude").await;
+        assert!(reachable);
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn probe_returns_true_on_405_method_not_allowed() {
+        // 端点存在但不允许 GET → 405；应用层在响应，视为可达
+        let _home = TempHome::new();
+        let (base_url, handle) = spawn_once_server(405);
+
+        let db = Arc::new(Database::memory().unwrap());
+        let router = Arc::new(ProviderRouter::new(db.clone()));
+        let checker = HealthChecker::new(router.clone(), db, test_client());
+
+        let provider = claude_provider_with(&base_url);
+        let reachable = checker.probe(&provider, "claude").await;
+        assert!(reachable);
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn probe_returns_false_on_503_service_unavailable() {
+        // 5xx = 服务端自身故障/网关错误，不可达（与 500 一致）
+        let _home = TempHome::new();
+        let (base_url, handle) = spawn_once_server(503);
 
         let db = Arc::new(Database::memory().unwrap());
         let router = Arc::new(ProviderRouter::new(db.clone()));
