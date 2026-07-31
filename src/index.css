@@ -161,6 +161,32 @@ html.dark {
     overflow-x: hidden;
   }
 
+  .scrollbar-visible {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent;
+    -ms-overflow-style: auto;
+  }
+
+  .scrollbar-visible::-webkit-scrollbar {
+    display: block;
+    width: 10px;
+    height: 10px;
+  }
+
+  .scrollbar-visible::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-visible::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.35);
+    border: 2px solid transparent;
+    border-radius: 9999px;
+    background-clip: content-box;
+  }
+
+  .scrollbar-visible::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.55);
+  }
   .border-default {
     border-width: 1px;
     border-color: hsl(var(--border));
