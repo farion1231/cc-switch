@@ -7,7 +7,15 @@ export interface DeepLinkImportRequest {
   resource: ResourceType;
 
   // Common fields
-  app?: "claude" | "codex" | "gemini";
+  app?:
+    | "claude"
+    | "codex"
+    | "gemini"
+    | "grokbuild"
+    | "opencode"
+    | "openclaw"
+    | "hermes"
+    | "qodercli";
   name?: string;
   enabled?: boolean;
 
@@ -17,6 +25,9 @@ export interface DeepLinkImportRequest {
   apiKey?: string;
   icon?: string;
   model?: string;
+  provider?: string;
+  type?: string;
+  format?: string;
   notes?: string;
   haikuModel?: string;
   sonnetModel?: string;

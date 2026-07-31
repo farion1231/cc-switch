@@ -4361,8 +4361,6 @@ impl ProviderService {
                 }
             }
             AppType::QoderCli => {
-                // qodercli: provider 条目应为 JSON 对象（baseUrl/apiKey/model 等）。
-                // 深度校验在写入 live 时由 qodercli_config::set_typed_provider 完成。
                 if !provider.settings_config.is_object() {
                     return Err(AppError::localized(
                         "provider.qodercli.settings.not_object",
@@ -4370,6 +4368,18 @@ impl ProviderService {
                         "qoder CLI configuration must be a JSON object",
                     ));
                 }
+                let config =
+                    crate::qodercli_config::parse_provider_config(&provider.settings_config)
+                        .map_err(|error| {
+                            AppError::localized(
+                                "provider.qodercli.settings.invalid",
+                                format!("qoder CLI 配置格式无效: {error}"),
+                                format!("Invalid qoder CLI configuration: {error}"),
+                            )
+                        })?;
+                // Validate before save_provider() so malformed deep links or API
+                // calls cannot leave a database row when the live write fails.
+                crate::qodercli_config::validate_provider_config(&config)?;
             }
         }
 

@@ -224,8 +224,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   const { t } = useTranslation();
   // 惰性初始化自模块缓存：重挂时首帧即渲染上次的值，避免 loading 闪烁；首次挂载缓存
   // 为空则回退到原始初值（null / loading）。
-  const isBrowserPreview =
-    import.meta.env.VITE_BROWSER_PREVIEW === "true";
+  const isBrowserPreview = import.meta.env.VITE_BROWSER_PREVIEW === "true";
   const previewToolVersions: ToolVersion[] = TOOL_NAMES.map((name) => ({
     name,
     version: null,
@@ -243,7 +242,8 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   );
   const [isDownloading, setIsDownloading] = useState(false);
   const [toolVersions, setToolVersions] = useState<ToolVersion[]>(
-    () => toolVersionsCache?.data ?? (isBrowserPreview ? previewToolVersions : []),
+    () =>
+      toolVersionsCache?.data ?? (isBrowserPreview ? previewToolVersions : []),
   );
   // 有缓存（哪怕已超期）就先展示旧值、初始不 loading；超期时由挂载副作用触发后台
   // 重查（stale-while-revalidate）。无缓存（首次）才从 loading 起步。

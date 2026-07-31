@@ -367,6 +367,23 @@ pub fn parse_provider_config(value: &Value) -> Result<QoderCliProviderConfig, se
     serde_json::from_value(migrate_legacy(value))
 }
 
+pub fn validate_provider_config(config: &QoderCliProviderConfig) -> Result<(), AppError> {
+    let provider = config.provider.trim();
+    validate_provider(provider)?;
+    validate_api_key(&config.apiKey)?;
+    if config.models.is_empty() {
+        return Err(AppError::localized(
+            "provider.qodercli.models.empty",
+            "请选择一个 Qoder 官方预设模型，或添加该供应商支持的其他模型",
+            "Select an official Qoder model preset or add another model supported by the provider",
+        ));
+    }
+    for model in &config.models {
+        validate_model(provider, model)?;
+    }
+    Ok(())
+}
+
 fn expand_to_custom_models(config: &QoderCliProviderConfig) -> Vec<Value> {
     let mut seen = std::collections::HashSet::new();
     let mut entries = Vec::new();
@@ -481,32 +498,28 @@ pub fn get_typed_providers() -> Result<IndexMap<String, QoderCliProviderConfig>,
             .and_then(Value::as_str)
             .map(str::to_string);
 
-        result
-            .entry(provider.to_string())
-            .and_modify(|group| group.models.push(model.clone()))
-            .or_insert_with(|| QoderCliProviderConfig {
+        let record_id = model_record_id(provider, &model.id);
+        result.insert(
+            record_id,
+            QoderCliProviderConfig {
                 provider: provider.to_string(),
                 apiKey: api_key.to_string(),
                 models: vec![model],
                 baseURL: legacy_base_url,
                 extra: Map::new(),
-            });
+            },
+        );
     }
     Ok(result)
 }
 
 pub fn get_providers() -> Result<Map<String, Value>, AppError> {
     let mut result = Map::new();
-    for (provider, config) in get_typed_providers()? {
-        for model in &config.models {
-            let mut single_model_config = config.clone();
-            single_model_config.models = vec![model.clone()];
-            result.insert(
-                model_record_id(&provider, &model.id),
-                serde_json::to_value(single_model_config)
-                    .map_err(|source| AppError::JsonSerialize { source })?,
-            );
-        }
+    for (record_id, config) in get_typed_providers()? {
+        result.insert(
+            record_id,
+            serde_json::to_value(config).map_err(|source| AppError::JsonSerialize { source })?,
+        );
     }
     Ok(result)
 }
@@ -515,19 +528,8 @@ pub fn set_typed_provider(
     database_id: &str,
     config: &QoderCliProviderConfig,
 ) -> Result<(), AppError> {
+    validate_provider_config(config)?;
     let provider = config.provider.trim();
-    validate_provider(provider)?;
-    validate_api_key(&config.apiKey)?;
-    if config.models.is_empty() {
-        return Err(AppError::localized(
-            "provider.qodercli.models.empty",
-            "请选择一个 Qoder 官方预设模型，或添加该供应商支持的其他模型",
-            "Select an official Qoder model preset or add another model supported by the provider",
-        ));
-    }
-    for model in &config.models {
-        validate_model(provider, model)?;
-    }
 
     let new_entries = expand_to_custom_models(config);
     let new_record_ids = config
@@ -850,8 +852,52 @@ mod tests {
         assert!(settings.get("permissions").is_some());
 
         let typed = get_typed_providers().expect("typed");
-        assert_eq!(typed.len(), 1);
-        assert_eq!(typed["deepseek"].models.len(), 2);
+        assert_eq!(typed.len(), 2);
+        assert_eq!(typed["deepseek/deepseek-v4-pro-pg"].models.len(), 1);
+        assert_eq!(typed["deepseek/deepseek-v4-flash-pg"].models.len(), 1);
+
+        restore_home(original);
+    }
+
+    #[test]
+    #[serial]
+    fn importing_models_from_one_provider_preserves_each_api_key() {
+        let (_temp, original) = isolate_home();
+        write_qodercli_settings(&json!({
+            "modelConfigs": {
+                "customModels": [
+                    {
+                        "provider": "deepseek",
+                        "apiKey": "key-for-pro",
+                        "model": "deepseek-v4-pro-pg",
+                        "type": "pg",
+                        "format": "openai"
+                    },
+                    {
+                        "provider": "deepseek",
+                        "apiKey": "key-for-flash",
+                        "model": "deepseek-v4-flash-pg",
+                        "type": "pg",
+                        "format": "openai"
+                    }
+                ]
+            }
+        }))
+        .expect("seed");
+
+        let providers = get_providers().expect("providers");
+        assert_eq!(
+            providers["deepseek/deepseek-v4-pro-pg"]
+                .get("apiKey")
+                .and_then(Value::as_str),
+            Some("key-for-pro")
+        );
+        assert_eq!(
+            providers["deepseek/deepseek-v4-flash-pg"]
+                .get("apiKey")
+                .and_then(Value::as_str),
+            Some("key-for-flash")
+        );
 
         restore_home(original);
     }

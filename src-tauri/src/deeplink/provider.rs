@@ -41,6 +41,9 @@ pub fn import_provider_from_deeplink(
         .clone()
         .ok_or_else(|| AppError::InvalidInput("Missing 'app' field for provider".to_string()))?;
 
+    let app_type = AppType::from_str(&app_str)
+        .map_err(|_| AppError::InvalidInput(format!("Invalid app type: {app_str}")))?;
+
     let api_key = merged_request.api_key.as_ref().ok_or_else(|| {
         AppError::InvalidInput("API key is required (either in URL or config file)".to_string())
     })?;
@@ -51,61 +54,86 @@ pub fn import_provider_from_deeplink(
         ));
     }
 
-    // Get endpoint: supports comma-separated multiple URLs (first is primary)
-    let endpoint_str = merged_request.endpoint.as_ref().ok_or_else(|| {
-        AppError::InvalidInput("Endpoint is required (either in URL or config file)".to_string())
-    })?;
+    let all_endpoints = if matches!(app_type, AppType::QoderCli) {
+        if merged_request
+            .endpoint
+            .as_deref()
+            .is_some_and(|endpoint| !endpoint.trim().is_empty())
+        {
+            return Err(AppError::InvalidInput(
+                "Qoder CLI endpoints are managed by the official BYOK catalog and cannot be supplied by a deep link"
+                    .to_string(),
+            ));
+        }
+        Vec::new()
+    } else {
+        // Other applications support comma-separated endpoints and require a
+        // primary endpoint for their provider configuration.
+        let endpoint_str = merged_request.endpoint.as_ref().ok_or_else(|| {
+            AppError::InvalidInput(
+                "Endpoint is required (either in URL or config file)".to_string(),
+            )
+        })?;
+        let endpoints = endpoint_str
+            .split(',')
+            .map(|endpoint| endpoint.trim().to_string())
+            .filter(|endpoint| !endpoint.is_empty())
+            .collect::<Vec<_>>();
+        let primary_endpoint = endpoints
+            .first()
+            .ok_or_else(|| AppError::InvalidInput("Endpoint cannot be empty".to_string()))?;
 
-    // Parse endpoints: split by comma, first is primary
-    let all_endpoints: Vec<String> = endpoint_str
-        .split(',')
-        .map(|e| e.trim().to_string())
-        .filter(|e| !e.is_empty())
-        .collect();
-
-    let primary_endpoint = all_endpoints
-        .first()
-        .ok_or_else(|| AppError::InvalidInput("Endpoint cannot be empty".to_string()))?;
-
-    // Auto-infer homepage from endpoint if not provided
-    if merged_request
-        .homepage
-        .as_ref()
-        .is_none_or(|s| s.is_empty())
-    {
-        merged_request.homepage = infer_homepage_from_endpoint(primary_endpoint);
-    }
-
-    let homepage = merged_request.homepage.as_ref().ok_or_else(|| {
-        AppError::InvalidInput("Homepage is required (either in URL or config file)".to_string())
-    })?;
-
-    if homepage.is_empty() {
-        return Err(AppError::InvalidInput(
-            "Homepage cannot be empty".to_string(),
-        ));
-    }
+        if merged_request
+            .homepage
+            .as_ref()
+            .is_none_or(|homepage| homepage.is_empty())
+        {
+            merged_request.homepage = infer_homepage_from_endpoint(primary_endpoint);
+        }
+        let homepage = merged_request.homepage.as_ref().ok_or_else(|| {
+            AppError::InvalidInput(
+                "Homepage is required (either in URL or config file)".to_string(),
+            )
+        })?;
+        if homepage.is_empty() {
+            return Err(AppError::InvalidInput(
+                "Homepage cannot be empty".to_string(),
+            ));
+        }
+        endpoints
+    };
 
     let name = merged_request
         .name
         .clone()
         .ok_or_else(|| AppError::InvalidInput("Missing 'name' field for provider".to_string()))?;
 
-    // Parse app type
-    let app_type = AppType::from_str(&app_str)
-        .map_err(|_| AppError::InvalidInput(format!("Invalid app type: {app_str}")))?;
-
     // Build provider configuration based on app type
     let mut provider = build_provider_from_request(&app_type, &merged_request)?;
 
-    // Generate a unique ID for the provider using timestamp + sanitized name
-    let timestamp = chrono::Utc::now().timestamp_millis();
-    let sanitized_name = name
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
-        .collect::<String>()
-        .to_lowercase();
-    provider.id = format!("{sanitized_name}-{timestamp}");
+    provider.id = if matches!(app_type, AppType::QoderCli) {
+        let config = crate::qodercli_config::parse_provider_config(&provider.settings_config)
+            .map_err(|error| {
+                AppError::InvalidInput(format!("Invalid Qoder CLI provider configuration: {error}"))
+            })?;
+        crate::qodercli_config::validate_provider_config(&config)?;
+        let model = config
+            .models
+            .first()
+            .expect("validated Qoder configuration contains a model");
+        crate::qodercli_config::model_record_id(&config.provider, &model.id)
+    } else {
+        // Generate a unique ID for providers that are not catalog/model keyed.
+        let timestamp = chrono::Utc::now().timestamp_millis();
+        let sanitized_name = name
+            .chars()
+            .filter(|character| {
+                character.is_alphanumeric() || *character == '-' || *character == '_'
+            })
+            .collect::<String>()
+            .to_lowercase();
+        format!("{sanitized_name}-{timestamp}")
+    };
 
     let provider_id = provider.id.clone();
 
@@ -152,9 +180,9 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
-        // qodercli 供应商级结构（baseURL/apiKey/models），写入 live 时展开为
-        // modelConfigs.customModels 条目，与 OpenClaw 的扁平 camelCase 不同。
-        AppType::QoderCli => build_qodercli_settings(request),
+        // qodercli uses an official catalog provider plus a model/plan entry.
+        // Validate it while building so invalid deep links fail before any DB write.
+        AppType::QoderCli => build_qodercli_settings(request)?,
     };
 
     // Build usage script configuration if provided
@@ -545,29 +573,61 @@ fn build_additive_app_settings(request: &DeepLinkImportRequest) -> serde_json::V
     json!(config)
 }
 
-/// Build settings for qodercli (supplier-level structure).
-/// Format: { baseURL, apiKey, models: [{ model }] }
+/// Build and validate a catalog-backed qodercli provider configuration.
 ///
-/// 与 qoder CLI 1.1.x 的 `modelConfigs.customModels` 解析字段对齐（`baseURL`
-/// 大写 URL）；写入 live 时由 qodercli_config 展开为每个模型一条的条目。
-fn build_qodercli_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
-    let endpoint = get_primary_endpoint(request);
-
-    let mut config = serde_json::Map::new();
-
-    if !endpoint.is_empty() {
-        config.insert("baseURL".to_string(), json!(endpoint));
+/// Qoder controls the endpoint. Deep links must identify an official provider,
+/// a supported plan type, and a model ID; the model may be an official preset
+/// or another model accepted by that provider/plan combination.
+fn build_qodercli_settings(request: &DeepLinkImportRequest) -> Result<serde_json::Value, AppError> {
+    if request
+        .endpoint
+        .as_deref()
+        .is_some_and(|endpoint| !endpoint.trim().is_empty())
+    {
+        return Err(AppError::InvalidInput(
+            "Qoder CLI endpoints are managed by the official BYOK catalog and cannot be supplied by a deep link"
+                .to_string(),
+        ));
     }
 
-    if let Some(api_key) = &request.api_key {
-        config.insert("apiKey".to_string(), json!(api_key));
-    }
+    let required = |value: &Option<String>, field: &str| {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| {
+                AppError::InvalidInput(format!(
+                    "Qoder CLI provider deep links require the '{field}' parameter"
+                ))
+            })
+    };
+    let provider = required(&request.provider, "provider")?;
+    let api_key = required(&request.api_key, "apiKey")?;
+    let model = required(&request.model, "model")?;
+    let plan_type = required(&request.plan_type, "type")?;
+    let format = request
+        .format
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("openai");
 
-    if let Some(model) = &request.model {
-        config.insert("models".to_string(), json!([{ "model": model }]));
-    }
-
-    json!(config)
+    let settings = json!({
+        "provider": provider,
+        "apiKey": api_key,
+        "models": [{
+            "model": model,
+            "type": plan_type,
+            "format": format,
+            "displayName": model,
+        }],
+    });
+    let config = crate::qodercli_config::parse_provider_config(&settings).map_err(|error| {
+        AppError::InvalidInput(format!("Invalid Qoder CLI provider configuration: {error}"))
+    })?;
+    crate::qodercli_config::validate_provider_config(&config)?;
+    Ok(settings)
 }
 
 /// Build Hermes provider settings (snake_case YAML-native fields).
@@ -677,6 +737,7 @@ pub fn parse_and_merge_config(
         "openclaw" | "opencode" | "hermes" => {
             merge_additive_config(&mut merged, &config_value)?;
         }
+        "qodercli" => merge_qodercli_config(&mut merged, &config_value)?,
         "" => {
             // No app specified, skip merging
             return Ok(merged);
@@ -958,6 +1019,68 @@ fn merge_additive_config(
         if let Some(endpoint) = request.endpoint.as_ref().filter(|s| !s.is_empty()) {
             request.homepage = infer_homepage_from_endpoint(endpoint);
         }
+    }
+
+    Ok(())
+}
+
+/// Merge Qoder's catalog-backed provider/model fields without importing an
+/// endpoint. URL parameters retain priority over inline configuration.
+fn merge_qodercli_config(
+    request: &mut DeepLinkImportRequest,
+    config: &serde_json::Value,
+) -> Result<(), AppError> {
+    let object = config.as_object().ok_or_else(|| {
+        AppError::InvalidInput("Qoder CLI config must be a JSON object".to_string())
+    })?;
+
+    if request
+        .api_key
+        .as_ref()
+        .is_none_or(|value| value.is_empty())
+    {
+        request.api_key = object
+            .get("apiKey")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+    }
+    if request
+        .provider
+        .as_ref()
+        .is_none_or(|value| value.is_empty())
+    {
+        request.provider = object
+            .get("provider")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+    }
+
+    let model = object
+        .get("models")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|models| models.first())
+        .and_then(serde_json::Value::as_object);
+    if request.model.as_ref().is_none_or(|value| value.is_empty()) {
+        request.model = model
+            .and_then(|model| model.get("model"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+    }
+    if request
+        .plan_type
+        .as_ref()
+        .is_none_or(|value| value.is_empty())
+    {
+        request.plan_type = model
+            .and_then(|model| model.get("type"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+    }
+    if request.format.as_ref().is_none_or(|value| value.is_empty()) {
+        request.format = model
+            .and_then(|model| model.get("format"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
     }
 
     Ok(())

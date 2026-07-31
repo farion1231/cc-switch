@@ -66,6 +66,15 @@ pub struct DeepLinkImportRequest {
     /// Optional model name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Qoder official BYOK provider identifier
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Qoder plan type (`cp`, `tp`, or `pg`)
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub plan_type: Option<String>,
+    /// Qoder model protocol format (currently `openai`)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
     /// Optional notes/description
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,

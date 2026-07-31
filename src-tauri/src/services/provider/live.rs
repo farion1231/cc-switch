@@ -2012,9 +2012,9 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 
 /// Import all providers from qoder CLI live config to database.
 ///
-/// Reads `modelConfigs.customModels` from `~/.qoder/settings.json`, groups entries
-/// by `provider`, and imports each group into the cc-switch database as a qodercli
-/// provider (supplier-level structure: baseURL/apiKey/models).
+/// Reads `modelConfigs.customModels` from `~/.qoder/settings.json` and imports
+/// every provider/model entry as its own cc-switch record so credentials remain
+/// associated with the model that owns them.
 pub fn import_qodercli_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     use crate::qodercli_config;
 
@@ -2136,6 +2136,22 @@ pub fn import_qodercli_providers_from_live(state: &AppState) -> Result<usize, Ap
         log::info!("Migrated legacy qodercli provider '{legacy_id}' to per-model records");
     }
 
+    // Qoder's top-level model.name is the source of truth. Restore both current
+    // pointers after importing/updating rows so a fresh database and external
+    // Qoder model switches are reflected immediately in the UI.
+    if let Some(active_id) = active_live_id.as_deref() {
+        if live_ids.contains(active_id)
+            && state
+                .db
+                .get_provider_by_id(active_id, "qodercli")?
+                .is_some()
+        {
+            state.db.set_current_provider("qodercli", active_id)?;
+            crate::settings::set_current_provider(&AppType::QoderCli, Some(active_id))?;
+            log::info!("Restored active qodercli model '{active_id}' from live config");
+        }
+    }
+
     Ok(imported + updated + migrated)
 }
 
@@ -2161,6 +2177,91 @@ pub fn remove_qodercli_provider_from_live(provider_id: &str) -> Result<(), AppEr
 mod tests {
     use super::*;
     use serde_json::json;
+
+    struct QoderTestHome {
+        _dir: tempfile::TempDir,
+        original_test_home: Option<std::ffi::OsString>,
+    }
+
+    impl QoderTestHome {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("create isolated qoder test home");
+            let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            crate::settings::reload_settings().expect("load isolated settings");
+            Self {
+                _dir: dir,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for QoderTestHome {
+        fn drop(&mut self) {
+            match &self.original_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            let _ = crate::settings::reload_settings();
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn qoder_import_preserves_credentials_and_restores_the_live_active_model() {
+        let _home = QoderTestHome::new();
+        crate::qodercli_config::write_qodercli_settings(&json!({
+            "model": {"name": "deepseek/deepseek-v4-flash-pg"},
+            "modelConfigs": {
+                "customModels": [
+                    {
+                        "provider": "deepseek",
+                        "apiKey": "key-for-pro",
+                        "model": "deepseek-v4-pro-pg",
+                        "type": "pg",
+                        "format": "openai"
+                    },
+                    {
+                        "provider": "deepseek",
+                        "apiKey": "key-for-flash",
+                        "model": "deepseek-v4-flash-pg",
+                        "type": "pg",
+                        "format": "openai"
+                    }
+                ]
+            }
+        }))
+        .expect("seed qoder live settings");
+
+        let db = std::sync::Arc::new(Database::memory().expect("create memory db"));
+        let state = AppState::new(db.clone());
+        assert_eq!(
+            import_qodercli_providers_from_live(&state).expect("import qoder providers"),
+            2
+        );
+
+        let providers = db
+            .get_all_providers("qodercli")
+            .expect("read imported qoder providers");
+        assert_eq!(
+            providers["deepseek/deepseek-v4-pro-pg"].settings_config["apiKey"],
+            json!("key-for-pro")
+        );
+        assert_eq!(
+            providers["deepseek/deepseek-v4-flash-pg"].settings_config["apiKey"],
+            json!("key-for-flash")
+        );
+        assert_eq!(
+            db.get_current_provider("qodercli")
+                .expect("read database current provider")
+                .as_deref(),
+            Some("deepseek/deepseek-v4-flash-pg")
+        );
+        assert_eq!(
+            crate::settings::get_current_provider(&AppType::QoderCli).as_deref(),
+            Some("deepseek/deepseek-v4-flash-pg")
+        );
+    }
 
     #[test]
     fn kimi_for_coding_effective_settings_backfill_256k_context() {

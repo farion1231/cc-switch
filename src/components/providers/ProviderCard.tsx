@@ -189,15 +189,14 @@ export function ProviderCard({
       return provider.name;
     }
 
-    const modelDisplayName = (
-      provider.settingsConfig as Record<string, any>
-    )?.models?.[0]?.displayName;
+    const modelDisplayName = (provider.settingsConfig as Record<string, any>)
+      ?.models?.[0]?.displayName;
     if (
       typeof modelDisplayName !== "string" ||
       !modelDisplayName.trim() ||
-      provider.name.toLocaleLowerCase().includes(
-        modelDisplayName.trim().toLocaleLowerCase(),
-      )
+      provider.name
+        .toLocaleLowerCase()
+        .includes(modelDisplayName.trim().toLocaleLowerCase())
     ) {
       return provider.name;
     }

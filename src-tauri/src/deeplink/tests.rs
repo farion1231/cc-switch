@@ -9,6 +9,7 @@ use super::DeepLinkImportRequest;
 use crate::AppType;
 use crate::{store::AppState, Database};
 use base64::prelude::*;
+use serde_json::json;
 use std::{env, ffi::OsString, sync::Arc};
 
 struct TestHomeGuard {
@@ -28,6 +29,7 @@ impl TestHomeGuard {
         env::set_var("HOME", dir.path());
         env::set_var("USERPROFILE", dir.path());
         env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+        crate::settings::reload_settings().expect("load isolated settings");
 
         Self {
             _dir: dir,
@@ -52,6 +54,7 @@ impl Drop for TestHomeGuard {
             Some(value) => env::set_var("HOME", value),
             None => env::remove_var("HOME"),
         }
+        let _ = crate::settings::reload_settings();
     }
 }
 
@@ -118,6 +121,97 @@ fn test_parse_grokbuild_provider() {
     assert_eq!(model["api_key"].as_str(), Some("secret"));
     assert_eq!(model["api_backend"].as_str(), Some("responses"));
     assert_eq!(model["context_window"].as_integer(), Some(500_000));
+}
+
+#[test]
+fn test_parse_and_build_catalog_backed_qodercli_provider() {
+    use super::provider::build_provider_from_request;
+
+    let url = "ccswitch://v1/import?resource=provider&app=qodercli&name=DeepSeek%20V4%20Pro&apiKey=test-key&provider=deepseek&model=deepseek-v4-pro-pg&type=pg&format=openai";
+    let request = parse_deeplink_url(url).expect("parse qodercli deep link");
+
+    assert_eq!(request.app.as_deref(), Some("qodercli"));
+    assert_eq!(request.provider.as_deref(), Some("deepseek"));
+    assert_eq!(request.model.as_deref(), Some("deepseek-v4-pro-pg"));
+    assert_eq!(request.plan_type.as_deref(), Some("pg"));
+    assert_eq!(request.format.as_deref(), Some("openai"));
+    assert!(request.endpoint.is_none());
+
+    let provider = build_provider_from_request(&AppType::QoderCli, &request)
+        .expect("build valid qodercli provider");
+    assert_eq!(provider.settings_config["provider"], json!("deepseek"));
+    assert_eq!(provider.settings_config["apiKey"], json!("test-key"));
+    assert_eq!(
+        provider.settings_config["models"][0],
+        json!({
+            "model": "deepseek-v4-pro-pg",
+            "type": "pg",
+            "format": "openai",
+            "displayName": "deepseek-v4-pro-pg"
+        })
+    );
+    assert!(provider.settings_config.get("baseURL").is_none());
+}
+
+#[test]
+fn invalid_qodercli_deeplink_is_rejected_without_saving_a_database_row() {
+    use super::provider::import_provider_from_deeplink;
+
+    let db = Arc::new(Database::memory().expect("create memory db"));
+    let state = AppState::new(db.clone());
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("qodercli".to_string()),
+        name: Some("Broken Qoder model".to_string()),
+        api_key: Some("test-key".to_string()),
+        provider: Some("deepseek".to_string()),
+        model: Some("deepseek-v4-pro-pg".to_string()),
+        // Missing the required Qoder plan type.
+        plan_type: None,
+        format: Some("openai".to_string()),
+        ..Default::default()
+    };
+
+    let error = import_provider_from_deeplink(&state, request)
+        .expect_err("invalid qodercli deep link must fail before saving");
+    assert!(error.to_string().contains("'type' parameter"));
+    assert!(db
+        .get_provider_ids("qodercli")
+        .expect("read qodercli providers")
+        .is_empty());
+}
+
+#[test]
+#[serial_test::serial]
+fn valid_qodercli_deeplink_imports_with_a_stable_model_record_id() {
+    use super::provider::import_provider_from_deeplink;
+
+    let _test_home = TestHomeGuard::new();
+    let db = Arc::new(Database::memory().expect("create memory db"));
+    let state = AppState::new(db.clone());
+    let url = "ccswitch://v1/import?resource=provider&app=qodercli&name=DeepSeek%20V4%20Pro&apiKey=test-key&provider=deepseek&model=deepseek-v4-pro-pg&type=pg&format=openai";
+    let request = parse_deeplink_url(url).expect("parse qodercli deep link");
+
+    let provider_id =
+        import_provider_from_deeplink(&state, request).expect("import valid qodercli provider");
+    assert_eq!(provider_id, "deepseek/deepseek-v4-pro-pg");
+    let saved = db
+        .get_provider_by_id(&provider_id, "qodercli")
+        .expect("read qodercli provider")
+        .expect("qodercli provider should be saved");
+    assert_eq!(saved.settings_config["apiKey"], json!("test-key"));
+
+    let live = crate::qodercli_config::read_qodercli_settings().expect("read qoder live settings");
+    let entry = live["modelConfigs"]["customModels"]
+        .as_array()
+        .and_then(|entries| entries.first())
+        .expect("qoder live model should exist");
+    assert_eq!(entry["provider"], json!("deepseek"));
+    assert_eq!(entry["model"], json!("deepseek-v4-pro-pg"));
+    assert_eq!(entry["type"], json!("pg"));
+    assert_eq!(entry["format"], json!("openai"));
+    assert!(entry.get("baseURL").is_none());
 }
 
 #[test]
@@ -208,6 +302,9 @@ fn test_build_gemini_provider_with_model() {
         api_key: Some("test-api-key".to_string()),
         icon: None,
         model: Some("gemini-2.0-flash".to_string()),
+        provider: None,
+        plan_type: None,
+        format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -261,6 +358,9 @@ fn test_build_gemini_provider_without_model() {
         api_key: Some("test-api-key".to_string()),
         icon: None,
         model: None,
+        provider: None,
+        plan_type: None,
+        format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -307,6 +407,9 @@ fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
         api_key: Some("sk-main".to_string()),
         icon: None,
         model: None,
+        provider: None,
+        plan_type: None,
+        format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -354,6 +457,9 @@ fn usage_script_request(code: &str, usage_enabled: Option<bool>) -> DeepLinkImpo
         api_key: Some("sk-main".to_string()),
         icon: None,
         model: None,
+        provider: None,
+        plan_type: None,
+        format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -437,6 +543,9 @@ fn test_deeplink_usage_script_omits_explicit_credentials_that_match_provider() {
         api_key: Some("sk-main".to_string()),
         icon: None,
         model: None,
+        provider: None,
+        plan_type: None,
+        format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -485,6 +594,9 @@ fn test_deeplink_usage_script_preserves_distinct_usage_credentials() {
         api_key: Some("sk-main".to_string()),
         icon: None,
         model: None,
+        provider: None,
+        plan_type: None,
+        format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -538,6 +650,9 @@ fn test_parse_and_merge_config_claude() {
         api_key: None,
         icon: None,
         model: None,
+        provider: None,
+        plan_type: None,
+        format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -661,6 +776,9 @@ fn test_parse_and_merge_config_url_override() {
         api_key: Some("sk-new".to_string()), // URL param should override
         icon: None,
         model: None,
+        provider: None,
+        plan_type: None,
+        format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -724,6 +842,9 @@ fn test_build_claude_provider_preserves_custom_env_fields() {
         icon: None,
         // URL param: must win over the same key in config (haiku-from-config)
         model: Some("main-model".to_string()),
+        provider: None,
+        plan_type: None,
+        format: None,
         notes: None,
         haiku_model: Some("haiku-from-url".to_string()),
         sonnet_model: None,
@@ -779,6 +900,9 @@ fn test_build_claude_provider_without_config_unchanged() {
         api_key: Some("sk".to_string()),
         icon: None,
         model: None,
+        provider: None,
+        plan_type: None,
+        format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,

@@ -81,10 +81,17 @@ fn parse_provider_deeplink(
     // Validate app type
     if !matches!(
         app.as_str(),
-        "claude" | "codex" | "gemini" | "grokbuild" | "opencode" | "openclaw" | "hermes"
+        "claude"
+            | "codex"
+            | "gemini"
+            | "grokbuild"
+            | "opencode"
+            | "openclaw"
+            | "hermes"
+            | "qodercli"
     ) {
         return Err(AppError::InvalidInput(format!(
-            "Invalid app type: must be 'claude', 'codex', 'gemini', 'grokbuild', 'opencode', 'openclaw', or 'hermes', got '{app}'"
+            "Invalid app type: must be 'claude', 'codex', 'gemini', 'grokbuild', 'opencode', 'openclaw', 'hermes', or 'qodercli', got '{app}'"
         )));
     }
 
@@ -116,6 +123,12 @@ fn parse_provider_deeplink(
 
     // Extract optional fields
     let model = params.get("model").cloned();
+    let provider = params.get("provider").cloned();
+    let plan_type = params
+        .get("type")
+        .or_else(|| params.get("planType"))
+        .cloned();
+    let format = params.get("format").cloned();
     let notes = params.get("notes").cloned();
     let haiku_model = params.get("haikuModel").cloned();
     let sonnet_model = params.get("sonnetModel").cloned();
@@ -153,6 +166,9 @@ fn parse_provider_deeplink(
         api_key,
         icon,
         model,
+        provider,
+        plan_type,
+        format,
         notes,
         haiku_model,
         sonnet_model,
@@ -225,6 +241,9 @@ fn parse_prompt_deeplink(
         endpoint: None,
         api_key: None,
         model: None,
+        provider: None,
+        plan_type: None,
+        format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -298,6 +317,9 @@ fn parse_mcp_deeplink(
         endpoint: None,
         api_key: None,
         model: None,
+        provider: None,
+        plan_type: None,
+        format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
@@ -353,6 +375,9 @@ fn parse_skill_deeplink(
         endpoint: None,
         api_key: None,
         model: None,
+        provider: None,
+        plan_type: None,
+        format: None,
         notes: None,
         haiku_model: None,
         sonnet_model: None,
