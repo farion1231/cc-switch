@@ -83,6 +83,7 @@ function modelCatalog(
         model: string;
         displayName?: string;
         contextWindow?: number;
+        useResponsesLite?: boolean;
         // Native Responses (direct) overrides for the generated
         // model-catalogs.json. Omitted input modalities are inferred by the
         // backend: confirmed text-only models stay text-only; everything else
@@ -102,6 +103,7 @@ function modelCatalog(
           model: entry.model,
           displayName: entry.displayName,
           contextWindow: entry.contextWindow,
+          useResponsesLite: entry.useResponsesLite,
           supportsParallelToolCalls: entry.supportsParallelToolCalls,
           inputModalities: entry.inputModalities,
           baseInstructions: entry.baseInstructions,
