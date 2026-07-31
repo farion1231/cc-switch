@@ -68,6 +68,15 @@ pub struct HotSwitchOutcome {
     pub logical_target_changed: bool,
 }
 
+struct HotSwitchRollbackState<'a> {
+    previous_backup: Option<&'a LiveBackup>,
+    previous_provider_id: Option<&'a str>,
+    should_sync_backup: bool,
+    live_taken_over: bool,
+    previous_codex_live: Option<&'a Value>,
+    previous_grok_live: Option<&'a crate::grok_config::GrokLiveSnapshot>,
+}
+
 impl ProxyService {
     pub fn new(db: Arc<Database>) -> Self {
         Self {
@@ -384,12 +393,13 @@ impl ProxyService {
         Ok(())
     }
 
-    pub async fn sync_grok_live_from_provider_while_proxy_active(
+    fn prepare_grok_live_from_provider(
         &self,
         provider: &Provider,
-    ) -> Result<(), String> {
+    ) -> Result<crate::grok_config::PreparedGrokLive, String> {
         let existing_live = self.read_grok_live().ok();
-        let mut effective_settings = build_effective_settings_with_common_config(
+        let mut effective_provider = provider.clone();
+        effective_provider.settings_config = build_effective_settings_with_common_config(
             self.db.as_ref(),
             &AppType::GrokBuild,
             provider,
@@ -397,14 +407,32 @@ impl ProxyService {
         .map_err(|e| format!("构建 Grok Build 有效配置失败: {e}"))?;
         if let Some(existing_live) = existing_live.as_ref() {
             Self::preserve_toml_mcp_servers_from_existing_config(
-                &mut effective_settings,
+                &mut effective_provider.settings_config,
                 existing_live,
             )?;
         }
+        crate::grok_config::prepare_grok_provider_live(&effective_provider)
+            .map_err(|e| format!("准备 Grok Build Live 配置失败: {e}"))
+    }
+
+    pub async fn sync_grok_live_from_provider_while_proxy_active(
+        &self,
+        provider: &Provider,
+    ) -> Result<(), String> {
+        let mut prepared = self.prepare_grok_live_from_provider(provider)?;
         let (proxy_url, _) = self.build_proxy_urls().await?;
         let proxy_grok_base_url = format!("{}/grokbuild/v1", proxy_url.trim_end_matches('/'));
-        Self::apply_grok_takeover_fields(&mut effective_settings, &proxy_grok_base_url)?;
-        self.write_grok_live(&effective_settings)
+        Self::apply_grok_takeover_fields(&mut prepared.settings, &proxy_grok_base_url)?;
+        crate::grok_config::write_prepared_grok_live(&prepared)
+            .map(|_| ())
+            .map_err(|e| format!("写入 Grok Build 配置失败: {e}"))
+    }
+
+    fn sync_grok_live_from_provider_direct(&self, provider: &Provider) -> Result<(), String> {
+        let prepared = self.prepare_grok_live_from_provider(provider)?;
+        crate::grok_config::write_prepared_grok_live(&prepared)
+            .map(|_| ())
+            .map_err(|e| format!("写入 Grok Build 配置失败: {e}"))
     }
 
     fn get_current_provider_for_app(&self, app_type: &AppType) -> Result<Option<Provider>, String> {
@@ -433,17 +461,13 @@ impl ProxyService {
     async fn rollback_hot_switch_preparation(
         &self,
         app_type: &AppType,
-        previous_backup: Option<&LiveBackup>,
-        previous_provider_id: Option<&str>,
-        should_sync_backup: bool,
-        live_taken_over: bool,
-        previous_live_before_direct_write: Option<&Value>,
+        rollback: &HotSwitchRollbackState<'_>,
     ) {
-        if !should_sync_backup {
+        if !rollback.should_sync_backup {
             return;
         }
 
-        let rollback_result = match previous_backup {
+        let rollback_result = match rollback.previous_backup {
             Some(backup) => {
                 self.db
                     .save_live_backup(app_type.as_str(), &backup.original_config)
@@ -455,7 +479,7 @@ impl ProxyService {
             log::error!("{} 热切换失败后恢复原备份失败: {error}", app_type.as_str());
         }
 
-        if let Some(previous_live) = previous_live_before_direct_write {
+        if let Some(previous_live) = rollback.previous_codex_live {
             if let Err(error) = self.write_codex_live_verbatim(previous_live) {
                 log::error!(
                     "{} 热切换失败后恢复直接写入前的 Live 配置失败: {error}",
@@ -464,8 +488,17 @@ impl ProxyService {
             }
             return;
         }
+        if let Some(previous_live) = rollback.previous_grok_live {
+            if let Err(error) = previous_live.restore() {
+                log::error!(
+                    "{} 热切换失败后恢复直接写入前的 Grok Live 配置失败: {error}",
+                    app_type.as_str()
+                );
+            }
+            return;
+        }
 
-        let Some(previous_provider_id) = previous_provider_id else {
+        let Some(previous_provider_id) = rollback.previous_provider_id else {
             return;
         };
         let Ok(Some(previous_provider)) = self
@@ -478,10 +511,10 @@ impl ProxyService {
         let live_result = if matches!(app_type, AppType::Claude) {
             self.sync_claude_live_from_provider_while_proxy_active(&previous_provider)
                 .await
-        } else if live_taken_over && matches!(app_type, AppType::Codex) {
+        } else if rollback.live_taken_over && matches!(app_type, AppType::Codex) {
             self.sync_codex_live_from_provider_while_proxy_active(&previous_provider)
                 .await
-        } else if live_taken_over && matches!(app_type, AppType::GrokBuild) {
+        } else if rollback.live_taken_over && matches!(app_type, AppType::GrokBuild) {
             self.sync_grok_live_from_provider_while_proxy_active(&previous_provider)
                 .await
         } else {
@@ -2395,6 +2428,12 @@ impl ProxyService {
                     existing_value,
                 )?;
             }
+            let mut effective_provider = provider.clone();
+            effective_provider.settings_config = effective_settings;
+            effective_settings =
+                crate::grok_config::prepare_grok_provider_live(&effective_provider)
+                    .map_err(|e| format!("准备 Grok Build Live 备份失败: {e}"))?
+                    .settings;
         }
 
         let backup_json = match app_type_enum {
@@ -2498,6 +2537,23 @@ impl ProxyService {
             } else {
                 None
             };
+        let previous_grok_live_before_direct_write =
+            if has_backup && !live_taken_over && matches!(app_type_enum, AppType::GrokBuild) {
+                Some(
+                    crate::grok_config::GrokLiveSnapshot::capture()
+                        .map_err(|error| format!("读取 Grok Build 原 Live 配置失败: {error}"))?,
+                )
+            } else {
+                None
+            };
+        let rollback_state = HotSwitchRollbackState {
+            previous_backup: previous_backup.as_ref(),
+            previous_provider_id: previous_provider_id.as_deref(),
+            should_sync_backup,
+            live_taken_over,
+            previous_codex_live: previous_live_before_direct_write.as_ref(),
+            previous_grok_live: previous_grok_live_before_direct_write.as_ref(),
+        };
 
         let prepare_result: Result<(), String> = async {
             if should_sync_backup {
@@ -2539,35 +2595,24 @@ impl ProxyService {
                 )
                 .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
             }
+            if has_backup && !live_taken_over && matches!(app_type_enum, AppType::GrokBuild) {
+                self.sync_grok_live_from_provider_direct(&provider)?;
+            }
 
             Ok(())
         }
         .await;
 
         if let Err(error) = prepare_result {
-            self.rollback_hot_switch_preparation(
-                &app_type_enum,
-                previous_backup.as_ref(),
-                previous_provider_id.as_deref(),
-                should_sync_backup,
-                live_taken_over,
-                previous_live_before_direct_write.as_ref(),
-            )
-            .await;
+            self.rollback_hot_switch_preparation(&app_type_enum, &rollback_state)
+                .await;
             return Err(error);
         }
 
         if let Err(error) = crate::settings::set_current_provider(&app_type_enum, Some(provider_id))
         {
-            self.rollback_hot_switch_preparation(
-                &app_type_enum,
-                previous_backup.as_ref(),
-                previous_provider_id.as_deref(),
-                should_sync_backup,
-                live_taken_over,
-                previous_live_before_direct_write.as_ref(),
-            )
-            .await;
+            self.rollback_hot_switch_preparation(&app_type_enum, &rollback_state)
+                .await;
             return Err(format!("更新本地当前供应商失败: {error}"));
         }
         if let Err(error) = self
@@ -2580,15 +2625,8 @@ impl ProxyService {
             ) {
                 log::error!("数据库切换失败后恢复本地当前供应商失败: {rollback_error}");
             }
-            self.rollback_hot_switch_preparation(
-                &app_type_enum,
-                previous_backup.as_ref(),
-                previous_provider_id.as_deref(),
-                should_sync_backup,
-                live_taken_over,
-                previous_live_before_direct_write.as_ref(),
-            )
-            .await;
+            self.rollback_hot_switch_preparation(&app_type_enum, &rollback_state)
+                .await;
             return Err(format!("更新当前供应商失败: {error}"));
         }
 
@@ -3218,6 +3256,7 @@ mod tests {
     use crate::provider::ProviderMeta;
     use serial_test::serial;
     use std::env;
+    use std::fs;
     use tempfile::TempDir;
 
     struct TempHome {
@@ -7178,6 +7217,8 @@ experimental_bearer_token = "PROXY_MANAGED"
             .expect("set db current");
         crate::settings::set_current_provider(&AppType::GrokBuild, Some("grok-a"))
             .expect("set local current");
+        crate::grok_config::write_grok_provider_live(&provider_a)
+            .expect("write provider A live config and image auth");
         let mut original_settings = provider_a.settings_config.clone();
         original_settings["config"] = json!(format!(
             "{}\n[mcp_servers.demo]\ncommand = \"demo\"\n",
@@ -7191,6 +7232,16 @@ experimental_bearer_token = "PROXY_MANAGED"
         )
         .await
         .expect("seed backup");
+        let takeover = crate::grok_config::apply_proxy_takeover(
+            &fs::read_to_string(crate::grok_config::get_grok_config_path())
+                .expect("read provider A live config"),
+            "http://127.0.0.1:15721/grokbuild/v1",
+            PROXY_TOKEN_PLACEHOLDER,
+        )
+        .expect("build takeover config");
+        service
+            .write_grok_live(&json!({ "config": takeover }))
+            .expect("seed taken-over live");
 
         service
             .hot_switch_provider("grokbuild", "grok-b")
@@ -7215,6 +7266,99 @@ experimental_bearer_token = "PROXY_MANAGED"
         assert!(backup["config"]
             .as_str()
             .is_some_and(|config| config.contains("[mcp_servers.demo]")));
+        let backup_config = backup["config"].as_str().expect("backup config");
+        let backup_config = backup_config
+            .parse::<toml::Value>()
+            .expect("parse backup config");
+        assert_eq!(
+            backup_config["endpoints"]["xai_api_base_url"].as_str(),
+            Some("https://b.example.com/v1")
+        );
+
+        let live = fs::read_to_string(crate::grok_config::get_grok_config_path())
+            .expect("read hot-switched live");
+        let live = live.parse::<toml::Value>().expect("parse live config");
+        assert_eq!(
+            live["model"]["grok-4.5"]["base_url"].as_str(),
+            Some("http://127.0.0.1:15721/grokbuild/v1")
+        );
+        assert_eq!(
+            live["endpoints"]["xai_api_base_url"].as_str(),
+            Some("https://b.example.com/v1")
+        );
+        let auth: Value = serde_json::from_str(
+            &fs::read_to_string(crate::grok_config::get_grok_auth_path())
+                .expect("read hot-switched image auth"),
+        )
+        .expect("parse hot-switched image auth");
+        assert_eq!(auth["xai::api_key"]["key"].as_str(), Some("b-key"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn hot_switch_grokbuild_with_backup_but_no_takeover_updates_direct_live() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let provider_a = Provider::with_id(
+            "grok-a".to_string(),
+            "Grok A".to_string(),
+            grok_provider_config("https://a.example.com/v1", "a-key"),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "grok-b".to_string(),
+            "Grok B".to_string(),
+            grok_provider_config("https://b.example.com/v1", "b-key"),
+            None,
+        );
+        db.save_provider("grokbuild", &provider_a)
+            .expect("save provider a");
+        db.save_provider("grokbuild", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("grokbuild", "grok-a")
+            .expect("set db current");
+        crate::settings::set_current_provider(&AppType::GrokBuild, Some("grok-a"))
+            .expect("set local current");
+        crate::grok_config::write_grok_provider_live(&provider_a)
+            .expect("write provider A live config and image auth");
+        db.save_live_backup(
+            "grokbuild",
+            &serde_json::to_string(&provider_a.settings_config).expect("serialize backup"),
+        )
+        .await
+        .expect("seed backup");
+
+        service
+            .hot_switch_provider("grokbuild", "grok-b")
+            .await
+            .expect("hot switch direct Grok Build live");
+
+        let live = fs::read_to_string(crate::grok_config::get_grok_config_path())
+            .expect("read hot-switched live");
+        let live = live.parse::<toml::Value>().expect("parse live config");
+        assert_eq!(
+            live["model"]["grok-4.5"]["base_url"].as_str(),
+            Some("https://b.example.com/v1")
+        );
+        assert_eq!(
+            live["endpoints"]["xai_api_base_url"].as_str(),
+            Some("https://b.example.com/v1")
+        );
+        let auth: Value = serde_json::from_str(
+            &fs::read_to_string(crate::grok_config::get_grok_auth_path())
+                .expect("read hot-switched image auth"),
+        )
+        .expect("parse hot-switched image auth");
+        assert_eq!(auth["xai::api_key"]["key"].as_str(), Some("b-key"));
+        assert_eq!(
+            crate::settings::get_effective_current_provider(&db, &AppType::GrokBuild)
+                .expect("read current")
+                .as_deref(),
+            Some("grok-b")
+        );
     }
 
     #[tokio::test]

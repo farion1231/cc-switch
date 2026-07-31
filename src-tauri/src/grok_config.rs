@@ -1,6 +1,9 @@
-use serde_json::{json, Value};
+use chrono::{SecondsFormat, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::config::{get_home_dir, write_text_file};
 use crate::error::AppError;
@@ -9,6 +12,106 @@ use crate::provider::Provider;
 pub const DEFAULT_MODEL: &str = "grok-4.5";
 pub const DEFAULT_API_BACKEND: &str = "responses";
 pub const DEFAULT_CONTEXT_WINDOW: i64 = 500_000;
+pub const DEFAULT_IMAGE_MODEL: &str = "grok-imagine-image";
+const IMAGE_AUTH_SCOPE: &str = "xai::api_key";
+const IMAGE_AUTH_OWNER: &str = "cc-switch";
+const IMAGE_AUTH_STATE_FILE: &str = ".cc-switch-image-auth.json";
+
+#[derive(Debug, Clone, PartialEq)]
+enum ImageCredentialAction {
+    SetManaged(String),
+    RestorePrevious,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PreparedGrokLive {
+    pub(crate) settings: Value,
+    credential_action: Option<ImageCredentialAction>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct ManagedImageAuthState {
+    // Preserve the user's prior scope so switching to Official can restore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    original_scope: Option<Value>,
+    managed_key_sha256: String,
+}
+
+#[derive(Clone)]
+struct FileSnapshot {
+    path: PathBuf,
+    content: Option<Vec<u8>>,
+    permissions: Option<fs::Permissions>,
+}
+
+impl FileSnapshot {
+    fn capture(path: PathBuf) -> Result<Self, AppError> {
+        if !path.exists() {
+            return Ok(Self {
+                path,
+                content: None,
+                permissions: None,
+            });
+        }
+
+        let content = fs::read(&path).map_err(|error| AppError::io(&path, error))?;
+        let permissions = fs::metadata(&path)
+            .map_err(|error| AppError::io(&path, error))?
+            .permissions();
+        Ok(Self {
+            path,
+            content: Some(content),
+            permissions: Some(permissions),
+        })
+    }
+
+    fn restore(&self) -> Result<(), AppError> {
+        match &self.content {
+            Some(content) => {
+                crate::config::atomic_write(&self.path, content)?;
+                if let Some(permissions) = &self.permissions {
+                    fs::set_permissions(&self.path, permissions.clone())
+                        .map_err(|error| AppError::io(&self.path, error))?;
+                }
+            }
+            None if self.path.exists() => {
+                fs::remove_file(&self.path).map_err(|error| AppError::io(&self.path, error))?;
+            }
+            None => {}
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct GrokLiveSnapshot {
+    files: Vec<FileSnapshot>,
+}
+
+impl GrokLiveSnapshot {
+    pub(crate) fn capture() -> Result<Self, AppError> {
+        Ok(Self {
+            files: vec![
+                FileSnapshot::capture(get_grok_config_path())?,
+                FileSnapshot::capture(get_grok_auth_path())?,
+                FileSnapshot::capture(get_grok_image_auth_state_path())?,
+            ],
+        })
+    }
+
+    pub(crate) fn restore(&self) -> Result<(), AppError> {
+        let mut errors = Vec::new();
+        for file in &self.files {
+            if let Err(error) = file.restore() {
+                errors.push(error.to_string());
+            }
+        }
+        if !errors.is_empty() {
+            return Err(AppError::Message(errors.join("; ")));
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrokModelConfig {
@@ -30,6 +133,274 @@ pub fn get_grok_config_dir() -> PathBuf {
 /// Grok Build live configuration path (`~/.grok/config.toml`).
 pub fn get_grok_config_path() -> PathBuf {
     get_grok_config_dir().join("config.toml")
+}
+
+/// Grok Build credential store (`~/.grok/auth.json`).
+pub fn get_grok_auth_path() -> PathBuf {
+    get_grok_config_dir().join("auth.json")
+}
+
+fn get_grok_image_auth_state_path() -> PathBuf {
+    get_grok_config_dir().join(IMAGE_AUTH_STATE_FILE)
+}
+
+fn set_owner_only_permissions(path: &Path) -> Result<(), AppError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .map_err(|error| AppError::io(path, error))?;
+    }
+    Ok(())
+}
+
+fn write_owner_only_json(path: &Path, value: &impl Serialize) -> Result<(), AppError> {
+    let content =
+        serde_json::to_string_pretty(value).map_err(|source| AppError::JsonSerialize { source })?;
+    write_text_file(path, &format!("{content}\n"))?;
+    set_owner_only_permissions(path)
+}
+
+fn read_auth_root(path: &Path) -> Result<Map<String, Value>, AppError> {
+    if !path.exists() {
+        return Ok(Map::new());
+    }
+
+    let content = fs::read_to_string(path).map_err(|error| AppError::io(path, error))?;
+    match serde_json::from_str::<Value>(&content) {
+        Ok(Value::Object(root)) => Ok(root),
+        Ok(_) => Err(AppError::localized(
+            "provider.grokbuild.auth.not_object",
+            format!("Grok Build 凭据文件必须是 JSON 对象: {}", path.display()),
+            format!(
+                "Grok Build credential file must be a JSON object: {}",
+                path.display()
+            ),
+        )),
+        Err(source) => Err(AppError::json(path, source)),
+    }
+}
+
+fn read_managed_auth_state(path: &Path) -> Result<Option<ManagedImageAuthState>, AppError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(path).map_err(|error| AppError::io(path, error))?;
+    serde_json::from_str(&content)
+        .map(Some)
+        .map_err(|source| AppError::json(path, source))
+}
+
+fn image_credential_files_are_readable() -> Result<(), AppError> {
+    read_auth_root(&get_grok_auth_path())?;
+    read_managed_auth_state(&get_grok_image_auth_state_path())?;
+    Ok(())
+}
+
+fn api_key_sha256(api_key: &str) -> String {
+    format!("{:x}", Sha256::digest(api_key.as_bytes()))
+}
+
+fn is_managed_image_scope(value: Option<&Value>) -> bool {
+    value
+        .and_then(Value::as_object)
+        .and_then(|scope| scope.get("user_id"))
+        .and_then(Value::as_str)
+        == Some(IMAGE_AUTH_OWNER)
+}
+
+fn managed_image_scope_matches(value: Option<&Value>, state: &ManagedImageAuthState) -> bool {
+    is_managed_image_scope(value)
+        && value
+            .and_then(Value::as_object)
+            .and_then(|scope| scope.get("key"))
+            .and_then(Value::as_str)
+            .is_some_and(|key| api_key_sha256(key) == state.managed_key_sha256)
+}
+
+fn apply_image_credential_action(action: &ImageCredentialAction) -> Result<(), AppError> {
+    let auth_path = get_grok_auth_path();
+    let state_path = get_grok_image_auth_state_path();
+
+    match action {
+        ImageCredentialAction::SetManaged(api_key) => {
+            let mut auth = read_auth_root(&auth_path)?;
+            let current_scope = auth.get(IMAGE_AUTH_SCOPE).cloned();
+            let existing_state = read_managed_auth_state(&state_path)?;
+            let original_scope = match existing_state {
+                Some(state) if managed_image_scope_matches(current_scope.as_ref(), &state) => {
+                    state.original_scope
+                }
+                _ => current_scope,
+            };
+            let state = ManagedImageAuthState {
+                original_scope,
+                managed_key_sha256: api_key_sha256(api_key),
+            };
+
+            write_owner_only_json(&state_path, &state)?;
+            auth.insert(
+                IMAGE_AUTH_SCOPE.to_string(),
+                json!({
+                    "auth_mode": "api_key",
+                    "key": api_key,
+                    "create_time": Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+                    "user_id": IMAGE_AUTH_OWNER,
+                }),
+            );
+            write_owner_only_json(&auth_path, &Value::Object(auth))
+        }
+        ImageCredentialAction::RestorePrevious => {
+            let state = read_managed_auth_state(&state_path)?;
+            if state.is_none() && !auth_path.exists() {
+                return Ok(());
+            }
+
+            let mut auth = match read_auth_root(&auth_path) {
+                Ok(auth) => auth,
+                Err(error) if state.is_none() => {
+                    log::warn!(
+                        "Leaving invalid Grok auth.json unchanged because there is no CC Switch image credential state: {error}"
+                    );
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            };
+            let current_is_managed = state
+                .as_ref()
+                .map(|state| managed_image_scope_matches(auth.get(IMAGE_AUTH_SCOPE), state))
+                .unwrap_or_else(|| is_managed_image_scope(auth.get(IMAGE_AUTH_SCOPE)));
+            let mut auth_changed = false;
+            let mut remove_state = false;
+
+            if let Some(state) = state {
+                if current_is_managed {
+                    match state.original_scope {
+                        Some(original) => {
+                            auth.insert(IMAGE_AUTH_SCOPE.to_string(), original);
+                        }
+                        None => {
+                            auth.remove(IMAGE_AUTH_SCOPE);
+                        }
+                    }
+                    auth_changed = true;
+                    remove_state = true;
+                }
+            } else if current_is_managed {
+                auth.remove(IMAGE_AUTH_SCOPE);
+                auth_changed = true;
+            }
+
+            if auth_changed {
+                write_owner_only_json(&auth_path, &Value::Object(auth))?;
+            }
+            if remove_state && state_path.exists() {
+                fs::remove_file(&state_path).map_err(|error| AppError::io(&state_path, error))?;
+            }
+            Ok(())
+        }
+    }
+}
+
+pub fn sync_image_endpoints_in_config_toml(
+    config_toml: &str,
+    base_url: &str,
+    enabled: bool,
+) -> Result<String, AppError> {
+    let mut document = config_toml
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|error| {
+            AppError::localized(
+                "provider.grokbuild.config.invalid_toml",
+                format!("Grok Build config.toml 格式错误: {error}"),
+                format!("Invalid Grok Build config.toml: {error}"),
+            )
+        })?;
+
+    if enabled {
+        let base_url = base_url.trim();
+        if base_url.is_empty() {
+            return Err(AppError::localized(
+                "provider.grokbuild.field.missing",
+                "Grok Build 配置缺少有效的 base_url 字段",
+                "Grok Build configuration is missing a valid base_url field",
+            ));
+        }
+        let image_model_override = |key: &str| {
+            document
+                .get("features")
+                .and_then(|item| item.get(key))
+                .and_then(toml_edit::Item::as_str)
+                .map(str::trim)
+                .filter(|model| !model.is_empty())
+                .unwrap_or(DEFAULT_IMAGE_MODEL)
+                .to_string()
+        };
+        let image_gen_model = image_model_override("image_gen_model_override");
+        let image_edit_model = image_model_override("image_edit_model_override");
+        if document.get("endpoints").is_none() {
+            document["endpoints"] = toml_edit::Item::Table(toml_edit::Table::new());
+        }
+        let endpoints = document
+            .get_mut("endpoints")
+            .and_then(toml_edit::Item::as_table_like_mut)
+            .ok_or_else(|| {
+                AppError::localized(
+                    "provider.grokbuild.endpoints.not_table",
+                    "Grok Build 配置中的 endpoints 必须是表结构",
+                    "Grok Build endpoints configuration must be a table",
+                )
+            })?;
+        endpoints.insert("xai_api_base_url", toml_edit::value(base_url));
+
+        if document.get("features").is_none() {
+            document["features"] = toml_edit::Item::Table(toml_edit::Table::new());
+        }
+        let features = document
+            .get_mut("features")
+            .and_then(toml_edit::Item::as_table_like_mut)
+            .ok_or_else(|| {
+                AppError::localized(
+                    "provider.grokbuild.features.not_table",
+                    "Grok Build 配置中的 features 必须是表结构",
+                    "Grok Build features configuration must be a table",
+                )
+            })?;
+        features.insert("image_gen", toml_edit::value(true));
+        features.insert("image_edit", toml_edit::value(true));
+        features.insert(
+            "image_gen_model_override",
+            toml_edit::value(&image_gen_model),
+        );
+        features.insert(
+            "image_edit_model_override",
+            toml_edit::value(&image_edit_model),
+        );
+    } else {
+        if let Some(endpoints) = document
+            .get_mut("endpoints")
+            .and_then(toml_edit::Item::as_table_like_mut)
+        {
+            endpoints.remove("xai_api_base_url");
+            if endpoints.is_empty() {
+                document.as_table_mut().remove("endpoints");
+            }
+        }
+        if let Some(features) = document
+            .get_mut("features")
+            .and_then(toml_edit::Item::as_table_like_mut)
+        {
+            features.remove("image_gen");
+            features.remove("image_edit");
+            features.remove("image_gen_model_override");
+            features.remove("image_edit_model_override");
+            if features.is_empty() {
+                document.as_table_mut().remove("features");
+            }
+        }
+    }
+
+    Ok(document.to_string())
 }
 
 fn required_non_empty_string<'a>(
@@ -362,7 +733,9 @@ pub fn read_grok_live_settings() -> Result<Value, AppError> {
     Ok(json!({ "config": config }))
 }
 
-pub fn write_grok_provider_live(provider: &Provider) -> Result<(), AppError> {
+pub(crate) fn prepare_grok_provider_live(
+    provider: &Provider,
+) -> Result<PreparedGrokLive, AppError> {
     let settings = provider.settings_config.as_object().ok_or_else(|| {
         AppError::localized(
             "provider.grokbuild.settings.not_object",
@@ -384,11 +757,104 @@ pub fn write_grok_provider_live(provider: &Provider) -> Result<(), AppError> {
     // 官方条目不注入自定义模型表：按快照原样写回（首次为空文件），
     // Grok CLI 回落到官方内置模型 + 自带 OAuth 登录；MCP 投影随后由
     // 切换流程重新补写。非官方供应商必须携带完整的自定义模型配置。
-    if provider.category.as_deref() != Some("official") {
+    let credential_files_ready = match image_credential_files_are_readable() {
+        Ok(()) => true,
+        Err(error) => {
+            log::warn!(
+                "Disabling Grok image sync and leaving credentials unchanged because the credential files cannot be read safely: {error}"
+            );
+            false
+        }
+    };
+    let is_official = provider.category.as_deref() == Some("official");
+    let (config, credential_action) = if is_official {
+        validate_config_toml_syntax(config)?;
+        (
+            config.to_string(),
+            if credential_files_ready {
+                Some(ImageCredentialAction::RestorePrevious)
+            } else {
+                None
+            },
+        )
+    } else {
         validate_config_toml(config)?;
+        let model = extract_model_config(config).ok_or_else(|| {
+            AppError::localized(
+                "provider.grokbuild.model.missing",
+                "Grok Build 配置缺少可用的模型配置",
+                "Grok Build configuration is missing a usable model configuration",
+            )
+        })?;
+        let image_key = model.api_key.or_else(|| {
+            model
+                .env_key
+                .as_deref()
+                .and_then(|key| std::env::var(key).ok())
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        });
+        match (image_key, credential_files_ready) {
+            (Some(image_key), true) => (
+                sync_image_endpoints_in_config_toml(config, &model.base_url, true)?,
+                Some(ImageCredentialAction::SetManaged(image_key)),
+            ),
+            (image_key, _) => {
+                if image_key.is_none() {
+                    log::warn!(
+                        "Disabling Grok image sync because no inline or configured environment key is available"
+                    );
+                }
+                let credential_action = if credential_files_ready {
+                    Some(ImageCredentialAction::RestorePrevious)
+                } else {
+                    None
+                };
+                log::warn!(
+                    "Grok image endpoint and feature overrides will not be written for this provider switch"
+                );
+                (
+                    sync_image_endpoints_in_config_toml(config, "", false)?,
+                    credential_action,
+                )
+            }
+        }
+    };
+
+    let mut prepared_settings = provider.settings_config.clone();
+    prepared_settings["config"] = Value::String(config);
+    Ok(PreparedGrokLive {
+        settings: prepared_settings,
+        credential_action,
+    })
+}
+
+pub(crate) fn write_prepared_grok_live(
+    prepared: &PreparedGrokLive,
+) -> Result<GrokLiveSnapshot, AppError> {
+    let snapshot = GrokLiveSnapshot::capture()?;
+    let result = (|| {
+        if let Some(action) = &prepared.credential_action {
+            apply_image_credential_action(action)?;
+        }
+        write_grok_live_settings(&prepared.settings)
+    })();
+
+    if let Err(error) = result {
+        if let Err(rollback_error) = snapshot.restore() {
+            return Err(AppError::Message(format!(
+                "{error}; additionally failed to restore the previous Grok Build live files: {rollback_error}"
+            )));
+        }
+        return Err(error);
     }
 
-    write_grok_live_settings(&json!({ "config": config }))
+    Ok(snapshot)
+}
+
+pub fn write_grok_provider_live(provider: &Provider) -> Result<(), AppError> {
+    let prepared = prepare_grok_provider_live(provider)?;
+    write_prepared_grok_live(&prepared).map(|_| ())
 }
 
 /// Raw live-file writer, mirroring `read_grok_live_settings` (syntax-only).
@@ -526,6 +992,54 @@ context_window = 500000
     }
 
     #[test]
+    fn image_sync_preserves_unrelated_config_and_proxy_takeover_keeps_upstream_media() {
+        let config = format!(
+            "{}\n[mcp_servers.echo]\ncommand = \"echo\"\n\n[features]\nunrelated = true\nimage_gen_model_override = \"custom-image-model\"\nimage_edit_model_override = \"custom-edit-model\"\n",
+            valid_config()
+        );
+        let synced = sync_image_endpoints_in_config_toml(&config, "https://example.com/v1", true)
+            .expect("sync image config");
+        let document = synced.parse::<toml::Value>().expect("parse synced config");
+
+        assert_eq!(
+            document["endpoints"]["xai_api_base_url"].as_str(),
+            Some("https://example.com/v1")
+        );
+        assert_eq!(document["features"]["image_gen"].as_bool(), Some(true));
+        assert_eq!(
+            document["features"]["image_gen_model_override"].as_str(),
+            Some("custom-image-model")
+        );
+        assert_eq!(
+            document["features"]["image_edit_model_override"].as_str(),
+            Some("custom-edit-model")
+        );
+        assert_eq!(document["features"]["unrelated"].as_bool(), Some(true));
+        assert_eq!(
+            document["mcp_servers"]["echo"]["command"].as_str(),
+            Some("echo")
+        );
+
+        let takeover = apply_proxy_takeover(
+            &synced,
+            "http://127.0.0.1:15721/grokbuild/v1",
+            "PROXY_MANAGED",
+        )
+        .expect("takeover config");
+        let takeover_document = takeover
+            .parse::<toml::Value>()
+            .expect("parse takeover config");
+        assert_eq!(
+            takeover_document["model"]["grok-4.5"]["base_url"].as_str(),
+            Some("http://127.0.0.1:15721/grokbuild/v1")
+        );
+        assert_eq!(
+            takeover_document["endpoints"]["xai_api_base_url"].as_str(),
+            Some("https://example.com/v1")
+        );
+    }
+
+    #[test]
     #[serial]
     fn resolves_api_key_from_configured_environment_variable() {
         let original = std::env::var_os("GROK_TEST_API_KEY");
@@ -584,6 +1098,91 @@ context_window = 500000
     }
 
     #[test]
+    #[serial]
+    fn writes_env_key_to_image_auth_scope() {
+        let temp = TempDir::new().expect("temp dir");
+        let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        let original_api_key = std::env::var_os("GROK_TEST_API_KEY");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        std::env::set_var("GROK_TEST_API_KEY", "env-image-secret");
+
+        let provider = Provider::with_id(
+            "grok-env".to_string(),
+            "Env Example".to_string(),
+            json!({ "config": valid_env_key_config() }),
+            None,
+        );
+        write_grok_provider_live(&provider).expect("write env-key provider");
+
+        let auth: Value = serde_json::from_str(
+            &fs::read_to_string(get_grok_auth_path()).expect("read env-key auth"),
+        )
+        .expect("parse env-key auth");
+        assert_eq!(
+            auth[IMAGE_AUTH_SCOPE]["key"].as_str(),
+            Some("env-image-secret")
+        );
+
+        match original_api_key {
+            Some(value) => std::env::set_var("GROK_TEST_API_KEY", value),
+            None => std::env::remove_var("GROK_TEST_API_KEY"),
+        }
+        match original_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn missing_env_key_disables_image_sync_and_restores_previous_scope() {
+        let temp = TempDir::new().expect("temp dir");
+        let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        let original_api_key = std::env::var_os("GROK_TEST_API_KEY");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        std::env::remove_var("GROK_TEST_API_KEY");
+
+        write_text_file(
+            &get_grok_auth_path(),
+            r#"{"xai::api_key":{"auth_mode":"api_key","key":"user-key"}}"#,
+        )
+        .expect("seed user auth");
+        apply_image_credential_action(&ImageCredentialAction::SetManaged(
+            "previous-provider-key".to_string(),
+        ))
+        .expect("seed managed provider auth");
+
+        let provider = Provider::with_id(
+            "grok-env".to_string(),
+            "Env Example".to_string(),
+            json!({ "config": valid_env_key_config() }),
+            None,
+        );
+        write_grok_provider_live(&provider).expect("write provider without resolved env key");
+
+        let config = fs::read_to_string(get_grok_config_path()).expect("read env-key live config");
+        let document = config.parse::<toml::Value>().expect("parse live config");
+        assert!(document.get("endpoints").is_none());
+        assert!(document.get("features").is_none());
+
+        let auth: Value = serde_json::from_str(
+            &fs::read_to_string(get_grok_auth_path()).expect("read restored auth"),
+        )
+        .expect("parse restored auth");
+        assert_eq!(auth[IMAGE_AUTH_SCOPE]["key"].as_str(), Some("user-key"));
+        assert!(!get_grok_image_auth_state_path().exists());
+
+        match original_api_key {
+            Some(value) => std::env::set_var("GROK_TEST_API_KEY", value),
+            None => std::env::remove_var("GROK_TEST_API_KEY"),
+        }
+        match original_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+    }
+
+    #[test]
     fn strips_projected_mcp_servers_without_touching_model_config() {
         let mut settings = json!({
             "config": format!(
@@ -615,10 +1214,54 @@ context_window = 500000
             None,
         );
         official.category = Some("official".to_string());
+
+        let auth_path = get_grok_auth_path();
+        write_text_file(
+            &auth_path,
+            r#"{
+  "xai::api_key": {"auth_mode": "api_key", "key": "user-secret"},
+  "https://auth.x.ai::client": {"auth_mode": "oauth", "key": "oauth-secret"}
+}"#,
+        )
+        .expect("seed auth");
+
+        let custom = Provider::with_id(
+            "custom".to_string(),
+            "Custom".to_string(),
+            json!({ "config": valid_config() }),
+            None,
+        );
+        write_grok_provider_live(&custom).expect("write managed custom provider");
+        let managed_auth: Value =
+            serde_json::from_str(&fs::read_to_string(&auth_path).expect("read managed auth"))
+                .expect("parse managed auth");
+        assert_eq!(
+            managed_auth[IMAGE_AUTH_SCOPE]["key"].as_str(),
+            Some("secret")
+        );
+        assert!(get_grok_image_auth_state_path().exists());
+
         write_grok_provider_live(&official).expect("official empty config is writable");
         assert_eq!(
             fs::read_to_string(get_grok_config_path()).expect("read config"),
             ""
+        );
+        let auth: Value = serde_json::from_str(&fs::read_to_string(&auth_path).expect("read auth"))
+            .expect("parse auth");
+        assert_eq!(auth[IMAGE_AUTH_SCOPE]["key"].as_str(), Some("user-secret"));
+        assert_eq!(
+            auth["https://auth.x.ai::client"]["key"].as_str(),
+            Some("oauth-secret")
+        );
+        assert!(!get_grok_image_auth_state_path().exists());
+
+        let official_snapshot =
+            "[endpoints]\nxai_api_base_url = \"https://official.example/v1\"\n\n[features]\nimage_gen = false\n";
+        official.settings_config = json!({ "config": official_snapshot });
+        write_grok_provider_live(&official).expect("official snapshot is preserved");
+        assert_eq!(
+            fs::read_to_string(get_grok_config_path()).expect("read official snapshot"),
+            official_snapshot
         );
 
         // 官方态 live（如 MCP 投影补写后）无自定义模型表，读取与原样写回都必须可用
@@ -632,13 +1275,13 @@ context_window = 500000
         );
 
         // 非官方供应商仍要求完整的自定义模型配置
-        let custom = Provider::with_id(
+        let invalid_custom = Provider::with_id(
             "custom".to_string(),
             "Custom".to_string(),
             json!({ "config": "" }),
             None,
         );
-        assert!(write_grok_provider_live(&custom).is_err());
+        assert!(write_grok_provider_live(&invalid_custom).is_err());
 
         match original_test_home {
             Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
@@ -663,17 +1306,144 @@ context_window = 500000
 
         let path = get_grok_config_path();
         assert_eq!(path, temp.path().join(".grok").join("config.toml"));
+        let expected_config =
+            sync_image_endpoints_in_config_toml(valid_config(), "https://example.com/v1", true)
+                .expect("expected image config");
         assert_eq!(
             fs::read_to_string(path).expect("read config"),
-            valid_config()
+            expected_config
         );
         assert_eq!(
             read_grok_live_settings()
                 .expect("read live settings")
                 .get("config")
                 .and_then(Value::as_str),
-            Some(valid_config())
+            Some(expected_config.as_str())
         );
+        let auth_path = get_grok_auth_path();
+        let auth: Value = serde_json::from_str(&fs::read_to_string(&auth_path).expect("read auth"))
+            .expect("parse auth");
+        assert_eq!(auth[IMAGE_AUTH_SCOPE]["key"].as_str(), Some("secret"));
+        assert_eq!(
+            auth[IMAGE_AUTH_SCOPE]["auth_mode"].as_str(),
+            Some("api_key")
+        );
+        let auth_state =
+            fs::read_to_string(get_grok_image_auth_state_path()).expect("read managed auth state");
+        assert!(!auth_state.contains("secret"));
+        let auth_state: ManagedImageAuthState =
+            serde_json::from_str(&auth_state).expect("parse managed auth state");
+        assert_eq!(auth_state.managed_key_sha256, api_key_sha256("secret"));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for path in [auth_path, get_grok_image_auth_state_path()] {
+                assert_eq!(
+                    fs::metadata(&path)
+                        .expect("managed credential metadata")
+                        .permissions()
+                        .mode()
+                        & 0o777,
+                    0o600
+                );
+            }
+        }
+
+        match original_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn image_credentials_restore_user_owned_scope_and_reject_invalid_auth() {
+        let temp = TempDir::new().expect("temp dir");
+        let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        let auth_path = get_grok_auth_path();
+
+        write_text_file(
+            &auth_path,
+            r#"{
+  "xai::api_key": {"auth_mode":"api_key","key":"user-key"},
+  "other::scope": {"auth_mode":"oauth","key":"preserve-me"}
+}"#,
+        )
+        .expect("seed auth");
+        apply_image_credential_action(&ImageCredentialAction::SetManaged("first-key".to_string()))
+            .expect("first sync");
+        apply_image_credential_action(&ImageCredentialAction::SetManaged("second-key".to_string()))
+            .expect("second sync");
+
+        let auth: Value =
+            serde_json::from_str(&fs::read_to_string(&auth_path).expect("read merged auth"))
+                .expect("parse merged auth");
+        assert_eq!(auth["other::scope"]["key"].as_str(), Some("preserve-me"));
+        assert_eq!(auth[IMAGE_AUTH_SCOPE]["key"].as_str(), Some("second-key"));
+        assert_eq!(
+            auth[IMAGE_AUTH_SCOPE]["user_id"].as_str(),
+            Some(IMAGE_AUTH_OWNER)
+        );
+
+        apply_image_credential_action(&ImageCredentialAction::RestorePrevious)
+            .expect("restore previous scope");
+        let restored: Value =
+            serde_json::from_str(&fs::read_to_string(&auth_path).expect("read restored auth"))
+                .expect("parse restored auth");
+        assert_eq!(restored[IMAGE_AUTH_SCOPE]["key"].as_str(), Some("user-key"));
+        assert_eq!(
+            restored["other::scope"]["key"].as_str(),
+            Some("preserve-me")
+        );
+        assert!(!get_grok_image_auth_state_path().exists());
+
+        apply_image_credential_action(&ImageCredentialAction::SetManaged("third-key".to_string()))
+            .expect("third sync");
+        let mut manually_edited: Value = serde_json::from_str(
+            &fs::read_to_string(&auth_path).expect("read auth before manual edit"),
+        )
+        .expect("parse auth before manual edit");
+        manually_edited[IMAGE_AUTH_SCOPE]["key"] = json!("user-took-over");
+        write_owner_only_json(&auth_path, &manually_edited).expect("write manual auth edit");
+
+        apply_image_credential_action(&ImageCredentialAction::RestorePrevious)
+            .expect("leave manually edited scope");
+        let manually_preserved: Value = serde_json::from_str(
+            &fs::read_to_string(&auth_path).expect("read manually preserved auth"),
+        )
+        .expect("parse manually preserved auth");
+        assert_eq!(
+            manually_preserved[IMAGE_AUTH_SCOPE]["key"].as_str(),
+            Some("user-took-over")
+        );
+        assert!(get_grok_image_auth_state_path().exists());
+
+        apply_image_credential_action(&ImageCredentialAction::RestorePrevious)
+            .expect("leave manually edited scope on repeated restore");
+        let repeatedly_preserved: Value = serde_json::from_str(
+            &fs::read_to_string(&auth_path).expect("read repeatedly preserved auth"),
+        )
+        .expect("parse repeatedly preserved auth");
+        assert_eq!(
+            repeatedly_preserved[IMAGE_AUTH_SCOPE]["key"].as_str(),
+            Some("user-took-over")
+        );
+        assert!(get_grok_image_auth_state_path().exists());
+
+        write_text_file(&auth_path, "{not-json").expect("seed invalid auth");
+        assert!(
+            apply_image_credential_action(&ImageCredentialAction::SetManaged(
+                "recovered-key".to_string()
+            ))
+            .is_err()
+        );
+        assert_eq!(
+            fs::read_to_string(&auth_path).expect("read unchanged invalid auth"),
+            "{not-json"
+        );
+        assert!(get_grok_image_auth_state_path().exists());
 
         match original_test_home {
             Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),

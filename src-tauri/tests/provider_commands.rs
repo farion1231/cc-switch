@@ -80,9 +80,85 @@ fn grokbuild_import_and_switch_write_live_config() {
     switch_provider_test_hook(&state, AppType::GrokBuild, "relay")
         .expect("switch Grok Build provider");
 
+    let live_config = std::fs::read_to_string(&live_path).expect("read switched Grok Build config");
+    let live = live_config
+        .parse::<toml::Value>()
+        .expect("parse switched Grok Build config");
     assert_eq!(
-        std::fs::read_to_string(&live_path).expect("read switched Grok Build config"),
-        next_config
+        live["model"]["grok-4.5"]["base_url"].as_str(),
+        Some("https://new.example/v1")
+    );
+    assert_eq!(
+        live["endpoints"]["xai_api_base_url"].as_str(),
+        Some("https://new.example/v1")
+    );
+    assert_eq!(live["features"]["image_gen"].as_bool(), Some(true));
+    assert_eq!(
+        live["features"]["image_gen_model_override"].as_str(),
+        Some("grok-imagine-image")
+    );
+    let auth: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(home.join(".grok").join("auth.json"))
+            .expect("read Grok Build image credentials"),
+    )
+    .expect("parse Grok Build image credentials");
+    assert_eq!(auth["xai::api_key"]["key"].as_str(), Some("new-key"));
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::GrokBuild.as_str())
+            .expect("read Grok Build current provider")
+            .as_deref(),
+        Some("relay")
+    );
+}
+
+#[test]
+fn grokbuild_invalid_auth_disables_images_but_switches_chat_provider() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let grok_dir = home.join(".grok");
+    let live_path = grok_dir.join("config.toml");
+    std::fs::create_dir_all(&grok_dir).expect("create grok config dir");
+    let imported_config = grokbuild_config("Imported", "https://old.example/v1", "old-key");
+    std::fs::write(&live_path, &imported_config).expect("seed Grok Build config");
+
+    let state = create_test_state().expect("create test state");
+    import_default_config_test_hook(&state, AppType::GrokBuild)
+        .expect("import Grok Build default provider");
+
+    let next_config = grokbuild_config("Relay", "https://new.example/v1", "new-key");
+    state
+        .db
+        .save_provider(
+            AppType::GrokBuild.as_str(),
+            &Provider::with_id(
+                "relay".to_string(),
+                "Relay".to_string(),
+                json!({ "config": next_config }),
+                None,
+            ),
+        )
+        .expect("save second Grok Build provider");
+    std::fs::write(grok_dir.join("auth.json"), "{not-json").expect("seed invalid auth");
+
+    switch_provider_test_hook(&state, AppType::GrokBuild, "relay")
+        .expect("invalid image auth must not block the chat provider switch");
+
+    let live = std::fs::read_to_string(&live_path)
+        .expect("read switched live config")
+        .parse::<toml::Value>()
+        .expect("parse switched live config");
+    assert_eq!(
+        live["model"]["grok-4.5"]["base_url"].as_str(),
+        Some("https://new.example/v1")
+    );
+    assert!(live.get("endpoints").is_none());
+    assert!(live.get("features").is_none());
+    assert_eq!(
+        std::fs::read_to_string(grok_dir.join("auth.json")).expect("read unchanged auth"),
+        "{not-json"
     );
     assert_eq!(
         state
