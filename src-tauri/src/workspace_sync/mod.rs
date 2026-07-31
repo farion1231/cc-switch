@@ -4,9 +4,13 @@
 
 pub mod adapters;
 
+pub mod blobs;
+
 pub mod crypto;
 
 pub mod manifest;
+
+pub mod merge;
 
 pub mod model;
 
