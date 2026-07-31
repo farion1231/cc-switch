@@ -172,7 +172,8 @@
         "oauthHint": "Google 官方使用 OAuth 个人认证，无需填写 API Key。首次使用时会自动打开浏览器进行登录。",
         "apiKeyPlaceholder": "请输入 Gemini API Key"
       }
-    }
+    },
+    "duplicateLiveIdsLoadFailed": "读取配置中的供应商标识失败，请先修复配置后再试"
   },
   "claudeCode": {
     "needsRouting": "需要路由",
@@ -221,7 +222,8 @@
       "tooltip": {
         "active": "Claude Desktop 本地路由已开启 - {{address}}:{{port}}",
         "inactive": "开启 Claude Desktop 本地路由，用于需要模型映射或格式转换的供应商。当前配置地址：{{address}}:{{port}}"
-      }
+      },
+      "stopBlockedByTakeover": "其它应用正在使用代理接管。请先在设置中关闭对应应用接管，再停止本地路由。"
     }
   },
   "notifications": {
@@ -270,7 +272,8 @@
     "backfillWarning": "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
     "windowControlFailed": "窗口控制失败：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切换到官方供应商，使用路由访问官方 API 可能导致账号被封禁",
-    "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由"
+    "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由",
+    "proxyReasonClaudeDesktop": "使用 Claude Desktop 本地路由模式"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -1168,7 +1171,8 @@
     "fetchModelsAuthFailed": "API Key 无效或无权限",
     "fetchModelsNotSupported": "该供应商不支持获取模型列表",
     "fetchModelsEndpointNotFound": "未找到可用的模型列表端点，请检查 Base URL 或确认供应商是否开放该接口",
-    "fetchModelsTimeout": "请求超时，请检查网络连接"
+    "fetchModelsTimeout": "请求超时，请检查网络连接",
+    "requiredFields": "请填写供应商名称、API 地址、API Key 和模型"
   },
   "copilot": {
     "authSection": "GitHub Copilot 认证",
@@ -1365,7 +1369,8 @@
     "reasoningEffortHint": "上游支持 low/high/max 等思考深度控制时启用。启用后会自动启用思考模式，并把 Codex 的 reasoning.effort 转成上游 Chat 参数。",
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "预设供应商已自动配置；自定义供应商会按名称/地址自动推断。仅当自动识别不准时才需手动覆盖。",
-    "advancedSectionHint": "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。"
+    "advancedSectionHint": "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。",
+    "noCommonConfigToApply": "通用配置片段为空或没有可写入的内容"
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",
@@ -1464,6 +1469,7 @@
     "totalRequests": "总请求数",
     "totalCost": "总成本",
     "cost": "成本",
+    "unpriced": "未定价",
     "perMillion": "(每百万)",
     "trends": "使用趋势",
     "rangeToday": "过去 24 小时 (按小时)",
@@ -2549,7 +2555,8 @@
     },
     "tooltip": {
       "enabled": "{{app}} 故障转移已启用\n按队列优先级（P1→P2→...）选择供应商",
-      "disabled": "启用 {{app}} 故障转移\n将立即切换到队列 P1，并在失败时自动切换到下一个"
+      "disabled": "启用 {{app}} 故障转移\n将立即切换到队列 P1，并在失败时自动切换到下一个",
+      "takeoverRequired": "请先接管 {{app}}，再启用故障转移"
     }
   },
   "proxy": {
@@ -2727,7 +2734,9 @@
     },
     "server": {
       "started": "路由服务已启动 - {{address}}:{{port}}",
-      "startFailed": "启动路由服务失败: {{detail}}"
+      "startFailed": "启动路由服务失败: {{detail}}",
+      "stopped": "路由服务已停止",
+      "stopFailed": "停止路由服务失败：{{detail}}"
     },
     "stoppedWithRestore": "路由服务已关闭，已恢复所有路由配置",
     "stopWithRestoreFailed": "停止失败: {{detail}}"

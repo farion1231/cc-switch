@@ -172,7 +172,8 @@
         "oauthHint": "Google 官方使用 OAuth 個人驗證，無需填寫 API Key。首次使用時會自動開啟瀏覽器進行登入。",
         "apiKeyPlaceholder": "請輸入 Gemini API Key"
       }
-    }
+    },
+    "duplicateLiveIdsLoadFailed": "讀取設定中的供應商識別碼失敗，請先修復設定後再試"
   },
   "claudeCode": {
     "needsRouting": "需要路由",
@@ -221,7 +222,8 @@
       "tooltip": {
         "active": "Claude Desktop 本地路由已開啟 - {{address}}:{{port}}",
         "inactive": "開啟 Claude Desktop 本地路由，用於需要模型對應或格式轉換的供應商。目前設定位址：{{address}}:{{port}}"
-      }
+      },
+      "stopBlockedByTakeover": "其他應用正在使用代理接管。請先在設定中關閉對應應用接管，再停止本機路由。"
     }
   },
   "notifications": {
@@ -270,7 +272,8 @@
     "backfillWarning": "切換成功，但舊供應商設定回填失敗，您手動修改的設定可能未儲存",
     "windowControlFailed": "視窗控制失敗：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切換至官方供應商，使用路由存取官方 API 可能導致帳號被封鎖",
-    "proxyOfficialWarning": "目前供應商 {{name}} 是官方供應商，建議切換至第三方供應商後再使用本地路由"
+    "proxyOfficialWarning": "目前供應商 {{name}} 是官方供應商，建議切換至第三方供應商後再使用本地路由",
+    "proxyReasonClaudeDesktop": "使用 Claude Desktop 本機路由模式"
   },
   "confirm": {
     "deleteProvider": "刪除供應商",
@@ -1169,7 +1172,8 @@
     "fetchModelsAuthFailed": "API Key 無效或無權限",
     "fetchModelsNotSupported": "該供應商不支援取得模型清單",
     "fetchModelsEndpointNotFound": "未找到可用的模型清單端點，請檢查 Base URL 或確認供應商是否開放該 API",
-    "fetchModelsTimeout": "請求逾時，請檢查網路連線"
+    "fetchModelsTimeout": "請求逾時，請檢查網路連線",
+    "requiredFields": "請填寫供應商名稱、API 位址、API Key 和模型"
   },
   "copilot": {
     "authSection": "GitHub Copilot 驗證",
@@ -1366,7 +1370,8 @@
     "reasoningEffortHint": "上游支援 low/high/max 等思考深度控制時啟用。啟用後會自動啟用思考模式，並把 Codex 的 reasoning.effort 轉成上游 Chat 參數。",
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "預設供應商已自動設定；自訂供應商會按名稱/位址自動推斷。僅當自動識別不準時才需手動覆寫。",
-    "advancedSectionHint": "包含上游格式、模型映射、思考能力與自訂 User-Agent。使用 Chat Completions 協定的供應商需開啟路由接管才能使用。"
+    "advancedSectionHint": "包含上游格式、模型映射、思考能力與自訂 User-Agent。使用 Chat Completions 協定的供應商需開啟路由接管才能使用。",
+    "noCommonConfigToApply": "通用設定片段為空或沒有可寫入的內容"
   },
   "geminiConfig": {
     "envFile": "環境變數 (.env)",
@@ -1465,6 +1470,7 @@
     "totalRequests": "總請求數",
     "totalCost": "總成本",
     "cost": "成本",
+    "unpriced": "未定價",
     "perMillion": "(每百萬)",
     "trends": "使用趨勢",
     "rangeToday": "過去 24 小時 (按小時)",
@@ -2550,7 +2556,8 @@
     },
     "tooltip": {
       "enabled": "{{app}} 故障轉移已啟用\n按佇列優先順序（P1→P2→...）選擇供應商",
-      "disabled": "啟用 {{app}} 故障轉移\n將立即切換至佇列 P1，並在失敗時自動切換至下一個"
+      "disabled": "啟用 {{app}} 故障轉移\n將立即切換至佇列 P1，並在失敗時自動切換至下一個",
+      "takeoverRequired": "請先接管 {{app}}，再啟用故障轉移"
     }
   },
   "proxy": {
@@ -2728,7 +2735,9 @@
     },
     "server": {
       "started": "路由服務已啟動 - {{address}}:{{port}}",
-      "startFailed": "啟動路由服務失敗：{{detail}}"
+      "startFailed": "啟動路由服務失敗：{{detail}}",
+      "stopped": "路由服務已停止",
+      "stopFailed": "停止路由服務失敗：{{detail}}"
     },
     "stoppedWithRestore": "路由服務已關閉，已還原所有路由設定",
     "stopWithRestoreFailed": "停止失敗：{{detail}}"
