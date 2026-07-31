@@ -4,6 +4,8 @@ use bytes::Bytes;
 use crate::AppError;
 
 pub mod memory;
+pub mod s3;
+pub mod webdav;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RemoteObject {
