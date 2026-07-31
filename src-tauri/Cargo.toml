@@ -47,6 +47,7 @@ zstd = "0.13"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
 futures = "0.3"
 async-stream = "0.3"
+async-trait = "0.1"
 bytes = "1.5"
 axum = "0.7"
 tower = "0.4"
@@ -79,6 +80,11 @@ rust_decimal = "1.33"
 uuid = { version = "1.11", features = ["v4"] }
 sha2 = "0.10"
 hmac = "0.12"
+argon2 = { version = "0.5", features = ["zeroize"] }
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+zeroize = { version = "1", features = ["derive"] }
+rand = "0.8"
 json5 = "0.4"
 json-five = "0.3.1"
 sys-locale = "0.3"
