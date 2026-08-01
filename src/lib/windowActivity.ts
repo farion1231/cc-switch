@@ -1,4 +1,4 @@
-import { focusManager } from "@tanstack/react-query";
+import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 const HEARTBEAT_INTERVAL_MS = 3000;
@@ -33,7 +33,6 @@ function startHeartbeat() {
 
 function setWindowActive(active: boolean) {
   document.documentElement.dataset.windowActive = String(active);
-  focusManager.setFocused(active);
 
   if (active) {
     startHeartbeat();
@@ -52,9 +51,11 @@ export function initializeWindowActivity() {
   window.addEventListener("focus", () => setWindowActive(true));
   window.addEventListener("blur", () => setWindowActive(false));
 
-  void getCurrentWindow()
-    .onFocusChanged(({ payload }) => setWindowActive(payload))
-    .catch((error) => {
-      console.error("Failed to observe window focus changes", error);
-    });
+  if (isTauri()) {
+    void getCurrentWindow()
+      .onFocusChanged(({ payload }) => setWindowActive(payload))
+      .catch((error) => {
+        console.error("Failed to observe window focus changes", error);
+      });
+  }
 }
