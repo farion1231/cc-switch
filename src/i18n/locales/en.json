@@ -770,6 +770,8 @@
     "openclawConfigDirDescription": "Override OpenClaw configuration directory (openclaw.json).",
     "hermesConfigDir": "Hermes Configuration Directory",
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
+    "qodercliConfigDir": "Qoder CLI Configuration Directory",
+    "qodercliConfigDirDescription": "Override Qoder CLI configuration directory (settings.json).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
@@ -777,6 +779,7 @@
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
+    "browsePlaceholderQodercli": "e.g., /home/<your-username>/.qoder",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",
@@ -887,7 +890,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "qodercli": "Qoder CLI"
   },
   "grokBuild": {
     "apiBackend": "API backend",
@@ -1441,6 +1445,29 @@
     "modelOptionKeyPlaceholder": "provider",
     "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
   },
+  "qodercli": {
+    "model": "Qoder Model",
+    "selectModel": "Select an official preset or add another model",
+    "catalogHint": "Providers and plan types come from Qoder's official BYOK catalog. You can select an official preset or add another model ID.",
+    "catalogProviderHint": "💡 Providers and plan types come from Qoder's official BYOK catalog. Select an official preset or enter another model supported by that provider.",
+    "addOtherModel": "+ Add another model...",
+    "planType": "Plan Type",
+    "selectPlanType": "Select a plan type",
+    "modelIdPlaceholder": "Enter a model ID supported by the provider",
+    "customModelHint": "The model ID is passed to the provider for validation. Enter a model that is available to this API key.",
+    "models": "Models",
+    "modelsHint": "Configure available models and their display names",
+    "addModel": "Add Model",
+    "removeModel": "Remove model",
+    "modelId": "Model ID",
+    "modelName": "Display Name",
+    "noModels": "No models yet. Click \"Add Model\" to create one.",
+    "toggleModelDetails": "Toggle model details",
+    "maxInputTokens": "Max Input Tokens",
+    "isReasoning": "Reasoning model",
+    "isVl": "Vision model",
+    "defaultModelHint": "The first model is used as the default model after switching."
+  },
   "providerPreset": {
     "label": "Provider Preset",
     "custom": "Custom Configuration",
@@ -1508,7 +1535,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "grokbuild": "Grok Build"
+      "grokbuild": "Grok Build",
+      "qodercli": "Qoder CLI"
     },
     "rawInputLabel": "Raw",
     "rebuildCodex": {

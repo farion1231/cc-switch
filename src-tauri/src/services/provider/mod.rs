@@ -23,7 +23,7 @@ use crate::store::AppState;
 // Re-export sub-module functions for external access
 pub use live::{
     import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings,
+    import_opencode_providers_from_live, import_qodercli_providers_from_live, read_live_settings,
     should_import_default_config_on_startup, sync_current_to_live,
     update_toml_common_config_snippet,
 };
@@ -39,7 +39,7 @@ pub(crate) use live::{
 // Internal re-exports
 use live::{
     remove_hermes_provider_from_live, remove_openclaw_provider_from_live,
-    remove_opencode_provider_from_live, write_gemini_live,
+    remove_opencode_provider_from_live, remove_qodercli_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
 
@@ -2539,8 +2539,10 @@ impl ProviderService {
     ///
     /// 对于累加模式应用（OpenCode, OpenClaw），不存在"当前供应商"概念，直接返回空字符串。
     pub fn current(state: &AppState, app_type: AppType) -> Result<String, AppError> {
-        // Additive mode apps have no "current" provider concept
-        if app_type.is_additive_mode() {
+        // Additive mode apps have no "current" provider concept —
+        // except qodercli: its live config keeps a top-level `model.name`
+        // active pointer, so "current" is meaningful (UI shows 已在用).
+        if app_type.is_additive_mode() && !matches!(app_type, AppType::QoderCli) {
             return Ok(String::new());
         }
         crate::settings::get_effective_current_provider(&state.db, &app_type)
@@ -2617,6 +2619,93 @@ impl ProviderService {
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
         if provider_id_changed {
+            if matches!(app_type, AppType::QoderCli) {
+                let Some(existing_provider) = existing_provider.clone() else {
+                    return Err(AppError::Message(format!(
+                        "Original provider '{}' does not exist in app '{}'",
+                        original_id,
+                        app_type.as_str()
+                    )));
+                };
+
+                if state
+                    .db
+                    .get_provider_by_id(&provider.id, app_type.as_str())?
+                    .is_some()
+                {
+                    return Err(AppError::Message(format!(
+                        "Qoder model '{}' already exists",
+                        provider.id
+                    )));
+                }
+
+                let original_in_live = Self::check_live_config_exists(
+                    &app_type,
+                    &original_id,
+                    Self::provider_live_config_managed(&existing_provider),
+                )?;
+                let next_in_live =
+                    Self::check_live_config_exists(&app_type, &provider.id, Some(false))?;
+                if next_in_live {
+                    return Err(AppError::Message(format!(
+                        "Qoder model '{}' already exists in the live config",
+                        provider.id
+                    )));
+                }
+
+                let local_current = crate::settings::get_current_provider(&app_type);
+                let database_current = state.db.get_current_provider(app_type.as_str())?;
+                let was_current = local_current.as_deref() == Some(original_id.as_str())
+                    || database_current.as_deref() == Some(original_id.as_str());
+
+                Self::set_provider_live_config_managed(&mut provider, original_in_live);
+                if original_in_live {
+                    let config =
+                        crate::qodercli_config::parse_provider_config(&provider.settings_config)
+                            .map_err(|e| {
+                                AppError::Message(format!(
+                                    "Invalid Qoder provider configuration: {e}"
+                                ))
+                            })?;
+                    crate::qodercli_config::set_typed_provider(&original_id, &config)?;
+                }
+
+                if let Err(error) = state.db.save_provider(app_type.as_str(), &provider) {
+                    if original_in_live {
+                        if let Ok(old_config) = crate::qodercli_config::parse_provider_config(
+                            &existing_provider.settings_config,
+                        ) {
+                            if let Err(rollback_error) = crate::qodercli_config::set_typed_provider(
+                                &provider.id,
+                                &old_config,
+                            ) {
+                                log::warn!(
+                                    "Failed to roll back Qoder model rename '{}': {rollback_error}",
+                                    original_id
+                                );
+                            }
+                        }
+                    }
+                    return Err(error);
+                }
+
+                if was_current {
+                    state
+                        .db
+                        .set_current_provider(app_type.as_str(), &provider.id)?;
+                    crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
+                    if original_in_live {
+                        crate::qodercli_config::apply_switch_defaults(
+                            &provider.id,
+                            &provider.settings_config,
+                        )?;
+                    }
+                }
+
+                state.db.delete_provider(app_type.as_str(), &original_id)?;
+                return Ok(true);
+            }
+
             if !app_type.is_additive_mode() {
                 return Err(AppError::Message(
                     "Only additive-mode providers support changing provider key".to_string(),
@@ -2870,6 +2959,7 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(id)?,
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
+                    AppType::QoderCli => remove_qodercli_provider_from_live(id)?,
                     _ => {}
                 }
             }
@@ -2934,6 +3024,9 @@ impl ProviderService {
             }
             AppType::Hermes => {
                 remove_hermes_provider_from_live(id)?;
+            }
+            AppType::QoderCli => {
+                remove_qodercli_provider_from_live(id)?;
             }
             _ => {
                 return Err(AppError::Message(format!(
@@ -3133,8 +3226,10 @@ impl ProviderService {
             }
         }
 
-        // Additive mode apps skip setting is_current (no such concept)
-        if !app_type.is_additive_mode() {
+        // Additive mode apps skip setting is_current (no such concept) —
+        // except qodercli: it has an active-provider pointer (`model.name`),
+        // so record "current" as well; the UI 启用 button greys out on it.
+        if !app_type.is_additive_mode() || matches!(app_type, AppType::QoderCli) {
             // Update local settings (device-level, takes priority)
             crate::settings::set_current_provider(&app_type, Some(id))?;
 
@@ -3188,6 +3283,24 @@ impl ProviderService {
             }
         }
 
+        // qodercli 同为 additive 模式：切换不仅要把 provider 的 customModels 条目
+        // 写进 live 配置，还要把顶层 `model.name` 指向当前 provider 的
+        // `<id>/<models[0]>`，否则 qoder CLI 仍会用切换前的激活项。
+        if matches!(app_type, AppType::QoderCli) {
+            if let Err(e) = crate::qodercli_config::apply_switch_defaults(
+                &provider.id,
+                &provider.settings_config,
+            ) {
+                log::warn!(
+                    "Failed to update qodercli active model after switching to '{}': {e}",
+                    provider.id
+                );
+                result
+                    .warnings
+                    .push(format!("qodercli_model_defaults_failed:{}", provider.id));
+            }
+        }
+
         // For additive-mode providers that were DB-only (live_config_managed == Some(false)),
         // flip the flag to true now that the provider has been successfully written to the live
         // file. This ensures sync_all_providers_to_live() will include it on future syncs.
@@ -3203,6 +3316,7 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
+                    AppType::QoderCli => remove_qodercli_provider_from_live(&provider.id),
                     _ => Ok(()),
                 };
 
@@ -3489,6 +3603,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::QoderCli => Ok(String::new()), // qodercli doesn't use common config snippets
         }
     }
 
@@ -3506,6 +3621,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::QoderCli => Ok(String::new()), // qodercli doesn't use common config snippets
         }
     }
 
@@ -4271,6 +4387,27 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::QoderCli => {
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.qodercli.settings.not_object",
+                        "qoder CLI 配置必须是 JSON 对象",
+                        "qoder CLI configuration must be a JSON object",
+                    ));
+                }
+                let config =
+                    crate::qodercli_config::parse_provider_config(&provider.settings_config)
+                        .map_err(|error| {
+                            AppError::localized(
+                                "provider.qodercli.settings.invalid",
+                                format!("qoder CLI 配置格式无效: {error}"),
+                                format!("Invalid qoder CLI configuration: {error}"),
+                            )
+                        })?;
+                // Validate before save_provider() so malformed deep links or API
+                // calls cannot leave a database row when the live write fails.
+                crate::qodercli_config::validate_provider_config(&config)?;
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -4475,15 +4612,15 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::OpenClaw | AppType::Hermes => {
-                // OpenClaw/Hermes use apiKey and baseUrl directly on the object
+            AppType::OpenClaw | AppType::Hermes | AppType::QoderCli => {
+                // OpenClaw/Hermes/qodercli use apiKey and baseUrl directly on the object
                 let api_key = provider
                     .settings_config
                     .get("apiKey")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
                         AppError::localized(
-                            "provider.openclaw.api_key.missing",
+                            "provider.api_key.missing",
                             "缺少 API Key",
                             "API key is missing",
                         )

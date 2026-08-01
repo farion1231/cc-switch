@@ -184,6 +184,26 @@ export function ProviderCard({
     return extractApiUrl(provider, fallbackUrlText);
   }, [provider, fallbackUrlText]);
 
+  const displayName = useMemo(() => {
+    if (appId !== "qodercli") {
+      return provider.name;
+    }
+
+    const modelDisplayName = (provider.settingsConfig as Record<string, any>)
+      ?.models?.[0]?.displayName;
+    if (
+      typeof modelDisplayName !== "string" ||
+      !modelDisplayName.trim() ||
+      provider.name
+        .toLocaleLowerCase()
+        .includes(modelDisplayName.trim().toLocaleLowerCase())
+    ) {
+      return provider.name;
+    }
+
+    return `${provider.name} · ${modelDisplayName.trim()}`;
+  }, [appId, provider]);
+
   const isClickableUrl = useMemo(() => {
     if (provider.notes?.trim()) {
       return false;
@@ -344,7 +364,7 @@ export function ProviderCard({
                 provider.icon,
                 provider.iconColor,
               )}
-              name={provider.name}
+              name={displayName}
               color={provider.iconColor}
               size={20}
             />
@@ -353,7 +373,7 @@ export function ProviderCard({
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex flex-wrap items-center gap-2 min-h-7">
               <h3 className="text-base font-semibold leading-none">
-                {provider.name}
+                {displayName}
               </h3>
 
               {isOmo && (

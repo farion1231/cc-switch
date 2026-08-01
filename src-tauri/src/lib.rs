@@ -29,8 +29,9 @@ mod prompt;
 mod prompt_files;
 mod provider;
 mod proxy;
+mod qodercli_config;
 mod services;
-mod session_manager;
+pub mod session_manager;
 mod settings;
 mod store;
 
@@ -52,9 +53,10 @@ pub use grok_config::get_grok_config_path;
 pub use mcp::{
     import_from_claude, import_from_codex, import_from_gemini, import_from_grokbuild,
     remove_server_from_claude, remove_server_from_codex, remove_server_from_gemini,
-    remove_server_from_grokbuild, sync_enabled_to_claude, sync_enabled_to_codex,
-    sync_enabled_to_gemini, sync_single_server_to_claude, sync_single_server_to_codex,
-    sync_single_server_to_gemini, sync_single_server_to_grokbuild,
+    remove_server_from_grokbuild, remove_server_from_qodercli, sync_enabled_to_claude,
+    sync_enabled_to_codex, sync_enabled_to_gemini, sync_single_server_to_claude,
+    sync_single_server_to_codex, sync_single_server_to_gemini, sync_single_server_to_grokbuild,
+    sync_single_server_to_qodercli,
 };
 pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
@@ -829,6 +831,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No Hermes provider changes from live config"),
                 Err(e) => log::warn!("✗ Failed to import Hermes providers: {e}"),
             }
+            match crate::services::provider::import_qodercli_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} qodercli provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No qodercli provider changes from live config"),
+                Err(e) => log::warn!("✗ Failed to import qodercli providers: {e}"),
+            }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
@@ -1568,6 +1577,9 @@ pub fn run() {
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,
+            // qodercli specific
+            commands::import_qodercli_providers_from_live,
+            commands::get_qodercli_live_provider_ids,
             // OpenClaw specific
             commands::import_openclaw_providers_from_live,
             commands::get_openclaw_live_provider_ids,

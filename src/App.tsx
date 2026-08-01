@@ -130,9 +130,18 @@ const VALID_APPS: AppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "qodercli",
 ];
 
 const getInitialApp = (): AppId => {
+  if (import.meta.env.VITE_BROWSER_PREVIEW === "true") {
+    const previewApp = new URLSearchParams(window.location.search).get(
+      "app",
+    ) as AppId | null;
+    if (previewApp && VALID_APPS.includes(previewApp)) {
+      return previewApp;
+    }
+  }
   const saved = localStorage.getItem(STORAGE_KEY) as AppId | null;
   if (saved && VALID_APPS.includes(saved)) {
     return saved;
@@ -159,6 +168,14 @@ const VALID_VIEWS: View[] = [
 ];
 
 const getInitialView = (): View => {
+  if (import.meta.env.VITE_BROWSER_PREVIEW === "true") {
+    const previewView = new URLSearchParams(window.location.search).get(
+      "view",
+    ) as View | null;
+    if (previewView && VALID_VIEWS.includes(previewView)) {
+      return previewView;
+    }
+  }
   const saved = localStorage.getItem(VIEW_STORAGE_KEY) as View | null;
   if (saved && VALID_VIEWS.includes(saved)) {
     return saved;
@@ -176,8 +193,16 @@ function App() {
   const [currentView, setCurrentView] = useState<View>(getInitialView);
   const [skillsDiscoverySource, setSkillsDiscoverySource] =
     useState<SkillsPageSource>("repos");
-  const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
-  const [isAddOpen, setIsAddOpen] = useState(false);
+  const [settingsDefaultTab, setSettingsDefaultTab] = useState(() =>
+    import.meta.env.VITE_BROWSER_PREVIEW === "true"
+      ? new URLSearchParams(window.location.search).get("tab") || "general"
+      : "general",
+  );
+  const [isAddOpen, setIsAddOpen] = useState(
+    () =>
+      import.meta.env.VITE_BROWSER_PREVIEW === "true" &&
+      new URLSearchParams(window.location.search).get("add") === "1",
+  );
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
 
   useEffect(() => {
@@ -198,6 +223,7 @@ function App() {
     opencode: true,
     openclaw: true,
     hermes: true,
+    qodercli: true,
   };
 
   const getFirstVisibleApp = (): AppId => {
@@ -209,6 +235,7 @@ function App() {
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";
+    if (visibleApps.qodercli) return "qodercli";
     return "claude"; // fallback
   };
 
@@ -228,7 +255,8 @@ function App() {
       sharedFeatureApp !== "opencode" &&
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
-      sharedFeatureApp !== "hermes"
+      sharedFeatureApp !== "hermes" &&
+      sharedFeatureApp !== "qodercli"
     ) {
       setCurrentView("providers");
     }
@@ -295,7 +323,8 @@ function App() {
     sharedFeatureApp === "opencode" ||
     sharedFeatureApp === "openclaw" ||
     sharedFeatureApp === "gemini" ||
-    sharedFeatureApp === "hermes";
+    sharedFeatureApp === "hermes" ||
+    sharedFeatureApp === "qodercli";
 
   const {
     addProvider,

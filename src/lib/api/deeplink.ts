@@ -14,7 +14,8 @@ export interface DeepLinkImportRequest {
     | "grokbuild"
     | "opencode"
     | "openclaw"
-    | "hermes";
+    | "hermes"
+    | "qodercli";
   name?: string;
   enabled?: boolean;
 
@@ -24,6 +25,9 @@ export interface DeepLinkImportRequest {
   apiKey?: string;
   icon?: string;
   model?: string;
+  provider?: string;
+  type?: string;
+  format?: string;
   notes?: string;
   haikuModel?: string;
   sonnetModel?: string;

@@ -887,7 +887,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "qodercli": "Qoder CLI"
   },
   "grokBuild": {
     "apiBackend": "API Backend",
@@ -1441,6 +1442,29 @@
     "modelOptionKeyPlaceholder": "provider",
     "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
   },
+  "qodercli": {
+    "model": "Qoder 模型",
+    "selectModel": "请选择官方预设或添加其他模型",
+    "catalogHint": "供应商和套餐类型来自 Qoder 官方 BYOK 目录；可选择官方预设或添加其他模型。",
+    "catalogProviderHint": "💡 供应商和套餐类型来自 Qoder 官方 BYOK 目录；模型可选择官方预设，也可手动填写该供应商支持的其他模型。",
+    "addOtherModel": "+ 添加其他模型…",
+    "planType": "套餐类型",
+    "selectPlanType": "请选择套餐类型",
+    "modelIdPlaceholder": "输入供应商实际支持的模型 ID",
+    "customModelHint": "模型名会原样交给该供应商验证；请填写当前 API Key 实际可用的模型 ID。",
+    "models": "模型配置",
+    "modelsHint": "配置可用的模型及其显示名称",
+    "addModel": "添加模型",
+    "removeModel": "删除模型",
+    "modelId": "模型 ID",
+    "modelName": "显示名称",
+    "noModels": "暂无模型，点击「添加模型」新增一个。",
+    "toggleModelDetails": "展开或收起模型详情",
+    "maxInputTokens": "最大输入 Tokens",
+    "isReasoning": "推理模型",
+    "isVl": "视觉模型",
+    "defaultModelHint": "第一个模型将作为切换后的默认模型。"
+  },
   "providerPreset": {
     "label": "预设供应商",
     "custom": "自定义配置",
@@ -1508,7 +1532,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "grokbuild": "Grok Build"
+      "grokbuild": "Grok Build",
+      "qodercli": "Qoder CLI"
     },
     "rawInputLabel": "原始",
     "rebuildCodex": {

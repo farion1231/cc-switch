@@ -887,7 +887,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "qodercli": "Qoder CLI"
   },
   "grokBuild": {
     "apiBackend": "API Backend",
@@ -1441,6 +1442,29 @@
     "modelOptionKeyPlaceholder": "provider",
     "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
   },
+  "qodercli": {
+    "model": "Qoder モデル",
+    "selectModel": "公式プリセットを選択するか、別のモデルを追加してください",
+    "catalogHint": "プロバイダーとプランタイプは Qoder 公式 BYOK カタログに基づきます。公式プリセットまたは別のモデル ID を追加できます。",
+    "catalogProviderHint": "💡 プロバイダーとプランタイプは Qoder 公式 BYOK カタログに基づきます。公式プリセットを選択するか、そのプロバイダーが対応する別のモデルを入力できます。",
+    "addOtherModel": "+ 別のモデルを追加…",
+    "planType": "プランタイプ",
+    "selectPlanType": "プランタイプを選択",
+    "modelIdPlaceholder": "プロバイダーが対応するモデル ID を入力",
+    "customModelHint": "モデル ID はプロバイダー側で検証されます。この API Key で利用できるモデルを入力してください。",
+    "models": "モデル設定",
+    "modelsHint": "利用可能なモデルと表示名を設定します",
+    "addModel": "モデルを追加",
+    "removeModel": "モデルを削除",
+    "modelId": "モデル ID",
+    "modelName": "表示名",
+    "noModels": "モデルがありません。「モデルを追加」で追加してください。",
+    "toggleModelDetails": "モデル詳細の表示切替",
+    "maxInputTokens": "最大入力トークン",
+    "isReasoning": "推論モデル",
+    "isVl": "ビジョンモデル",
+    "defaultModelHint": "最初のモデルが切り替え後のデフォルトモデルになります。"
+  },
   "providerPreset": {
     "label": "プロバイダータイプ",
     "custom": "カスタム設定",
@@ -1508,7 +1532,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "grokbuild": "Grok Build"
+      "grokbuild": "Grok Build",
+      "qodercli": "Qoder CLI"
     },
     "rawInputLabel": "原始",
     "rebuildCodex": {
