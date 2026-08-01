@@ -440,6 +440,28 @@ pub(crate) fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64
     Ok(result.unwrap_or((0, 0)))
 }
 
+/// 获取同步进度，并包含上次已处理的文件大小。
+pub(crate) fn get_sync_state_with_size(
+    db: &Database,
+    file_path: &str,
+) -> Result<(i64, i64, u64), AppError> {
+    let conn = lock_conn!(db.conn);
+    let result = conn.query_row(
+        "SELECT last_modified, last_line_offset, last_file_size
+         FROM session_log_sync WHERE file_path = ?1",
+        rusqlite::params![file_path],
+        |row| {
+            let size = row.get::<_, i64>(2)?;
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                size.max(0) as u64,
+            ))
+        },
+    );
+    Ok(result.unwrap_or((0, 0, 0)))
+}
+
 /// 返回文件 mtime 的纳秒时间戳。
 ///
 /// `session_log_sync.last_modified` 旧数据是秒级时间戳；新写入纳秒值不需要
@@ -484,6 +506,56 @@ pub(crate) fn update_sync_state_on_conn(
          VALUES (?1, ?2, ?3, ?4)",
     )
     .and_then(|mut stmt| stmt.execute(rusqlite::params![file_path, last_modified, last_offset, now]))
+    .map_err(|e| AppError::Database(format!("更新同步状态失败: {e}")))?;
+    Ok(())
+}
+
+/// 更新同步进度，并持久化已处理的文件大小。
+pub(crate) fn update_sync_state_with_size(
+    db: &Database,
+    file_path: &str,
+    last_modified: i64,
+    last_offset: i64,
+    last_file_size: u64,
+) -> Result<(), AppError> {
+    let conn = lock_conn!(db.conn);
+    update_sync_state_with_size_on_conn(
+        &conn,
+        file_path,
+        last_modified,
+        last_offset,
+        last_file_size,
+    )
+}
+
+/// [`update_sync_state_with_size`] 的免锁版本，供 Codex 批量写入事务使用。
+pub(crate) fn update_sync_state_with_size_on_conn(
+    conn: &rusqlite::Connection,
+    file_path: &str,
+    last_modified: i64,
+    last_offset: i64,
+    last_file_size: u64,
+) -> Result<(), AppError> {
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let last_file_size = last_file_size.min(i64::MAX as u64) as i64;
+
+    conn.prepare_cached(
+        "INSERT OR REPLACE INTO session_log_sync
+         (file_path, last_modified, last_line_offset, last_file_size, last_synced_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+    )
+    .and_then(|mut stmt| {
+        stmt.execute(rusqlite::params![
+            file_path,
+            last_modified,
+            last_offset,
+            last_file_size,
+            now
+        ])
+    })
     .map_err(|e| AppError::Database(format!("更新同步状态失败: {e}")))?;
     Ok(())
 }
