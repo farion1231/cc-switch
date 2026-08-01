@@ -83,7 +83,11 @@ struct ChatToResponsesState {
     tool_context: CodexToolContext,
     /// 本回合因缺少合法函数名而被丢弃的工具调用数（见 `finalize_tools`）。
     dropped_tool_calls: usize,
-    shadow_ctx: Option<(std::sync::Arc<super::gemini_shadow::GeminiShadowStore>, String, String)>,
+    shadow_ctx: Option<(
+        std::sync::Arc<super::gemini_shadow::GeminiShadowStore>,
+        String,
+        String,
+    )>,
 }
 
 impl Default for ChatToResponsesState {
@@ -113,7 +117,11 @@ impl Default for ChatToResponsesState {
 impl ChatToResponsesState {
     fn with_tool_context(
         tool_context: CodexToolContext,
-        shadow_ctx: Option<(std::sync::Arc<super::gemini_shadow::GeminiShadowStore>, String, String)>,
+        shadow_ctx: Option<(
+            std::sync::Arc<super::gemini_shadow::GeminiShadowStore>,
+            String,
+            String,
+        )>,
     ) -> Self {
         Self {
             tool_context,
@@ -850,7 +858,11 @@ pub fn create_responses_sse_stream_from_chat<E: std::error::Error + Send + 'stat
 pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
     tool_context: CodexToolContext,
-    shadow_ctx: Option<(std::sync::Arc<super::gemini_shadow::GeminiShadowStore>, String, String)>,
+    shadow_ctx: Option<(
+        std::sync::Arc<super::gemini_shadow::GeminiShadowStore>,
+        String,
+        String,
+    )>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
@@ -982,7 +994,8 @@ mod tests {
             .map(|chunk| Ok(Bytes::copy_from_slice(chunk.as_bytes())))
             .collect();
         let upstream = stream::iter(chunks);
-        let converted = create_responses_sse_stream_from_chat_with_context(upstream, tool_context, None);
+        let converted =
+            create_responses_sse_stream_from_chat_with_context(upstream, tool_context, None);
         let bytes: Vec<Bytes> = converted.map(|item| item.unwrap()).collect().await;
         String::from_utf8(bytes.concat()).unwrap()
     }

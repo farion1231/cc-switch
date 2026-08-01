@@ -1442,11 +1442,22 @@ impl RequestForwarder {
             super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
-            let is_gemini_upstream = matches!(provider.provider_type(), Some("gemini") | Some("gemini_cli"))
-                || effective_endpoint.contains("generativelanguage.googleapis.com")
-                || mapped_body.get("model").and_then(|v| v.as_str()).unwrap_or("").contains("gemini");
+            let is_gemini_upstream = matches!(
+                provider.provider_type(),
+                Some("gemini") | Some("gemini_cli")
+            ) || effective_endpoint
+                .contains("generativelanguage.googleapis.com")
+                || mapped_body
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .contains("gemini");
             let shadow_ctx = if is_gemini_upstream {
-                Some((self.gemini_shadow.as_ref(), provider.id.as_str(), self.session_id.as_str()))
+                Some((
+                    self.gemini_shadow.as_ref(),
+                    provider.id.as_str(),
+                    self.session_id.as_str(),
+                ))
             } else {
                 None
             };
@@ -1462,8 +1473,7 @@ impl RequestForwarder {
                 self.session_client_provided
                     .then_some(self.session_id.as_str()),
             );
-            
-            
+
             chat_body
         } else if codex_responses_to_anthropic {
             let mut mapped_body = mapped_body;
@@ -1496,17 +1506,24 @@ impl RequestForwarder {
                     mapped_body,
                     DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS,
                 )?;
-                
-            let is_gemini_native = provider.settings_config.get("api_format").and_then(|v| v.as_str()) == Some("gemini_native")
-                || provider.meta.as_ref().and_then(|m| m.api_format.as_deref()) == Some("gemini_native");
-                
+
+            let is_gemini_native = provider
+                .settings_config
+                .get("api_format")
+                .and_then(|v| v.as_str())
+                == Some("gemini_native")
+                || provider.meta.as_ref().and_then(|m| m.api_format.as_deref())
+                    == Some("gemini_native");
+
             if is_gemini_native {
-                anthropic_body = super::providers::transform_gemini::anthropic_to_gemini_with_shadow(
-                    anthropic_body,
-                    Some(&self.gemini_shadow),
-                    Some(provider.id.as_str()),
-                    self.session_client_provided.then_some(self.session_id.as_str())
-                )?;
+                anthropic_body =
+                    super::providers::transform_gemini::anthropic_to_gemini_with_shadow(
+                        anthropic_body,
+                        Some(&self.gemini_shadow),
+                        Some(provider.id.as_str()),
+                        self.session_client_provided
+                            .then_some(self.session_id.as_str()),
+                    )?;
             } else {
                 // Handle the 1M-context marker [1m]: strip the model-name suffix (the
                 // gateway doesn't recognize it) and set the flag so the beta header is
@@ -1552,8 +1569,12 @@ impl RequestForwarder {
             }
         } else {
             let is_gemini_chat = effective_endpoint.contains("generativelanguage.googleapis.com")
-                || mapped_body.get("model").and_then(|v| v.as_str()).unwrap_or("").contains("gemini");
-                
+                || mapped_body
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .contains("gemini");
+
             if is_gemini_chat {
                 super::providers::transform_codex_chat::inject_gemini_thought_signatures_for_openai_format(
                     &mut mapped_body,

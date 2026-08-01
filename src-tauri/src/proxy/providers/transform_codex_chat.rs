@@ -9,8 +9,8 @@ use super::codex_chat_common::{
     response_function_call_item, response_function_call_item_with_namespace,
     split_leading_think_block,
 };
-use crate::provider::CodexChatReasoningConfig;
 use super::gemini_shadow::{GeminiShadowStore, GeminiToolCallMeta};
+use crate::provider::CodexChatReasoningConfig;
 use crate::proxy::{
     error::ProxyError,
     json_canonical::{
@@ -1320,7 +1320,10 @@ fn responses_function_call_to_chat_tool_call(
                                     "thought_signature": &sig
                                 }
                             });
-                            if let Some(f) = chat_call.get_mut("function").and_then(|f| f.as_object_mut()) {
+                            if let Some(f) = chat_call
+                                .get_mut("function")
+                                .and_then(|f| f.as_object_mut())
+                            {
                                 f.insert("thought_signature".to_string(), json!(&sig));
                             }
                             if let Some(obj) = chat_call.as_object_mut() {
@@ -1331,7 +1334,9 @@ fn responses_function_call_to_chat_tool_call(
                         }
                     }
                 }
-                if injected { break; }
+                if injected {
+                    break;
+                }
             }
         }
         if !injected {
@@ -1340,11 +1345,20 @@ fn responses_function_call_to_chat_tool_call(
                     "thought_signature": "skip_thought_signature_validator"
                 }
             });
-            if let Some(f) = chat_call.get_mut("function").and_then(|f| f.as_object_mut()) {
-                f.insert("thought_signature".to_string(), json!("skip_thought_signature_validator"));
+            if let Some(f) = chat_call
+                .get_mut("function")
+                .and_then(|f| f.as_object_mut())
+            {
+                f.insert(
+                    "thought_signature".to_string(),
+                    json!("skip_thought_signature_validator"),
+                );
             }
             if let Some(obj) = chat_call.as_object_mut() {
-                obj.insert("thought_signature".to_string(), json!("skip_thought_signature_validator"));
+                obj.insert(
+                    "thought_signature".to_string(),
+                    json!("skip_thought_signature_validator"),
+                );
             }
         }
     }
@@ -1454,9 +1468,18 @@ pub(crate) fn chat_completion_to_response_with_context(
         if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
             let mut metas = Vec::new();
             for call in tool_calls {
-                if let Some(sig) = call.get("extra_content").and_then(|v| v.get("google")).and_then(|v| v.get("thought_signature")).and_then(|v| v.as_str()) {
+                if let Some(sig) = call
+                    .get("extra_content")
+                    .and_then(|v| v.get("google"))
+                    .and_then(|v| v.get("thought_signature"))
+                    .and_then(|v| v.as_str())
+                {
                     let id = call.get("id").and_then(|v| v.as_str());
-                    let name = call.get("function").and_then(|v| v.get("name")).and_then(|v| v.as_str()).unwrap_or("");
+                    let name = call
+                        .get("function")
+                        .and_then(|v| v.get("name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
                     metas.push(GeminiToolCallMeta::new(id, name, json!({}), Some(sig)));
                 }
             }
@@ -2043,7 +2066,11 @@ pub fn inject_gemini_thought_signatures_for_openai_format(
             if let Some(tool_calls) = msg.get_mut("tool_calls").and_then(|t| t.as_array_mut()) {
                 for tool_call in tool_calls {
                     let call_id = tool_call.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                    let name = tool_call.get("function").and_then(|f| f.get("name")).and_then(|v| v.as_str()).unwrap_or("");
+                    let name = tool_call
+                        .get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
 
                     let mut injected_sig = None;
                     if let Some(snapshot) = &store_snapshot {
@@ -2058,7 +2085,8 @@ pub fn inject_gemini_thought_signatures_for_openai_format(
                         }
                     }
 
-                    let sig = injected_sig.unwrap_or_else(|| "skip_thought_signature_validator".to_string());
+                    let sig = injected_sig
+                        .unwrap_or_else(|| "skip_thought_signature_validator".to_string());
 
                     let google = tool_call
                         .as_object_mut()
@@ -2073,13 +2101,13 @@ pub fn inject_gemini_thought_signatures_for_openai_format(
                         .unwrap();
 
                     if !google.contains_key("thought_signature") {
-                        google.insert(
-                            "thought_signature".to_string(),
-                            serde_json::json!(&sig),
-                        );
+                        google.insert("thought_signature".to_string(), serde_json::json!(&sig));
                     }
-                    
-                    if let Some(function) = tool_call.get_mut("function").and_then(|f| f.as_object_mut()) {
+
+                    if let Some(function) = tool_call
+                        .get_mut("function")
+                        .and_then(|f| f.as_object_mut())
+                    {
                         function.insert("thought_signature".to_string(), serde_json::json!(&sig));
                     }
                     if let Some(obj) = tool_call.as_object_mut() {
@@ -2089,8 +2117,13 @@ pub fn inject_gemini_thought_signatures_for_openai_format(
             }
 
             // Fix function_call
-            if let Some(function_call) = msg.get_mut("function_call").and_then(|f| f.as_object_mut()) {
-                let name = function_call.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if let Some(function_call) =
+                msg.get_mut("function_call").and_then(|f| f.as_object_mut())
+            {
+                let name = function_call
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let mut injected_sig = None;
                 if let Some(snapshot) = &store_snapshot {
                     for turn in &snapshot.turns {
@@ -2102,7 +2135,8 @@ pub fn inject_gemini_thought_signatures_for_openai_format(
                     }
                 }
 
-                let sig = injected_sig.unwrap_or_else(|| "skip_thought_signature_validator".to_string());
+                let sig =
+                    injected_sig.unwrap_or_else(|| "skip_thought_signature_validator".to_string());
 
                 let google = msg
                     .as_object_mut()
@@ -2117,12 +2151,9 @@ pub fn inject_gemini_thought_signatures_for_openai_format(
                     .unwrap();
 
                 if !google.contains_key("thought_signature") {
-                    google.insert(
-                        "thought_signature".to_string(),
-                        serde_json::json!(&sig),
-                    );
+                    google.insert("thought_signature".to_string(), serde_json::json!(&sig));
                 }
-                
+
                 if let Some(obj) = msg.get_mut("function_call").and_then(|f| f.as_object_mut()) {
                     obj.insert("thought_signature".to_string(), serde_json::json!(&sig));
                 }
@@ -2675,7 +2706,8 @@ mod tests {
             output_format: Some("reasoning_content".to_string()),
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["thinking"]["type"], "enabled");
         assert_eq!(result["reasoning_effort"], "max");
@@ -2701,7 +2733,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "max"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["reasoning"]["effort"], "xhigh");
         assert!(result.get("reasoning_effort").is_none());
@@ -2740,7 +2773,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "none"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["reasoning"]["effort"], "none");
         // none 不是 OpenAI 顶层 reasoning_effort 的合法枚举，不写顶层别名；也不写 thinking。
@@ -2767,7 +2801,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "none"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         // thinking 关闭信号照发；但不写 reasoning_effort，也不写原生 reasoning 对象。
         assert_eq!(result["thinking"]["type"], "disabled");
@@ -2791,7 +2826,8 @@ mod tests {
             output_format: Some("reasoning_content".to_string()),
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["thinking"]["type"], "enabled");
         assert!(result.get("reasoning_effort").is_none());
@@ -2813,7 +2849,8 @@ mod tests {
             output_format: Some("reasoning_content".to_string()),
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["enable_thinking"], true);
         assert!(result.get("reasoning_effort").is_none());

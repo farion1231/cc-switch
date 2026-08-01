@@ -209,7 +209,8 @@ pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint
                 .settings_config
                 .get("api_format")
                 .and_then(|v| v.as_str())
-        }) == Some("gemini_native");
+        })
+        == Some("gemini_native");
 
     matches!(
         path,
