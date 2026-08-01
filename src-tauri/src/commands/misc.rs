@@ -2498,8 +2498,7 @@ fn terminate_child_tree(child: &mut std::process::Child) -> bool {
 fn terminate_child_tree(child: &mut std::process::Child) -> bool {
     let process_group = -(child.id() as libc::pid_t);
     // SAFETY: runtime commands are placed in a dedicated process group before spawn.
-    unsafe { libc::kill(process_group, libc::SIGKILL) == 0 }
-    || child.kill().is_ok()
+    (unsafe { libc::kill(process_group, libc::SIGKILL) == 0 }) || child.kill().is_ok()
 }
 
 #[cfg(not(target_os = "windows"))]
