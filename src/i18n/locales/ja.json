@@ -2534,6 +2534,27 @@
     "skillsFailedDescription": "Skills 画面で「既存をインポート」をクリックして手動でインポートしてください（または再起動して再試行）。"
   },
   "agents": {
+    "codexTitle": "Codex サブエージェントのデフォルト設定",
+    "codexDescription": "Codex サブエージェントが使用するモデルと思考強度を設定します。",
+    "modelLabel": "サブエージェントモデル",
+    "modelPlaceholder": "Codex モデル ID を入力",
+    "modelHint": "空欄にするとデフォルトモデルを削除します。",
+    "reasoningLabel": "思考強度",
+    "reasoningHint": "未設定の場合は Codex のデフォルト値を使用します。",
+    "notSet": "未設定",
+    "configPath": "Codex 設定",
+    "reset": "変更をリセット",
+    "saveSuccess": "Codex サブエージェント設定を保存しました",
+    "saveFailed": "Codex サブエージェント設定の保存に失敗しました",
+    "loadFailed": "Codex サブエージェント設定の読み込みに失敗しました",
+    "reasoning": {
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "xhigh": "非常に高い",
+      "max": "最大",
+      "ultra": "Ultra"
+    },
     "title": "エージェント"
   },
   "health": {

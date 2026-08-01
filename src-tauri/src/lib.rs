@@ -7,6 +7,7 @@ mod claude_plugin;
 mod codex_config;
 mod codex_history_migration;
 mod codex_state_db;
+mod codex_subagents;
 mod commands;
 mod config;
 mod database;
@@ -1417,6 +1418,9 @@ pub fn run() {
             commands::apply_profile,
             // model list fetch (OpenAI-compatible /v1/models)
             commands::fetch_models_for_config,
+            // Codex subagent defaults
+            commands::get_codex_subagent_settings,
+            commands::save_codex_subagent_settings,
             // ours: endpoint speed test + custom endpoint management
             commands::test_api_endpoints,
             commands::get_custom_endpoints,

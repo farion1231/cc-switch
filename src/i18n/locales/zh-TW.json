@@ -2535,6 +2535,27 @@
     "skillsFailedDescription": "請開啟 Skills 頁面點擊「匯入現有」手動匯入（或重新啟動後再試）。"
   },
   "agents": {
+    "codexTitle": "Codex 子代理預設設定",
+    "codexDescription": "設定 Codex 子代理使用的預設模型與思考強度。",
+    "modelLabel": "子代理模型",
+    "modelPlaceholder": "輸入 Codex 模型 ID",
+    "modelHint": "留空即可移除預設模型。",
+    "reasoningLabel": "思考強度",
+    "reasoningHint": "留空則由 Codex 使用預設值。",
+    "notSet": "未設定",
+    "configPath": "Codex 設定",
+    "reset": "重設變更",
+    "saveSuccess": "Codex 子代理設定已儲存",
+    "saveFailed": "儲存 Codex 子代理設定失敗",
+    "loadFailed": "載入 Codex 子代理設定失敗",
+    "reasoning": {
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "xhigh": "特高",
+      "max": "最大",
+      "ultra": "Ultra"
+    },
     "title": "Agent"
   },
   "health": {
