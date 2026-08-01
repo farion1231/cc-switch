@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ProviderIcon } from "@/components/ProviderIcon";
@@ -53,6 +54,7 @@ export function UniversalProviderFormModal({
   const [claudeEnabled, setClaudeEnabled] = useState(true);
   const [codexEnabled, setCodexEnabled] = useState(true);
   const [geminiEnabled, setGeminiEnabled] = useState(true);
+  const [antigravityEnabled, setAntigravityEnabled] = useState(true);
 
   // 模型配置
   const [models, setModels] = useState<UniversalProviderModels>({});
@@ -74,6 +76,7 @@ export function UniversalProviderFormModal({
       setClaudeEnabled(editingProvider.apps.claude);
       setCodexEnabled(editingProvider.apps.codex);
       setGeminiEnabled(editingProvider.apps.gemini);
+      setAntigravityEnabled(editingProvider.apps.antigravity);
       setModels(editingProvider.models || {});
 
       // 尝试匹配预设
@@ -93,6 +96,7 @@ export function UniversalProviderFormModal({
       setClaudeEnabled(defaultPreset.defaultApps.claude);
       setCodexEnabled(defaultPreset.defaultApps.codex);
       setGeminiEnabled(defaultPreset.defaultApps.gemini);
+      setAntigravityEnabled(defaultPreset.defaultApps.antigravity);
       setModels(deepClone(defaultPreset.defaultModels));
     }
   }, [editingProvider, initialPreset, isOpen]);
@@ -106,6 +110,7 @@ export function UniversalProviderFormModal({
         setClaudeEnabled(preset.defaultApps.claude);
         setCodexEnabled(preset.defaultApps.codex);
         setGeminiEnabled(preset.defaultApps.gemini);
+        setAntigravityEnabled(preset.defaultApps.antigravity);
         setModels(deepClone(preset.defaultModels));
       }
     },
@@ -114,7 +119,7 @@ export function UniversalProviderFormModal({
 
   // 更新模型配置
   const updateModel = useCallback(
-    (app: "claude" | "codex" | "gemini", field: string, value: string) => {
+    (app: "claude" | "codex" | "gemini" | "antigravity", field: string, value: string) => {
       setModels((prev) => ({
         ...prev,
         [app]: {
@@ -178,12 +183,24 @@ requires_openai_auth = true`;
     const model = models.gemini?.model || "gemini-2.5-pro";
     return {
       env: {
-        GOOGLE_GEMINI_BASE_URL: baseUrl,
         GEMINI_API_KEY: apiKey,
+        GEMINI_BASE_URL: baseUrl,
         GEMINI_MODEL: model,
       },
     };
   }, [geminiEnabled, baseUrl, apiKey, models.gemini]);
+
+  const antigravityConfigJson = useMemo(() => {
+    if (!antigravityEnabled) return null;
+    const model = models.antigravity?.model || "gemini-2.5-pro";
+    return {
+      env: {
+        GEMINI_API_KEY: apiKey,
+        GEMINI_BASE_URL: baseUrl,
+        GEMINI_MODEL: model,
+      },
+    };
+  }, [antigravityEnabled, baseUrl, apiKey, models.antigravity]);
 
   // 提交表单
   const handleSubmit = useCallback(() => {
@@ -200,9 +217,14 @@ requires_openai_auth = true`;
           websiteUrl: websiteUrl.trim() || undefined,
           notes: notes.trim() || undefined,
           apps: {
+            grokbuild: editingProvider?.apps?.grokbuild ?? false,
+            opencode: editingProvider?.apps?.opencode ?? false,
+            openclaw: editingProvider?.apps?.openclaw ?? false,
+            hermes: editingProvider?.apps?.hermes ?? false,
             claude: claudeEnabled,
             codex: codexEnabled,
             gemini: geminiEnabled,
+            antigravity: antigravityEnabled,
           },
           models,
         }
@@ -217,9 +239,14 @@ requires_openai_auth = true`;
     // 如果是新建，更新应用启用状态和模型
     if (!editingProvider) {
       provider.apps = {
+        grokbuild: false,
+        opencode: false,
+        openclaw: false,
+        hermes: false,
         claude: claudeEnabled,
         codex: codexEnabled,
         gemini: geminiEnabled,
+        antigravity: antigravityEnabled,
       };
       provider.models = models;
       provider.websiteUrl = websiteUrl.trim() || undefined;
@@ -238,6 +265,7 @@ requires_openai_auth = true`;
     claudeEnabled,
     codexEnabled,
     geminiEnabled,
+    antigravityEnabled,
     models,
     selectedPreset,
     onSave,
@@ -259,9 +287,14 @@ requires_openai_auth = true`;
           websiteUrl: websiteUrl.trim() || undefined,
           notes: notes.trim() || undefined,
           apps: {
+            grokbuild: editingProvider?.apps?.grokbuild ?? false,
+            opencode: editingProvider?.apps?.opencode ?? false,
+            openclaw: editingProvider?.apps?.openclaw ?? false,
+            hermes: editingProvider?.apps?.hermes ?? false,
             claude: claudeEnabled,
             codex: codexEnabled,
             gemini: geminiEnabled,
+            antigravity: antigravityEnabled,
           },
           models,
         }
@@ -276,9 +309,14 @@ requires_openai_auth = true`;
     // 如果是新建，更新应用启用状态和模型
     if (!editingProvider) {
       provider.apps = {
+        grokbuild: false,
+        opencode: false,
+        openclaw: false,
+        hermes: false,
         claude: claudeEnabled,
         codex: codexEnabled,
         gemini: geminiEnabled,
+        antigravity: antigravityEnabled,
       };
       provider.models = models;
       provider.websiteUrl = websiteUrl.trim() || undefined;
@@ -296,6 +334,7 @@ requires_openai_auth = true`;
     claudeEnabled,
     codexEnabled,
     geminiEnabled,
+    antigravityEnabled,
     models,
     selectedPreset,
   ]);
@@ -514,6 +553,31 @@ requires_openai_auth = true`;
                 onCheckedChange={setGeminiEnabled}
               />
             </div>
+
+            {/* Antigravity Toggle */}
+            <label
+              className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${
+                antigravityEnabled
+                  ? "bg-primary/10 border-primary"
+                  : "bg-surface/50 border-border hover:bg-surface"
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <ProviderIcon icon="gemini" name="Antigravity" size={20} />
+                <div>
+                  <div className="text-sm font-medium">Antigravity 2.0</div>
+                </div>
+              </div>
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="flex items-center"
+              >
+                <Switch
+                  checked={antigravityEnabled}
+                  onCheckedChange={setAntigravityEnabled}
+                />
+              </div>
+            </label>
           </div>
         </div>
 
@@ -613,21 +677,41 @@ requires_openai_auth = true`;
 
           {/* Gemini 模型 */}
           {geminiEnabled && (
-            <div className="space-y-3 rounded-lg border p-4">
-              <div className="flex items-center gap-2 font-medium">
+            <div className="p-4 bg-surface/30 rounded-lg border space-y-3">
+              <div className="flex items-center gap-2 mb-2">
                 <ProviderIcon icon="gemini" name="Gemini" size={16} />
-                Gemini
+                <span className="text-sm font-medium">Gemini CLI 设置</span>
               </div>
-              <div className="space-y-1">
-                <Label className="text-xs">
-                  {t("universalProvider.model", { defaultValue: "模型" })}
-                </Label>
+              <div className="space-y-1.5">
+                <label className="text-xs text-text-secondary">自定义模型</label>
                 <Input
                   value={models.gemini?.model || ""}
                   onChange={(e) =>
                     updateModel("gemini", "model", e.target.value)
                   }
                   placeholder="gemini-2.5-pro"
+                  className="bg-surface/50"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Antigravity Settings */}
+          {antigravityEnabled && (
+            <div className="p-4 bg-surface/30 rounded-lg border space-y-3">
+              <div className="flex items-center gap-2 mb-2">
+                <ProviderIcon icon="gemini" name="Antigravity" size={16} />
+                <span className="text-sm font-medium">Antigravity 2.0 设置</span>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs text-text-secondary">自定义模型</label>
+                <Input
+                  value={models.antigravity?.model || ""}
+                  onChange={(e) =>
+                    updateModel("antigravity", "model", e.target.value)
+                  }
+                  placeholder="gemini-2.5-pro"
+                  className="bg-surface/50"
                 />
               </div>
             </div>
@@ -635,7 +719,7 @@ requires_openai_auth = true`;
         </div>
 
         {/* 配置 JSON 预览 */}
-        {isEditMode && (claudeEnabled || codexEnabled || geminiEnabled) && (
+        {isEditMode && (claudeEnabled || codexEnabled || geminiEnabled || antigravityEnabled) && (
           <div className="space-y-4">
             <Label>
               {t("universalProvider.configJsonPreview", {
@@ -684,15 +768,29 @@ requires_openai_auth = true`;
             {/* Gemini JSON */}
             {geminiConfigJson && (
               <div className="space-y-2">
-                <div className="flex items-center gap-2 text-sm font-medium">
+                <div className="flex items-center gap-2 text-sm font-medium text-text-secondary">
                   <ProviderIcon icon="gemini" name="Gemini" size={16} />
-                  Gemini
+                  <span>Gemini 覆盖配置</span>
                 </div>
-                <JsonEditor
+                <Textarea
                   value={JSON.stringify(geminiConfigJson, null, 2)}
-                  onChange={() => {}}
-                  height={140}
-                  darkMode={isDarkMode}
+                  readOnly
+                  className="font-mono text-xs h-32 bg-surface/30"
+                />
+              </div>
+            )}
+
+            {/* Antigravity JSON */}
+            {antigravityConfigJson && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium text-text-secondary">
+                  <ProviderIcon icon="gemini" name="Antigravity" size={16} />
+                  <span>Antigravity 覆盖配置</span>
+                </div>
+                <Textarea
+                  value={JSON.stringify(antigravityConfigJson, null, 2)}
+                  readOnly
+                  className="font-mono text-xs h-32 bg-surface/30"
                 />
               </div>
             )}

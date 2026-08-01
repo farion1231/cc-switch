@@ -46,6 +46,9 @@ impl McpService {
         if prev_apps.hermes && !server.apps.hermes {
             Self::remove_server_from_app(state, &server.id, &AppType::Hermes)?;
         }
+        if prev_apps.antigravity && !server.apps.antigravity {
+            Self::remove_server_from_app(state, &server.id, &AppType::Antigravity)?;
+        }
 
         // 同步到各个启用的应用
         Self::sync_server_to_apps(state, &server)?;
@@ -147,6 +150,13 @@ impl McpService {
             AppType::Hermes => {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
+            AppType::Antigravity => {
+                mcp::antigravity::sync_single_server_to_antigravity(
+                    &Default::default(),
+                    &server.id,
+                    &server.server,
+                )?;
+            }
         }
         Ok(())
     }
@@ -182,6 +192,9 @@ impl McpService {
             }
             AppType::Hermes => {
                 mcp::remove_server_from_hermes(id)?;
+            }
+            AppType::Antigravity => {
+                mcp::antigravity::remove_server_from_antigravity(id)?;
             }
         }
         Ok(())

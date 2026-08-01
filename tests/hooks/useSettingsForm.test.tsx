@@ -161,7 +161,12 @@ describe("useSettingsForm Hook", () => {
     });
 
     changeLanguageSpy.mockClear();
-    (i18n as any).language = "zh";
+    
+    act(() => {
+      result.current.updateSettings({ language: "zh" });
+    });
+    
+    changeLanguageSpy.mockClear();
 
     act(() => {
       result.current.resetSettings({

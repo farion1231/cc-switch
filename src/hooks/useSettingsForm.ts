@@ -77,7 +77,8 @@ export function useSettingsForm(): UseSettingsFormResult {
     null,
   );
 
-  const initialLanguageRef = useRef<Language>("zh");
+  const initialLanguageRef = useRef<Language>("en");
+  const hasInitialized = useRef<boolean>(false);
 
   const readPersistedLanguage = useCallback((): Language => {
     if (typeof window !== "undefined") {
@@ -101,14 +102,13 @@ export function useSettingsForm(): UseSettingsFormResult {
 
   // 初始化设置数据
   useEffect(() => {
-    if (!data) return;
+    if (!data || hasInitialized.current) return;
 
     const normalizedLanguage = normalizeLanguage(
       data.language ?? readPersistedLanguage(),
     );
 
     const normalized: SettingsFormState = {
-      ...data,
       showInTray: data.showInTray ?? true,
       minimizeToTrayOnClose: data.minimizeToTrayOnClose ?? true,
       useAppWindowControls: data.useAppWindowControls ?? false,
@@ -122,6 +122,8 @@ export function useSettingsForm(): UseSettingsFormResult {
       claudeConfigDir: sanitizeDir(data.claudeConfigDir),
       codexConfigDir: sanitizeDir(data.codexConfigDir),
       geminiConfigDir: sanitizeDir(data.geminiConfigDir),
+      hermesConfigDir: sanitizeDir(data.hermesConfigDir),
+      antigravityConfigDir: sanitizeDir(data.antigravityConfigDir),
       grokConfigDir: sanitizeDir(data.grokConfigDir),
       opencodeConfigDir: sanitizeDir(data.opencodeConfigDir),
       openclawConfigDir: sanitizeDir(data.openclawConfigDir),
@@ -131,6 +133,7 @@ export function useSettingsForm(): UseSettingsFormResult {
     setSettingsState(normalized);
     initialLanguageRef.current = normalizedLanguage;
     syncLanguage(normalizedLanguage);
+    hasInitialized.current = true;
   }, [data, readPersistedLanguage, syncLanguage]);
 
   const updateSettings = useCallback(
@@ -175,7 +178,6 @@ export function useSettingsForm(): UseSettingsFormResult {
       );
 
       const normalized: SettingsFormState = {
-        ...serverData,
         showInTray: serverData.showInTray ?? true,
         minimizeToTrayOnClose: serverData.minimizeToTrayOnClose ?? true,
         useAppWindowControls: serverData.useAppWindowControls ?? false,
@@ -189,6 +191,8 @@ export function useSettingsForm(): UseSettingsFormResult {
         claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
         codexConfigDir: sanitizeDir(serverData.codexConfigDir),
         geminiConfigDir: sanitizeDir(serverData.geminiConfigDir),
+        hermesConfigDir: sanitizeDir(serverData.hermesConfigDir),
+        antigravityConfigDir: sanitizeDir(serverData.antigravityConfigDir),
         grokConfigDir: sanitizeDir(serverData.grokConfigDir),
         opencodeConfigDir: sanitizeDir(serverData.opencodeConfigDir),
         openclawConfigDir: sanitizeDir(serverData.openclawConfigDir),

@@ -2876,7 +2876,7 @@ fn extract_env_vars_from_config(
         // 处理 base_url: 根据应用类型添加对应的环境变量
         let base_url_key = match app_type {
             AppType::Claude | AppType::ClaudeDesktop => Some("ANTHROPIC_BASE_URL"),
-            AppType::Gemini => Some("GOOGLE_GEMINI_BASE_URL"),
+            AppType::Gemini | AppType::Antigravity => Some("GOOGLE_GEMINI_BASE_URL"),
             _ => None,
         };
 
@@ -2894,8 +2894,8 @@ fn extract_env_vars_from_config(
         }
     }
 
-    // Gemini 使用 api_key 字段转换为 GEMINI_API_KEY
-    if *app_type == AppType::Gemini {
+    // Gemini & Antigravity 使用 api_key 字段转换为 GEMINI_API_KEY
+    if *app_type == AppType::Gemini || *app_type == AppType::Antigravity {
         if let Some(api_key) = obj.get("api_key").and_then(|v| v.as_str()) {
             env_vars.push(("GEMINI_API_KEY".to_string(), api_key.to_string()));
         }
