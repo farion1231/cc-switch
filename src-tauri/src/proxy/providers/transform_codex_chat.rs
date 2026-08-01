@@ -10,6 +10,7 @@ use super::codex_chat_common::{
     split_leading_think_block,
 };
 use crate::provider::CodexChatReasoningConfig;
+use super::gemini_shadow::{GeminiShadowStore, GeminiToolCallMeta};
 use crate::proxy::{
     error::ProxyError,
     json_canonical::{
@@ -256,7 +257,7 @@ pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolCo
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request.
 #[allow(dead_code)]
 pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
-    responses_to_chat_completions_with_reasoning(body, None)
+    responses_to_chat_completions_with_reasoning(body, None, None)
 }
 
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request,
@@ -264,6 +265,7 @@ pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
 pub fn responses_to_chat_completions_with_reasoning(
     body: Value,
     reasoning_config: Option<&CodexChatReasoningConfig>,
+    shadow_ctx: Option<(&GeminiShadowStore, &str, &str)>,
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
     let tool_context = build_codex_tool_context_from_request(&body);
@@ -284,7 +286,7 @@ pub fn responses_to_chat_completions_with_reasoning(
     }
 
     if let Some(input) = body.get("input") {
-        append_responses_input_as_chat_messages(input, &mut messages, &tool_context)?;
+        append_responses_input_as_chat_messages(input, &mut messages, &tool_context, shadow_ctx)?;
     }
     let messages = collapse_system_messages_to_head(messages);
     result["messages"] = json!(messages);
@@ -547,6 +549,7 @@ fn append_responses_input_as_chat_messages(
     input: &Value,
     messages: &mut Vec<Value>,
     tool_context: &CodexToolContext,
+    shadow_ctx: Option<(&GeminiShadowStore, &str, &str)>,
 ) -> Result<(), ProxyError> {
     let mut pending_tool_calls = Vec::new();
     let mut pending_media = Vec::new();
@@ -570,6 +573,7 @@ fn append_responses_input_as_chat_messages(
                     &mut pending_reasoning,
                     &mut last_assistant_index,
                     tool_context,
+                    shadow_ctx,
                 )?;
             }
         }
@@ -582,6 +586,7 @@ fn append_responses_input_as_chat_messages(
                 &mut pending_reasoning,
                 &mut last_assistant_index,
                 tool_context,
+                shadow_ctx,
             )?;
         }
         _ => {}
@@ -619,6 +624,7 @@ fn append_responses_item_as_chat_message(
     pending_reasoning: &mut Option<String>,
     last_assistant_index: &mut Option<usize>,
     tool_context: &CodexToolContext,
+    shadow_ctx: Option<(&GeminiShadowStore, &str, &str)>,
 ) -> Result<(), ProxyError> {
     let item_type = item.get("type").and_then(|v| v.as_str());
     match item_type {
@@ -627,6 +633,7 @@ fn append_responses_item_as_chat_message(
             pending_tool_calls.push(responses_function_call_to_chat_tool_call(
                 item,
                 tool_context,
+                shadow_ctx,
             ));
         }
         Some("custom_tool_call") => {
@@ -1276,6 +1283,7 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
 fn responses_function_call_to_chat_tool_call(
     item: &Value,
     tool_context: &CodexToolContext,
+    shadow_ctx: Option<(&GeminiShadowStore, &str, &str)>,
 ) -> Value {
     let call_id = item
         .get("call_id")
@@ -1287,14 +1295,57 @@ fn responses_function_call_to_chat_tool_call(
     let chat_name = tool_context.chat_name_for_response_function(name, namespace);
     let arguments = canonicalize_tool_arguments(item.get("arguments"));
 
-    json!({
+    let mut chat_call = json!({
         "id": call_id,
         "type": "function",
         "function": {
             "name": chat_name,
             "arguments": arguments
         }
-    })
+    });
+
+    if let Some((store, provider_id, session_id)) = shadow_ctx {
+        let mut injected = false;
+        if let Some(snapshot) = store.get_session(provider_id, session_id) {
+            for turn in snapshot.turns {
+                for meta in turn.tool_calls {
+                    if meta.id.as_deref() == Some(call_id) {
+                        if let Some(sig) = meta.thought_signature {
+                            chat_call["extra_content"] = json!({
+                                "google": {
+                                    "thought_signature": &sig
+                                }
+                            });
+                            if let Some(f) = chat_call.get_mut("function").and_then(|f| f.as_object_mut()) {
+                                f.insert("thought_signature".to_string(), json!(&sig));
+                            }
+                            if let Some(obj) = chat_call.as_object_mut() {
+                                obj.insert("thought_signature".to_string(), json!(&sig));
+                            }
+                            injected = true;
+                            break;
+                        }
+                    }
+                }
+                if injected { break; }
+            }
+        }
+        if !injected {
+            chat_call["extra_content"] = json!({
+                "google": {
+                    "thought_signature": "skip_thought_signature_validator"
+                }
+            });
+            if let Some(f) = chat_call.get_mut("function").and_then(|f| f.as_object_mut()) {
+                f.insert("thought_signature".to_string(), json!("skip_thought_signature_validator"));
+            }
+            if let Some(obj) = chat_call.as_object_mut() {
+                obj.insert("thought_signature".to_string(), json!("skip_thought_signature_validator"));
+            }
+        }
+    }
+
+    chat_call
 }
 
 fn responses_custom_tool_call_to_chat_tool_call(item: &Value) -> Value {
@@ -1374,7 +1425,7 @@ fn responses_tool_choice_to_chat(tool_choice: &Value, tool_context: &CodexToolCo
 /// Convert a non-streaming Chat Completions response into a Responses response.
 #[allow(dead_code)]
 pub fn chat_completion_to_response(body: Value) -> Result<Value, ProxyError> {
-    chat_completion_to_response_with_context(body, &CodexToolContext::default())
+    chat_completion_to_response_with_context(body, &CodexToolContext::default(), None)
 }
 
 /// Convert a non-streaming Chat Completions response into a Responses response,
@@ -1382,6 +1433,7 @@ pub fn chat_completion_to_response(body: Value) -> Result<Value, ProxyError> {
 pub(crate) fn chat_completion_to_response_with_context(
     body: Value,
     tool_context: &CodexToolContext,
+    shadow_ctx: Option<(&GeminiShadowStore, &str, &str)>,
 ) -> Result<Value, ProxyError> {
     let choices = body
         .get("choices")
@@ -1393,6 +1445,22 @@ pub(crate) fn chat_completion_to_response_with_context(
     let message = choice
         .get("message")
         .ok_or_else(|| ProxyError::TransformError("No message in chat choice".to_string()))?;
+
+    if let Some((store, provider_id, session_id)) = shadow_ctx {
+        if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
+            let mut metas = Vec::new();
+            for call in tool_calls {
+                if let Some(sig) = call.get("extra_content").and_then(|v| v.get("google")).and_then(|v| v.get("thought_signature")).and_then(|v| v.as_str()) {
+                    let id = call.get("id").and_then(|v| v.as_str());
+                    let name = call.get("function").and_then(|v| v.get("name")).and_then(|v| v.as_str()).unwrap_or("");
+                    metas.push(GeminiToolCallMeta::new(id, name, json!({}), Some(sig)));
+                }
+            }
+            if !metas.is_empty() {
+                store.record_assistant_turn(provider_id, session_id, Value::Null, metas);
+            }
+        }
+    }
 
     let response_id = response_id_from_chat_id(body.get("id").and_then(|v| v.as_str()));
     let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
@@ -1956,6 +2024,112 @@ pub fn chat_error_to_response_error(body: Option<&Value>) -> Value {
     })
 }
 
+pub fn inject_gemini_thought_signatures_for_openai_format(
+    body: &mut Value,
+    shadow_ctx: Option<(&GeminiShadowStore, &str, &str)>,
+) {
+    let mut store_snapshot = None;
+    if let Some((store, provider_id, session_id)) = shadow_ctx {
+        store_snapshot = store.get_session(provider_id, session_id);
+    }
+
+    if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
+        for msg in messages {
+            // Fix tool_calls
+            if let Some(tool_calls) = msg.get_mut("tool_calls").and_then(|t| t.as_array_mut()) {
+                for tool_call in tool_calls {
+                    let call_id = tool_call.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    let name = tool_call.get("function").and_then(|f| f.get("name")).and_then(|v| v.as_str()).unwrap_or("");
+
+                    let mut injected_sig = None;
+                    if let Some(snapshot) = &store_snapshot {
+                        for turn in &snapshot.turns {
+                            for meta in &turn.tool_calls {
+                                if !call_id.is_empty() && meta.id.as_deref() == Some(call_id) {
+                                    injected_sig = meta.thought_signature.clone();
+                                } else if !name.is_empty() && meta.name == name {
+                                    injected_sig = meta.thought_signature.clone();
+                                }
+                            }
+                        }
+                    }
+
+                    let sig = injected_sig.unwrap_or_else(|| "skip_thought_signature_validator".to_string());
+
+                    let google = tool_call
+                        .as_object_mut()
+                        .unwrap()
+                        .entry("extra_content")
+                        .or_insert_with(|| serde_json::json!({}))
+                        .as_object_mut()
+                        .unwrap()
+                        .entry("google")
+                        .or_insert_with(|| serde_json::json!({}))
+                        .as_object_mut()
+                        .unwrap();
+
+                    if !google.contains_key("thought_signature") {
+                        google.insert(
+                            "thought_signature".to_string(),
+                            serde_json::json!(&sig),
+                        );
+                    }
+                    
+                    if let Some(function) = tool_call.get_mut("function").and_then(|f| f.as_object_mut()) {
+                        function.insert("thought_signature".to_string(), serde_json::json!(&sig));
+                    }
+                    if let Some(obj) = tool_call.as_object_mut() {
+                        obj.insert("thought_signature".to_string(), serde_json::json!(&sig));
+                    }
+                }
+            }
+
+            // Fix function_call
+            if let Some(function_call) = msg.get_mut("function_call").and_then(|f| f.as_object_mut()) {
+                let name = function_call.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let mut injected_sig = None;
+                if let Some(snapshot) = &store_snapshot {
+                    for turn in &snapshot.turns {
+                        for meta in &turn.tool_calls {
+                            if !name.is_empty() && meta.name == name {
+                                injected_sig = meta.thought_signature.clone();
+                            }
+                        }
+                    }
+                }
+
+                let sig = injected_sig.unwrap_or_else(|| "skip_thought_signature_validator".to_string());
+
+                let google = msg
+                    .as_object_mut()
+                    .unwrap()
+                    .entry("extra_content")
+                    .or_insert_with(|| serde_json::json!({}))
+                    .as_object_mut()
+                    .unwrap()
+                    .entry("google")
+                    .or_insert_with(|| serde_json::json!({}))
+                    .as_object_mut()
+                    .unwrap();
+
+                if !google.contains_key("thought_signature") {
+                    google.insert(
+                        "thought_signature".to_string(),
+                        serde_json::json!(&sig),
+                    );
+                }
+                
+                if let Some(obj) = msg.get_mut("function_call").and_then(|f| f.as_object_mut()) {
+                    obj.insert("thought_signature".to_string(), serde_json::json!(&sig));
+                }
+                if let Some(obj) = msg.as_object_mut() {
+                    obj.insert("thought_signature".to_string(), serde_json::json!(&sig));
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2497,7 +2671,7 @@ mod tests {
             output_format: Some("reasoning_content".to_string()),
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["thinking"]["type"], "enabled");
         assert_eq!(result["reasoning_effort"], "max");
@@ -2523,7 +2697,7 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "max"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["reasoning"]["effort"], "xhigh");
         assert!(result.get("reasoning_effort").is_none());
@@ -2538,7 +2712,7 @@ mod tests {
             "reasoning": {"effort": "high"}
         });
         let result_high =
-            responses_to_chat_completions_with_reasoning(input_high, Some(&config)).unwrap();
+            responses_to_chat_completions_with_reasoning(input_high, Some(&config), None).unwrap();
         assert_eq!(result_high["reasoning"]["effort"], "high");
         assert!(result_high.get("reasoning_effort").is_none());
     }
@@ -2562,7 +2736,7 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "none"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["reasoning"]["effort"], "none");
         // none 不是 OpenAI 顶层 reasoning_effort 的合法枚举，不写顶层别名；也不写 thinking。
@@ -2589,7 +2763,7 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "none"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         // thinking 关闭信号照发；但不写 reasoning_effort，也不写原生 reasoning 对象。
         assert_eq!(result["thinking"]["type"], "disabled");
@@ -2613,7 +2787,7 @@ mod tests {
             output_format: Some("reasoning_content".to_string()),
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["thinking"]["type"], "enabled");
         assert!(result.get("reasoning_effort").is_none());
@@ -2635,7 +2809,7 @@ mod tests {
             output_format: Some("reasoning_content".to_string()),
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, Some(&config), None).unwrap();
 
         assert_eq!(result["enable_thinking"], true);
         assert!(result.get("reasoning_effort").is_none());
@@ -3910,7 +4084,7 @@ mod tests {
             }]
         });
 
-        let result = chat_completion_to_response_with_context(chat, &context).unwrap();
+        let result = chat_completion_to_response_with_context(chat, &context, None).unwrap();
 
         assert_eq!(result["output"][0]["type"], "function_call");
         assert_eq!(result["output"][0]["call_id"], "call_gmail");
@@ -3951,7 +4125,7 @@ mod tests {
             }]
         });
 
-        let result = chat_completion_to_response_with_context(chat, &context).unwrap();
+        let result = chat_completion_to_response_with_context(chat, &context, None).unwrap();
 
         assert_eq!(result["output"][0]["type"], "tool_search_call");
         assert_eq!(result["output"][0]["call_id"], "call_tool_search_1");
@@ -3992,7 +4166,7 @@ mod tests {
             }]
         });
 
-        let result = chat_completion_to_response_with_context(chat, &context).unwrap();
+        let result = chat_completion_to_response_with_context(chat, &context, None).unwrap();
 
         assert_eq!(result["output"][0]["type"], "custom_tool_call");
         assert_eq!(result["output"][0]["id"], "ctc_call_patch");

@@ -98,7 +98,7 @@ impl Provider {
             .unwrap_or(false)
     }
 
-    fn provider_type(&self) -> Option<&str> {
+    pub fn provider_type(&self) -> Option<&str> {
         self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
     }
 

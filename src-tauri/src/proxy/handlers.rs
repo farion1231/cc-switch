@@ -1196,9 +1196,19 @@ async fn handle_codex_chat_to_responses_transform(
         return handle_codex_chat_error_response(response, ctx, status).await;
     }
 
+    let provider_type_str = ctx.provider.provider_type().unwrap_or("codex");
+    let is_gemini_upstream = provider_type_str == "gemini" 
+        || provider_type_str == "gemini_cli" 
+        || (provider_type_str == "codex" && ctx.request_model.to_lowercase().contains("gemini"));
+    let shadow_ctx = if is_gemini_upstream {
+        Some((state.gemini_shadow.clone(), ctx.provider.id.clone(), ctx.session_id.clone()))
+    } else {
+        None
+    };
+
     if is_stream || response.is_sse() {
         let stream = response.bytes_stream();
-        let sse_stream = create_responses_sse_stream_from_chat_with_context(stream, tool_context);
+        let sse_stream = create_responses_sse_stream_from_chat_with_context(stream, tool_context.clone(), shadow_ctx);
         let sse_stream = record_responses_sse_stream(sse_stream, state.codex_chat_history.clone());
 
         let usage_collector = if usage_logging_enabled(state) {
@@ -1325,9 +1335,15 @@ async fn handle_codex_chat_to_responses_transform(
             ));
         }
     };
+    let shadow_ctx_ref = if is_gemini_upstream {
+        Some((state.gemini_shadow.as_ref(), ctx.provider.id.as_str(), ctx.session_id.as_str()))
+    } else {
+        None
+    };
     let responses_response = transform_codex_chat::chat_completion_to_response_with_context(
         chat_response,
         &tool_context,
+        shadow_ctx_ref,
     )
     .map_err(|e| {
         log::error!("[Codex] Chat → Responses 响应转换失败: {e}");
