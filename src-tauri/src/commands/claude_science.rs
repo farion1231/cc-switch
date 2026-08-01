@@ -14,6 +14,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::Duration;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
@@ -21,7 +27,6 @@ use crate::store::AppState;
 
 const CLAUDE_SCIENCE_BIN_ENV: &str = "CLAUDE_SCIENCE_BIN";
 const MANAGED_PROFILE_DIR: &str = "claude-science-proxy";
-const SCIENCE_HOME_DIR: &str = ".claude-science";
 const SCIENCE_PROXY_USER_ID: &str = "00000000-0000-4000-8000-000000157210";
 const SCIENCE_PROXY_ORG_ID: &str = "00000000-0000-4000-8000-000000157211";
 const SCIENCE_PROXY_EMAIL: &str = "cc-switch-proxy@localhost.invalid";
@@ -91,6 +96,42 @@ struct ScienceProfilePaths {
     data_dir: PathBuf,
     auth_dir: PathBuf,
     config_path: PathBuf,
+}
+
+/// Runtime description for launching Claude Science.
+/// On Windows, when the user points the config directory at a WSL path (or a
+/// WSL distro is auto-detected), `wsl_distro` is set and the binary/command is
+/// resolved inside WSL.
+#[derive(Debug, Clone)]
+struct ScienceRuntime {
+    /// Human-readable binary path/command (used in status responses).
+    bin_display: String,
+    /// Native path used for non-WSL execution.
+    bin_path: PathBuf,
+    /// WSL distro name when running inside WSL.
+    wsl_distro: Option<String>,
+    /// Claude Science data/config home. For WSL runtimes this is the UNC path
+    /// (`\\wsl$\Distro\<home>\.claude-science`); for native runtimes it is the
+    /// local home (or the user's override).
+    config_dir: PathBuf,
+    /// WSL version (1 or 2) when running inside WSL. WSL1 shares the Windows
+    /// loopback, so only WSL2 needs the proxy URL host rewritten to the
+    /// Windows host IP visible from the distro.
+    wsl_version: Option<u8>,
+}
+
+impl ScienceRuntime {
+    fn is_wsl(&self) -> bool {
+        self.wsl_distro.is_some()
+    }
+
+    fn binary_path_display(&self) -> String {
+        self.bin_display.clone()
+    }
+
+    fn managed_profile_paths(&self) -> ScienceProfilePaths {
+        managed_profile_paths_for_science_home(&self.config_dir)
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -171,32 +212,35 @@ pub async fn launch_claude_science_with_proxy(
 }
 
 fn read_status() -> Result<ClaudeScienceStatus, String> {
-    let Some(bin) = find_claude_science_binary() else {
-        return Ok(ClaudeScienceStatus {
-            installed: false,
-            running: false,
-            pid: None,
-            port: None,
-            binary_path: None,
-            proxy_base_url: None,
-            error: Some("Claude Science CLI was not found".to_string()),
-        });
+    let runtime = match find_science_runtime() {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            return Ok(ClaudeScienceStatus {
+                installed: false,
+                running: false,
+                pid: None,
+                port: None,
+                binary_path: None,
+                proxy_base_url: None,
+                error: Some(err),
+            });
+        }
     };
 
-    let profile = managed_profile_paths();
+    let profile = runtime.managed_profile_paths();
     if !profile.config_path.exists() {
         return Ok(ClaudeScienceStatus {
             installed: true,
             running: false,
             pid: None,
             port: None,
-            binary_path: Some(bin.display().to_string()),
+            binary_path: Some(runtime.binary_path_display()),
             proxy_base_url: None,
             error: None,
         });
     }
 
-    match run_cli(&bin, &["status"], &[], Some(&profile)) {
+    match run_science_cli(&runtime, &["status"], &[], Some(&profile)) {
         Ok(output) if output.status.success() => {
             let parsed = parse_status_output(&output).unwrap_or_default();
             Ok(ClaudeScienceStatus {
@@ -204,7 +248,7 @@ fn read_status() -> Result<ClaudeScienceStatus, String> {
                 running: parsed.running,
                 pid: parsed.pid,
                 port: parsed.port,
-                binary_path: Some(bin.display().to_string()),
+                binary_path: Some(runtime.binary_path_display()),
                 proxy_base_url: None,
                 error: None,
             })
@@ -214,7 +258,7 @@ fn read_status() -> Result<ClaudeScienceStatus, String> {
             running: false,
             pid: None,
             port: None,
-            binary_path: Some(bin.display().to_string()),
+            binary_path: Some(runtime.binary_path_display()),
             proxy_base_url: None,
             error: Some(format_cli_failure("Claude Science status failed", &output)),
         }),
@@ -223,7 +267,7 @@ fn read_status() -> Result<ClaudeScienceStatus, String> {
             running: false,
             pid: None,
             port: None,
-            binary_path: Some(bin.display().to_string()),
+            binary_path: Some(runtime.binary_path_display()),
             proxy_base_url: None,
             error: Some(err),
         }),
@@ -231,18 +275,20 @@ fn read_status() -> Result<ClaudeScienceStatus, String> {
 }
 
 fn stop_science() -> Result<(), String> {
-    let bin = find_claude_science_binary()
-        .ok_or_else(|| "Claude Science CLI was not found".to_string())?;
-    let profile = managed_profile_paths();
+    let runtime = find_science_runtime()?;
+    let profile = runtime.managed_profile_paths();
     if !profile.config_path.exists() {
         return Ok(());
     }
 
-    stop_science_for_profile(&bin, &profile)
+    stop_science_for_profile(&runtime, &profile)
 }
 
-fn stop_science_for_profile(bin: &Path, profile: &ScienceProfilePaths) -> Result<(), String> {
-    let output = run_cli(bin, &["stop"], &[], Some(profile))?;
+fn stop_science_for_profile(
+    runtime: &ScienceRuntime,
+    profile: &ScienceProfilePaths,
+) -> Result<(), String> {
+    let output = run_science_cli(runtime, &["stop"], &[], Some(profile))?;
     if output.status.success() {
         Ok(())
     } else {
@@ -251,15 +297,27 @@ fn stop_science_for_profile(bin: &Path, profile: &ScienceProfilePaths) -> Result
 }
 
 fn launch_science(proxy_base_url: String) -> Result<ScienceLaunchOutcome, String> {
-    let bin = find_claude_science_binary()
-        .ok_or_else(|| "Claude Science CLI was not found".to_string())?;
-    let profile = prepare_managed_profile()?;
+    let runtime = find_science_runtime()?;
+    let profile = prepare_managed_profile_at(&runtime)?;
 
-    stop_science_for_profile(&bin, &profile)?;
+    stop_science_for_profile(&runtime, &profile)?;
 
-    let proxy_env = proxy_launch_env(&proxy_base_url);
-    let output = run_cli_with_env(
-        &bin,
+    let proxy_env = if runtime.is_wsl() && runtime.wsl_version != Some(1) {
+        // WSL2 has its own network namespace: the Windows loopback address is
+        // not reachable from the distro, so rewrite the URL host to the
+        // Windows host IP visible from WSL (its default gateway). WSL1 shares
+        // the Windows loopback and needs no rewrite.
+        let wsl_host = runtime
+            .wsl_distro
+            .as_deref()
+            .and_then(wsl_host_ip)
+            .ok_or_else(|| "Could not determine the Windows host IP from WSL".to_string())?;
+        proxy_launch_env_with_host(&proxy_base_url, Some(&wsl_host))
+    } else {
+        proxy_launch_env(&proxy_base_url)
+    };
+    let output = run_science_cli_with_env(
+        &runtime,
         &[
             "serve",
             "--port",
@@ -275,8 +333,8 @@ fn launch_science(proxy_base_url: String) -> Result<ScienceLaunchOutcome, String
         return Err(format_cli_failure("Claude Science launch failed", &output));
     }
 
-    let parsed_status = poll_until_running(&bin, &profile)?;
-    let url = read_science_url(&bin, &profile)
+    let parsed_status = poll_until_running(&runtime, &profile)?;
+    let url = read_science_url(&runtime, &profile)
         .ok()
         .or(parsed_status.url.clone());
 
@@ -285,21 +343,21 @@ fn launch_science(proxy_base_url: String) -> Result<ScienceLaunchOutcome, String
             proxy_base_url,
             pid: parsed_status.pid,
             port: parsed_status.port,
-            binary_path: bin.display().to_string(),
+            binary_path: runtime.binary_path_display(),
         },
         url,
     })
 }
 
 fn poll_until_running(
-    bin: &Path,
+    runtime: &ScienceRuntime,
     profile: &ScienceProfilePaths,
 ) -> Result<ParsedScienceStatus, String> {
     let mut last_status = ParsedScienceStatus::default();
     let mut last_error = None;
 
     for _ in 0..LAUNCH_POLL_ATTEMPTS {
-        match run_cli(bin, &["status"], &[], Some(profile)) {
+        match run_science_cli(runtime, &["status"], &[], Some(profile)) {
             Ok(output) if output.status.success() => {
                 if let Some(parsed) = parse_status_output(&output) {
                     if parsed.running {
@@ -330,8 +388,11 @@ fn poll_until_running(
     }
 }
 
-fn read_science_url(bin: &Path, profile: &ScienceProfilePaths) -> Result<String, String> {
-    let output = run_cli(bin, &["url"], &[], Some(profile))?;
+fn read_science_url(
+    runtime: &ScienceRuntime,
+    profile: &ScienceProfilePaths,
+) -> Result<String, String> {
+    let output = run_science_cli(runtime, &["url"], &[], Some(profile))?;
     if !output.status.success() {
         return Err(format_cli_failure(
             "Claude Science URL lookup failed",
@@ -344,6 +405,13 @@ fn read_science_url(bin: &Path, profile: &ScienceProfilePaths) -> Result<String,
 }
 
 fn proxy_launch_env(proxy_base_url: &str) -> [(&'static str, String); 3] {
+    proxy_launch_env_with_host(proxy_base_url, None)
+}
+
+fn proxy_launch_env_with_host(
+    proxy_base_url: &str,
+    host_override: Option<&str>,
+) -> [(&'static str, String); 3] {
     // Claude Science does not currently document a stable config key for
     // Anthropic client routing. Keep the proxy handoff scoped to this managed
     // daemon launch instead of writing it into the user's default profile.
@@ -354,30 +422,67 @@ fn proxy_launch_env(proxy_base_url: &str) -> [(&'static str, String); 3] {
     // to the claude-science provider namespace and failover queue (the CLI's
     // own config lives in an encrypted SQLite, so there is no live config
     // file for cc-switch to write).
-    let science_base_url = format!(
-        "{}/claude-science",
-        proxy_base_url.trim_end_matches('/')
-    );
+    //
+    // When the daemon runs inside WSL2, the Windows loopback address returned
+    // by the proxy service is not reachable from WSL. In that case we rewrite
+    // the URL host to the Windows host IP visible from WSL (the default
+    // gateway in the WSL namespace). The proxy itself must be configured to
+    // listen on an interface reachable from WSL (e.g., 0.0.0.0).
+    let mut base_url = proxy_base_url.trim_end_matches('/').to_string();
+    if let Some(host) = host_override {
+        base_url = replace_url_host(&base_url, host)
+            .trim_end_matches('/')
+            .to_string();
+    }
+    let science_base_url = format!("{}/claude-science", base_url);
     [
         ("ANTHROPIC_BASE_URL", science_base_url),
-        (
-            "ANTHROPIC_AUTH_TOKEN",
-            PROXY_TOKEN_PLACEHOLDER.to_string(),
-        ),
-        (
-            "ANTHROPIC_API_KEY",
-            PROXY_TOKEN_PLACEHOLDER.to_string(),
-        ),
+        ("ANTHROPIC_AUTH_TOKEN", PROXY_TOKEN_PLACEHOLDER.to_string()),
+        ("ANTHROPIC_API_KEY", PROXY_TOKEN_PLACEHOLDER.to_string()),
     ]
 }
 
-fn run_cli(
-    bin: &Path,
-    args: &[&str],
-    envs: &[(&str, &str)],
-    profile: Option<&ScienceProfilePaths>,
-) -> Result<Output, String> {
-    run_cli_with_env(bin, args, envs, profile)
+fn replace_url_host(url_str: &str, new_host: &str) -> String {
+    let mut url = match url::Url::parse(url_str) {
+        Ok(u) => u,
+        Err(_) => return url_str.to_string(),
+    };
+    if url.set_host(Some(new_host)).is_err() {
+        return url_str.to_string();
+    }
+    url.to_string()
+}
+
+/// Resolve the Windows host IP that is reachable from a WSL2 distro.
+/// This is the default gateway in the WSL namespace.
+#[cfg(target_os = "windows")]
+fn wsl_host_ip(distro: &str) -> Option<String> {
+    if !crate::commands::misc::is_valid_wsl_distro_name(distro) {
+        return None;
+    }
+
+    let output = run_wsl_bash_script(distro, "ip route show default | awk '{print $3}'").ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let ip = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()?
+        .trim()
+        .to_string();
+
+    if ip.is_empty() {
+        return None;
+    }
+
+    Some(ip)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn wsl_host_ip(_distro: &str) -> Option<String> {
+    None
 }
 
 fn run_cli_with_env<K, V>(
@@ -421,8 +526,140 @@ where
         .map_err(|e| format!("Failed to execute Claude Science CLI: {e}"))
 }
 
-fn managed_profile_paths() -> ScienceProfilePaths {
-    managed_profile_paths_for_science_home(&crate::config::get_home_dir().join(SCIENCE_HOME_DIR))
+fn run_science_cli(
+    runtime: &ScienceRuntime,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    profile: Option<&ScienceProfilePaths>,
+) -> Result<Output, String> {
+    run_science_cli_with_env(runtime, args, envs, profile)
+}
+
+fn run_science_cli_with_env<K, V>(
+    runtime: &ScienceRuntime,
+    args: &[&str],
+    envs: &[(K, V)],
+    profile: Option<&ScienceProfilePaths>,
+) -> Result<Output, String>
+where
+    K: AsRef<std::ffi::OsStr>,
+    V: AsRef<std::ffi::OsStr>,
+{
+    if let Some(distro) = &runtime.wsl_distro {
+        #[cfg(target_os = "windows")]
+        {
+            let cmd = build_wsl_shell_command(runtime, args, envs, profile);
+            let mut command = Command::new("wsl.exe");
+            command
+                .args(["-d", distro, "--", "sh", "-c", &cmd])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .creation_flags(CREATE_NO_WINDOW);
+            return command
+                .output()
+                .map_err(|e| format!("Failed to execute Claude Science CLI in WSL: {e}"));
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (args, envs, profile);
+            return Err("Claude Science WSL launch is only supported on Windows".to_string());
+        }
+    }
+
+    run_cli_with_env(&runtime.bin_path, args, envs, profile)
+}
+
+/// Build the shell command executed inside WSL.
+#[cfg(target_os = "windows")]
+fn build_wsl_shell_command<K, V>(
+    runtime: &ScienceRuntime,
+    args: &[&str],
+    envs: &[(K, V)],
+    profile: Option<&ScienceProfilePaths>,
+) -> String
+where
+    K: AsRef<std::ffi::OsStr>,
+    V: AsRef<std::ffi::OsStr>,
+{
+    let mut cmd = String::from("cd ~");
+
+    if !SCIENCE_MODEL_ENV_KEYS_TO_CLEAR.is_empty() {
+        cmd.push_str(" && unset");
+        for key in SCIENCE_MODEL_ENV_KEYS_TO_CLEAR {
+            cmd.push(' ');
+            cmd.push_str(key);
+        }
+    }
+
+    for (k, v) in envs {
+        cmd.push_str(" && export ");
+        cmd.push_str(&k.as_ref().to_string_lossy());
+        cmd.push('=');
+        cmd.push_str(&shell_quote(&v.as_ref().to_string_lossy()));
+    }
+
+    cmd.push_str(" && ");
+    cmd.push_str(&shell_quote(&runtime.bin_display));
+
+    for arg in args {
+        cmd.push(' ');
+        cmd.push_str(&shell_quote(arg));
+    }
+
+    if let Some(profile) = profile {
+        cmd.push_str(" --data-dir ");
+        cmd.push_str(&shell_quote(
+            &wsl_path_to_linux(&profile.data_dir)
+                .unwrap_or_else(|| profile.data_dir.to_string_lossy().to_string()),
+        ));
+        cmd.push_str(" --config ");
+        cmd.push_str(&shell_quote(
+            &wsl_path_to_linux(&profile.config_path)
+                .unwrap_or_else(|| profile.config_path.to_string_lossy().to_string()),
+        ));
+    }
+
+    cmd
+}
+
+/// Escape a value for safe use inside single quotes in a POSIX shell.
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+/// Convert a Windows UNC WSL path (`\\wsl$\Distro\home\user\.claude-science`)
+/// to the Linux path seen inside WSL (`/home/user/.claude-science`).
+fn wsl_path_to_linux(path: &Path) -> Option<String> {
+    use std::path::{Component, Prefix};
+
+    let mut components = path.components();
+    let prefix = components.next()?;
+    let (server, _share) = match prefix {
+        Component::Prefix(prefix) => match prefix.kind() {
+            Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+                (server.to_string_lossy(), share.to_string_lossy())
+            }
+            _ => return None,
+        },
+        _ => return None,
+    };
+
+    if !server.eq_ignore_ascii_case("wsl$") && !server.eq_ignore_ascii_case("wsl.localhost") {
+        return None;
+    }
+
+    let parts: Vec<String> = components
+        .filter_map(|c| match c {
+            Component::Normal(part) => Some(part.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect();
+
+    if parts.is_empty() {
+        return None;
+    }
+
+    Some(format!("/{}", parts.join("/")))
 }
 
 fn managed_profile_paths_for_science_home(science_home: &Path) -> ScienceProfilePaths {
@@ -464,8 +701,8 @@ fn migrate_legacy_profile_dir(legacy: &Path, target: &Path) {
     let _ = fs::rename(legacy, target);
 }
 
-fn prepare_managed_profile() -> Result<ScienceProfilePaths, String> {
-    let profile = managed_profile_paths();
+fn prepare_managed_profile_at(runtime: &ScienceRuntime) -> Result<ScienceProfilePaths, String> {
+    let profile = runtime.managed_profile_paths();
     migrate_legacy_profile(&profile);
     prepare_profile_at(&profile)?;
     Ok(profile)
@@ -502,7 +739,10 @@ fn prepare_profile_at(profile: &ScienceProfilePaths) -> Result<(), String> {
 }
 
 fn write_science_config(profile: &ScienceProfilePaths) -> Result<(), String> {
-    let auth_dir = profile.auth_dir.to_string_lossy().to_string();
+    // When the profile lives on a WSL UNC path, the daemon inside WSL needs a
+    // Linux path rather than the Windows UNC representation.
+    let auth_dir = wsl_path_to_linux(&profile.auth_dir)
+        .unwrap_or_else(|| profile.auth_dir.to_string_lossy().to_string());
     let config = ScienceConfig {
         paths: ScienceConfigPaths {
             auth_dir: auth_dir.as_str(),
@@ -766,14 +1006,399 @@ fn set_private_dir_permissions(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn find_claude_science_binary() -> Option<PathBuf> {
-    find_claude_science_binary_from(
+/// Resolve the runtime used to launch/status/stop Claude Science.
+///
+/// Windows resolution order:
+/// 1. Explicit WSL override: config dir points at a WSL UNC path.
+/// 2. Native host binary.
+/// 3. Auto-detect: scan registered WSL distros (default first) for the
+///    claude-science binary and derive the data dir from the distro's $HOME.
+///
+/// Other platforms use the native binary search only.
+fn find_science_runtime() -> Result<ScienceRuntime, String> {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(distro) = crate::commands::misc::wsl_distro_for_science() {
+            return find_wsl_override_runtime(&distro);
+        }
+
+        let candidates = native_binary_candidates();
+        if let Some(path) = find_first_executable(candidates.clone()) {
+            return Ok(ScienceRuntime {
+                bin_display: path.display().to_string(),
+                bin_path: path,
+                wsl_distro: None,
+                config_dir: crate::config::get_claude_science_config_dir(),
+                wsl_version: None,
+            });
+        }
+
+        if let Some(runtime) = detect_wsl_science_runtime() {
+            return Ok(runtime);
+        }
+
+        let searched = candidates
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let wsl_hint = match registered_wsl_distros() {
+            Some(distros) if !distros.is_empty() => format!(
+                "Registered WSL distros: {} (no claude-science binary found inside them).",
+                distros.join(", ")
+            ),
+            _ => "No WSL distro with claude-science was detected.".to_string(),
+        };
+        return Err(format!(
+            "Claude Science CLI was not found. Searched:\n{searched}\n\n{wsl_hint}\n\
+             Install claude-science, point the config directory at a WSL path, or set the \
+             {CLAUDE_SCIENCE_BIN_ENV} environment variable."
+        ));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let candidates = native_binary_candidates();
+        find_first_executable(candidates.clone())
+            .map(|path| ScienceRuntime {
+                bin_display: path.display().to_string(),
+                bin_path: path,
+                wsl_distro: None,
+                config_dir: crate::config::get_claude_science_config_dir(),
+                wsl_version: None,
+            })
+            .ok_or_else(|| {
+                let searched = candidates
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!(
+                    "Claude Science CLI was not found. Searched:\n{searched}\n\n\
+                     Install claude-science or set the {CLAUDE_SCIENCE_BIN_ENV} environment variable."
+                )
+            })
+    }
+}
+
+fn native_binary_candidates() -> Vec<PathBuf> {
+    claude_science_binary_candidates(
         std::env::var(CLAUDE_SCIENCE_BIN_ENV).ok(),
-        home_dir(),
+        Some(crate::config::get_home_dir()),
         std::env::var_os("PATH"),
     )
 }
 
+/// Runtime for an explicitly configured WSL config directory.
+#[cfg(target_os = "windows")]
+fn find_wsl_override_runtime(distro: &str) -> Result<ScienceRuntime, String> {
+    // Try the actual binary search first; if it succeeds we don't care about
+    // any list/probe quirks.
+    match find_claude_science_binary_wsl(distro) {
+        Ok(Some(cmd)) => {
+            return Ok(ScienceRuntime {
+                bin_display: cmd.clone(),
+                bin_path: PathBuf::from(&cmd),
+                wsl_distro: Some(distro.to_string()),
+                config_dir: crate::config::get_claude_science_config_dir(),
+                wsl_version: wsl_version_for(distro),
+            });
+        }
+        Ok(None) => {}
+        Err(err) => return Err(err),
+    }
+
+    if !wsl_distro_exists(distro) {
+        let registered = registered_wsl_distros()
+            .map(|list| list.join(", "))
+            .unwrap_or_else(|| "could not enumerate".to_string());
+        return Err(format!(
+            "WSL distro '{distro}' does not exist. Registered distros: {registered}. \
+             Update the Claude Science config directory to point to an existing distro, \
+             e.g. \\\\wsl$\\<distro>\\home\\<user>\\.claude-science."
+        ));
+    }
+
+    Err(format!(
+        "Claude Science CLI was not found in WSL distro '{distro}'. \
+         Searched: $PATH, $HOME/.claude-science/bin/claude-science, \
+         $HOME/.local/bin/claude-science. \
+         Install it inside WSL or set the {CLAUDE_SCIENCE_BIN_ENV} environment variable."
+    ))
+}
+
+/// Auto-detect a WSL distro that has claude-science installed and build a
+/// runtime whose data dir lives in that distro's home.
+#[cfg(target_os = "windows")]
+fn detect_wsl_science_runtime() -> Option<ScienceRuntime> {
+    let mut distros = registered_wsl_distros_verbose()?;
+    distros.sort_by_key(|d| !d.is_default);
+
+    for distro in distros {
+        let cmd = match find_claude_science_binary_wsl(&distro.name) {
+            Ok(Some(cmd)) => cmd,
+            _ => continue,
+        };
+        let home = match wsl_user_home(&distro.name) {
+            Some(home) if home.starts_with('/') => home,
+            _ => continue,
+        };
+        return Some(ScienceRuntime {
+            bin_display: cmd.clone(),
+            bin_path: PathBuf::from(&cmd),
+            wsl_distro: Some(distro.name.clone()),
+            config_dir: wsl_unc_science_home(&distro.name, &home),
+            wsl_version: Some(distro.version),
+        });
+    }
+
+    None
+}
+
+/// Query the default user's $HOME inside a WSL distro.
+#[cfg(target_os = "windows")]
+fn wsl_user_home(distro: &str) -> Option<String> {
+    let output = run_wsl_bash_script(distro, r#"printf '%s' "$HOME""#).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let home = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if home.is_empty() {
+        None
+    } else {
+        Some(home)
+    }
+}
+
+/// Build the Windows UNC path for the Claude Science home inside a distro,
+/// e.g. `\\wsl$\Ubuntu-24.04\home\ciao\.claude-science`.
+#[cfg(target_os = "windows")]
+fn wsl_unc_science_home(distro: &str, linux_home: &str) -> PathBuf {
+    let windows_home = linux_home.trim_end_matches('/').replace('/', "\\");
+    PathBuf::from(format!(
+        "\\\\wsl$\\{distro}{windows_home}\\.claude-science"
+    ))
+}
+
+/// Run a bash script inside a WSL distro. The script is base64-encoded before
+/// being handed to wsl.exe so quoting/variable-expansion quirks of the
+/// Windows -> WSL command line cannot corrupt it.
+#[cfg(target_os = "windows")]
+fn run_wsl_bash_script(distro: &str, script: &str) -> Result<Output, String> {
+    let encoded_script = BASE64_STANDARD.encode(script.as_bytes());
+    let wrapped = format!("echo {encoded_script} | base64 -d | bash");
+    Command::new("wsl.exe")
+        .args(["-d", distro, "--", "sh", "-c", &wrapped])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| format!("Failed to run wsl.exe: {e}"))
+}
+
+/// Locate the claude-science executable inside a WSL distro.
+#[cfg(target_os = "windows")]
+fn find_claude_science_binary_wsl(distro: &str) -> Result<Option<String>, String> {
+    if !crate::commands::misc::is_valid_wsl_distro_name(distro) {
+        return Err(format!("Invalid WSL distro name: '{distro}'"));
+    }
+
+    // Prepend the standard user-level bin directories to PATH before using
+    // command -v, so binaries installed outside the login PATH are still found.
+    let script = r#"PATH="$HOME/.claude-science/bin:$HOME/.local/bin:$PATH"; for p in "$(command -v claude-science 2>/dev/null)" "$HOME/.claude-science/bin/claude-science" "$HOME/.local/bin/claude-science"; do if [ -n "$p" ] && [ -x "$p" ]; then printf '%s\n' "$p"; break; fi; done"#;
+
+    let output = run_wsl_bash_script(distro, script)?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("exit status {}", output.status)
+        };
+        return Err(format!(
+            "WSL command failed in distro '{distro}': {detail}"
+        ));
+    }
+
+    let line = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string();
+
+    if line.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(line))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn find_claude_science_binary_wsl(_distro: &str) -> Result<Option<String>, String> {
+    Ok(None)
+}
+
+/// A registered WSL distro with its version and default flag.
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone)]
+struct WslDistroInfo {
+    name: String,
+    version: u8,
+    is_default: bool,
+}
+
+/// Parse `wsl.exe --list --verbose` output. Lines look like
+/// `* Ubuntu-24.04 Running 2` (localized header is skipped automatically
+/// because its last token does not parse as a version number).
+#[cfg(target_os = "windows")]
+fn parse_wsl_verbose_output(text: &str) -> Vec<WslDistroInfo> {
+    let mut distros = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let (is_default, rest) = match line.strip_prefix('*') {
+            Some(rest) => (true, rest.trim()),
+            None => (false, line),
+        };
+        let mut tokens: Vec<&str> = rest.split_whitespace().collect();
+        let Some(version_str) = tokens.last().copied() else {
+            continue;
+        };
+        let Ok(version) = version_str.parse::<u8>() else {
+            continue;
+        };
+        tokens.pop();
+        if tokens.is_empty() {
+            continue;
+        }
+        // Distro names cannot contain whitespace, so the first token is the
+        // name; anything between the name and the version is the state column.
+        let name = tokens[0];
+        distros.push(WslDistroInfo {
+            name: name.to_string(),
+            version,
+            is_default,
+        });
+    }
+    distros
+}
+
+/// List registered WSL distros with version info (Windows only).
+#[cfg(target_os = "windows")]
+fn registered_wsl_distros_verbose() -> Option<Vec<WslDistroInfo>> {
+    let output = Command::new("wsl.exe")
+        .args(["--list", "--verbose"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let text = decode_wsl_text_output(&output.stdout);
+    let distros = parse_wsl_verbose_output(&text);
+    if distros.is_empty() {
+        None
+    } else {
+        Some(distros)
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn registered_wsl_distros_verbose() -> Option<Vec<WslDistroInfo>> {
+    None
+}
+
+/// Non-Windows placeholder type so the verbose stub compiles.
+#[cfg(not(target_os = "windows"))]
+#[derive(Debug, Clone)]
+struct WslDistroInfo {
+    name: String,
+    version: u8,
+    is_default: bool,
+}
+
+/// List registered WSL distro names (Windows only).
+#[cfg(target_os = "windows")]
+fn registered_wsl_distros() -> Option<Vec<String>> {
+    registered_wsl_distros_verbose()
+        .map(|list| list.into_iter().map(|distro| distro.name).collect())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn registered_wsl_distros() -> Option<Vec<String>> {
+    None
+}
+
+/// Look up the WSL version (1 or 2) for a distro name.
+#[cfg(target_os = "windows")]
+fn wsl_version_for(distro: &str) -> Option<u8> {
+    registered_wsl_distros_verbose().and_then(|list| {
+        list.into_iter()
+            .find(|d| d.name.eq_ignore_ascii_case(distro))
+            .map(|d| d.version)
+    })
+}
+
+/// Decode output from wsl.exe. It often returns UTF-16LE when stdout is
+/// redirected — with or without a BOM — so detect the BOM first and otherwise
+/// fall back to a NUL-ratio heuristic before assuming UTF-8.
+#[cfg(target_os = "windows")]
+fn decode_wsl_text_output(bytes: &[u8]) -> String {
+    let bom = bytes.starts_with(&[0xFF, 0xFE]);
+    let body = if bom { &bytes[2..] } else { bytes };
+
+    // ASCII text encoded as UTF-16LE has a NUL in every second byte (~50%).
+    // A >=25% NUL ratio is a safe signal that this is not UTF-8 text.
+    let nul_count = body.iter().filter(|&&b| b == 0).count();
+    let looks_utf16le = bom || (body.len() >= 4 && nul_count * 4 >= body.len());
+
+    if looks_utf16le {
+        let u16s: Vec<u16> = body
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        return String::from_utf16(&u16s)
+            .unwrap_or_else(|_| String::from_utf8_lossy(bytes).to_string());
+    }
+
+    String::from_utf8_lossy(bytes).to_string()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn decode_wsl_text_output(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).to_string()
+}
+
+/// Check whether a WSL distro is registered (Windows only).
+/// This uses a direct `wsl.exe -d <distro> -- echo ok` probe instead of parsing
+/// `wsl.exe --list`, so it is immune to list-output encoding quirks.
+#[cfg(target_os = "windows")]
+fn wsl_distro_exists(distro: &str) -> bool {
+    if !crate::commands::misc::is_valid_wsl_distro_name(distro) {
+        return false;
+    }
+
+    Command::new("wsl.exe")
+        .args(["-d", distro, "--", "echo", "ok"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn wsl_distro_exists(_distro: &str) -> bool {
+    false
+}
+
+#[allow(dead_code)]
 fn find_claude_science_binary_from(
     override_path: Option<String>,
     home: Option<PathBuf>,
@@ -836,10 +1461,6 @@ fn find_first_executable(candidates: Vec<PathBuf>) -> Option<PathBuf> {
     candidates
         .into_iter()
         .find(|path| path.is_file() && is_executable(path))
-}
-
-fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
 }
 
 #[cfg(unix)]
@@ -1105,10 +1726,7 @@ mod tests {
         );
         assert_eq!(
             env[1],
-            (
-                "ANTHROPIC_AUTH_TOKEN",
-                PROXY_TOKEN_PLACEHOLDER.to_string()
-            )
+            ("ANTHROPIC_AUTH_TOKEN", PROXY_TOKEN_PLACEHOLDER.to_string())
         );
         assert_eq!(
             env[2],
@@ -1127,6 +1745,32 @@ mod tests {
                 "http://127.0.0.1:15721/claude-science".to_string()
             )
         );
+    }
+
+    #[test]
+    fn proxy_launch_env_with_host_override_rewrites_loopback_for_wsl() {
+        let env = proxy_launch_env_with_host("http://127.0.0.1:15721", Some("172.24.128.1"));
+
+        assert_eq!(
+            env[0],
+            (
+                "ANTHROPIC_BASE_URL",
+                "http://172.24.128.1:15721/claude-science".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn replace_url_host_swaps_host_and_preserves_port_and_path() {
+        assert_eq!(
+            replace_url_host("http://127.0.0.1:15721", "172.24.128.1"),
+            "http://172.24.128.1:15721/"
+        );
+        assert_eq!(
+            replace_url_host("http://localhost:15721/foo", "172.24.128.1"),
+            "http://172.24.128.1:15721/foo"
+        );
+        assert_eq!(replace_url_host("not-a-url", "172.24.128.1"), "not-a-url");
     }
 
     #[test]
@@ -1252,6 +1896,150 @@ printf 'sonnet_name=%s\n' "${ANTHROPIC_DEFAULT_SONNET_MODEL_NAME-}"
         assert_eq!(
             extract_first_http_url(output),
             Some("http://localhost:8000/?nonce=redacted".to_string())
+        );
+    }
+
+    #[test]
+    fn shell_quote_escapes_single_quotes() {
+        assert_eq!(shell_quote("hello"), "'hello'");
+        assert_eq!(shell_quote("it's"), "'it'\\''s'");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn wsl_path_to_linux_converts_unc_paths() {
+        assert_eq!(
+            wsl_path_to_linux(&PathBuf::from(r"\\wsl$\Ubuntu\home\alice\.claude-science")),
+            Some("/home/alice/.claude-science".to_string())
+        );
+        assert_eq!(
+            wsl_path_to_linux(&PathBuf::from(
+                r"\\wsl.localhost\Ubuntu\root\.claude-science"
+            )),
+            Some("/root/.claude-science".to_string())
+        );
+        assert_eq!(
+            wsl_path_to_linux(&PathBuf::from(r"C:\Users\alice\.claude-science")),
+            None
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn build_wsl_shell_command_includes_env_profile_and_unset() {
+        let runtime = ScienceRuntime {
+            bin_display: "claude-science".to_string(),
+            bin_path: PathBuf::from("claude-science"),
+            wsl_distro: Some("Ubuntu".to_string()),
+            config_dir: PathBuf::from(r"\\wsl$\Ubuntu\home\alice\.claude-science"),
+            wsl_version: Some(2),
+        };
+        let profile = managed_profile_paths_for_science_home(&PathBuf::from(
+            r"\\wsl$\Ubuntu\home\alice\.claude-science",
+        ));
+        let envs = proxy_launch_env("http://127.0.0.1:15721");
+
+        let cmd = build_wsl_shell_command(&runtime, &["status"], &envs, Some(&profile));
+
+        assert!(cmd.starts_with("cd ~"), "{cmd}");
+        assert!(cmd.contains(" && unset ANTHROPIC_MODEL"), "{cmd}");
+        assert!(
+            cmd.contains("export ANTHROPIC_BASE_URL='http://127.0.0.1:15721/claude-science'"),
+            "{cmd}"
+        );
+        assert!(
+            cmd.contains("export ANTHROPIC_AUTH_TOKEN='PROXY_MANAGED'"),
+            "{cmd}"
+        );
+        assert!(
+            cmd.contains("export ANTHROPIC_API_KEY='PROXY_MANAGED'"),
+            "{cmd}"
+        );
+        assert!(cmd.contains(" && 'claude-science' 'status'"), "{cmd}");
+        assert!(
+            cmd.contains("--data-dir '/home/alice/.claude-science/claude-science-proxy'"),
+            "{cmd}"
+        );
+        assert!(
+            cmd.contains("--config '/home/alice/.claude-science/claude-science-proxy/config.toml'"),
+            "{cmd}"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn wsl_unc_science_home_builds_unc_path() {
+        assert_eq!(
+            wsl_unc_science_home("Ubuntu-24.04", "/home/ciao"),
+            PathBuf::from(r"\\wsl$\Ubuntu-24.04\home\ciao\.claude-science")
+        );
+        assert_eq!(
+            wsl_unc_science_home("Ubuntu-24.04", "/root"),
+            PathBuf::from(r"\\wsl$\Ubuntu-24.04\root\.claude-science")
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn wsl_unc_science_home_roundtrips_through_linux_conversion() {
+        let unc = wsl_unc_science_home("Ubuntu-24.04", "/home/ciao");
+        assert_eq!(
+            wsl_path_to_linux(&unc),
+            Some("/home/ciao/.claude-science".to_string())
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn parse_wsl_verbose_output_reads_name_version_and_default() {
+        let text = "  NAME            STATE           VERSION\r\n* Ubuntu-24.04    Running         2\r\n  Debian          Stopped         1\r\n";
+        let distros = parse_wsl_verbose_output(text);
+
+        assert_eq!(distros.len(), 2);
+        assert_eq!(distros[0].name, "Ubuntu-24.04");
+        assert_eq!(distros[0].version, 2);
+        assert!(distros[0].is_default);
+        assert_eq!(distros[1].name, "Debian");
+        assert_eq!(distros[1].version, 1);
+        assert!(!distros[1].is_default);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn parse_wsl_verbose_output_skips_localized_header() {
+        let text = "  名称            状态            版本\n  Ubuntu-24.04    正在运行        2\n";
+        let distros = parse_wsl_verbose_output(text);
+
+        assert_eq!(distros.len(), 1);
+        assert_eq!(distros[0].name, "Ubuntu-24.04");
+        assert_eq!(distros[0].version, 2);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn decode_wsl_text_output_handles_utf16le_with_bom() {
+        let mut bytes = vec![0xFF, 0xFE];
+        bytes.extend("Ubuntu-24.04".encode_utf16().flat_map(|u| u.to_le_bytes()));
+        assert_eq!(decode_wsl_text_output(&bytes), "Ubuntu-24.04");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn decode_wsl_text_output_handles_utf16le_without_bom() {
+        let bytes: Vec<u8> = "Ubuntu-24.04\r\n"
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
+        assert_eq!(decode_wsl_text_output(&bytes), "Ubuntu-24.04\r\n");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn decode_wsl_text_output_passes_utf8_through() {
+        let bytes = "适用于 Linux 的 Windows 子系统".as_bytes();
+        assert_eq!(
+            decode_wsl_text_output(bytes),
+            "适用于 Linux 的 Windows 子系统"
         );
     }
 }

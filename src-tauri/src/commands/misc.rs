@@ -1072,7 +1072,7 @@ fn try_get_version(tool: &str) -> ShellProbe {
 /// 校验 WSL 发行版名称是否合法
 /// WSL 发行版名称只允许字母、数字、连字符和下划线
 #[cfg(target_os = "windows")]
-fn is_valid_wsl_distro_name(name: &str) -> bool {
+pub fn is_valid_wsl_distro_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
         && name
@@ -3293,10 +3293,23 @@ fn wsl_distro_for_tool(tool: &str) -> Option<String> {
         "opencode" => crate::settings::get_opencode_override_dir(),
         "openclaw" => crate::settings::get_openclaw_override_dir(),
         "hermes" => crate::settings::get_hermes_override_dir(),
+        "claude-science" => crate::settings::get_claude_science_override_dir(),
         _ => None,
     }?;
 
     wsl_distro_from_path(&override_dir)
+}
+
+/// 获取 Claude Science 运行所需的 WSL 发行版（如果有）
+#[cfg(target_os = "windows")]
+pub fn wsl_distro_for_science() -> Option<String> {
+    wsl_distro_for_tool("claude-science")
+}
+
+/// 非 Windows 平台永远返回 None
+#[cfg(not(target_os = "windows"))]
+pub fn wsl_distro_for_science() -> Option<String> {
+    None
 }
 
 /// 从 UNC 路径中提取 WSL 发行版名称

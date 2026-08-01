@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
 import type { ResolvedDirectories } from "@/hooks/useSettings";
 
-type DirectoryAppId = Exclude<AppId, "claude-desktop" | "claude-science">;
+type DirectoryAppId = Exclude<AppId, "claude-desktop">;
 
 interface DirectorySettingsProps {
   appConfigDir?: string;
@@ -21,6 +21,7 @@ interface DirectorySettingsProps {
   opencodeDir?: string;
   openclawDir?: string;
   hermesDir?: string;
+  scienceDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -39,6 +40,7 @@ export function DirectorySettings({
   opencodeDir,
   openclawDir,
   hermesDir,
+  scienceDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -171,6 +173,18 @@ export function DirectorySettings({
           onBrowse={() => onBrowseDirectory("hermes")}
           onReset={() => onResetDirectory("hermes")}
         />
+
+        <DirectoryInput
+          label={t("settings.claudeScienceConfigDir")}
+          description={t("settings.claudeScienceConfigDirDescription")}
+          value={scienceDir}
+          resolvedValue={resolvedDirs.claudescience}
+          placeholder={t("settings.browsePlaceholderScience")}
+          onChange={(val) => onDirectoryChange("claude-science", val)}
+          onBrowse={() => onBrowseDirectory("claude-science")}
+          onReset={() => onResetDirectory("claude-science")}
+          hideResolvedFallback
+        />
       </section>
     </div>
   );
@@ -185,6 +199,8 @@ interface DirectoryInputProps {
   onChange: (value?: string) => void;
   onBrowse: () => Promise<void>;
   onReset: () => Promise<void>;
+  /** 为 true 时，空值不回显 resolvedValue（用于"留空=自动检测"的目录）。 */
+  hideResolvedFallback?: boolean;
 }
 
 function DirectoryInput({
@@ -196,11 +212,12 @@ function DirectoryInput({
   onChange,
   onBrowse,
   onReset,
+  hideResolvedFallback = false,
 }: DirectoryInputProps) {
   const { t } = useTranslation();
   const displayValue = useMemo(
-    () => value ?? resolvedValue ?? "",
-    [value, resolvedValue],
+    () => value ?? (hideResolvedFallback ? "" : (resolvedValue ?? "")),
+    [value, resolvedValue, hideResolvedFallback],
   );
 
   return (

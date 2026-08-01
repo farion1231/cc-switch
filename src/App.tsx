@@ -1313,24 +1313,24 @@ function App() {
                   className="flex shrink-0 items-center gap-1.5"
                   style={{ WebkitAppRegion: "no-drag" } as any}
                 >
-                  {(activeApp === "claude" || activeApp === "claude-science") &&
-                    settingsData?.enableLocalProxy && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={handleLaunchClaudeScience}
-                        disabled={isLaunchingClaudeScience}
-                        title={t("claudeScience.launch")}
-                        aria-label={t("claudeScience.launch")}
-                        className="hover:bg-black/5 dark:hover:bg-white/5"
-                      >
-                        {isLaunchingClaudeScience ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Microscope className="w-4 h-4" />
-                        )}
-                      </Button>
-                    )}
+                  {((activeApp === "claude" && settingsData?.enableLocalProxy) ||
+                    activeApp === "claude-science") && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={handleLaunchClaudeScience}
+                      disabled={isLaunchingClaudeScience}
+                      title={t("claudeScience.launch")}
+                      aria-label={t("claudeScience.launch")}
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      {isLaunchingClaudeScience ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Microscope className="w-4 h-4" />
+                      )}
+                    </Button>
+                  )}
                   {activeApp === "claude-desktop" ? (
                     <ClaudeDesktopRouteToggle />
                   ) : (

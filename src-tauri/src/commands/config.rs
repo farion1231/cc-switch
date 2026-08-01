@@ -82,7 +82,7 @@ pub async fn get_config_status(
         }
         AppType::ClaudeScience => {
             // Claude Science 的配置在加密 SQLite 中（~/.claude-science），无独立配置文件
-            let dir = crate::config::get_home_dir().join(".claude-science");
+            let dir = crate::config::get_claude_science_config_dir();
             Ok(ConfigStatus {
                 exists: dir.exists(),
                 path: dir.to_string_lossy().to_string(),
@@ -158,8 +158,8 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::ClaudeDesktop => {
             crate::claude_desktop_config::get_config_library_path().map_err(|e| e.to_string())?
         }
-        // Claude Science 的配置在加密 SQLite 中（~/.claude-science），无独立配置目录可覆盖
-        AppType::ClaudeScience => crate::config::get_home_dir().join(".claude-science"),
+        // Claude Science 的配置在加密 SQLite 中（~/.claude-science），支持目录覆盖以便在 WSL2 中运行
+        AppType::ClaudeScience => crate::config::get_claude_science_config_dir(),
         AppType::Codex => codex_config::get_codex_config_dir(),
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
         AppType::GrokBuild => crate::grok_config::get_grok_config_dir(),
@@ -178,8 +178,8 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::ClaudeDesktop => {
             crate::claude_desktop_config::get_config_library_path().map_err(|e| e.to_string())?
         }
-        // Claude Science 的配置在加密 SQLite 中（~/.claude-science），无独立配置目录可覆盖
-        AppType::ClaudeScience => crate::config::get_home_dir().join(".claude-science"),
+        // Claude Science 的配置在加密 SQLite 中（~/.claude-science），支持目录覆盖以便在 WSL2 中运行
+        AppType::ClaudeScience => crate::config::get_claude_science_config_dir(),
         AppType::Codex => codex_config::get_codex_config_dir(),
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
         AppType::GrokBuild => crate::grok_config::get_grok_config_dir(),

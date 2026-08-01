@@ -125,6 +125,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       grokConfigDir: sanitizeDir(data.grokConfigDir),
       opencodeConfigDir: sanitizeDir(data.opencodeConfigDir),
       openclawConfigDir: sanitizeDir(data.openclawConfigDir),
+      claudeScienceConfigDir: sanitizeDir(data.claudeScienceConfigDir),
       language: normalizedLanguage,
     };
 
@@ -192,6 +193,7 @@ export function useSettingsForm(): UseSettingsFormResult {
         grokConfigDir: sanitizeDir(serverData.grokConfigDir),
         opencodeConfigDir: sanitizeDir(serverData.opencodeConfigDir),
         openclawConfigDir: sanitizeDir(serverData.openclawConfigDir),
+        claudeScienceConfigDir: sanitizeDir(serverData.claudeScienceConfigDir),
         language: normalizedLanguage,
       };
 
