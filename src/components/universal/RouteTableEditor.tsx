@@ -40,6 +40,15 @@ export function RouteTableEditor({ routes, onChange }: RouteTableEditorProps) {
     );
   };
 
+  // 直接填写优先级数字（各上游互不关联，不做排序）
+  const handleSetPriority = (id: string, raw: string) => {
+    const n = Number.parseInt(raw, 10);
+    const priority = Number.isNaN(n) ? 0 : n;
+    onChange(
+      routes.map((r) => (r.id === id ? { ...r, priority } : r)),
+    );
+  };
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -59,7 +68,7 @@ export function RouteTableEditor({ routes, onChange }: RouteTableEditorProps) {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        配置上游供应商，代理按 model 字段自动匹配并转发
+        配置上游供应商，代理按 model 字段自动匹配并转发；各上游优先级互不关联，数字越大越优先，相同则随机
       </p>
 
       {routes.length === 0 ? (
@@ -117,6 +126,22 @@ export function RouteTableEditor({ routes, onChange }: RouteTableEditorProps) {
                 </div>
 
                 <div className="flex items-center gap-1">
+                  {/* 优先级：数字越大越优先，同优先级随机 */}
+                  <label className="flex items-center gap-1 rounded-md border border-border/50 px-1.5 py-0.5">
+                    <span className="text-[10px] font-medium text-muted-foreground">
+                      P
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={route.priority ?? 0}
+                      onChange={(e) =>
+                        handleSetPriority(route.id, e.target.value)
+                      }
+                      className="w-12 bg-transparent text-center text-xs text-foreground outline-none"
+                      title="优先级（数字越大越优先，相同则随机）"
+                    />
+                  </label>
                   <Button
                     variant="ghost"
                     size="icon"

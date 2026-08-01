@@ -210,7 +210,19 @@ export function RequestLogTable({
                           )}
                         </TableCell>
                         <TableCell className="text-center">
-                          {log.providerName || t("usage.unknownProvider")}
+                          <span className="inline-flex items-center justify-center gap-1">
+                            <span className="whitespace-nowrap">
+                              {log.providerName || t("usage.unknownProvider")}
+                            </span>
+                            {log.providerType === "cc_switch_route" && (
+                              <span
+                                className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary"
+                                title="来自统一供应商路由"
+                              >
+                                {t("usage.routeBadge")}
+                              </span>
+                            )}
+                          </span>
                         </TableCell>
                         <TableCell className="text-center font-mono text-xs max-w-[200px]">
                           <div

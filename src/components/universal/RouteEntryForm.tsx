@@ -141,6 +141,7 @@ export function RouteEntryForm({
   const [customModel, setCustomModel] = useState("");
   const [isCustom, setIsCustom] = useState(true);
   const [presetSearch, setPresetSearch] = useState("");
+  const [priority, setPriority] = useState(0);
 
   useEffect(() => {
     if (editingRoute) {
@@ -150,6 +151,7 @@ export function RouteEntryForm({
       setApiKey(editingRoute.apiKey);
       setEnabled(editingRoute.enabled);
       setModelNames(editingRoute.modelNames || []);
+      setPriority(editingRoute.priority ?? 0);
       setIsCustom(true);
     } else {
       resetForm();
@@ -165,6 +167,7 @@ export function RouteEntryForm({
     setApiKey("");
     setEnabled(true);
     setModelNames([]);
+    setPriority(0);
     setIsCustom(true);
   }
 
@@ -222,6 +225,7 @@ export function RouteEntryForm({
       apiKey: apiKey.trim(),
       modelNames,
       enabled,
+      priority,
     });
     onClose();
   };
@@ -408,6 +412,25 @@ export function RouteEntryForm({
             onChange={(e) => setApiKey(e.target.value)}
             placeholder="sk-..."
           />
+        </div>
+
+        {/* 优先级 */}
+        <div className="space-y-2">
+          <Label htmlFor="route-priority">优先级</Label>
+          <Input
+            id="route-priority"
+            type="number"
+            min={0}
+            value={priority}
+            onChange={(e) => {
+              const n = Number.parseInt(e.target.value, 10);
+              setPriority(Number.isNaN(n) ? 0 : n);
+            }}
+            placeholder="默认 0，数字越大越优先"
+          />
+          <p className="text-xs text-muted-foreground">
+            各上游优先级互不关联；数字大的优先匹配，相同则随机
+          </p>
         </div>
 
         {/* 模型列表 */}

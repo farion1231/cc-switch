@@ -597,6 +597,7 @@ export interface UpstreamRoute {
   apiKey: string;
   modelNames: string[]; // 上游支持的模型名称列表
   enabled: boolean;
+  priority?: number; // 优先级（数字越大越优先，默认 0，同优先级随机）
 }
 
 // 统一供应商映射（id -> UniversalProvider）

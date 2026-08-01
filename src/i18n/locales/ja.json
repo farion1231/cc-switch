@@ -1493,6 +1493,7 @@
     "responseModel": "レスポンスモデル",
     "noData": "データなし",
     "unknownProvider": "不明なプロバイダー",
+    "routeBadge": "ルート",
     "stream": "ストリーム",
     "nonStream": "非ストリーム",
     "source": "ソース",

@@ -6,6 +6,21 @@
 use crate::provider::UniversalProvider;
 use std::collections::HashMap;
 
+/// 匹配前剥离 [1m] / [1M] 上下文能力标记，使 `claude-sonnet-4-6[1m]`
+/// 能正确匹配精确 route `claude-sonnet-4-6`，避免因后缀差异导致不同请求
+/// 落在不同 route 上。
+fn strip_one_m_context_marker(model: &str) -> &str {
+    let bytes = model.as_bytes();
+    let marker = b"[1m]";
+    // 检查结尾（大小写不敏感）
+    if bytes.len() >= marker.len()
+        && bytes[bytes.len() - marker.len()..].eq_ignore_ascii_case(marker)
+    {
+        return model[..model.len() - marker.len()].trim_end();
+    }
+    model
+}
+
 /// 模型路由解析器
 pub struct ModelRouter;
 
@@ -40,6 +55,14 @@ impl ModelRouter {
         sorted.sort_by_key(|p| p.sort_index.unwrap_or(usize::MAX));
 
         for provider in sorted {
+            // 跳过有 routes 的 UP：routes 路由只由 find_matching_route 驱动
+            // （且仅在它作为当前 provider 时）。若这里按 models 匹配到它，
+            // to_*_provider 的 ANTHROPIC_BASE_URL 会指向本地代理自身
+            // （cc_switch preset 的 baseUrl=127.0.0.1:15721），造成请求自环。
+            if !provider.routes.is_empty() {
+                continue;
+            }
+
             let kind = match app_type {
                 "claude" => Self::match_claude(&model_lower, provider),
                 "codex" => Self::match_codex(&model_lower, provider),
@@ -125,17 +148,22 @@ impl ModelRouter {
     }
 
     /// 单值匹配
+    ///
+    /// 匹配前剥离 `[1m]` 后缀，使 Claude Code 带 1M 标记的模型名
+    /// 仍能命中精确 route 或 model。
     fn match_value(model: &str, pattern: &str) -> Option<MatchKind> {
+        let model = strip_one_m_context_marker(model);
         let pattern_lower = pattern.to_lowercase();
+        let model_lower = model.to_lowercase();
 
         // 精确匹配
-        if model == pattern_lower {
+        if model_lower == pattern_lower {
             return Some(MatchKind::Exact);
         }
 
         // 通配符匹配：pattern 以 * 结尾，且 model 以前缀开头
         if let Some(prefix) = pattern_lower.strip_suffix('*') {
-            if model.starts_with(prefix) {
+            if model_lower.starts_with(prefix) {
                 return Some(MatchKind::Wildcard(prefix.len()));
             }
         }
@@ -144,7 +172,10 @@ impl ModelRouter {
     }
 
     /// 检查 UpstreamRoute 是否能处理指定 model
+    ///
+    /// 匹配前剥离 `[1m]` 后缀（同 match_value）。
     pub fn match_route(model: &str, route: &crate::provider::UpstreamRoute) -> bool {
+        let model = strip_one_m_context_marker(model);
         let model_lower = model.to_lowercase();
         route.model_names.iter().any(|name| {
             let name_lower = name.to_lowercase();
@@ -408,5 +439,108 @@ mod tests {
         assert!(result.is_some());
         // 精确匹配优先于通配符
         assert_eq!(result.unwrap().id, "exact");
+    }
+
+    #[test]
+    fn match_route_strips_one_m_marker() {
+        let route = crate::provider::UpstreamRoute {
+            id: "test".to_string(),
+            name: "test".to_string(),
+            model_names: vec!["claude-sonnet-4-6".to_string()],
+            enabled: true,
+            base_url: "https://test.com".to_string(),
+            api_key: "sk-test".to_string(),
+            protocol: "openai_chat".to_string(),
+            priority: 0,
+        };
+        assert!(ModelRouter::match_route("claude-sonnet-4-6[1m]", &route));
+        assert!(ModelRouter::match_route("claude-sonnet-4-6[1M]", &route));
+        assert!(ModelRouter::match_route("claude-sonnet-4-6", &route));
+    }
+
+    #[test]
+    fn match_model_strips_one_m_marker_exact() {
+        let up = make_up(
+            "up-a",
+            claude_models(None, Some("claude-sonnet-4-6"), None, None),
+        );
+        let mut map = HashMap::new();
+        map.insert(up.id.clone(), up);
+
+        // 带 [1m] 后缀也应该匹配精确 model
+        let result = ModelRouter::match_model("claude-sonnet-4-6[1m]", &map, "claude");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().id, "up-a");
+    }
+
+    #[test]
+    fn match_model_strips_one_m_marker_wildcard() {
+        let up = make_up(
+            "up-b",
+            UniversalProviderModels {
+                gemini: Some(GeminiModelConfig {
+                    model: Some("gemini-2*".to_string()),
+                }),
+                ..Default::default()
+            },
+        );
+        let mut map = HashMap::new();
+        map.insert(up.id.clone(), up);
+
+        let result = ModelRouter::match_model("gemini-2.0-flash[1m]", &map, "gemini");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn match_model_skips_up_with_routes() {
+        // routes 模式只由 find_matching_route 驱动（且仅在它作为当前 provider 时）。
+        // 若这里按 models 匹配到有 routes 的 UP，to_*_provider 会把请求转发回本地
+        // 代理自身造成自环，因此 match_model 必须跳过有 routes 的 UP。
+        let up = make_up(
+            "up-routes",
+            claude_models(Some("claude-sonnet-4-6"), None, None, None),
+        );
+        let mut up_with_routes = up;
+        up_with_routes.routes = vec![crate::provider::UpstreamRoute {
+            id: "r1".to_string(),
+            name: "r1".to_string(),
+            protocol: "openai_chat".to_string(),
+            base_url: "https://route.example.com".to_string(),
+            api_key: "sk-route".to_string(),
+            model_names: vec!["claude-sonnet-4-6".to_string()],
+            enabled: true,
+            priority: 0,
+        }];
+        let mut map = HashMap::new();
+        map.insert(up_with_routes.id.clone(), up_with_routes);
+
+        // 有 routes 的 UP 不应被 models 匹配命中
+        let result = ModelRouter::match_model("claude-sonnet-4-6", &map, "claude");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn match_model_skips_up_with_routes_even_if_no_model_match() {
+        // 确保跳过逻辑不是"有 routes 就不看 models"，而是彻底不参与 models 匹配
+        let up = make_up(
+            "up-routes",
+            claude_models(Some("claude-sonnet-4-6"), None, None, None),
+        );
+        let mut up_with_routes = up;
+        up_with_routes.routes = vec![crate::provider::UpstreamRoute {
+            id: "r1".to_string(),
+            name: "r1".to_string(),
+            protocol: "openai_chat".to_string(),
+            base_url: "https://route.example.com".to_string(),
+            api_key: "sk-route".to_string(),
+            model_names: vec!["claude-sonnet-4-6".to_string()],
+            enabled: true,
+            priority: 0,
+        }];
+        let mut map = HashMap::new();
+        map.insert(up_with_routes.id.clone(), up_with_routes);
+
+        let result = ModelRouter::match_model("other-model", &map, "claude");
+        assert!(result.is_none());
     }
 }

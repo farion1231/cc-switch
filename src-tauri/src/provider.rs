@@ -628,6 +628,9 @@ pub struct UpstreamRoute {
     pub model_names: Vec<String>,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    /// 路由优先级（数字越大越优先；未配置默认 0，同优先级随机）
+    #[serde(default)]
+    pub priority: u32,
 }
 
 /// Claude 模型配置

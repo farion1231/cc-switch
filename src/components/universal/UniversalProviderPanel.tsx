@@ -242,66 +242,6 @@ export function UniversalProviderPanel() {
     [providers],
   );
 
-  // 提高优先级
-  const handlePriorityUp = useCallback(
-    async (provider: UniversalProvider) => {
-      const list = Object.values(providers).sort(
-        (a, b) => (a.sortIndex ?? 999999) - (b.sortIndex ?? 999999),
-      );
-      const idx = list.findIndex((p) => p.id === provider.id);
-      if (idx <= 0) return;
-
-      const swap = list[idx - 1];
-      const updated: UniversalProvider = {
-        ...deepClone(provider),
-        sortIndex: swap.sortIndex !== undefined ? swap.sortIndex : idx - 1,
-      };
-      const updatedSwap: UniversalProvider = {
-        ...deepClone(swap),
-        sortIndex: provider.sortIndex ?? idx,
-      };
-
-      try {
-        await universalProvidersApi.upsert(updated);
-        await universalProvidersApi.upsert(updatedSwap);
-        loadProviders();
-      } catch {
-        toast.error("调整优先级失败");
-      }
-    },
-    [providers, loadProviders],
-  );
-
-  // 降低优先级
-  const handlePriorityDown = useCallback(
-    async (provider: UniversalProvider) => {
-      const list = Object.values(providers).sort(
-        (a, b) => (a.sortIndex ?? 999999) - (b.sortIndex ?? 999999),
-      );
-      const idx = list.findIndex((p) => p.id === provider.id);
-      if (idx < 0 || idx >= list.length - 1) return;
-
-      const swap = list[idx + 1];
-      const updated: UniversalProvider = {
-        ...deepClone(provider),
-        sortIndex: swap.sortIndex ?? idx + 1,
-      };
-      const updatedSwap: UniversalProvider = {
-        ...deepClone(swap),
-        sortIndex: provider.sortIndex ?? idx,
-      };
-
-      try {
-        await universalProvidersApi.upsert(updated);
-        await universalProvidersApi.upsert(updatedSwap);
-        loadProviders();
-      } catch {
-        toast.error("调整优先级失败");
-      }
-    },
-    [providers, loadProviders],
-  );
-
   const providerList = Object.values(providers).sort(
     (a, b) => (a.sortIndex ?? 999999) - (b.sortIndex ?? 999999),
   );
@@ -352,14 +292,10 @@ export function UniversalProviderPanel() {
             <UniversalProviderCard
               key={provider.id}
               provider={provider}
-              index={providerList.indexOf(provider)}
-              total={providerList.length}
               onEdit={handleEdit}
               onDelete={handleDeleteClick}
               onSync={handleSyncClick}
               onDuplicate={handleDuplicate}
-              onPriorityUp={handlePriorityUp}
-              onPriorityDown={handlePriorityDown}
             />
           ))}
         </div>
