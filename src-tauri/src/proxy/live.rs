@@ -263,12 +263,11 @@ pub async fn handle_live_call(
     let status = upstream.status();
     let mut response_headers = upstream.headers().clone();
     if status.is_success() {
-        let call_id = response_headers
+        let live_location = response_headers
             .get(http::header::LOCATION)
             .and_then(|value| value.to_str().ok())
-            .and_then(extract_live_call_id)
-            .map(str::to_string);
-        let Some(call_id) = call_id else {
+            .and_then(parse_live_location);
+        let Some((call_id, location_query)) = live_location else {
             log::warn!(
                 "[Codex Live] Upstream {} returned success without a usable Location call id",
                 route.provider.name
@@ -299,7 +298,8 @@ pub async fn handle_live_call(
         );
         drop(calls);
 
-        let local_location = local_sideband_location(parts.uri.path(), &call_id)?;
+        let local_location =
+            local_sideband_location(parts.uri.path(), &call_id, location_query.as_deref())?;
         response_headers.insert(http::header::LOCATION, local_location);
         log::info!(
             "[Codex Live] Bound call {call_id} to provider {}",
@@ -890,13 +890,21 @@ fn live_invalid_upstream_response() -> Response<Body> {
     response
 }
 
-fn local_sideband_location(client_path: &str, call_id: &str) -> Result<HeaderValue, ProxyError> {
+fn local_sideband_location(
+    client_path: &str,
+    call_id: &str,
+    upstream_query: Option<&str>,
+) -> Result<HeaderValue, ProxyError> {
     if !is_valid_call_id(call_id) {
         return Err(ProxyError::ConfigError(
             "invalid Live sideband call id".to_string(),
         ));
     }
-    let path = format!("{}/{call_id}", client_path.trim_end_matches('/'));
+    let mut path = format!("{}/{call_id}", client_path.trim_end_matches('/'));
+    if let Some(query) = upstream_query {
+        path.push('?');
+        path.push_str(query);
+    }
     HeaderValue::from_str(&path).map_err(|error| {
         ProxyError::Internal(format!(
             "failed to build local Live Location header: {error}"
@@ -1310,6 +1318,13 @@ fn extract_live_call_id(location: &str) -> Option<&str> {
         .find(|segment| is_valid_call_id(segment))
 }
 
+fn parse_live_location(location: &str) -> Option<(String, Option<String>)> {
+    let location = location.parse::<Uri>().ok()?;
+    let call_id = extract_live_call_id(location.path())?.to_string();
+    let query = location.query().map(str::to_string);
+    Some((call_id, query))
+}
+
 fn is_valid_call_id(value: &str) -> bool {
     (value.starts_with("rtc_") || value.len() == 36)
         && value.len() <= 128
@@ -1599,6 +1614,24 @@ mod tests {
             Some("123e4567-e89b-12d3-a456-426614174000")
         );
         assert_eq!(extract_live_call_id("/v1/live"), None);
+    }
+
+    #[test]
+    fn parses_live_location_query_parameters() {
+        assert_eq!(
+            parse_live_location("/v1/live/rtc_test?intent=quicksilver&token=a%2Fb"),
+            Some((
+                "rtc_test".to_string(),
+                Some("intent=quicksilver&token=a%2Fb".to_string())
+            ))
+        );
+        assert_eq!(
+            parse_live_location("https://example.com/v1/live/rtc_test?intent=quicksilver"),
+            Some((
+                "rtc_test".to_string(),
+                Some("intent=quicksilver".to_string())
+            ))
+        );
     }
 
     #[test]
@@ -2009,13 +2042,24 @@ mod tests {
     #[test]
     fn successful_live_location_is_rewritten_to_the_local_route() {
         assert_eq!(
-            local_sideband_location("/v1/live", "rtc_test")
+            local_sideband_location("/v1/live", "rtc_test", None)
                 .unwrap()
                 .to_str()
                 .unwrap(),
             "/v1/live/rtc_test"
         );
-        assert!(local_sideband_location("/v1/live", "../escape").is_err());
+        assert_eq!(
+            local_sideband_location(
+                "/v1/live",
+                "rtc_test",
+                Some("intent=quicksilver&token=a%2Fb")
+            )
+            .unwrap()
+            .to_str()
+            .unwrap(),
+            "/v1/live/rtc_test?intent=quicksilver&token=a%2Fb"
+        );
+        assert!(local_sideband_location("/v1/live", "../escape", None).is_err());
         assert_eq!(
             live_invalid_upstream_response().status(),
             StatusCode::BAD_GATEWAY
