@@ -3302,6 +3302,10 @@ fn macos_otty_cli_candidates() -> Vec<std::path::PathBuf> {
         );
     }
 
+    // GUI apps launched by LaunchServices may not inherit Homebrew/local CLI paths.
+    candidates.push(std::path::PathBuf::from("/usr/local/bin/otty"));
+    candidates.push(std::path::PathBuf::from("/opt/homebrew/bin/otty"));
+
     // "Install CLI" symlinks `otty` onto PATH; the in-bundle binary is `otty-cli`.
     if let Some(path) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path) {
@@ -5913,6 +5917,15 @@ mod tests {
                 "/tmp/$(touch pwn)'project dir".to_string(),
             ]
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn otty_cli_candidates_include_standard_cli_locations() {
+        let candidates = macos_otty_cli_candidates();
+
+        assert!(candidates.contains(&PathBuf::from("/usr/local/bin/otty")));
+        assert!(candidates.contains(&PathBuf::from("/opt/homebrew/bin/otty")));
     }
 
     /// AppleScript launchers need both shell-path quoting and AppleScript string quoting.
