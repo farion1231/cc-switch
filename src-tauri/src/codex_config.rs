@@ -997,8 +997,10 @@ const CODEX_DEEPSEEK_OFFICIAL_CATALOG_HOSTS: &[&str] = &["deepseek.com"];
 /// Bundled copy of DeepSeek's official Codex models.json — the exact file
 /// their one-click integration script writes (api-docs.deepseek.com →
 /// quick_start/agent_integrations/codex): freeform apply_patch, GPT-5 harness
-/// base_instructions, low/high/max reasoning levels, web_search supported,
-/// 1m context. Declares `minimal_client_version` 0.144.0.
+/// base_instructions, low/high/xhigh reasoning levels, web_search supported,
+/// 1m context. The official file declares the top effort as `max`, which
+/// Codex's catalog parser does not accept, so the bundled copy corrects it
+/// to `xhigh`. Declares `minimal_client_version` 0.144.0.
 fn load_codex_deepseek_official_catalog_models() -> Vec<Value> {
     let text = include_str!("resources/codex_deepseek_catalog_template.json");
     let catalog: Value =
@@ -3441,7 +3443,7 @@ wire_api = "responses"
     #[test]
     fn deepseek_host_native_catalog_mirrors_official_entries() {
         // DeepSeek publishes an official Codex models.json (freeform
-        // apply_patch + GPT-5 harness + low/high/max reasoning levels). For a
+        // apply_patch + GPT-5 harness + low/high/xhigh reasoning levels). For a
         // deepseek.com native provider the generated catalog must mirror it
         // verbatim instead of the stripped neutral template — the harness
         // tells the model to use apply_patch, so stripping the tool while
@@ -3486,7 +3488,7 @@ wire_api = "responses"
             .iter()
             .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
             .collect();
-        assert_eq!(efforts, vec!["low", "high", "max"]);
+        assert_eq!(efforts, vec!["low", "high", "xhigh"]);
         assert_eq!(flash.get("supports_search_tool"), Some(&json!(true)));
         assert_eq!(
             flash.get("web_search_tool_type").and_then(|v| v.as_str()),
