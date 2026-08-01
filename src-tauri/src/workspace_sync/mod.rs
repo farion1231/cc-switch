@@ -6,6 +6,8 @@ pub mod adapters;
 
 pub mod archive;
 
+pub mod config_sync;
+
 pub mod crypto;
 
 pub mod engine;

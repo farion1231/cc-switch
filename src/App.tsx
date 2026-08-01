@@ -430,6 +430,22 @@ function App() {
     },
   );
 
+  useTauriEvent<SyncStatusUpdatedPayload | null | undefined>(
+    "workspace-sync-status-updated",
+    async (payload) => {
+      const statusPayload = payload ?? {};
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      if (statusPayload.source !== "auto" || statusPayload.status !== "error") {
+        return;
+      }
+      toast.error(
+        t("settings.workspaceSync.autoSyncFailedToast", {
+          error: statusPayload.error || t("common.unknown"),
+        }),
+      );
+    },
+  );
+
   useTauriEvent<{ appType: string; providerName: string }>(
     "proxy-official-warning",
     (payload) => {

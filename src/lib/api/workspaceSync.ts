@@ -3,6 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 /// Wire format matches the Rust `WorkspaceSyncSettings` (camelCase serde).
 export interface WorkspaceSyncSettings {
   enabled: boolean;
+  /** Enable periodic auto-sync (default off). */
+  autoSync: boolean;
+  /** Auto-sync interval in minutes. null → 30; 0 → periodic disabled. */
+  syncIntervalMinutes?: number | null;
   transport: "webdav" | "s3";
   providers: string[];
   remoteRoot: string;

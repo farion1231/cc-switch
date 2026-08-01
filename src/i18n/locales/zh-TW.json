@@ -889,11 +889,17 @@
       "itemCount": "{{count}} 項",
       "notInstalled": "未安裝",
       "reportSummary": "已掃描 {{providers}} 個端 · 合併 {{items}} 項 · 寫入 {{files}} 個檔案",
-      "conflicts": "{{count}} 處衝突（已保留雙份，請手動處理）",
+      "conflicts": "{{count}} 處衝突（已按較新版本處理）",
       "sync": "同步",
       "syncHint": "拉取雲端聯集 → 與本機合併 → 部署到本機 → 回傳雲端",
       "syncDone": "同步完成：寫入 {{files}} 個檔案，{{conflicts}} 處衝突",
-      "syncing": "同步中…"
+      "syncing": "同步中…",
+      "autoSync": "定時自動同步",
+      "autoSyncHint": "依設定的間隔在背景自動同步",
+      "interval": "間隔",
+      "intervalHint": "分鐘（0 = 關閉；資料未變更時略過傳輸）",
+      "configNote": "同時會同步 cc-switch 自身設定（供應商/設定等）；設定採用整庫較新者勝。",
+      "autoSyncFailedToast": "工作區自動同步失敗：{{error}}"
     }
   },
   "apps": {

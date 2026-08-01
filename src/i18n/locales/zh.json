@@ -888,11 +888,17 @@
       "itemCount": "{{count}} 项",
       "notInstalled": "未安装",
       "reportSummary": "已扫描 {{providers}} 个端 · 合并 {{items}} 项 · 写入 {{files}} 个文件",
-      "conflicts": "{{count}} 处冲突（已保留双份，请手动处理）",
+      "conflicts": "{{count}} 处冲突（已按较新版本处理）",
       "sync": "同步",
       "syncHint": "拉取云端并集 → 与本地合并 → 部署到本地 → 回传云端",
       "syncDone": "同步完成：写入 {{files}} 个文件，{{conflicts}} 处冲突",
-      "syncing": "同步中…"
+      "syncing": "同步中…",
+      "autoSync": "定时自动同步",
+      "autoSyncHint": "按设定的间隔在后台自动同步",
+      "interval": "间隔",
+      "intervalHint": "分钟（0 = 关闭；数据未变化时跳过传输）",
+      "configNote": "同时会同步 cc-switch 自身配置（供应商/设置等）；配置采用整库较新者胜。",
+      "autoSyncFailedToast": "工作区自动同步失败：{{error}}"
     }
   },
   "apps": {

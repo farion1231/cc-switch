@@ -96,6 +96,35 @@ fn selected_providers(settings: &WorkspaceSyncSettings) -> Vec<WorkspaceProvider
         .collect()
 }
 
+/// A cheap local fingerprint over the selected providers' files: a hash of
+/// sorted `(native_path, content_hash)` pairs from a scan. Used to skip the
+/// network round-trip on a scheduled tick when nothing changed locally.
+///
+/// This reuses the adapters' scan (which already hashes file contents), so it is
+/// exact for local-change detection — not merely mtime-based.
+pub fn compute_local_fingerprint(settings: &WorkspaceSyncSettings) -> String {
+    use crate::services::sync_protocol::sha256_hex;
+    let mut parts: Vec<String> = Vec::new();
+    for provider in selected_providers(settings) {
+        let adapter = adapter_for(provider);
+        if !adapter.is_installed() {
+            continue;
+        }
+        if let Ok(items) = adapter.scan() {
+            for item in items {
+                parts.push(format!(
+                    "{}:{}:{}",
+                    provider.as_str(),
+                    item.native_path,
+                    item.content_hash
+                ));
+            }
+        }
+    }
+    parts.sort();
+    sha256_hex(parts.join("\n").as_bytes())
+}
+
 // ─── Sync ────────────────────────────────────────────────────
 
 /// Pull the remote union archive, merge with local, deploy locally, then push
@@ -148,32 +177,35 @@ pub async fn sync(
             .map(|s| s.items.clone())
             .unwrap_or_default();
 
-        let remote_device = remote_manifest
-            .as_ref()
-            .map(|m| m.created_by.as_str())
-            .unwrap_or("remote");
-
-        let outcome =
-            merge::merge_provider(&local_items, &remote_items, remote_device, &device);
+        let outcome = merge::merge_provider(&local_items, &remote_items);
 
         // Apply filesystem actions, reading remote blobs from the archive.
-        apply_actions(
+        // Union merges return their new content hash so we can patch the
+        // merged item (its hash isn't known until both blobs are combined).
+        let mut merged_items = outcome.merged_items;
+        let union_hashes = apply_actions(
             &*adapter,
             remote_archive.as_ref(),
             &outcome.actions,
             &mut report,
         )?;
+        for item in merged_items.iter_mut() {
+            if let Some(new_hash) = union_hashes.get(&item.native_path) {
+                item.content_hash = new_hash.clone();
+                item.object_ids = vec![new_hash.clone()];
+            }
+        }
 
         for c in outcome.conflicts {
             report.conflicts.push(ConflictReport {
                 provider: provider.as_str().to_string(),
                 logical_id: c.logical_id,
                 resolution: c.resolution,
-                conflict_path: c.conflict_path,
+                conflict_path: None,
             });
         }
 
-        report.items_total += outcome.merged_items.len();
+        report.items_total += merged_items.len();
         snapshot_content.providers.insert(
             *provider,
             ProviderSnapshot {
@@ -181,7 +213,7 @@ pub async fn sync(
                 adapter_version: 1,
                 native_version: None,
                 schema_fingerprint: None,
-                items: outcome.merged_items,
+                items: merged_items,
             },
         );
     }
@@ -253,37 +285,75 @@ impl archive::BlobSource for ArchiveBlobSource<'_> {
     }
 }
 
+/// Apply filesystem actions. Returns a map of `native_path -> new content hash`
+/// for line-union merges (whose hash isn't known until both blobs are combined),
+/// so the caller can patch the corresponding merged items.
 fn apply_actions(
     adapter: &dyn ProviderAdapter,
     remote: Option<&LocalArchive>,
     actions: &[MaterializeAction],
     report: &mut SyncReport,
-) -> Result<(), AppError> {
+) -> Result<std::collections::HashMap<String, String>, AppError> {
+    let mut union_hashes = std::collections::HashMap::new();
     for action in actions {
         match action {
             MaterializeAction::FromRemoteBlob {
                 content_hash,
                 target_path,
+                updated_at,
             } => {
                 let Some(bytes) = remote.and_then(|a| a.read_blob(content_hash)) else {
                     return Err(AppError::Message(format!(
                         "workspace sync: archive blob {content_hash} missing for {target_path}"
                     )));
                 };
-                let item = target_item(adapter.provider(), target_path, content_hash);
+                let mut item = target_item(adapter.provider(), target_path, content_hash);
+                item.updated_at = *updated_at;
                 adapter.materialize(&item, bytes)?;
                 report.files_written += 1;
             }
-            MaterializeAction::CopyLocalFile { from_path, to_path } => {
-                let from = source_item(adapter.provider(), from_path);
-                let bytes = adapter.read_blob(&from)?;
-                let to = target_item(adapter.provider(), to_path, "");
-                adapter.materialize(&to, &bytes)?;
+            MaterializeAction::UnionMergeJsonl {
+                native_path,
+                remote_content_hash,
+                remote_newer,
+            } => {
+                let local_item = source_item(adapter.provider(), native_path);
+                let local_bytes = adapter.read_blob(&local_item).unwrap_or_default();
+                let Some(remote_bytes) = remote.and_then(|a| a.read_blob(remote_content_hash))
+                else {
+                    return Err(AppError::Message(format!(
+                        "workspace sync: archive blob {remote_content_hash} missing for {native_path}"
+                    )));
+                };
+                let merged = merge::jsonl_union(&local_bytes, remote_bytes, *remote_newer);
+                let new_hash = crate::services::sync_protocol::sha256_hex(&merged);
+                let item = target_item(adapter.provider(), native_path, &new_hash);
+                adapter.materialize(&item, &merged)?;
                 report.files_written += 1;
+                union_hashes.insert(native_path.clone(), new_hash);
+            }
+            MaterializeAction::MergeJsonUnion {
+                native_path,
+                remote_content_hash,
+            } => {
+                let local_item = source_item(adapter.provider(), native_path);
+                let local_bytes = adapter.read_blob(&local_item).unwrap_or_default();
+                let Some(remote_bytes) = remote.and_then(|a| a.read_blob(remote_content_hash))
+                else {
+                    return Err(AppError::Message(format!(
+                        "workspace sync: archive blob {remote_content_hash} missing for {native_path}"
+                    )));
+                };
+                let merged = merge::json_deep_union(&local_bytes, remote_bytes);
+                let new_hash = crate::services::sync_protocol::sha256_hex(&merged);
+                let item = target_item(adapter.provider(), native_path, &new_hash);
+                adapter.materialize(&item, &merged)?;
+                report.files_written += 1;
+                union_hashes.insert(native_path.clone(), new_hash);
             }
         }
     }
-    Ok(())
+    Ok(union_hashes)
 }
 
 /// Minimal DataItem used only to drive adapter path resolution for writes.
@@ -366,6 +436,8 @@ mod tests {
     fn settings() -> WorkspaceSyncSettings {
         WorkspaceSyncSettings {
             enabled: true,
+            auto_sync: false,
+            sync_interval_minutes: None,
             transport: "webdav".to_string(),
             providers: vec!["claude".to_string()],
             remote_root: "cc-switch-workspace".to_string(),
@@ -403,7 +475,7 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn sync_keeps_both_on_text_conflict() {
+    async fn sync_text_conflict_newer_wins_no_sidecar() {
         let home = TestHome::new();
 
         let storage = MemoryStorage::default();
@@ -413,30 +485,50 @@ mod tests {
         home.write("plans/note.md", "remote version");
         sync(&storage, &s, 1000).await.expect("seed remote");
 
-        // Local diverges.
+        // Local diverges with a newer mtime (write happens after the seed sync).
         home.write("plans/note.md", "local edits again");
         let merged = sync(&storage, &s, 3000).await.expect("sync");
 
-        // Local file preserved untouched.
+        // Newer local wins and is left in place.
         assert_eq!(
             home.read("plans/note.md").as_deref(),
             Some("local edits again")
         );
-        // A conflict copy of the remote version was written and reported.
+        // Divergence is reported as a conflict...
         assert!(
             !merged.conflicts.is_empty(),
-            "text divergence should produce a conflict"
+            "text divergence should be reported"
         );
-        let cpath = merged.conflicts[0]
-            .conflict_path
-            .clone()
-            .expect("conflict path");
-        assert!(cpath.contains(".conflict-"));
-        assert_eq!(
-            home.read(&cpath).as_deref(),
-            Some("remote version"),
-            "remote version should be saved to the conflict sibling"
-        );
+        // ...but NO .conflict sidecar file is produced (they re-propagate).
+        let dir = std::fs::read_dir(home.claude_dir().join("plans")).unwrap();
+        for entry in dir.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            assert!(
+                !name.contains(".conflict-"),
+                "no conflict sidecar expected, found {name}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn sync_history_jsonl_line_unions_both_devices() {
+        let home = TestHome::new();
+        let storage = MemoryStorage::default();
+        let s = settings();
+
+        // Device A seeds history with line "a".
+        home.write("history.jsonl", "{\"e\":\"a\"}\n");
+        sync(&storage, &s, 1000).await.expect("seed remote");
+
+        // Device B (same home here) diverges: replace with a different line "b".
+        home.write("history.jsonl", "{\"e\":\"b\"}\n");
+        sync(&storage, &s, 3000).await.expect("union sync");
+
+        // Merged file must contain BOTH devices' lines (line union, no clobber).
+        let merged = home.read("history.jsonl").unwrap();
+        assert!(merged.contains("{\"e\":\"a\"}"), "remote line kept: {merged}");
+        assert!(merged.contains("{\"e\":\"b\"}"), "local line kept: {merged}");
     }
 
     #[tokio::test]

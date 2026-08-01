@@ -200,6 +200,8 @@ fn persist_sync_success(
         last_local_manifest_hash: Some(manifest_hash.clone()),
         last_remote_manifest_hash: Some(manifest_hash),
         last_remote_etag: etag,
+        // Preserve workspace/config-sync markers owned by the unified sync path.
+        ..settings.status.clone()
     };
     settings.status = status.clone();
     update_webdav_sync_status(status)

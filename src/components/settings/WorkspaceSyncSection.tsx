@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -33,6 +34,8 @@ export function WorkspaceSyncSection() {
   const { t } = useTranslation();
   const [settings, setSettings] = useState<WorkspaceSyncSettings>({
     enabled: false,
+    autoSync: false,
+    syncIntervalMinutes: 30,
     transport: "webdav",
     providers: [],
     remoteRoot: "cc-switch-workspace",
@@ -40,8 +43,9 @@ export function WorkspaceSyncSection() {
   });
   const [preview, setPreview] = useState<WorkspaceScanPreviewItem[]>([]);
   const [loading, setLoading] = useState(false);
-  const [busy, setBusy] = useState<null | "sync" | "save">(null);
+  const [busy, setBusy] = useState<null | "sync">(null);
   const [report, setReport] = useState<WorkspaceSyncReport | null>(null);
+  const [ready, setReady] = useState(false);
 
   const refreshPreview = useCallback(async () => {
     try {
@@ -63,7 +67,10 @@ export function WorkspaceSyncSection() {
       } catch (e) {
         console.warn("load workspace sync settings failed", e);
       } finally {
-        if (active) setLoading(false);
+        if (active) {
+          setLoading(false);
+          setReady(true);
+        }
       }
       await refreshPreview();
     })();
@@ -71,6 +78,25 @@ export function WorkspaceSyncSection() {
       active = false;
     };
   }, [refreshPreview]);
+
+  // Persist settings when the user changes enable/auto-sync/interval/transport
+  // so the scheduled auto-sync worker picks them up without a manual sync.
+  useEffect(() => {
+    if (!ready) return;
+    const handle = setTimeout(() => {
+      workspaceSyncApi.saveSettings(settings).catch((e) => {
+        console.warn("save workspace sync settings failed", e);
+      });
+    }, 400);
+    return () => clearTimeout(handle);
+  }, [
+    ready,
+    settings.enabled,
+    settings.autoSync,
+    settings.syncIntervalMinutes,
+    settings.transport,
+    settings.providers,
+  ]);
 
   const toggleProvider = (id: string, checked: boolean) => {
     setSettings((s) => ({
@@ -155,6 +181,52 @@ export function WorkspaceSyncSection() {
         <span className="text-xs text-muted-foreground">
           {t("settings.workspaceSync.transportHint")}
         </span>
+      </div>
+
+      {/* Auto-sync: opt-in periodic sync + interval */}
+      <div className="space-y-3 rounded-lg border p-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium">
+              {t("settings.workspaceSync.autoSync")}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {t("settings.workspaceSync.autoSyncHint")}
+            </div>
+          </div>
+          <Switch
+            checked={settings.autoSync}
+            onCheckedChange={(v) => setSettings((s) => ({ ...s, autoSync: v }))}
+          />
+        </div>
+        {settings.autoSync && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm">
+              {t("settings.workspaceSync.interval")}
+            </span>
+            <Input
+              type="number"
+              min={0}
+              className="w-24"
+              value={settings.syncIntervalMinutes ?? 30}
+              onChange={(e) =>
+                setSettings((s) => ({
+                  ...s,
+                  syncIntervalMinutes: Math.max(
+                    0,
+                    Number(e.target.value) || 0,
+                  ),
+                }))
+              }
+            />
+            <span className="text-xs text-muted-foreground">
+              {t("settings.workspaceSync.intervalHint")}
+            </span>
+          </div>
+        )}
+        <div className="text-xs text-muted-foreground">
+          {t("settings.workspaceSync.configNote")}
+        </div>
       </div>
 
       {/* Provider selection */}

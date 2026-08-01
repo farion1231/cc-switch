@@ -888,11 +888,17 @@
       "itemCount": "{{count}} 件",
       "notInstalled": "未インストール",
       "reportSummary": "{{providers}} プロバイダーをスキャン · {{items}} 件をマージ · {{files}} ファイル書き込み",
-      "conflicts": "{{count}} 件の競合（両方保持されました。手動で解決してください）",
+      "conflicts": "{{count}} 件の競合（新しい方を採用しました）",
       "sync": "同期",
       "syncHint": "クラウドの和集合を取得 → ローカルとマージ → 配置 → 送り返す",
       "syncDone": "同期完了：{{files}} ファイル書き込み、{{conflicts}} 件の競合",
-      "syncing": "同期中…"
+      "syncing": "同期中…",
+      "autoSync": "自動同期",
+      "autoSyncHint": "設定した間隔でバックグラウンド自動同期します",
+      "interval": "間隔",
+      "intervalHint": "分（0 = 無効；変更がなければ転送をスキップ）",
+      "configNote": "cc-switch 自身の設定（プロバイダー/設定）も同期します。設定はデータベース全体で新しい方を採用します。",
+      "autoSyncFailedToast": "ワークスペース自動同期に失敗しました：{{error}}"
     }
   },
   "apps": {

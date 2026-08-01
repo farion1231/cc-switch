@@ -1264,6 +1264,68 @@ pub fn run() {
                         run_session_sync(db_for_session_sync.clone(), false).await;
                     }
                 });
+
+                // Workspace + config unified auto-sync (opt-in). Fires ~20s after
+                // startup, then every `sync_interval_minutes` (default 30, 0 =
+                // periodic off). Each run does a cheap local-fingerprint check
+                // first, so idle ticks with no local changes do no network I/O.
+                let db_for_ws_sync = state.db.clone();
+                let app_for_ws_sync = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    async fn run_ws_auto_sync(
+                        db: std::sync::Arc<crate::database::Database>,
+                        app: &tauri::AppHandle,
+                    ) {
+                        // Only when enabled + auto_sync is on.
+                        let Some(settings) = crate::settings::get_workspace_sync_settings() else {
+                            return;
+                        };
+                        if !settings.enabled || !settings.auto_sync {
+                            return;
+                        }
+                        match crate::commands::run_unified_sync(db, "auto", false)
+                            .await
+                        {
+                            Ok(_) => {
+                                let _ = app.emit(
+                                    "workspace-sync-status-updated",
+                                    serde_json::json!({ "source": "auto", "status": "success" }),
+                                );
+                            }
+                            Err(e) => {
+                                log::warn!("Workspace auto-sync failed: {e}");
+                                let _ = app.emit(
+                                    "workspace-sync-status-updated",
+                                    serde_json::json!({
+                                        "source": "auto",
+                                        "status": "error",
+                                        "error": e.to_string(),
+                                    }),
+                                );
+                            }
+                        }
+                    }
+
+                    // Delayed initial run (let the app settle first).
+                    tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                    run_ws_auto_sync(db_for_ws_sync.clone(), &app_for_ws_sync).await;
+
+                    loop {
+                        // Re-read the interval each cycle so settings changes take
+                        // effect without a restart. 0 → periodic disabled: park.
+                        let minutes = crate::settings::get_workspace_sync_settings()
+                            .map(|s| s.effective_sync_interval_minutes())
+                            .unwrap_or(
+                                crate::settings::DEFAULT_WORKSPACE_SYNC_INTERVAL_MINUTES,
+                            );
+                        let secs = if minutes == 0 { 30 * 60 } else { minutes as u64 * 60 };
+                        tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+                        if minutes == 0 {
+                            continue; // periodic off; just idle-poll settings.
+                        }
+                        run_ws_auto_sync(db_for_ws_sync.clone(), &app_for_ws_sync).await;
+                    }
+                });
             });
 
             // Linux: 禁用 WebKitGTK 硬件加速，防止 EGL 初始化失败导致白屏

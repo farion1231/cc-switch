@@ -43,6 +43,8 @@ pub trait ProviderAdapter: Send + Sync {
     fn scan(&self) -> Result<Vec<DataItem>, AppError>;
 
     /// Write `bytes` back to the item's native path (creating parent dirs).
+    /// When `item.updated_at` is set, stamp the file's mtime to it so
+    /// cross-device "newer wins" comparisons use logical edit time.
     fn materialize(&self, item: &DataItem, bytes: &[u8]) -> Result<(), AppError>;
 
     /// Read the current on-disk bytes for an item (used to upload blobs).
@@ -187,6 +189,14 @@ impl ProviderAdapter for FsAdapter {
             fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
         }
         fs::write(&path, bytes).map_err(|e| AppError::io(&path, e))?;
+        // Stamp mtime to the item's logical edit time so "newer wins" is stable
+        // across devices (best-effort; failure to set the time is non-fatal).
+        if let Some(ms) = item.updated_at {
+            if let Ok(file) = fs::OpenOptions::new().write(true).open(&path) {
+                let mtime = std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms as u64);
+                let _ = file.set_times(fs::FileTimes::new().set_modified(mtime));
+            }
+        }
         Ok(())
     }
 

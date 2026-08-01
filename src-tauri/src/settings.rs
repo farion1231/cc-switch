@@ -95,6 +95,18 @@ pub struct WebDavSyncStatus {
     pub last_local_manifest_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_remote_manifest_hash: Option<String>,
+    /// Cheap local data fingerprint from the last workspace sync (path+mtime+size
+    /// hash); lets a scheduled tick skip the round-trip when nothing changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_local_fingerprint: Option<String>,
+    /// Manifest `createdAt` (rfc3339) of the config snapshot last uploaded or
+    /// applied; drives "newer wins" for the bundled config-DB sync.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_config_synced_at: Option<String>,
+    /// Local config-snapshot manifest hash at the last sync; detects whether the
+    /// config DB changed locally since then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_config_local_hash: Option<String>,
 }
 
 fn default_remote_root() -> String {
@@ -285,13 +297,21 @@ fn default_workspace_remote_root() -> String {
 
 /// 工作区数据同步设置（session/task/plan/memory 等）。
 ///
-/// 传输凭据复用已配置的 WebDAV/S3 设置，这里只保存传输方式、要同步的端、
-/// 远端子根与 profile。
+/// 传输凭据、远端根目录与 profile 均复用所选传输（WebDAV/S3）的设置，这里只
+/// 保存传输方式与要同步的端。`remote_root` 字段保留仅为向后兼容旧配置的
+/// 反序列化，运行时会被所选传输的 `remote_root` 覆盖（见
+/// `commands/workspace_sync::with_shared_location`）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceSyncSettings {
     #[serde(default)]
     pub enabled: bool,
+    /// 是否启用定时自动同步（默认关闭）。
+    #[serde(default)]
+    pub auto_sync: bool,
+    /// 自动同步间隔（分钟）。None/缺省 → 30；0 → 禁用定时（仍可手动）。
+    #[serde(default)]
+    pub sync_interval_minutes: Option<u32>,
     /// "webdav" | "s3" —— 复用对应的已配置凭据。
     #[serde(default = "default_workspace_transport")]
     pub transport: String,
@@ -299,6 +319,7 @@ pub struct WorkspaceSyncSettings {
     /// "grokbuild"/"opencode"/"cursor"）。
     #[serde(default)]
     pub providers: Vec<String>,
+    /// 向后兼容字段；运行时被所选传输的 remote_root 覆盖。
     #[serde(default = "default_workspace_remote_root")]
     pub remote_root: String,
     #[serde(default = "default_profile")]
@@ -311,10 +332,15 @@ fn default_workspace_transport() -> String {
     "webdav".to_string()
 }
 
+/// 默认自动同步间隔（分钟）。
+pub const DEFAULT_WORKSPACE_SYNC_INTERVAL_MINUTES: u32 = 30;
+
 impl Default for WorkspaceSyncSettings {
     fn default() -> Self {
         Self {
             enabled: false,
+            auto_sync: false,
+            sync_interval_minutes: None,
             transport: default_workspace_transport(),
             providers: Vec::new(),
             remote_root: default_workspace_remote_root(),
@@ -344,6 +370,13 @@ impl WorkspaceSyncSettings {
         for p in self.providers.iter_mut() {
             *p = p.trim().to_lowercase();
         }
+    }
+
+    /// Effective auto-sync interval in minutes. `None` → default (30); `Some(0)`
+    /// → 0 (periodic disabled). Mirrors `effective_backup_interval_hours`.
+    pub fn effective_sync_interval_minutes(&self) -> u32 {
+        self.sync_interval_minutes
+            .unwrap_or(DEFAULT_WORKSPACE_SYNC_INTERVAL_MINUTES)
     }
 }
 

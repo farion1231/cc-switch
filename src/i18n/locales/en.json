@@ -892,7 +892,13 @@
       "sync": "Sync",
       "syncHint": "Pull cloud union → merge with local → deploy → push back",
       "syncDone": "Sync complete: {{files}} files written, {{conflicts}} conflicts",
-      "syncing": "Syncing…"
+      "syncing": "Syncing…",
+      "autoSync": "Auto-sync",
+      "autoSyncHint": "Sync automatically in the background on a schedule",
+      "interval": "Interval",
+      "intervalHint": "minutes (0 = off; unchanged data skips the transfer)",
+      "configNote": "Also syncs cc-switch's own config (providers/settings); config uses whole-database newer-wins.",
+      "autoSyncFailedToast": "Workspace auto-sync failed: {{error}}"
     }
   },
   "apps": {
