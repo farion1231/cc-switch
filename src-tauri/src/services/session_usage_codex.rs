@@ -145,16 +145,6 @@ impl ParentFileStamp {
     }
 }
 
-fn parent_file_was_closed_by_cutoff(stamp: ParentFileStamp, cutoff: &DateTime<Utc>) -> bool {
-    // `metadata_modified_nanos` uses 0 when the platform mtime is unavailable.
-    // Treat that sentinel as unknown instead of as the UNIX epoch; otherwise an
-    // unstable parent could bypass the BehindCutoff guard.
-    stamp.modified_nanos != 0
-        && cutoff
-            .timestamp_nanos_opt()
-            .is_some_and(|cutoff_nanos| stamp.modified_nanos <= cutoff_nanos)
-}
-
 #[cfg(windows)]
 fn windows_file_identity(file: &fs::File) -> Option<(u64, [u8; 16])> {
     let mut information = FILE_ID_INFO::default();
@@ -177,7 +167,10 @@ fn windows_file_identity(file: &fs::File) -> Option<(u64, [u8; 16])> {
 #[derive(Debug)]
 struct ParentTokenTimeline {
     events: Vec<TimestampedTokenSignature>,
-    max_timestamp: Option<DateTime<Utc>>,
+    max_finalized_timestamp: Option<DateTime<Utc>>,
+    ends_at_finalized_turn_boundary: bool,
+    unfinalized_activity_min_timestamp: Option<DateTime<Utc>>,
+    has_unfinalized_activity_without_timestamp: bool,
     has_token_without_timestamp: bool,
 }
 
@@ -186,7 +179,7 @@ impl ParentTokenTimeline {
         &self,
         parent_path: &Path,
         cutoff: DateTime<Utc>,
-        allow_behind_cutoff: bool,
+        parent_is_archived: bool,
     ) -> Result<Vec<TokenUsageSignature>, ParentTimelineError> {
         if self.has_token_without_timestamp {
             return Err(ParentTimelineError::Invalid(format!(
@@ -194,13 +187,22 @@ impl ParentTokenTimeline {
                 parent_path.display()
             )));
         }
-        if !allow_behind_cutoff
+        let unfinalized_activity_is_after_cutoff = !self.has_unfinalized_activity_without_timestamp
             && self
-                .max_timestamp
-                .is_none_or(|timestamp| timestamp < cutoff)
+                .unfinalized_activity_min_timestamp
+                .is_none_or(|timestamp| timestamp > cutoff);
+        let finalized_through_cutoff = self
+            .max_finalized_timestamp
+            .is_some_and(|timestamp| timestamp >= cutoff)
+            && unfinalized_activity_is_after_cutoff;
+        // A completed/aborted turn at or after the cutoff seals the parent
+        // prefix even if a newer turn is now active. A file that currently
+        // ends at a terminal boundary is also safe when the parent completed
+        // before the child was created and stayed idle in `sessions`.
+        if !parent_is_archived && !finalized_through_cutoff && !self.ends_at_finalized_turn_boundary
         {
             return Err(ParentTimelineError::BehindCutoff(format!(
-                "父 rollout {} 尚未写到 child fork 时刻",
+                "父 rollout {} 尚无覆盖 child fork 时刻的已完成 turn",
                 parent_path.display()
             )));
         }
@@ -419,6 +421,14 @@ fn is_rollout_filename(file_name: &str) -> bool {
     let stem = file_name.trim_end_matches(".jsonl");
     stem.get(stem.len().saturating_sub(36)..)
         .is_some_and(|candidate| uuid::Uuid::parse_str(candidate).is_ok())
+}
+
+fn is_archived_rollout_path(file_path: &Path) -> bool {
+    file_path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("archived_sessions"))
 }
 
 fn is_codex_cursor_path(file_path: &str, codex_dir: &Path) -> bool {
@@ -1041,7 +1051,6 @@ fn parse_codex_file(
 fn parent_signatures_before(
     parent_path: &Path,
     cutoff: DateTime<Utc>,
-    allow_behind_cutoff: bool,
 ) -> Result<Vec<TokenUsageSignature>, ParentTimelineError> {
     let file = fs::File::open(parent_path).map_err(|error| {
         ParentTimelineError::Invalid(format!(
@@ -1050,9 +1059,9 @@ fn parent_signatures_before(
         ))
     })?;
     let stamp = ParentFileStamp::from_file(&file);
-    let file_was_closed_by_cutoff =
-        stamp.is_some_and(|stamp| parent_file_was_closed_by_cutoff(stamp, &cutoff));
-    let allow_behind_cutoff = allow_behind_cutoff || file_was_closed_by_cutoff;
+    // Only archived rollouts are known to be closed. An old mtime or an
+    // unchanged snapshot can also describe a paused live writer.
+    let parent_is_archived = is_archived_rollout_path(parent_path);
     let cached_timeline = stamp.and_then(|stamp| {
         replay_caches().lock().ok().and_then(|caches| {
             caches
@@ -1063,33 +1072,79 @@ fn parent_signatures_before(
         })
     });
     if let Some(timeline) = cached_timeline {
-        return timeline.signatures_before(parent_path, cutoff, allow_behind_cutoff);
+        return timeline.signatures_before(parent_path, cutoff, parent_is_archived);
     }
 
     let mut events = Vec::new();
-    let mut max_timestamp: Option<DateTime<Utc>> = None;
+    let mut max_finalized_timestamp: Option<DateTime<Utc>> = None;
+    let mut ends_at_finalized_turn_boundary = false;
+    let mut unfinalized_activity_min_timestamp: Option<DateTime<Utc>> = None;
+    let mut has_unfinalized_activity_without_timestamp = false;
     let mut has_token_without_timestamp = false;
 
     // 必须扫描完整父文件，不能在首个未来时间戳处 break：rollout 写入顺序
     // 不承诺时间戳严格单调。缓存完整时间线后，不同 child cutoff 只需内存过滤。
-    for line in BufReader::with_capacity(CODEX_JSONL_BUFFER_CAPACITY, file).lines() {
-        let Ok(line) = line else {
+    // 父时间线不能像普通增量导入那样跳过坏行；半写入的 task_started/token_count
+    // 若被忽略，前一个 terminal event 会被误当成稳定文件尾。
+    let mut reader = BufReader::with_capacity(CODEX_JSONL_BUFFER_CAPACITY, file);
+    for (line_index, line) in (&mut reader).lines().enumerate() {
+        let line_number = line_index + 1;
+        let line = line.map_err(|error| {
+            ParentTimelineError::Invalid(format!(
+                "读取父 rollout {} 第 {line_number} 行失败: {error}",
+                parent_path.display()
+            ))
+        })?;
+        if line.trim().is_empty() {
             continue;
-        };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
-            continue;
-        };
-        let timestamp = parse_timestamp(value.get("timestamp"));
-        if let Some(timestamp) = timestamp {
-            max_timestamp = Some(max_timestamp.map_or(timestamp, |current| current.max(timestamp)));
         }
-        if value.get("type").and_then(serde_json::Value::as_str) != Some("event_msg")
-            || value
-                .get("payload")
-                .and_then(|payload| payload.get("type"))
-                .and_then(serde_json::Value::as_str)
-                != Some("token_count")
-        {
+        let value = serde_json::from_str::<serde_json::Value>(&line).map_err(|error| {
+            ParentTimelineError::Invalid(format!(
+                "解析父 rollout {} 第 {line_number} 行失败: {error}",
+                parent_path.display()
+            ))
+        })?;
+        let timestamp = parse_timestamp(value.get("timestamp"));
+        let record_type = value.get("type").and_then(serde_json::Value::as_str);
+        let payload_type = value
+            .get("payload")
+            .and_then(|payload| payload.get("type"))
+            .and_then(serde_json::Value::as_str);
+
+        let is_terminal_event = record_type == Some("event_msg")
+            && matches!(payload_type, Some("task_complete" | "turn_aborted"));
+        let is_turn_activity = matches!(record_type, Some("turn_context" | "response_item"))
+            || (record_type == Some("event_msg")
+                && matches!(
+                    payload_type,
+                    Some("task_started" | "user_message" | "token_count")
+                ));
+
+        if is_terminal_event {
+            ends_at_finalized_turn_boundary = timestamp.is_some();
+            if let Some(timestamp) = timestamp {
+                max_finalized_timestamp = Some(
+                    max_finalized_timestamp.map_or(timestamp, |current| current.max(timestamp)),
+                );
+                unfinalized_activity_min_timestamp = None;
+                has_unfinalized_activity_without_timestamp = false;
+            } else {
+                unfinalized_activity_min_timestamp = None;
+                has_unfinalized_activity_without_timestamp = true;
+            }
+        } else if is_turn_activity {
+            ends_at_finalized_turn_boundary = false;
+            if let Some(timestamp) = timestamp {
+                unfinalized_activity_min_timestamp = Some(
+                    unfinalized_activity_min_timestamp
+                        .map_or(timestamp, |current| current.min(timestamp)),
+                );
+            } else {
+                has_unfinalized_activity_without_timestamp = true;
+            }
+        }
+
+        if record_type != Some("event_msg") || payload_type != Some("token_count") {
             continue;
         }
         let Some(info) = value
@@ -1112,12 +1167,23 @@ fn parent_signatures_before(
         });
     }
 
+    let final_stamp = ParentFileStamp::from_file(reader.get_ref());
+    if stamp.is_some() && final_stamp != stamp {
+        return Err(ParentTimelineError::Invalid(format!(
+            "父 rollout {} 在读取期间发生变化",
+            parent_path.display()
+        )));
+    }
+
     let timeline = Arc::new(ParentTokenTimeline {
         events,
-        max_timestamp,
+        max_finalized_timestamp,
+        ends_at_finalized_turn_boundary,
+        unfinalized_activity_min_timestamp,
+        has_unfinalized_activity_without_timestamp,
         has_token_without_timestamp,
     });
-    let result = timeline.signatures_before(parent_path, cutoff, allow_behind_cutoff);
+    let result = timeline.signatures_before(parent_path, cutoff, parent_is_archived);
     if let (Some(stamp), Ok(mut caches)) = (stamp, replay_caches().lock()) {
         caches.parent_timelines.insert(
             parent_path.to_path_buf(),
@@ -1134,7 +1200,6 @@ fn resolve_parent_signatures(
     parent_id: &str,
     cutoff: DateTime<Utc>,
     rollout_index: &RolloutIndex,
-    allow_behind_cutoff: bool,
 ) -> Result<Vec<TokenUsageSignature>, ParentResolveFailure> {
     let Some(candidates) = rollout_index.get(parent_id) else {
         return Err(ParentResolveFailure {
@@ -1151,7 +1216,7 @@ fn resolve_parent_signatures(
 
     let mut snapshots = Vec::with_capacity(candidates.len());
     for candidate in candidates {
-        match parent_signatures_before(candidate, cutoff, allow_behind_cutoff) {
+        match parent_signatures_before(candidate, cutoff) {
             Ok(snapshot) => snapshots.push(snapshot),
             Err(ParentTimelineError::BehindCutoff(reason)) => {
                 return Err(ParentResolveFailure {
@@ -1255,7 +1320,6 @@ fn sync_single_codex_file(
         return Ok(CodexFileSyncResult::default());
     }
 
-    let mut allow_behind_cutoff = false;
     if let Some(pending) = load_pending_entry(db, &file_path_str)? {
         if pending.modified == file_modified && pending.size == file_size {
             match &pending.reason {
@@ -1278,9 +1342,10 @@ fn sync_single_codex_file(
                 } => {
                     let current = snapshot_parent_dependencies(parent_id, rollout_index);
                     if &current == dependencies {
-                        // 第二次看到完全相同的父文件快照时，父 rollout 可视为稳定。
-                        // 允许它早于 child fork 结束，并完成一次最终 replay 对齐。
-                        allow_behind_cutoff = true;
+                        return Ok(CodexFileSyncResult {
+                            deferred: true,
+                            ..CodexFileSyncResult::default()
+                        });
                     } else {
                         delete_pending_entry(db, &file_path_str)?;
                     }
@@ -1366,43 +1431,39 @@ fn sync_single_codex_file(
                     prefix
                 } else {
                     drop(caches);
-                    let parent_signatures = match resolve_parent_signatures(
-                        parent_id,
-                        cutoff,
-                        rollout_index,
-                        allow_behind_cutoff,
-                    ) {
-                        Ok(signatures) => signatures,
-                        Err(failure) => {
-                            let pending_reason = if rollout_index.contains_key(parent_id) {
-                                match failure.kind {
-                                    ParentResolveFailureKind::BehindCutoff => {
-                                        PendingReason::ParentBehindCutoff {
-                                            parent_id: parent_id.clone(),
-                                            reason: failure.reason,
-                                            dependencies: failure.dependencies,
+                    let parent_signatures =
+                        match resolve_parent_signatures(parent_id, cutoff, rollout_index) {
+                            Ok(signatures) => signatures,
+                            Err(failure) => {
+                                let pending_reason = if rollout_index.contains_key(parent_id) {
+                                    match failure.kind {
+                                        ParentResolveFailureKind::BehindCutoff => {
+                                            PendingReason::ParentBehindCutoff {
+                                                parent_id: parent_id.clone(),
+                                                reason: failure.reason,
+                                                dependencies: failure.dependencies,
+                                            }
+                                        }
+                                        ParentResolveFailureKind::Retryable => {
+                                            PendingReason::Retryable {
+                                                parent_id: parent_id.clone(),
+                                                reason: failure.reason,
+                                                dependencies: failure.dependencies,
+                                            }
                                         }
                                     }
-                                    ParentResolveFailureKind::Retryable => {
-                                        PendingReason::Retryable {
-                                            parent_id: parent_id.clone(),
-                                            reason: failure.reason,
-                                            dependencies: failure.dependencies,
-                                        }
-                                    }
-                                }
-                            } else {
-                                PendingReason::MissingParent(parent_id.clone())
-                            };
-                            return mark_deferred(
-                                db,
-                                file_path,
-                                file_modified,
-                                file_size,
-                                pending_reason,
-                            );
-                        }
-                    };
+                                } else {
+                                    PendingReason::MissingParent(parent_id.clone())
+                                };
+                                return mark_deferred(
+                                    db,
+                                    file_path,
+                                    file_modified,
+                                    file_size,
+                                    pending_reason,
+                                );
+                            }
+                        };
                     let prefix = matching_replay_prefix(&parsed.token_events, &parent_signatures);
                     if let Ok(mut caches) = replay_caches().lock() {
                         caches.replay_prefixes.insert(
@@ -1417,13 +1478,8 @@ fn sync_single_codex_file(
                     prefix
                 }
             } else {
-                let parent_signatures = resolve_parent_signatures(
-                    parent_id,
-                    cutoff,
-                    rollout_index,
-                    allow_behind_cutoff,
-                )
-                .map_err(|failure| AppError::Config(failure.reason))?;
+                let parent_signatures = resolve_parent_signatures(parent_id, cutoff, rollout_index)
+                    .map_err(|failure| AppError::Config(failure.reason))?;
                 matching_replay_prefix(&parsed.token_events, &parent_signatures)
             }
         }
@@ -1597,6 +1653,7 @@ fn find_codex_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<Mod
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
     use tempfile::tempdir;
 
     const PARENT_ID: &str = "00000000-0000-4000-8000-000000000001";
@@ -1611,6 +1668,13 @@ mod tests {
             .join("\n")
             + "\n";
         fs::write(path, contents).unwrap();
+    }
+
+    fn append_jsonl(path: &Path, values: &[serde_json::Value]) {
+        let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
+        for value in values {
+            writeln!(file, "{value}").unwrap();
+        }
     }
 
     fn rollout_path(dir: &Path, thread_id: &str) -> PathBuf {
@@ -1658,6 +1722,26 @@ mod tests {
 
     fn turn_context() -> serde_json::Value {
         turn_context_at("2026-07-10T03:00:01Z")
+    }
+
+    fn lifecycle_event_at(event_type: &str, timestamp: &str) -> serde_json::Value {
+        serde_json::json!({
+            "timestamp": timestamp,
+            "type": "event_msg",
+            "payload": { "type": event_type }
+        })
+    }
+
+    fn task_started_at(timestamp: &str) -> serde_json::Value {
+        lifecycle_event_at("task_started", timestamp)
+    }
+
+    fn task_complete_at(timestamp: &str) -> serde_json::Value {
+        lifecycle_event_at("task_complete", timestamp)
+    }
+
+    fn turn_aborted_at(timestamp: &str) -> serde_json::Value {
+        lifecycle_event_at("turn_aborted", timestamp)
     }
 
     fn token_count_at(input: u64, cached: u64, output: u64, timestamp: &str) -> serde_json::Value {
@@ -1886,7 +1970,7 @@ mod tests {
             &[
                 session_meta(PARENT_ID),
                 token_count_at(1_000, 900, 100, "2026-07-10T03:00:01Z"),
-                turn_context_at("2026-07-10T03:00:10Z"),
+                task_complete_at("2026-07-10T03:00:10Z"),
             ],
         );
         write_jsonl(
@@ -1918,13 +2002,17 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn historical_fork_parent_ended_before_cutoff_is_imported() -> Result<(), AppError> {
+    fn archived_fork_parent_ended_before_cutoff_is_imported() -> Result<(), AppError> {
         clear_codex_replay_caches();
         CODEX_FILE_PARSE_COUNT.store(0, Ordering::SeqCst);
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
-        let parent = rollout_path(temp.path(), PARENT_ID);
-        let child = rollout_path(temp.path(), CHILD_A_ID);
+        let archived = temp.path().join("archived_sessions");
+        let sessions = temp.path().join("sessions");
+        fs::create_dir_all(&archived).unwrap();
+        fs::create_dir_all(&sessions).unwrap();
+        let parent = rollout_path(&archived, PARENT_ID);
+        let child = rollout_path(&sessions, CHILD_A_ID);
         write_jsonl(
             &parent,
             &[
@@ -1932,18 +2020,6 @@ mod tests {
                 token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
             ],
         );
-        let parent_file = fs::OpenOptions::new().write(true).open(&parent).unwrap();
-        let modified = SystemTime::UNIX_EPOCH
-            + std::time::Duration::from_secs(
-                "2026-07-10T03:00:02Z"
-                    .parse::<DateTime<Utc>>()
-                    .unwrap()
-                    .timestamp() as u64,
-            );
-        parent_file
-            .set_times(fs::FileTimes::new().set_modified(modified))
-            .unwrap();
-        drop(parent_file);
         write_jsonl(
             &child,
             &[
@@ -1978,7 +2054,137 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn unchanged_parent_behind_cutoff_finishes_on_second_observation() -> Result<(), AppError> {
+    fn completed_live_parent_turn_before_cutoff_is_imported() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let sessions = temp.path().join("sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        let parent = rollout_path(&sessions, PARENT_ID);
+        let child = rollout_path(&sessions, CHILD_A_ID);
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
+                task_complete_at("2026-07-10T03:00:02Z"),
+            ],
+        );
+        write_jsonl(
+            &child,
+            &[
+                session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:10:00Z"),
+                token_count_at(100, 50, 10, "2026-07-10T03:10:01Z"),
+                token_count_at(160, 80, 16, "2026-07-10T03:10:02Z"),
+            ],
+        );
+
+        let result = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert_eq!(
+            (result.imported, result.skipped, result.deferred),
+            (1, 1, false)
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn turn_context_after_terminal_reopens_parent_boundary() {
+        clear_codex_replay_caches();
+        let temp = tempdir().unwrap();
+        let parent = rollout_path(temp.path(), PARENT_ID);
+        let cutoff = "2026-07-10T03:10:00Z".parse::<DateTime<Utc>>().unwrap();
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
+                task_complete_at("2026-07-10T03:00:02Z"),
+                turn_context_at("2026-07-10T03:05:00Z"),
+            ],
+        );
+
+        assert!(matches!(
+            parent_signatures_before(&parent, cutoff),
+            Err(ParentTimelineError::BehindCutoff(_))
+        ));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn turn_aborted_after_cutoff_seals_prefix_before_next_turn() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let sessions = temp.path().join("sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        let parent = rollout_path(&sessions, PARENT_ID);
+        let child = rollout_path(&sessions, CHILD_A_ID);
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
+                turn_aborted_at("2026-07-10T03:10:01Z"),
+                task_started_at("2026-07-10T03:10:02Z"),
+                token_count_at(200, 100, 20, "2026-07-10T03:10:03Z"),
+            ],
+        );
+        write_jsonl(
+            &child,
+            &[
+                session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:10:00Z"),
+                token_count_at(100, 50, 10, "2026-07-10T03:10:01Z"),
+                token_count_at(160, 80, 16, "2026-07-10T03:10:02Z"),
+            ],
+        );
+
+        let result = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert_eq!(
+            (result.imported, result.skipped, result.deferred),
+            (1, 1, false)
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn unfinalized_activity_at_cutoff_overrides_terminal_watermark() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let sessions = temp.path().join("sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        let parent = rollout_path(&sessions, PARENT_ID);
+        let child = rollout_path(&sessions, CHILD_A_ID);
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
+                task_complete_at("2026-07-10T03:10:01Z"),
+                task_started_at("2026-07-10T03:09:59Z"),
+            ],
+        );
+        write_jsonl(
+            &child,
+            &[
+                session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:10:00Z"),
+                token_count_at(100, 50, 10, "2026-07-10T03:10:01Z"),
+                token_count_at(160, 80, 16, "2026-07-10T03:10:02Z"),
+            ],
+        );
+
+        let result = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert!(result.deferred);
+        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn unchanged_live_parent_behind_cutoff_remains_deferred_without_reparse() -> Result<(), AppError>
+    {
         clear_codex_replay_caches();
         CODEX_FILE_PARSE_COUNT.store(0, Ordering::SeqCst);
         let db = Database::memory()?;
@@ -1990,12 +2196,58 @@ mod tests {
             &[
                 session_meta(PARENT_ID),
                 token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
+                turn_context_at("2026-07-10T03:20:00Z"),
+            ],
+        );
+        write_jsonl(
+            &child,
+            &[
+                session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:10:00Z"),
+                token_count_at(100, 50, 10, "2026-07-10T03:10:01Z"),
+                token_count_at(160, 80, 16, "2026-07-10T03:10:02Z"),
+            ],
+        );
+
+        let first = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert!(first.deferred);
+        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
+        let parses_after_first = CODEX_FILE_PARSE_COUNT.load(Ordering::SeqCst);
+        clear_codex_replay_caches();
+
+        let second = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert!(second.deferred);
+        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
+        assert_eq!(
+            CODEX_FILE_PARSE_COUNT.load(Ordering::SeqCst),
+            parses_after_first
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn live_parent_pause_does_not_commit_child_before_delayed_event_arrives() -> Result<(), AppError>
+    {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let sessions = temp.path().join("sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        let parent = rollout_path(&sessions, PARENT_ID);
+        let child = rollout_path(&sessions, CHILD_A_ID);
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
+                task_complete_at("2026-07-10T03:00:02Z"),
+                task_started_at("2026-07-10T03:00:03Z"),
             ],
         );
         let parent_file = fs::OpenOptions::new().write(true).open(&parent).unwrap();
         let modified = SystemTime::UNIX_EPOCH
             + std::time::Duration::from_secs(
-                "2026-07-10T04:00:00Z"
+                "2026-07-10T03:00:02Z"
                     .parse::<DateTime<Utc>>()
                     .unwrap()
                     .timestamp() as u64,
@@ -2010,20 +2262,36 @@ mod tests {
                 session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:10:00Z"),
                 token_count_at(100, 50, 10, "2026-07-10T03:10:01Z"),
                 token_count_at(160, 80, 16, "2026-07-10T03:10:02Z"),
+                token_count_at(220, 110, 22, "2026-07-10T03:10:03Z"),
             ],
         );
 
         let first = sync_test_file(&db, &child, &[&parent, &child])?;
         assert!(first.deferred);
         assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
+
+        append_jsonl(
+            &parent,
+            &[
+                token_count_at(160, 80, 16, "2026-07-10T03:00:05Z"),
+                task_complete_at("2026-07-10T03:10:01Z"),
+            ],
+        );
         clear_codex_replay_caches();
 
         let second = sync_test_file(&db, &child, &[&parent, &child])?;
         assert_eq!(
             (second.imported, second.skipped, second.deferred),
-            (1, 1, false)
+            (1, 2, false)
         );
-        assert_ne!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
+        let conn = lock_conn!(db.conn);
+        let usage: (i64, i64, i64) = conn.query_row(
+            "SELECT input_tokens, cache_read_tokens, output_tokens
+             FROM proxy_request_logs WHERE request_id = ?1",
+            [format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{CHILD_A_ID}:3")],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(usage, (60, 30, 6));
         Ok(())
     }
 
@@ -2094,7 +2362,7 @@ mod tests {
             &[
                 session_meta(PARENT_ID),
                 token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
-                turn_context_at("2026-07-10T03:00:10Z"),
+                task_complete_at("2026-07-10T03:00:10Z"),
             ],
         );
         clear_codex_replay_caches();
@@ -2159,7 +2427,7 @@ mod tests {
                 token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
                 token_count_at(200, 100, 20, "2026-07-10T03:00:02Z"),
                 token_count_at(300, 150, 30, "2026-07-10T03:00:03Z"),
-                turn_context_at("2026-07-10T03:00:10Z"),
+                task_complete_at("2026-07-10T03:00:10Z"),
             ],
         );
         write_jsonl(
@@ -2189,26 +2457,16 @@ mod tests {
                 session_meta(PARENT_ID),
                 token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
                 token_count_at(200, 100, 20, "2026-07-10T03:00:10Z"),
-                turn_context_at("2026-07-10T03:00:20Z"),
+                task_complete_at("2026-07-10T03:00:20Z"),
             ],
         );
 
         let early = "2026-07-10T03:00:05Z".parse::<DateTime<Utc>>().unwrap();
         let late = "2026-07-10T03:00:15Z".parse::<DateTime<Utc>>().unwrap();
-        assert_eq!(
-            parent_signatures_before(&parent, early, false)
-                .unwrap()
-                .len(),
-            1
-        );
+        assert_eq!(parent_signatures_before(&parent, early).unwrap().len(), 1);
         let first_timeline =
             Arc::clone(&replay_caches().lock().unwrap().parent_timelines[&parent].timeline);
-        assert_eq!(
-            parent_signatures_before(&parent, late, false)
-                .unwrap()
-                .len(),
-            2
-        );
+        assert_eq!(parent_signatures_before(&parent, late).unwrap().len(), 2);
 
         let caches = replay_caches().lock().unwrap();
         assert_eq!(caches.parent_timelines.len(), 1);
@@ -2231,15 +2489,10 @@ mod tests {
             &[
                 session_meta(PARENT_ID),
                 token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
-                turn_context_at("2026-07-10T03:00:20Z"),
+                task_complete_at("2026-07-10T03:00:20Z"),
             ],
         );
-        assert_eq!(
-            parent_signatures_before(&parent, cutoff, false)
-                .unwrap()
-                .len(),
-            1
-        );
+        assert_eq!(parent_signatures_before(&parent, cutoff).unwrap().len(), 1);
 
         write_jsonl(
             &parent,
@@ -2247,15 +2500,10 @@ mod tests {
                 session_meta(PARENT_ID),
                 token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
                 token_count_at(200, 100, 20, "2026-07-10T03:00:10Z"),
-                turn_context_at("2026-07-10T03:00:20Z"),
+                task_complete_at("2026-07-10T03:00:20Z"),
             ],
         );
-        assert_eq!(
-            parent_signatures_before(&parent, cutoff, false)
-                .unwrap()
-                .len(),
-            2
-        );
+        assert_eq!(parent_signatures_before(&parent, cutoff).unwrap().len(), 2);
 
         let caches = replay_caches().lock().unwrap();
         assert_eq!(caches.parent_timelines.len(), 1);
@@ -2274,11 +2522,11 @@ mod tests {
             &[
                 session_meta(PARENT_ID),
                 token_count_without_timestamp(100, 50, 10),
-                turn_context_at("2026-07-10T03:00:20Z"),
+                task_complete_at("2026-07-10T03:00:20Z"),
             ],
         );
 
-        let first_error = parent_signatures_before(&parent, cutoff, false).unwrap_err();
+        let first_error = parent_signatures_before(&parent, cutoff).unwrap_err();
         assert!(matches!(
             &first_error,
             ParentTimelineError::Invalid(reason)
@@ -2288,16 +2536,48 @@ mod tests {
             || Arc::clone(&replay_caches().lock().unwrap().parent_timelines[&parent].timeline);
         let first_timeline = cached_timeline();
 
-        let second_error = parent_signatures_before(&parent, cutoff, false).unwrap_err();
+        let second_error = parent_signatures_before(&parent, cutoff).unwrap_err();
         assert_eq!(second_error, first_error);
         assert!(Arc::ptr_eq(&first_timeline, &cached_timeline()));
 
         fs::remove_file(&parent).unwrap();
-        let open_error = parent_signatures_before(&parent, cutoff, false).unwrap_err();
+        let open_error = parent_signatures_before(&parent, cutoff).unwrap_err();
         assert!(matches!(
             open_error,
             ParentTimelineError::Invalid(reason) if reason.contains("无法打开父 rollout")
         ));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn partial_parent_line_does_not_reuse_previous_terminal_boundary() {
+        clear_codex_replay_caches();
+        let temp = tempdir().unwrap();
+        let parent = rollout_path(temp.path(), PARENT_ID);
+        let cutoff = "2026-07-10T03:10:00Z".parse::<DateTime<Utc>>().unwrap();
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
+                task_complete_at("2026-07-10T03:00:02Z"),
+            ],
+        );
+        let mut file = fs::OpenOptions::new().append(true).open(&parent).unwrap();
+        write!(
+            file,
+            "{{\"timestamp\":\"2026-07-10T03:05:00Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"task_started\"}}"
+        )
+        .unwrap();
+        drop(file);
+
+        let error = parent_signatures_before(&parent, cutoff).unwrap_err();
+        assert!(matches!(
+            error,
+            ParentTimelineError::Invalid(reason)
+                if reason.contains("解析父 rollout") && reason.contains("第 4 行")
+        ));
+        assert!(replay_caches().lock().unwrap().parent_timelines.is_empty());
     }
 
     #[test]
@@ -2311,7 +2591,7 @@ mod tests {
             &[
                 session_meta(PARENT_ID),
                 token_count_at(100, 50, 10, "2026-07-10T03:00:00.000000500Z"),
-                turn_context_at("2026-07-10T03:00:00.000000900Z"),
+                task_complete_at("2026-07-10T03:00:00.000000900Z"),
             ],
         );
 
@@ -2321,15 +2601,10 @@ mod tests {
         let after = "2026-07-10T03:00:00.000000700Z"
             .parse::<DateTime<Utc>>()
             .unwrap();
-        assert!(parent_signatures_before(&parent, before, false)
+        assert!(parent_signatures_before(&parent, before)
             .unwrap()
             .is_empty());
-        assert_eq!(
-            parent_signatures_before(&parent, after, false)
-                .unwrap()
-                .len(),
-            1
-        );
+        assert_eq!(parent_signatures_before(&parent, after).unwrap().len(), 1);
         assert_eq!(replay_caches().lock().unwrap().parent_timelines.len(), 1);
     }
 
@@ -2361,27 +2636,6 @@ mod tests {
     }
 
     #[test]
-    fn unknown_parent_mtime_does_not_mark_file_closed_by_cutoff() {
-        let cutoff = "2026-07-10T03:00:00Z".parse::<DateTime<Utc>>().unwrap();
-        let mut stamp = ParentFileStamp {
-            modified_nanos: 0,
-            size: 1,
-            #[cfg(unix)]
-            device: 1,
-            #[cfg(unix)]
-            inode: 1,
-            #[cfg(windows)]
-            volume_serial: 1,
-            #[cfg(windows)]
-            file_id: [0; 16],
-        };
-
-        assert!(!parent_file_was_closed_by_cutoff(stamp, &cutoff));
-        stamp.modified_nanos = 1;
-        assert!(parent_file_was_closed_by_cutoff(stamp, &cutoff));
-    }
-
-    #[test]
     #[serial_test::serial]
     fn test_empty_fork_imports_no_parent_usage() -> Result<(), AppError> {
         clear_codex_replay_caches();
@@ -2395,7 +2649,7 @@ mod tests {
                 session_meta(PARENT_ID),
                 token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
                 token_count_at(200, 100, 20, "2026-07-10T03:00:02Z"),
-                turn_context_at("2026-07-10T03:00:10Z"),
+                task_complete_at("2026-07-10T03:00:10Z"),
             ],
         );
         write_jsonl(
@@ -2467,6 +2721,7 @@ mod tests {
                 session_meta(PARENT_ID),
                 token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
                 token_count_at(200, 100, 20, "2026-07-10T03:00:06Z"),
+                task_complete_at("2026-07-10T03:00:08Z"),
             ],
         );
         write_jsonl(
@@ -2511,7 +2766,7 @@ mod tests {
             &[
                 session_meta(PARENT_ID),
                 token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
-                turn_context_at("2026-07-10T03:00:10Z"),
+                task_complete_at("2026-07-10T03:00:10Z"),
             ],
         );
         let recovered = sync_test_file(&db, &child, &[&parent, &child])?;
