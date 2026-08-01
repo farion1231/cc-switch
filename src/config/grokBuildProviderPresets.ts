@@ -174,18 +174,6 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "runapi",
   },
   {
-    name: "Unity2.ai",
-    websiteUrl: "https://unity2.ai",
-    apiKeyUrl: "https://unity2.ai/register?source=ccs",
-    auth: grokAuth(),
-    config: grokPresetConfig("Unity2.ai", "https://api.unity2.ai"),
-    endpointCandidates: ["https://api.unity2.ai"],
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "unity2",
-    icon: "unity2",
-  },
-  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",

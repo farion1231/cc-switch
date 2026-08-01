@@ -73,11 +73,6 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
-<td width="180"><a href="https://unity2.ai/register?source=ccs"><img src="assets/partners/logos/unity2.jpg" alt="Unity2.ai" width="150"></a></td>
-<td>Unity2.ai のご支援に感謝します！Unity2.ai は個人開発者・チーム・企業向けの高性能 AI モデル API リレープラットフォームです。中国の大手企業に長年利用されており、1 日 300 億トークン以上を処理し、5000 RPM クラスの高並列に対応しています。残高課金、初回チャージボーナス、組み合わせサブスクリプション、企業向け請求書発行、専任サポートを提供。<a href="https://unity2.ai/register?source=ccs">こちらのリンク</a>から登録すると $2 のクレジット、公式グループへの参加でさらに $10、最大 $12 の無料クレジットがもらえます！</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
 <td>胜算雲（Shengsuanyun）のご支援に感謝します！胜算雲は AI ネイティブチーム向けのスーパーファクトリーであり、産業グレードの AI タスク並列実行プラットフォームです。モデルマーケットプレイスでは Claude、ChatGPT、Gemini をはじめとする国内外の LLM およびマルチメディアモデルの計算リソースを集約・直接提供。リバースエンジニアリングや品質低下は一切なく、プラットフォーム全体のモデル SLA 可用性は 99.7% に達し、<a href="https://watch.shengsuanyun.com/status/shengsuanyun">監視ダッシュボード</a>は常時グリーン表示です。さらにエンタープライズ向けカスタムゲートウェイを提供し、チームのきめ細かなコスト・権限管理、スマートルーティング、セキュリティ保護、BYOK（自社キー持ち込み）ホスティングを実現します。従量課金およびトークンプラン（近日公開）対応で、請求書発行にも対応。<a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">このリンク</a>から新規登録すると 10 元分のクレジットと初回チャージ 10% ボーナスが付与されます。</td>
 </tr>

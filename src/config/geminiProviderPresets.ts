@@ -117,24 +117,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "Unity2.ai",
-    websiteUrl: "https://unity2.ai",
-    apiKeyUrl: "https://unity2.ai/register?source=ccs",
-    settingsConfig: {
-      env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.unity2.ai",
-        GEMINI_MODEL: "gemini-3.1-pro",
-      },
-    },
-    baseURL: "https://api.unity2.ai",
-    model: "gemini-3.1-pro",
-    description: "Unity2.ai",
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "unity2",
-    icon: "unity2",
-  },
-  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
