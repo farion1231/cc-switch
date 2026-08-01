@@ -307,6 +307,46 @@ fn sqlite_column_exists(
     .map_err(|error| AppError::Database(format!("查询列 {table}.{column} 失败: {error}")))
 }
 
+fn codex_cursor_paths_on_conn(
+    conn: &rusqlite::Connection,
+    codex_dir: &Path,
+) -> Result<Vec<String>, AppError> {
+    if !sqlite_table_exists(conn, "session_log_sync")?
+        || !sqlite_column_exists(conn, "session_log_sync", "file_path")?
+    {
+        return Ok(Vec::new());
+    }
+
+    let mut statement = conn
+        .prepare("SELECT file_path FROM session_log_sync")
+        .map_err(|error| AppError::Database(format!("读取会话同步 cursor 失败: {error}")))?;
+    let paths = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| AppError::Database(format!("查询会话同步 cursor 失败: {error}")))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| AppError::Database(format!("解析会话同步 cursor 失败: {error}")))?;
+    Ok(paths
+        .into_iter()
+        .filter(|path| is_codex_cursor_path(path, codex_dir))
+        .collect())
+}
+
+pub(crate) fn reset_codex_sync_cursors_on_conn(
+    conn: &rusqlite::Connection,
+    codex_dir: &Path,
+) -> Result<(), AppError> {
+    for file_path in codex_cursor_paths_on_conn(conn, codex_dir)? {
+        conn.execute(
+            "UPDATE session_log_sync
+             SET last_modified = 0, last_line_offset = 0, last_file_size = 0
+             WHERE file_path = ?1",
+            [file_path],
+        )
+        .map_err(|error| AppError::Database(format!("重置 Codex 同步 cursor 失败: {error}")))?;
+    }
+    Ok(())
+}
+
 pub(crate) fn reset_codex_usage_on_conn(
     conn: &rusqlite::Connection,
     codex_dir: &Path,
@@ -329,34 +369,12 @@ pub(crate) fn reset_codex_usage_on_conn(
         )
         .map_err(|error| AppError::Database(format!("清理 Codex 用量汇总失败: {error}")))?;
     }
-    if sqlite_table_exists(conn, "session_log_sync")?
-        && sqlite_column_exists(conn, "session_log_sync", "file_path")?
-    {
-        let paths = {
-            let mut statement = conn
-                .prepare("SELECT file_path FROM session_log_sync")
-                .map_err(|error| {
-                    AppError::Database(format!("读取会话同步 cursor 失败: {error}"))
-                })?;
-            let paths = statement
-                .query_map([], |row| row.get::<_, String>(0))
-                .map_err(|error| AppError::Database(format!("查询会话同步 cursor 失败: {error}")))?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| {
-                    AppError::Database(format!("解析会话同步 cursor 失败: {error}"))
-                })?;
-            paths
-        };
-        for file_path in paths
-            .into_iter()
-            .filter(|path| is_codex_cursor_path(path, codex_dir))
-        {
-            conn.execute(
-                "DELETE FROM session_log_sync WHERE file_path = ?1",
-                [file_path],
-            )
-            .map_err(|error| AppError::Database(format!("清理 Codex 同步 cursor 失败: {error}")))?;
-        }
+    for file_path in codex_cursor_paths_on_conn(conn, codex_dir)? {
+        conn.execute(
+            "DELETE FROM session_log_sync WHERE file_path = ?1",
+            [file_path],
+        )
+        .map_err(|error| AppError::Database(format!("清理 Codex 同步 cursor 失败: {error}")))?;
     }
     Ok(())
 }
@@ -1766,6 +1784,54 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(count, 2);
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn migrated_cursor_rescans_an_empty_rollout_before_same_mtime_append() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let sessions_dir = temp.path().join("sessions");
+        fs::create_dir_all(&sessions_dir).unwrap();
+        let rollout = rollout_path(&sessions_dir, PARENT_ID);
+        fs::File::create(&rollout).unwrap();
+        let original_metadata = fs::metadata(&rollout).unwrap();
+        let original_modified = original_metadata.modified().unwrap();
+        let original_modified_nanos = metadata_modified_nanos(&original_metadata);
+
+        update_sync_state_with_size(
+            &db,
+            &rollout.to_string_lossy(),
+            original_modified_nanos,
+            99,
+            0,
+        )?;
+        {
+            let conn = lock_conn!(db.conn);
+            reset_codex_sync_cursors_on_conn(&conn, temp.path())?;
+        }
+        assert_eq!(
+            get_sync_state_with_size(&db, &rollout.to_string_lossy())?,
+            (0, 0, 0)
+        );
+
+        assert_eq!(sync_test_file(&db, &rollout, &[&rollout])?.imported, 0);
+        append_jsonl(
+            &rollout,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:02Z"),
+            ],
+        );
+        let file = fs::OpenOptions::new().write(true).open(&rollout).unwrap();
+        file.set_times(fs::FileTimes::new().set_modified(original_modified))
+            .unwrap();
+        drop(file);
+
+        assert_eq!(sync_test_file(&db, &rollout, &[&rollout])?.imported, 1);
         Ok(())
     }
 

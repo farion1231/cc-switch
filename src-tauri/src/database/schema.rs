@@ -1537,6 +1537,10 @@ impl Database {
                 "last_file_size",
                 "INTEGER NOT NULL DEFAULT 0",
             )?;
+            crate::services::session_usage_codex::reset_codex_sync_cursors_on_conn(
+                conn,
+                &crate::codex_config::get_codex_config_dir(),
+            )?;
         }
         Ok(())
     }
@@ -3269,22 +3273,41 @@ mod tests {
                 last_line_offset INTEGER NOT NULL DEFAULT 0,
                 last_synced_at INTEGER NOT NULL
              );
-             INSERT INTO session_log_sync
-                (file_path, last_modified, last_line_offset, last_synced_at)
-             VALUES ('rollout.jsonl', 11, 22, 33);",
+            ",
+        )?;
+        let codex_cursor =
+            "/old/.codex/sessions/rollout-00000000-0000-4000-8000-000000000001.jsonl";
+        conn.execute(
+            "INSERT INTO session_log_sync
+             (file_path, last_modified, last_line_offset, last_synced_at)
+             VALUES (?1, 11, 22, 33)",
+            [codex_cursor],
+        )?;
+        conn.execute(
+            "INSERT INTO session_log_sync
+             (file_path, last_modified, last_line_offset, last_synced_at)
+             VALUES ('/gemini/tmp/session-123.json', 44, 55, 66)",
+            [],
         )?;
         Database::set_user_version(&conn, 16)?;
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
         assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
-        let state: (i64, i64, i64) = conn.query_row(
+        let codex_state: (i64, i64, i64) = conn.query_row(
             "SELECT last_modified, last_line_offset, last_file_size
-             FROM session_log_sync WHERE file_path = 'rollout.jsonl'",
+             FROM session_log_sync WHERE file_path = ?1",
+            [codex_cursor],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(codex_state, (0, 0, 0));
+        let non_codex_state: (i64, i64, i64) = conn.query_row(
+            "SELECT last_modified, last_line_offset, last_file_size
+             FROM session_log_sync WHERE file_path = '/gemini/tmp/session-123.json'",
             [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
-        assert_eq!(state, (11, 22, 0));
+        assert_eq!(non_codex_state, (44, 55, 0));
         Ok(())
     }
 }
