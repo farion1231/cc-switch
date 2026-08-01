@@ -561,7 +561,7 @@ where
         }
         #[cfg(not(target_os = "windows"))]
         {
-            let _ = (args, envs, profile);
+            let _ = (distro, args, envs, profile);
             return Err("Claude Science WSL launch is only supported on Windows".to_string());
         }
     }
