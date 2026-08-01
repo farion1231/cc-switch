@@ -1,12 +1,16 @@
 import { createRef } from "react";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor, act, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import UnifiedSkillsPanel, {
   type UnifiedSkillsPanelHandle,
 } from "@/components/skills/UnifiedSkillsPanel";
-import type { InstalledSkill } from "@/lib/api/skills";
+import type {
+  InstalledSkill,
+  SkillBackupEntry,
+  SkillUpdateInfo,
+} from "@/lib/api/skills";
 
 const scanUnmanagedMock = vi.fn();
 const toggleSkillAppMock = vi.fn();
@@ -17,10 +21,16 @@ const deleteSkillBackupMock = vi.fn();
 const restoreSkillBackupMock = vi.fn();
 const bulkToggleSkillAppMock = vi.fn();
 const checkUpdatesMock = vi.fn();
-const { toastErrorMock } = vi.hoisted(() => ({
+const updateSkillMock = vi.fn();
+const refetchSkillBackupsMock = vi.fn();
+const { toastErrorMock, toastSuccessMock } = vi.hoisted(() => ({
   toastErrorMock: vi.fn(),
+  toastSuccessMock: vi.fn(),
 }));
 let installedSkillsMock: InstalledSkill[] = [];
+let skillBackupsMock: SkillBackupEntry[] = [];
+let skillUpdatesMock: SkillUpdateInfo[] = [];
+let checkUpdatesFetching = false;
 let toggleSkillAppPending = false;
 let toggleSkillAppVariables:
   | { id: string; app: "claude"; enabled: boolean }
@@ -32,7 +42,7 @@ let bulkToggleSkillAppVariables:
 
 vi.mock("sonner", () => ({
   toast: {
-    success: vi.fn(),
+    success: toastSuccessMock,
     error: toastErrorMock,
     info: vi.fn(),
   },
@@ -44,8 +54,8 @@ vi.mock("@/hooks/useSkills", () => ({
     isLoading: false,
   }),
   useSkillBackups: () => ({
-    data: [],
-    refetch: vi.fn(),
+    data: skillBackupsMock,
+    refetch: refetchSkillBackupsMock,
     isFetching: false,
   }),
   useDeleteSkillBackup: () => ({
@@ -88,12 +98,12 @@ vi.mock("@/hooks/useSkills", () => ({
     mutateAsync: installFromZipMock,
   }),
   useCheckSkillUpdates: () => ({
-    data: [],
+    data: skillUpdatesMock,
     refetch: checkUpdatesMock,
-    isFetching: false,
+    isFetching: checkUpdatesFetching,
   }),
   useUpdateSkill: () => ({
-    mutateAsync: vi.fn(),
+    mutateAsync: updateSkillMock,
     isPending: false,
   }),
 }));
@@ -137,10 +147,14 @@ const renderPanel = () =>
 describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
     installedSkillsMock = [];
+    skillBackupsMock = [];
+    skillUpdatesMock = [];
+    checkUpdatesFetching = false;
     toggleSkillAppPending = false;
     toggleSkillAppVariables = undefined;
     bulkToggleSkillAppPending = false;
     bulkToggleSkillAppVariables = undefined;
+    scanUnmanagedMock.mockReset();
     scanUnmanagedMock.mockResolvedValue({
       data: [
         {
@@ -157,13 +171,20 @@ describe("UnifiedSkillsPanel", () => {
     bulkToggleSkillAppMock.mockReset();
     bulkToggleSkillAppMock.mockResolvedValue({ succeeded: [], failed: [] });
     toastErrorMock.mockReset();
+    toastSuccessMock.mockReset();
     uninstallSkillMock.mockReset();
     importSkillsMock.mockReset();
     installFromZipMock.mockReset();
     deleteSkillBackupMock.mockReset();
+    refetchSkillBackupsMock.mockReset();
+    refetchSkillBackupsMock.mockResolvedValue({ data: skillBackupsMock });
     restoreSkillBackupMock.mockReset();
     checkUpdatesMock.mockReset();
     checkUpdatesMock.mockResolvedValue({ data: [] });
+    updateSkillMock.mockReset();
+    updateSkillMock.mockImplementation(async (id: string) =>
+      makeInstalledSkill({ id }),
+    );
   });
 
   it("opens the import dialog without crashing when app toggles render", async () => {
@@ -198,6 +219,31 @@ describe("UnifiedSkillsPanel", () => {
           apps: expect.objectContaining({ grokbuild: true }),
         },
       ]);
+    });
+  });
+
+  it("passes only the installed Skill ID to uninstall", async () => {
+    installedSkillsMock = [
+      makeInstalledSkill({
+        id: "owner/repo:skill-id",
+        directory: "nested/skill-directory",
+        repoOwner: "owner",
+        repoName: "repo",
+      }),
+    ];
+    uninstallSkillMock.mockResolvedValueOnce({ backupPath: undefined });
+    renderPanel();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTitle("skills.uninstall"));
+    await user.click(
+      screen.getByRole("button", {
+        name: "common.confirm",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(uninstallSkillMock).toHaveBeenCalledWith("owner/repo:skill-id");
     });
   });
 
@@ -464,5 +510,246 @@ describe("UnifiedSkillsPanel", () => {
       resolveCheck({ data: [] });
       await Promise.resolve();
     });
+  });
+
+  it("blocks actions but not navigation while checking updates", async () => {
+    installedSkillsMock = [makeInstalledSkill()];
+    checkUpdatesFetching = true;
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    const onInteractionBlockedChange = vi.fn();
+    const onNavigationBlockedChange = vi.fn();
+
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+        onInteractionBlockedChange={onInteractionBlockedChange}
+        onNavigationBlockedChange={onNavigationBlockedChange}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(onInteractionBlockedChange).toHaveBeenLastCalledWith(true);
+      expect(onNavigationBlockedChange).toHaveBeenLastCalledWith(false);
+    });
+    expect(screen.getByText("Claude:").closest("button")).toBeDisabled();
+    expect(screen.getByTitle("skills.uninstall")).toBeDisabled();
+
+    await act(async () => {
+      await ref.current?.openImport();
+    });
+    expect(scanUnmanagedMock).not.toHaveBeenCalled();
+  });
+
+  it("closes the backup dialog and reports an explicit refresh failure", async () => {
+    refetchSkillBackupsMock.mockRejectedValueOnce(new Error("refresh failed"));
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+      />,
+    );
+
+    await act(async () => {
+      await ref.current?.openRestoreFromBackup();
+    });
+
+    expect(refetchSkillBackupsMock).toHaveBeenCalledWith({
+      throwOnError: true,
+    });
+    expect(toastErrorMock).toHaveBeenCalledWith("common.error", {
+      description: "Error: refresh failed",
+    });
+    expect(
+      screen.queryByText("skills.restoreFromBackup.title"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("blocks writes immediately when an update check starts", async () => {
+    installedSkillsMock = [makeInstalledSkill()];
+    let resolveCheck!: (value: { data: never[] }) => void;
+    checkUpdatesMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveCheck = resolve;
+      }),
+    );
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+      />,
+    );
+
+    act(() => {
+      ref.current?.checkUpdates();
+    });
+    expect(checkUpdatesMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await ref.current?.openImport();
+    });
+    await userEvent.setup().click(screen.getByTitle("skills.uninstall"));
+    await userEvent
+      .setup()
+      .click(screen.getByText("Claude:").closest("button")!);
+
+    expect(scanUnmanagedMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(bulkToggleSkillAppMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveCheck({ data: [] });
+      await Promise.resolve();
+    });
+  });
+
+  it("ignores stale update entries for uninstalled Skills", async () => {
+    installedSkillsMock = [makeInstalledSkill({ id: "installed-id" })];
+    skillUpdatesMock = [
+      { id: "removed-id", name: "Removed Skill", remoteHash: "removed" },
+      { id: "installed-id", name: "Alpha Skill", remoteHash: "current" },
+    ];
+    renderPanel();
+
+    expect(screen.getAllByText("skills.updateAvailable")).toHaveLength(1);
+    await userEvent.setup().click(
+      screen.getByRole("button", {
+        name: "skills.updateAll",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(updateSkillMock).toHaveBeenCalledTimes(1);
+      expect(updateSkillMock).toHaveBeenCalledWith("installed-id");
+    });
+  });
+
+  it("waits for an explicit backup refresh before reporting deletion failure", async () => {
+    skillBackupsMock = [
+      {
+        backupId: "backup-1",
+        backupPath: "C:\\backups\\backup-1",
+        createdAt: 1,
+        skill: makeInstalledSkill({ name: "Backup Skill" }),
+      },
+    ];
+    deleteSkillBackupMock.mockRejectedValueOnce(undefined);
+    let releaseRefresh: (() => void) | undefined;
+    const refreshPending = new Promise((resolve) => {
+      releaseRefresh = () => resolve({ data: [] });
+    });
+    refetchSkillBackupsMock
+      .mockResolvedValueOnce({ data: skillBackupsMock })
+      .mockReturnValueOnce(refreshPending);
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+      />,
+    );
+
+    await act(async () => {
+      await ref.current?.openRestoreFromBackup();
+    });
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", {
+        name: "skills.restoreFromBackup.delete",
+      }),
+    );
+    const confirmDialog = screen
+      .getByText("skills.restoreFromBackup.deleteConfirmTitle")
+      .closest<HTMLElement>('[role="dialog"]');
+    expect(confirmDialog).not.toBeNull();
+    await user.click(
+      within(confirmDialog!).getByRole("button", {
+        name: "skills.restoreFromBackup.delete",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(deleteSkillBackupMock).toHaveBeenCalledWith("backup-1");
+      expect(refetchSkillBackupsMock).toHaveBeenCalledTimes(2);
+    });
+    expect(toastErrorMock).not.toHaveBeenCalled();
+
+    releaseRefresh?.();
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalledTimes(1);
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        "skills.restoreFromBackup.deleteFailed",
+        { description: "undefined" },
+      );
+    });
+    expect(toastSuccessMock).not.toHaveBeenCalled();
+    expect(
+      screen.queryByText("skills.restoreFromBackup.deleteConfirmTitle"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not report a completed deletion as failed when refresh rejects", async () => {
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    skillBackupsMock = [
+      {
+        backupId: "backup-1",
+        backupPath: "C:\\backups\\backup-1",
+        createdAt: 1,
+        skill: makeInstalledSkill({ name: "Backup Skill" }),
+      },
+    ];
+    deleteSkillBackupMock.mockResolvedValueOnce(true);
+    refetchSkillBackupsMock
+      .mockResolvedValueOnce({ data: skillBackupsMock })
+      .mockRejectedValueOnce(new Error("refresh failed"));
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+      />,
+    );
+
+    await act(async () => {
+      await ref.current?.openRestoreFromBackup();
+    });
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", {
+        name: "skills.restoreFromBackup.delete",
+      }),
+    );
+    const confirmDialog = screen
+      .getByText("skills.restoreFromBackup.deleteConfirmTitle")
+      .closest<HTMLElement>('[role="dialog"]');
+    expect(confirmDialog).not.toBeNull();
+    await user.click(
+      within(confirmDialog!).getByRole("button", {
+        name: "skills.restoreFromBackup.delete",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        "skills.restoreFromBackup.deleteSuccess",
+        { closeButton: true },
+      );
+    });
+    expect(refetchSkillBackupsMock).toHaveBeenCalledTimes(2);
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "Failed to refresh Skill backups after deletion:",
+      expect.any(Error),
+    );
+    consoleErrorSpy.mockRestore();
   });
 });

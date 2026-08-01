@@ -15,6 +15,7 @@ const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
 const skillsPanelMocks = vi.hoisted(() => ({
   checkUpdates: vi.fn(),
+  openDiscovery: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({
@@ -144,7 +145,7 @@ vi.mock("@/components/skills/UnifiedSkillsPanel", async () => {
           });
       }, [onCheckUpdatesStateChange]);
       React.useImperativeHandle(ref, () => ({
-        openDiscovery: vi.fn(),
+        openDiscovery: skillsPanelMocks.openDiscovery,
         openImport: vi.fn(),
         openInstallFromZip: vi.fn(),
         openRestoreFromBackup: vi.fn(),
@@ -191,6 +192,7 @@ describe("App integration with MSW", () => {
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
     skillsPanelMocks.checkUpdates.mockReset();
+    skillsPanelMocks.openDiscovery.mockReset();
     localStorage.removeItem("cc-switch-last-view");
   });
 
@@ -399,5 +401,23 @@ describe("App integration with MSW", () => {
 
     fireEvent.click(checkUpdatesButton);
     expect(skillsPanelMocks.checkUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes the Skills discover toolbar action through the panel guard", async () => {
+    localStorage.setItem("cc-switch-last-view", "skills");
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    expect(
+      await screen.findByTestId("unified-skills-panel"),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "skills.discover",
+      }),
+    );
+
+    expect(skillsPanelMocks.openDiscovery).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("unified-skills-panel")).toBeInTheDocument();
   });
 });

@@ -14,6 +14,8 @@ interface PromptPanelProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   appId: AppId;
+  onInteractionBlockedChange?: (blocked: boolean) => void;
+  onNavigationBlockedChange?: (blocked: boolean) => void;
 }
 
 export interface PromptPanelHandle {
@@ -21,7 +23,10 @@ export interface PromptPanelHandle {
 }
 
 const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
-  ({ open, appId }, ref) => {
+  (
+    { open, appId, onInteractionBlockedChange, onNavigationBlockedChange },
+    ref,
+  ) => {
     const { t } = useTranslation();
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -33,6 +38,13 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
       messageParams?: Record<string, unknown>;
       onConfirm: () => void;
     } | null>(null);
+    const [writePending, setWritePending] = useState(false);
+    const [reloadPending, setReloadPending] = useState(false);
+    const writeLockRef = React.useRef(false);
+    const reloadLockRef = React.useRef(false);
+    const reloadRunGenerationRef = React.useRef(0);
+    const overlayOpenRef = React.useRef(false);
+    const externalReloadQueuedRef = React.useRef(false);
 
     const {
       prompts,
@@ -42,14 +54,80 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
       deletePrompt,
       toggleEnabled,
     } = usePromptActions(appId);
+    const reloadRef = React.useRef(reload);
+    reloadRef.current = reload;
+
+    const dialogOpen = confirmDialog !== null;
+    const interactionBlocked =
+      loading || reloadPending || writePending || isFormOpen || dialogOpen;
+    const navigationBlocked = writePending || isFormOpen || dialogOpen;
 
     useEffect(() => {
-      if (open) reload();
-    }, [open, reload]);
+      onInteractionBlockedChange?.(interactionBlocked);
+    }, [interactionBlocked, onInteractionBlockedChange]);
+
+    useEffect(() => {
+      onNavigationBlockedChange?.(navigationBlocked);
+    }, [navigationBlocked, onNavigationBlockedChange]);
+
+    useEffect(
+      () => () => {
+        onInteractionBlockedChange?.(false);
+        onNavigationBlockedChange?.(false);
+      },
+      [onInteractionBlockedChange, onNavigationBlockedChange],
+    );
+
+    const runExternalReload = React.useCallback(async () => {
+      if (writeLockRef.current || overlayOpenRef.current) {
+        externalReloadQueuedRef.current = true;
+        return;
+      }
+
+      const runGeneration = ++reloadRunGenerationRef.current;
+      externalReloadQueuedRef.current = false;
+      reloadLockRef.current = true;
+      setReloadPending(true);
+      try {
+        await reloadRef.current();
+      } finally {
+        if (reloadRunGenerationRef.current === runGeneration) {
+          reloadLockRef.current = false;
+          setReloadPending(false);
+        }
+      }
+    }, []);
+
+    const beginWrite = () => {
+      if (loading || reloadLockRef.current || writeLockRef.current)
+        return false;
+      writeLockRef.current = true;
+      setWritePending(true);
+      return true;
+    };
+
+    const endWrite = () => {
+      writeLockRef.current = false;
+      setWritePending(false);
+      if (externalReloadQueuedRef.current) {
+        void runExternalReload();
+      }
+    };
+
+    useEffect(() => {
+      if (open) void runExternalReload();
+    }, [appId, open, runExternalReload]);
 
     useEffect(() => {
       setSearchQuery("");
-    }, [appId]);
+      overlayOpenRef.current = false;
+      setIsFormOpen(false);
+      setEditingId(null);
+      setConfirmDialog(null);
+      if (externalReloadQueuedRef.current) {
+        void runExternalReload();
+      }
+    }, [appId, runExternalReload]);
 
     // Listen for prompt import events from deep link
     useEffect(() => {
@@ -57,7 +135,7 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
         const customEvent = event as CustomEvent;
         // Reload if the import is for this app
         if (customEvent.detail?.app === appId) {
-          reload();
+          void runExternalReload();
         }
       };
 
@@ -65,12 +143,16 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
       return () => {
         window.removeEventListener("prompt-imported", handlePromptImported);
       };
-    }, [appId, reload]);
+    }, [appId, runExternalReload]);
 
     // 应用项目 Profile 会切换激活的 prompt（prompts 非 react-query，需主动 reload）
-    useTauriEvent("profile-applied", reload);
+    useTauriEvent("profile-applied", runExternalReload);
 
     const handleAdd = () => {
+      if (reloadLockRef.current || writeLockRef.current || interactionBlocked) {
+        return;
+      }
+      overlayOpenRef.current = true;
       setEditingId(null);
       setIsFormOpen(true);
     };
@@ -80,26 +162,84 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
     }));
 
     const handleEdit = (id: string) => {
+      if (reloadLockRef.current || writeLockRef.current || interactionBlocked) {
+        return;
+      }
+      overlayOpenRef.current = true;
       setEditingId(id);
       setIsFormOpen(true);
     };
 
     const handleDelete = (id: string) => {
+      if (reloadLockRef.current || writeLockRef.current || interactionBlocked) {
+        return;
+      }
       const prompt = prompts[id];
+      overlayOpenRef.current = true;
       setConfirmDialog({
         isOpen: true,
         titleKey: "prompts.confirm.deleteTitle",
         messageKey: "prompts.confirm.deleteMessage",
         messageParams: { name: prompt?.name },
         onConfirm: async () => {
+          if (!beginWrite()) return;
           try {
-            await deletePrompt(id);
+            const refreshed = await deletePrompt(id);
+            if (refreshed === false) {
+              externalReloadQueuedRef.current = true;
+            }
+            overlayOpenRef.current = false;
             setConfirmDialog(null);
           } catch (e) {
             // Error handled by hook
+          } finally {
+            endWrite();
           }
         },
       });
+    };
+
+    const handleToggle = async (id: string, enabled: boolean) => {
+      if (!beginWrite()) return;
+      try {
+        const refreshed = await toggleEnabled(id, enabled);
+        if (refreshed === false) {
+          externalReloadQueuedRef.current = true;
+        }
+      } catch (error) {
+        // Error handled by hook
+      } finally {
+        endWrite();
+      }
+    };
+
+    const handleSave = async (
+      id: string,
+      prompt: Parameters<typeof savePrompt>[1],
+    ) => {
+      if (!beginWrite()) return false;
+      try {
+        const refreshed = await savePrompt(id, prompt);
+        if (refreshed === false) {
+          externalReloadQueuedRef.current = true;
+        }
+        return true;
+      } catch (error) {
+        // Error handled by hook
+        return false;
+      } finally {
+        endWrite();
+      }
+    };
+
+    const handleCloseForm = () => {
+      if (writeLockRef.current) return;
+      overlayOpenRef.current = false;
+      setIsFormOpen(false);
+      setEditingId(null);
+      if (externalReloadQueuedRef.current) {
+        void runExternalReload();
+      }
     };
 
     const promptEntries = useMemo(() => Object.entries(prompts), [prompts]);
@@ -171,9 +311,10 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
                     key={id}
                     id={id}
                     prompt={prompt}
-                    onToggle={toggleEnabled}
+                    onToggle={handleToggle}
                     onEdit={handleEdit}
                     onDelete={handleDelete}
+                    disabled={interactionBlocked}
                   />
                 ))}
               </div>
@@ -186,8 +327,8 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
             appId={appId}
             editingId={editingId || undefined}
             initialData={editingId ? prompts[editingId] : undefined}
-            onSave={savePrompt}
-            onClose={() => setIsFormOpen(false)}
+            onSave={handleSave}
+            onClose={handleCloseForm}
           />
         )}
 
@@ -196,8 +337,17 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
             isOpen={confirmDialog.isOpen}
             title={t(confirmDialog.titleKey)}
             message={t(confirmDialog.messageKey, confirmDialog.messageParams)}
+            pending={writePending}
             onConfirm={confirmDialog.onConfirm}
-            onCancel={() => setConfirmDialog(null)}
+            onCancel={() => {
+              if (!writeLockRef.current) {
+                overlayOpenRef.current = false;
+                setConfirmDialog(null);
+                if (externalReloadQueuedRef.current) {
+                  void runExternalReload();
+                }
+              }
+            }}
           />
         )}
       </div>

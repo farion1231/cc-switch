@@ -185,6 +185,9 @@ function App() {
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
   const [mcpManagementBusy, setMcpManagementBusy] = useState(false);
   const [skillsManagementBusy, setSkillsManagementBusy] = useState(false);
+  const [skillsNavigationBusy, setSkillsNavigationBusy] = useState(false);
+  const [promptManagementBusy, setPromptManagementBusy] = useState(false);
+  const [promptNavigationBusy, setPromptNavigationBusy] = useState(false);
   const [skillsCheckUpdatesState, setSkillsCheckUpdatesState] =
     useState<SkillsCheckUpdatesState>({
       isChecking: false,
@@ -601,8 +604,10 @@ function App() {
   }, [activeApp]);
 
   const currentViewRef = useRef(currentView);
+  const managementBusy =
+    mcpManagementBusy || skillsNavigationBusy || promptNavigationBusy;
   const managementBusyRef = useRef(false);
-  managementBusyRef.current = mcpManagementBusy || skillsManagementBusy;
+  managementBusyRef.current = managementBusy;
 
   useEffect(() => {
     currentViewRef.current = currentView;
@@ -926,6 +931,8 @@ function App() {
               open={true}
               onOpenChange={() => setCurrentView("providers")}
               appId={sharedFeatureApp}
+              onInteractionBlockedChange={setPromptManagementBusy}
+              onNavigationBlockedChange={setPromptNavigationBusy}
             />
           );
         case "hermesMemory":
@@ -936,6 +943,7 @@ function App() {
               ref={unifiedSkillsPanelRef}
               onOpenDiscovery={handleOpenSkillsDiscovery}
               onInteractionBlockedChange={setSkillsManagementBusy}
+              onNavigationBlockedChange={setSkillsNavigationBusy}
               onCheckUpdatesStateChange={setSkillsCheckUpdatesState}
               currentApp={
                 sharedFeatureApp === "openclaw" ? "claude" : sharedFeatureApp
@@ -1176,7 +1184,7 @@ function App() {
                 <Button
                   variant="outline"
                   size="icon"
-                  disabled={mcpManagementBusy || skillsManagementBusy}
+                  disabled={managementBusy}
                   onClick={() =>
                     setCurrentView(
                       currentView === "skillsDiscovery"
@@ -1186,8 +1194,7 @@ function App() {
                   }
                   className={cn(
                     "mr-2 rounded-lg",
-                    (mcpManagementBusy || skillsManagementBusy) &&
-                      "disabled:opacity-100",
+                    managementBusy && "disabled:opacity-100",
                   )}
                 >
                   <ArrowLeft className="w-4 h-4" />
@@ -1310,8 +1317,9 @@ function App() {
                   <Button
                     variant="ghost"
                     size="sm"
+                    disabled={promptManagementBusy}
                     onClick={() => promptPanelRef.current?.openAdd()}
-                    className="hover:bg-black/5 dark:hover:bg-white/5"
+                    className="hover:bg-black/5 disabled:opacity-100 dark:hover:bg-white/5"
                   >
                     <Plus className="w-4 h-4 mr-2" />
                     {t("prompts.add")}
@@ -1419,7 +1427,9 @@ function App() {
                       variant="ghost"
                       size="sm"
                       disabled={skillsManagementBusy}
-                      onClick={handleOpenSkillsDiscovery}
+                      onClick={() =>
+                        unifiedSkillsPanelRef.current?.openDiscovery()
+                      }
                       className="hover:bg-black/5 disabled:opacity-100 dark:hover:bg-white/5"
                     >
                       <Search className="w-4 h-4 mr-2" />

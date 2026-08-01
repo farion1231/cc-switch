@@ -53,6 +53,7 @@ interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
   currentApp: AppId;
   onInteractionBlockedChange?: (blocked: boolean) => void;
+  onNavigationBlockedChange?: (blocked: boolean) => void;
   onCheckUpdatesStateChange?: (state: SkillsCheckUpdatesState) => void;
 }
 
@@ -84,6 +85,7 @@ const UnifiedSkillsPanel = React.forwardRef<
     onOpenDiscovery,
     currentApp,
     onInteractionBlockedChange,
+    onNavigationBlockedChange,
     onCheckUpdatesStateChange,
   } = props;
   const { t } = useTranslation();
@@ -138,15 +140,23 @@ const UnifiedSkillsPanel = React.forwardRef<
     isUpdatingAll;
   const dialogOpen =
     importDialogOpen || restoreDialogOpen || confirmDialog !== null;
-  const interactionBlocked = writePending || mutationPending || dialogOpen;
+  const navigationBlocked = writePending || mutationPending || dialogOpen;
+  const interactionBlocked = navigationBlocked || isCheckingUpdates;
 
   React.useEffect(() => {
     onInteractionBlockedChange?.(interactionBlocked);
   }, [interactionBlocked, onInteractionBlockedChange]);
 
+  React.useEffect(() => {
+    onNavigationBlockedChange?.(navigationBlocked);
+  }, [navigationBlocked, onNavigationBlockedChange]);
+
   React.useEffect(
-    () => () => onInteractionBlockedChange?.(false),
-    [onInteractionBlockedChange],
+    () => () => {
+      onInteractionBlockedChange?.(false);
+      onNavigationBlockedChange?.(false);
+    },
+    [onInteractionBlockedChange, onNavigationBlockedChange],
   );
 
   const hasSkills = (skills?.length ?? 0) > 0;
@@ -166,6 +176,8 @@ const UnifiedSkillsPanel = React.forwardRef<
 
   const beginWrite = (allowOpenDialog = false) => {
     if (
+      checkUpdatesLockRef.current ||
+      isCheckingUpdates ||
       writeLockRef.current ||
       mutationPending ||
       (!allowOpenDialog && dialogOpen)
@@ -182,15 +194,18 @@ const UnifiedSkillsPanel = React.forwardRef<
     setWritePending(false);
   };
 
+  const applicableSkillUpdates = useMemo(() => {
+    const installedIds = new Set((skills ?? []).map((skill) => skill.id));
+    return (skillUpdates ?? []).filter((update) => installedIds.has(update.id));
+  }, [skillUpdates, skills]);
+
   const updatesMap = useMemo(() => {
     const map: Record<string, SkillUpdateInfo> = {};
-    if (skillUpdates) {
-      for (const u of skillUpdates) {
-        map[u.id] = u;
-      }
+    for (const update of applicableSkillUpdates) {
+      map[update.id] = update;
     }
     return map;
-  }, [skillUpdates]);
+  }, [applicableSkillUpdates]);
 
   const enabledCounts = useMemo(() => {
     const counts = {
@@ -288,7 +303,13 @@ const UnifiedSkillsPanel = React.forwardRef<
   };
 
   const handleUninstall = (skill: InstalledSkill) => {
-    if (writeLockRef.current || interactionBlocked) return;
+    if (
+      checkUpdatesLockRef.current ||
+      writeLockRef.current ||
+      interactionBlocked
+    ) {
+      return;
+    }
     setConfirmDialog({
       isOpen: true,
       title: t("skills.uninstall"),
@@ -296,16 +317,7 @@ const UnifiedSkillsPanel = React.forwardRef<
       onConfirm: async () => {
         if (!beginWrite(true)) return;
         try {
-          // 构建 skillKey 用于更新 discoverable 缓存
-          const installName =
-            skill.directory.split(/[/\\]/).pop()?.toLowerCase() ||
-            skill.directory.toLowerCase();
-          const skillKey = `${installName}:${skill.repoOwner?.toLowerCase() || ""}:${skill.repoName?.toLowerCase() || ""}`;
-
-          const result = await uninstallMutation.mutateAsync({
-            id: skill.id,
-            skillKey,
-          });
+          const result = await uninstallMutation.mutateAsync(skill.id);
           setConfirmDialog(null);
           toast.success(t("skills.uninstallSuccess", { name: skill.name }), {
             description: result.backupPath
@@ -431,13 +443,13 @@ const UnifiedSkillsPanel = React.forwardRef<
   };
 
   const handleUpdateAll = async () => {
-    if (!skillUpdates || skillUpdates.length === 0 || !beginWrite()) {
+    if (applicableSkillUpdates.length === 0 || !beginWrite()) {
       return;
     }
     setIsUpdatingAll(true);
     let successCount = 0;
     try {
-      for (const update of skillUpdates) {
+      for (const update of applicableSkillUpdates) {
         try {
           await updateSkillMutation.mutateAsync(update.id);
           successCount++;
@@ -462,8 +474,9 @@ const UnifiedSkillsPanel = React.forwardRef<
     if (!beginWrite()) return;
     setRestoreDialogOpen(true);
     try {
-      await refetchSkillBackups();
+      await refetchSkillBackups({ throwOnError: true });
     } catch (error) {
+      setRestoreDialogOpen(false);
       toast.error(t("common.error"), { description: String(error) });
     } finally {
       endWrite();
@@ -494,7 +507,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   };
 
   const handleDeleteBackup = (backup: SkillBackupEntry) => {
-    if (writeLockRef.current) return;
+    if (checkUpdatesLockRef.current || writeLockRef.current) return;
     setConfirmDialog({
       isOpen: true,
       title: t("skills.restoreFromBackup.deleteConfirmTitle"),
@@ -506,21 +519,57 @@ const UnifiedSkillsPanel = React.forwardRef<
       onConfirm: async () => {
         if (!beginWrite(true)) return;
         try {
-          await deleteBackupMutation.mutateAsync(backup.backupId);
-          await refetchSkillBackups();
-          setConfirmDialog(null);
-          toast.success(
-            t("skills.restoreFromBackup.deleteSuccess", {
-              name: backup.skill.name,
-            }),
-            {
-              closeButton: true,
-            },
-          );
-        } catch (error) {
-          toast.error(t("skills.restoreFromBackup.deleteFailed"), {
-            description: String(error),
-          });
+          let deleteSucceeded = false;
+          let deleteError: unknown;
+          try {
+            await deleteBackupMutation.mutateAsync(backup.backupId);
+            deleteSucceeded = true;
+          } catch (error) {
+            deleteError = error;
+          }
+
+          // The backups query is disabled by default, so invalidation alone
+          // does not fetch authoritative data. Explicitly refresh after both
+          // success and failure (remove_dir_all may have made partial progress).
+          let refreshedBackups: SkillBackupEntry[] | undefined;
+          try {
+            const result = await refetchSkillBackups({ throwOnError: true });
+            refreshedBackups = result.data;
+          } catch (error) {
+            // A refresh failure must not turn a completed deletion into a false
+            // "delete failed" report, or replace the original deletion error.
+            console.error(
+              "Failed to refresh Skill backups after deletion:",
+              error,
+            );
+          }
+
+          if (!deleteSucceeded) {
+            // remove_dir_all may finish removing the directory but still
+            // report an error. If the authoritative refresh confirms that the
+            // item is gone, close the now-stale confirmation dialog.
+            if (
+              refreshedBackups &&
+              !refreshedBackups.some(
+                (entry) => entry.backupId === backup.backupId,
+              )
+            ) {
+              setConfirmDialog(null);
+            }
+            toast.error(t("skills.restoreFromBackup.deleteFailed"), {
+              description: String(deleteError),
+            });
+          } else {
+            setConfirmDialog(null);
+            toast.success(
+              t("skills.restoreFromBackup.deleteSuccess", {
+                name: backup.skill.name,
+              }),
+              {
+                closeButton: true,
+              },
+            );
+          }
         } finally {
           endWrite();
         }
@@ -530,7 +579,13 @@ const UnifiedSkillsPanel = React.forwardRef<
 
   React.useImperativeHandle(ref, () => ({
     openDiscovery: () => {
-      if (!writeLockRef.current && !interactionBlocked) onOpenDiscovery();
+      if (
+        !checkUpdatesLockRef.current &&
+        !writeLockRef.current &&
+        !interactionBlocked
+      ) {
+        onOpenDiscovery();
+      }
     },
     openImport: handleOpenImport,
     openInstallFromZip: handleInstallFromZip,
@@ -555,8 +610,8 @@ const UnifiedSkillsPanel = React.forwardRef<
         <div
           className="mb-4 overflow-hidden transition-all duration-300 ease-out"
           style={{
-            maxWidth: skillUpdates && skillUpdates.length > 0 ? "200px" : "0px",
-            opacity: skillUpdates && skillUpdates.length > 0 ? 1 : 0,
+            maxWidth: applicableSkillUpdates.length > 0 ? "200px" : "0px",
+            opacity: applicableSkillUpdates.length > 0 ? 1 : 0,
           }}
         >
           <Button
@@ -574,7 +629,9 @@ const UnifiedSkillsPanel = React.forwardRef<
             )}
             {isUpdatingAll
               ? t("skills.updatingAll")
-              : t("skills.updateAll", { count: skillUpdates?.length ?? 0 })}
+              : t("skills.updateAll", {
+                  count: applicableSkillUpdates.length,
+                })}
           </Button>
         </div>
       </div>
