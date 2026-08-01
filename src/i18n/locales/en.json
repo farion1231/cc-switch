@@ -887,13 +887,12 @@
       "refresh": "Refresh",
       "itemCount": "{{count}} items",
       "notInstalled": "Not installed",
-      "backup": "Back up to cloud",
-      "merge": "Pull & merge from cloud",
-      "saved": "Workspace sync settings saved",
-      "backupDone": "Backup complete: {{items}} items, {{blobs}} files uploaded",
-      "mergeDone": "Merge complete: {{files}} files written, {{conflicts}} conflicts",
-      "reportSummary": "Scanned {{providers}} providers · {{items}} items · {{files}} files written · {{blobs}} files uploaded",
-      "conflicts": "{{count}} conflicts (both copies kept — resolve manually)"
+      "reportSummary": "Scanned {{providers}} providers · merged {{items}} items · {{files}} files written",
+      "conflicts": "{{count}} conflicts (both copies kept — resolve manually)",
+      "sync": "Sync",
+      "syncHint": "Pull cloud union → merge with local → deploy → push back",
+      "syncDone": "Sync complete: {{files}} files written, {{conflicts}} conflicts",
+      "syncing": "Syncing…"
     }
   },
   "apps": {

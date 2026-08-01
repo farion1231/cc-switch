@@ -1,12 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import {
-  UploadCloud,
-  DownloadCloud,
-  Loader2,
-  Save,
-  AlertTriangle,
-  RefreshCw,
-} from "lucide-react";
+import { FolderSync, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -47,7 +40,7 @@ export function WorkspaceSyncSection() {
   });
   const [preview, setPreview] = useState<WorkspaceScanPreviewItem[]>([]);
   const [loading, setLoading] = useState(false);
-  const [busy, setBusy] = useState<null | "backup" | "merge" | "save">(null);
+  const [busy, setBusy] = useState<null | "sync" | "save">(null);
   const [report, setReport] = useState<WorkspaceSyncReport | null>(null);
 
   const refreshPreview = useCallback(async () => {
@@ -88,51 +81,22 @@ export function WorkspaceSyncSection() {
     }));
   };
 
-  const save = async () => {
-    setBusy("save");
-    try {
-      await workspaceSyncApi.saveSettings(settings);
-      toast.success(t("settings.workspaceSync.saved"));
-    } catch (e) {
-      toast.error(String(e));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const runBackup = async () => {
-    setBusy("backup");
+  const runSync = async () => {
+    setBusy("sync");
     setReport(null);
     try {
+      // Persist current selection first so the backend syncs the right scope.
       await workspaceSyncApi.saveSettings(settings);
-      const r = await workspaceSyncApi.backup();
+      const r = await workspaceSyncApi.sync();
       setReport(r);
       toast.success(
-        t("settings.workspaceSync.backupDone", {
-          items: r.itemsTotal,
-          blobs: r.blobsUploaded,
-        }),
-      );
-    } catch (e) {
-      toast.error(String(e));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const runMerge = async () => {
-    setBusy("merge");
-    setReport(null);
-    try {
-      await workspaceSyncApi.saveSettings(settings);
-      const r = await workspaceSyncApi.merge();
-      setReport(r);
-      toast.success(
-        t("settings.workspaceSync.mergeDone", {
+        t("settings.workspaceSync.syncDone", {
           files: r.filesWritten,
           conflicts: r.conflicts.length,
         }),
       );
+      // Refresh counts after deploy.
+      await refreshPreview();
     } catch (e) {
       toast.error(String(e));
     } finally {
@@ -233,41 +197,24 @@ export function WorkspaceSyncSection() {
         </div>
       </div>
 
-      {/* Actions */}
-      <div className="flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" onClick={save} disabled={!!busy}>
-          {busy === "save" ? (
-            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-          ) : (
-            <Save className="h-4 w-4 mr-1" />
-          )}
-          {t("common.save")}
-        </Button>
+      {/* Action: single Sync button */}
+      <div className="flex flex-wrap items-center gap-3">
         <Button
-          size="sm"
-          onClick={runBackup}
-          disabled={!!busy || !settings.enabled || settings.providers.length === 0}
+          onClick={runSync}
+          disabled={
+            !!busy || !settings.enabled || settings.providers.length === 0
+          }
         >
-          {busy === "backup" ? (
-            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+          {busy === "sync" ? (
+            <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
           ) : (
-            <UploadCloud className="h-4 w-4 mr-1" />
+            <FolderSync className="h-4 w-4 mr-1.5" />
           )}
-          {t("settings.workspaceSync.backup")}
+          {t("settings.workspaceSync.sync")}
         </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={runMerge}
-          disabled={!!busy || !settings.enabled || settings.providers.length === 0}
-        >
-          {busy === "merge" ? (
-            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-          ) : (
-            <DownloadCloud className="h-4 w-4 mr-1" />
-          )}
-          {t("settings.workspaceSync.merge")}
-        </Button>
+        <span className="text-xs text-muted-foreground">
+          {t("settings.workspaceSync.syncHint")}
+        </span>
       </div>
 
       {/* Last-run report + conflicts */}
@@ -278,7 +225,6 @@ export function WorkspaceSyncSection() {
               providers: report.providersScanned,
               items: report.itemsTotal,
               files: report.filesWritten,
-              blobs: report.blobsUploaded,
             })}
           </div>
           {report.conflicts.length > 0 && (

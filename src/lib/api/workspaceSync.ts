@@ -31,7 +31,7 @@ export interface WorkspaceSyncReport {
   snapshotId: string;
   providersScanned: number;
   itemsTotal: number;
-  blobsUploaded: number;
+  archiveBytes: number;
   filesWritten: number;
   conflicts: WorkspaceConflictReport[];
 }
@@ -41,6 +41,7 @@ export interface WorkspaceRemoteInfo {
   snapshotId?: string;
   deviceName?: string;
   updatedAt?: number;
+  sizeBytes?: number;
 }
 
 export const workspaceSyncApi = {
@@ -62,12 +63,10 @@ export const workspaceSyncApi = {
     );
   },
 
-  async backup(): Promise<WorkspaceSyncReport> {
-    return invoke<WorkspaceSyncReport>("workspace_sync_backup");
-  },
-
-  async merge(): Promise<WorkspaceSyncReport> {
-    return invoke<WorkspaceSyncReport>("workspace_sync_merge");
+  /// The one-button sync: pull remote union → merge with local → deploy →
+  /// upload the merged union back.
+  async sync(): Promise<WorkspaceSyncReport> {
+    return invoke<WorkspaceSyncReport>("workspace_sync_run");
   },
 
   async fetchRemoteInfo(): Promise<WorkspaceRemoteInfo> {

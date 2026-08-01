@@ -887,13 +887,12 @@
       "refresh": "刷新",
       "itemCount": "{{count}} 项",
       "notInstalled": "未安装",
-      "backup": "备份到云端",
-      "merge": "从云端拉取并合并",
-      "saved": "工作区同步设置已保存",
-      "backupDone": "备份完成：{{items}} 项，上传 {{blobs}} 个文件",
-      "mergeDone": "合并完成：写入 {{files}} 个文件，{{conflicts}} 处冲突",
-      "reportSummary": "已扫描 {{providers}} 个端 · {{items}} 项 · 写入 {{files}} 个文件 · 上传 {{blobs}} 个文件",
-      "conflicts": "{{count}} 处冲突（已保留双份，请手动处理）"
+      "reportSummary": "已扫描 {{providers}} 个端 · 合并 {{items}} 项 · 写入 {{files}} 个文件",
+      "conflicts": "{{count}} 处冲突（已保留双份，请手动处理）",
+      "sync": "同步",
+      "syncHint": "拉取云端并集 → 与本地合并 → 部署到本地 → 回传云端",
+      "syncDone": "同步完成：写入 {{files}} 个文件，{{conflicts}} 处冲突",
+      "syncing": "同步中…"
     }
   },
   "apps": {

@@ -887,13 +887,12 @@
       "refresh": "更新",
       "itemCount": "{{count}} 件",
       "notInstalled": "未インストール",
-      "backup": "クラウドへバックアップ",
-      "merge": "クラウドから取得してマージ",
-      "saved": "ワークスペース同期設定を保存しました",
-      "backupDone": "バックアップ完了：{{items}} 件、{{blobs}} ファイルをアップロード",
-      "mergeDone": "マージ完了：{{files}} ファイル書き込み、{{conflicts}} 件の競合",
-      "reportSummary": "{{providers}} プロバイダーをスキャン · {{items}} 件 · {{files}} ファイル書き込み · {{blobs}} ファイルアップロード",
-      "conflicts": "{{count}} 件の競合（両方保持されました。手動で解決してください）"
+      "reportSummary": "{{providers}} プロバイダーをスキャン · {{items}} 件をマージ · {{files}} ファイル書き込み",
+      "conflicts": "{{count}} 件の競合（両方保持されました。手動で解決してください）",
+      "sync": "同期",
+      "syncHint": "クラウドの和集合を取得 → ローカルとマージ → 配置 → 送り返す",
+      "syncDone": "同期完了：{{files}} ファイル書き込み、{{conflicts}} 件の競合",
+      "syncing": "同期中…"
     }
   },
   "apps": {

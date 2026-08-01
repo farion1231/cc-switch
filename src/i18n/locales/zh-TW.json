@@ -888,13 +888,12 @@
       "refresh": "重新整理",
       "itemCount": "{{count}} 項",
       "notInstalled": "未安裝",
-      "backup": "備份到雲端",
-      "merge": "從雲端拉取並合併",
-      "saved": "工作區同步設定已儲存",
-      "backupDone": "備份完成：{{items}} 項，上傳 {{blobs}} 個檔案",
-      "mergeDone": "合併完成：寫入 {{files}} 個檔案，{{conflicts}} 處衝突",
-      "reportSummary": "已掃描 {{providers}} 個端 · {{items}} 項 · 寫入 {{files}} 個檔案 · 上傳 {{blobs}} 個檔案",
-      "conflicts": "{{count}} 處衝突（已保留雙份，請手動處理）"
+      "reportSummary": "已掃描 {{providers}} 個端 · 合併 {{items}} 項 · 寫入 {{files}} 個檔案",
+      "conflicts": "{{count}} 處衝突（已保留雙份，請手動處理）",
+      "sync": "同步",
+      "syncHint": "拉取雲端聯集 → 與本機合併 → 部署到本機 → 回傳雲端",
+      "syncDone": "同步完成：寫入 {{files}} 個檔案，{{conflicts}} 處衝突",
+      "syncing": "同步中…"
     }
   },
   "apps": {
