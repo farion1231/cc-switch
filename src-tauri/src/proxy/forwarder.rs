@@ -1463,12 +1463,6 @@ impl RequestForwarder {
                     .then_some(self.session_id.as_str()),
             );
             
-            if is_gemini_upstream {
-                super::providers::transform_codex_chat::inject_gemini_thought_signatures_for_openai_format(
-                    &mut chat_body,
-                    Some((&self.gemini_shadow, provider.id.as_str(), self.session_id.as_str()))
-                );
-            }
             
             chat_body
         } else if codex_responses_to_anthropic {

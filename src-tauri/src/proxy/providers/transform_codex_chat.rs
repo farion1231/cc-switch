@@ -349,6 +349,10 @@ pub fn responses_to_chat_completions_with_reasoning(
     // 与 Claude→openai_chat 路径共用同一 helper，保证两个客户端方向一致。
     super::transform::inject_openai_stream_include_usage(&mut result);
 
+    if let Some(shadow_ctx) = shadow_ctx {
+        inject_gemini_thought_signatures_for_openai_format(&mut result, Some(shadow_ctx));
+    }
+
     Ok(result)
 }
 
