@@ -1309,13 +1309,14 @@ fn websocket_url(http_url: &str) -> Result<url::Url, ProxyError> {
 }
 
 fn extract_live_call_id(location: &str) -> Option<&str> {
-    location
+    let final_segment = location
         .split('?')
         .next()
         .unwrap_or(location)
         .trim_end_matches('/')
         .rsplit('/')
-        .find(|segment| is_valid_call_id(segment))
+        .next()?;
+    is_valid_call_id(final_segment).then_some(final_segment)
 }
 
 fn parse_live_location(location: &str) -> Option<(String, Option<String>)> {
@@ -1613,6 +1614,8 @@ mod tests {
             extract_live_call_id("/v1/live/123e4567-e89b-12d3-a456-426614174000"),
             Some("123e4567-e89b-12d3-a456-426614174000")
         );
+        assert_eq!(extract_live_call_id("/v1/live/rtc_test/status"), None);
+        assert_eq!(extract_live_call_id("/v1/live/rtc_test/"), Some("rtc_test"));
         assert_eq!(extract_live_call_id("/v1/live"), None);
     }
 
