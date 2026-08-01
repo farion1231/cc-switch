@@ -237,6 +237,8 @@ pub struct CursorUsageEventPage {
 pub struct CursorUsageEvent {
     pub sequence: i64,
     pub event_id: String,
+    #[serde(default = "default_cursor_usage_event_kind")]
+    pub kind: String,
     pub status: String,
     pub source_provider_id: String,
     pub source_provider_name: String,
@@ -276,10 +278,43 @@ fn default_openai_endpoint() -> String {
 fn default_anthropic_effort() -> String {
     "xhigh".to_string()
 }
+fn default_cursor_usage_event_kind() -> String {
+    "provider_call".to_string()
+}
 
 #[cfg(test)]
 mod tests {
-    use super::{CursorModelConfig, SidecarModelAdapter, SidecarRuntimeState};
+    use super::{CursorModelConfig, CursorUsageEvent, SidecarModelAdapter, SidecarRuntimeState};
+
+    #[test]
+    fn cursor_usage_event_defaults_legacy_kind_to_provider_call() {
+        let event: CursorUsageEvent = serde_json::from_value(serde_json::json!({
+            "sequence": 1,
+            "eventId": "legacy-event",
+            "status": "completed",
+            "sourceProviderId": "provider",
+            "sourceProviderName": "Provider",
+            "providerType": "openai",
+            "channelId": "channel",
+            "requestModel": "alias",
+            "model": "model",
+            "pricingModel": "model",
+            "statusCode": 200,
+            "latencyMs": 10,
+            "firstTokenMs": 2,
+            "durationMs": 12,
+            "isStreaming": true,
+            "at": "2026-03-14T00:00:00Z",
+            "inputTokens": 10,
+            "outputTokens": 2,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": 0,
+            "usagePresent": true
+        }))
+        .expect("deserialize legacy usage event");
+
+        assert_eq!(event.kind, "provider_call");
+    }
 
     #[test]
     fn sidecar_adapter_uses_go_control_protocol_acronyms() {
