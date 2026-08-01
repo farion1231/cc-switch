@@ -4,6 +4,8 @@
 
 pub mod adapters;
 
+pub mod archive;
+
 pub mod blobs;
 
 pub mod crypto;
