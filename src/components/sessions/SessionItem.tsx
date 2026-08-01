@@ -1,4 +1,4 @@
-import { ChevronRight, Clock } from "lucide-react";
+import { ChevronRight, Clock, HardDrive } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -11,6 +11,7 @@ import { ProviderIcon } from "@/components/ProviderIcon";
 import type { SessionMeta } from "@/types";
 import {
   formatRelativeTime,
+  formatFileSize,
   formatSessionTitle,
   getProviderIconName,
   getProviderLabel,
@@ -42,6 +43,7 @@ export function SessionItem({
   const { t } = useTranslation();
   const title = formatSessionTitle(session);
   const lastActive = session.lastActiveAt || session.createdAt || undefined;
+  const formattedSize = formatFileSize(session.sizeBytes);
   const sessionKey = getSessionKey(session);
 
   return (
@@ -96,13 +98,42 @@ export function SessionItem({
           />
         </div>
 
-        <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-          <Clock className="size-3" />
-          <span>
-            {lastActive
-              ? formatRelativeTime(lastActive, t)
-              : t("common.unknown")}
+        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+          <span className="flex min-w-0 items-center gap-1">
+            <Clock className="size-3 shrink-0" />
+            <span className="truncate">
+              {lastActive
+                ? formatRelativeTime(lastActive, t)
+                : t("common.unknown")}
+            </span>
           </span>
+          {formattedSize && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  className="flex shrink-0 items-center gap-1"
+                  aria-label={t(
+                    session.sizeApproximate
+                      ? "sessionManager.sessionSizeApprox"
+                      : "sessionManager.sessionSize",
+                    { size: formattedSize },
+                  )}
+                >
+                  <HardDrive className="size-3" />
+                  <span>
+                    {session.sizeApproximate ? `~${formattedSize}` : formattedSize}
+                  </span>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {t(
+                  session.sizeApproximate
+                    ? "sessionManager.sessionSizeApproxTooltip"
+                    : "sessionManager.sessionSizeTooltip",
+                )}
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
       </button>
     </div>

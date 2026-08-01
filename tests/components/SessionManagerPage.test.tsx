@@ -166,6 +166,7 @@ describe("SessionManagerPage", () => {
         projectDir: "/mock/codex",
         createdAt: 2,
         lastActiveAt: 20,
+        sizeBytes: 1536,
         sourcePath: "/mock/codex/session-1.jsonl",
         resumeCommand: "codex resume codex-session-1",
       },
@@ -219,6 +220,15 @@ describe("SessionManagerPage", () => {
     };
 
     setSessionFixtures(sessions, messages);
+  });
+
+  it("shows the size of each session in the list", async () => {
+    renderPage();
+
+    expect(await screen.findByText("1.5 KB")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("sessionManager.sessionSize"),
+    ).toBeInTheDocument();
   });
 
   it("deletes the selected session and selects the next visible session", async () => {

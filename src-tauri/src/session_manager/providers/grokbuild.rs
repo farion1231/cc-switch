@@ -7,7 +7,9 @@ use serde_json::Value;
 
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::utils::{extract_text, parse_timestamp_to_ms, truncate_summary, TITLE_MAX_CHARS};
+use super::utils::{
+    extract_text, parse_timestamp_to_ms, path_size, truncate_summary, TITLE_MAX_CHARS,
+};
 
 #[derive(Debug, Deserialize)]
 struct GrokSessionInfo {
@@ -179,6 +181,7 @@ fn parse_summary(path: &Path) -> Option<SessionMeta> {
         .as_ref()
         .or(summary.updated_at.as_ref())
         .and_then(parse_timestamp_to_ms);
+    let size_bytes = path.parent().and_then(path_size);
 
     Some(SessionMeta {
         provider_id: "grokbuild".to_string(),
@@ -188,6 +191,8 @@ fn parse_summary(path: &Path) -> Option<SessionMeta> {
         project_dir: summary.info.cwd,
         created_at,
         last_active_at,
+        size_bytes,
+        size_approximate: false,
         source_path: Some(path.to_string_lossy().to_string()),
         resume_command: Some(format!("grok --resume {session_id}")),
     })
@@ -205,13 +210,13 @@ mod tests {
         let session_id = "019f6af2-18b0-7673-958e-d25be650e172";
         let session_dir = sessions_dir.join("encoded-project").join(session_id);
         std::fs::create_dir_all(&session_dir).expect("create session dir");
-        std::fs::write(
-            session_dir.join("summary.json"),
-            format!(
-                r#"{{"info":{{"id":"{session_id}","cwd":"C:/work"}},"session_summary":"hello grok","generated_title":"Grok session","created_at":"2026-07-16T12:00:00Z","last_active_at":"2026-07-16T12:00:01Z"}}"#
-            ),
-        )
-        .expect("write summary");
+        let summary = format!(
+            r#"{{"info":{{"id":"{session_id}","cwd":"C:/work"}},"session_summary":"hello grok","generated_title":"Grok session","created_at":"2026-07-16T12:00:00Z","last_active_at":"2026-07-16T12:00:01Z"}}"#
+        );
+        let chat_history = "chat history";
+        std::fs::write(session_dir.join("summary.json"), &summary).expect("write summary");
+        std::fs::write(session_dir.join("chat_history.jsonl"), chat_history)
+            .expect("write chat history");
         let mut files = Vec::new();
         collect_summary_files(&sessions_dir, &mut files);
         let sessions = files
@@ -223,6 +228,10 @@ mod tests {
         assert_eq!(sessions[0].provider_id, "grokbuild");
         assert_eq!(sessions[0].session_id, session_id);
         assert_eq!(sessions[0].title.as_deref(), Some("Grok session"));
+        assert_eq!(
+            sessions[0].size_bytes,
+            Some((summary.len() + chat_history.len()) as u64)
+        );
         let expected_resume = format!("grok --resume {session_id}");
         assert_eq!(
             sessions[0].resume_command.as_deref(),

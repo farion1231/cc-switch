@@ -22,6 +22,12 @@ pub struct SessionMeta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_active_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    /// True when `size_bytes` is an estimate (e.g. summed from SQLite row
+    /// content) rather than an exact on-disk file size.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub size_approximate: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_command: Option<String>,
@@ -53,6 +59,10 @@ pub struct DeleteSessionOutcome {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {

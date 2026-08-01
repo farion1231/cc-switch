@@ -21,6 +21,7 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronsDownUp,
+  ArrowUpDown,
 } from "lucide-react";
 import {
   useDeleteSessionMutation,
@@ -70,6 +71,8 @@ import {
   getSessionDirectoryGroupKey,
   getSessionKey,
   groupSessionsByProviderAndDirectory,
+  sortSessions,
+  type SessionSortOrder,
   type SessionDirectoryGroup,
   type SessionProviderGroup,
   shouldHideCodexMessageFromToc,
@@ -79,6 +82,8 @@ const SESSION_LIST_VIEW_MODE_STORAGE_KEY =
   "cc-switch.sessionManager.listViewMode";
 const SESSION_GROUP_EXPANSION_STORAGE_KEY =
   "cc-switch.sessionManager.groupExpansionState";
+const SESSION_SORT_ORDER_STORAGE_KEY =
+  "cc-switch.sessionManager.sortOrder";
 
 type ProviderFilter =
   | "all"
@@ -168,6 +173,12 @@ const serializeSessionGroupExpansionState = (
     expandedDirectoryKeys: Array.from(expandedDirectoryGroups).sort(),
   });
 
+const readInitialSortOrder = (): SessionSortOrder => {
+  if (typeof window === "undefined") return "date";
+  const stored = window.localStorage.getItem(SESSION_SORT_ORDER_STORAGE_KEY);
+  return stored === "sizeDesc" || stored === "sizeAsc" ? stored : "date";
+};
+
 const filterSetToAllowedValues = (
   current: Set<string>,
   allowedValues: Set<string>,
@@ -216,6 +227,9 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const [listViewMode, setListViewMode] = useState<SessionListViewMode>(
     readInitialSessionListViewMode,
   );
+  const [sortOrder, setSortOrder] = useState<SessionSortOrder>(
+    readInitialSortOrder,
+  );
   const [initialGroupExpansionState] = useState(
     readInitialSessionGroupExpansionState,
   );
@@ -233,8 +247,8 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   });
 
   const filteredSessions = useMemo(() => {
-    return searchSessions(search);
-  }, [searchSessions, search]);
+    return sortSessions(searchSessions(search), sortOrder);
+  }, [searchSessions, search, sortOrder]);
 
   const groupedSessions = useMemo(
     () =>
@@ -260,11 +274,12 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   );
 
   useEffect(() => {
-    window.localStorage.setItem(
-      SESSION_LIST_VIEW_MODE_STORAGE_KEY,
-      listViewMode,
-    );
+    window.localStorage.setItem(SESSION_LIST_VIEW_MODE_STORAGE_KEY, listViewMode);
   }, [listViewMode]);
+
+  useEffect(() => {
+    window.localStorage.setItem(SESSION_SORT_ORDER_STORAGE_KEY, sortOrder);
+  }, [sortOrder]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -994,6 +1009,76 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                             </TooltipContent>
                           </Tooltip>
                         )}
+                        <Select
+                          value={sortOrder}
+                          onValueChange={(value) =>
+                            setSortOrder(value as SessionSortOrder)
+                          }
+                        >
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <SelectTrigger
+                                className="size-7 p-0 justify-center border-0 bg-transparent hover:bg-muted"
+                                aria-label={t(
+                                  "sessionManager.sortOrderTooltip",
+                                  { defaultValue: "排序方式" },
+                                )}
+                              >
+                                <span className="sr-only">
+                                  {t("sessionManager.sortOrderTooltip", {
+                                    defaultValue: "排序方式",
+                                  })}
+                                </span>
+                                <ArrowUpDown className="size-3.5" />
+                              </SelectTrigger>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {sortOrder === "date"
+                                ? t("sessionManager.sortByDate", {
+                                    defaultValue: "按时间排序",
+                                  })
+                                : sortOrder === "sizeDesc"
+                                  ? t("sessionManager.sortBySizeDesc", {
+                                      defaultValue: "按大小从大到小",
+                                    })
+                                  : t("sessionManager.sortBySizeAsc", {
+                                      defaultValue: "按大小从小到大",
+                                    })}
+                            </TooltipContent>
+                          </Tooltip>
+                          <SelectContent className="w-52">
+                            <SelectItem value="date">
+                              <div className="flex items-center gap-2">
+                                <Clock className="size-3.5" />
+                                <span>
+                                  {t("sessionManager.sortByDate", {
+                                    defaultValue: "按时间排序",
+                                  })}
+                                </span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="sizeDesc">
+                              <div className="flex items-center gap-2">
+                                <ArrowUpDown className="size-3.5" />
+                                <span>
+                                  {t("sessionManager.sortBySizeDesc", {
+                                    defaultValue: "按大小从大到小",
+                                  })}
+                                </span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="sizeAsc">
+                              <div className="flex items-center gap-2">
+                                <ArrowUpDown className="size-3.5" />
+                                <span>
+                                  {t("sessionManager.sortBySizeAsc", {
+                                    defaultValue: "按大小从小到大",
+                                  })}
+                                </span>
+                              </div>
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button

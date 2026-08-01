@@ -8,8 +8,8 @@ use crate::config::get_claude_config_dir;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
-    TITLE_MAX_CHARS,
+    extract_text, file_size, parse_timestamp_to_ms, path_basename, read_head_tail_lines,
+    truncate_summary, TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "claude";
@@ -247,6 +247,8 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         project_dir,
         created_at,
         last_active_at,
+        size_bytes: file_size(path),
+        size_approximate: false,
         source_path: Some(path.to_string_lossy().to_string()),
         resume_command: Some(format!("claude --resume {session_id}")),
     })

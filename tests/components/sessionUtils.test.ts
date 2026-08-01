@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   extractCodexPromptPreview,
+  formatFileSize,
   formatSessionMessagePreview,
   groupSessionsByProviderAndDirectory,
   shouldHideCodexMessageFromToc,
@@ -8,6 +9,16 @@ import {
 import type { SessionMeta } from "@/types";
 
 describe("session utils", () => {
+  it("formats session sizes with binary units", () => {
+    expect(formatFileSize(0)).toBe("0 B");
+    expect(formatFileSize(1023)).toBe("1023 B");
+    expect(formatFileSize(1024)).toBe("1.0 KB");
+    expect(formatFileSize(1.5 * 1024 * 1024)).toBe("1.5 MB");
+    expect(formatFileSize(128 * 1024 * 1024)).toBe("128 MB");
+    expect(formatFileSize(undefined)).toBe("");
+    expect(formatFileSize(-1)).toBe("");
+  });
+
   it("extracts Codex VS Code prompts after the request marker", () => {
     const content = [
       "# Context from my IDE setup:",

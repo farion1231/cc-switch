@@ -91,6 +91,38 @@ export const formatTimestamp = (value?: number) => {
   return new Date(value).toLocaleString();
 };
 
+export type SessionSortOrder = "date" | "sizeDesc" | "sizeAsc";
+
+export const sortSessions = (
+  sessions: SessionMeta[],
+  order: SessionSortOrder,
+): SessionMeta[] => {
+  if (order === "date") return sessions;
+  return [...sessions].sort((a, b) => {
+    const sa = a.sizeBytes;
+    const sb = b.sizeBytes;
+    if (sa === undefined && sb === undefined) return 0;
+    if (sa === undefined) return 1;
+    if (sb === undefined) return -1;
+    return order === "sizeDesc" ? sb - sa : sa - sb;
+  });
+};
+
+export const formatFileSize = (bytes?: number) => {
+  if (bytes === undefined || !Number.isFinite(bytes) || bytes < 0) return "";
+
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+
+  const unitIndex = Math.min(
+    Math.floor(Math.log(bytes) / Math.log(1024)),
+    units.length - 1,
+  );
+  const value = bytes / 1024 ** unitIndex;
+  const precision = value >= 100 ? 0 : 1;
+  return `${value.toFixed(precision)} ${units[unitIndex]}`;
+};
+
 export const formatRelativeTime = (
   value: number | undefined,
   t: (key: string, options?: Record<string, unknown>) => string,
