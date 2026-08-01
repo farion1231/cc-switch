@@ -39,7 +39,9 @@ mod usage_events;
 mod usage_script;
 
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
-pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
+pub use codex_config::{
+    get_codex_auth_path, get_codex_config_path, read_codex_live_settings, write_codex_live_atomic,
+};
 #[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
 pub fn migrate_codex_provider_templates_test_hook(state: &AppState) -> Result<usize, AppError> {
     codex_history_migration::maybe_migrate_codex_provider_template_bucket(&state.db)
