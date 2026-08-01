@@ -437,10 +437,15 @@ pub(crate) fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64
         rusqlite::params![file_path],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
     );
-    Ok(result.unwrap_or((0, 0)))
+    match result {
+        Ok(state) => Ok(state),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok((0, 0)),
+        Err(error) => Err(AppError::Database(format!("读取会话同步状态失败: {error}"))),
+    }
 }
 
 /// 获取同步进度，并包含上次已处理的文件大小。
+#[cfg(test)]
 pub(crate) fn get_sync_state_with_size(
     db: &Database,
     file_path: &str,
@@ -459,7 +464,11 @@ pub(crate) fn get_sync_state_with_size(
             ))
         },
     );
-    Ok(result.unwrap_or((0, 0, 0)))
+    match result {
+        Ok(state) => Ok(state),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok((0, 0, 0)),
+        Err(error) => Err(AppError::Database(format!("读取会话同步状态失败: {error}"))),
+    }
 }
 
 /// 返回文件 mtime 的纳秒时间戳。
@@ -713,6 +722,27 @@ pub fn get_data_source_breakdown(db: &Database) -> Result<Vec<DataSourceSummary>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sync_state_lookup_defaults_only_when_row_is_missing() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        assert_eq!(get_sync_state(&db, "missing.jsonl")?, (0, 0));
+        assert_eq!(get_sync_state_with_size(&db, "missing.jsonl")?, (0, 0, 0));
+
+        let conn = lock_conn!(db.conn);
+        conn.execute("DROP TABLE session_log_sync", [])?;
+        drop(conn);
+
+        assert!(matches!(
+            get_sync_state(&db, "missing.jsonl"),
+            Err(AppError::Database(_))
+        ));
+        assert!(matches!(
+            get_sync_state_with_size(&db, "missing.jsonl"),
+            Err(AppError::Database(_))
+        ));
+        Ok(())
+    }
 
     #[test]
     fn sync_result_notification_is_coalesced_to_one_call() {
