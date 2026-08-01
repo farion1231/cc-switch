@@ -1521,6 +1521,18 @@ impl RequestForwarder {
             mapped_body
         };
 
+        // Native Responses passthrough to a qwen ≥3.8 gateway: clamp
+        // reasoning.effort to the vendor's tier domain (low/medium/xhigh) and
+        // convert disable signals to "low" — qwen ≥3.8 is thinking-only and
+        // errors on any "thinking off" parameter. Absent reasoning → untouched
+        // (vendor default xhigh). Non-qwen bodies pass through byte-identical.
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+        {
+            super::providers::transform::sanitize_responses_reasoning_for_qwen(&mut request_body);
+        }
+
         // Native Responses passthrough to a strict third-party gateway (xAI):
         // flatten Codex's private `namespace`/plugin tool declarations into
         // top-level function tools so the upstream's strict serde parser does

@@ -142,7 +142,9 @@ export type CodexChatEffortValueMode =
   | "low_high"
   | "deepseek"
   // OpenRouter effort 枚举 xhigh|high|medium|low|minimal（无 max，max 钳到 xhigh）
-  | "openrouter";
+  | "openrouter"
+  // qwen ≥3.8 仅思考模型：档位 low/medium/xhigh，关闭信号映射为 low
+  | "qwen";
 
 export type CodexChatReasoningOutputFormat =
   | "auto"
