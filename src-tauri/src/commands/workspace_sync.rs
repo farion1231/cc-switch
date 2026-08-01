@@ -87,40 +87,21 @@ fn persist_status_success(settings: &mut WorkspaceSyncSettings) {
 
 // ─── Commands ────────────────────────────────────────────────
 
-/// Back up selected providers' local data to the cloud.
+/// The one-button sync: pull the remote union, merge with local, deploy
+/// locally, then upload the merged union — replacing the remote archive.
 #[tauri::command]
-pub async fn workspace_sync_backup() -> Result<Value, String> {
+pub async fn workspace_sync_run() -> Result<Value, String> {
     let mut settings = require_enabled_settings()?;
     let storage = resolve_storage(&settings)?;
 
-    let result = engine::run_with_sync_lock(engine::backup(&*storage, &settings, now_ms())).await;
+    let result = engine::run_with_sync_lock(engine::sync(&*storage, &settings, now_ms())).await;
     match result {
         Ok(report) => {
             persist_status_success(&mut settings);
             Ok(serde_json::to_value(report).unwrap_or_else(|_| json!({ "status": "ok" })))
         }
         Err(e) => {
-            persist_status_error(&mut settings, &e.to_string(), "backup");
-            Err(e.to_string())
-        }
-    }
-}
-
-/// Pull remote data, merge with local (union + keep-both), then back up the
-/// merged result.
-#[tauri::command]
-pub async fn workspace_sync_merge() -> Result<Value, String> {
-    let mut settings = require_enabled_settings()?;
-    let storage = resolve_storage(&settings)?;
-
-    let result = engine::run_with_sync_lock(engine::merge(&*storage, &settings, now_ms())).await;
-    match result {
-        Ok(report) => {
-            persist_status_success(&mut settings);
-            Ok(serde_json::to_value(report).unwrap_or_else(|_| json!({ "status": "ok" })))
-        }
-        Err(e) => {
-            persist_status_error(&mut settings, &e.to_string(), "merge");
+            persist_status_error(&mut settings, &e.to_string(), "sync");
             Err(e.to_string())
         }
     }
@@ -160,7 +141,7 @@ pub async fn workspace_sync_scan_preview() -> Result<Value, String> {
     Ok(json!({ "providers": out }))
 }
 
-/// Fetch remote head info without downloading blobs.
+/// Fetch remote archive info (presence + snapshot id) without deploying.
 #[tauri::command]
 pub async fn workspace_sync_fetch_remote_info() -> Result<Value, String> {
     let settings = require_enabled_settings()?;
@@ -170,12 +151,18 @@ pub async fn workspace_sync_fetch_remote_info() -> Result<Value, String> {
         settings.remote_root.trim_end_matches('/'),
         settings.profile
     );
-    let head_key = format!("{prefix}/head.json");
-    match storage.get(&head_key).await.map_err(|e| e.to_string())? {
+    let archive_key = format!("{prefix}/workspace.zip");
+    match storage.get(&archive_key).await.map_err(|e| e.to_string())? {
         Some(obj) => {
-            let head: engine::Head = serde_json::from_slice(&obj.bytes)
-                .map_err(|e| format!("failed to parse remote head: {e}"))?;
-            Ok(serde_json::to_value(head).unwrap_or(json!({ "empty": true })))
+            let archive = crate::workspace_sync::archive::unpack_snapshot(&obj.bytes)
+                .map_err(|e| format!("failed to parse remote archive: {e}"))?;
+            let m = archive.manifest();
+            Ok(json!({
+                "snapshotId": m.snapshot_id,
+                "deviceName": m.created_by,
+                "updatedAt": m.created_at,
+                "sizeBytes": obj.bytes.len(),
+            }))
         }
         None => Ok(json!({ "empty": true })),
     }

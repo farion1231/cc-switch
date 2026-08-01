@@ -1643,8 +1643,7 @@ pub fn run() {
             commands::search_daily_memory_files,
             commands::open_workspace_directory,
             // Workspace data sync (session/task/plan/memory across providers)
-            commands::workspace_sync_backup,
-            commands::workspace_sync_merge,
+            commands::workspace_sync_run,
             commands::workspace_sync_scan_preview,
             commands::workspace_sync_fetch_remote_info,
             commands::workspace_sync_save_settings,
