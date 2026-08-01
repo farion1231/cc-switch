@@ -121,7 +121,9 @@ export function SessionItem({
                 >
                   <HardDrive className="size-3" />
                   <span>
-                    {session.sizeApproximate ? `~${formattedSize}` : formattedSize}
+                    {session.sizeApproximate
+                      ? `~${formattedSize}`
+                      : formattedSize}
                   </span>
                 </span>
               </TooltipTrigger>

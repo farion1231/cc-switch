@@ -82,8 +82,7 @@ const SESSION_LIST_VIEW_MODE_STORAGE_KEY =
   "cc-switch.sessionManager.listViewMode";
 const SESSION_GROUP_EXPANSION_STORAGE_KEY =
   "cc-switch.sessionManager.groupExpansionState";
-const SESSION_SORT_ORDER_STORAGE_KEY =
-  "cc-switch.sessionManager.sortOrder";
+const SESSION_SORT_ORDER_STORAGE_KEY = "cc-switch.sessionManager.sortOrder";
 
 type ProviderFilter =
   | "all"
@@ -227,9 +226,8 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const [listViewMode, setListViewMode] = useState<SessionListViewMode>(
     readInitialSessionListViewMode,
   );
-  const [sortOrder, setSortOrder] = useState<SessionSortOrder>(
-    readInitialSortOrder,
-  );
+  const [sortOrder, setSortOrder] =
+    useState<SessionSortOrder>(readInitialSortOrder);
   const [initialGroupExpansionState] = useState(
     readInitialSessionGroupExpansionState,
   );
@@ -274,7 +272,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   );
 
   useEffect(() => {
-    window.localStorage.setItem(SESSION_LIST_VIEW_MODE_STORAGE_KEY, listViewMode);
+    window.localStorage.setItem(
+      SESSION_LIST_VIEW_MODE_STORAGE_KEY,
+      listViewMode,
+    );
   }, [listViewMode]);
 
   useEffect(() => {
