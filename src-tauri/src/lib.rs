@@ -2014,51 +2014,67 @@ fn initialize_common_config_snippets(state: &store::AppState) {
 // 迁移错误对话框辅助函数
 // ============================================================
 
-/// 检测是否为中文环境
-fn is_chinese_locale() -> bool {
-    std::env::var("LANG")
-        .or_else(|_| std::env::var("LC_ALL"))
+/// 检测系统区域，供设置尚未加载时显示启动错误文案。
+fn system_locale_hint() -> &'static str {
+    std::env::var("LC_ALL")
         .or_else(|_| std::env::var("LC_MESSAGES"))
-        .map(|lang| lang.starts_with("zh"))
-        .unwrap_or(false)
+        .or_else(|_| std::env::var("LANG"))
+        .map(|lang| {
+            let lang = lang.to_lowercase();
+            if lang.starts_with("zh") {
+                "zh"
+            } else if lang.starts_with("ru") {
+                "ru"
+            } else {
+                "en"
+            }
+        })
+        .unwrap_or("en")
 }
 
 /// 显示迁移错误对话框
 /// 返回 true 表示用户选择重试，false 表示用户选择退出
 fn show_migration_error_dialog(app: &tauri::AppHandle, error: &str) -> bool {
-    let title = if is_chinese_locale() {
-        "配置迁移失败"
-    } else {
-        "Migration Failed"
+    let lang = system_locale_hint();
+    let title = match lang {
+        "zh" => "配置迁移失败",
+        "ru" => "Ошибка миграции",
+        _ => "Migration Failed",
     };
 
-    let message = if is_chinese_locale() {
-        format!(
+    let message = match lang {
+        "zh" => format!(
             "从旧版本迁移配置时发生错误：\n\n{error}\n\n\
             您的数据尚未丢失，旧配置文件仍然保留。\n\
             建议回退到旧版本 CC Switch 以保护数据。\n\n\
             点击「重试」重新尝试迁移\n\
             点击「退出」关闭程序（可回退版本后重新打开）"
-        )
-    } else {
-        format!(
+        ),
+        "ru" => format!(
+            "При миграции конфигурации из старой версии произошла ошибка:\n\n{error}\n\n\
+            Ваши данные НЕ потеряны — старый файл конфигурации сохранён.\n\
+            Рекомендуем временно вернуться к старой версии CC Switch, чтобы защитить данные.\n\n\
+            Нажмите «Повторить», чтобы попробовать миграцию снова\n\
+            Нажмите «Выйти», чтобы закрыть приложение (после отката версии его можно открыть снова)"
+        ),
+        _ => format!(
             "An error occurred while migrating configuration:\n\n{error}\n\n\
             Your data is NOT lost - the old config file is still preserved.\n\
             Consider rolling back to an older CC Switch version.\n\n\
             Click 'Retry' to attempt migration again\n\
             Click 'Exit' to close the program"
-        )
+        ),
     };
 
-    let retry_text = if is_chinese_locale() {
-        "重试"
-    } else {
-        "Retry"
+    let retry_text = match lang {
+        "zh" => "重试",
+        "ru" => "Повторить",
+        _ => "Retry",
     };
-    let exit_text = if is_chinese_locale() {
-        "退出"
-    } else {
-        "Exit"
+    let exit_text = match lang {
+        "zh" => "退出",
+        "ru" => "Выйти",
+        _ => "Exit",
     };
 
     // 使用 blocking_show 同步等待用户响应
@@ -2081,14 +2097,15 @@ fn show_database_init_error_dialog(
     db_path: &std::path::Path,
     error: &str,
 ) -> bool {
-    let title = if is_chinese_locale() {
-        "数据库初始化失败"
-    } else {
-        "Database Initialization Failed"
+    let lang = system_locale_hint();
+    let title = match lang {
+        "zh" => "数据库初始化失败",
+        "ru" => "Ошибка инициализации базы данных",
+        _ => "Database Initialization Failed",
     };
 
-    let message = if is_chinese_locale() {
-        format!(
+    let message = match lang {
+        "zh" => format!(
             "初始化数据库或迁移数据库结构时发生错误：\n\n{error}\n\n\
             数据库文件路径：\n{db}\n\n\
             您的数据尚未丢失，应用不会自动删除数据库文件。\n\
@@ -2100,9 +2117,21 @@ fn show_database_init_error_dialog(
             点击「重试」重新尝试初始化\n\
             点击「退出」关闭程序",
             db = db_path.display()
-        )
-    } else {
-        format!(
+        ),
+        "ru" => format!(
+            "При инициализации базы данных или миграции её структуры произошла ошибка:\n\n{error}\n\n\
+            Путь к файлу базы данных:\n{db}\n\n\
+            Ваши данные НЕ потеряны: приложение не удаляет файл базы данных автоматически.\n\
+            Частые причины: база данных создана более новой версией, файл повреждён, не хватает прав доступа или места на диске.\n\n\
+            Рекомендации:\n\
+            1) Сначала создайте резервную копию всего каталога конфигурации (включая cc-switch.db)\n\
+            2) Если сообщение говорит, что версия базы данных новее, обновите CC Switch\n\
+            3) Если ошибка появилась сразу после обновления, откатитесь на старую версию, экспортируйте или создайте резервную копию, затем обновитесь снова\n\n\
+            Нажмите «Повторить», чтобы попробовать инициализацию снова\n\
+            Нажмите «Выйти», чтобы закрыть приложение",
+            db = db_path.display()
+        ),
+        _ => format!(
             "An error occurred while initializing or migrating the database:\n\n{error}\n\n\
             Database file path:\n{db}\n\n\
             Your data is NOT lost - the app will not delete the database automatically.\n\
@@ -2114,18 +2143,18 @@ fn show_database_init_error_dialog(
             Click 'Retry' to attempt initialization again\n\
             Click 'Exit' to close the program",
             db = db_path.display()
-        )
+        ),
     };
 
-    let retry_text = if is_chinese_locale() {
-        "重试"
-    } else {
-        "Retry"
+    let retry_text = match lang {
+        "zh" => "重试",
+        "ru" => "Повторить",
+        _ => "Retry",
     };
-    let exit_text = if is_chinese_locale() {
-        "退出"
-    } else {
-        "Exit"
+    let exit_text = match lang {
+        "zh" => "退出",
+        "ru" => "Выйти",
+        _ => "Exit",
     };
 
     app.dialog()

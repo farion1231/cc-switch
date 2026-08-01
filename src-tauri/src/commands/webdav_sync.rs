@@ -11,28 +11,38 @@ use crate::services::webdav_sync as webdav_sync_service;
 use crate::settings::{self, WebDavSyncSettings};
 use crate::store::AppState;
 
+fn current_language() -> String {
+    settings::get_settings()
+        .language
+        .unwrap_or_else(|| "zh".to_string())
+}
+
+fn format_error(error: &AppError) -> String {
+    error.localized_message(&current_language())
+}
+
 fn persist_sync_error(settings: &mut WebDavSyncSettings, error: &AppError, source: &str) {
-    settings.status.last_error = Some(error.to_string());
+    settings.status.last_error = Some(format_error(error));
     settings.status.last_error_source = Some(source.to_string());
     let _ = settings::update_webdav_sync_status(settings.status.clone());
 }
 
 fn webdav_not_configured_error() -> String {
-    AppError::localized(
+    format_error(&AppError::localized_ru(
         "webdav.sync.not_configured",
         "未配置 WebDAV 同步",
         "WebDAV sync is not configured.",
-    )
-    .to_string()
+        "Синхронизация WebDAV не настроена.",
+    ))
 }
 
 fn webdav_sync_disabled_error() -> String {
-    AppError::localized(
+    format_error(&AppError::localized_ru(
         "webdav.sync.disabled",
         "WebDAV 同步未启用",
         "WebDAV sync is disabled.",
-    )
-    .to_string()
+        "Синхронизация WebDAV отключена.",
+    ))
 }
 
 fn require_enabled_webdav_settings() -> Result<WebDavSyncSettings, String> {
@@ -76,7 +86,7 @@ where
         Ok(value) => Ok(value),
         Err(err) => {
             on_error(&err);
-            Err(err.to_string())
+            Err(format_error(&err))
         }
     }
 }

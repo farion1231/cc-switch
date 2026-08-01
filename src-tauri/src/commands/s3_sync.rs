@@ -11,23 +11,38 @@ use crate::services::s3_sync as s3_sync_service;
 use crate::settings::{self, S3SyncSettings};
 use crate::store::AppState;
 
+fn current_language() -> String {
+    settings::get_settings()
+        .language
+        .unwrap_or_else(|| "zh".to_string())
+}
+
+fn format_error(error: &AppError) -> String {
+    error.localized_message(&current_language())
+}
+
 fn persist_sync_error(settings: &mut S3SyncSettings, error: &AppError, source: &str) {
-    settings.status.last_error = Some(error.to_string());
+    settings.status.last_error = Some(format_error(error));
     settings.status.last_error_source = Some(source.to_string());
     let _ = settings::update_s3_sync_status(settings.status.clone());
 }
 
 fn s3_not_configured_error() -> String {
-    AppError::localized(
+    format_error(&AppError::localized_ru(
         "s3.sync.not_configured",
         "未配置 S3 同步",
         "S3 sync is not configured.",
-    )
-    .to_string()
+        "Синхронизация S3 не настроена.",
+    ))
 }
 
 fn s3_sync_disabled_error() -> String {
-    AppError::localized("s3.sync.disabled", "S3 同步未启用", "S3 sync is disabled.").to_string()
+    format_error(&AppError::localized_ru(
+        "s3.sync.disabled",
+        "S3 同步未启用",
+        "S3 sync is disabled.",
+        "Синхронизация S3 отключена.",
+    ))
 }
 
 fn require_enabled_s3_settings() -> Result<S3SyncSettings, String> {
@@ -71,7 +86,7 @@ where
         Ok(value) => Ok(value),
         Err(err) => {
             on_error(&err);
-            Err(err.to_string())
+            Err(format_error(&err))
         }
     }
 }
