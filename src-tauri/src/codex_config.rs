@@ -573,6 +573,42 @@ fn codex_catalog_model_entry(
     entry_obj.insert("availability_nux".to_string(), Value::Null);
     entry_obj.insert("upgrade".to_string(), Value::Null);
 
+    // Per-model reasoning effort override. The template only carries a neutral
+    // [none, high] default; when the model mapping declares the levels the
+    // upstream actually validates, replace the list so the Codex UI only
+    // offers those levels.
+    if let Some(levels) = &spec.supported_reasoning_levels {
+        let levels_json: Vec<Value> = levels
+            .iter()
+            .map(|effort| {
+                json!({
+                    "effort": effort,
+                    "description": codex_reasoning_level_description(effort),
+                })
+            })
+            .collect();
+        if !levels_json.is_empty() {
+            entry_obj.insert(
+                "supported_reasoning_levels".to_string(),
+                Value::Array(levels_json),
+            );
+            // Keep `default_reasoning_level` consistent when the template
+            // default (high/medium) is not part of the declared set.
+            let template_default = entry_obj
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str())
+                .unwrap_or("high");
+            if !levels.iter().any(|level| level == template_default) {
+                if let Some(last) = levels.last() {
+                    entry_obj.insert(
+                        "default_reasoning_level".to_string(),
+                        json!(last),
+                    );
+                }
+            }
+        }
+    }
+
     // Image support is a model capability, not a tool-profile capability.
     // Trust hidden preset metadata first, then the confirmed text-only registry;
     // every unknown model fails open so GPT/relay aliases are never declared
@@ -622,6 +658,23 @@ fn codex_catalog_model_entry(
     entry
 }
 
+/// Human-readable label for a reasoning effort level, mirroring the wording
+/// Codex ships in `models_cache.json` so custom catalogs stay consistent.
+fn codex_reasoning_level_description(effort: &str) -> String {
+    match effort {
+        "none" => "Disable Thinking",
+        "minimal" => "Minimal reasoning",
+        "low" => "Fast responses with lighter reasoning",
+        "medium" => "Balances speed and reasoning depth for everyday tasks",
+        "high" => "Greater reasoning depth for complex problems",
+        "xhigh" => "Extra high reasoning depth for complex problems",
+        "max" => "Maximum reasoning depth for the hardest problems",
+        "ultra" => "Maximum reasoning with automatic task delegation",
+        _ => effort,
+    }
+    .to_string()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CodexCatalogModelSpec {
     model: String,
@@ -645,6 +698,12 @@ struct CodexCatalogModelSpec {
     /// back to the template default when absent. Only consulted for
     /// `NativeResponses`.
     base_instructions: Option<String>,
+    /// Per-row override for the template's `supported_reasoning_levels`
+    /// (e.g. `["none", "low", "medium", "high", "xhigh", "max"]`). When
+    /// present, the generated catalog entry only offers these effort levels
+    /// (plus a matching `default_reasoning_level` when the template default
+    /// is not among them).
+    supported_reasoning_levels: Option<Vec<String>>,
 }
 
 fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
@@ -711,6 +770,21 @@ fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
             .filter(|text| !text.is_empty())
             .map(str::to_string);
 
+        let supported_reasoning_levels = model_config
+            .get("supportedReasoningLevels")
+            .or_else(|| model_config.get("supported_reasoning_levels"))
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str())
+                    .map(str::trim)
+                    .filter(|level| !level.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|levels| !levels.is_empty());
+
         specs.push(CodexCatalogModelSpec {
             model: model.to_string(),
             display_name,
@@ -718,6 +792,7 @@ fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
             supports_parallel_tool_calls,
             input_modalities,
             base_instructions,
+            supported_reasoning_levels,
         });
     }
 
@@ -1466,6 +1541,28 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
             let inferred = codex_catalog_input_modalities(model, None);
             if !mods.is_empty() && mods != inferred {
                 obj.insert("inputModalities".to_string(), json!(mods));
+            }
+        }
+
+        // Preserve per-model reasoning effort overrides so a DB-SSOT-missing
+        // fallback round-trip doesn't silently drop them. The neutral template
+        // default ([none, high]) is left implicit to keep existing rows clean.
+        if let Some(levels) = entry
+            .get("supported_reasoning_levels")
+            .and_then(|v| v.as_array())
+        {
+            let efforts: Vec<String> = levels
+                .iter()
+                .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
+                .map(str::to_string)
+                .collect();
+            let is_template_default =
+                efforts.len() == 2 && efforts[0] == "none" && efforts[1] == "high";
+            if !efforts.is_empty() && !is_template_default {
+                obj.insert(
+                    "supportedReasoningLevels".to_string(),
+                    json!(efforts),
+                );
             }
         }
 
@@ -3132,6 +3229,7 @@ base_url = "https://production.api/v1"
             supports_parallel_tool_calls: None,
             input_modalities: None,
             base_instructions: None,
+            supported_reasoning_levels: None,
         }];
         let catalog = codex_model_catalog_from_specs(
             &specs,
@@ -3323,6 +3421,68 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
+    fn per_model_supported_reasoning_levels_override_template_and_round_trip() {
+        // A model mapping that declares the levels the upstream actually
+        // validates must replace the template's neutral [none, high] list, and
+        // the simplified reverse-parse must carry the override back so a
+        // DB-SSOT-missing fallback doesn't drop it.
+        let settings = json!({
+            "modelCatalog": {
+                "models": [{
+                    "model": "gpt-5.6-luna",
+                    "displayName": "GPT-5.6 Luna",
+                    "supportedReasoningLevels": [
+                        "none", "minimal", "low", "medium", "high", "xhigh", "max"
+                    ]
+                }]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("native catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let entry = &catalog["models"][0];
+        let levels: Vec<&str> = entry["supported_reasoning_levels"]
+            .as_array()
+            .expect("supported_reasoning_levels array")
+            .iter()
+            .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(
+            levels,
+            vec!["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+        );
+        assert_eq!(
+            entry["supported_reasoning_levels"][2]["description"]
+                .as_str()
+                .unwrap(),
+            "Fast responses with lighter reasoning"
+        );
+        // Template default ("high") is part of the declared set, so it stays.
+        assert_eq!(
+            entry.get("default_reasoning_level").and_then(|v| v.as_str()),
+            Some("high")
+        );
+
+        // Round-trip through the simplified reverse-parse keeps the override.
+        let config_text = r#"model_catalog_json = "cc-switch-model-catalog.json""#;
+        let simplified = build_simplified_catalog_from_texts(
+            config_text,
+            &serde_json::to_string(&catalog).unwrap(),
+        )
+        .expect("simplified catalog should parse");
+        assert_eq!(
+            simplified["models"][0]["supportedReasoningLevels"],
+            json!(["none", "minimal", "low", "medium", "high", "xhigh", "max"])
+        );
+    }
+
+    #[test]
     fn catalog_infers_image_input_independently_of_tool_profile() {
         // Start from a deliberately text-only template to prove that every
         // profile overwrites template defaults with shared capability logic.
@@ -3338,6 +3498,7 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
+                supported_reasoning_levels: None,
             },
             CodexCatalogModelSpec {
                 model: "deepseek/deepseek-v4-pro".to_string(),
@@ -3346,6 +3507,7 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
+                supported_reasoning_levels: None,
             },
             CodexCatalogModelSpec {
                 model: "glm-5.2v".to_string(),
@@ -3354,6 +3516,7 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
+                supported_reasoning_levels: None,
             },
             CodexCatalogModelSpec {
                 model: "deepseek-v4-flash".to_string(),
@@ -3362,6 +3525,7 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: Some(vec!["text".to_string(), "image".to_string()]),
                 base_instructions: None,
+                supported_reasoning_levels: None,
             },
             CodexCatalogModelSpec {
                 model: "custom-text-alias".to_string(),
@@ -3370,6 +3534,7 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: Some(vec!["text".to_string()]),
                 base_instructions: None,
+                supported_reasoning_levels: None,
             },
         ];
 
@@ -3640,6 +3805,7 @@ wire_api = "responses"
             supports_parallel_tool_calls: None,
             input_modalities: None,
             base_instructions: None,
+            supported_reasoning_levels: None,
         }];
         // Using a gpt-5.5-shaped template under ProxyChat must NOT strip
         // apply_patch_tool_type. (The native template lacks it, so synthesize
