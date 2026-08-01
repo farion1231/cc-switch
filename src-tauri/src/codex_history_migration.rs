@@ -15,7 +15,7 @@ use crate::settings::{
     CodexThirdPartyHistoryProviderBucketMigration,
 };
 use chrono::{Local, Utc};
-use rusqlite::{backup::Backup, params_from_iter, Connection};
+use rusqlite::{backup::Backup, params_from_iter, Connection, TransactionBehavior};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -634,7 +634,7 @@ fn restore_codex_state_db_official_threads(
         return Ok(0);
     }
 
-    backup_codex_state_db(db_path, codex_dir, backup_root, &conn)?;
+    backup_codex_state_db(db_path, codex_dir, backup_root, &conn, 5)?;
 
     let tx = conn
         .transaction()
@@ -1153,7 +1153,7 @@ fn migrate_codex_state_db_provider_bucket(
         return Ok(0);
     }
 
-    backup_codex_state_db(db_path, codex_dir, backup_root, &conn)?;
+    backup_codex_state_db(db_path, codex_dir, backup_root, &conn, 5)?;
 
     let update_sql =
         format!("UPDATE threads SET model_provider = ? WHERE model_provider IN ({placeholders})");
@@ -1187,6 +1187,15 @@ fn migrate_codex_state_db_legacy_thread_names(
     codex_dir: &Path,
     backup_root: &Path,
 ) -> Result<usize, AppError> {
+    migrate_codex_state_db_legacy_thread_names_after_lock(db_path, codex_dir, backup_root, || {})
+}
+
+fn migrate_codex_state_db_legacy_thread_names_after_lock<F: FnOnce()>(
+    db_path: &Path,
+    codex_dir: &Path,
+    backup_root: &Path,
+    after_lock: F,
+) -> Result<usize, AppError> {
     if !db_path.exists() {
         return Ok(0);
     }
@@ -1194,18 +1203,22 @@ fn migrate_codex_state_db_legacy_thread_names(
         .map_err(|e| AppError::Database(format!("打开 Codex state DB 失败: {e}")))?;
     conn.busy_timeout(Duration::from_secs(5))
         .map_err(|e| AppError::Database(format!("设置 Codex state DB busy_timeout 失败: {e}")))?;
-    if !Database::table_exists(&conn, "threads")? {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| AppError::Database(format!("开启 Codex thread rename 迁移事务失败: {e}")))?;
+    if !Database::table_exists(&tx, "threads")? {
         return Ok(0);
     }
-    let candidates = codex_legacy_thread_name_candidates(&conn, codex_dir)?;
+    after_lock();
+    let candidates = codex_legacy_thread_name_candidates(&tx, codex_dir)?;
     if candidates.is_empty() {
         return Ok(0);
     }
 
-    backup_codex_state_db(db_path, codex_dir, backup_root, &conn)?;
-    let tx = conn
-        .transaction()
-        .map_err(|e| AppError::Database(format!("开启 Codex thread rename 迁移事务失败: {e}")))?;
+    // SQLite backup cannot use the connection that owns the write transaction.
+    let backup_source = Connection::open(db_path)
+        .map_err(|e| AppError::Database(format!("打开 Codex state DB 备份源失败: {e}")))?;
+    backup_codex_state_db(db_path, codex_dir, backup_root, &backup_source, i32::MAX)?;
     let mut migrated = 0;
     for (thread_id, thread_name) in &candidates {
         let changed = tx
@@ -1319,6 +1332,7 @@ fn backup_codex_state_db(
     codex_dir: &Path,
     backup_root: &Path,
     source_conn: &Connection,
+    pages_per_step: i32,
 ) -> Result<(), AppError> {
     let backup_path = backup_root
         .join("state")
@@ -1332,7 +1346,7 @@ fn backup_codex_state_db(
     let backup = Backup::new(source_conn, &mut backup_conn)
         .map_err(|e| AppError::Database(format!("初始化 Codex state DB 备份失败: {e}")))?;
     backup
-        .run_to_completion(5, Duration::from_millis(25), None)
+        .run_to_completion(pages_per_step, Duration::from_millis(25), None)
         .map_err(|e| AppError::Database(format!("写入 Codex state DB 备份失败: {e}")))?;
     Ok(())
 }
@@ -2248,7 +2262,6 @@ base_url = "https://proxy.example/v1"
             concat!(
                 "not json\n",
                 "{\"id\":\"renamed\",\"thread_name\":\"old name\"}\n",
-                "{\"id\":\"renamed\",\"thread_name\":\"my project\"}\n",
                 "{\"id\":\"generated\",\"thread_name\":\"generated title\"}\n",
                 "{\"id\":\"existing\",\"thread_name\":\"legacy name\"}\n",
                 "{\"id\":\"nullable\",\"thread_name\":\"nullable name\"}\n",
@@ -2280,9 +2293,40 @@ base_url = "https://proxy.example/v1"
         drop(conn);
 
         let backup_root = dir.path().join("backup");
-        let changed =
-            migrate_codex_state_db_legacy_thread_names(&db_path, &codex_dir, &backup_root)
-                .expect("migrate thread names");
+        let changed = migrate_codex_state_db_legacy_thread_names_after_lock(
+            &db_path,
+            &codex_dir,
+            &backup_root,
+            || {
+                let index_path = codex_dir.join("session_index.jsonl");
+                let mut index = fs::read_to_string(&index_path).expect("read session index");
+                index.push_str("{\"id\":\"renamed\",\"thread_name\":\"my project\"}\n");
+                fs::write(index_path, index).expect("update session index before candidate scan");
+
+                let writer = Connection::open(&db_path).expect("open concurrent writer");
+                writer
+                    .busy_timeout(Duration::ZERO)
+                    .expect("disable concurrent writer timeout");
+                let error = writer
+                    .execute(
+                        "UPDATE threads SET name = 'concurrent name' WHERE id = 'renamed'",
+                        [],
+                    )
+                    .expect_err("IMMEDIATE transaction must lock before candidate scan");
+                assert!(matches!(
+                    error,
+                    rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error {
+                            code: rusqlite::ffi::ErrorCode::DatabaseBusy
+                                | rusqlite::ffi::ErrorCode::DatabaseLocked,
+                            ..
+                        },
+                        _
+                    )
+                ));
+            },
+        )
+        .expect("migrate thread names");
 
         assert_eq!(changed, 2);
         let conn = Connection::open(&db_path).expect("reopen db");
@@ -2302,6 +2346,14 @@ base_url = "https://proxy.example/v1"
             .join("state")
             .join(CODEX_STATE_DB_FILENAME)
             .exists());
+        let backup_conn = Connection::open(backup_root.join("state").join(CODEX_STATE_DB_FILENAME))
+            .expect("open backup db");
+        let backed_up_name: Option<String> = backup_conn
+            .query_row("SELECT name FROM threads WHERE id = 'renamed'", [], |row| {
+                row.get(0)
+            })
+            .expect("read backed up thread name");
+        assert_eq!(backed_up_name, None);
 
         drop(conn);
         let rerun_backup_root = dir.path().join("rerun-backup");
