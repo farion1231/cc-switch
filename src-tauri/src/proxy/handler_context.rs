@@ -510,7 +510,7 @@ fn find_matching_route(
     }
 
     // 按优先级降序作为 failover 顺序；同优先级内随机打乱，保留原平局均匀随机语义。
-    matched.sort_by(|a, b| b.priority.cmp(&a.priority));
+    matched.sort_by_key(|b| std::cmp::Reverse(b.priority));
     let mut chain: Vec<crate::provider::Provider> = Vec::new();
     let mut cursor = 0;
     while cursor < matched.len() {
