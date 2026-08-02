@@ -8,8 +8,8 @@ use crate::config::get_claude_config_dir;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
-    extract_text, file_size, parse_timestamp_to_ms, path_basename, path_size,
-    read_head_tail_lines, truncate_summary, TITLE_MAX_CHARS,
+    extract_text, file_size, parse_timestamp_to_ms, path_basename, path_size, read_head_tail_lines,
+    truncate_summary, TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "claude";
