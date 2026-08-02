@@ -321,22 +321,6 @@ requires_openai_auth = true`,
     icon: "runapi",
   },
   {
-    name: "Unity2.ai",
-    websiteUrl: "https://unity2.ai",
-    apiKeyUrl: "https://unity2.ai/register?source=ccs",
-    category: "aggregator",
-    auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig(
-      "unity2",
-      "https://api.unity2.ai",
-      "gpt-5.6-sol",
-    ),
-    endpointCandidates: ["https://api.unity2.ai"],
-    isPartner: true,
-    partnerPromotionKey: "unity2",
-    icon: "unity2",
-  },
-  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
@@ -487,8 +471,12 @@ requires_openai_auth = true`,
       "https://ark.cn-beijing.volces.com/api/coding/v3",
       "ark-code-latest",
     ),
+    // ⚠️ 计费红线（官方 warning）：Coding Plan 必须走 /api/coding/v3；
+    // 填按量端点 /api/v3 不消耗套餐额度、按量另计费，绝不能混入候选
     endpointCandidates: ["https://ark.cn-beijing.volces.com/api/coding/v3"],
-    apiFormat: "openai_chat",
+    // 官方 Codex 文档（volcengine.com/docs/82379/2556056，2026-07 更新）：
+    // Coding Plan /api/coding/v3 已支持 Responses API（wire_api=responses），无需路由接管转换
+    apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
       {
         model: "ark-code-latest",
@@ -517,6 +505,8 @@ requires_openai_auth = true`,
     endpointCandidates: [
       "https://ark.ap-southeast.bytepluses.com/api/coding/v3",
     ],
+    // 国内站 coding/v3 已切原生 Responses（见 火山Agentplan），但 BytePlus
+    // 国际站（bytepluses.com）文档未单独核实，暂保持 Chat 路由
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
       {
@@ -969,27 +959,25 @@ requires_openai_auth = true`,
       "deepseek-v4-flash",
     ),
     endpointCandidates: ["https://api.deepseek.com"],
-    apiFormat: "openai_chat",
+    // DeepSeek 官方 Codex 文档（api-docs.deepseek.com → agent_integrations/codex）：
+    // deepseek-v4-flash 原生 Responses（wire_api=responses 对自家 base_url），无需路由接管转换。
+    // 后端按 deepseek.com host 直接镜像官方 models.json（freeform apply_patch +
+    // GPT-5 harness + low/high/max 思考档，需 codex >= 0.144.0），这里只保留行清单与展示名。
+    apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
       {
         model: "deepseek-v4-flash",
         displayName: "DeepSeek V4 Flash",
-        contextWindow: 1000000,
+        contextWindow: 1048576,
       },
+      // 官方预计 2026-08 初开通 pro 的 Codex 集成（官方 models.json 已含该条目），
+      // 在那之前切到 pro 会上游报错
       {
         model: "deepseek-v4-pro",
         displayName: "DeepSeek V4 Pro",
-        contextWindow: 1000000,
+        contextWindow: 1048576,
       },
     ]),
-    codexChatReasoning: {
-      supportsThinking: true,
-      supportsEffort: true,
-      thinkingParam: "thinking",
-      effortParam: "reasoning_effort",
-      effortValueMode: "deepseek",
-      outputFormat: "reasoning_content",
-    },
     category: "cn_official",
     icon: "deepseek",
     iconColor: "#1E88E5",
@@ -1094,6 +1082,50 @@ requires_openai_auth = true`,
     category: "cn_official",
     icon: "bailian",
     iconColor: "#624AFF",
+  },
+  {
+    name: "Tencent Hunyuan",
+    websiteUrl: "https://cloud.tencent.com/product/tokenhub",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/apikey",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "hy3_tokenhub",
+      "https://tokenhub.tencentmaas.com/v1",
+      "hy3",
+    ),
+    // 官方备用域名 tencentmaas.cn（文档 1823/130078）；国际站 tokenhub-intl
+    // 属不同地域，API Key 不跨站通用，不作候选
+    endpointCandidates: [
+      "https://tokenhub.tencentmaas.com/v1",
+      "https://tokenhub.tencentmaas.cn/v1",
+    ],
+    // 腾讯 TokenHub 官方 Codex 文档（cloud.tencent.com/document/product/1823/133532）：
+    // hy3 原生 Responses（wire_api=responses；官方硬性要求的
+    // disable_response_storage=true 已由 generateThirdPartyConfig 输出）。
+    // ⚠️ 须用 TokenHub API Key（创建时范围需勾选 Hy3）；Coding Plan / Token Plan
+    // 订阅 Key 只能走各自 chat 端点，对本预设的 /v1 不通。
+    // hy3 在带 tools 的请求里会把 reasoning_effort=low 服务端自动升为 high
+    // （Codex 恒带 tools），默认 high 即真实行为。
+    apiFormat: "openai_responses",
+    // 无官方 catalog：合成 MiMo 式（shell_command 编辑、不发 freeform apply_patch）
+    modelCatalog: modelCatalog([
+      {
+        model: "hy3",
+        displayName: "Hy3",
+        contextWindow: 256000,
+        // hy3 不在官方多模态理解模型名单（1823/130988），纯文本
+        inputModalities: ["text"],
+      },
+      {
+        model: "hy3-preview",
+        displayName: "Hy3 Preview",
+        contextWindow: 256000,
+        inputModalities: ["text"],
+      },
+    ]),
+    category: "cn_official",
+    icon: "hunyuan",
+    iconColor: "#0055E9",
   },
   {
     name: "StepFun",

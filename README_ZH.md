@@ -73,11 +73,6 @@ Claude Code / Codex / Gemini 官方渠道低至 3.8 / 0.2 / 0.9 折，充值更�
 </tr>
 
 <tr>
-<td width="180"><a href="https://unity2.ai/register?source=ccs"><img src="assets/partners/logos/unity2.jpg" alt="Unity2.ai" width="150"></a></td>
-<td>感谢 Unity2.ai 赞助了本项目！Unity2.ai 是面向个人开发者、团队和企业的高性能 AI 模型 API 中转平台，长期服务国内头部企业，日均承载超 300 亿 token 调用，支持 5000 RPM 级高并发。支持余额计费、首充赠额、组合订阅、企业开票和专属对接。通过<a href="https://unity2.ai/register?source=ccs">此链接</a>注册可领取 $2 余额，加入官方群再送 $10 余额，最高可领 $12 免费额度！</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
 <td>感谢胜算云赞助了本项目！胜算云是专为AI Native Teams服务的超级工厂，工业级AI任务并行执行平台，模型商城集采直供聚合接入了Claude、Chatgpt、Gemini等海内外LLM及图片视频多媒体模型算力，绝无逆向掺水、全站模型SLA可用性高达99.7%、<a href="https://watch.shengsuanyun.com/status/shengsuanyun">监测接口</a>日常全绿。更有企业级专属定制网关，实现团队精细化成本与权限管控，智能路由+安全防护+BYOK企业自带密钥托管。平台按量及tokens plan（即将上线）计费，可开票，使用<a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">此链接</a>注册新用户可获10元模力及首充10%赠送。</td>
 </tr>
