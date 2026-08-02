@@ -629,35 +629,45 @@ impl ProxyService {
         generation: Arc<AtomicU64>,
         my_generation: u64,
     ) {
+        // 仅持有 Weak：刷新线程不应阻止 Database 随 ProxyService 释放，否则
+        // 后台线程会长期占用 DB 文件句柄（测试/停机后无法及时释放）。
+        // 每次刷新前短暂 upgrade，ProxyService 销毁后 upgrade 返回 None 即退出。
+        let db = Arc::downgrade(&db);
         std::thread::spawn(move || {
             while generation.load(Ordering::Relaxed) == my_generation {
+                {
+                    let Some(db) = db.upgrade() else {
+                        break;
+                    };
+                    // 无当前 Codex 供应商（例如仅接管 Claude/Gemini）时没有缓存可刷，直接退出
+                    let Some(current_id) =
+                        crate::settings::get_effective_current_provider(&db, &AppType::Codex)
+                            .ok()
+                            .flatten()
+                    else {
+                        break;
+                    };
+                    let Ok(Some(provider)) =
+                        db.get_provider_by_id(&current_id, AppType::Codex.as_str())
+                    else {
+                        break;
+                    };
+                    let config_text = provider
+                        .settings_config
+                        .get("config")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("");
+                    if let Err(e) = crate::codex_config::write_codex_models_cache_for_provider(
+                        &provider,
+                        config_text,
+                    ) {
+                        log::warn!("[codex] 定时刷新 models_cache.json 失败: {e}");
+                    }
+                }
+
                 std::thread::sleep(std::time::Duration::from_secs(240));
                 if generation.load(Ordering::Relaxed) != my_generation {
                     break;
-                }
-
-                let Some(current_id) =
-                    crate::settings::get_effective_current_provider(&db, &AppType::Codex)
-                        .ok()
-                        .flatten()
-                else {
-                    continue;
-                };
-                let Ok(Some(provider)) =
-                    db.get_provider_by_id(&current_id, AppType::Codex.as_str())
-                else {
-                    continue;
-                };
-                let config_text = provider
-                    .settings_config
-                    .get("config")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("");
-                if let Err(e) = crate::codex_config::write_codex_models_cache_for_provider(
-                    &provider,
-                    config_text,
-                ) {
-                    log::warn!("[codex] 定时刷新 models_cache.json 失败: {e}");
                 }
             }
         });
