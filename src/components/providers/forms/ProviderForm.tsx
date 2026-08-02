@@ -1422,6 +1422,7 @@ function ProviderFormFull({
             category,
             apiFormat: localCodexApiFormat,
             enabled: codexMultiAgentV2Enabled,
+            hasModelCatalog: normalizedCatalogModels.length > 0,
           }),
         );
       } catch (err) {
@@ -2298,6 +2299,7 @@ function ProviderFormFull({
 
           {appId === "codex" && (
             <CodexFormFields
+              appId={appId}
               providerId={providerId}
               isXaiOauthPreset={
                 presetProviderType === "xai_oauth" ||
@@ -2331,6 +2333,13 @@ function ProviderFormFull({
               onApiFormatChange={handleCodexApiFormatChange}
               multiAgentV2Enabled={codexMultiAgentV2Enabled}
               onMultiAgentV2EnabledChange={setCodexMultiAgentV2Enabled}
+              multiAgentV2Available={
+                appId === "codex" &&
+                category !== "official" &&
+                localCodexApiFormat === "openai_chat" &&
+                normalizeCodexCatalogModelsForSave(codexCatalogModels).length >
+                  0
+              }
               anthropicAuthField={localCodexAnthropicAuthField}
               onAnthropicAuthFieldChange={setLocalCodexAnthropicAuthField}
               impersonateClaudeCode={localCodexImpersonateClaudeCode}

@@ -190,6 +190,7 @@ describe("Codex multi-agent V2 capability helpers", () => {
       category: "third_party",
       apiFormat: "openai_chat",
       enabled: false,
+      hasModelCatalog: true,
     });
 
     expect(isCodexMultiAgentV2Enabled(result)).toBe(false);
@@ -211,6 +212,7 @@ describe("Codex multi-agent V2 capability helpers", () => {
       category: "custom",
       apiFormat: "openai_chat",
       enabled: true,
+      hasModelCatalog: true,
     });
 
     expect(result.codexMultiAgentVersion).toBe("v2");
@@ -228,6 +230,7 @@ describe("Codex multi-agent V2 capability helpers", () => {
         category: "custom",
         apiFormat: "openai_chat",
         enabled: false,
+        hasModelCatalog: true,
       },
     );
 
@@ -244,6 +247,7 @@ describe("Codex multi-agent V2 capability helpers", () => {
           category: "custom",
           apiFormat,
           enabled: true,
+          hasModelCatalog: true,
         },
       );
 
@@ -259,6 +263,7 @@ describe("Codex multi-agent V2 capability helpers", () => {
         category: "official",
         apiFormat: "openai_chat",
         enabled: true,
+        hasModelCatalog: true,
       },
     );
 
@@ -271,6 +276,7 @@ describe("Codex multi-agent V2 capability helpers", () => {
       category: "third_party",
       apiFormat: "openai_chat",
       enabled: true,
+      hasModelCatalog: true,
     });
     const roundTrip = JSON.parse(JSON.stringify(result));
 
@@ -278,5 +284,20 @@ describe("Codex multi-agent V2 capability helpers", () => {
     expect(roundTrip.auth).toEqual(baseSettings.auth);
     expect(roundTrip.config).toBe(baseSettings.config);
     expect(roundTrip.modelCatalog).toEqual(baseSettings.modelCatalog);
+  });
+
+  it("does not write v2 when the model catalog is empty", () => {
+    const result = applyCodexMultiAgentCapability(
+      { ...baseSettings, codexMultiAgentVersion: "v2" },
+      {
+        appId: "codex",
+        category: "third_party",
+        apiFormat: "openai_chat",
+        enabled: true,
+        hasModelCatalog: false,
+      },
+    );
+
+    expect(result).not.toHaveProperty("codexMultiAgentVersion");
   });
 });

@@ -547,6 +547,7 @@ export function GrokBuildProviderForm({
               }}
               multiAgentV2Enabled={false}
               onMultiAgentV2EnabledChange={() => {}}
+              multiAgentV2Available={false}
               anthropicAuthField={anthropicAuthField}
               onAnthropicAuthFieldChange={setAnthropicAuthField}
               impersonateClaudeCode={impersonateClaudeCode}

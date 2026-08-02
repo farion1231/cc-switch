@@ -17,6 +17,7 @@ export interface CodexMultiAgentCapabilityOptions {
   category?: ProviderCategory;
   apiFormat: CodexApiFormat;
   enabled: boolean;
+  hasModelCatalog: boolean;
 }
 
 export const isCodexMultiAgentV2Enabled = (
@@ -34,7 +35,8 @@ export const applyCodexMultiAgentCapability = (
     options.enabled &&
     options.appId === "codex" &&
     options.category !== "official" &&
-    options.apiFormat === "openai_chat"
+    options.apiFormat === "openai_chat" &&
+    options.hasModelCatalog
   ) {
     next.codexMultiAgentVersion = "v2" satisfies CodexMultiAgentVersion;
   }
