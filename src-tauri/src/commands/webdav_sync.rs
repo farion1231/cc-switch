@@ -104,7 +104,7 @@ pub async fn webdav_test_connection(
     );
     webdav_sync_service::check_connection(&resolved)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format_error(&e))?;
     Ok(json!({
         "success": true,
         "message": "WebDAV connection ok"
@@ -164,8 +164,8 @@ pub async fn webdav_sync_save_settings(
     }
 
     sync_settings.normalize();
-    sync_settings.validate().map_err(|e| e.to_string())?;
-    settings::set_webdav_sync_settings(Some(sync_settings)).map_err(|e| e.to_string())?;
+    sync_settings.validate().map_err(|e| format_error(&e))?;
+    settings::set_webdav_sync_settings(Some(sync_settings)).map_err(|e| format_error(&e))?;
     Ok(json!({ "success": true }))
 }
 
@@ -174,14 +174,14 @@ pub async fn webdav_sync_fetch_remote_info() -> Result<Value, String> {
     let settings = require_enabled_webdav_settings()?;
     let info = webdav_sync_service::fetch_remote_info(&settings)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format_error(&e))?;
     Ok(info.unwrap_or(json!({ "empty": true })))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        map_sync_result, persist_sync_error, require_enabled_webdav_settings,
+        format_error, map_sync_result, persist_sync_error, require_enabled_webdav_settings,
         resolve_password_for_request, run_with_webdav_lock, webdav_sync_mutex,
     };
     use crate::error::AppError;
@@ -363,5 +363,26 @@ mod tests {
             require_enabled_webdav_settings().expect("enabled settings should be accepted");
         assert!(settings.enabled);
         assert_eq!(settings.base_url, "https://dav.example.com/dav/");
+    }
+
+    #[test]
+    #[serial]
+    fn format_error_uses_russian_for_webdav_settings_validation() {
+        let test_home = std::env::temp_dir().join("cc-switch-webdav-sync-ru-validation-test");
+        let _ = std::fs::remove_dir_all(&test_home);
+        std::fs::create_dir_all(&test_home).expect("create test home");
+        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+
+        crate::settings::update_settings(AppSettings {
+            language: Some("ru".to_string()),
+            ..AppSettings::default()
+        })
+        .expect("set Russian language");
+
+        let err = WebDavSyncSettings::default()
+            .validate()
+            .expect_err("empty WebDAV settings should fail validation");
+
+        assert_eq!(format_error(&err), "WebDAV URL обязателен.");
     }
 }
