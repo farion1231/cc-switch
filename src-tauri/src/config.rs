@@ -93,7 +93,10 @@ fn path_eq_lexical(left: &Path, right: &Path) -> bool {
 /// Returns true when `path` is lexically contained within `base`.
 ///
 /// Both paths are normalized lexically (without hitting the filesystem), so
-/// this works for non-existent paths and avoids symlink-related surprises.
+/// this works for non-existent paths. It is **not** a symlink defense: a
+/// symlink inside `base` can still lead a resolved path outside it. Callers
+/// that go on to open the file must canonicalize the existing path and
+/// re-verify containment (see `resolve_cc_switch_catalog_path`).
 /// On Windows the comparison is case-insensitive.
 pub(crate) fn path_is_within(base: &Path, path: &Path) -> bool {
     let base_key = comparable_path_key(base);

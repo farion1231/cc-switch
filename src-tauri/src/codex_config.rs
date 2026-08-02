@@ -1200,6 +1200,11 @@ pub(crate) fn resolve_cc_switch_catalog_path(
         return None;
     }
 
+    // 注意（有意的行为变更）：Windows 上 `/…` 形式的旧 WSL 风格 Linux 路径也会
+    // 被视为绝对路径，从而在下方的包含性校验中失败——此前这类路径会因无法匹配
+    // 生成文件名而回退为按文件名解析、碰巧能工作。可接受：下一次切换供应商时
+    // 写入侧会重新落一个裸文件名，配置自愈（见
+    // `set_catalog_json_none_removes_cc_switch_owned_by_filename` 的场景注释）。
     let is_unix_absolute = catalog_path_str.starts_with('/');
     let resolved = if referenced_path.is_absolute() || is_unix_absolute {
         referenced_path.to_path_buf()
@@ -1214,6 +1219,37 @@ pub(crate) fn resolve_cc_switch_catalog_path(
             base_dir.display()
         );
         return None;
+    }
+
+    // 词法包含不等于运行时包含：配置目录内的符号链接（如 ~/.codex/link ->
+    // /etc）能让 `link/cc-switch-model-catalog.json` 通过上面的检查，读取却
+    // 落到目录外。文件存在时把真实路径 canonicalize 出来再校验一次，并把
+    // canonical 路径返回给调用方——后续读取不再经过 symlink 组件。
+    if resolved.exists() {
+        let canonical = match fs::canonicalize(&resolved) {
+            Ok(path) => path,
+            Err(error) => {
+                log::warn!(
+                    "Codex model_catalog_json canonicalize 失败: {}: {error}",
+                    resolved.display()
+                );
+                return None;
+            }
+        };
+        // base 同样 canonicalize，保证两侧前缀一致（Windows \\?\、
+        // macOS /tmp -> /private/tmp）；base 失败时退回词法 base——
+        // 词法 base 与 canonical 路径比较只会误拒（退化为不读），不会误放。
+        let canonical_base = fs::canonicalize(base_dir).unwrap_or_else(|_| base_dir.to_path_buf());
+        if !path_is_within(&canonical_base, &canonical) {
+            log::warn!(
+                "Codex model_catalog_json 经符号链接解析到配置目录外: {} -> {}（允许目录: {}）",
+                resolved.display(),
+                canonical.display(),
+                canonical_base.display()
+            );
+            return None;
+        }
+        return Some(canonical);
     }
 
     Some(resolved)
@@ -3808,6 +3844,52 @@ model_catalog_json = "cc-switch-model-catalog.json"
         assert_eq!(
             result, None,
             "relative traversal outside ~/.codex must not be accepted"
+        );
+    }
+
+    #[test]
+    fn resolve_catalog_rejects_symlink_escaping_config_dir() {
+        // 词法包含可被符号链接绕过：~/.codex/link -> 外部目录，
+        // "link/cc-switch-model-catalog.json" 词法上在 base 内，真实读取却落到
+        // base 外。canonicalize 之后的二次校验必须拒绝。
+        let temp = tempfile::tempdir().expect("tempdir");
+        let base_dir = temp.path().join("codex");
+        let outside_dir = temp.path().join("outside");
+        fs::create_dir_all(&base_dir).expect("create base");
+        fs::create_dir_all(&outside_dir).expect("create outside");
+        let escaped_file = outside_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+        fs::write(&escaped_file, r#"{"models":[]}"#).expect("write escaped catalog");
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside_dir, base_dir.join("link")).expect("symlink");
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&outside_dir, base_dir.join("link")).expect("symlink");
+
+        let config_text = r#"model_catalog_json = "link/cc-switch-model-catalog.json"
+"#;
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
+        assert_eq!(
+            result, None,
+            "symlink escaping the config dir must be rejected after canonicalization"
+        );
+    }
+
+    #[test]
+    fn resolve_catalog_accepts_real_file_inside_config_dir() {
+        // 存在于 base 内的真实文件：canonical 校验通过后仍应接受
+        let temp = tempfile::tempdir().expect("tempdir");
+        let base_dir = temp.path().join("codex");
+        fs::create_dir_all(&base_dir).expect("create base");
+        let catalog_file = base_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+        fs::write(&catalog_file, r#"{"models":[]}"#).expect("write catalog");
+
+        let config_text = r#"model_catalog_json = "cc-switch-model-catalog.json"
+"#;
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
+        let resolved = result.expect("real file inside config dir should be accepted");
+        assert_eq!(
+            resolved.file_name().and_then(|n| n.to_str()),
+            Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
         );
     }
 

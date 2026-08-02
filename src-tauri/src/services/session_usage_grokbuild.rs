@@ -155,16 +155,17 @@ fn collect_files_named(root: &Path, name: &str, files: &mut Vec<PathBuf>, depth:
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        // 跟随符号链接前先做元数据检查：如果是 symlink 且指向目录，
-        // 只在当前深度容忍一次，避免循环。
+        // `entry.metadata()` 不跟随符号链接（不同于 `path.is_dir()`），这里据此
+        // **无条件跳过一切 symlink**：目录 symlink 不递归（避免循环），文件
+        // symlink 也不收集——同名文件若经 symlink 指向 sessions 根之外，会把用户
+        // 意料之外的内容当作会话日志读入。代价：把 sessions 目录整体做成 symlink
+        // 的用户会同步不到数据，所以跳过必须留日志，便于排查"用量数据静默缺失"。
         let metadata = entry.metadata();
-        let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-        let is_symlink = metadata.as_ref().map(|m| m.is_symlink()).unwrap_or(false);
-        if is_symlink {
-            // 对符号链接保持保守：不再递归，避免循环；同名文件本身也不应通过
-            // symlink 引入外部日志。
+        if metadata.as_ref().map(|m| m.is_symlink()).unwrap_or(false) {
+            log::info!("[GROK-SYNC] 跳过符号链接（不跟随）: {}", path.display());
             continue;
         }
+        let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
         if is_dir {
             collect_files_named(&path, name, files, depth + 1);
         } else if path.file_name().and_then(|n| n.to_str()) == Some(name) {
