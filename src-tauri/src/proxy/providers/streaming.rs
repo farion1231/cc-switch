@@ -1215,7 +1215,11 @@ mod tests {
                         == Some("text")
             })
             .collect();
-        assert_eq!(text_starts.len(), 1, "expected an injected empty text block");
+        assert_eq!(
+            text_starts.len(),
+            1,
+            "expected an injected empty text block"
+        );
         assert_eq!(
             text_starts[0]
                 .pointer("/content_block/text")

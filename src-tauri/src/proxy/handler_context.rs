@@ -177,8 +177,8 @@ impl RequestContext {
             } else if !current_up_has_routes {
                 // 没有选中有 routes 的 UP，才退到 models 匹配普通 UP
                 // （避免 CC Switch 代理的 models 匹配自身造成请求循环）
-                ModelRouter::match_model(&request_model, &enabled_providers, app_type_str).and_then(
-                    |matched_up| {
+                ModelRouter::match_model(&request_model, &enabled_providers, app_type_str)
+                    .and_then(|matched_up| {
                         let converted = match app_type_str {
                             "claude" => matched_up.to_claude_provider(),
                             "codex" => matched_up.to_codex_provider(),
@@ -195,10 +195,9 @@ impl RequestContext {
                             );
                         }
                         converted
-                    },
-                )
-                .map(|p| vec![p])
-                .unwrap_or_default()
+                    })
+                    .map(|p| vec![p])
+                    .unwrap_or_default()
             } else {
                 Vec::new()
             }
@@ -412,10 +411,7 @@ impl RequestContext {
     /// 是否为路由链：首个 provider 是路由目标（meta.provider_type == "cc_switch_route"）
     fn is_route_chain(&self) -> bool {
         self.providers.first().is_some_and(|p| {
-            p.meta
-                .as_ref()
-                .and_then(|m| m.provider_type.as_deref())
-                == Some("cc_switch_route")
+            p.meta.as_ref().and_then(|m| m.provider_type.as_deref()) == Some("cc_switch_route")
         })
     }
 
@@ -914,7 +910,8 @@ mod tests {
         let mut saw_r1 = false;
         let mut saw_r2 = false;
         for _ in 0..200 {
-            let result = find_matching_route("deepseek-v4-flash", &map, "up1", "claude", "test", None);
+            let result =
+                find_matching_route("deepseek-v4-flash", &map, "up1", "claude", "test", None);
             if result.first().expect("命中").name == "r1" {
                 saw_r1 = true;
             }
@@ -925,10 +922,7 @@ mod tests {
                 break;
             }
         }
-        assert!(
-            saw_r1 && saw_r2,
-            "同优先级应随机，两种路由都应被选中"
-        );
+        assert!(saw_r1 && saw_r2, "同优先级应随机，两种路由都应被选中");
     }
 
     #[test]
