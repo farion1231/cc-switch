@@ -92,10 +92,10 @@ const expectedChatPresets = new Map<
     },
   ],
   [
-    "BaiLing",
+    "Ant Ling",
     {
-      baseUrl: "https://api.tbox.cn/api/llm/v1",
-      contextWindows: { "Ling-2.6-1T": 262144 },
+      baseUrl: "https://api.ant-ling.com/v1",
+      contextWindows: { "Ling-3.0-flash": 262144, "Ring-2.6-1T": 262144 },
     },
   ],
   [
