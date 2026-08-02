@@ -197,6 +197,23 @@ pub fn qwen_tier_to_budget(tier: &str) -> u64 {
     }
 }
 
+/// Shared headroom clamp for every site that writes an Anthropic
+/// `thinking.budget_tokens`: Anthropic 400s unless `budget_tokens < max_tokens`
+/// (and requires `budget_tokens >= 1024` when thinking is on), and a budget
+/// that consumes nearly all of max_tokens leaves an effectively empty
+/// completion. Cap at half of max_tokens, floor at 1024, and never reach
+/// max_tokens itself.
+///
+/// Invariant: for `max_tokens >= 2` the result is always `< max_tokens`
+/// (possibly below the 1024 floor when max_tokens itself is tiny — such a
+/// request is already degenerate and upstream decides). Never returns 0.
+pub fn clamp_thinking_budget(budget: u64, max_tokens: u64) -> u64 {
+    budget
+        .min(max_tokens / 2)
+        .max(1024)
+        .min(max_tokens.saturating_sub(1).max(1))
+}
+
 /// Resolve the qwen ≥3.8 reasoning tier from an Anthropic-format request body.
 ///
 /// Tri-state: `None` means no thinking signal is present — the caller must not
@@ -237,6 +254,12 @@ pub fn qwen_reasoning_effort_from_anthropic_body(body: &Value) -> Option<&'stati
 /// `thinking` params (budget_tokens) to its internal tiers itself. Never
 /// injects a top-level `reasoning_effort` (not documented for Messages API).
 /// Non-qwen models are returned byte-identical.
+///
+/// The rewritten `thinking` object is mutated in place so any sibling fields
+/// survive, and its low-tier budget is clamped against the body's `max_tokens`
+/// (Anthropic 400s on `budget_tokens >= max_tokens`). An absent `max_tokens`
+/// leaves the raw low-tier budget — the body is malformed either way (Claude
+/// requires it), so upstream's own rejection is the correct signal.
 pub fn sanitize_anthropic_body_for_qwen_reasoning(mut body: Value) -> Value {
     let is_qwen = body
         .get("model")
@@ -247,7 +270,19 @@ pub fn sanitize_anthropic_body_for_qwen_reasoning(mut body: Value) -> Value {
     }
     let disabled = body.pointer("/thinking/type").and_then(|t| t.as_str()) == Some("disabled");
     if disabled {
-        body["thinking"] = json!({ "type": "enabled", "budget_tokens": qwen_tier_to_budget("low") });
+        let mut budget = qwen_tier_to_budget("low");
+        if let Some(max_tokens) = body.get("max_tokens").and_then(|v| v.as_u64()) {
+            budget = clamp_thinking_budget(budget, max_tokens);
+        }
+        // Mutate in place to preserve sibling fields on `thinking`
+        // (`disabled == true` implies thinking is an object; the fallback arm
+        // is defensive only).
+        if let Some(thinking) = body.get_mut("thinking") {
+            thinking["type"] = json!("enabled");
+            thinking["budget_tokens"] = json!(budget);
+        } else {
+            body["thinking"] = json!({ "type": "enabled", "budget_tokens": budget });
+        }
     }
     body
 }
@@ -259,7 +294,9 @@ pub fn sanitize_anthropic_body_for_qwen_reasoning(mut body: Value) -> Value {
 /// - `reasoning: null` → explicit disable intent on a thinking-only model →
 ///   `{"effort": "low"}`
 /// - `reasoning.effort` present → mapped through `map_effort_to_qwen_tier`
-///   (none/minimal→low, high/max→xhigh)
+///   (none/minimal→low, high/max→xhigh); only `effort` is mutated, sibling
+///   fields (e.g. `summary`, used by Codex to request reasoning-summary
+///   events) survive the rewrite
 /// - `reasoning` object without `effort` → untouched (vendor default)
 pub fn sanitize_responses_reasoning_for_qwen(body: &mut Value) {
     let is_qwen = body
@@ -269,15 +306,22 @@ pub fn sanitize_responses_reasoning_for_qwen(body: &mut Value) {
     if !is_qwen {
         return;
     }
-    let Some(reasoning) = body.get("reasoning") else {
+    let Some(reasoning) = body.get_mut("reasoning") else {
         return;
     };
     if reasoning.is_null() {
-        body["reasoning"] = json!({ "effort": "low" });
+        // null carries no siblings — a wholesale replace is fine.
+        *reasoning = json!({ "effort": "low" });
         return;
     }
-    if let Some(effort) = reasoning.get("effort").and_then(|v| v.as_str()) {
-        body["reasoning"] = json!({ "effort": map_effort_to_qwen_tier(effort) });
+    // Map into a &'static str first so the immutable borrow ends before the
+    // in-place write; mutating only `effort` preserves sibling fields.
+    let mapped = reasoning
+        .get("effort")
+        .and_then(|v| v.as_str())
+        .map(map_effort_to_qwen_tier);
+    if let Some(effort) = mapped {
+        reasoning["effort"] = json!(effort);
     }
 }
 
@@ -2451,5 +2495,92 @@ mod tests {
         let mut body = json!({"model": "qwen3.7-max", "reasoning": {"effort": "high"}});
         sanitize_responses_reasoning_for_qwen(&mut body);
         assert_eq!(body["reasoning"]["effort"], "high");
+    }
+
+    #[test]
+    fn test_sanitize_responses_reasoning_for_qwen_preserves_siblings() {
+        // Only `effort` is rewritten; siblings (e.g. `summary`, used by Codex
+        // to request reasoning-summary events) must survive.
+        let mut body = json!({
+            "model": "qwen3.8-max-preview",
+            "reasoning": {"effort": "high", "summary": "auto", "verbosity": "medium"}
+        });
+        sanitize_responses_reasoning_for_qwen(&mut body);
+        assert_eq!(body["reasoning"]["effort"], "xhigh");
+        assert_eq!(body["reasoning"]["summary"], "auto");
+        assert_eq!(body["reasoning"]["verbosity"], "medium");
+
+        // null reasoning still becomes exactly {"effort":"low"} (no siblings
+        // can exist on null).
+        let mut body = json!({"model": "qwen3.8-max-preview", "reasoning": null});
+        sanitize_responses_reasoning_for_qwen(&mut body);
+        assert_eq!(body["reasoning"], json!({"effort": "low"}));
+    }
+
+    #[test]
+    fn test_sanitize_anthropic_body_for_qwen_reasoning_clamps_to_max_tokens() {
+        // Anthropic 400s on budget_tokens >= max_tokens: a disabled→enabled
+        // rewrite must clamp the low-tier budget against the body's ceiling.
+        let body = json!({
+            "model": "qwen3.8-max-preview",
+            "max_tokens": 4096,
+            "thinking": {"type": "disabled"}
+        });
+        let result = sanitize_anthropic_body_for_qwen_reasoning(body);
+        assert_eq!(result["thinking"]["type"], "enabled");
+        assert_eq!(result["thinking"]["budget_tokens"], 2048); // 4096/2 ceiling
+
+        let body = json!({
+            "model": "qwen3.8-max-preview",
+            "max_tokens": 2048,
+            "thinking": {"type": "disabled"}
+        });
+        let result = sanitize_anthropic_body_for_qwen_reasoning(body);
+        assert_eq!(result["thinking"]["budget_tokens"], 1024); // 1024 floor
+
+        // max_tokens absent (malformed — Claude requires it) → raw low-tier
+        // budget, upstream's own rejection is the correct signal.
+        let body = json!({
+            "model": "qwen3.8-max-preview",
+            "thinking": {"type": "disabled"}
+        });
+        let result = sanitize_anthropic_body_for_qwen_reasoning(body);
+        assert_eq!(result["thinking"]["budget_tokens"], 4096);
+
+        // Sibling fields on `thinking` survive the in-place rewrite.
+        let body = json!({
+            "model": "qwen3.8-max-preview",
+            "max_tokens": 8192,
+            "thinking": {"type": "disabled", "display": "concise"}
+        });
+        let result = sanitize_anthropic_body_for_qwen_reasoning(body);
+        assert_eq!(result["thinking"]["type"], "enabled");
+        assert_eq!(result["thinking"]["budget_tokens"], 4096); // capped at 8192/2
+        assert_eq!(result["thinking"]["display"], "concise");
+    }
+
+    #[test]
+    fn test_clamp_thinking_budget() {
+        // Value table
+        assert_eq!(clamp_thinking_budget(262_144, 20_000), 10_000); // half ceiling
+        assert_eq!(clamp_thinking_budget(16_384, 8_192), 4_096);
+        assert_eq!(clamp_thinking_budget(4_096, 4_096), 2_048);
+        assert_eq!(clamp_thinking_budget(4_096, 2_048), 1_024); // floor
+        assert_eq!(clamp_thinking_budget(4_096, 1_000), 999); // strict < max_tokens wins over floor
+        assert_eq!(clamp_thinking_budget(4_096, 2), 1); // degenerate, never 0
+        assert_eq!(clamp_thinking_budget(4_096, 0), 1);
+        assert_eq!(clamp_thinking_budget(0, 0), 1);
+
+        // Invariant: for max_tokens >= 2 the result is always < max_tokens.
+        for max_tokens in [2u64, 3, 999, 1_000, 2_048, 4_096, 8_192, 20_000, 1_000_000] {
+            for budget in [0u64, 1, 1_024, 4_096, 16_384, 262_144] {
+                let out = clamp_thinking_budget(budget, max_tokens);
+                assert!(out > 0, "budget={budget} max_tokens={max_tokens} → {out}");
+                assert!(
+                    out < max_tokens,
+                    "budget={budget} max_tokens={max_tokens} → {out}"
+                );
+            }
+        }
     }
 }

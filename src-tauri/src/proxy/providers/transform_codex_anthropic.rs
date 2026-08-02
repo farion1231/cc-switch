@@ -333,11 +333,7 @@ pub fn responses_request_to_anthropic(
             // Headroom: Anthropic requires max_tokens > budget_tokens. Never
             // disable thinking (thinking-only model) — a small max_output_tokens
             // silently downgrades the tier the gateway derives from the budget.
-            let ceiling = max_tokens / 2;
-            thinking_budget = budget
-                .min(ceiling)
-                .max(1024)
-                .min(max_tokens.saturating_sub(1).max(1));
+            thinking_budget = super::transform::clamp_thinking_budget(budget, max_tokens);
             thinking_enabled = true;
         }
     } else if !thinking_history_is_valid {
@@ -426,9 +422,17 @@ pub fn responses_request_to_anthropic(
                 if is_qwen_reasoning {
                     // qwen ≥3.8 cannot disable thinking (400s); degrade to the
                     // low tier and keep the caller's forced tool constraint.
+                    // The budget must be clamped against max_tokens headroom:
+                    // Anthropic 400s on budget_tokens >= max_tokens, so a small
+                    // max_output_tokens (≤ 4096) must not ship the raw low-tier
+                    // budget.
+                    let budget = super::transform::clamp_thinking_budget(
+                        super::transform::qwen_tier_to_budget("low"),
+                        max_tokens,
+                    );
                     result["thinking"] = json!({
                         "type": "enabled",
-                        "budget_tokens": super::transform::qwen_tier_to_budget("low")
+                        "budget_tokens": budget
                     });
                 } else if cannot_disable_thinking {
                     return Err(ProxyError::InvalidRequest(
@@ -2236,6 +2240,47 @@ mod tests {
         // 仅思考模型：降级到 low 档而不是关闭 thinking；保留强制 tool_choice。
         assert_eq!(result["thinking"]["type"], "enabled");
         assert_eq!(result["thinking"]["budget_tokens"], 4096);
+        assert_eq!(result["tool_choice"], json!({ "type": "any" }));
+    }
+
+    #[test]
+    fn test_qwen38_forced_tool_choice_clamps_budget_below_small_max_tokens() {
+        // 回归审核意见：低档预算 4096 不得裸写——max_output_tokens ≤ 4096 时
+        // budget_tokens >= max_tokens 会违反 Anthropic 约束（上游 400）。
+        let input = json!({
+            "model": "qwen3.8-max-preview",
+            "max_output_tokens": 4096,
+            "reasoning": { "effort": "high" },
+            "tools": [{ "type": "function", "name": "x", "parameters": {"type": "object"} }],
+            "tool_choice": "required",
+            "input": [
+                { "role": "user", "content": [{ "type": "input_text", "text": "hi" }] }
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        assert_eq!(result["thinking"]["type"], "enabled");
+        assert_eq!(result["thinking"]["budget_tokens"], 2048); // ceiling 4096/2
+        assert!(result["thinking"]["budget_tokens"].as_u64().unwrap() < 4096);
+        assert_eq!(result["tool_choice"], json!({ "type": "any" }));
+    }
+
+    #[test]
+    fn test_qwen38_forced_tool_choice_floor_budget_at_tiny_max_tokens() {
+        // max_output_tokens=2048：ceiling 1024 触及 Anthropic 下限，budget 兜底
+        // 在 1024（仍严格小于 max_tokens）。
+        let input = json!({
+            "model": "qwen3.8-max-preview",
+            "max_output_tokens": 2048,
+            "reasoning": { "effort": "high" },
+            "tools": [{ "type": "function", "name": "x", "parameters": {"type": "object"} }],
+            "tool_choice": "required",
+            "input": [
+                { "role": "user", "content": [{ "type": "input_text", "text": "hi" }] }
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        assert_eq!(result["thinking"]["type"], "enabled");
+        assert_eq!(result["thinking"]["budget_tokens"], 1024);
         assert_eq!(result["tool_choice"], json!({ "type": "any" }));
     }
 

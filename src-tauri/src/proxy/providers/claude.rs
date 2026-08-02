@@ -1804,7 +1804,9 @@ mod tests {
             "env": { "ANTHROPIC_BASE_URL": "https://dashscope.aliyuncs.com/apps/anthropic" }
         }));
         // qwen ≥3.8 是仅思考模型：thinking disabled 会被供应商拒绝，透传路径
-        // 必须改写为 enabled + low 档预算，而不是原样转发。
+        // 必须改写为 enabled + low 档预算，而不是原样转发。低档预算 4096 还要
+        // 对 max_tokens 做 headroom 钳制（Anthropic 400s on budget >= max_tokens）：
+        // 此处 max_tokens=128 ⇒ budget 钳到 127。
         let body = json!({
             "model": "qwen3.8-max-preview",
             "thinking": { "type": "disabled" },
@@ -1815,7 +1817,8 @@ mod tests {
             transform_claude_request_for_api_format(body, &provider, "anthropic", None, None)
                 .unwrap();
         assert_eq!(transformed["thinking"]["type"], "enabled");
-        assert_eq!(transformed["thinking"]["budget_tokens"], 4096);
+        assert_eq!(transformed["thinking"]["budget_tokens"], 127);
+        assert!(transformed["thinking"]["budget_tokens"].as_u64().unwrap() < 128);
         assert!(transformed.get("reasoning_effort").is_none());
     }
 

@@ -486,47 +486,63 @@ fn infer_codex_chat_reasoning_config(
     None
 }
 
+/// 聚合 / 托管平台类型：reasoning 接口由平台而非模型厂商定义。chat 路径的配置推断
+/// （`infer_aggregator_platform_config`）与 native Responses 直通路径的 vendor
+/// sanitizer gating（forwarder 的 `sanitize_native_responses_vendor_reasoning`）
+/// 共用这一检测，保证两条路径对"平台优先"的判定一致。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AggregatorPlatform {
+    OpenRouter,
+    SiliconFlow,
+}
+
+/// 平台优先检测：仅以平台标识（name / base_url）判定，绝不掺入 model 名——
+/// model 名属于模型厂商，会把托管平台（如 OpenRouter 托管 `qwen/qwen3.8-*`）
+/// 误判成模型官方接口。大小写不敏感。
+pub fn detect_aggregator_platform(name: &str, base_url: &str) -> Option<AggregatorPlatform> {
+    let platform = format!("{name} {base_url}").to_ascii_lowercase();
+    if platform.contains("openrouter") {
+        return Some(AggregatorPlatform::OpenRouter);
+    }
+    if platform.contains("siliconflow") {
+        return Some(AggregatorPlatform::SiliconFlow);
+    }
+    None
+}
+
 /// 聚合 / 托管平台的 reasoning 接口由平台决定：同一个模型在不同平台参数可能完全不同
 /// （DeepSeek 官方用 `thinking:{type}`、SiliconFlow 用 `enable_thinking`、
-/// OpenRouter 用原生 `reasoning:{effort}` 对象）。仅以平台标识（name / base_url）判定，
-/// 绝不掺入 model 名——model 名属于模型厂商，会把托管平台误判成模型官方接口。
+/// OpenRouter 用原生 `reasoning:{effort}` 对象）。
 fn infer_aggregator_platform_config(
     name: &str,
     base_url: &str,
 ) -> Option<CodexChatReasoningConfig> {
-    let platform = format!("{name} {base_url}");
-
-    // OpenRouter：用原生归一化对象 `reasoning: { effort }`（由 OpenRouter 翻译成各底层
-    // 模型的正确推理参数，比顶层 OpenAI 别名 reasoning_effort 覆盖面更全）。effort 走
-    // "openrouter" 值映射：枚举为 xhigh|high|medium|low|minimal，无 max——max 会触发
-    // `400 reasoning_effort: Invalid option`（见 openclaw#77350），故钳到 xhigh。
-    // 安全降级：不发 `thinking:{type}`（OpenRouter 不认该字段），避免误配导致请求被拒。
-    if platform.contains("openrouter") {
-        return Some(CodexChatReasoningConfig {
+    match detect_aggregator_platform(name, base_url)? {
+        // OpenRouter：用原生归一化对象 `reasoning: { effort }`（由 OpenRouter 翻译成各底层
+        // 模型的正确推理参数，比顶层 OpenAI 别名 reasoning_effort 覆盖面更全）。effort 走
+        // "openrouter" 值映射：枚举为 xhigh|high|medium|low|minimal，无 max——max 会触发
+        // `400 reasoning_effort: Invalid option`（见 openclaw#77350），故钳到 xhigh。
+        // 安全降级：不发 `thinking:{type}`（OpenRouter 不认该字段），避免误配导致请求被拒。
+        AggregatorPlatform::OpenRouter => Some(CodexChatReasoningConfig {
             supports_thinking: Some(false),
             supports_effort: Some(true),
             thinking_param: Some("none".to_string()),
             effort_param: Some("reasoning.effort".to_string()),
             effort_value_mode: Some("openrouter".to_string()),
             output_format: Some("auto".to_string()),
-        });
-    }
-
-    // SiliconFlow：平台级统一 `enable_thinking`，思维回传 reasoning_content。
-    // 安全降级：不按 reasoning_effort 发 effort（平台用 thinking_budget 控制深度，
-    // 发 reasoning_effort 反而可能不被接受）。
-    if platform.contains("siliconflow") {
-        return Some(CodexChatReasoningConfig {
+        }),
+        // SiliconFlow：平台级统一 `enable_thinking`，思维回传 reasoning_content。
+        // 安全降级：不按 reasoning_effort 发 effort（平台用 thinking_budget 控制深度，
+        // 发 reasoning_effort 反而可能不被接受）。
+        AggregatorPlatform::SiliconFlow => Some(CodexChatReasoningConfig {
             supports_thinking: Some(true),
             supports_effort: Some(false),
             thinking_param: Some("enable_thinking".to_string()),
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
             output_format: Some("reasoning_content".to_string()),
-        });
+        }),
     }
-
-    None
 }
 
 fn is_chat_wire_api(value: &str) -> bool {
@@ -1557,6 +1573,38 @@ wire_api = "chat"
         assert_eq!(config.thinking_param.as_deref(), Some("enable_thinking"));
         assert_eq!(config.supports_effort, Some(false));
         assert_eq!(config.output_format.as_deref(), Some("reasoning_content"));
+    }
+
+    #[test]
+    fn detect_aggregator_platform_matches_name_or_url_case_insensitively() {
+        // base_url 命中
+        assert_eq!(
+            detect_aggregator_platform("anything", "https://openrouter.ai/api/v1"),
+            Some(AggregatorPlatform::OpenRouter)
+        );
+        // 仅 name 命中（自建镜像用中性 URL，但供应商名表明平台）
+        assert_eq!(
+            detect_aggregator_platform("My OpenRouter Mirror", "https://gw.internal.example/v1"),
+            Some(AggregatorPlatform::OpenRouter)
+        );
+        // 大小写不敏感
+        assert_eq!(
+            detect_aggregator_platform("UPPER", "https://OPENROUTER.AI/api/v1"),
+            Some(AggregatorPlatform::OpenRouter)
+        );
+        assert_eq!(
+            detect_aggregator_platform("sf", "https://api.siliconflow.cn/v1"),
+            Some(AggregatorPlatform::SiliconFlow)
+        );
+        // 厂商直连网关不命中
+        assert_eq!(
+            detect_aggregator_platform(
+                "DashScope",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            ),
+            None
+        );
+        assert_eq!(detect_aggregator_platform("Bailian", ""), None);
     }
 
     #[test]

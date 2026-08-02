@@ -1526,11 +1526,15 @@ impl RequestForwarder {
         // convert disable signals to "low" — qwen ≥3.8 is thinking-only and
         // errors on any "thinking off" parameter. Absent reasoning → untouched
         // (vendor default xhigh). Non-qwen bodies pass through byte-identical.
+        // Skipped entirely for aggregator platforms (OpenRouter/SiliconFlow):
+        // their hosted models use the platform's own reasoning interface, so a
+        // platform-native `high` must not be escalated to the qwen-only
+        // `xhigh` tier (mirrors the chat path's platform-first detection).
         if matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
         {
-            super::providers::transform::sanitize_responses_reasoning_for_qwen(&mut request_body);
+            sanitize_native_responses_vendor_reasoning(provider, &base_url, &mut request_body);
         }
 
         // Native Responses passthrough to a strict third-party gateway (xAI):
@@ -3479,6 +3483,23 @@ fn prepare_upstream_request_body(request_body: Value) -> Value {
     canonicalize_value(filter_private_params_with_whitelist(request_body, &[]))
 }
 
+/// Native Responses 直通路径的 vendor reasoning sanitizer 入口：仅对厂商直连
+/// 网关应用 qwen ≥3.8 思考强度改写。聚合 / 托管平台（OpenRouter、SiliconFlow）
+/// 的 reasoning 接口由平台自身定义——与 chat 路径 `infer_aggregator_platform_config`
+/// 的平台优先检测对等：平台命中即整体跳过，托管的 qwen 模型保持平台原生 effort
+/// 语义（例如 OpenRouter 的 `high` 不得被升级成 qwen 专属的 `xhigh`）。
+/// 非聚合器沿用模型名规则（中性网关 + qwen 模型仍会改写，与 chat 路径一致）。
+fn sanitize_native_responses_vendor_reasoning(
+    provider: &Provider,
+    base_url: &str,
+    body: &mut Value,
+) {
+    if super::providers::detect_aggregator_platform(&provider.name, base_url).is_some() {
+        return;
+    }
+    super::providers::transform::sanitize_responses_reasoning_for_qwen(body);
+}
+
 fn log_prompt_cache_trace(
     app_type: &AppType,
     provider: &Provider,
@@ -5006,5 +5027,72 @@ mod tests {
         });
         let body = body_with_image("any-model");
         assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
+    }
+
+    #[test]
+    fn native_responses_vendor_reasoning_sanitized_for_direct_gateway() {
+        // 厂商直连（DashScope）：qwen3.8 的 effort 走 vendor 档位映射，
+        // 且 reasoning 的兄弟字段（summary）保留。
+        let mut provider = test_provider_with_type(None);
+        provider.name = "DashScope".to_string();
+        let mut body = json!({
+            "model": "qwen3.8-max-preview",
+            "reasoning": {"effort": "high", "summary": "auto"}
+        });
+        sanitize_native_responses_vendor_reasoning(
+            &provider,
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            &mut body,
+        );
+        assert_eq!(body["reasoning"]["effort"], "xhigh");
+        assert_eq!(body["reasoning"]["summary"], "auto");
+    }
+
+    #[test]
+    fn native_responses_vendor_reasoning_skipped_for_openrouter_hosted_model() {
+        // 审核意见场景：OpenRouter 托管 qwen/qwen3.8-* 时，平台原生 high
+        // 不得被升级成 qwen 专属 xhigh——聚合器整体跳过 vendor sanitizer。
+        let provider = test_provider_with_type(None); // 中性 name "Provider 1"
+        let mut body = json!({
+            "model": "qwen/qwen3.8-max-preview",
+            "reasoning": {"effort": "high"}
+        });
+        sanitize_native_responses_vendor_reasoning(
+            &provider,
+            "https://openrouter.ai/api/v1",
+            &mut body,
+        );
+        assert_eq!(body["reasoning"]["effort"], "high");
+
+        // 中性 URL 但供应商名表明平台 —— 同样跳过。
+        let mut provider = test_provider_with_type(None);
+        provider.name = "OpenRouter".to_string();
+        let mut body = json!({
+            "model": "qwen/qwen3.8-max-preview",
+            "reasoning": {"effort": "high"}
+        });
+        sanitize_native_responses_vendor_reasoning(
+            &provider,
+            "https://gw.internal.example/v1",
+            &mut body,
+        );
+        assert_eq!(body["reasoning"]["effort"], "high");
+    }
+
+    #[test]
+    fn native_responses_vendor_reasoning_skipped_for_siliconflow_hosted_model() {
+        // SiliconFlow 上的 qwen3.8：关闭信号 none 不得被改写成 low，
+        // 平台自身的 enable_thinking 语义优先。
+        let provider = test_provider_with_type(None);
+        let mut body = json!({
+            "model": "qwen/qwen3.8-max-preview",
+            "reasoning": {"effort": "none"}
+        });
+        sanitize_native_responses_vendor_reasoning(
+            &provider,
+            "https://api.siliconflow.cn/v1",
+            &mut body,
+        );
+        assert_eq!(body["reasoning"]["effort"], "none");
     }
 }
