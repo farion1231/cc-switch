@@ -29,6 +29,7 @@ import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
 import { XaiOAuthSection } from "./XaiOAuthSection";
 import {
+  fetchCodexOfficialModels,
   fetchModelsForConfig,
   fetchXaiOauthModels,
   showFetchModelsError,
@@ -183,14 +184,12 @@ type CodexCustomModelRow = CodexCustomModel & { rowId: string };
 
 // Codex 桌面端只认官方模型名（gpt-5.x 等）：自定义模型必须用这些名字
 // 作为「模型名称」展示，实际请求再映射回目标供应商的上游模型。
+// 这是动态获取官方模型失败时的回退快照，需随官方模型上下线手动维护。
 const CODEX_OFFICIAL_MODEL_NAMES = [
-  "gpt-5.6-sol",
   "gpt-5.6-terra",
   "gpt-5.6-luna",
   "gpt-5.5",
-  "gpt-5.4",
   "gpt-5.4-mini",
-  "gpt-5.3-codex-spark",
   "gpt-5.2",
   "codex-auto-review",
 ] as const;
@@ -351,6 +350,28 @@ export function CodexFormFields({
       setAdvancedExpanded(true);
     }
   }, [hasAnyAdvancedValue, isXaiOauthPreset]);
+
+  // 官方 Codex 自定义模型的插槽下拉：优先从官方动态获取当前模型，失败（未登录/
+  // 请求异常）时回退到内置快照列表，避免绑定已下线的插槽导致模型在 Codex 里不显示。
+  const [officialModelSlugs, setOfficialModelSlugs] = useState<string[]>([]);
+  useEffect(() => {
+    if (category !== "official") {
+      return;
+    }
+    let cancelled = false;
+    fetchCodexOfficialModels()
+      .then((slugs) => {
+        if (!cancelled && slugs.length > 0) {
+          setOfficialModelSlugs(slugs);
+        }
+      })
+      .catch(() => {
+        // 保持空数组，回退到 CODEX_OFFICIAL_MODEL_NAMES
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [category]);
 
   const [catalogRows, setCatalogRows] = useState<CodexCatalogRow[]>(() =>
     catalogModels.map((m) => createCatalogRow(m)),
@@ -1018,6 +1039,11 @@ export function CodexFormFields({
                             })}
                           </SelectItem>
                           {(() => {
+                            // 插槽基础列表：优先官方动态获取，失败回退内置快照。
+                            const slotBase =
+                              officialModelSlugs.length > 0
+                                ? officialModelSlugs
+                                : CODEX_OFFICIAL_MODEL_NAMES;
                             // 已被其他行选中的插槽从本行下拉中过滤掉，避免两个模型
                             // 占用同一插槽（models_cache 按 slug 去重，只会显示一个）。
                             // 当前行已选的值始终保留，避免值不在选项里。
@@ -1027,10 +1053,9 @@ export function CodexFormFields({
                                 .map((r) => r.model)
                                 .filter(Boolean),
                             );
-                            const slotOptions: string[] =
-                              CODEX_OFFICIAL_MODEL_NAMES.filter(
-                                (m) => !usedElsewhere.has(m),
-                              );
+                            const slotOptions: string[] = slotBase.filter(
+                              (m) => !usedElsewhere.has(m),
+                            );
                             if (row.model && !slotOptions.includes(row.model)) {
                               slotOptions.push(row.model);
                             }

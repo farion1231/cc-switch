@@ -188,6 +188,18 @@ pub fn get_codex_auth_path() -> PathBuf {
     get_codex_config_dir().join("auth.json")
 }
 
+/// 读取 `auth.json` 里的 ChatGPT `access_token`，用于拉取官方 Codex 模型列表。
+pub fn read_codex_auth_access_token() -> Option<String> {
+    let value: Value = read_json_file(&get_codex_auth_path()).ok()?;
+    value
+        .get("tokens")?
+        .get("access_token")?
+        .as_str()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+}
+
 /// 获取 Codex config.toml 路径
 pub fn get_codex_config_path() -> PathBuf {
     get_codex_config_dir().join("config.toml")

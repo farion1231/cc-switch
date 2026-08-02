@@ -42,6 +42,34 @@ pub async fn fetch_models_with_token(
     Ok(parse_models(value))
 }
 
+/// 使用 ChatGPT 登录 token（auth.json）拉取官方 Codex 模型列表。
+/// 与托管 OAuth 账号不同，这里没有 `chatgpt-account-id` 头。
+pub async fn fetch_official_models_with_token(token: &str) -> Result<Vec<FetchedModel>, String> {
+    let client = crate::proxy::http_client::get();
+    let response = client
+        .get(CODEX_OAUTH_MODELS_URL)
+        .query(&[("client_version", CODEX_OAUTH_CLIENT_VERSION)])
+        .header("Authorization", format!("Bearer {token}"))
+        .header("originator", "cc-switch")
+        .timeout(Duration::from_secs(CODEX_OAUTH_FETCH_TIMEOUT_SECS))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {e}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = truncate_body(response.text().await.unwrap_or_default());
+        return Err(format!("HTTP {status}: {body}"));
+    }
+
+    let value: Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {e}"))?;
+
+    Ok(parse_models(value))
+}
+
 fn parse_models(value: Value) -> Vec<FetchedModel> {
     let entries = value
         .get("data")
