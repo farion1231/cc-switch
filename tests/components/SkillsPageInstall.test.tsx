@@ -18,6 +18,7 @@ import type {
 const installMutateAsyncMock = vi.fn();
 let discoverableSkillsMock: DiscoverableSkill[] = [];
 let skillReposMock: SkillRepo[] = [];
+let skillReposLoadingMock = false;
 const refetchDiscoverableMock = vi.fn();
 
 // Stable cache so repeated renders see referentially-equal data.
@@ -75,6 +76,7 @@ vi.mock("@/hooks/useSkills", () => ({
   }),
   useSkillRepos: () => ({
     data: skillReposMock,
+    isLoading: skillReposLoadingMock,
     refetch: vi.fn(),
   }),
   useAddSkillRepo: () => ({
@@ -132,6 +134,7 @@ describe("SkillsPage - skills.sh install (regression)", () => {
     installMutateAsyncMock.mockResolvedValue({});
     discoverableSkillsMock = [];
     skillReposMock = [];
+    skillReposLoadingMock = false;
     refetchDiscoverableMock.mockReset();
     searchCache.clear();
   });
@@ -301,6 +304,17 @@ describe("SkillsPage - skills.sh install (regression)", () => {
     ).toBeVisible();
   });
 
+  it("keeps cached repository results while repositories are loading", async () => {
+    discoverableSkillsMock = [makeDiscoverableSkill()];
+    skillReposLoadingMock = true;
+    const onSourceChange = vi.fn();
+
+    render(<SkillsPage initialApp="claude" onSourceChange={onSourceChange} />);
+
+    expect(screen.getByText("Repo Skill")).toBeInTheDocument();
+    await waitFor(() => expect(onSourceChange).toHaveBeenCalledWith("repos"));
+  });
+
   it("can switch back to repository results after discoverable skills refresh", async () => {
     const onSourceChange = vi.fn();
     const user = userEvent.setup();
@@ -335,5 +349,23 @@ describe("SkillsPage - skills.sh install (regression)", () => {
     expect(
       getSkillsPageHeaderActions("skillssh").map((action) => action.key),
     ).toEqual(["manage-repos"]);
+  });
+
+  it("renders large cached repository results in batches", async () => {
+    skillReposMock = [makeSkillRepo()];
+    discoverableSkillsMock = Array.from({ length: 60 }, (_, index) =>
+      makeDiscoverableSkill({
+        key: `skill-${index}:owner-a:repo-a`,
+        name: `Skill ${index}`,
+        directory: `skill-${index}`,
+      }),
+    );
+
+    render(<SkillsPage initialApp="claude" />);
+
+    expect(screen.getAllByText(/^Skill \d+$/)).toHaveLength(48);
+    await waitFor(() =>
+      expect(screen.getAllByText(/^Skill \d+$/)).toHaveLength(60),
+    );
   });
 });
