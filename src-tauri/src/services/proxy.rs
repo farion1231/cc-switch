@@ -2944,7 +2944,7 @@ impl ProxyService {
     }
 
     fn write_codex_live_verbatim(&self, config: &Value) -> Result<(), String> {
-        use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
+        use crate::codex_config::get_codex_auth_path;
 
         let auth = config.get("auth");
         let config_str = config.get("config").and_then(|v| v.as_str());
@@ -2986,8 +2986,7 @@ impl ProxyService {
                     // Codex login. This is especially important when takeover
                     // switches from an API-key-backed official session to the
                     // built-in empty `codex-official` seed.
-                    let config_path = get_codex_config_path();
-                    crate::config::write_text_file(&config_path, cfg)
+                    crate::codex_config::write_codex_live_config_atomic(Some(cfg))
                         .map_err(|e| format!("写入 Codex config 失败: {e}"))?;
                 } else {
                     crate::codex_config::write_codex_live_atomic(auth, Some(cfg))
@@ -3000,8 +2999,7 @@ impl ProxyService {
                     .map_err(|e| format!("写入 Codex auth 失败: {e}"))?;
             }
             (None, Some(cfg)) => {
-                let config_path = get_codex_config_path();
-                crate::config::write_text_file(&config_path, cfg)
+                crate::codex_config::write_codex_live_config_atomic(Some(cfg))
                     .map_err(|e| format!("写入 Codex config 失败: {e}"))?;
             }
             (None, None) => {}
@@ -4244,6 +4242,38 @@ wire_api = "responses"
             crate::config::read_json_file(&crate::codex_config::get_codex_auth_path())
                 .expect("read auth");
         assert_eq!(live_auth, auth);
+    }
+
+    #[test]
+    #[serial]
+    fn codex_verbatim_restore_preserves_subagent_defaults_without_auth() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        crate::codex_subagents::save_settings(
+            Some("gpt-5.6-sol".to_string()),
+            Some("ultra".to_string()),
+        )
+        .expect("save subagent defaults");
+        let service = ProxyService::new(Arc::new(Database::memory().expect("init db")));
+
+        for snapshot in [
+            json!({
+                "auth": {},
+                "config": "model = \"gpt-5.4-mini\"\n"
+            }),
+            json!({
+                "config": "model = \"gpt-5.4\"\n"
+            }),
+        ] {
+            service
+                .write_codex_live_verbatim(&snapshot)
+                .expect("restore Codex snapshot");
+
+            let live_config =
+                crate::codex_config::read_codex_config_text().expect("read restored Codex config");
+            assert!(live_config.contains("default_subagent_model = \"gpt-5.6-sol\""));
+            assert!(live_config.contains("default_subagent_reasoning_effort = \"ultra\""));
+        }
     }
 
     #[tokio::test]

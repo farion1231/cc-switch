@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use toml_edit::DocumentMut;
 
-use crate::config::{get_app_config_dir, read_json_file, write_json_file};
+use crate::config::{
+    atomic_write, delete_file, get_app_config_dir, read_json_file, write_json_file,
+};
 use crate::error::AppError;
 
 const SETTINGS_FILE_NAME: &str = "codex-subagent-settings.json";
@@ -211,18 +213,93 @@ pub fn save_settings(
     reasoning_effort: Option<String>,
 ) -> Result<CodexSubagentSettingsView, AppError> {
     let settings = normalize_settings(model, reasoning_effort)?;
-    write_json_file(&settings_path(), &settings)?;
+    let sidecar_path = settings_path();
+    let previous_sidecar = if sidecar_path.exists() {
+        Some(fs::read(&sidecar_path).map_err(|error| AppError::io(&sidecar_path, error))?)
+    } else {
+        None
+    };
 
-    let config_text = crate::codex_config::read_codex_config_text()?;
-    let updated = apply_settings_to_config_text(&config_text, &settings)?;
-    crate::codex_config::write_codex_live_config_atomic(Some(&updated))?;
+    write_json_file(&sidecar_path, &settings)?;
+
+    let update_result = (|| {
+        let config_text = crate::codex_config::read_codex_config_text()?;
+        let updated = apply_settings_to_config_text(&config_text, &settings)?;
+        crate::codex_config::write_codex_live_config_atomic(Some(&updated))
+    })();
+
+    if let Err(error) = update_result {
+        let rollback_result = match previous_sidecar {
+            Some(contents) => atomic_write(&sidecar_path, &contents),
+            None => delete_file(&sidecar_path),
+        };
+
+        if let Err(rollback_error) = rollback_result {
+            return Err(AppError::Config(format!(
+                "Failed to update Codex subagent settings: {error}; failed to restore the previous settings sidecar: {rollback_error}"
+            )));
+        }
+
+        return Err(error);
+    }
 
     get_settings_view()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_settings_to_config_text, normalize_settings, CodexSubagentSettings};
+    use super::{
+        apply_settings_to_config_text, normalize_settings, read_persisted_settings, save_settings,
+        settings_path, CodexSubagentSettings,
+    };
+    use serial_test::serial;
+    use std::env;
+    use tempfile::TempDir;
+
+    struct TempHome {
+        #[allow(dead_code)]
+        dir: TempDir,
+        original_home: Option<String>,
+        original_userprofile: Option<String>,
+        original_test_home: Option<String>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = TempDir::new().expect("failed to create temp home");
+            let original_home = env::var("HOME").ok();
+            let original_userprofile = env::var("USERPROFILE").ok();
+            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
+
+            env::set_var("HOME", dir.path());
+            env::set_var("USERPROFILE", dir.path());
+            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+
+            Self {
+                dir,
+                original_home,
+                original_userprofile,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.original_home {
+                Some(value) => env::set_var("HOME", value),
+                None => env::remove_var("HOME"),
+            }
+            match &self.original_userprofile {
+                Some(value) => env::set_var("USERPROFILE", value),
+                None => env::remove_var("USERPROFILE"),
+            }
+            match &self.original_test_home {
+                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
 
     #[test]
     fn writes_subagent_defaults_without_touching_other_agents_fields() {
@@ -273,5 +350,28 @@ mod tests {
 
         assert!(output.contains("[agents]"));
         assert!(output.contains("default_subagent_model = \"gpt-5.6-terra\""));
+    }
+
+    #[test]
+    #[serial]
+    fn save_settings_restores_previous_sidecar_when_config_update_fails() {
+        let _home = TempHome::new();
+        let previous = CodexSubagentSettings {
+            model: Some("gpt-5.6-sol".to_string()),
+            reasoning_effort: Some("high".to_string()),
+        };
+        crate::config::write_json_file(&settings_path(), &previous)
+            .expect("seed existing settings sidecar");
+        crate::config::write_text_file(
+            &crate::codex_config::get_codex_config_path(),
+            "[agents\ndefault_subagent_model = \"broken\"\n",
+        )
+        .expect("seed malformed config");
+
+        let error = save_settings(Some("gpt-5.6-terra".to_string()), Some("ultra".to_string()))
+            .expect_err("malformed config should reject the update");
+
+        assert!(error.to_string().contains("TOML"));
+        assert_eq!(read_persisted_settings().unwrap(), Some(previous));
     }
 }
