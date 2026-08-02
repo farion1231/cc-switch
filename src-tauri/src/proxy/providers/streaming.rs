@@ -170,6 +170,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         // 截断（连接中断、从未给任何 finish_reason）不会置位。自然流结束时据此区分
         // 该补合成 end_turn（商汤场景，避免客户端判不完整而重试）还是保持不伪装成功。
         let mut saw_any_finish_reason = false;
+        let mut has_emitted_text = false;
         let mut latest_usage: Option<Value> = None;
         let mut current_non_tool_block_type: Option<&'static str> = None;
         let mut current_non_tool_block_index: Option<u32> = None;
@@ -291,6 +292,36 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                             yield Ok(Bytes::from(sse_data));
                                         }
                                         open_tool_block_indices.clear();
+                                    }
+
+                                    // 兜底：只有 thinking 块而无文本时注入空文本块（与 finish_reason 分支一致）。
+                                    if has_sent_message_start
+                                        && !has_emitted_text
+                                        && tool_blocks_by_index.is_empty()
+                                    {
+                                        let index = next_content_index;
+                                        next_content_index += 1;
+                                        let event = json!({
+                                            "type": "content_block_start",
+                                            "index": index,
+                                            "content_block": {
+                                                "type": "text",
+                                                "text": ""
+                                            }
+                                        });
+                                        yield Ok(Bytes::from(format!(
+                                            "event: content_block_start\ndata: {}\n\n",
+                                            serde_json::to_string(&event).unwrap_or_default()
+                                        )));
+                                        let stop_event = json!({
+                                            "type": "content_block_stop",
+                                            "index": index
+                                        });
+                                        yield Ok(Bytes::from(format!(
+                                            "event: content_block_stop\ndata: {}\n\n",
+                                            serde_json::to_string(&stop_event).unwrap_or_default()
+                                        )));
+                                        has_emitted_text = true;
                                     }
 
                                     // 兜底：消息已开始但从未收到有效 finish_reason 时，合成一个
@@ -435,6 +466,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                         // 处理文本内容
                                         if let Some(content) = &choice.delta.content {
                                             if !content.is_empty() {
+                                                has_emitted_text = true;
                                                 if current_non_tool_block_type != Some("text") {
                                                     if let Some(index) = current_non_tool_block_index.take() {
                                                         let event = json!({
@@ -676,6 +708,36 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                             }
                                             current_non_tool_block_type = None;
 
+                                            // 流只产生了 thinking 块而无任何文本内容时（如思考模型在
+                                            // max_tokens 极低时只输出思考），注入一个空文本块，让客户端
+                                            // 收到完整的 assistant 消息而不会判定不完整后重试。已有文本或
+                                            // 有工具调用时无需注入。
+                                            if !has_emitted_text && tool_blocks_by_index.is_empty() {
+                                                let index = next_content_index;
+                                                next_content_index += 1;
+                                                let event = json!({
+                                                    "type": "content_block_start",
+                                                    "index": index,
+                                                    "content_block": {
+                                                        "type": "text",
+                                                        "text": ""
+                                                    }
+                                                });
+                                                yield Ok(Bytes::from(format!(
+                                                    "event: content_block_start\ndata: {}\n\n",
+                                                    serde_json::to_string(&event).unwrap_or_default()
+                                                )));
+                                                let stop_event = json!({
+                                                    "type": "content_block_stop",
+                                                    "index": index
+                                                });
+                                                yield Ok(Bytes::from(format!(
+                                                    "event: content_block_stop\ndata: {}\n\n",
+                                                    serde_json::to_string(&stop_event).unwrap_or_default()
+                                                )));
+                                                has_emitted_text = true;
+                                            }
+
                                             // Late start for blocks that accumulated args before id/name arrived.
                                             let mut late_tool_starts: Vec<(u32, String, String, String)> =
                                                 Vec::new();
@@ -829,6 +891,31 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                         yield Ok(Bytes::from(sse_data));
                     }
                     open_tool_block_indices.clear();
+                }
+
+                // 与 finish_reason 分支一致的兜底：只有 thinking 块而无文本时注入空文本块。
+                if !has_emitted_text && tool_blocks_by_index.is_empty() {
+                    let index = next_content_index;
+                    let event = json!({
+                        "type": "content_block_start",
+                        "index": index,
+                        "content_block": {
+                            "type": "text",
+                            "text": ""
+                        }
+                    });
+                    yield Ok(Bytes::from(format!(
+                        "event: content_block_start\ndata: {}\n\n",
+                        serde_json::to_string(&event).unwrap_or_default()
+                    )));
+                    let stop_event = json!({
+                        "type": "content_block_stop",
+                        "index": index
+                    });
+                    yield Ok(Bytes::from(format!(
+                        "event: content_block_stop\ndata: {}\n\n",
+                        serde_json::to_string(&stop_event).unwrap_or_default()
+                    )));
                 }
             }
 
@@ -1087,6 +1174,73 @@ mod tests {
             .any(|event| event_type(event) == Some("message_stop")));
     }
 
+    // 回归：思考模型在 max_tokens 极低（如 Claude Code 2.1.2xx 后台请求 max_tokens=64）时
+    // 只输出 thinking、无任何文本，finish_reason="length"。修复前客户端收到只有 thinking
+    // 块而无 text 的 assistant 消息会判定不完整而重试（每 40 秒 5 次）。现在应注入空文本块，
+    // 让消息结构完整（thinking + 空 text），客户端不再重试。
+    #[tokio::test]
+    async fn test_streaming_injects_empty_text_when_thinking_only_max_tokens() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_64\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"reasoning_content\":\"思考\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_64\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"reasoning_content\":\"继续思考\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_64\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_all_blocks_closed_before_message_stop(&events);
+
+        // 应有一个 thinking 块
+        let thinking_starts: Vec<&Value> = events
+            .iter()
+            .filter(|event| {
+                event_type(event) == Some("content_block_start")
+                    && event
+                        .pointer("/content_block/type")
+                        .and_then(|v| v.as_str())
+                        == Some("thinking")
+            })
+            .collect();
+        assert_eq!(thinking_starts.len(), 1, "expected one thinking block");
+
+        // 应注入一个空文本块
+        let text_starts: Vec<&Value> = events
+            .iter()
+            .filter(|event| {
+                event_type(event) == Some("content_block_start")
+                    && event
+                        .pointer("/content_block/type")
+                        .and_then(|v| v.as_str())
+                        == Some("text")
+            })
+            .collect();
+        assert_eq!(text_starts.len(), 1, "expected an injected empty text block");
+        assert_eq!(
+            text_starts[0]
+                .pointer("/content_block/text")
+                .and_then(|v| v.as_str()),
+            Some(""),
+            "injected text block should be empty"
+        );
+
+        let message_deltas: Vec<&Value> = events
+            .iter()
+            .filter(|event| event_type(event) == Some("message_delta"))
+            .collect();
+        assert_eq!(message_deltas.len(), 1);
+        assert_eq!(
+            message_deltas[0]
+                .pointer("/delta/stop_reason")
+                .and_then(|v| v.as_str()),
+            Some("max_tokens"),
+            "stop_reason should remain max_tokens"
+        );
+
+        assert!(events
+            .iter()
+            .any(|event| event_type(event) == Some("message_stop")));
+    }
     // 上游发送了 tool_calls 但从未给出有效 finish_reason 时，
     // 合成的 message_delta 应使用 stop_reason: tool_use（而非 end_turn），
     // 否则客户端不会执行工具。

@@ -367,10 +367,25 @@ impl RequestContext {
             };
 
         // 故障转移关闭时强制 max_retries=0（仅尝试 1 个 provider），与「不超时 + 不切换」语义一致。
+        // 路由链例外：路由配了多个目标就该按优先级都试（New API 降级语义），只放宽 attempt
+        // 上限，forwarder 的 failover 循环本身不变。
         let max_retries = if self.app_config.auto_failover_enabled {
             self.app_config.max_retries
+        } else if self.is_route_chain() && self.providers.len() > 1 {
+            (self.providers.len() - 1) as u32
         } else {
             0
+        };
+
+        // 路由链的切换基线取首个目标 id：主目标成功时 should_switch=false，不触发 try_switch
+        // （路由目标在 DB 中不存在，hot_switch_provider 会无害失败），只在真正降级到次目标时才触发。
+        let switch_baseline = if self.is_route_chain() {
+            self.providers
+                .first()
+                .map(|p| p.id.clone())
+                .unwrap_or_else(|| self.current_provider_id.clone())
+        } else {
+            self.current_provider_id.clone()
         };
 
         RequestForwarder::new(
@@ -382,7 +397,7 @@ impl RequestContext {
             state.codex_chat_history.clone(),
             state.failover_manager.clone(),
             state.app_handle.clone(),
-            self.current_provider_id.clone(),
+            switch_baseline,
             self.session_id.clone(),
             self.session_client_provided,
             first_byte_timeout,
@@ -392,6 +407,16 @@ impl RequestContext {
             self.copilot_optimizer_config.clone(),
             max_retries,
         )
+    }
+
+    /// 是否为路由链：首个 provider 是路由目标（meta.provider_type == "cc_switch_route"）
+    fn is_route_chain(&self) -> bool {
+        self.providers.first().is_some_and(|p| {
+            p.meta
+                .as_ref()
+                .and_then(|m| m.provider_type.as_deref())
+                == Some("cc_switch_route")
+        })
     }
 
     /// 获取 Provider 列表（用于故障转移）
@@ -589,7 +614,10 @@ fn build_route_provider(
         auth_var.into(),
         serde_json::Value::String(route.api_key.clone()),
     );
-    let sync_id = format!("universal-{}-{}", app_type, up.id);
+    // 每个路由目标独立 id → 独立熔断器。原共享 id 使任意目标熔断（如商汤限流）
+    // 会连带阻断整条路由链（其余目标也命中同一熔断器）→ 503 无可用 Provider。
+    // 路由目标 id 在 DB 中不存在，failover 后 try_switch 到它会无害失败（不改状态）。
+    let sync_id = format!("universal-{}-{}-{}", app_type, up.id, route.name);
     crate::provider::Provider {
         id: sync_id,
         name: route.name.clone(),
@@ -871,10 +899,9 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].name, "r1");
         assert_eq!(result[1].name, "r2");
-        // 同 UP 路由共享 sync id：failover 成功后 try_switch 比较
-        // current_provider_id_at_start 与 provider.id，相同则不会错误切到
-        // 不存在的路由 provider。
-        assert_eq!(result[0].id, result[1].id);
+        // 每个路由目标独立 id → 独立熔断器：商汤限流熔断不阻断 OpenCode Go。
+        // try_switch 到路由目标 id 会无害失败（DB 中不存在），不影响原版逻辑。
+        assert_ne!(result[0].id, result[1].id);
     }
 
     #[test]
