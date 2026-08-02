@@ -54,7 +54,9 @@ export function UniversalProviderCard({
               size="icon"
               className="h-8 w-8"
               onClick={() => onSync(provider.id)}
-              title={t("universalProvider.sync", { defaultValue: "同步到应用" })}
+              title={t("universalProvider.sync", {
+                defaultValue: "同步到应用",
+              })}
             >
               <RefreshCw className="h-4 w-4" />
             </Button>
@@ -117,7 +119,6 @@ export function UniversalProviderCard({
             </span>
           )}
         </div>
-
       </div>
 
       {/* 备注 */}

@@ -44,9 +44,7 @@ export function RouteTableEditor({ routes, onChange }: RouteTableEditorProps) {
   const handleSetPriority = (id: string, raw: string) => {
     const n = Number.parseInt(raw, 10);
     const priority = Number.isNaN(n) ? 0 : n;
-    onChange(
-      routes.map((r) => (r.id === id ? { ...r, priority } : r)),
-    );
+    onChange(routes.map((r) => (r.id === id ? { ...r, priority } : r)));
   };
 
   return (
@@ -68,7 +66,8 @@ export function RouteTableEditor({ routes, onChange }: RouteTableEditorProps) {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        配置上游供应商，代理按 model 字段自动匹配并转发；各上游优先级互不关联，数字越大越优先，相同则随机
+        配置上游供应商，代理按 model
+        字段自动匹配并转发；各上游优先级互不关联，数字越大越优先，相同则随机
       </p>
 
       {routes.length === 0 ? (
