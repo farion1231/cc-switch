@@ -1786,15 +1786,13 @@ impl ProxyService {
                     let _ = self.write_claude_live(&live_config);
                 }
             }
-            AppType::Codex => {
-                if self.read_codex_live().is_ok() {
-                    let codex_provider = self.require_current_provider_for_app(&AppType::Codex)?;
-                    if let Err(err) = self
-                        .sync_codex_live_from_provider_while_proxy_active(&codex_provider)
-                        .await
-                    {
-                        log::warn!("Codex Live 配置接管失败（尽力而为模式，继续启动代理）: {err}");
-                    }
+            AppType::Codex if self.read_codex_live().is_ok() => {
+                let codex_provider = self.require_current_provider_for_app(&AppType::Codex)?;
+                if let Err(err) = self
+                    .sync_codex_live_from_provider_while_proxy_active(&codex_provider)
+                    .await
+                {
+                    log::warn!("Codex Live 配置接管失败（尽力而为模式，继续启动代理）: {err}");
                 }
             }
             AppType::Gemini => {
