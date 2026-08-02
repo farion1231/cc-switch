@@ -1292,6 +1292,8 @@
     "autoCompactLimitPlaceholder": "例如: 90000",
     "upstreamFormatLabel": "上游格式",
     "upstreamFormatHint": "供應商原生為 Responses API 就選 Responses（直連，不轉換格式）；使用 Chat Completions 協定就選 Chat；供應商只提供原生 Anthropic Messages 協定就選 Anthropic Messages。Chat 與 Anthropic Messages 均需開啟路由接管才能轉換為 Responses。",
+    "multiAgentV2Label": "啟用 V2 子智能體（實驗性）",
+    "multiAgentV2Hint": "僅對已驗證支援完整 Codex 工具呼叫的供應商開啟。可能導致普通請求失敗；重啟 Codex 並建立新任務後生效。",
     "upstreamFormatChat": "Chat Completions（需開啟路由）",
     "upstreamFormatResponses": "Responses（原生）",
     "upstreamFormatAnthropic": "Anthropic Messages（需開啟路由）",

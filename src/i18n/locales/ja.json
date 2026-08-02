@@ -1316,6 +1316,8 @@
     "modelName": "モデル名",
     "upstreamFormatLabel": "上流フォーマット",
     "upstreamFormatHint": "プロバイダーがネイティブ Responses API なら Responses を選択（直結、フォーマット変換なし）。Chat Completions プロトコルなら Chat を選択。ネイティブ Anthropic Messages プロトコルのみ提供する場合は Anthropic Messages を選択。Chat と Anthropic Messages はどちらも Responses への変換にルーティング引き継ぎの有効化が必要です。",
+    "multiAgentV2Label": "V2 サブエージェントを有効化（実験的）",
+    "multiAgentV2Hint": "完全な Codex ツール呼び出しを検証済みのプロバイダーにのみ有効化してください。通常のリクエストが失敗する場合があります。Codex を再起動して新しいタスクを作成すると反映されます。",
     "upstreamFormatChat": "Chat Completions（ルーティング必須）",
     "upstreamFormatResponses": "Responses（ネイティブ）",
     "upstreamFormatAnthropic": "Anthropic Messages（ルーティング必須）",

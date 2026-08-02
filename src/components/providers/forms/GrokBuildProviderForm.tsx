@@ -545,6 +545,8 @@ export function GrokBuildProviderForm({
                 setApiBackend(backend);
                 syncStructuredConfig({ apiBackend: backend });
               }}
+              multiAgentV2Enabled={false}
+              onMultiAgentV2EnabledChange={() => {}}
               anthropicAuthField={anthropicAuthField}
               onAnthropicAuthFieldChange={setAnthropicAuthField}
               impersonateClaudeCode={impersonateClaudeCode}

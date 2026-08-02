@@ -1,13 +1,45 @@
 // 供应商配置处理工具函数
 
 import type { TemplateValueConfig } from "../config/claudeProviderPresets";
-import type { CodexApiFormat } from "@/types";
+import type { CodexApiFormat, ProviderCategory } from "@/types";
 import { deepClone } from "@/utils/deepClone";
 import { normalizeTomlText } from "@/utils/textNormalization";
 import { parse as parseToml } from "smol-toml";
 
 const isPlainObject = (value: unknown): value is Record<string, any> => {
   return Object.prototype.toString.call(value) === "[object Object]";
+};
+
+export type CodexMultiAgentVersion = "v2";
+
+export interface CodexMultiAgentCapabilityOptions {
+  appId: string;
+  category?: ProviderCategory;
+  apiFormat: CodexApiFormat;
+  enabled: boolean;
+}
+
+export const isCodexMultiAgentV2Enabled = (
+  settingsConfig: Record<string, unknown> | undefined,
+): boolean => settingsConfig?.codexMultiAgentVersion === "v2";
+
+export const applyCodexMultiAgentCapability = (
+  settingsConfig: Record<string, unknown>,
+  options: CodexMultiAgentCapabilityOptions,
+): Record<string, unknown> => {
+  const next = { ...settingsConfig };
+  delete next.codexMultiAgentVersion;
+
+  if (
+    options.enabled &&
+    options.appId === "codex" &&
+    options.category !== "official" &&
+    options.apiFormat === "openai_chat"
+  ) {
+    next.codexMultiAgentVersion = "v2" satisfies CodexMultiAgentVersion;
+  }
+
+  return next;
 };
 
 const deepMerge = (
