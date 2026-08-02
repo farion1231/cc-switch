@@ -620,6 +620,7 @@ fn append_responses_input_as_chat_messages(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn append_responses_item_as_chat_message(
     item: &Value,
     messages: &mut Vec<Value>,
@@ -2076,9 +2077,9 @@ pub fn inject_gemini_thought_signatures_for_openai_format(
                     if let Some(snapshot) = &store_snapshot {
                         for turn in &snapshot.turns {
                             for meta in &turn.tool_calls {
-                                if !call_id.is_empty() && meta.id.as_deref() == Some(call_id) {
-                                    injected_sig = meta.thought_signature.clone();
-                                } else if !name.is_empty() && meta.name == name {
+                                if (!call_id.is_empty() && meta.id.as_deref() == Some(call_id))
+                                    || (!name.is_empty() && meta.name == name)
+                                {
                                     injected_sig = meta.thought_signature.clone();
                                 }
                             }
