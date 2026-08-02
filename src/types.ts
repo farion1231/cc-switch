@@ -284,6 +284,7 @@ export interface VisibleApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  zcode: boolean;
 }
 
 // WebDAV 同步状态
@@ -403,6 +404,8 @@ export interface Settings {
   openclawConfigDir?: string;
   // 覆盖 Hermes 配置目录（可选）
   hermesConfigDir?: string;
+  // 覆盖 ZCode 配置目录（可选）
+  zcodeConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
@@ -495,6 +498,7 @@ export interface McpApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  zcode?: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）
@@ -734,4 +738,49 @@ export interface HermesMemoryLimits {
   user: number;
   memoryEnabled: boolean;
   userEnabled: boolean;
+}
+
+// ============================================================================
+// ZCode Agent 专属配置（v3.x+）
+// 对应 ~/.zcode/v2/config.json 的 provider.<id> 结构
+// ============================================================================
+
+// ZCode 模型配置（provider.<id>.models.<model-id>）
+export interface ZCodeModel {
+  name?: string;
+  limit?: {
+    context?: number;
+    output?: number;
+  };
+  modalities?: {
+    input: string[];
+    output: string[];
+  };
+  reasoning?: {
+    enabled?: boolean;
+    variants?: string[];
+    defaultVariant?: string;
+  };
+  // 支持任意额外字段（cost 等）
+  [key: string]: unknown;
+}
+
+// ZCode 供应商选项（provider.<id>.options）
+export interface ZCodeProviderOptions {
+  baseURL?: string;
+  apiKey?: string;
+  // 支持额外选项（headers 等）
+  [key: string]: unknown;
+}
+
+// ZCode 供应商配置（settings_config 结构，对应 config.json 的 provider.<id>）
+export interface ZCodeProviderConfig {
+  name?: string;
+  kind?: string; // "anthropic" | "openai-compatible" | "openai"
+  options?: ZCodeProviderOptions;
+  enabled?: boolean | null;
+  source?: string; // 通常为 "custom"
+  models?: Record<string, ZCodeModel>;
+  // 支持任意额外字段
+  [key: string]: unknown;
 }
