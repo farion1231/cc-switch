@@ -262,7 +262,10 @@ pub fn resolve_codex_custom_model_provider(
 
     if let Some(upstream_model) = entry.upstream_model.as_deref() {
         if let Some(obj) = provider.settings_config.as_object_mut() {
-            obj.insert("model".to_string(), JsonValue::String(upstream_model.to_string()));
+            obj.insert(
+                "model".to_string(),
+                JsonValue::String(upstream_model.to_string()),
+            );
         }
     }
 
@@ -1256,7 +1259,8 @@ wire_api = "responses"
 "#
         }));
         bound.id = "deepseek".to_string();
-        db.save_provider("codex", &bound).expect("save bound provider");
+        db.save_provider("codex", &bound)
+            .expect("save bound provider");
 
         let mut official = create_provider(json!({
             "enableOfficialLogin": false,
@@ -1286,8 +1290,8 @@ wire_api = "responses"
         );
         assert_eq!(by_upstream.unwrap().id, "deepseek");
 
-        let unknown =
-            resolve_codex_custom_model_provider(&db, &official, "gpt-5.5").expect("resolve unknown");
+        let unknown = resolve_codex_custom_model_provider(&db, &official, "gpt-5.5")
+            .expect("resolve unknown");
         assert!(unknown.is_none(), "unmapped model must not route");
     }
 
@@ -1308,7 +1312,8 @@ wire_api = "chat"
 "#
         }));
         chat.id = "chat-provider".to_string();
-        db.save_provider("codex", &chat).expect("save chat provider");
+        db.save_provider("codex", &chat)
+            .expect("save chat provider");
 
         let mut anth = create_provider(json!({
             "auth": { "OPENAI_API_KEY": "sk-anth" },
@@ -1322,7 +1327,8 @@ wire_api = "anthropic"
 "#
         }));
         anth.id = "anth-provider".to_string();
-        db.save_provider("codex", &anth).expect("save anthropic provider");
+        db.save_provider("codex", &anth)
+            .expect("save anthropic provider");
 
         let mut official = create_provider(json!({
             "enableOfficialLogin": false,

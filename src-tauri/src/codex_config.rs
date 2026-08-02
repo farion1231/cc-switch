@@ -820,7 +820,8 @@ pub(crate) fn codex_custom_model_entries(settings: &Value) -> Vec<CodexCustomMod
                 .filter(|name| !name.is_empty())
                 .map(str::to_string),
             context_window: parse_codex_positive_u64(
-                item.get("contextWindow").or_else(|| item.get("context_window")),
+                item.get("contextWindow")
+                    .or_else(|| item.get("context_window")),
             ),
             supports_parallel_tool_calls: item
                 .get("supportsParallelToolCalls")
@@ -3201,14 +3202,22 @@ experimental_bearer_token = "stale-table-key"
         )
         .expect("cleanup must not fail");
         assert!(!removed, "aggregate mode must not delete auth.json");
-        assert!(auth_path.exists(), "stale auth must be preserved in aggregate mode");
+        assert!(
+            auth_path.exists(),
+            "stale auth must be preserved in aggregate mode"
+        );
 
         // 启用官方登录时仍按原逻辑清理残留的第三方 key。
-        let removed =
-            clear_stale_codex_live_auth_after_official_switch(&json!({}), &json!({}))
-                .expect("cleanup must not fail");
-        assert!(removed, "official login mode still clears stale third-party auth");
-        assert!(!auth_path.exists(), "stale auth must be deleted for official login mode");
+        let removed = clear_stale_codex_live_auth_after_official_switch(&json!({}), &json!({}))
+            .expect("cleanup must not fail");
+        assert!(
+            removed,
+            "official login mode still clears stale third-party auth"
+        );
+        assert!(
+            !auth_path.exists(),
+            "stale auth must be deleted for official login mode"
+        );
 
         match original_home {
             Some(value) => std::env::set_var("HOME", value),
@@ -4933,12 +4942,14 @@ web_search = "disabled"
             .expect("skip must not error");
 
         let written: Value = serde_json::from_str(
-            &std::fs::read_to_string(codex_dir.join("models_cache.json"))
-                .expect("read cache"),
+            &std::fs::read_to_string(codex_dir.join("models_cache.json")).expect("read cache"),
         )
         .expect("parse cache");
         assert_eq!(
-            written.get("models").and_then(|v| v.as_array()).map(|m| m.len()),
+            written
+                .get("models")
+                .and_then(|v| v.as_array())
+                .map(|m| m.len()),
             Some(1),
             "cache must be left untouched when official login is enabled"
         );
@@ -5218,7 +5229,11 @@ model_catalog_json = "cc-switch-model-catalog.json"
             ]
         });
         let entries = codex_custom_model_entries(&settings);
-        assert_eq!(entries.len(), 2, "duplicate and empty model ids are skipped");
+        assert_eq!(
+            entries.len(),
+            2,
+            "duplicate and empty model ids are skipped"
+        );
         assert_eq!(entries[0].model, "my-deepseek");
         assert_eq!(entries[0].provider_id, "prov-1");
         assert_eq!(entries[0].upstream_model.as_deref(), Some("deepseek-chat"));
@@ -5234,5 +5249,4 @@ model_catalog_json = "cc-switch-model-catalog.json"
             Some("deepseek-reasoner")
         );
     }
-
 }

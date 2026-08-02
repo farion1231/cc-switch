@@ -171,9 +171,10 @@ async fn forward_codex_official_models(
     if let Some(auth) = headers.get(axum::http::header::AUTHORIZATION) {
         builder = builder.header(axum::http::header::AUTHORIZATION, auth);
     }
-    let upstream = builder.send().await.map_err(|e| {
-        ProxyError::ForwardFailed(format!("转发 /models 到 ChatGPT 后端失败: {e}"))
-    })?;
+    let upstream = builder
+        .send()
+        .await
+        .map_err(|e| ProxyError::ForwardFailed(format!("转发 /models 到 ChatGPT 后端失败: {e}")))?;
     let status = upstream.status();
     log::info!("[models] forward chatgpt.com status={status} url={url}");
     let content_type = upstream

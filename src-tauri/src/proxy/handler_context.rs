@@ -154,12 +154,13 @@ impl RequestContext {
         if app_type == AppType::Codex
             && crate::proxy::providers::is_codex_official_provider(&provider)
         {
-            if let Some(custom_provider) = crate::proxy::providers::resolve_codex_custom_model_provider(
-                &state.db,
-                &provider,
-                &request_model,
-            )
-            .map_err(|e| ProxyError::DatabaseError(e.to_string()))?
+            if let Some(custom_provider) =
+                crate::proxy::providers::resolve_codex_custom_model_provider(
+                    &state.db,
+                    &provider,
+                    &request_model,
+                )
+                .map_err(|e| ProxyError::DatabaseError(e.to_string()))?
             {
                 log::info!(
                     "[Codex] 自定义模型 `{request_model}` 路由到供应商 `{}`",
@@ -171,9 +172,8 @@ impl RequestContext {
                 // current_provider_id，否则 forwarder 会在成功时误判为
                 // "实际供应商 ≠ 配置供应商"而把当前供应商切到绑定供应商。
                 current_provider_id = provider.id.clone();
-            } else if !crate::codex_config::codex_official_login_enabled(
-                &provider.settings_config
-            ) {
+            } else if !crate::codex_config::codex_official_login_enabled(&provider.settings_config)
+            {
                 // 聚合模式（官方供应商、未启用官方登录）：没有官方模型可用，
                 // 不在自定义列表里的模型请求直接报错，而不是带 PROXY_MANAGED
                 // 占位 token 落到 chatgpt.com（401）。

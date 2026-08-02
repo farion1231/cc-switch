@@ -14,8 +14,8 @@ use crate::services::provider::{
 };
 use serde_json::{json, Map, Value};
 use std::str::FromStr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use tauri::Emitter;
 use tokio::sync::RwLock;
 
@@ -405,18 +405,14 @@ impl ProxyService {
 
     /// Codex 供应商接管/热切换后重建 `models_cache.json`（桌面端模型列表的来源）。
     /// 失败只告警，不影响接管本身。
-    fn refresh_codex_models_cache_after_takeover(
-        effective_settings: &Value,
-        provider: &Provider,
-    ) {
+    fn refresh_codex_models_cache_after_takeover(effective_settings: &Value, provider: &Provider) {
         let config_text = effective_settings
             .get("config")
             .and_then(|value| value.as_str())
             .unwrap_or("");
-        if let Err(e) = crate::codex_config::write_codex_models_cache_for_provider(
-            provider,
-            config_text,
-        ) {
+        if let Err(e) =
+            crate::codex_config::write_codex_models_cache_for_provider(provider, config_text)
+        {
             log::warn!("[codex] 刷新 models_cache.json 失败: {e}");
         }
     }
@@ -606,10 +602,10 @@ impl ProxyService {
 
         // 每次启动捕获新的代际值：停止时自增会让上一次启动的线程退出，
         // 避免启停多次后线程累积。
-        let generation =
-            self.codex_cache_refresher_generation
-                .fetch_add(1, Ordering::Relaxed)
-                + 1;
+        let generation = self
+            .codex_cache_refresher_generation
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
         Self::spawn_codex_models_cache_refresher(
             self.db.clone(),
             self.codex_cache_refresher_generation.clone(),
@@ -1797,9 +1793,7 @@ impl ProxyService {
                         .sync_codex_live_from_provider_while_proxy_active(&codex_provider)
                         .await
                     {
-                        log::warn!(
-                            "Codex Live 配置接管失败（尽力而为模式，继续启动代理）: {err}"
-                        );
+                        log::warn!("Codex Live 配置接管失败（尽力而为模式，继续启动代理）: {err}");
                     }
                 }
             }
