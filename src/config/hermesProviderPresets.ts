@@ -1072,6 +1072,50 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "OrcaRouter",
+    websiteUrl: "https://www.orcarouter.ai",
+    apiKeyUrl: "https://www.orcarouter.ai/console",
+    settingsConfig: {
+      name: "orcarouter",
+      base_url: "https://api.orcarouter.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "anthropic/claude-opus-5",
+          name: "Claude Opus 5",
+          context_length: 1000000,
+        },
+        {
+          id: "anthropic/claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          context_length: 1000000,
+        },
+        {
+          id: "anthropic/claude-haiku-4.5",
+          name: "Claude Haiku 4.5",
+          context_length: 200000,
+        },
+        {
+          id: "openai/gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          context_length: 400000,
+        },
+        {
+          id: "google/gemini-3.6-flash",
+          name: "Gemini 3.6 Flash",
+          context_length: 1000000,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "orcarouter",
+    iconColor: "#0160E6",
+    suggestedDefaults: {
+      model: { default: "anthropic/claude-opus-5", provider: "orcarouter" },
+    },
+  },
+  {
     name: "DeepSeek",
     nameKey: "providerForm.presets.deepseek",
     websiteUrl: "https://platform.deepseek.com",

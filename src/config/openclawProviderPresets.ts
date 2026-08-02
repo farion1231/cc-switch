@@ -2272,6 +2272,48 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "OrcaRouter",
+    websiteUrl: "https://www.orcarouter.ai",
+    apiKeyUrl: "https://www.orcarouter.ai/console",
+    settingsConfig: {
+      baseUrl: "https://api.orcarouter.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "anthropic/claude-opus-5",
+          name: "Claude Opus 5",
+          contextWindow: 1000000,
+        },
+        {
+          id: "anthropic/claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "orcarouter",
+    iconColor: "#0160E6",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-orca-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "orcarouter/anthropic/claude-opus-5",
+        fallbacks: ["orcarouter/anthropic/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "orcarouter/anthropic/claude-opus-5": { alias: "Opus" },
+        "orcarouter/anthropic/claude-sonnet-5": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
     name: "TheRouter",
     websiteUrl: "https://therouter.ai",
     apiKeyUrl: "https://dashboard.therouter.ai",
