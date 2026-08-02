@@ -37,13 +37,16 @@ import {
 import { CustomUserAgentField } from "./CustomUserAgentField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
 import { cn } from "@/lib/utils";
+import { extractCodexModelName } from "@/utils/providerConfigUtils";
 import type {
   ClaudeApiKeyField,
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
+  CodexCustomModel,
   PromptCacheRoutingMode,
   ProviderCategory,
+  Provider,
 } from "@/types";
 import type { AppId } from "@/lib/api";
 
@@ -106,6 +109,19 @@ interface CodexFormFieldsProps {
   catalogModels?: CodexCatalogModel[];
   onCatalogModelsChange?: (models: CodexCatalogModel[]) => void;
 
+  // 官方 Codex 供应商的自定义模型（对外 ID -> 绑定供应商）
+  codexCustomModels?: CodexCustomModel[];
+  onCodexCustomModelsChange?: (models: CodexCustomModel[]) => void;
+  // 可绑定的 Codex 供应商列表（下拉选择目标供应商）
+  codexProviders?: Provider[];
+  // 官方 Codex：是否启用官方登录（关闭 = 聚合模式，多供应商模型切换）
+  enableOfficialLogin?: boolean;
+  onEnableOfficialLoginChange?: (value: boolean) => void;
+  // 官方 Codex：模型聚合总开关。关闭时隐藏登录选择与自定义模型配置，
+  // 官方供应商按普通官方登录处理。
+  codexAggregationEnabled?: boolean;
+  onCodexAggregationEnabledChange?: (value: boolean) => void;
+
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
 
@@ -163,6 +179,63 @@ function catalogRowsMatchModels(
   });
 }
 
+type CodexCustomModelRow = CodexCustomModel & { rowId: string };
+
+// Codex 桌面端只认官方模型名（gpt-5.x 等）：自定义模型必须用这些名字
+// 作为「模型名称」展示，实际请求再映射回目标供应商的上游模型。
+const CODEX_OFFICIAL_MODEL_NAMES = [
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+  "gpt-5.5",
+  "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.3-codex-spark",
+  "gpt-5.2",
+  "codex-auto-review",
+] as const;
+
+/// “清除插槽”选项的哨兵值：选中后把该行 model 清空。
+const CODEX_SLOT_CLEAR_VALUE = "__codex_slot_clear__";
+
+function createCustomModelRow(
+  seed?: Partial<CodexCustomModel>,
+): CodexCustomModelRow {
+  return {
+    rowId: crypto.randomUUID(),
+    model: seed?.model ?? "",
+    providerId: seed?.providerId ?? "",
+    upstreamModel: seed?.upstreamModel ?? "",
+    displayName: seed?.displayName ?? "",
+    contextWindow: seed?.contextWindow ?? "",
+    ...(seed?.supportsParallelToolCalls !== undefined
+      ? { supportsParallelToolCalls: seed.supportsParallelToolCalls }
+      : {}),
+    ...(seed?.inputModalities ? { inputModalities: seed.inputModalities } : {}),
+    ...(seed?.baseInstructions
+      ? { baseInstructions: seed.baseInstructions }
+      : {}),
+  };
+}
+
+function customRowsMatchModels(
+  rows: CodexCustomModel[],
+  models: CodexCustomModel[],
+): boolean {
+  if (rows.length !== models.length) return false;
+  return rows.every((row, i) => {
+    const incoming = models[i];
+    return (
+      row.model === (incoming.model ?? "") &&
+      row.providerId === (incoming.providerId ?? "") &&
+      (row.upstreamModel ?? "") === (incoming.upstreamModel ?? "") &&
+      (row.displayName ?? "") === (incoming.displayName ?? "") &&
+      String(row.contextWindow ?? "") ===
+        String(incoming.contextWindow ?? "")
+    );
+  });
+}
+
 export function CodexFormFields({
   appId = "codex",
   providerId,
@@ -203,6 +276,13 @@ export function CodexFormFields({
   onPromptCacheRoutingChange,
   catalogModels = [],
   onCatalogModelsChange,
+  codexCustomModels = [],
+  onCodexCustomModelsChange,
+  codexProviders = [],
+  enableOfficialLogin = true,
+  onEnableOfficialLoginChange,
+  codexAggregationEnabled = true,
+  onCodexAggregationEnabledChange,
   speedTestEndpoints,
   customUserAgent,
   onCustomUserAgentChange,
@@ -303,6 +383,136 @@ export function CodexFormFields({
     lastSentModelsRef.current = next;
     onCatalogModelsChange(next);
   }, [catalogRows, onCatalogModelsChange]);
+
+  // ---- 官方 Codex 自定义模型行（对外 ID -> 绑定供应商） ----
+  const [customRows, setCustomRows] = useState<CodexCustomModelRow[]>(() =>
+    codexCustomModels.map((m) => createCustomModelRow(m)),
+  );
+
+  const lastSentCustomModelsRef = useRef<CodexCustomModel[]>(codexCustomModels);
+
+  useEffect(() => {
+    setCustomRows((current) => {
+      if (customRowsMatchModels(current, codexCustomModels)) return current;
+      return codexCustomModels.map((m) => createCustomModelRow(m));
+    });
+    lastSentCustomModelsRef.current = codexCustomModels;
+  }, [codexCustomModels]);
+
+  useEffect(() => {
+    if (!onCodexCustomModelsChange) return;
+    const next: CodexCustomModel[] = customRows.map(
+      ({ rowId: _rowId, ...rest }) => rest,
+    );
+    if (customRowsMatchModels(customRows, lastSentCustomModelsRef.current))
+      return;
+    lastSentCustomModelsRef.current = next;
+    onCodexCustomModelsChange(next);
+  }, [customRows, onCodexCustomModelsChange]);
+
+  const handleAddCustomModelRow = useCallback(() => {
+    if (!onCodexCustomModelsChange) return;
+    setCustomRows((current) => [...current, createCustomModelRow()]);
+  }, [onCodexCustomModelsChange]);
+
+  const handleRemoveCustomModelRow = useCallback((index: number) => {
+    setCustomRows((current) => current.filter((_, i) => i !== index));
+  }, []);
+
+  // ---- 自定义模型：从目标供应商的模型目录自动带出模型/上下文 ----
+  const providerCatalogModels = useCallback(
+    (providerId: string): CodexCatalogModel[] => {
+      const provider = codexProviders.find((p) => p.id === providerId);
+      const catalog = (provider?.settingsConfig as any)?.modelCatalog?.models;
+      return Array.isArray(catalog)
+        ? catalog.filter(
+            (m: CodexCatalogModel) =>
+              typeof m.model === "string" && m.model.trim(),
+          )
+        : [];
+    },
+    [codexProviders],
+  );
+
+  // 实际请求模型下拉选项：供应商已配置的模型目录（与目标供应商列同款 Select）
+  const customCatalogByProvider = useMemo(() => {
+    const map: Record<string, CodexCatalogModel[]> = {};
+    for (const provider of codexProviders) {
+      const models = providerCatalogModels(provider.id);
+      if (models.length === 0) continue;
+      map[provider.id] = models;
+    }
+    return map;
+  }, [codexProviders, providerCatalogModels]);
+
+  // 选定供应商后：带出默认上游模型，并尽量自动填显示名/上下文窗口。
+  // 模型名称（Codex 展示用）保持用户选择不变。
+  const handleCustomProviderChange = useCallback(
+    (index: number, providerId: string) => {
+      const provider = codexProviders.find((p) => p.id === providerId);
+      const models = providerCatalogModels(providerId);
+      const defaultUpstreamModel =
+        extractCodexModelName(
+          typeof provider?.settingsConfig?.config === "string"
+            ? provider.settingsConfig.config
+            : "",
+        ) ||
+        models[0]?.model ||
+        "";
+      const match = models.find((m) => m.model === defaultUpstreamModel);
+      setCustomRows((current) =>
+        current.map((row, i) =>
+          i === index
+            ? {
+                ...row,
+                providerId,
+                upstreamModel: defaultUpstreamModel,
+                // 菜单显示名始终读目标供应商目录中该模型的显示名
+                displayName: match?.displayName?.trim() || "",
+                // 上下文窗口只读继承自供应商模型目录，不由用户手填
+                contextWindow: match?.contextWindow ?? "",
+              }
+            : row,
+        ),
+      );
+    },
+    [codexProviders, providerCatalogModels],
+  );
+
+  // 实际请求模型（上游）变化：命中目录时自动补显示名/上下文（仅当用户没手填）
+  const handleCustomModelChange = useCallback(
+    (index: number, model: string) => {
+      setCustomRows((current) => {
+        const row = current[index];
+        const match = providerCatalogModels(row.providerId).find(
+          (m) => m.model === model,
+        );
+        return current.map((r, i) =>
+          i === index
+            ? {
+                ...r,
+                upstreamModel: model,
+                // 菜单显示名始终读目标供应商目录中该模型的显示名
+                displayName: match?.displayName?.trim() || "",
+                // 上下文窗口只读继承自供应商模型目录，不由用户手填
+                contextWindow: match?.contextWindow ?? "",
+              }
+            : r,
+        );
+      });
+    },
+    [providerCatalogModels],
+  );
+
+  // 模型名称（Codex 展示用）变化：只改对外 ID，不影响上游模型
+  const handleCustomDisplayModelChange = useCallback(
+    (index: number, model: string) => {
+      setCustomRows((current) =>
+        current.map((r, i) => (i === index ? { ...r, model } : r)),
+      );
+    },
+    [],
+  );
 
   const handleReasoningThinkingChange = useCallback(
     (checked: boolean) => {
@@ -611,6 +821,295 @@ export function CodexFormFields({
                 })}
               </Button>
             </p>
+          )}
+        </div>
+      )}
+
+      {/* 官方 Codex 自定义模型：把额外模型路由到 cc-switch 绑定的供应商 */}
+      {category === "official" && onCodexCustomModelsChange && (
+        <div className="space-y-4">
+          {/* 模型聚合总开关：关闭时隐藏登录选择与自定义模型配置 */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="space-y-1">
+              <FormLabel>
+                {t("codexConfig.aggregationLabel", {
+                  defaultValue: "模型聚合",
+                })}
+              </FormLabel>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {t("codexConfig.aggregationHint", {
+                  defaultValue:
+                    "开启后可将其他供应商的模型聚合进 Codex（需先开启本地路由/代理才生效）。关闭时按普通官方模型登录处理。",
+                })}
+              </p>
+            </div>
+            <Switch
+              checked={codexAggregationEnabled}
+              onCheckedChange={(value) =>
+                onCodexAggregationEnabledChange?.(value)
+              }
+              aria-label={t("codexConfig.aggregationLabel", {
+                defaultValue: "模型聚合",
+              })}
+            />
+          </div>
+
+          {codexAggregationEnabled && (
+            <>
+              <div className="flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <FormLabel>
+                    {t("codexConfig.enableOfficialLoginLabel", {
+                      defaultValue: "启用官方登录",
+                    })}
+                  </FormLabel>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {enableOfficialLogin
+                  ? t("codexConfig.enableOfficialLoginHintOn", {
+                      defaultValue:
+                        "使用 ChatGPT 账号登录官方模型；下方自定义模型仍走各自供应商的凭据。",
+                    })
+                  : t("codexConfig.enableOfficialLoginHintOff", {
+                      defaultValue:
+                        "无需登录：Codex 的模型全部来自下方配置的多个供应商，请求按模型路由到对应供应商。",
+                    })}
+              </p>
+            </div>
+            <Switch
+              checked={enableOfficialLogin}
+              onCheckedChange={(value) => onEnableOfficialLoginChange?.(value)}
+              aria-label={t("codexConfig.enableOfficialLoginLabel", {
+                defaultValue: "启用官方登录",
+              })}
+            />
+          </div>
+
+          <div className="space-y-1">
+            <div className="flex items-center justify-between gap-3">
+              <FormLabel>
+                {t("codexConfig.customModelsTitle", {
+                  defaultValue: "自定义模型（官方登录）",
+                })}
+              </FormLabel>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleAddCustomModelRow}
+                className="h-7 gap-1"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {t("codexConfig.addCustomModel", {
+                  defaultValue: "添加自定义模型",
+                })}
+              </Button>
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {enableOfficialLogin
+                ? t("codexConfig.customModelsHint", {
+                    defaultValue:
+                      "配置后 Codex 会在模型列表里看到这些模型；选择它们时，本地代理会把请求转发到你绑定的供应商（保留官方登录，仅支持 OpenAI Responses 协议）。",
+                  })
+                : t("codexConfig.customModelsHintAggregate", {
+                    defaultValue:
+                      "Codex 桌面端只认官方模型名：为每个模型选一个 Codex 插槽名（如 gpt-5.2），实际请求会映射到你绑定的供应商的上游模型。",
+                  })}
+            </p>
+          </div>
+
+          {customRows.length > 0 && (
+            <div className="space-y-2">
+              <div className="hidden grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_110px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+                <span>
+                  {t("codexConfig.customColumnProvider", {
+                    defaultValue: "目标供应商",
+                  })}
+                </span>
+                <span>
+                  {t("codexConfig.customColumnModelName", {
+                    defaultValue: "Codex 插槽",
+                  })}
+                </span>
+                <span>
+                  {t("codexConfig.catalogColumnDisplay", {
+                    defaultValue: "菜单显示名",
+                  })}
+                </span>
+                <span>
+                  {t("codexConfig.catalogColumnModel", {
+                    defaultValue: "实际请求模型",
+                  })}
+                </span>
+                <span>
+                  {t("codexConfig.catalogColumnContext", {
+                    defaultValue: "上下文窗口",
+                  })}
+                </span>
+                <span />
+              </div>
+
+              {customRows.map((row, index) => (
+                <div
+                  key={row.rowId}
+                  className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_110px_36px]"
+                >
+                  <Select
+                    value={row.providerId}
+                    onValueChange={(value) =>
+                      handleCustomProviderChange(index, value)
+                    }
+                  >
+                    <SelectTrigger
+                      className="min-w-0 select-fade-value"
+                      aria-label={t("codexConfig.customColumnProvider", {
+                        defaultValue: "目标供应商",
+                      })}
+                    >
+                      <SelectValue
+                        placeholder={t("codexConfig.customProviderPlaceholder", {
+                          defaultValue: "选择供应商",
+                        })}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {codexProviders.map((provider) => (
+                        <SelectItem key={provider.id} value={provider.id}>
+                          {provider.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={row.model}
+                    onValueChange={(value) =>
+                      handleCustomDisplayModelChange(
+                        index,
+                        value === CODEX_SLOT_CLEAR_VALUE ? "" : value,
+                      )
+                    }
+                  >
+                    <SelectTrigger
+                      className="min-w-0 select-fade-value"
+                      aria-label={t("codexConfig.customColumnModelName", {
+                        defaultValue: "Codex 插槽",
+                      })}
+                      title={t("codexConfig.customModelNameHint", {
+                        defaultValue:
+                          "Codex 只显示官方模型名。这里选一个 Codex 插槽名（如 gpt-5.2）让该模型出现在列表里；实际请求走目标供应商的上游模型。",
+                      })}
+                    >
+                      <SelectValue
+                        placeholder={t("codexConfig.customModelNamePlaceholder", {
+                          defaultValue: "选一个 Codex 插槽（如 gpt-5.2）",
+                        })}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={CODEX_SLOT_CLEAR_VALUE}>
+                        {t("codexConfig.customSlotClear", {
+                          defaultValue: "清除插槽",
+                        })}
+                      </SelectItem>
+                      {(() => {
+                        // 已被其他行选中的插槽从本行下拉中过滤掉，避免两个模型
+                        // 占用同一插槽（models_cache 按 slug 去重，只会显示一个）。
+                        // 当前行已选的值始终保留，避免值不在选项里。
+                        const usedElsewhere = new Set(
+                          customRows
+                            .filter((_r, i2) => i2 !== index)
+                            .map((r) => r.model)
+                            .filter(Boolean),
+                        );
+                        const slotOptions: string[] =
+                          CODEX_OFFICIAL_MODEL_NAMES.filter(
+                            (m) => !usedElsewhere.has(m),
+                          );
+                        if (
+                          row.model &&
+                          !slotOptions.includes(row.model)
+                        ) {
+                          slotOptions.push(row.model);
+                        }
+                        return slotOptions;
+                      })().map((model) => (
+                        <SelectItem key={model} value={model}>
+                          {model}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div
+                    className="flex h-9 min-w-0 items-center rounded-md border border-transparent px-3 text-sm text-muted-foreground"
+                    aria-label={t("codexConfig.catalogColumnDisplay", {
+                      defaultValue: "菜单显示名",
+                    })}
+                    title={t("codexConfig.customDisplayNameReadonlyHint", {
+                      defaultValue: "显示名自动取自目标供应商的模型目录",
+                    })}
+                  >
+                    <span className="flex-1 text-fade-out">
+                      {row.displayName?.trim() || row.model || "—"}
+                    </span>
+                  </div>
+                  <Select
+                    value={row.upstreamModel ?? row.model}
+                    onValueChange={(value) =>
+                      handleCustomModelChange(index, value)
+                    }
+                    disabled={!row.providerId}
+                  >
+                    <SelectTrigger
+                      className="min-w-0 select-fade-value"
+                      aria-label={t("codexConfig.catalogColumnModel", {
+                        defaultValue: "实际请求模型",
+                      })}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(customCatalogByProvider[row.providerId] ?? []).map(
+                        (model) => (
+                          <SelectItem key={model.model} value={model.model}>
+                            {model.model}
+                          </SelectItem>
+                        ),
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <div
+                    className="flex h-9 min-w-0 items-center rounded-md border border-transparent px-3 text-sm text-muted-foreground"
+                    aria-label={t("codexConfig.catalogColumnContext", {
+                      defaultValue: "上下文窗口",
+                    })}
+                    title={t("codexConfig.customContextReadonlyHint", {
+                      defaultValue: "上下文窗口继承自目标供应商的模型目录，不可编辑",
+                    })}
+                  >
+                    <span className="flex-1 text-fade-out">
+                      {row.contextWindow
+                        ? `${row.contextWindow}`
+                        : t("codexConfig.catalogContextPlaceholder", {
+                            defaultValue: "默认 128k",
+                          })}
+                    </span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleRemoveCustomModelRow(index)}
+                    className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                    aria-label={t("codexConfig.removeCustomModel", {
+                      defaultValue: "删除",
+                    })}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+            </>
           )}
         </div>
       )}
