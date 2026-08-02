@@ -141,8 +141,8 @@ export const providersApi = {
 
   /**
    * 打开指定提供商的终端
-   * 任何提供商都可以打开终端，不受是否为当前激活提供商的限制
-   * 终端会使用该提供商特定的 API 配置，不影响全局设置
+   * 直连提供商不受是否为当前激活项的限制，并使用独立 API 配置
+   * 必须经本地路由的 Claude 提供商不会生成直连终端配置
    */
   async openTerminal(
     providerId: string,
