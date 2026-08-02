@@ -257,12 +257,15 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
     let metadata = fs::metadata(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
     let file_modified = metadata_modified_nanos(&metadata);
+    let file_size = metadata.len() as i64;
 
     // 检查同步状态
-    let (last_modified, last_offset) = get_sync_state(db, &file_path_str)?;
+    let (last_modified, last_offset, last_size) = get_sync_state(db, &file_path_str)?;
 
-    // 文件未变化则跳过
-    if file_modified <= last_modified {
+    // 文件未变化则跳过。mtime 相等不代表未变化：写入中的会话文件 mtime
+    // 可能不更新（Windows 实测），若上次在写入中间态落盘，最终版本会因
+    // mtime 相等被误判跳过，故必须同时校验文件大小。
+    if file_modified <= last_modified && file_size == last_size {
         return Ok((0, 0));
     }
 
@@ -422,22 +425,30 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
     }
 
     // 更新同步状态
-    update_sync_state(db, &file_path_str, file_modified, line_offset)?;
+    update_sync_state(db, &file_path_str, file_modified, line_offset, file_size)?;
 
     Ok((imported, skipped))
 }
 
 /// 获取 session_log_sync 表中某条目的同步进度。
 ///
+/// 返回 (last_modified, last_line_offset, last_size)。
 /// Shared by all session_usage_* parsers.
-pub(crate) fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64), AppError> {
+pub(crate) fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64, i64), AppError> {
     let conn = lock_conn!(db.conn);
     let result = conn.query_row(
-        "SELECT last_modified, last_line_offset FROM session_log_sync WHERE file_path = ?1",
+        "SELECT last_modified, last_line_offset, last_size
+         FROM session_log_sync WHERE file_path = ?1",
         rusqlite::params![file_path],
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        },
     );
-    Ok(result.unwrap_or((0, 0)))
+    Ok(result.unwrap_or((0, 0, 0)))
 }
 
 /// 返回文件 mtime 的纳秒时间戳。
@@ -455,12 +466,16 @@ pub(crate) fn metadata_modified_nanos(metadata: &fs::Metadata) -> i64 {
 
 /// 更新 session_log_sync 表中某条目的同步进度。
 ///
-/// Shared by all session_usage_* parsers.
+/// `last_size` 是同步时文件的字节数，用于弥补 mtime 不可靠的场景
+/// （写入中的会话文件 mtime 可能不更新，见 migrate_v16_to_v17）。
+/// Shared by all session_usage_* parsers；非文件型同步方（如 opencode）
+/// 无 size 语义，传 0 即可。
 pub(crate) fn update_sync_state(
     db: &Database,
     file_path: &str,
     last_modified: i64,
     last_offset: i64,
+    last_size: i64,
 ) -> Result<(), AppError> {
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -469,9 +484,9 @@ pub(crate) fn update_sync_state(
 
     let conn = lock_conn!(db.conn);
     conn.execute(
-        "INSERT OR REPLACE INTO session_log_sync (file_path, last_modified, last_line_offset, last_synced_at)
-         VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![file_path, last_modified, last_offset, now],
+        "INSERT OR REPLACE INTO session_log_sync (file_path, last_modified, last_line_offset, last_size, last_synced_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![file_path, last_modified, last_offset, last_size, now],
     )
     .map_err(|e| AppError::Database(format!("更新同步状态失败: {e}")))?;
     Ok(())

@@ -302,6 +302,7 @@ impl Database {
                 file_path TEXT PRIMARY KEY,
                 last_modified INTEGER NOT NULL,
                 last_line_offset INTEGER NOT NULL DEFAULT 0,
+                last_size INTEGER NOT NULL DEFAULT 0,
                 last_synced_at INTEGER NOT NULL
             )",
             [],
@@ -510,6 +511,11 @@ impl Database {
                         log::info!("迁移数据库从 v15 到 v16（重建 Codex 会话用量）");
                         Self::migrate_v15_to_v16(conn)?;
                         Self::set_user_version(conn, 16)?;
+                    }
+                    16 => {
+                        log::info!("迁移数据库从 v16 到 v17（会话日志同步增加文件大小校验）");
+                        Self::migrate_v16_to_v17(conn)?;
+                        Self::set_user_version(conn, 17)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1521,6 +1527,28 @@ impl Database {
     fn migrate_v15_to_v16(conn: &Connection) -> Result<(), AppError> {
         let codex_dir = crate::codex_config::get_codex_config_dir();
         crate::services::session_usage_codex::reset_codex_usage_on_conn(conn, &codex_dir)
+    }
+
+    /// v16 -> v17: session_log_sync 增加 last_size 列
+    ///
+    /// 修复会话文件写入中 mtime 不更新导致的漏同步：同步器在文件写入的
+    /// 中间态（如只写了 13 行）读取后把该 mtime 记为完成态，文件最终版本
+    /// 的 mtime 不变（Windows 上 Codex/Claude Code 实测），于是每轮同步
+    /// 都判定"未变化"而跳过，之后写入的所有用量永久丢失。
+    /// 新增 last_size 后，跳过判定同时校验文件大小：mtime 相等但 size
+    /// 变大时仍会重读，用 last_line_offset 去重保证不重复导入。
+    fn migrate_v16_to_v17(conn: &Connection) -> Result<(), AppError> {
+        // 真实库在 v8 迁移已建该表；表缺失（如部分测试模拟库）则跳过，
+        // 反正没有同步状态数据需要补列
+        if Self::table_exists(conn, "session_log_sync")? {
+            Self::add_column_if_missing(
+                conn,
+                "session_log_sync",
+                "last_size",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
+        Ok(())
     }
 
     /// 插入默认模型定价数据
@@ -3222,7 +3250,7 @@ mod tests {
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
-        assert_eq!(Database::get_user_version(&conn)?, 16);
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         let counts: (i64, i64, i64, i64) = conn.query_row(
             "SELECT
                 (SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'),

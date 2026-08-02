@@ -71,7 +71,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
         file_modified = file_modified.max(metadata_modified_nanos(&wal_meta));
     }
 
-    let (last_modified, _last_offset) = get_sync_state(db, &db_path_str)?;
+    let (last_modified, _last_offset, _last_size) = get_sync_state(db, &db_path_str)?;
 
     // 文件未变化则跳过
     if file_modified <= last_modified {
@@ -106,7 +106,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     for (session_id, time_updated) in &sessions {
         // 检查会话是否需要重新同步
         let sync_key = format!("{db_path_str}:{session_id}");
-        let (sess_last_modified, _) = get_sync_state(db, &sync_key)?;
+        let (sess_last_modified, _, _) = get_sync_state(db, &sync_key)?;
         if *time_updated <= sess_last_modified {
             continue; // 会话未更新，跳过
         }
@@ -152,7 +152,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
         }
 
         // 更新会话级同步状态。失败时不要推进文件级状态，确保下次可重试。
-        if let Err(e) = update_sync_state(db, &sync_key, *time_updated, 0) {
+        if let Err(e) = update_sync_state(db, &sync_key, *time_updated, 0, 0) {
             let msg = format!("OpenCode 会话同步状态更新失败 {session_id}: {e}");
             log::warn!("[OPENCODE-SYNC] {msg}");
             result.errors.push(msg);
@@ -162,7 +162,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
 
     // 仅在本轮完全成功时推进文件级状态；否则保留下次重试入口。
     if !has_sync_errors {
-        update_sync_state(db, &db_path_str, file_modified, 0)?;
+        update_sync_state(db, &db_path_str, file_modified, 0, 0)?;
     }
 
     if result.imported > 0 {

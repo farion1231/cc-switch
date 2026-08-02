@@ -450,10 +450,10 @@ fn parse_token_signature(info: &serde_json::Value) -> Option<TokenUsageSignature
     (total.is_some() || last.is_some()).then_some(TokenUsageSignature { total, last })
 }
 
-fn get_codex_sync_state(db: &Database, file_path: &Path) -> Result<(i64, i64), AppError> {
+fn get_codex_sync_state(db: &Database, file_path: &Path) -> Result<(i64, i64, i64), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
     let state = get_sync_state(db, &file_path_str)?;
-    if state != (0, 0)
+    if state != (0, 0, 0)
         || file_path
             .parent()
             .and_then(Path::file_name)
@@ -470,7 +470,7 @@ fn get_codex_sync_state(db: &Database, file_path: &Path) -> Result<(i64, i64), A
     let backslash_suffix = format!("\\{file_name}");
     let conn = lock_conn!(db.conn);
     let inherited = conn.query_row(
-        "SELECT last_modified, last_line_offset
+        "SELECT last_modified, last_line_offset, last_size
          FROM session_log_sync
          WHERE file_path <> ?1
            AND (substr(file_path, -length(?2)) = ?2
@@ -478,13 +478,19 @@ fn get_codex_sync_state(db: &Database, file_path: &Path) -> Result<(i64, i64), A
          ORDER BY last_line_offset DESC, last_modified DESC
          LIMIT 1",
         rusqlite::params![file_path_str, slash_suffix, backslash_suffix],
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        },
     );
     drop(conn);
 
     match inherited {
         Ok(inherited) => {
-            update_sync_state(db, &file_path_str, inherited.0, inherited.1)?;
+            update_sync_state(db, &file_path_str, inherited.0, inherited.1, inherited.2)?;
             Ok(inherited)
         }
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(state),
@@ -994,6 +1000,17 @@ fn matching_replay_prefix(child: &[ParsedTokenEvent], parent: &[TokenUsageSignat
     matched
 }
 
+/// 判断文件是否需要重新同步。
+///
+/// mtime 不可靠：Windows 上会话文件在写入过程中 mtime 可能不更新，
+/// 若上次同步恰好读到写入中间态并记录该 mtime，文件最终版本会因
+/// `mtime <= last_modified` 被永久误判为"未变化"而漏同步（实测：56 MB
+/// 会话文件同步停在 13 行后 7000+ 行永久丢失）。因此只有当 mtime 和
+/// size 都未变化时才跳过；重读由 last_line_offset 去重保证不重复导入。
+fn should_resync(last_modified: i64, last_size: i64, file_modified: i64, file_size: u64) -> bool {
+    file_modified > last_modified || file_size as i64 != last_size
+}
+
 fn mark_deferred(
     file_path: &Path,
     modified: i64,
@@ -1043,10 +1060,13 @@ fn sync_single_codex_file(
     let file_size = metadata.len();
 
     // 检查同步状态
-    let (last_modified, last_offset) = get_codex_sync_state(db, file_path)?;
+    let (last_modified, last_offset, last_size) = get_codex_sync_state(db, file_path)?;
 
-    // 文件未变化则跳过
-    if file_modified <= last_modified {
+    // 文件未变化则跳过。mtime 相等不代表未变化：写入中的会话文件 mtime
+    // 可能不更新（Windows 上 Codex 实测），若上次在写入中间态落盘（如只
+    // 读到 13 行），最终版本会因 mtime 相等被永久误判为"未变化"而漏同步，
+    // 故必须同时校验文件大小。last_line_offset 去重保证重读不重复导入。
+    if !should_resync(last_modified, last_size, file_modified, file_size) {
         return Ok(CodexFileSyncResult::default());
     }
 
@@ -1079,7 +1099,13 @@ fn sync_single_codex_file(
 
     let parsed = parse_codex_file(file_path, thread_id_from_filename(file_path))?;
     if !parsed.has_billable_tokens {
-        update_sync_state(db, &file_path_str, file_modified, parsed.line_offset)?;
+        update_sync_state(
+            db,
+            &file_path_str,
+            file_modified,
+            parsed.line_offset,
+            file_size as i64,
+        )?;
         return Ok(CodexFileSyncResult::default());
     }
     let Some(root_thread_id) = parsed.root_thread_id.as_deref() else {
@@ -1206,7 +1232,13 @@ fn sync_single_codex_file(
         }
     }
 
-    update_sync_state(db, &file_path_str, file_modified, parsed.line_offset)?;
+    update_sync_state(
+        db,
+        &file_path_str,
+        file_modified,
+        parsed.line_offset,
+        file_size as i64,
+    )?;
     Ok(result)
 }
 
@@ -1344,6 +1376,51 @@ mod tests {
     const PARENT_ID: &str = "00000000-0000-4000-8000-000000000001";
     const CHILD_A_ID: &str = "00000000-0000-4000-8000-000000000002";
     const CHILD_B_ID: &str = "00000000-0000-4000-8000-000000000003";
+
+    #[test]
+    fn test_should_resync_mtime_same_size_grew() {
+        // 写入中的会话文件 mtime 不更新：上次同步停在中间态（13 行的小 size），
+        // 文件最终版本 mtime 不变但 size 变大 → 必须重读，否则 7000+ 行永久丢失
+        assert!(should_resync(
+            1_755_960_000_000_000_000,
+            96_000,
+            1_755_960_000_000_000_000,
+            56_945_631
+        ));
+    }
+
+    #[test]
+    fn test_should_resync_unchanged_file_skips() {
+        // mtime 和 size 都未变化 → 跳过（保持原有增量同步行为）
+        assert!(!should_resync(
+            1_755_960_000_000_000_000,
+            56_945_631,
+            1_755_960_000_000_000_000,
+            56_945_631
+        ));
+    }
+
+    #[test]
+    fn test_should_resync_mtime_grew() {
+        // mtime 变大 → 重读（原有行为）
+        assert!(should_resync(
+            1_755_960_000_000_000_000,
+            56_945_631,
+            1_755_960_000_000_000_100,
+            56_945_631
+        ));
+    }
+
+    #[test]
+    fn test_should_resync_size_shrunk() {
+        // size 变小（如文件被截断重写）→ 重读，offset 去重兜底
+        assert!(should_resync(
+            1_755_960_000_000_000_000,
+            56_945_631,
+            1_755_960_000_000_000_000,
+            13_000
+        ));
+    }
 
     fn write_jsonl(path: &Path, values: &[serde_json::Value]) {
         let contents = values
@@ -1848,7 +1925,7 @@ mod tests {
 
         let result = sync_test_file(&db, &child, &[&child])?;
         assert!(result.deferred);
-        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
+        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0, 0));
         Ok(())
     }
 
@@ -1903,7 +1980,7 @@ mod tests {
 
         let deferred = sync_test_file(&db, &child, &[&child])?;
         assert!(deferred.deferred);
-        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
+        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0, 0));
 
         write_jsonl(
             &parent,
@@ -1929,7 +2006,7 @@ mod tests {
 
         let result = sync_test_file(&db, &child, &[&child])?;
         assert!(result.deferred);
-        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
+        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0, 0));
 
         std::thread::sleep(std::time::Duration::from_millis(2));
         write_jsonl(
@@ -2053,7 +2130,7 @@ mod tests {
             )?;
         }
         let source_path = source.to_string_lossy().to_string();
-        update_sync_state(&db, &source_path, 1, 3)?;
+        update_sync_state(&db, &source_path, 1, 3, 0)?;
 
         assert_eq!(
             sync_test_file(&db, &archived_file, &[&archived_file])?.imported,
