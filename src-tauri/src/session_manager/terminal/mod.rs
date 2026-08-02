@@ -286,11 +286,21 @@ fn launch_custom(
     }
 
     let cmd_str = command;
-    let dir_str = cwd.unwrap_or(".");
+    // `{cwd}` 是磁盘上扫来的路径，先做转义；`{command}` 保持原样——模板作者写下
+    // 这个占位符的本意就是让它当命令展开。
+    //
+    // ⚠️ 这里的转义**不是完备防护**，只在占位符处于未加引号的 shell 词位置时成立。
+    // 模板若写成 `echo "{cwd}"`，插入的单引号会落进双引号里变成普通字符，`cwd`
+    // 里的 `$(...)` 照样求值。安全性取决于模板怎么写，而模板不由这里控制。
+    //
+    // 目前本分支无 UI 入口（终端选项列表没有 `custom`，前端也从不传
+    // `customConfig`），所以不可达。**接线前必须换掉这个方案**——正确做法是让
+    // 模板声明参数位、由此处按 argv 传递，而不是让用户拼 shell 字符串。
+    let dir_str = shell_escape(cwd.unwrap_or("."));
 
     let final_cmd_line = template
         .replace("{command}", cmd_str)
-        .replace("{cwd}", dir_str);
+        .replace("{cwd}", &dir_str);
 
     // Execute via sh -c
     let status = Command::new("sh")
@@ -315,9 +325,16 @@ fn build_shell_command(command: &str, cwd: Option<&str>) -> String {
     }
 }
 
+/// POSIX 单引号转义。
+///
+/// **必须是单引号**：双引号内 `$(...)`、反引号、`$VAR` 照常展开，而这里包的是
+/// `projectDir`——会话历史里记录的真实项目路径，macOS 允许目录名含 `$` `(` `)`，
+/// 所以一个名为 `$(...)` 的目录就足以让命令替换在用户终端里执行。
+///
+/// 单引号内不做任何展开，唯一的特例是 `'` 自身无法被表示：用「闭合-转义-重开」
+/// 的 `'\''` 序列绕过。
 fn shell_escape(value: &str) -> String {
-    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{escaped}\"")
+    format!("'{}'", value.replace('\'', r"'\''"))
 }
 
 fn escape_osascript(value: &str) -> String {
@@ -377,6 +394,47 @@ mod tests {
         );
 
         // Verify shell_escape works correctly for paths with spaces
-        assert_eq!(shell_escape(cwd), "\"/tmp/project dir\"");
+        assert_eq!(shell_escape(cwd), "'/tmp/project dir'");
+    }
+
+    #[test]
+    fn shell_escape_neutralizes_command_substitution_in_directory_names() {
+        // 这些字符在 macOS 目录名里全部合法，而 `cwd` 就是会话历史里的
+        // `projectDir`——一个名为 `$(...)` 的目录必须原样落到 `cd` 后面，
+        // 不能被 shell 求值。旧的双引号实现对这三种全部失守。
+        assert_eq!(shell_escape("/tmp/$(id -un)"), "'/tmp/$(id -un)'");
+        assert_eq!(shell_escape("/tmp/`id -un`"), "'/tmp/`id -un`'");
+        assert_eq!(shell_escape("/tmp/$HOME"), "'/tmp/$HOME'");
+    }
+
+    #[test]
+    fn shell_escape_handles_embedded_single_quote() {
+        // 单引号是单引号包裹法唯一表示不了的字符，靠「闭合-转义-重开」绕过。
+        assert_eq!(shell_escape("/tmp/it's"), r"'/tmp/it'\''s'");
+    }
+
+    #[test]
+    fn shell_escape_survives_the_osascript_layer() {
+        // Terminal / iTerm 的链路是两层：shell_escape 的结果先被塞进 AppleScript
+        // 字符串字面量，由 escape_osascript 再转义一次，AppleScript 求值后才交给
+        // shell。反斜杠会在中间那层被加倍，必须确认最终落到 shell 的字节没变形。
+        let escaped = shell_escape("/tmp/it's");
+        assert_eq!(escaped, r"'/tmp/it'\''s'");
+
+        let for_applescript = escape_osascript(&escaped);
+        assert_eq!(for_applescript, r"'/tmp/it'\\''s'");
+
+        // AppleScript 把 `\\` 求值回单个 `\`，于是 shell 拿到的正是 escaped 本身。
+        assert_eq!(for_applescript.replace(r"\\", r"\"), escaped);
+    }
+
+    #[test]
+    fn build_shell_command_quotes_the_cwd_it_prefixes() {
+        // Terminal / iTerm / kitty 三条路径都经这里；ghostty / wezterm / alacritty
+        // 走 `cwd = None` 并把目录当独立 argv 传，不受影响。
+        assert_eq!(
+            build_shell_command("claude --resume x", Some("/tmp/$(id -un)")),
+            "cd '/tmp/$(id -un)' && claude --resume x"
+        );
     }
 }
