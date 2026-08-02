@@ -131,7 +131,7 @@ impl RequestContext {
 
         // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-        let providers = state
+        let mut providers = state
             .provider_router
             .select_providers(app_type_str)
             .await
@@ -143,10 +143,41 @@ impl RequestContext {
                 _ => ProxyError::DatabaseError(e.to_string()),
             })?;
 
-        let provider = providers
+        let mut provider = providers
             .first()
             .cloned()
             .ok_or(ProxyError::NoAvailableProvider)?;
+
+        // Codex 官方登录 + 自定义模型：请求模型命中官方供应商的
+        // `codexCustomModels` 条目时，本次请求改用绑定的供应商（该供应商
+        // 自带凭据，不会把官方 token 转发出去；协议不限，本地代理转换）。
+        if app_type == AppType::Codex
+            && crate::proxy::providers::is_codex_official_provider(&provider)
+        {
+            if let Some(custom_provider) = crate::proxy::providers::resolve_codex_custom_model_provider(
+                &state.db,
+                &provider,
+                &request_model,
+            )
+            .map_err(|e| ProxyError::DatabaseError(e.to_string()))?
+            {
+                log::info!(
+                    "[Codex] 自定义模型 `{request_model}` 路由到供应商 `{}`",
+                    custom_provider.name
+                );
+                providers = vec![custom_provider.clone()];
+                provider = custom_provider;
+            } else if !crate::codex_config::codex_official_login_enabled(
+                &provider.settings_config
+            ) {
+                // 聚合模式（官方供应商、未启用官方登录）：没有官方模型可用，
+                // 不在自定义列表里的模型请求直接报错，而不是带 PROXY_MANAGED
+                // 占位 token 落到 chatgpt.com（401）。
+                return Err(ProxyError::InvalidRequest(format!(
+                    "Codex 聚合模式未启用官方登录：模型 `{request_model}` 不在自定义模型列表中"
+                )));
+            }
+        }
 
         log::debug!(
             "[{}] Provider: {}, model: {}, failover chain: {} providers, session: {}",

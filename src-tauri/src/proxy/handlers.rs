@@ -48,6 +48,7 @@ use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 
 // ============================================================================
 // 健康检查和状态查询（简单端点）
@@ -73,14 +74,26 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// GET /v1/models — Codex model list (reachability check)
 ///
 /// Codex CLI probes this endpoint at startup and deserializes the response as a
-/// catalog with a top-level `models` field.  Return the cc-switch–managed model
-/// catalog file directly so the format always matches what the current version
-/// of Codex expects.
+/// catalog with a top-level `models` field.
 ///
-/// Only serves the catalog when the live config.toml still references the
-/// cc-switch–owned `model_catalog_json`, using the same path ownership rules as
-/// Codex live-setting import.
-pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
+/// 官方 Codex 路由：转发到 ChatGPT 后端，保留真实的登录门禁——未登录时 401
+/// 原样回传，Codex 会正常要求登录；登录成功后把官方模型列表与自定义模型
+/// 条目合并返回。其他供应商只在实时 config.toml 仍引用
+/// cc-switch 所有的 `model_catalog_json` 时返回模型目录。
+pub async fn handle_models(
+    State(state): State<ProxyState>,
+    headers: axum::http::HeaderMap,
+) -> Result<axum::response::Response, ProxyError> {
+    if let Some(official) = resolve_codex_official_provider(&state) {
+        if crate::codex_config::codex_official_login_enabled(&official.settings_config) {
+            return forward_codex_official_models(&official, &headers).await;
+        }
+        // 未启用官方登录：聚合模式，目录只包含下方配置的供应商模型
+        let models =
+            crate::codex_config::codex_custom_catalog_entries(&official.settings_config, "");
+        return Ok(Json(json!({ "models": models })).into_response());
+    }
+
     let config_dir = crate::codex_config::get_codex_config_dir();
     let active_catalog_path = match crate::codex_config::read_codex_config_text() {
         Ok(config_text) => {
@@ -107,7 +120,94 @@ pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
         }
         json!({"models": []})
     };
-    Ok(Json(catalog))
+    Ok(Json(catalog).into_response())
+}
+
+/// 当前 Codex 供应商是内置官方供应商时返回它。
+fn resolve_codex_official_provider(state: &ProxyState) -> Option<crate::provider::Provider> {
+    let current_id = crate::settings::get_effective_current_provider(&state.db, &AppType::Codex)
+        .ok()
+        .flatten()
+        .or_else(|| state.db.get_current_provider("codex").ok().flatten())?;
+    let provider = state
+        .db
+        .get_provider_by_id(&current_id, "codex")
+        .ok()
+        .flatten()?;
+    crate::proxy::providers::is_codex_official_provider(&provider).then_some(provider)
+}
+
+/// 转发官方 Codex 的 /models 到 ChatGPT 后端；登录成功后在响应里合并自定义模型。
+async fn forward_codex_official_models(
+    official: &crate::provider::Provider,
+    headers: &axum::http::HeaderMap,
+) -> Result<axum::response::Response, ProxyError> {
+    use std::time::Duration;
+
+    let client = crate::proxy::http_client::get();
+    let url = format!("{}/models", super::providers::CHATGPT_CODEX_BASE_URL);
+    let mut builder = client.get(&url).timeout(Duration::from_secs(30));
+    if let Some(auth) = headers.get(axum::http::header::AUTHORIZATION) {
+        builder = builder.header(axum::http::header::AUTHORIZATION, auth);
+    }
+    let upstream = builder.send().await.map_err(|e| {
+        ProxyError::ForwardFailed(format!("转发 /models 到 ChatGPT 后端失败: {e}"))
+    })?;
+    let status = upstream.status();
+    let content_type = upstream
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .cloned();
+    let bytes = upstream
+        .bytes()
+        .await
+        .map_err(|e| ProxyError::ForwardFailed(format!("读取 ChatGPT /models 响应失败: {e}")))?;
+
+    if !status.is_success() {
+        // 原样回传（401 → Codex 正常要求登录）
+        let mut builder = axum::response::Response::builder().status(status);
+        if let Some(ct) = content_type {
+            builder = builder.header(axum::http::header::CONTENT_TYPE, ct);
+        }
+        return builder
+            .body(axum::body::Body::from(bytes))
+            .map_err(|e| ProxyError::Internal(e.to_string()));
+    }
+
+    let mut catalog: Value =
+        serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({ "models": [] }));
+    let custom_entries =
+        crate::codex_config::codex_custom_catalog_entries(&official.settings_config, "");
+    if !custom_entries.is_empty() {
+        // 上游 /models 响应的数组键可能是 `models` 或 `data`：优先合并到
+        // 已存在的那个数组，都不存在时落到 `models`，避免自定义模型合并静默失效。
+        let key = if catalog.get("models").is_some() {
+            "models"
+        } else if catalog.get("data").is_some() {
+            "data"
+        } else {
+            "models"
+        };
+        if catalog.get(key).is_none() {
+            catalog[key] = json!([]);
+        }
+        if let Some(models) = catalog.get_mut(key).and_then(|m| m.as_array_mut()) {
+            let mut seen: HashSet<String> = models
+                .iter()
+                .filter_map(|m| m.get("slug").and_then(|s| s.as_str()))
+                .map(str::to_string)
+                .collect();
+            for entry in custom_entries {
+                let Some(slug) = entry.get("slug").and_then(|s| s.as_str()) else {
+                    continue;
+                };
+                if seen.insert(slug.to_string()) {
+                    models.push(entry);
+                }
+            }
+        }
+    }
+    Ok(Json(catalog).into_response())
 }
 
 // ============================================================================
