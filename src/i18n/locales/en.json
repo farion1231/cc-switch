@@ -98,7 +98,8 @@
   },
   "provider": {
     "connectivityCheck": "Connectivity check",
-    "tabProvider": "Provider",
+    "tabSingle": "Single",
+    "tabAggregate": "Aggregate",
     "tabUniversal": "Universal",
     "noProviders": "No providers added yet",
     "noProvidersDescription": "If you already have a config, click \"Import Current Config\" — all data will be safely saved in a default provider",

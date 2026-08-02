@@ -59,6 +59,73 @@ describe("AddProviderDialog", () => {
     };
   });
 
+  it("claude 显示单一/聚合/统一三个 tab，默认选中单一供应商", () => {
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="claude"
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      "provider.tabSingle",
+      "provider.tabAggregate",
+      "provider.tabUniversal",
+    ]);
+    expect(
+      screen.getByRole("tab", { name: "provider.tabSingle" }),
+    ).toHaveAttribute("data-state", "active");
+  });
+
+  it("codex 显示聚合供应商 tab", () => {
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="codex"
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("tab", { name: "provider.tabAggregate" }),
+    ).toBeInTheDocument();
+  });
+
+  it("gemini 不显示聚合 tab，但保留统一供应商 tab", () => {
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="gemini"
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("tab", { name: "provider.tabAggregate" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("tab", { name: "provider.tabUniversal" }),
+    ).toBeInTheDocument();
+  });
+
+  it("opencode 不显示任何 tab", () => {
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="opencode"
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("tab")).toBeNull();
+  });
+
   it("使用 ProviderForm 返回的自定义端点", async () => {
     const handleSubmit = vi.fn().mockResolvedValue(undefined);
     const handleOpenChange = vi.fn();

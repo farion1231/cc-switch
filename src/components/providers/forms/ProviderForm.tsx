@@ -23,8 +23,6 @@ import type {
   CodexChatReasoning,
   PromptCacheRoutingMode,
   ClaudeApiKeyField,
-  AggregateRoutes,
-  Provider,
 } from "@/types";
 import {
   providerPresets,
@@ -78,7 +76,6 @@ import { Label } from "@/components/ui/label";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
-import { AggregateProviderFields } from "./AggregateProviderFields";
 import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
 import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
@@ -126,14 +123,6 @@ import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
-import {
-  AGGREGATE_SETTINGS_CONFIG,
-  customRoutesToRows,
-  hasAggregateRoutes,
-  normalizeAggregateRoutes,
-  validateAggregateRoutes,
-  type AggregateCustomRouteRow,
-} from "@/utils/aggregateRoutes";
 
 type PresetEntry = {
   id: string;
@@ -250,7 +239,6 @@ export interface ProviderFormProps {
   };
   showButtons?: boolean;
   isProxyTakeover?: boolean;
-  availableProviders?: Provider[];
 }
 
 export function ProviderForm(props: ProviderFormProps) {
@@ -276,7 +264,6 @@ function ProviderFormFull({
   initialData,
   showButtons = true,
   isProxyTakeover = false,
-  availableProviders = [],
 }: ProviderFormProps) {
   if (appId === "claude-desktop") {
     throw new Error("ProviderFormFull should not receive claude-desktop");
@@ -284,17 +271,6 @@ function ProviderFormFull({
 
   const { t } = useTranslation();
   const isEditMode = Boolean(initialData);
-  const supportsAggregate = appId === "claude" || appId === "codex";
-  const [aggregateEnabled, setAggregateEnabled] = useState(
-    supportsAggregate && hasAggregateRoutes(initialData?.meta?.aggregateRoutes),
-  );
-  const [aggregateRoutes, setAggregateRoutes] = useState<AggregateRoutes>(
-    initialData?.meta?.aggregateRoutes ?? {},
-  );
-  // Codex 聚合路由的有序行态（Record 无法保留重复 key，提交校验依赖行态）
-  const [aggregateCustomRows, setAggregateCustomRows] = useState<
-    AggregateCustomRouteRow[]
-  >(() => customRoutesToRows(initialData?.meta?.aggregateRoutes?.custom));
   const queryClient = useQueryClient();
   const { data: settingsData } = useSettingsQuery();
   const showCommonConfigNotice =
@@ -369,14 +345,6 @@ function ProviderFormFull({
   useEffect(() => {
     setSelectedPresetId(initialData ? null : "custom");
     setActivePreset(null);
-    setAggregateEnabled(
-      supportsAggregate &&
-        hasAggregateRoutes(initialData?.meta?.aggregateRoutes),
-    );
-    setAggregateRoutes(initialData?.meta?.aggregateRoutes ?? {});
-    setAggregateCustomRows(
-      customRoutesToRows(initialData?.meta?.aggregateRoutes?.custom),
-    );
 
     if (!initialData) {
       setDraftCustomEndpoints([]);
@@ -1049,38 +1017,9 @@ function ProviderFormFull({
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
   const shouldApplyLocalProxyRequestOverrides =
-    (appId === "claude" || appId === "codex") &&
-    category !== "official" &&
-    !aggregateEnabled;
+    (appId === "claude" || appId === "codex") && category !== "official";
 
   const handleSubmit = async (values: ProviderFormData) => {
-    if (supportsAggregate && aggregateEnabled) {
-      const validation = validateAggregateRoutes(
-        aggregateRoutes,
-        appId as "claude" | "codex",
-        aggregateCustomRows,
-      );
-      if (!validation.ok) {
-        toast.error(
-          validation.reason === "empty"
-            ? t("providerForm.aggregate.empty", {
-                defaultValue: "Configure at least one aggregate route.",
-              })
-            : validation.reason === "duplicate"
-              ? t("providerForm.aggregate.duplicateKey", {
-                  key: validation.key,
-                  defaultValue: "Duplicate model name: {{key}}",
-                })
-              : t("providerForm.aggregate.incomplete", {
-                  tier: validation.tier,
-                  defaultValue:
-                    "The {{tier}} route requires both a provider and a model.",
-                }),
-        );
-        return;
-      }
-    }
-
     const overridesResult = shouldApplyLocalProxyRequestOverrides
       ? buildLocalProxyRequestOverrides(
           localProxyHeadersOverride,
@@ -1101,11 +1040,7 @@ function ProviderFormFull({
     const issues: string[] = [];
 
     // 模板变量未填：A 类（空值）
-    if (
-      appId === "claude" &&
-      !aggregateEnabled &&
-      templateValueEntries.length > 0
-    ) {
+    if (appId === "claude" && templateValueEntries.length > 0) {
       const validation = validateTemplateValues();
       if (!validation.isValid && validation.missingField) {
         issues.push(
@@ -1339,7 +1274,7 @@ function ProviderFormFull({
     // 非官方供应商端点 / API Key 空：A 类
     // cloud_provider（如 Bedrock）通过模板变量处理认证，跳过通用校验
     if (category !== "official" && category !== "cloud_provider") {
-      if (appId === "claude" && !aggregateEnabled) {
+      if (appId === "claude") {
         if (!isCodexOauthProvider && !isXaiOauthProvider && !baseUrl.trim()) {
           issues.push(
             t("providerForm.endpointRequired", {
@@ -1359,7 +1294,7 @@ function ProviderFormFull({
             }),
           );
         }
-      } else if (appId === "codex" && !aggregateEnabled) {
+      } else if (appId === "codex") {
         // 托管 OAuth 预设（xAI）：端点由 adapter 硬定向、token 由代理注入，
         // 两项都不需要用户填写
         if (!isXaiOauthProvider && !codexBaseUrl.trim()) {
@@ -1433,9 +1368,7 @@ function ProviderFormFull({
 
     let settingsConfig: string;
 
-    if (supportsAggregate && aggregateEnabled) {
-      settingsConfig = JSON.stringify(AGGREGATE_SETTINGS_CONFIG);
-    } else if (appId === "codex") {
+    if (appId === "codex") {
       try {
         const authJson = JSON.parse(codexAuth);
         let normalizedCodexConfig =
@@ -1542,10 +1475,6 @@ function ProviderFormFull({
       payload.presetCategory = category;
     }
 
-    if (supportsAggregate && aggregateEnabled) {
-      payload.presetCategory = "custom";
-    }
-
     if (activePreset) {
       payload.presetId = activePreset.id;
       if (activePreset.category) {
@@ -1612,70 +1541,62 @@ function ProviderFormFull({
       payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
 
     // 确定 providerType（新建时从预设获取，编辑时从现有数据获取）
-    const providerType = aggregateEnabled
-      ? undefined
-      : presetProviderType || initialData?.meta?.providerType;
+    const providerType = presetProviderType || initialData?.meta?.providerType;
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
       commonConfigEnabled:
-        appId === "claude" && !aggregateEnabled
+        appId === "claude"
           ? useCommonConfig
-          : appId === "codex" && !aggregateEnabled
+          : appId === "codex"
             ? useCodexCommonConfigFlag
             : appId === "gemini"
               ? useGeminiCommonConfigFlag
               : undefined,
-      endpointAutoSelect: aggregateEnabled ? undefined : endpointAutoSelect,
+      endpointAutoSelect,
       claudeDesktopMode: undefined,
       // 保存 providerType（用于识别 Copilot / Codex OAuth 等特殊供应商）
       providerType,
-      authBinding:
-        !aggregateEnabled && isCopilotProvider
+      authBinding: isCopilotProvider
+        ? {
+            source: "managed_account",
+            authProvider: "github_copilot",
+            accountId: selectedGitHubAccountId ?? undefined,
+          }
+        : isCodexOauthProvider
           ? {
               source: "managed_account",
-              authProvider: "github_copilot",
-              accountId: selectedGitHubAccountId ?? undefined,
+              authProvider: "codex_oauth",
+              accountId: selectedCodexAccountId ?? undefined,
             }
-          : !aggregateEnabled && isCodexOauthProvider
+          : isXaiOauthProvider
             ? {
                 source: "managed_account",
-                authProvider: "codex_oauth",
-                accountId: selectedCodexAccountId ?? undefined,
+                authProvider: "xai_oauth",
+                accountId: selectedXaiAccountId ?? undefined,
               }
-            : !aggregateEnabled && isXaiOauthProvider
-              ? {
-                  source: "managed_account",
-                  authProvider: "xai_oauth",
-                  accountId: selectedXaiAccountId ?? undefined,
-                }
-              : undefined,
+            : undefined,
       // GitHub Copilot 多账号：保存关联的账号 ID
       githubAccountId:
-        !aggregateEnabled && isCopilotProvider && selectedGitHubAccountId
+        isCopilotProvider && selectedGitHubAccountId
           ? selectedGitHubAccountId
           : undefined,
-      codexFastMode:
-        !aggregateEnabled && isCodexOauthProvider ? codexFastMode : undefined,
+      codexFastMode: isCodexOauthProvider ? codexFastMode : undefined,
       codexChatReasoning:
         appId === "codex" &&
         category !== "official" &&
-        !aggregateEnabled &&
         localCodexApiFormat === "openai_chat"
           ? normalizeCodexChatReasoningForSave(codexChatReasoning)
           : undefined,
       promptCacheRouting:
         appId === "codex" &&
         category !== "official" &&
-        !aggregateEnabled &&
         localCodexApiFormat === "openai_chat" &&
         promptCacheRouting !== "auto"
           ? promptCacheRouting
           : undefined,
       customUserAgent:
-        (appId === "claude" || appId === "codex") &&
-        category !== "official" &&
-        !aggregateEnabled
+        (appId === "claude" || appId === "codex") && category !== "official"
           ? customUserAgent.trim() || undefined
           : undefined,
       localProxyRequestOverrides: shouldApplyLocalProxyRequestOverrides
@@ -1689,11 +1610,11 @@ function ProviderFormFull({
           ? pricingConfig.pricingModelSource
           : undefined,
       apiFormat:
-        appId === "claude" && category !== "official" && !aggregateEnabled
+        appId === "claude" && category !== "official"
           ? isXaiOauthProvider
             ? "openai_responses"
             : localApiFormat
-          : appId === "codex" && category !== "official" && !aggregateEnabled
+          : appId === "codex" && category !== "official"
             ? isXaiOauthProvider
               ? "openai_responses"
               : localCodexApiFormat
@@ -1701,12 +1622,10 @@ function ProviderFormFull({
       apiKeyField:
         appId === "claude" &&
         category !== "official" &&
-        !aggregateEnabled &&
         localApiKeyField !== "ANTHROPIC_AUTH_TOKEN"
           ? localApiKeyField
           : appId === "codex" &&
               category !== "official" &&
-              !aggregateEnabled &&
               localCodexApiFormat === "anthropic" &&
               localCodexAnthropicAuthField !== "ANTHROPIC_AUTH_TOKEN"
             ? localCodexAnthropicAuthField
@@ -1715,7 +1634,6 @@ function ProviderFormFull({
       impersonateClaudeCode:
         appId === "codex" &&
         category !== "official" &&
-        !aggregateEnabled &&
         localCodexApiFormat === "anthropic" &&
         localCodexImpersonateClaudeCode
           ? true
@@ -1724,7 +1642,6 @@ function ProviderFormFull({
       maxOutputTokens:
         appId === "codex" &&
         category !== "official" &&
-        !aggregateEnabled &&
         localCodexApiFormat === "anthropic" &&
         localCodexMaxOutputTokens.trim() !== "" &&
         Number(localCodexMaxOutputTokens) > 0
@@ -1733,17 +1650,9 @@ function ProviderFormFull({
       isFullUrl:
         supportsFullUrl &&
         category !== "official" &&
-        !aggregateEnabled &&
         !isXaiOauthProvider &&
         localIsFullUrl
           ? true
-          : undefined,
-      aggregateRoutes:
-        supportsAggregate && aggregateEnabled
-          ? normalizeAggregateRoutes(
-              aggregateRoutes,
-              appId as "claude" | "codex",
-            )
           : undefined,
     };
 
@@ -2051,21 +1960,7 @@ function ProviderFormFull({
           onSubmit={form.handleSubmit(handleSubmit)}
           className="space-y-6 glass rounded-xl p-6 border border-white/10"
         >
-          {supportsAggregate && (
-            <AggregateProviderFields
-              appId={appId as "claude" | "codex"}
-              enabled={aggregateEnabled}
-              onEnabledChange={setAggregateEnabled}
-              routes={aggregateRoutes}
-              onRoutesChange={setAggregateRoutes}
-              providers={availableProviders}
-              currentProviderId={providerId}
-              customRows={aggregateCustomRows}
-              onCustomRowsChange={setAggregateCustomRows}
-            />
-          )}
-
-          {!initialData && !aggregateEnabled && (
+          {!initialData && (
             <ProviderPresetSelector
               selectedPresetId={selectedPresetId}
               presetEntries={presetEntries}
@@ -2289,7 +2184,7 @@ function ProviderFormFull({
             }
           />
 
-          {appId === "claude" && !aggregateEnabled && (
+          {appId === "claude" && (
             <ClaudeFormFields
               providerId={providerId}
               shouldShowApiKey={
@@ -2381,7 +2276,7 @@ function ProviderFormFull({
             />
           )}
 
-          {appId === "codex" && !aggregateEnabled && (
+          {appId === "codex" && (
             <CodexFormFields
               providerId={providerId}
               isXaiOauthPreset={
@@ -2554,7 +2449,7 @@ function ProviderFormFull({
           )}
 
           {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
-          {supportsAggregate && aggregateEnabled ? null : appId === "codex" ? (
+          {appId === "codex" ? (
             <>
               <CodexConfigEditor
                 authValue={codexAuth}
@@ -2703,8 +2598,7 @@ function ProviderFormFull({
           {!isAnyOmoCategory &&
             appId !== "opencode" &&
             appId !== "openclaw" &&
-            appId !== "hermes" &&
-            !aggregateEnabled && (
+            appId !== "hermes" && (
               <ProviderAdvancedConfig
                 pricingConfig={pricingConfig}
                 onPricingConfigChange={setPricingConfig}

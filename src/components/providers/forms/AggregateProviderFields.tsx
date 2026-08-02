@@ -44,8 +44,9 @@ const EMPTY_PROVIDER = "__none__";
 
 interface AggregateProviderFieldsProps {
   appId: "claude" | "codex";
-  enabled: boolean;
-  onEnabledChange: (enabled: boolean) => void;
+  /** 不传 onEnabledChange 时视为始终启用（由外层 tab 表达启用语义），且不渲染开关 */
+  enabled?: boolean;
+  onEnabledChange?: (enabled: boolean) => void;
   routes: AggregateRoutes;
   onRoutesChange: (routes: AggregateRoutes) => void;
   providers: Provider[];
@@ -67,6 +68,7 @@ export function AggregateProviderFields({
   onCustomRowsChange,
 }: AggregateProviderFieldsProps) {
   const { t } = useTranslation();
+  const isEnabled = enabled ?? true;
   const targets = useMemo(
     () => getAggregateRouteTargets(providers, appId, currentProviderId),
     [providers, appId, currentProviderId],
@@ -163,16 +165,18 @@ export function AggregateProviderFields({
                 })}
           </p>
         </div>
-        <Switch
-          checked={enabled}
-          onCheckedChange={onEnabledChange}
-          aria-label={t("providerForm.aggregate.title", {
-            defaultValue: "Aggregate provider",
-          })}
-        />
+        {onEnabledChange && (
+          <Switch
+            checked={isEnabled}
+            onCheckedChange={onEnabledChange}
+            aria-label={t("providerForm.aggregate.title", {
+              defaultValue: "Aggregate provider",
+            })}
+          />
+        )}
       </div>
 
-      {enabled && appId === "claude" && (
+      {isEnabled && appId === "claude" && (
         <div className="space-y-3 border-t border-border-default pt-4">
           {targets.length === 0 && (
             <p className="text-sm text-destructive">
@@ -319,7 +323,7 @@ export function AggregateProviderFields({
         </div>
       )}
 
-      {enabled && appId === "codex" && (
+      {isEnabled && appId === "codex" && (
         <div className="space-y-3 border-t border-border-default pt-4">
           {targets.length === 0 && (
             <p className="text-sm text-destructive">

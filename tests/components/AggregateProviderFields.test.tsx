@@ -41,6 +41,25 @@ function renderFields(
 // 四个档位行各有一个 1M checkbox，顺序与 AGGREGATE_ROUTE_TIERS 一致
 const OPUS_CHECKBOX_INDEX = 2;
 
+describe("AggregateProviderFields enable switch", () => {
+  it("renders the switch when onEnabledChange is provided", () => {
+    renderFields({});
+
+    expect(screen.getByRole("switch")).toBeInTheDocument();
+  });
+
+  it("hides the switch (always enabled) when onEnabledChange is omitted", () => {
+    renderFields(
+      { opus: { providerId: "kimi", model: "k3" } },
+      { enabled: undefined, onEnabledChange: undefined },
+    );
+
+    expect(screen.queryByRole("switch")).toBeNull();
+    // 路由 UI 仍然渲染
+    expect(document.getElementById("aggregate-opus-model")).not.toBeNull();
+  });
+});
+
 describe("AggregateProviderFields 1M marker", () => {
   it("reflects the [1M] marker: checkbox checked, input shows the base id", () => {
     renderFields({ opus: { providerId: "kimi", model: "k3[1M]" } });
@@ -125,9 +144,7 @@ describe("AggregateProviderFields codex custom routes", () => {
   it("uses the codex-specific hint", () => {
     renderCodexFields();
 
-    expect(
-      screen.getByText(/exact request model name/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/exact request model name/i)).toBeInTheDocument();
   });
 
   it("renders existing rows with request/upstream model inputs", () => {
@@ -172,9 +189,7 @@ describe("AggregateProviderFields codex custom routes", () => {
   it("shows a fetch button for the upstream model once a provider is selected", () => {
     renderCodexFields([{ key: "gpt-5.5", providerId: "kimi", model: "" }]);
 
-    expect(
-      screen.getByTitle("providerForm.fetchModels"),
-    ).toBeInTheDocument();
+    expect(screen.getByTitle("providerForm.fetchModels")).toBeInTheDocument();
   });
 
   it("keeps the upstream model a plain input without a selected provider", () => {

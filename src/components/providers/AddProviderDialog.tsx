@@ -12,6 +12,7 @@ import {
   ProviderForm,
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
+import { AggregateProviderForm } from "@/components/providers/forms/AggregateProviderForm";
 import { UniversalProviderFormModal } from "@/components/universal/UniversalProviderFormModal";
 import { UniversalProviderPanel } from "@/components/universal";
 import { providerPresets } from "@/config/claudeProviderPresets";
@@ -48,6 +49,8 @@ export function AddProviderDialog({
   availableProviders = [],
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
+  // 聚合供应商仅 Claude / Codex 支持（与历史上的 supportsAggregate 条件一致）
+  const showAggregateTab = appId === "claude" || appId === "codex";
   // OpenCode and OpenClaw don't support universal providers
   const showUniversalTab =
     appId !== "opencode" &&
@@ -55,9 +58,10 @@ export function AddProviderDialog({
     appId !== "hermes" &&
     appId !== "grokbuild" &&
     appId !== "claude-desktop";
-  const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
-    "app-specific",
-  );
+  const showTabs = showAggregateTab || showUniversalTab;
+  const [activeTab, setActiveTab] = useState<
+    "app-specific" | "aggregate" | "universal"
+  >("app-specific");
   const [universalFormOpen, setUniversalFormOpen] = useState(false);
   const [selectedUniversalPreset, setSelectedUniversalPreset] =
     useState<UniversalProviderPreset | null>(null);
@@ -322,7 +326,7 @@ export function AddProviderDialog({
   );
 
   const footer =
-    !showUniversalTab || activeTab === "app-specific" ? (
+    activeTab !== "universal" ? (
       <>
         <span className="mr-auto min-w-0 text-xs text-muted-foreground truncate">
           {t("provider.addFooterHint")}
@@ -371,18 +375,33 @@ export function AddProviderDialog({
       footer={footer}
       contentClassName="pt-3"
     >
-      {showUniversalTab ? (
+      {showTabs ? (
         <Tabs
           value={activeTab}
-          onValueChange={(v) => setActiveTab(v as "app-specific" | "universal")}
+          onValueChange={(v) =>
+            setActiveTab(v as "app-specific" | "aggregate" | "universal")
+          }
         >
-          <TabsList className="grid w-full grid-cols-2 mb-6">
+          <TabsList
+            className={`grid w-full ${
+              showAggregateTab && showUniversalTab
+                ? "grid-cols-3"
+                : "grid-cols-2"
+            } mb-6`}
+          >
             <TabsTrigger value="app-specific">
-              {t(`apps.${appId}`)} {t("provider.tabProvider")}
+              {t("provider.tabSingle")}
             </TabsTrigger>
-            <TabsTrigger value="universal">
-              {t("provider.tabUniversal")}
-            </TabsTrigger>
+            {showAggregateTab && (
+              <TabsTrigger value="aggregate">
+                {t("provider.tabAggregate")}
+              </TabsTrigger>
+            )}
+            {showUniversalTab && (
+              <TabsTrigger value="universal">
+                {t("provider.tabUniversal")}
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="app-specific" className="mt-0">
@@ -393,13 +412,28 @@ export function AddProviderDialog({
               onCancel={() => onOpenChange(false)}
               onSubmittingChange={setIsFormSubmitting}
               showButtons={false}
-              availableProviders={availableProviders}
             />
           </TabsContent>
 
-          <TabsContent value="universal" className="mt-0">
-            <UniversalProviderPanel />
-          </TabsContent>
+          {showAggregateTab && (
+            <TabsContent value="aggregate" className="mt-0">
+              <AggregateProviderForm
+                appId={appId as "claude" | "codex"}
+                submitLabel={t("common.add")}
+                onSubmit={handleSubmit}
+                onCancel={() => onOpenChange(false)}
+                onSubmittingChange={setIsFormSubmitting}
+                showButtons={false}
+                availableProviders={availableProviders}
+              />
+            </TabsContent>
+          )}
+
+          {showUniversalTab && (
+            <TabsContent value="universal" className="mt-0">
+              <UniversalProviderPanel />
+            </TabsContent>
+          )}
         </Tabs>
       ) : (
         // OpenCode/OpenClaw: directly show form without tabs
@@ -410,7 +444,6 @@ export function AddProviderDialog({
           onCancel={() => onOpenChange(false)}
           onSubmittingChange={setIsFormSubmitting}
           showButtons={false}
-          availableProviders={availableProviders}
         />
       )}
 

@@ -98,7 +98,8 @@
   },
   "provider": {
     "connectivityCheck": "檢測連通",
-    "tabProvider": "供應商",
+    "tabSingle": "單一供應商",
+    "tabAggregate": "聚合供應商",
     "tabUniversal": "通用供應商",
     "noProviders": "尚未新增任何供應商",
     "noProvidersDescription": "如果您已有設定，請點擊「匯入目前設定」，所有資料將安全儲存在 default 供應商中",

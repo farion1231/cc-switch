@@ -98,7 +98,8 @@
   },
   "provider": {
     "connectivityCheck": "接続チェック",
-    "tabProvider": "プロバイダー",
+    "tabSingle": "単一プロバイダー",
+    "tabAggregate": "集約プロバイダー",
     "tabUniversal": "統一プロバイダー",
     "noProviders": "まだプロバイダーがありません",
     "noProvidersDescription": "既存の設定がある場合は「現在の設定をインポート」をクリックしてください。すべてのデータが default プロバイダーに安全に保存されます",
