@@ -41,6 +41,21 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
     Ok(base_dir.join(filename))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hermes_prompt_file_uses_soul_md() {
+        let path = prompt_file_path(&AppType::Hermes).expect("Hermes prompt path");
+
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("SOUL.md")
+        );
+    }
+}
+
 fn get_base_dir_with_fallback(
     primary_path: PathBuf,
     fallback_dir: &str,
