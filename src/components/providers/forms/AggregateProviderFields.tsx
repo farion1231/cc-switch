@@ -43,7 +43,7 @@ import {
 const EMPTY_PROVIDER = "__none__";
 
 interface AggregateProviderFieldsProps {
-  appId: "claude" | "codex";
+  appId: "claude" | "claude-desktop" | "codex";
   /** 不传 onEnabledChange 时视为始终启用（由外层 tab 表达启用语义），且不渲染开关 */
   enabled?: boolean;
   onEnabledChange?: (enabled: boolean) => void;
@@ -176,7 +176,7 @@ export function AggregateProviderFields({
         )}
       </div>
 
-      {isEnabled && appId === "claude" && (
+      {isEnabled && appId !== "codex" && (
         <div className="space-y-3 border-t border-border-default pt-4">
           {targets.length === 0 && (
             <p className="text-sm text-destructive">

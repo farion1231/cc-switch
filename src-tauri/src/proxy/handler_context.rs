@@ -152,7 +152,7 @@ impl RequestContext {
         // 未命中路由的聚合供应商被丢弃，由链上后续 provider 自动回退。
         let mut routed_provider_sources = std::collections::HashMap::new();
         let route_key = match app_type_str {
-            "claude" => Some(
+            "claude" | "claude-desktop" => Some(
                 crate::proxy::provider_router::AggregateRouteKey::ClaudeTier(
                     crate::proxy::model_mapper::classify_claude_tier(&request_model),
                 ),

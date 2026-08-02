@@ -255,7 +255,7 @@ export function EditProviderDialog({
     >
       {isAggregate ? (
         <AggregateProviderForm
-          appId={appId as "claude" | "codex"}
+          appId={appId as "claude" | "claude-desktop" | "codex"}
           providerId={provider.id}
           submitLabel={t("common.save")}
           onSubmit={handleSubmit}

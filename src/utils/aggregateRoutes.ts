@@ -70,7 +70,7 @@ export function getAggregateRouteTargetIds(
  */
 export function getAggregateRouteTargets(
   providers: Provider[],
-  appId: "claude" | "codex",
+  appId: "claude" | "claude-desktop" | "codex",
   excludeProviderId?: string,
 ): Provider[] {
   return providers.filter(
@@ -161,7 +161,7 @@ export type AggregateRoutesValidation =
  */
 export function validateAggregateRoutes(
   routes: AggregateRoutes,
-  appId: "claude" | "codex",
+  appId: "claude" | "claude-desktop" | "codex",
   customRows?: AggregateCustomRouteRow[],
 ): AggregateRoutesValidation {
   if (appId === "codex") {

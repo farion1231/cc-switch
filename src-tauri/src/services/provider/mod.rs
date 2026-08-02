@@ -903,6 +903,38 @@ mod tests {
         });
     }
 
+    #[test]
+    #[serial]
+    fn validate_aggregate_routes_accepts_claude_desktop_app() {
+        with_test_home(|state, _| {
+            let kimi = Provider::with_id(
+                "kimi".into(),
+                "Kimi".into(),
+                json!({"env": {"ANTHROPIC_BASE_URL": "https://api.kimi.com"}}),
+                None,
+            );
+            state.db.save_provider("claude-desktop", &kimi).unwrap();
+
+            let agg = aggregate_provider_with_routes(
+                "agg",
+                AggregateRoutes {
+                    fable: Some(AggregateRoute {
+                        provider_id: "kimi".into(),
+                        model: "k3".into(),
+                    }),
+                    ..Default::default()
+                },
+            );
+
+            ProviderService::validate_aggregate_routes(
+                state.db.as_ref(),
+                &AppType::ClaudeDesktop,
+                &agg,
+            )
+            .expect("claude-desktop aggregate routes should pass");
+        });
+    }
+
     // ==================== Codex 聚合路由（custom 精确匹配）校验 ====================
 
     fn codex_custom_routes(entries: &[(&str, &str, &str)]) -> AggregateRoutes {
@@ -3551,7 +3583,10 @@ impl ProviderService {
             ));
         }
 
-        if matches!(app_type, AppType::Claude | AppType::Codex) {
+        if matches!(
+            app_type,
+            AppType::Claude | AppType::ClaudeDesktop | AppType::Codex
+        ) {
             let dependent = Self::find_aggregate_dependent(state.db.as_ref(), &app_type, id)?;
             if let Some(provider) = dependent {
                 return Err(AppError::localized(
@@ -4975,8 +5010,9 @@ impl ProviderService {
         Ok(())
     }
 
-    /// 校验聚合供应商路由：仅 Claude / Codex 应用支持；约定 Claude 只校验
-    /// 四档（tiers）路由、Codex 只校验 custom（自由键）路由，互相忽略。
+    /// 校验聚合供应商路由：仅 Claude / Claude Desktop / Codex 应用支持；约定
+    /// Claude 系（含 Desktop）只校验四档（tiers）路由、Codex 只校验
+    /// custom（自由键）路由，互相忽略。
     /// 每条路由的目标 provider 必须存在、不指向自身、且不能也是聚合供应商
     /// （禁止嵌套）；模型名非空。
     fn validate_aggregate_routes(
@@ -4990,11 +5026,14 @@ impl ProviderService {
         if !routes.has_any_route() {
             return Ok(());
         }
-        if !matches!(app_type, AppType::Claude | AppType::Codex) {
+        if !matches!(
+            app_type,
+            AppType::Claude | AppType::ClaudeDesktop | AppType::Codex
+        ) {
             return Err(AppError::localized(
                 "provider.aggregate.unsupported_app",
-                "聚合供应商仅支持 Claude / Codex 应用",
-                "Aggregate providers are only supported for the Claude / Codex apps",
+                "聚合供应商仅支持 Claude / Claude Desktop / Codex 应用",
+                "Aggregate providers are only supported for the Claude / Claude Desktop / Codex apps",
             ));
         }
         if let Some(dependent) = Self::find_aggregate_dependent(db, app_type, provider.id.as_str())?
@@ -5079,7 +5118,7 @@ impl ProviderService {
         };
 
         match app_type {
-            AppType::Claude => {
+            AppType::Claude | AppType::ClaudeDesktop => {
                 for (tier, route) in [
                     ("haiku", routes.haiku.as_ref()),
                     ("sonnet", routes.sonnet.as_ref()),
