@@ -68,14 +68,23 @@ fn provider_env_targets_gpt56(provider_env: Option<&serde_json::Map<String, Valu
     saw_model
 }
 
+/// Kimi For Coding (`https://api.kimi.com/coding`, alias `kimi-for-coding`) and
+/// the Moonshot.cn-hosted Kimi (`https://api.moonshot.cn/anthropic`, alias
+/// `kimi-k2.7-code`) both serve a 256K context window, but Claude Code caps
+/// unknown non-Claude model ids at 200K unless `CLAUDE_CODE_MAX_CONTEXT_TOKENS`
+/// is set — and that env is ignored for `claude-`-prefixed ids. Match the
+/// Anthropic-protocol Kimi endpoints (and their trailing-slash variants) so
+/// both presets get the 256K context declared in their effective settings.
 fn is_kimi_for_coding_provider(provider: &Provider) -> bool {
-    provider
-        .settings_config
-        .pointer("/env/ANTHROPIC_BASE_URL")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .map(|url| url.trim_end_matches('/'))
-        == Some("https://api.kimi.com/coding")
+    matches!(
+        provider
+            .settings_config
+            .pointer("/env/ANTHROPIC_BASE_URL")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .map(|url| url.trim_end_matches('/')),
+        Some("https://api.kimi.com/coding") | Some("https://api.moonshot.cn/anthropic")
+    )
 }
 
 /// Claude Code assigns unknown non-Claude model ids a 200K context window.
@@ -133,11 +142,13 @@ fn apply_codex_oauth_claude_context_defaults(settings: &mut Value, provider: &Pr
     }
 }
 
-/// Kimi For Coding serves a 256K window, but Claude Code caps unknown models at
-/// 200K unless `CLAUDE_CODE_MAX_CONTEXT_TOKENS` is set — and that env is ignored
-/// for `claude-`-prefixed ids, so these defaults only bite when the provider also
-/// routes the endpoint's `kimi-for-coding` alias (the preset does). Keep the
-/// defaults provider-owned so an old shared snippet cannot override them.
+/// Kimi For Coding (`kimi-for-coding`) and the Moonshot.cn-hosted Kimi
+/// (`kimi-k2.7-code`) both serve a 256K context window, but Claude Code caps
+/// unknown models at 200K unless `CLAUDE_CODE_MAX_CONTEXT_TOKENS` is set —
+/// and that env is ignored for `claude-`-prefixed ids, so these defaults only
+/// bite when the provider also routes the endpoint's `kimi-for-coding` /
+/// `kimi-k2.7-code` alias (the presets do). Keep the defaults provider-owned
+/// so an old shared snippet cannot override them.
 fn apply_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provider) {
     if !is_kimi_for_coding_provider(provider) {
         return;
