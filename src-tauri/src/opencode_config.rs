@@ -276,7 +276,15 @@ pub fn add_plugin(plugin_name: &str) -> Result<(), AppError> {
     write_opencode_config(&config)
 }
 
-pub fn remove_plugins_by_prefixes(prefixes: &[&str]) -> Result<(), AppError> {
+pub fn remove_plugins_by_prefixes(
+    prefixes: &[&str],
+) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), AppError> {
+    let path = get_opencode_config_path();
+    let previous_contents = if path.exists() {
+        Some(std::fs::read(&path).map_err(|e| AppError::io(&path, e))?)
+    } else {
+        None
+    };
     let mut config = read_opencode_config()?;
 
     if let Some(arr) = config.get_mut("plugin").and_then(|v| v.as_array_mut()) {
@@ -291,7 +299,20 @@ pub fn remove_plugins_by_prefixes(prefixes: &[&str]) -> Result<(), AppError> {
         }
     }
 
-    write_opencode_config(&config)
+    let current_contents = if path.exists() {
+        Some(std::fs::read(&path).map_err(|e| AppError::io(&path, e))?)
+    } else {
+        None
+    };
+    if current_contents != previous_contents {
+        return Err(AppError::Config(
+            "OpenCode config changed on disk. Please reload and try again.".to_string(),
+        ));
+    }
+
+    write_opencode_config(&config)?;
+    let expected_contents = Some(std::fs::read(&path).map_err(|e| AppError::io(&path, e))?);
+    Ok((previous_contents, expected_contents))
 }
 
 #[cfg(test)]

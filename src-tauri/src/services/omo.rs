@@ -364,10 +364,12 @@ impl OmoService {
         }
     }
 
-    fn remove_unified_config_section(path: &Path) -> Result<Vec<u8>, AppError> {
+    fn remove_unified_config_section(path: &Path) -> Result<(Vec<u8>, Vec<u8>), AppError> {
         let mut document = UnifiedConfigDocument::load(path)?;
+        let previous_contents = document.original_source.as_bytes().to_vec();
         document.remove_opencode_section()?;
-        document.save()
+        let expected_contents = document.save()?;
+        Ok((previous_contents, expected_contents))
     }
 
     // ── Field extraction ───────────────────────────────────
@@ -506,31 +508,22 @@ impl OmoService {
             .collect();
         let plugin_config_path = crate::opencode_config::get_opencode_config_path();
 
-        let plugin_config_snapshot = Self::snapshot_config_file(&plugin_config_path)?;
-        let unified_snapshot = unified_path
-            .as_ref()
-            .map(|path| Self::snapshot_config_file(path))
-            .transpose()?
-            .flatten();
-        let legacy_snapshots = legacy_paths
-            .iter()
-            .map(|path| Self::snapshot_config_file(path))
-            .collect::<Result<Vec<_>, _>>()?;
         let mut applied_changes = Vec::new();
 
         let result = (|| -> Result<(), AppError> {
-            crate::opencode_config::remove_plugins_by_prefixes(v.plugin_prefixes)?;
-            let plugin_config_expected = Self::snapshot_config_file(&plugin_config_path)?;
+            let (plugin_config_snapshot, plugin_config_expected) =
+                crate::opencode_config::remove_plugins_by_prefixes(v.plugin_prefixes)?;
             applied_changes.push((
                 plugin_config_path,
                 plugin_config_snapshot,
                 plugin_config_expected,
             ));
             if let Some(path) = &unified_path {
-                let expected_contents = Some(Self::remove_unified_config_section(path)?);
-                applied_changes.push((path.clone(), unified_snapshot, expected_contents));
+                let (snapshot, expected_contents) = Self::remove_unified_config_section(path)?;
+                applied_changes.push((path.clone(), Some(snapshot), Some(expected_contents)));
             }
-            for (path, snapshot) in legacy_paths.iter().zip(legacy_snapshots) {
+            for path in &legacy_paths {
+                let snapshot = Self::snapshot_config_file(path)?;
                 std::fs::remove_file(path).map_err(|e| AppError::io(path, e))?;
                 applied_changes.push((path.clone(), snapshot, None));
             }
