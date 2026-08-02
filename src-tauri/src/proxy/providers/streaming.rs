@@ -165,6 +165,11 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         let mut pending_message_delta: Option<(Option<String>, Option<Value>)> = None;
         let mut has_sent_message_stop = false;
         let mut stream_ended_with_error = false;
+        // 上游是否给过 finish_reason 字段（含空串）。SenseNova 等上游在推理流里
+        // 每个 chunk 都带 finish_reason:""，表示「正常结束但用的是空信号」；而真正的
+        // 截断（连接中断、从未给任何 finish_reason）不会置位。自然流结束时据此区分
+        // 该补合成 end_turn（商汤场景，避免客户端判不完整而重试）还是保持不伪装成功。
+        let mut saw_any_finish_reason = false;
         let mut latest_usage: Option<Value> = None;
         let mut current_non_tool_block_type: Option<&'static str> = None;
         let mut current_non_tool_block_index: Option<u32> = None;
@@ -636,6 +641,11 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                         // 处理会提前关闭 content block 并吞掉真正的 finish_reason，
                                         // 导致 message_stop 前残留未关闭的 block，客户端（如 Claude
                                         // Desktop）会丢弃整条 assistant 消息，因此视为缺失。
+                                        // 记录「上游给过 finish_reason 字段」（含空串），供自然流结束
+                                        // 时判断该不该补合成 end_turn。
+                                        if choice.finish_reason.is_some() {
+                                            saw_any_finish_reason = true;
+                                        }
                                         if let Some(finish_reason) = choice
                                             .finish_reason
                                             .as_deref()
@@ -774,6 +784,25 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         // 流自然结束但未收到 [DONE] 时，确保发送缓存的 message_delta 和 message_stop。
         // 若上游已显式报错，则只保留 error 事件，避免把失败伪装成成功完成。
         if !stream_ended_with_error {
+            // 兜底（与 [DONE] 分支一致的合成逻辑）：流自然结束（无 [DONE]）但上游
+            // 给过 finish_reason 字段（含空串，如 SenseNova）时，合成 message_delta，
+            // 否则客户端收到没有 stop_reason 的流会判定响应不完整而重试（造成重复计费）。
+            // 真正的截断（从未收到任何 finish_reason）不在此列，仍保持原行为不伪装成功。
+            if pending_message_delta.is_none()
+                && !has_emitted_message_delta
+                && !has_sent_message_stop
+                && has_sent_message_start
+                && saw_any_finish_reason
+            {
+                let fallback_reason = if tool_blocks_by_index.is_empty() {
+                    "end_turn"
+                } else {
+                    "tool_use"
+                };
+                pending_message_delta =
+                    Some((Some(fallback_reason.to_string()), latest_usage.clone()));
+            }
+
             // 与 [DONE] 分支相同的兜底：发出 message_delta/message_stop 前，
             // 先关闭仍处于打开状态的 content block。
             if pending_message_delta.is_some() {
@@ -1019,6 +1048,38 @@ mod tests {
                 .pointer("/delta/stop_reason")
                 .and_then(|v| v.as_str()),
             Some("end_turn")
+        );
+
+        assert!(events
+            .iter()
+            .any(|event| event_type(event) == Some("message_stop")));
+    }
+
+    // 回归：SenseNova 等上游每个 chunk 都带 finish_reason:"" 且流自然结束不发 [DONE]。
+    // 修复前只给过空 finish_reason 会落到自然结束分支且不发 message_stop，客户端 SDK
+    // 判响应不完整而重试（重复计费）。现在应合成 end_turn + message_stop。
+    #[tokio::test]
+    async fn test_streaming_synthesizes_stop_when_only_empty_finish_reason_no_done() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_sn\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"reasoning_content\":\"思考\"},\"finish_reason\":\"\"}]}\n\n",
+            "data: {\"id\":\"chatcmpl_sn\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"content\":\"答案\"},\"finish_reason\":\"\"}]}\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_all_blocks_closed_before_message_stop(&events);
+
+        let message_deltas: Vec<&Value> = events
+            .iter()
+            .filter(|event| event_type(event) == Some("message_delta"))
+            .collect();
+        assert_eq!(message_deltas.len(), 1);
+        assert_eq!(
+            message_deltas[0]
+                .pointer("/delta/stop_reason")
+                .and_then(|v| v.as_str()),
+            Some("end_turn"),
+            "only-empty-finish_reason natural end should synthesize end_turn"
         );
 
         assert!(events
