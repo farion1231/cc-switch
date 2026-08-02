@@ -393,6 +393,24 @@ pub fn read_json_file<T: for<'a> Deserialize<'a>>(path: &Path) -> Result<T, AppE
     serde_json::from_str(&content).map_err(|e| AppError::json(path, e))
 }
 
+/// Ensure a directory is available for use.
+///
+/// On Windows, `std::fs::create_dir_all` may return OS error 183 when the
+/// requested path is an existing directory junction/reparse point.  Check the
+/// resolved path before creating it, and check again after an error to also
+/// tolerate another process creating the directory concurrently.
+pub fn ensure_dir_exists(path: &Path) -> Result<(), AppError> {
+    if path.is_dir() {
+        return Ok(());
+    }
+
+    match fs::create_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(_) if path.is_dir() => Ok(()),
+        Err(error) => Err(AppError::io(path, error)),
+    }
+}
+
 /// 递归排序 JSON 对象的键（按字母顺序），确保序列化输出是确定性的
 fn sort_json_keys(value: &Value) -> Value {
     match value {
@@ -417,7 +435,7 @@ pub fn write_json_file_with_contents<T: Serialize>(
 ) -> Result<Vec<u8>, AppError> {
     // 确保目录存在
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+        ensure_dir_exists(parent)?;
     }
 
     let contents = sorted_json_bytes(data)?;
@@ -448,7 +466,7 @@ pub fn write_json_file_private<T: Serialize>(path: &Path, data: &T) -> Result<()
 /// 原子写入文本文件（用于 TOML/纯文本）
 pub fn write_text_file(path: &Path, data: &str) -> Result<(), AppError> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+        ensure_dir_exists(parent)?;
     }
     atomic_write(path, data.as_bytes())
 }
@@ -510,7 +528,7 @@ pub(crate) fn stage_write(
     let _ = unix_mode;
 
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+        ensure_dir_exists(parent)?;
     }
 
     let parent = path
@@ -806,6 +824,32 @@ mod tests {
             .tempdir_in(&root)
             .unwrap();
         assert_atomic_write_replaces_existing_file(dir.path());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn write_text_file_supports_existing_directory_junction() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let target = temp.path().join("target");
+        let junction = temp.path().join("junction");
+        fs::create_dir(&target).expect("create junction target");
+
+        let status = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&target)
+            .status()
+            .expect("run mklink");
+        assert!(status.success(), "create directory junction");
+
+        let file = junction.join("config.toml");
+        write_text_file(&file, "model = \"gpt-test\"\n").expect("write through directory junction");
+        assert_eq!(
+            fs::read_to_string(target.join("config.toml")).expect("read target file"),
+            "model = \"gpt-test\"\n"
+        );
+
+        fs::remove_dir(&junction).expect("remove directory junction");
     }
 
     #[test]
