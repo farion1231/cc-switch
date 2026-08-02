@@ -107,7 +107,7 @@ impl RequestContext {
         let optimizer_config = state.db.get_optimizer_config().unwrap_or_default();
         let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
 
-        let current_provider_id =
+        let mut current_provider_id =
             crate::settings::get_current_provider(&app_type).unwrap_or_default();
 
         // 从请求体提取模型名称
@@ -167,6 +167,10 @@ impl RequestContext {
                 );
                 providers = vec![custom_provider.clone()];
                 provider = custom_provider;
+                // 路由到绑定供应商是本次请求的选择，不是故障转移：同步
+                // current_provider_id，否则 forwarder 会在成功时误判为
+                // "实际供应商 ≠ 配置供应商"而把当前供应商切到绑定供应商。
+                current_provider_id = provider.id.clone();
             } else if !crate::codex_config::codex_official_login_enabled(
                 &provider.settings_config
             ) {

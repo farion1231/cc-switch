@@ -48,7 +48,6 @@ use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
-use std::collections::HashSet;
 
 // ============================================================================
 // 健康检查和状态查询（简单端点）
@@ -83,10 +82,19 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 pub async fn handle_models(
     State(state): State<ProxyState>,
     headers: axum::http::HeaderMap,
+    uri: axum::http::Uri,
 ) -> Result<axum::response::Response, ProxyError> {
+    log::info!(
+        "[models] GET {} auth={}",
+        uri.path_and_query().map(|pq| pq.as_str()).unwrap_or(""),
+        headers
+            .get(axum::http::header::AUTHORIZATION)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+    );
     if let Some(official) = resolve_codex_official_provider(&state) {
         if crate::codex_config::codex_official_login_enabled(&official.settings_config) {
-            return forward_codex_official_models(&official, &headers).await;
+            return forward_codex_official_models(&official, &headers, uri.query()).await;
         }
         // 未启用官方登录：聚合模式，目录只包含下方配置的供应商模型
         let models =
@@ -141,11 +149,24 @@ fn resolve_codex_official_provider(state: &ProxyState) -> Option<crate::provider
 async fn forward_codex_official_models(
     official: &crate::provider::Provider,
     headers: &axum::http::HeaderMap,
+    query: Option<&str>,
 ) -> Result<axum::response::Response, ProxyError> {
     use std::time::Duration;
 
     let client = crate::proxy::http_client::get();
-    let url = format!("{}/models", super::providers::CHATGPT_CODEX_BASE_URL);
+    // 上游 /models 要求 `client_version` 查询参数（Codex 客户端会带），
+    // 必须原样透传，否则 chatgpt.com 返回 400。客户端没带时补一个兜底版本。
+    let mut url = format!("{}/models", super::providers::CHATGPT_CODEX_BASE_URL);
+    let query = query.unwrap_or("");
+    let effective_query = if query.contains("client_version=") {
+        query.to_string()
+    } else if !query.is_empty() {
+        format!("{query}&client_version=0.146.0")
+    } else {
+        "client_version=0.146.0".to_string()
+    };
+    url.push('?');
+    url.push_str(&effective_query);
     let mut builder = client.get(&url).timeout(Duration::from_secs(30));
     if let Some(auth) = headers.get(axum::http::header::AUTHORIZATION) {
         builder = builder.header(axum::http::header::AUTHORIZATION, auth);
@@ -154,6 +175,7 @@ async fn forward_codex_official_models(
         ProxyError::ForwardFailed(format!("转发 /models 到 ChatGPT 后端失败: {e}"))
     })?;
     let status = upstream.status();
+    log::info!("[models] forward chatgpt.com status={status} url={url}");
     let content_type = upstream
         .headers()
         .get(axum::http::header::CONTENT_TYPE)
@@ -192,16 +214,19 @@ async fn forward_codex_official_models(
             catalog[key] = json!([]);
         }
         if let Some(models) = catalog.get_mut(key).and_then(|m| m.as_array_mut()) {
-            let mut seen: HashSet<String> = models
-                .iter()
-                .filter_map(|m| m.get("slug").and_then(|s| s.as_str()))
-                .map(str::to_string)
-                .collect();
             for entry in custom_entries {
                 let Some(slug) = entry.get("slug").and_then(|s| s.as_str()) else {
                     continue;
                 };
-                if seen.insert(slug.to_string()) {
+                // 自定义条目使用官方插槽名（如 gpt-5.4-mini）：同名官方条目被
+                // 自定义条目覆盖（显示名换成绑定的供应商模型）；不在官方列表的
+                // 插槽则追加。否则绑定到官方已存在插槽的模型永远显示不出来。
+                if let Some(existing) = models
+                    .iter_mut()
+                    .find(|m| m.get("slug").and_then(|s| s.as_str()) == Some(slug))
+                {
+                    *existing = entry;
+                } else {
                     models.push(entry);
                 }
             }

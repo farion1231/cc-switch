@@ -1016,40 +1016,6 @@ fn write_codex_models_cache_for_provider_at(
 /// 加载 Codex 内置的完整官方模型目录（`models_cache.json`，Codex 连接
 /// OpenAI 后自行写入），用于在保留官方模型选择的同时合并自定义模型条目。
 /// 缓存缺失时回退到内置 gpt-5.5 模板（降级：只展示这一个官方模型）。
-fn load_codex_official_catalog_models() -> Result<Vec<Value>, AppError> {
-    let path = get_codex_config_dir().join("models_cache.json");
-    if path.exists() {
-        let text = fs::read_to_string(&path).map_err(|e| AppError::io(&path, e))?;
-        let catalog: Value = serde_json::from_str(&text).map_err(|e| AppError::json(&path, e))?;
-        let mut models: Vec<Value> = catalog
-            .get("models")
-            .and_then(|models| models.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let mut seen = HashSet::new();
-        models.retain(|model| {
-            model
-                .get("slug")
-                .and_then(|slug| slug.as_str())
-                .map(|slug| seen.insert(slug.to_string()))
-                .unwrap_or(false)
-        });
-        for model in &mut models {
-            fill_template_fields_from_static(model);
-        }
-        if !models.is_empty() {
-            return Ok(models);
-        }
-    }
-    if let Some(template) = load_codex_model_template_static() {
-        return Ok(vec![template]);
-    }
-    Err(AppError::Message(
-        "无法生成官方模型目录：找不到 Codex models_cache.json（请先用官方账号启动一次 Codex）"
-            .to_string(),
-    ))
-}
-
 fn find_codex_model_template(catalog: &Value) -> Option<Value> {
     catalog
         .get("models")
@@ -1552,53 +1518,12 @@ pub(crate) fn codex_custom_catalog_entries(settings: &Value, config_text: &str) 
         .collect()
 }
 
-/// 生成官方 Codex 供应商的合并目录：官方内置模型 + 自定义模型条目。
-///
-/// 整份目录共享同一个 tool profile：自定义模型条目统一按 NativeResponses
-/// 生成（Codex 侧始终是 Responses 视角，协议转换由本地代理完成），因此官方
-/// 目录也必须同为 `NativeResponses` 才能一致合并；其他 profile 直接报错。
-fn codex_official_merged_catalog(
-    settings: &Value,
-    config_text: &str,
-    profile: CodexCatalogToolProfile,
-) -> Result<Option<Value>, AppError> {
-    let entries = codex_custom_model_entries(settings);
-    if entries.is_empty() {
-        return Ok(None);
-    }
-    if profile != CodexCatalogToolProfile::NativeResponses {
-        return Err(AppError::Message(
-            "Codex 官方目录仅支持 OpenAI Responses 协议（apiFormat = openai_responses）合并自定义模型"
-                .to_string(),
-        ));
-    }
-
-    let mut models = load_codex_official_catalog_models()?;
-    let custom_entries = codex_custom_catalog_entries(settings, config_text);
-
-    let mut seen: HashSet<String> = models
-        .iter()
-        .filter_map(|model| model.get("slug").and_then(|slug| slug.as_str()))
-        .map(str::to_string)
-        .collect();
-    for entry in custom_entries {
-        let Some(slug) = entry.get("slug").and_then(|slug| slug.as_str()) else {
-            continue;
-        };
-        if seen.insert(slug.to_string()) {
-            models.push(entry);
-        }
-    }
-
-    Ok(Some(json!({ "models": models })))
-}
-
 fn codex_model_catalog_from_settings(
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Result<Option<Value>, AppError> {
-    // 官方 Codex 供应商带自定义模型时走合并目录：官方内置模型 + 自定义条目。
+    // 官方 Codex 供应商带自定义模型。
     if codex_custom_models_nonempty(settings) {
         // 未启用官方登录：聚合模式，目录只包含下方配置的供应商模型（多供应商切换）。
         if !codex_official_login_enabled(settings) {
@@ -1606,7 +1531,11 @@ fn codex_model_catalog_from_settings(
                 "models": codex_custom_catalog_entries(settings, config_text)
             })));
         }
-        return codex_official_merged_catalog(settings, config_text, profile);
+        // 官方登录模式：不写 model_catalog_json，让 Codex 直接走 /v1/models，
+        // 由本地代理把官方模型与自定义模型合并返回。合并目录文件依赖
+        // models_cache.json 拿官方模型，而登录模式下该缓存不可靠，容易写出
+        // 只有自定义模型、缺官方模型的错误目录。
+        return Ok(None);
     }
 
     let specs = codex_catalog_model_specs(settings);
@@ -5294,29 +5223,4 @@ model_catalog_json = "cc-switch-model-catalog.json"
         );
     }
 
-    #[test]
-    fn merged_catalog_empty_entries_returns_none() {
-        let settings = json!({ "codexCustomModels": [] });
-        let result = codex_official_merged_catalog(
-            &settings,
-            "",
-            CodexCatalogToolProfile::NativeResponses,
-        )
-        .unwrap();
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn merged_catalog_rejects_non_responses_profile() {
-        let settings = json!({
-            "codexCustomModels": [{ "model": "my-model", "providerId": "p1" }]
-        });
-        let err = codex_official_merged_catalog(
-            &settings,
-            "",
-            CodexCatalogToolProfile::ProxyChat,
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("Responses"));
-    }
 }
