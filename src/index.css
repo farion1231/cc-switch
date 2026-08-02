@@ -202,7 +202,12 @@ html[data-window-active="false"] .status-heartbeat {
       black 80%,
       transparent 100%
     );
-    mask-image: linear-gradient(to right, black 0%, black 80%, transparent 100%);
+    mask-image: linear-gradient(
+      to right,
+      black 0%,
+      black 80%,
+      transparent 100%
+    );
   }
 
   /* Radix SelectValue 会丢弃传入的 className，无法直接给值 span 加样式。
@@ -220,7 +225,12 @@ html[data-window-active="false"] .status-heartbeat {
       black 80%,
       transparent 100%
     );
-    mask-image: linear-gradient(to right, black 0%, black 80%, transparent 100%);
+    mask-image: linear-gradient(
+      to right,
+      black 0%,
+      black 80%,
+      transparent 100%
+    );
   }
 
   .border-default {

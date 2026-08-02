@@ -45,7 +45,8 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
   const [codexCustomModels, setCodexCustomModels] = useState<
     CodexCustomModel[]
   >([]);
-  const [codexEnableOfficialLogin, setCodexEnableOfficialLogin] = useState(true);
+  const [codexEnableOfficialLogin, setCodexEnableOfficialLogin] =
+    useState(true);
   const [codexAggregationEnabled, setCodexAggregationEnabled] = useState(true);
   const [codexAuthError, setCodexAuthError] = useState("");
 

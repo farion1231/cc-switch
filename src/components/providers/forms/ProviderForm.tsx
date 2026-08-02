@@ -1423,8 +1423,11 @@ function ProviderFormFull({
         }
         // 官方供应商的自定义模型：对外 ID -> 绑定供应商（仅官方场景持久化）
         // 模型聚合关闭时：按普通官方登录处理，不保存自定义模型。
-        const effectiveAggregation = category === "official" && codexAggregationEnabled;
-        const effectiveCustomModels = effectiveAggregation ? codexCustomModels : [];
+        const effectiveAggregation =
+          category === "official" && codexAggregationEnabled;
+        const effectiveCustomModels = effectiveAggregation
+          ? codexCustomModels
+          : [];
         const effectiveOfficialLogin = effectiveAggregation
           ? codexEnableOfficialLogin
           : true;
