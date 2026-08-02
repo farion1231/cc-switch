@@ -87,6 +87,15 @@ impl Provider {
             || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
     }
 
+    /// Claude 订阅透传：开启后，未填模型 ID 的模型角色（模型映射解析不到的请求）
+    /// 由本地代理透传到官方上游，使用客户端自带的订阅登录凭据。
+    pub fn claude_subscription_passthrough_enabled(&self) -> bool {
+        self.meta
+            .as_ref()
+            .and_then(|m| m.claude_subscription_passthrough)
+            .unwrap_or(false)
+    }
+
     fn provider_type(&self) -> Option<&str> {
         self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
     }
@@ -526,6 +535,13 @@ pub struct ProviderMeta {
     /// - "github_copilot": GitHub Copilot 供应商
     #[serde(rename = "providerType", skip_serializing_if = "Option::is_none")]
     pub provider_type: Option<String>,
+    /// Claude 订阅透传开关：未填模型 ID 的模型角色直接使用 Claude 订阅额度
+    /// （仅 Claude 应用、代理接管下生效）
+    #[serde(
+        rename = "claudeSubscriptionPassthrough",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub claude_subscription_passthrough: Option<bool>,
     /// GitHub Copilot 关联账号 ID（仅 github_copilot 供应商使用）
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]

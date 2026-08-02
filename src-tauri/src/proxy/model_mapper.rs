@@ -69,47 +69,63 @@ impl ModelMapping {
     pub fn map_model(&self, original_model: &str) -> String {
         let model_lower = original_model.to_lowercase();
 
-        // 1. 按模型类型匹配
-        if model_lower.contains("fable") {
-            if let Some(ref m) = self.fable_model {
-                return m.clone();
-            }
-            // 未单独配置 fable 档时归入 opus 档，与 Claude Code 官方
-            // 分类器降级方向一致（fable→opus），避免落到 default 失去层级。
+        // 未单独配置 fable 档时归入 opus 档，与 Claude Code 官方
+        // 分类器降级方向一致（fable→opus），避免落到 default 失去层级。
+        // 注意：订阅透传的档位判定用 `resolve`（不含这条降级）——
+        // 未填 fable 时透传真实订阅档，优于降级到第三方 opus。
+        if model_lower.contains("fable") && self.fable_model.is_none() {
             if let Some(ref m) = self.opus_model {
                 return m.clone();
+            }
+        }
+
+        self.resolve(original_model)
+            .unwrap_or_else(|| original_model.to_string())
+    }
+
+    /// 解析该模型在当前配置下映射到的目标；解析不到返回 `None`。
+    ///
+    /// 「已配置」的口径：档位自身的键、默认兜底模型（对所有请求兜底）、
+    /// 或与 subagent 模型精确匹配（保持原名）。fable→opus 的降级不算在内。
+    pub fn resolve(&self, original_model: &str) -> Option<String> {
+        let model_lower = original_model.to_lowercase();
+
+        // 1. 按模型档位匹配
+        if model_lower.contains("fable") {
+            if let Some(ref m) = self.fable_model {
+                return Some(m.clone());
             }
         }
         if model_lower.contains("haiku") {
             if let Some(ref m) = self.haiku_model {
-                return m.clone();
+                return Some(m.clone());
             }
         }
         if model_lower.contains("opus") {
             if let Some(ref m) = self.opus_model {
-                return m.clone();
+                return Some(m.clone());
             }
         }
         if model_lower.contains("sonnet") {
             if let Some(ref m) = self.sonnet_model {
-                return m.clone();
+                return Some(m.clone());
             }
         }
 
         if let Some(ref m) = self.subagent_model {
             if strip_one_m_suffix_for_upstream(original_model) == strip_one_m_suffix_for_upstream(m)
             {
-                return original_model.to_string();
+                return Some(original_model.to_string());
             }
         }
 
         // 2. 默认模型
         if let Some(ref m) = self.default_model {
-            return m.clone();
+            return Some(m.clone());
         }
 
-        // 3. 无映射，保持原样
-        original_model.to_string()
+        // 3. 无映射
+        None
     }
 }
 
@@ -394,6 +410,64 @@ mod tests {
         let (result, _, mapped) = apply_model_mapping(body, &provider);
         assert_eq!(result["model"], "sonnet-mapped");
         assert_eq!(mapped, Some("sonnet-mapped".to_string()));
+    }
+
+    #[test]
+    fn resolve_returns_none_without_any_mapping() {
+        let provider = create_provider_without_mapping();
+        let mapping = ModelMapping::from_provider(&provider);
+        assert_eq!(mapping.resolve("claude-sonnet-4-6"), None);
+        assert_eq!(mapping.resolve("claude-fable-5[1m]"), None);
+    }
+
+    #[test]
+    fn resolve_none_for_unconfigured_tier_without_default() {
+        let mut provider = create_provider_with_mapping();
+        provider.settings_config = json!({
+            "env": {
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "haiku-mapped"
+            }
+        });
+        let mapping = ModelMapping::from_provider(&provider);
+        // haiku 档已配置 → 解析成功；sonnet 档未配置且无默认兜底 → 解析不到
+        assert_eq!(
+            mapping.resolve("claude-haiku-4-5"),
+            Some("haiku-mapped".to_string())
+        );
+        assert_eq!(mapping.resolve("claude-sonnet-4-6"), None);
+    }
+
+    #[test]
+    fn resolve_falls_back_to_default_model() {
+        let mut provider = create_provider_with_mapping();
+        provider.settings_config = json!({
+            "env": {
+                "ANTHROPIC_MODEL": "default-model"
+            }
+        });
+        let mapping = ModelMapping::from_provider(&provider);
+        assert_eq!(
+            mapping.resolve("claude-sonnet-4-6"),
+            Some("default-model".to_string())
+        );
+        assert_eq!(
+            mapping.resolve("some-unknown-model"),
+            Some("default-model".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_ignores_fable_to_opus_degrade_but_map_model_keeps_it() {
+        let mut provider = create_provider_with_mapping();
+        provider.settings_config = json!({
+            "env": {
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "opus-mapped"
+            }
+        });
+        let mapping = ModelMapping::from_provider(&provider);
+        // map_model 保持 fable→opus 降级；resolve 视 fable 档为未配置
+        assert_eq!(mapping.map_model("claude-fable-5"), "opus-mapped");
+        assert_eq!(mapping.resolve("claude-fable-5"), None);
     }
 
     #[test]

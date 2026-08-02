@@ -227,6 +227,9 @@ export interface ProviderMeta {
   customUserAgent?: string;
   // Local proxy request overrides. Only applied by the local proxy after route transforms.
   localProxyRequestOverrides?: LocalProxyRequestOverrides;
+  // Claude 订阅透传：未填模型 ID 的模型角色直接使用 Claude 订阅额度
+  // （仅 Claude 应用、代理接管下生效）
+  claudeSubscriptionPassthrough?: boolean;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）

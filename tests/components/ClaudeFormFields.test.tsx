@@ -43,65 +43,96 @@ const FormShell = ({ children }: PropsWithChildren) => {
   return <Form {...form}>{children}</Form>;
 };
 
+const getCopilotFormProps = (
+  overrides: Partial<ClaudeFormFieldsProps> = {},
+): ClaudeFormFieldsProps => ({
+  shouldShowApiKey: false,
+  apiKey: "",
+  onApiKeyChange: vi.fn(),
+  category: "official",
+  shouldShowApiKeyLink: false,
+  websiteUrl: "",
+  isCopilotPreset: true,
+  usesOAuth: true,
+  isCopilotAuthenticated: true,
+  selectedGitHubAccountId: "gh-1",
+  onGitHubAccountSelect: vi.fn(),
+  isCodexOauthPreset: false,
+  isCodexOauthAuthenticated: false,
+  selectedCodexAccountId: null,
+  onCodexAccountSelect: vi.fn(),
+  codexFastMode: false,
+  onCodexFastModeChange: vi.fn(),
+  templateValueEntries: [],
+  templateValues: {},
+  templatePresetName: "",
+  onTemplateValueChange: vi.fn(),
+  shouldShowSpeedTest: false,
+  baseUrl: "",
+  onBaseUrlChange: vi.fn(),
+  isEndpointModalOpen: false,
+  onEndpointModalToggle: vi.fn(),
+  onCustomEndpointsChange: vi.fn(),
+  autoSelect: false,
+  onAutoSelectChange: vi.fn(),
+  showEndpointTools: true,
+  shouldShowModelSelector: true,
+  claudeModel: "",
+  defaultHaikuModel: "",
+  defaultHaikuModelName: "",
+  defaultSonnetModel: "claude-sonnet",
+  defaultSonnetModelName: "Claude Sonnet",
+  defaultOpusModel: "",
+  defaultOpusModelName: "",
+  defaultFableModel: "",
+  defaultFableModelName: "",
+  subagentModel: "",
+  onModelChange: vi.fn(),
+  speedTestEndpoints: [],
+  apiFormat: "anthropic",
+  onApiFormatChange: vi.fn(),
+  apiKeyField: "ANTHROPIC_AUTH_TOKEN",
+  onApiKeyFieldChange: vi.fn(),
+  isFullUrl: false,
+  onFullUrlChange: vi.fn(),
+  customUserAgent: "",
+  onCustomUserAgentChange: vi.fn(),
+  localProxyHeadersOverride: "",
+  onLocalProxyHeadersOverrideChange: vi.fn(),
+  localProxyBodyOverride: "",
+  onLocalProxyBodyOverrideChange: vi.fn(),
+  ...overrides,
+});
+
 const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
-  const props: ClaudeFormFieldsProps = {
-    shouldShowApiKey: false,
-    apiKey: "",
-    onApiKeyChange: vi.fn(),
-    category: "official",
-    shouldShowApiKeyLink: false,
-    websiteUrl: "",
-    isCopilotPreset: true,
-    usesOAuth: true,
-    isCopilotAuthenticated: true,
-    selectedGitHubAccountId: "gh-1",
-    onGitHubAccountSelect: vi.fn(),
-    isCodexOauthPreset: false,
-    isCodexOauthAuthenticated: false,
-    selectedCodexAccountId: null,
-    onCodexAccountSelect: vi.fn(),
-    codexFastMode: false,
-    onCodexFastModeChange: vi.fn(),
-    templateValueEntries: [],
-    templateValues: {},
-    templatePresetName: "",
-    onTemplateValueChange: vi.fn(),
-    shouldShowSpeedTest: false,
-    baseUrl: "",
-    onBaseUrlChange: vi.fn(),
-    isEndpointModalOpen: false,
-    onEndpointModalToggle: vi.fn(),
-    onCustomEndpointsChange: vi.fn(),
-    autoSelect: false,
-    onAutoSelectChange: vi.fn(),
-    showEndpointTools: true,
-    shouldShowModelSelector: true,
-    claudeModel: "",
-    defaultHaikuModel: "",
-    defaultHaikuModelName: "",
-    defaultSonnetModel: "claude-sonnet",
-    defaultSonnetModelName: "Claude Sonnet",
-    defaultOpusModel: "",
-    defaultOpusModelName: "",
-    defaultFableModel: "",
-    defaultFableModelName: "",
-    subagentModel: "",
-    onModelChange: vi.fn(),
-    speedTestEndpoints: [],
-    apiFormat: "anthropic",
-    onApiFormatChange: vi.fn(),
-    apiKeyField: "ANTHROPIC_AUTH_TOKEN",
-    onApiKeyFieldChange: vi.fn(),
-    isFullUrl: false,
-    onFullUrlChange: vi.fn(),
-    customUserAgent: "",
-    onCustomUserAgentChange: vi.fn(),
-    localProxyHeadersOverride: "",
-    onLocalProxyHeadersOverrideChange: vi.fn(),
-    localProxyBodyOverride: "",
-    onLocalProxyBodyOverrideChange: vi.fn(),
+  const props = getCopilotFormProps(overrides);
+
+  return render(
+    <FormShell>
+      <ClaudeFormFields {...props} />
+    </FormShell>,
+  );
+};
+
+const getOrdinaryClaudeFormProps = (
+  overrides: Partial<ClaudeFormFieldsProps> = {},
+): ClaudeFormFieldsProps =>
+  getCopilotFormProps({
+    category: "custom",
+    isCopilotPreset: false,
+    usesOAuth: false,
+    isCopilotAuthenticated: false,
+    selectedGitHubAccountId: null,
+    defaultSonnetModel: "",
+    defaultSonnetModelName: "",
+    onClaudeSubscriptionPassthroughChange: vi.fn(),
     ...overrides,
-  };
+  });
+
+const renderOrdinaryClaudeForm = (
+  overrides: Partial<ClaudeFormFieldsProps> = {},
+) => {
+  const props = getOrdinaryClaudeFormProps(overrides);
 
   return render(
     <FormShell>
@@ -173,6 +204,93 @@ describe("ClaudeFormFields", () => {
         "chatgpt-1",
       );
     });
+  });
+
+  it("在普通供应商模型映射提示后、映射行前渲染订阅透传开关", () => {
+    const onToggle = vi.fn();
+    renderOrdinaryClaudeForm({
+      claudeSubscriptionPassthrough: true,
+      onClaudeSubscriptionPassthroughChange: onToggle,
+    });
+
+    const hint = screen.getByText("providerForm.modelMappingHint");
+    const toggle = screen.getByRole("switch", {
+      name: "Claude 订阅透传",
+    });
+    const firstRole = screen.getByText("Sonnet");
+
+    expect(toggle).toHaveAttribute("data-state", "checked");
+    expect(
+      hint.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      toggle.compareDocumentPosition(firstRole) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    fireEvent.click(toggle);
+    expect(onToggle).toHaveBeenCalledWith(false);
+  });
+
+  it("启用订阅透传时自动展开高级选项", () => {
+    renderOrdinaryClaudeForm({
+      claudeModel: "",
+      defaultSonnetModel: "",
+      defaultSonnetModelName: "",
+      claudeSubscriptionPassthrough: true,
+      onClaudeSubscriptionPassthroughChange: vi.fn(),
+    });
+
+    expect(
+      screen.getByRole("switch", {
+        name: "Claude 订阅透传",
+      }),
+    ).toHaveAttribute("data-state", "checked");
+  });
+
+  it("透传从关闭变为启用时自动展开高级选项", () => {
+    const { rerender } = render(
+      <FormShell>
+        <ClaudeFormFields
+          {...({
+            ...getOrdinaryClaudeFormProps(),
+            claudeSubscriptionPassthrough: false,
+          } satisfies ClaudeFormFieldsProps)}
+        />
+      </FormShell>,
+    );
+
+    expect(
+      screen.queryByRole("switch", { name: "Claude 订阅透传" }),
+    ).toBeNull();
+
+    rerender(
+      <FormShell>
+        <ClaudeFormFields
+          {...({
+            ...getOrdinaryClaudeFormProps(),
+            claudeSubscriptionPassthrough: true,
+          } satisfies ClaudeFormFieldsProps)}
+        />
+      </FormShell>,
+    );
+
+    expect(
+      screen.getByRole("switch", { name: "Claude 订阅透传" }),
+    ).toHaveAttribute("data-state", "checked");
+  });
+
+  it("未接入订阅透传回调时不渲染开关", () => {
+    renderOrdinaryClaudeForm({
+      customUserAgent: "test-agent",
+      onClaudeSubscriptionPassthroughChange: undefined,
+    });
+
+    expect(
+      screen.queryByRole("switch", {
+        name: "Claude 订阅透传",
+      }),
+    ).toBeNull();
   });
 
   it("一键设置会同时写入 Subagent 模型", () => {

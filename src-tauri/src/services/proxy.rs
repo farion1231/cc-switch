@@ -51,7 +51,13 @@ const CLAUDE_ONE_M_MARKER_FOR_CLIENT: &str = "[1M]";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClaudeTakeoverAuthPolicy {
     PreserveExistingOrAuthToken,
-    ManagedAccount { keep_auth_token: bool },
+    ManagedAccount {
+        keep_auth_token: bool,
+    },
+    /// Claude 订阅透传：不注入任何认证键。写入 PROXY_MANAGED 会顶掉 Claude Code
+    /// 自身的订阅 OAuth（实测 ANTHROPIC_AUTH_TOKEN 优先级更高），
+    /// 透传档位就拿不到客户端自带凭据了（issue #5879）。
+    NativeClientAuth,
 }
 
 #[derive(Clone)]
@@ -99,6 +105,8 @@ impl ProxyService {
             ClaudeTakeoverAuthPolicy::ManagedAccount {
                 keep_auth_token: !provider.is_github_copilot(),
             }
+        } else if provider.claude_subscription_passthrough_enabled() {
+            ClaudeTakeoverAuthPolicy::NativeClientAuth
         } else {
             ClaudeTakeoverAuthPolicy::PreserveExistingOrAuthToken
         };
@@ -208,6 +216,15 @@ impl ProxyService {
                         "ANTHROPIC_API_KEY".to_string(),
                         json!(PROXY_TOKEN_PLACEHOLDER),
                     );
+                }
+            }
+            ClaudeTakeoverAuthPolicy::NativeClientAuth => {
+                // 不注入任何认证键：Claude Code 在无 key 时回退到自身订阅
+                // OAuth，并把该凭据发给代理（已在自定义 base URL 下实测）。
+                // 代价是未登录订阅的用户会看到登录提示（#3784 的行为），
+                // 这正是订阅透传所要求的登录态。
+                for key in token_keys {
+                    env.remove(key);
                 }
             }
         }
@@ -3301,6 +3318,68 @@ mod tests {
             .expect("serialize models_cache"),
         )
         .expect("write models_cache.json");
+    }
+
+    #[test]
+    fn subscription_passthrough_claude_takeover_writes_no_auth_keys() {
+        let mut provider = Provider::with_id(
+            "prov".to_string(),
+            "第三方供应商".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://relay.example.com",
+                    "ANTHROPIC_AUTH_TOKEN": "sk-relay",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-4.7"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            claude_subscription_passthrough: Some(true),
+            ..Default::default()
+        });
+
+        // live config 是切换后写入的该供应商配置；接管必须清掉全部认证键且
+        // 不写占位符：ANTHROPIC_AUTH_TOKEN=PROXY_MANAGED 会顶掉 Claude Code
+        // 自身的订阅 OAuth，透传档位就拿不到客户端自带凭据了。
+        let mut live_config = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://relay.example.com",
+                "ANTHROPIC_AUTH_TOKEN": "sk-relay",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-4.7"
+            }
+        });
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(|value| value.as_object())
+            .expect("env should exist");
+        assert_eq!(
+            env.get("ANTHROPIC_BASE_URL")
+                .and_then(|value| value.as_str()),
+            Some("http://127.0.0.1:15721")
+        );
+        for key in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"] {
+            assert!(
+                env.get(key).is_none(),
+                "subscription passthrough takeover must not write {key}, or Claude Code's own subscription OAuth is suppressed"
+            );
+        }
+        // 已填的角色照常写接管别名（/model 菜单仍能展示供应商模型）；
+        // 未填的角色不写别名，客户端会请求真实 claude-* 模型名，
+        // 代理正是据此判定该档位应透传订阅。
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+                .and_then(|value| value.as_str()),
+            Some("claude-sonnet-4-6")
+        );
+        assert!(env.get("ANTHROPIC_DEFAULT_OPUS_MODEL").is_none());
+        assert!(env.get("ANTHROPIC_DEFAULT_FABLE_MODEL").is_none());
     }
 
     #[test]
