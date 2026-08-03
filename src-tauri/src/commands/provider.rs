@@ -147,6 +147,75 @@ pub fn clear_current_provider(
     Ok(())
 }
 
+/// 取消使用并关闭代理接管（用于代理接管激活时的 "Cancel Use" 操作）
+///
+/// 与 `clear_current_provider` 的区别：
+/// - 同时关闭指定应用的代理接管，恢复 Live 配置并清备份
+/// - 如果关闭接管后无其它接管，自动停止代理服务
+#[tauri::command]
+pub async fn clear_current_provider_with_takeover(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+    app: String,
+) -> Result<(), String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let app_type_str = app_type.as_str();
+
+    // 1. 关闭代理接管（恢复 Live 配置、删除备份、清 enabled 标志、清健康状态）
+    //    如果无其它接管，会自动停止代理服务
+    if let Err(e) = state
+        .proxy_service
+        .set_takeover_for_app(app_type_str, false)
+        .await
+    {
+        log::warn!("关闭 {app_type_str} 代理接管失败，继续清供应商: {e}");
+    }
+
+    // 2. 清 current provider 标记
+    crate::settings::set_current_provider(&app_type, None).map_err(|e| e.to_string())?;
+    state
+        .db
+        .clear_current_provider(app_type.as_str())
+        .map_err(|e| e.to_string())?;
+
+    // 3. 发射事件并刷新托盘
+    let event_data = serde_json::json!({
+        "appType": app_type.as_str(),
+        "providerId": "",
+    });
+    #[allow(unused_variables)]
+    let _ = app_handle.emit("provider-switched", event_data);
+    #[allow(unused_variables)]
+    let _ = crate::tray::refresh_tray_menu(&app_handle);
+
+    Ok(())
+}
+
+#[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
+pub fn clear_current_provider_test(state: &AppState, app_type: &AppType) -> Result<(), AppError> {
+    crate::settings::set_current_provider(app_type, None)?;
+    state.db.clear_current_provider(app_type.as_str())?;
+    Ok(())
+}
+
+#[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
+pub async fn clear_current_provider_with_takeover_test(
+    state: &AppState,
+    app_type: &AppType,
+) -> Result<(), String> {
+    let app_type_str = app_type.as_str();
+    if let Err(e) = state.proxy_service.set_takeover_for_app(app_type_str, false).await {
+        log::warn!("关闭 {app_type_str} 代理接管失败: {e}");
+    }
+    crate::settings::set_current_provider(app_type, None)
+        .map_err(|e| e.to_string())?;
+    state
+        .db
+        .clear_current_provider(app_type.as_str())
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
     if matches!(app_type, AppType::GrokBuild) {
         // 官方登录态（live 语法合法且无自定义模型表）+ 用户手动导入：

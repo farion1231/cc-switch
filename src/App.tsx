@@ -989,7 +989,9 @@ function App() {
                       onSwitch={switchProvider}
                       onStopUsing={
                         activeApp === "gemini" || activeApp === "claude" || activeApp === "codex" || activeApp === "grokbuild" || activeApp === "claude-desktop"
-                          ? () => providersApi.clearCurrent(activeApp)
+                          ? () => (isProxyRunning && isCurrentAppTakeoverActive)
+                            ? providersApi.clearCurrentWithTakeover(activeApp)
+                            : providersApi.clearCurrent(activeApp)
                           : undefined
                       }
                       onEdit={(provider) => {
