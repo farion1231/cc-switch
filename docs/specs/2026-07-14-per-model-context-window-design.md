@@ -13,12 +13,12 @@ cc-switch 对模型上下文窗口的支持存在三个痛点：
 
 1. **Claude Code 只有 1M 一档**：`[1M]` 后缀是布尔标记，无法声明 200K / 256K / 500K 等其他窗口大小
 2. **后缀与压缩割裂**：勾选"声明支持 1M"只声明能力，不设置 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`，导致超过 200K 显示 100% 但不压缩
-3. **Codex catalog 字段缺失**：`auto_compact_token_limit` 和 `effective_context_window_percent` 完全缺失；`truncation_policy.limit` 硬编码 10000，不跟随用户配置（issue #4832 / #5110）
+3. **Codex catalog 字段缺失**：`auto_compact_token_limit` 和 `effective_context_window_percent` 完全缺失；`truncation_policy` 曾被误当作上下文窗口联动（issue #4832 / #5110 的结论已更正）
 
 ### 1.2 目标
 
 - Claude Code：checkbox → 窗口大小输入框，支持任意粒度后缀，后缀与压缩阈值自动联动
-- Codex：补全 catalog 字段，`truncation_policy.limit` 跟随 `context_window` 联动，恢复隐藏的压缩配置 UI，catalog 的 `contextWindow` 列支持多元输入
+- Codex：补全 catalog 字段，`truncation_policy` 与 `context_window` 解耦并保留工具输出预算，恢复隐藏的压缩配置 UI，catalog 的 `contextWindow` 列支持多元输入
 - Hermes / OpenClaw：已有窗口字段，不动
 - OpenCode / Gemini：工具无此机制，跳过
 
@@ -208,23 +208,19 @@ entry_obj.insert("effective_context_window_percent".to_string(), json!(100));
 entry_obj.insert("auto_compact_token_limit".to_string(), Value::Null);
 ```
 
-### 5.2 truncation_policy.limit 联动
+### 5.2 truncation_policy 与 context_window 解耦
 
-`codex_native_responses_template.json` 中硬编码的 `truncation_policy.limit = 10000`（issue #4832）改为动态生成。
+`truncation_policy` 是 Codex 对单条工具/函数输出做截断的存储预算，不是整个请求的上下文上限，因此不跟随 `context_window` 联动。
 
-在 `codex_catalog_model_entry` 生成 entry 时，覆盖模板的 `truncation_policy`：
+在 `codex_catalog_model_entry` 生成 entry 时，模板自带 `truncation_policy` 则原样保留；模板缺失时按 profile 补固定兜底值：
 
 ```rust
-// truncation_policy.limit 跟随 context_window（issue #4832/#5110）
-// 留空/0 时回退 10000（保持兼容）
-let truncation_limit = if spec.context_window > 0 { spec.context_window } else { 10_000 };
-entry_obj.insert("truncation_policy".to_string(), json!({
-    "mode": "bytes",
-    "limit": truncation_limit
-}));
+// ProxyChat：tokens/10000
+// NativeResponses / Anthropic：bytes/10000
+ensure_truncation_policy(entry_obj, profile);
 ```
 
-模板文件 `codex_native_responses_template.json` 本身不改（保持 10000 作为 fallback），在 Rust 生成时动态覆盖。
+模板文件本身不改，继续作为默认值来源。
 
 ### 5.3 恢复隐藏 UI + 多元输入
 
@@ -308,7 +304,7 @@ if let Some(existing) = root_key_string(config_text, "model_catalog_json") {
   - 用户显式值优先
   - 无后缀不注入
 - Codex catalog 生成：`auto_compact_token_limit` / `effective_context_window_percent` 字段存在
-- Codex `truncation_policy.limit` 跟随 `context_window`
+- Codex `truncation_policy` 与 `context_window` 解耦，模板缺失时按 profile 补 `10000`
 - Codex catalog 覆盖保护：用户手写指针不被覆盖
 
 ### 7.3 集成验证

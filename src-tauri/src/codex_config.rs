@@ -555,6 +555,29 @@ fn codex_catalog_input_modalities(
     modalities.iter().map(|item| (*item).to_string()).collect()
 }
 
+/// Fixed budget for a single tool/function output when the active template
+/// does not declare `truncation_policy`. Independent of `context_window`.
+const CODEX_TOOL_OUTPUT_TRUNCATION_LIMIT: u64 = 10_000;
+
+fn ensure_truncation_policy(
+    entry_obj: &mut serde_json::Map<String, Value>,
+    profile: CodexCatalogToolProfile,
+) {
+    if entry_obj.contains_key("truncation_policy") {
+        return;
+    }
+    let (mode, limit) = match profile {
+        CodexCatalogToolProfile::ProxyChat => ("tokens", CODEX_TOOL_OUTPUT_TRUNCATION_LIMIT),
+        CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
+            ("bytes", CODEX_TOOL_OUTPUT_TRUNCATION_LIMIT)
+        }
+    };
+    entry_obj.insert(
+        "truncation_policy".to_string(),
+        json!({ "mode": mode, "limit": limit }),
+    );
+}
+
 fn codex_catalog_model_entry(
     template: &Value,
     spec: &CodexCatalogModelSpec,
@@ -577,29 +600,12 @@ fn codex_catalog_model_entry(
     entry_obj.insert("effective_context_window_percent".to_string(), json!(100));
     entry_obj.insert("auto_compact_token_limit".to_string(), Value::Null);
 
-    // truncation_policy.limit follows context_window (issue #4832/#5110)
-    // context_window 的单位是 token，写入时必须同时设 mode="tokens" 确保
-    // limit 与 mode 单位一致。codex_native_responses 模板默认 mode="bytes"，
-    // 若保留 bytes 却写入 token 值，128K-token 模型会被截断在 128K bytes
-    //（≈32K tokens，仅 1/4 容量）。
-    let truncation_limit = spec.context_window.unwrap_or(10_000);
-    if let Some(tp) = entry_obj
-        .get_mut("truncation_policy")
-        .and_then(|v| v.as_object_mut())
-    {
-        tp.insert("mode".to_string(), json!("tokens"));
-        tp.insert("limit".to_string(), json!(truncation_limit));
-    } else {
-        entry_obj.insert(
-            "truncation_policy".to_string(),
-            json!({ "mode": "tokens", "limit": truncation_limit }),
-        );
-    }
     entry_obj.insert("priority".to_string(), json!(1000 + priority));
     entry_obj.insert("additional_speed_tiers".to_string(), json!([]));
     entry_obj.insert("service_tiers".to_string(), json!([]));
     entry_obj.insert("availability_nux".to_string(), Value::Null);
     entry_obj.insert("upgrade".to_string(), Value::Null);
+    ensure_truncation_policy(entry_obj, profile);
 
     // Image support is a model capability, not a tool-profile capability.
     // Trust hidden preset metadata first, then the confirmed text-only registry;
@@ -1124,6 +1130,9 @@ fn codex_vendor_catalog_model_entry(
     // Defensive: if a future codex parser requires a field the vendor file
     // predates, backfill only whitelisted parser-required keys.
     fill_template_fields_from_static(&mut entry);
+    if let Some(entry_obj) = entry.as_object_mut() {
+        ensure_truncation_policy(entry_obj, CodexCatalogToolProfile::NativeResponses);
+    }
     entry
 }
 
@@ -4362,86 +4371,131 @@ model_catalog_json = "cc-switch-model-catalog.json"
         assert_eq!(entry["auto_compact_token_limit"], json!(null));
     }
 
-    #[test]
-    fn catalog_entry_truncation_follows_context_window() {
-        let settings = json!({
-            "modelCatalog": {
-                "models": [
-                    { "model": "deepseek-v4-pro", "contextWindow": "1000000" }
-                ]
-            }
-        });
-        let catalog =
-            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::ProxyChat)
-                .expect("catalog generation")
-                .expect("non-empty catalog");
-        let entry = &catalog["models"][0];
-        assert_eq!(entry["truncation_policy"]["limit"], json!(1000000));
-        assert_eq!(entry["truncation_policy"]["mode"], json!("tokens"));
-    }
-    #[test]
-    fn catalog_entry_truncation_preserves_template_mode_tokens() {
-        // ProxyChat 用 gpt5_5_template（mode=tokens）。
-        // 修复后统一设 mode="tokens"，确保 limit（token 值）与 mode 单位一致。
-        let settings = json!({
-            "modelCatalog": {
-                "models": [
-                    { "model": "deepseek-v4-pro", "contextWindow": "128000" }
-                ]
-            }
-        });
-        let catalog =
-            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::ProxyChat)
-                .expect("catalog generation")
-                .expect("non-empty catalog");
-        let entry = &catalog["models"][0];
-        assert_eq!(entry["truncation_policy"]["mode"], json!("tokens"));
-        assert_eq!(entry["truncation_policy"]["limit"], json!(128000));
+    fn test_spec(model: &str, context_window: Option<u64>) -> CodexCatalogModelSpec {
+        CodexCatalogModelSpec {
+            model: model.to_string(),
+            display_name: Some(model.to_string()),
+            context_window,
+            supports_parallel_tool_calls: None,
+            input_modalities: None,
+            base_instructions: None,
+        }
     }
 
     #[test]
-    fn catalog_entry_truncation_forces_tokens_mode_for_native_responses() {
-        // NativeResponses 用 codex_native_responses_template（默认 mode=bytes）。
-        // context_window 单位是 token，若保留 bytes 模式却写入 token 值，
-        // 128K-token 模型会被截断在 128K bytes（≈32K tokens，1/4 容量）。
-        // 修复后应强制 mode="tokens"，与 limit 单位一致。
-        let settings = json!({
-            "modelCatalog": {
-                "models": [
-                    { "model": "deepseek-v4-pro", "contextWindow": "128000" }
-                ]
-            }
+    fn catalog_entry_truncation_stays_independent_of_context_window() {
+        let template = json!({
+            "slug": "template",
+            "truncation_policy": { "mode": "tokens", "limit": 10000 }
         });
-        let catalog = codex_model_catalog_from_settings(
-            &settings,
-            "",
-            CodexCatalogToolProfile::NativeResponses,
-        )
-        .expect("catalog generation")
-        .expect("non-empty catalog");
+        let specs = vec![test_spec("deepseek-v4-pro", Some(1_000_000))];
+        let catalog = codex_model_catalog_from_specs(
+            &specs,
+            &template,
+            CodexCatalogToolProfile::ProxyChat,
+            128_000,
+        );
         let entry = &catalog["models"][0];
+        assert_eq!(entry["context_window"], json!(1000000));
         assert_eq!(entry["truncation_policy"]["mode"], json!("tokens"));
-        assert_eq!(entry["truncation_policy"]["limit"], json!(128000));
+        assert_eq!(entry["truncation_policy"]["limit"], json!(10000));
+    }
+
+    #[test]
+    fn catalog_entry_truncation_preserves_template_value() {
+        let template = json!({
+            "slug": "template",
+            "truncation_policy": { "mode": "bytes", "limit": 4096 }
+        });
+        let specs = vec![test_spec("deepseek-v4-pro", Some(128_000))];
+        let catalog = codex_model_catalog_from_specs(
+            &specs,
+            &template,
+            CodexCatalogToolProfile::ProxyChat,
+            128_000,
+        );
+        let entry = &catalog["models"][0];
+        assert_eq!(
+            entry["truncation_policy"],
+            json!({ "mode": "bytes", "limit": 4096 })
+        );
+    }
+
+    #[test]
+    fn catalog_entry_truncation_preserves_native_template() {
+        let template = load_codex_native_responses_template();
+        let specs = vec![test_spec("deepseek-v4-pro", Some(128_000))];
+        let catalog = codex_model_catalog_from_specs(
+            &specs,
+            &template,
+            CodexCatalogToolProfile::NativeResponses,
+            128_000,
+        );
+        let entry = &catalog["models"][0];
+        assert_eq!(entry["truncation_policy"]["mode"], json!("bytes"));
+        assert_eq!(entry["truncation_policy"]["limit"], json!(10000));
     }
 
     #[test]
     fn catalog_entry_truncation_follows_default_context_window() {
-        // When no explicit contextWindow is set, the default (128000) is used
-        // and truncation_policy.limit should follow it.
-        let settings = json!({
-            "modelCatalog": {
-                "models": [
-                    { "model": "deepseek-v4-pro" }
-                ]
-            }
+        let template = json!({
+            "slug": "template",
+            "truncation_policy": { "mode": "tokens", "limit": 10000 }
         });
-        let catalog =
-            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::ProxyChat)
-                .expect("catalog generation")
-                .expect("non-empty catalog");
+        let specs = vec![test_spec("deepseek-v4-pro", None)];
+        let catalog = codex_model_catalog_from_specs(
+            &specs,
+            &template,
+            CodexCatalogToolProfile::ProxyChat,
+            128_000,
+        );
         let entry = &catalog["models"][0];
-        let cw = entry["context_window"].as_u64().expect("context_window");
-        assert_eq!(entry["truncation_policy"]["limit"].as_u64(), Some(cw));
+        assert_eq!(entry["context_window"], json!(128000));
+        assert_eq!(entry["truncation_policy"]["limit"], json!(10000));
+    }
+
+    #[test]
+    fn catalog_entry_truncation_policy_falls_back_per_profile() {
+        let template = json!({ "slug": "template" });
+        let specs = vec![test_spec("deepseek-v4-pro", None)];
+
+        let proxy = codex_model_catalog_from_specs(
+            &specs,
+            &template,
+            CodexCatalogToolProfile::ProxyChat,
+            128_000,
+        );
+        assert_eq!(
+            proxy["models"][0]["truncation_policy"],
+            json!({ "mode": "tokens", "limit": 10000 })
+        );
+
+        for profile in [
+            CodexCatalogToolProfile::NativeResponses,
+            CodexCatalogToolProfile::Anthropic,
+        ] {
+            let catalog = codex_model_catalog_from_specs(&specs, &template, profile, 128_000);
+            assert_eq!(
+                catalog["models"][0]["truncation_policy"],
+                json!({ "mode": "bytes", "limit": 10000 })
+            );
+        }
+    }
+
+    #[test]
+    fn vendor_catalog_entry_backfills_missing_truncation_policy() {
+        let vendor_models = vec![json!({
+            "slug": "deepseek-v4-flash",
+            "display_name": "DeepSeek V4 Flash",
+            "base_instructions": "x",
+            "supports_reasoning_summaries": true
+        })];
+        let specs = vec![test_spec("deepseek-v4-flash", None)];
+        let entry = codex_vendor_catalog_model_entry(&vendor_models, &specs[0], 0);
+        assert_eq!(
+            entry["truncation_policy"],
+            json!({ "mode": "bytes", "limit": 10000 })
+        );
     }
 
     #[test]
@@ -4461,19 +4515,20 @@ model_catalog_json = "cc-switch-model-catalog.json"
 
     #[test]
     fn catalog_entry_context_window_from_multi_format() {
-        let settings = json!({
-            "modelCatalog": {
-                "models": [
-                    { "model": "test-model", "contextWindow": "1M" }
-                ]
-            }
+        let template = json!({
+            "slug": "template",
+            "truncation_policy": { "mode": "tokens", "limit": 10000 }
         });
-        let catalog =
-            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::ProxyChat)
-                .expect("catalog generation")
-                .expect("non-empty catalog");
+        let specs = vec![test_spec("test-model", Some(1_000_000))];
+        let catalog = codex_model_catalog_from_specs(
+            &specs,
+            &template,
+            CodexCatalogToolProfile::ProxyChat,
+            128_000,
+        );
         let entry = &catalog["models"][0];
         assert_eq!(entry["context_window"], json!(1000000));
-        assert_eq!(entry["truncation_policy"]["limit"], json!(1000000));
+        assert_eq!(entry["max_context_window"], json!(1000000));
+        assert_eq!(entry["truncation_policy"]["limit"], json!(10000));
     }
 }
