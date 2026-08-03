@@ -497,7 +497,7 @@ pub(crate) fn restore_response_tool_calls(
     if map.is_empty() && !restore_tool_search {
         return false;
     }
-    restore_value(value, map, restore_tool_search)
+    restore_value(value, map, restore_tool_search, &mut HashMap::new())
 }
 
 /// Restore a single parsed SSE event (e.g. `response.output_item.added` /
@@ -506,11 +506,12 @@ pub(crate) fn restore_sse_event_tool_calls(
     event: &mut Value,
     map: &HashMap<String, NamespacedName>,
     restore_tool_search: bool,
+    tool_search_item_ids: &mut HashMap<String, String>,
 ) -> bool {
     if map.is_empty() && !restore_tool_search {
         return false;
     }
-    restore_value(event, map, restore_tool_search)
+    restore_value(event, map, restore_tool_search, tool_search_item_ids)
 }
 
 fn namespace_children(tool: &Value) -> Vec<Value> {
@@ -574,16 +575,32 @@ fn rewrite_namespace_qualified_call(
     }
 }
 
+fn typed_tool_search_item_id(obj: &serde_json::Map<String, Value>) -> Option<String> {
+    if let Some(item_id) = obj
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|item_id| item_id.starts_with("tsc_") && item_id.len() > 4)
+    {
+        return Some(item_id.to_string());
+    }
+
+    obj.get("call_id")
+        .and_then(Value::as_str)
+        .filter(|call_id| !call_id.is_empty())
+        .map(|call_id| format!("tsc_{call_id}"))
+}
+
 fn restore_value(
     value: &mut Value,
     map: &HashMap<String, NamespacedName>,
     restore_tool_search: bool,
+    tool_search_item_ids: &mut HashMap<String, String>,
 ) -> bool {
     let mut changed = false;
     match value {
         Value::Array(items) => {
             for item in items {
-                changed |= restore_value(item, map, restore_tool_search);
+                changed |= restore_value(item, map, restore_tool_search, tool_search_item_ids);
             }
         }
         Value::Object(obj) => {
@@ -592,11 +609,22 @@ fn restore_value(
                     && obj.get("namespace").is_none()
                     && obj.get("name").and_then(Value::as_str) == Some("tool_search");
                 if is_tool_search {
+                    let previous_item_id =
+                        obj.get("id").and_then(Value::as_str).map(str::to_string);
+                    let item_id = typed_tool_search_item_id(obj);
                     let arguments = tool_search_arguments_from_value(obj.get("arguments"));
                     obj.insert("type".to_string(), json!("tool_search_call"));
                     obj.insert("execution".to_string(), json!("client"));
                     obj.insert("arguments".to_string(), arguments);
                     obj.remove("name");
+                    if let Some(item_id) = item_id {
+                        if previous_item_id.as_deref() != Some(item_id.as_str()) {
+                            if let Some(previous_item_id) = previous_item_id {
+                                tool_search_item_ids.insert(previous_item_id, item_id.clone());
+                            }
+                            obj.insert("id".to_string(), json!(item_id));
+                        }
+                    }
                     changed = true;
                 } else if let Some(flat) = obj.get("name").and_then(Value::as_str) {
                     if let Some(entry) = map.get(flat) {
@@ -607,7 +635,16 @@ fn restore_value(
                 }
             }
             for child in obj.values_mut() {
-                changed |= restore_value(child, map, restore_tool_search);
+                changed |= restore_value(child, map, restore_tool_search, tool_search_item_ids);
+            }
+            let restored_item_id = obj
+                .get("item_id")
+                .and_then(Value::as_str)
+                .and_then(|item_id| tool_search_item_ids.get(item_id))
+                .cloned();
+            if let Some(restored_item_id) = restored_item_id {
+                obj.insert("item_id".to_string(), json!(restored_item_id));
+                changed = true;
             }
         }
         _ => {}
@@ -629,6 +666,7 @@ where
     async_stream::stream! {
         let mut buffer = String::new();
         let mut utf8_remainder: Vec<u8> = Vec::new();
+        let mut tool_search_item_ids = HashMap::new();
 
         tokio::pin!(stream);
 
@@ -640,7 +678,12 @@ where
                         if block.trim().is_empty() {
                             continue;
                         }
-                        yield Ok(restore_sse_block(&block, &map, restore_tool_search));
+                        yield Ok(restore_sse_block(
+                            &block,
+                            &map,
+                            restore_tool_search,
+                            &mut tool_search_item_ids,
+                        ));
                     }
                 }
                 Err(e) => {
@@ -657,7 +700,12 @@ where
         }
         let tail = std::mem::take(&mut buffer);
         if !tail.trim().is_empty() {
-            yield Ok(restore_sse_block(&tail, &map, restore_tool_search));
+            yield Ok(restore_sse_block(
+                &tail,
+                &map,
+                restore_tool_search,
+                &mut tool_search_item_ids,
+            ));
         }
     }
 }
@@ -669,6 +717,7 @@ fn restore_sse_block(
     block: &str,
     map: &HashMap<String, NamespacedName>,
     restore_tool_search: bool,
+    tool_search_item_ids: &mut HashMap<String, String>,
 ) -> Bytes {
     let mut event_name: Option<&str> = None;
     let mut data_parts: Vec<&str> = Vec::new();
@@ -696,7 +745,7 @@ fn restore_sse_block(
         Err(_) => return Bytes::from(format!("{block}\n\n")),
     };
 
-    if !restore_sse_event_tool_calls(&mut event, map, restore_tool_search) {
+    if !restore_sse_event_tool_calls(&mut event, map, restore_tool_search, tool_search_item_ids) {
         return Bytes::from(format!("{block}\n\n"));
     }
 
@@ -1096,13 +1145,24 @@ mod tests {
     #[test]
     fn restore_converts_tool_search_function_call_for_native_responses() {
         let mut response = json!({
-            "output": [{
-                "type": "function_call",
-                "name": "tool_search",
-                "call_id": "search-1",
-                "status": "completed",
-                "arguments": "{\"query\":\"automation\",\"limit\":\"8\"}"
-            }]
+            "output": [
+                {
+                    "id": "fc_search-1",
+                    "type": "function_call",
+                    "name": "tool_search",
+                    "call_id": "search-1",
+                    "status": "completed",
+                    "arguments": "{\"query\":\"automation\",\"limit\":\"8\"}"
+                },
+                {
+                    "id": "fc_regular-1",
+                    "type": "function_call",
+                    "name": "plain_tool",
+                    "call_id": "regular-1",
+                    "status": "completed",
+                    "arguments": "{}"
+                }
+            ]
         });
 
         assert!(restore_response_tool_calls(
@@ -1111,6 +1171,7 @@ mod tests {
             true
         ));
         let call = &response["output"][0];
+        assert_eq!(call["id"], "tsc_search-1");
         assert_eq!(call["type"], "tool_search_call");
         assert_eq!(call["execution"], "client");
         assert_eq!(call["call_id"], "search-1");
@@ -1118,6 +1179,8 @@ mod tests {
         assert_eq!(call["arguments"]["query"], "automation");
         assert_eq!(call["arguments"]["limit"], 8);
         assert!(call.get("name").is_none());
+        assert_eq!(response["output"][1]["id"], "fc_regular-1");
+        assert_eq!(response["output"][1]["type"], "function_call");
     }
 
     #[test]
@@ -1179,12 +1242,21 @@ mod tests {
     #[tokio::test]
     async fn sse_stream_restores_native_tool_search_function_call() {
         let added = "event: response.output_item.added\n\
-                     data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"name\":\"tool_search\",\"call_id\":\"search-1\",\"status\":\"in_progress\",\"arguments\":\"\"}}\n\n";
+                     data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"fc_search-1\",\"type\":\"function_call\",\"name\":\"tool_search\",\"call_id\":\"search-1\",\"status\":\"in_progress\",\"arguments\":\"\"}}\n\n";
+        let arguments_delta = "event: response.function_call_arguments.delta\n\
+                               data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_search-1\",\"output_index\":0,\"delta\":\"{\\\"query\\\":\\\"thread tools\\\"}\"}\n\n";
+        let arguments_done = "event: response.function_call_arguments.done\n\
+                              data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_search-1\",\"output_index\":0,\"arguments\":\"{\\\"query\\\":\\\"thread tools\\\",\\\"limit\\\":8}\"}\n\n";
         let done = "event: response.output_item.done\n\
-                    data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"name\":\"tool_search\",\"call_id\":\"search-1\",\"status\":\"completed\",\"arguments\":\"{\\\"query\\\":\\\"thread tools\\\",\\\"limit\\\":8}\"}}\n\n";
+                    data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"fc_search-1\",\"type\":\"function_call\",\"name\":\"tool_search\",\"call_id\":\"search-1\",\"status\":\"completed\",\"arguments\":\"{\\\"query\\\":\\\"thread tools\\\",\\\"limit\\\":8}\"}}\n\n";
+        let completed = "event: response.completed\n\
+                         data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"id\":\"fc_search-1\",\"type\":\"function_call\",\"name\":\"tool_search\",\"call_id\":\"search-1\",\"status\":\"completed\",\"arguments\":\"{\\\"query\\\":\\\"thread tools\\\",\\\"limit\\\":8}\"}]}}\n\n";
         let input = stream::iter(vec![
             Ok::<Bytes, std::io::Error>(Bytes::from(added)),
+            Ok(Bytes::from(arguments_delta)),
+            Ok(Bytes::from(arguments_done)),
             Ok(Bytes::from(done)),
+            Ok(Bytes::from(completed)),
             Ok(Bytes::from("data: [DONE]\n\n")),
         ]);
         let out = create_tool_call_restore_sse_stream(input, HashMap::new(), true);
@@ -1197,8 +1269,11 @@ mod tests {
 
         assert_eq!(
             collected.matches("\"type\":\"tool_search_call\"").count(),
-            2
+            3
         );
+        assert_eq!(collected.matches("\"id\":\"tsc_search-1\"").count(), 3);
+        assert_eq!(collected.matches("\"item_id\":\"tsc_search-1\"").count(), 2);
+        assert!(!collected.contains("fc_search-1"));
         assert!(collected.contains("\"execution\":\"client\""));
         assert!(collected.contains("\"query\":\"thread tools\""));
         assert!(collected.contains("\"limit\":8"));
