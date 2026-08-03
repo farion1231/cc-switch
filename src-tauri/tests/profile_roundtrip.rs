@@ -185,7 +185,7 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
         payload.skills.claude,
         Some(vec!["local:test-skill".to_string()])
     );
-    assert_eq!(payload.prompts.claude.as_deref(), Some("pr1"));
+    assert_eq!(payload.prompts.claude, Some(vec!["pr1".to_string()]));
     assert_eq!(
         payload.providers.codex, None,
         "codex side not captured when creating from the claude group"
@@ -410,7 +410,7 @@ fn profile_apply_reports_dangling_references_and_continues() {
         "providers": { "claude": "ghost-provider" },
         "mcp": { "claude": ["m1", "ghost-mcp"] },
         "skills": { "claude": ["ghost-skill"] },
-        "prompts": { "claude": "ghost-prompt" }
+        "prompts": { "claude": ["ghost-prompt"] }
     });
     let profile = cc_switch_lib::Profile {
         id: "dangling-test".to_string(),
@@ -586,7 +586,7 @@ fn switching_profile_autosaves_previous_profile_state() {
         serde_json::from_str(&saved_a.payload).expect("parse project A payload");
     assert_eq!(payload_a.providers.claude.as_deref(), Some("p2"));
     assert_eq!(payload_a.mcp.claude, Some(vec!["m2".to_string()]));
-    assert_eq!(payload_a.prompts.claude.as_deref(), Some("pr2"));
+    assert_eq!(payload_a.prompts.claude, Some(vec!["pr2".to_string()]));
 
     // ---- 在 B 下改回状态 X，再切换回 A ----
     ProviderService::switch(&state, AppType::Claude, "p1").expect("switch to p1");
@@ -640,7 +640,7 @@ fn switching_profile_autosaves_previous_profile_state() {
         serde_json::from_str(&saved_b.payload).expect("parse project B payload");
     assert_eq!(payload_b.providers.claude.as_deref(), Some("p1"));
     assert_eq!(payload_b.mcp.claude, Some(vec!["m1".to_string()]));
-    assert_eq!(payload_b.prompts.claude.as_deref(), Some("pr1"));
+    assert_eq!(payload_b.prompts.claude, Some(vec!["pr1".to_string()]));
 }
 
 #[test]

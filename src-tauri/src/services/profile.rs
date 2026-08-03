@@ -9,7 +9,7 @@
 //! - 供应商：`ProviderService::switch`（内建代理接管热切换与接管下禁切官方）
 //! - MCP：`McpService::toggle_app`（改标志 + 单 server 物化）
 //! - Skills：`SkillService::toggle_app`（改标志 + 单 skill 物化）
-//! - Prompt：`PromptService::enable_prompt`（互斥激活 + 原子写 live）
+//! - Prompt：`PromptService::enable_prompt`（启用并原子写入 live 文件）
 //!
 //! apply 为 best-effort：单项失败收集为 warning 继续，不整体回滚。
 
@@ -129,7 +129,7 @@ pub struct ProfilePayload {
     /// 每 app 启用的 Skill id 集合
     pub skills: PerApp<Option<Vec<String>>>,
     /// 每 app 激活的 prompt id
-    pub prompts: PerApp<Option<String>>,
+    pub prompts: PerApp<Option<Vec<String>>>,
 }
 
 impl ProfilePayload {
@@ -225,12 +225,14 @@ impl ProfileService {
                 );
             }
             if let Some(slot) = payload.prompts.get_mut(app) {
-                *slot = state
+                let enabled = state
                     .db
                     .get_prompts(app.as_str())?
                     .values()
-                    .find(|p| p.enabled)
-                    .map(|p| p.id.clone());
+                    .filter(|p| p.enabled)
+                    .map(|p| p.id.clone())
+                    .collect::<Vec<_>>();
+                *slot = Some(enabled);
             }
         }
         Ok(payload)
@@ -434,20 +436,39 @@ impl ProfileService {
             }
 
             // 5. Prompt（None = 不动；已激活则幂等跳过，避免无谓的文件写与备份）
-            if let Some(Some(target_prompt)) = payload.prompts.get(app) {
+            if let Some(Some(target_prompts)) = payload.prompts.get(app) {
                 let prompts = state.db.get_prompts(app_str)?;
-                match prompts.get(target_prompt) {
-                    None => warnings.push(format!(
-                        "[{app_str}] prompt '{target_prompt}' no longer exists, skipped"
-                    )),
-                    Some(p) if p.enabled => {}
-                    Some(_) => {
+                let target_ids: std::collections::HashSet<&str> =
+                    target_prompts.iter().map(String::as_str).collect();
+
+                for (id, prompt) in prompts.iter() {
+                    if prompt.enabled && !target_ids.contains(id.as_str()) {
+                        let mut disabled = prompt.clone();
+                        disabled.enabled = false;
                         if let Err(e) =
-                            PromptService::enable_prompt(state, app.clone(), target_prompt)
+                            PromptService::upsert_prompt(state, app.clone(), id, disabled)
                         {
                             warnings.push(format!(
-                                "[{app_str}] enable prompt '{target_prompt}' failed: {e}"
+                                "[{app_str}] disable prompt '{id}' failed: {e}"
                             ));
+                        }
+                    }
+                }
+
+                for target_prompt in target_prompts {
+                    match prompts.get(target_prompt) {
+                        None => warnings.push(format!(
+                            "[{app_str}] prompt '{target_prompt}' no longer exists, skipped"
+                        )),
+                        Some(p) if p.enabled => {}
+                        Some(_) => {
+                            if let Err(e) =
+                                PromptService::enable_prompt(state, app.clone(), target_prompt)
+                            {
+                                warnings.push(format!(
+                                    "[{app_str}] enable prompt '{target_prompt}' failed: {e}"
+                                ));
+                            }
                         }
                     }
                 }
@@ -494,7 +515,7 @@ mod tests {
             prompts: PerApp {
                 claude: None,
                 claude_desktop: None,
-                codex: Some("pr1".into()),
+                codex: Some(vec!["pr1".into()]),
             },
         };
         let json = serde_json::to_string(&payload).unwrap();
@@ -591,7 +612,7 @@ mod tests {
 
     #[test]
     fn test_per_app_get_only_supports_profile_apps() {
-        let per: PerApp<Option<String>> = PerApp::default();
+        let per: PerApp<Option<Vec<String>>> = PerApp::default();
         assert!(per.get(&AppType::Claude).is_some());
         assert!(per.get(&AppType::ClaudeDesktop).is_some());
         assert!(per.get(&AppType::Codex).is_some());
