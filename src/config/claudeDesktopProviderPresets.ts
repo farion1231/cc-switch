@@ -167,6 +167,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "kimi-k2.7-code",
       "kimi-k2.7-code",
     ),
+    partnerPromotionKey: "kimi",
     icon: "kimi",
     iconColor: "#6366F1",
   },

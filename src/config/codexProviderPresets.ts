@@ -159,6 +159,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
       outputFormat: "reasoning_content",
     },
     category: "cn_official",
+    partnerPromotionKey: "kimi",
     icon: "kimi",
     iconColor: "#6366F1",
   },
