@@ -195,4 +195,25 @@ describe("ClaudeFormFields", () => {
       "shared-model[1M]",
     );
   });
+
+  it("角色模型上下文长度输入框能正确写入后缀", () => {
+    const onModelChange = vi.fn();
+    renderCopilotForm({
+      defaultSonnetModel: "claude-sonnet",
+      defaultSonnetModelName: "Claude Sonnet",
+      onModelChange,
+    });
+
+    // getAllByLabelText 返回所有 context window 输入框，顺序为：
+    // [0] Sonnet, [1] Opus, [2] Fable, [3] Haiku, [4] Subagent, [5] 兜底模型
+    const contextInputs = screen.getAllByLabelText("Context Window");
+    const sonnetContextInput = contextInputs[0];
+
+    fireEvent.change(sonnetContextInput, { target: { value: "1M" } });
+
+    expect(onModelChange).toHaveBeenCalledWith(
+      "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "claude-sonnet[1m]",
+    );
+  });
 });

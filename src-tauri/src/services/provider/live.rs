@@ -163,9 +163,12 @@ fn apply_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provi
     }
 }
 
-/// Scan all ANTHROPIC_DEFAULT_*_MODEL / ANTHROPIC_MODEL suffixes and inject
-/// CLAUDE_CODE_MAX_CONTEXT_TOKENS + CLAUDE_CODE_AUTO_COMPACT_WINDOW from max(window).
-/// User explicit values always win; no suffix = no injection.
+/// 扫描 ANTHROPIC_MODEL / ANTHROPIC_DEFAULT_*_MODEL 后缀，
+/// 注入 CLAUDE_CODE_MAX_CONTEXT_TOKENS + CLAUDE_CODE_AUTO_COMPACT_WINDOW。
+///
+/// 选值策略：优先用 ANTHROPIC_MODEL 的后缀窗口；无后缀时取所有模型最大窗口。
+/// ACW = 窗口 × 80%，MAX = 窗口（复用 watcher 的 build_env_writes 保持一致）。
+/// 用户在 provider config 中显式设过的值不覆盖。
 fn apply_context_window_defaults(settings: &mut Value, provider: &Provider) {
     let model_env_keys = [
         "ANTHROPIC_MODEL",
@@ -181,19 +184,30 @@ fn apply_context_window_defaults(settings: &mut Value, provider: &Provider) {
         .get("env")
         .and_then(Value::as_object);
 
-    let mut max_window: Option<u64> = None;
-    if let Some(env) = provider_env {
-        for key in model_env_keys {
-            if let Some(model) = env.get(key).and_then(Value::as_str) {
-                let (_, window) = crate::claude_desktop_config::parse_context_window_suffix(model);
-                if let Some(w) = window {
-                    max_window = Some(max_window.map_or(w, |m| m.max(w)));
+    // 1. 优先：ANTHROPIC_MODEL 带后缀就用它的窗口
+    let target_window = provider_env
+        .and_then(|e| e.get("ANTHROPIC_MODEL"))
+        .and_then(Value::as_str)
+        .and_then(|m| crate::claude_desktop_config::parse_context_window_suffix(m).1);
+
+    // 2. 回退：取所有模型的最大窗口
+    let target_window = target_window.or_else(|| {
+        let mut max_window: Option<u64> = None;
+        if let Some(env) = provider_env {
+            for key in model_env_keys {
+                if let Some(model) = env.get(key).and_then(Value::as_str) {
+                    let (_, window) =
+                        crate::claude_desktop_config::parse_context_window_suffix(model);
+                    if let Some(w) = window {
+                        max_window = Some(max_window.map_or(w, |m| m.max(w)));
+                    }
                 }
             }
         }
-    }
+        max_window
+    });
 
-    let Some(max_window) = max_window else {
+    let Some(target_window) = target_window else {
         return;
     };
 
@@ -201,14 +215,12 @@ fn apply_context_window_defaults(settings: &mut Value, provider: &Provider) {
         return;
     };
 
-    let max_str = max_window.to_string();
-    for key in [
-        "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
-        "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
-    ] {
+    // 复用 watcher 的 build_env_writes：ACW = 80%, MAX = 100%
+    let writes = crate::claude_settings_watcher::build_env_writes(target_window);
+    for (key, value) in writes {
         let user_has_explicit = provider_env.is_some_and(|e| e.contains_key(key));
-        if !user_has_explicit && !env.contains_key(key) {
-            env.insert(key.to_string(), Value::String(max_str.clone()));
+        if !user_has_explicit {
+            env.insert(key.to_string(), Value::String(value));
         }
     }
 }
@@ -2723,7 +2735,7 @@ base_url = "https://a.example/v1"
         );
         assert_eq!(
             effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
-            json!("1000000")
+            json!("800000")
         );
     }
 
@@ -2790,5 +2802,150 @@ base_url = "https://a.example/v1"
         assert!(sanitized.get("autoSyncContextWindow").is_none());
         // 其他字段保留
         assert_eq!(sanitized["env"]["ANTHROPIC_MODEL"], json!("test"));
+    }
+
+    #[test]
+    fn context_window_defaults_prioritize_anthropic_model_suffix() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "fallback-model[1M]",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-model[200k]"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        // ANTHROPIC_MODEL 的 1M 优先于 sonnet 的 200k
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("1000000")
+        );
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("800000")
+        );
+    }
+
+    #[test]
+    fn context_window_defaults_fallback_to_max_when_anthropic_model_no_suffix() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "fallback-model",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-model[1M]",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "haiku-model[30k]"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        // ANTHROPIC_MODEL 无后缀，回退到 max(1M, 30k) = 1M
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("1000000")
+        );
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("800000")
+        );
+    }
+
+    #[test]
+    fn context_window_defaults_anthropic_model_smaller_than_others() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "fallback-model[200k]",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-model[1M]"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        // ANTHROPIC_MODEL 的 200k 优先，即使 sonnet 有更大的 1M
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("200000")
+        );
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("160000")
+        );
+    }
+
+    #[test]
+    fn context_window_defaults_preserve_user_explicit_values() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "fallback-model[1M]",
+                    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "999999",
+                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "888888"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        // 用户显式设的值不被覆盖
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("999999")
+        );
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("888888")
+        );
+    }
+
+    #[test]
+    fn context_window_defaults_skip_when_no_suffix_anywhere() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "fallback-model",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-model"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        // 无任何后缀 -> 不写 ACW/MAX
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            .is_none());
     }
 }

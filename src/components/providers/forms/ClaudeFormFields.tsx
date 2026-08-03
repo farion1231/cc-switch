@@ -1090,8 +1090,11 @@ export function ClaudeFormFields({
                             : ""
                         }
                         onChange={(event) => {
-                          handleRoleModelChange(
-                            row,
+                          // 上下文长度输入直接调 onModelChange，绕过
+                          // handleRoleModelChange 内的 reapplySuffix
+                          // （reapplySuffix 会剥离新后缀，仅用于改模型名）
+                          onModelChange(
+                            row.modelField,
                             setModelSuffix(row.model, event.target.value),
                           );
                         }}
