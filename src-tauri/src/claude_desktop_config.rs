@@ -1688,6 +1688,68 @@ mod tests {
     }
 
     #[test]
+    fn claude_science_model_list_includes_fable_when_configured() {
+        // Claude Science 的 /claude-science/v1/models 直接调用
+        // model_list_response 返回当前 provider 的所有档位。
+        // Fable 档（claude-fable-5）必须在列表里，前端才能展示 Fable 选项。
+        let mut provider = proxy_provider("proxy-for-science");
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes = std::collections::HashMap::from([
+            (
+                "claude-opus-4-8".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "upstream-opus".to_string(),
+                    label_override: None,
+                    supports_1m: Some(true),
+                },
+            ),
+            (
+                "claude-sonnet-4-6".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "upstream-sonnet".to_string(),
+                    label_override: None,
+                    supports_1m: Some(true),
+                },
+            ),
+            (
+                "claude-haiku-4-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "upstream-haiku".to_string(),
+                    label_override: None,
+                    supports_1m: Some(true),
+                },
+            ),
+            (
+                "claude-fable-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "upstream-fable".to_string(),
+                    label_override: None,
+                    supports_1m: Some(true),
+                },
+            ),
+        ]);
+
+        let models = model_list_response(&provider).expect("model list");
+        let ids: Vec<&str> = models["data"]
+            .as_array()
+            .expect("data array")
+            .iter()
+            .map(|item| item["id"].as_str().expect("id string"))
+            .collect();
+        assert!(
+            ids.contains(&"claude-fable-5"),
+            "Fable route not in model list; ids={ids:?}"
+        );
+        assert!(
+            ids.contains(&"claude-opus-4-8"),
+            "Opus route not in model list; ids={ids:?}"
+        );
+    }
+
+    #[test]
     fn claude_desktop_proxy_maps_fable_to_opus_tier() {
         // issue #4026/#4049：老用户只配 Sonnet/Opus/Haiku 三档、未显式配置
         // fable 档时，fable 请求按官方分类器降级方向回落到 opus 档兜底。

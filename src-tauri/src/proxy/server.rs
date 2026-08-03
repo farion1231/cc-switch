@@ -308,6 +308,10 @@ impl ProxyServer {
             // Claude Science 使用 Anthropic Messages 协议，但拥有独立的
             // provider namespace 与故障转移队列（无 live 配置文件可写）
             .route(
+                "/claude-science/v1/models",
+                get(handlers::handle_claude_science_models),
+            )
+            .route(
                 "/claude-science/v1/messages",
                 post(handlers::handle_claude_science_messages),
             )

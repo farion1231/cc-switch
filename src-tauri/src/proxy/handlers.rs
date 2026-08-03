@@ -162,6 +162,25 @@ pub async fn handle_claude_science_messages(
     .await
 }
 
+/// 处理 /claude-science/v1/models 请求（Claude Science）
+///
+/// Claude Science 前端调用 `GET /claude-science/v1/models`（经
+/// ANTHROPIC_BASE_URL 代理）获取模型列表。与 `/claude-desktop/v1/models` 同形
+/// 式，但不发 gateway token（Science 二进制无此机制），故不校验 Authorization。
+pub async fn handle_claude_science_models(
+    State(state): State<ProxyState>,
+) -> Result<Json<Value>, ProxyError> {
+    let providers = state
+        .provider_router
+        .select_providers("claude-science")
+        .await
+        .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+    let provider = providers.first().ok_or(ProxyError::NoAvailableProvider)?;
+    let response = crate::claude_desktop_config::model_list_response(provider)
+        .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
+    Ok(Json(response))
+}
+
 pub async fn handle_claude_desktop_models(
     State(state): State<ProxyState>,
     headers: axum::http::HeaderMap,
