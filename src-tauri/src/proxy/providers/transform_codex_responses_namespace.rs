@@ -471,7 +471,7 @@ pub(crate) fn flatten_request_namespaces(body: &mut Value) -> Result<bool, Proxy
 
     // Rewrite namespace-qualified function_call items in the replayed history.
     if let Some(input) = body.get_mut("input") {
-        rewrite_namespace_qualified_calls(input, &owners);
+        rewrite_namespace_qualified_input_items(input, &owners);
     }
 
     // A namespace-typed tool_choice cannot survive flattening: degrade to auto.
@@ -522,23 +522,17 @@ fn namespace_children(tool: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-fn rewrite_namespace_qualified_calls(value: &mut Value, owners: &HashMap<String, NamespacedName>) {
-    match value {
-        Value::Array(items) => {
-            for item in items {
-                rewrite_namespace_qualified_calls(item, owners);
-            }
+fn rewrite_namespace_qualified_input_items(
+    input: &mut Value,
+    owners: &HashMap<String, NamespacedName>,
+) {
+    let Some(items) = input.as_array_mut() else {
+        return;
+    };
+    for item in items {
+        if item.get("type").and_then(Value::as_str) == Some("function_call") {
+            rewrite_namespace_qualified_call(item, owners);
         }
-        Value::Object(obj) => {
-            if obj.get("type").and_then(Value::as_str) == Some("function_call") {
-                rewrite_namespace_qualified_call(value, owners);
-                return;
-            }
-            for child in obj.values_mut() {
-                rewrite_namespace_qualified_calls(child, owners);
-            }
-        }
-        _ => {}
     }
 }
 
@@ -1058,6 +1052,43 @@ mod tests {
         }
         assert_eq!(body["input"][0]["type"], "function_call_output");
         assert_eq!(body["tool_choice"], "auto");
+    }
+
+    #[test]
+    fn flatten_rewrites_only_direct_protocol_input_items() {
+        let nested_call = json!({
+            "type": "function_call",
+            "namespace": "mcp__files__",
+            "name": "read",
+            "call_id": "nested-call",
+            "arguments": "{}"
+        });
+        let mut body = json!({
+            "tools": [{
+                "type": "namespace",
+                "name": "mcp__files__",
+                "tools": [{"type": "function", "name": "read", "parameters": {}}]
+            }],
+            "input": [
+                {
+                    "type": "function_call",
+                    "namespace": "mcp__files__",
+                    "name": "read",
+                    "call_id": "direct-call",
+                    "arguments": "{}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "outer-call",
+                    "output": {"result": nested_call.clone()}
+                }
+            ]
+        });
+
+        assert!(flatten_request_namespaces(&mut body).unwrap());
+        assert_eq!(body["input"][0]["name"], "mcp__files____read");
+        assert!(body["input"][0].get("namespace").is_none());
+        assert_eq!(body["input"][1]["output"]["result"], nested_call);
     }
 
     #[test]
