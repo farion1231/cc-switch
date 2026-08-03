@@ -10,9 +10,12 @@
 //! - `transform_responses.rs`: Anthropic request → Responses request, Responses response → Anthropic response
 //! - this module:               Responses request → Anthropic request, Anthropic response → Responses response
 
+#[cfg(test)]
+use super::transform_codex_chat::build_codex_tool_context_from_request;
 use super::transform_codex_chat::{
-    build_codex_tool_context_from_request, response_tool_call_item_from_chat_name,
-    response_tool_call_item_id_from_chat_name, CodexToolContext,
+    build_codex_tool_context_from_request_with_tool_search_compat,
+    response_tool_call_item_from_chat_name, response_tool_call_item_id_from_chat_name,
+    CodexToolContext,
 };
 use super::transform_responses::{sanitize_anthropic_tool_use_input, TOOL_RESULT_ERROR_MARKER};
 use crate::proxy::error::ProxyError;
@@ -223,12 +226,24 @@ fn responses_system_text(item: &Value) -> Vec<String> {
     }
 }
 
+#[allow(dead_code)]
 pub fn responses_request_to_anthropic(
     body: Value,
     default_max_tokens: u64,
 ) -> Result<Value, ProxyError> {
+    responses_request_to_anthropic_with_tool_search_compat(body, default_max_tokens, true)
+}
+
+pub(crate) fn responses_request_to_anthropic_with_tool_search_compat(
+    body: Value,
+    default_max_tokens: u64,
+    allow_tool_search_compat: bool,
+) -> Result<Value, ProxyError> {
     let mut result = json!({});
-    let tool_context = build_codex_tool_context_from_request(&body);
+    let tool_context = build_codex_tool_context_from_request_with_tool_search_compat(
+        &body,
+        allow_tool_search_compat,
+    );
     let model = body
         .get("model")
         .and_then(|value| value.as_str())
@@ -2478,6 +2493,39 @@ mod tests {
     }
 
     #[test]
+    fn test_response_keeps_tool_search_as_function_when_compat_is_disabled() {
+        let request = json!({
+            "model": "grok-4.1-fast",
+            "tools": [{
+                "type": "function",
+                "name": "get_weather",
+                "parameters": {"type": "object"}
+            }],
+            "input": "hi"
+        });
+        let context =
+            build_codex_tool_context_from_request_with_tool_search_compat(&request, false);
+        let result = anthropic_response_to_responses_with_context(
+            json!({
+                "id": "msg_search",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "call_search_1",
+                    "name": "tool_search",
+                    "input": {"query": "docs"}
+                }],
+                "stop_reason": "tool_use"
+            }),
+            &context,
+        )
+        .unwrap();
+
+        assert_eq!(result["output"][0]["type"], "function_call");
+        assert_eq!(result["output"][0]["id"], "fc_call_search_1");
+        assert_eq!(result["output"][0]["name"], "tool_search");
+    }
+
+    #[test]
     fn test_response_thinking_becomes_reasoning() {
         let input = json!({
             "id": "msg_1",
@@ -3009,5 +3057,31 @@ data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":
         let sse =
             "data: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"content\":[]}}\n\n";
         assert!(anthropic_sse_to_message_value(sse).is_err());
+    }
+
+    #[test]
+    fn test_request_skips_tool_search_when_compat_is_disabled() {
+        let input = json!({
+            "model": "grok-4.1-fast",
+            "max_output_tokens": 100,
+            "input": [{ "role": "user", "content": "hi" }],
+            "tools": [{
+                "type": "function",
+                "name": "get_weather",
+                "description": "d",
+                "parameters": {"type": "object"}
+            }]
+        });
+
+        let result =
+            responses_request_to_anthropic_with_tool_search_compat(input, 4096, false).unwrap();
+        let tool_names = result["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+
+        assert_eq!(tool_names, vec!["get_weather"]);
     }
 }

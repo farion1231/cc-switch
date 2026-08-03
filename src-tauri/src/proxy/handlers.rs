@@ -811,9 +811,14 @@ async fn handle_responses_for_app(
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
-    let request_uses_tool_search_shim =
-        transform_codex_chat::request_uses_responses_tool_search_shim(&body);
+    let allow_tool_search_compat = super::supports_codex_tool_search_compat(&app_type);
+    let codex_tool_context =
+        transform_codex_chat::build_codex_tool_context_from_request_with_tool_search_compat(
+            &body,
+            allow_tool_search_compat,
+        );
+    let request_uses_tool_search_shim = allow_tool_search_compat
+        && transform_codex_chat::request_uses_responses_tool_search_shim(&body);
     // Captured before `body` is moved into the forwarder: the flat-name →
     // {namespace, name} map used to restore the native Responses upstream's
     // function-call names (see the namespace-restore dispatch below).
@@ -871,8 +876,7 @@ async fn handle_responses_for_app(
         .await;
     }
 
-    let restore_tool_search = super::supports_codex_tool_search_compat(&app_type)
-        && request_uses_tool_search_shim
+    let restore_tool_search = request_uses_tool_search_shim
         && super::providers::should_restore_codex_native_tool_search(&ctx.provider, &endpoint);
     let restore_namespaces =
         (super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)
@@ -957,9 +961,14 @@ async fn handle_responses_compact_for_app(
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
-    let request_uses_tool_search_shim =
-        transform_codex_chat::request_uses_responses_tool_search_shim(&body);
+    let allow_tool_search_compat = super::supports_codex_tool_search_compat(&app_type);
+    let codex_tool_context =
+        transform_codex_chat::build_codex_tool_context_from_request_with_tool_search_compat(
+            &body,
+            allow_tool_search_compat,
+        );
+    let request_uses_tool_search_shim = allow_tool_search_compat
+        && transform_codex_chat::request_uses_responses_tool_search_shim(&body);
     let namespace_restore_map = transform_codex_responses_namespace::namespace_restore_map(&body);
 
     let forwarder = ctx.create_forwarder(&state);
@@ -1014,8 +1023,7 @@ async fn handle_responses_compact_for_app(
         .await;
     }
 
-    let restore_tool_search = super::supports_codex_tool_search_compat(&app_type)
-        && request_uses_tool_search_shim
+    let restore_tool_search = request_uses_tool_search_shim
         && super::providers::should_restore_codex_native_tool_search(&ctx.provider, &endpoint);
     let restore_namespaces =
         (super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)

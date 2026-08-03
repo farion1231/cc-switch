@@ -278,7 +278,15 @@ impl CodexToolContext {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolContext {
+    build_codex_tool_context_from_request_with_tool_search_compat(body, true)
+}
+
+pub(crate) fn build_codex_tool_context_from_request_with_tool_search_compat(
+    body: &Value,
+    allow_tool_search_compat: bool,
+) -> CodexToolContext {
     let mut context = CodexToolContext::default();
     let declared_tools = body.get("tools").and_then(|v| v.as_array());
     let has_declared_tools = declared_tools.is_some_and(|tools| !tools.is_empty());
@@ -300,7 +308,7 @@ pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolCo
     // synthetic function in both the upstream tool list and this restore map.
     // Clean requests with no tools and no prior search exchange stay untouched
     // for strict third-party providers that do not support function calling.
-    if has_declared_tools || has_tool_search_history {
+    if allow_tool_search_compat && (has_declared_tools || has_tool_search_history) {
         context.add_tool_search_tool();
     }
     context
@@ -416,8 +424,23 @@ pub fn responses_to_chat_completions_with_reasoning(
     body: Value,
     reasoning_config: Option<&CodexChatReasoningConfig>,
 ) -> Result<Value, ProxyError> {
+    responses_to_chat_completions_with_reasoning_and_tool_search_compat(
+        body,
+        reasoning_config,
+        true,
+    )
+}
+
+pub(crate) fn responses_to_chat_completions_with_reasoning_and_tool_search_compat(
+    body: Value,
+    reasoning_config: Option<&CodexChatReasoningConfig>,
+    allow_tool_search_compat: bool,
+) -> Result<Value, ProxyError> {
     let mut result = json!({});
-    let tool_context = build_codex_tool_context_from_request(&body);
+    let tool_context = build_codex_tool_context_from_request_with_tool_search_compat(
+        &body,
+        allow_tool_search_compat,
+    );
 
     if let Some(model) = body.get("model") {
         result["model"] = model.clone();
@@ -4994,5 +5017,72 @@ mod tests {
             "tools should be present from tool_search_output"
         );
         assert_eq!(result["tools"][0]["function"]["name"], "search_docs");
+    }
+
+    #[test]
+    fn responses_request_to_chat_skips_tool_search_when_compat_is_disabled() {
+        let input = json!({
+            "model": "grok-4.1-fast",
+            "tools": [{
+                "type": "function",
+                "name": "get_weather",
+                "description": "Get weather",
+                "parameters": {"type": "object"}
+            }],
+            "input": "hi"
+        });
+
+        let result =
+            responses_to_chat_completions_with_reasoning_and_tool_search_compat(input, None, false)
+                .unwrap();
+        let tool_names = result["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool.pointer("/function/name").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+
+        assert_eq!(tool_names, vec!["get_weather"]);
+    }
+
+    #[test]
+    fn chat_response_keeps_tool_search_as_function_when_compat_is_disabled() {
+        let request = json!({
+            "model": "grok-4.1-fast",
+            "tools": [{
+                "type": "function",
+                "name": "get_weather",
+                "parameters": {"type": "object"}
+            }],
+            "input": "hi"
+        });
+        let context =
+            build_codex_tool_context_from_request_with_tool_search_compat(&request, false);
+        let chat = json!({
+            "id": "chatcmpl_grok",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "grok-4.1-fast",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_search_1",
+                        "type": "function",
+                        "function": {
+                            "name": "tool_search",
+                            "arguments": "{\"query\":\"docs\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let result = chat_completion_to_response_with_context(chat, &context).unwrap();
+
+        assert_eq!(result["output"][0]["type"], "function_call");
+        assert_eq!(result["output"][0]["id"], "fc_call_search_1");
+        assert_eq!(result["output"][0]["name"], "tool_search");
     }
 }

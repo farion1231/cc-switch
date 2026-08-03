@@ -1418,7 +1418,8 @@ impl RequestForwarder {
         // the actual third-party provider. Direct/non-takeover Codex routing
         // bypasses this forwarder, while official ChatGPT/OAuth providers are
         // explicitly excluded by the provider gate.
-        if super::supports_codex_tool_search_compat(app_type)
+        let allow_tool_search_compat = super::supports_codex_tool_search_compat(app_type);
+        if allow_tool_search_compat
             && super::providers::should_inject_codex_tool_search_shim(provider, endpoint)
         {
             let action = super::providers::transform_codex_chat::ensure_responses_tool_search_shim(
@@ -1468,9 +1469,10 @@ impl RequestForwarder {
             super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
-            let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+            let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning_and_tool_search_compat(
                 mapped_body,
                 reasoning_config.as_ref(),
+                allow_tool_search_compat,
             )?;
             super::providers::inject_codex_chat_prompt_cache_key(
                 provider,
@@ -1507,9 +1509,10 @@ impl RequestForwarder {
             // transform clamps any thinking budget below this value.
             const DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS: u64 = 8192;
             let mut anthropic_body =
-                super::providers::transform_codex_anthropic::responses_request_to_anthropic(
+                super::providers::transform_codex_anthropic::responses_request_to_anthropic_with_tool_search_compat(
                     mapped_body,
                     DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS,
+                    allow_tool_search_compat,
                 )?;
             // Handle the 1M-context marker [1m]: strip the model-name suffix (the
             // gateway doesn't recognize it) and set the flag so the beta header is
