@@ -39,6 +39,7 @@ import { CustomUserAgentField } from "./CustomUserAgentField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
 import { cn } from "@/lib/utils";
 import { extractCodexModelName } from "@/utils/providerConfigUtils";
+import { CODEX_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import type {
   ClaudeApiKeyField,
   CodexApiFormat,
@@ -997,11 +998,22 @@ export function CodexFormFields({
                           />
                         </SelectTrigger>
                         <SelectContent>
-                          {codexProviders.map((provider) => (
-                            <SelectItem key={provider.id} value={provider.id}>
-                              {provider.name}
-                            </SelectItem>
-                          ))}
+                          {codexProviders
+                            // 聚合模式（官方登录关闭）下官方供应商无自有凭据，
+                            // 路由到它会拿 Bearer PROXY_MANAGED 被官方校验拒绝，
+                            // 从目标选择器排除，避免保存出必坏的映射。
+                            .filter(
+                              (provider) =>
+                                !(
+                                  !enableOfficialLogin &&
+                                  provider.id === CODEX_OFFICIAL_PROVIDER_ID
+                                ),
+                            )
+                            .map((provider) => (
+                              <SelectItem key={provider.id} value={provider.id}>
+                                {provider.name}
+                              </SelectItem>
+                            ))}
                         </SelectContent>
                       </Select>
                       <Select

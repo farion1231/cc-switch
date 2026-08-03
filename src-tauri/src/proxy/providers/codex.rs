@@ -241,15 +241,22 @@ pub fn resolve_codex_custom_model_provider(
     model: &str,
 ) -> Result<Option<Provider>, AppError> {
     let entries = crate::codex_config::codex_custom_model_entries(&official.settings_config);
-    // 优先按对外模型名（slug）匹配；兼容旧会话里保存的上游模型名
-    // （upstreamModel，如 deepseek-v4-flash），同样路由到绑定的供应商。
-    let Some(entry) = entries.iter().find(|entry| {
-        entry.model == model
-            || entry
-                .upstream_model
-                .as_deref()
-                .is_some_and(|upstream| upstream == model)
-    }) else {
+    // 优先按对外模型名（slug）精确匹配；没有精确命中时，才回退到旧会话里
+    // 保存的上游模型名（upstreamModel，如 deepseek-v4-flash）兼容匹配。
+    // 否则某条目的 upstreamModel 等于另一条目的 model 时，靠前的兼容匹配会
+    // 抢先于靠后的精确匹配，导致请求被路由到错误的供应商。
+    let Some(entry) = entries
+        .iter()
+        .find(|entry| entry.model == model)
+        .or_else(|| {
+            entries.iter().find(|entry| {
+                entry
+                    .upstream_model
+                    .as_deref()
+                    .is_some_and(|upstream| upstream == model)
+            })
+        })
+    else {
         return Ok(None);
     };
 
@@ -260,12 +267,29 @@ pub fn resolve_codex_custom_model_provider(
         )));
     };
 
+    // 兜底拦截历史/API 保存的坏映射：聚合模式（官方登录关闭）下官方供应商
+    // 没有自有凭据，路由到它会拿 Bearer PROXY_MANAGED 被官方校验拒绝。
+    // 前端选择器已过滤新映射，这里负责已存在的数据。
+    if is_codex_official_provider(&provider)
+        && !crate::codex_config::codex_official_login_enabled(&official.settings_config)
+    {
+        return Err(AppError::Message(format!(
+            "Codex 自定义模型 `{model}` 不能绑定到官方供应商（聚合模式下官方无凭据）"
+        )));
+    }
+
     if let Some(upstream_model) = entry.upstream_model.as_deref() {
         if let Some(obj) = provider.settings_config.as_object_mut() {
             obj.insert(
                 "model".to_string(),
                 JsonValue::String(upstream_model.to_string()),
             );
+            // 显式自定义映射标记（仅内存中的请求克隆，不落库）：让
+            // apply_codex_upstream_model 无条件改写为上游模型。否则当目标
+            // 供应商自己的 modelCatalog 里恰好有插槽名（如 gpt-5.2）时，
+            // catalog 保真逻辑会保留插槽名，把请求发给了供应商自己的同名
+            // 模型而不是映射的上游模型。
+            obj.insert("cc_switch_custom_route".to_string(), JsonValue::Bool(true));
         }
     }
 
@@ -355,15 +379,24 @@ pub fn apply_codex_chat_upstream_model(
 /// the chat gating check. Reused by the anthropic conversion path (the forwarder has
 /// already confirmed this provider uses anthropic).
 pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> Option<String> {
-    let catalog_model_ids = codex_provider_catalog_model_ids(provider);
-    if let Some(request_model) = body
-        .get("model")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|model| !model.is_empty())
-    {
-        if catalog_model_ids.contains(request_model) {
-            return Some(request_model.to_string());
+    // 显式自定义映射（resolve_codex_custom_model_provider 注入）：插槽名必须
+    // 无条件改写为上游模型，跳过 catalog 保真逻辑。
+    let custom_route_forced = provider
+        .settings_config
+        .get("cc_switch_custom_route")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    if !custom_route_forced {
+        let catalog_model_ids = codex_provider_catalog_model_ids(provider);
+        if let Some(request_model) = body
+            .get("model")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+        {
+            if catalog_model_ids.contains(request_model) {
+                return Some(request_model.to_string());
+            }
         }
     }
 
@@ -1240,6 +1273,110 @@ wire_api = "anthropic"
         assert_eq!(
             body.get("model").and_then(|v| v.as_str()),
             Some("claude-opus-4-1[1m]")
+        );
+    }
+
+    #[test]
+    fn test_apply_codex_upstream_model_forces_upstream_for_custom_route() {
+        // 自定义映射把插槽 gpt-5.2 路由到上游 deepseek-v4-flash；目标供应商的
+        // modelCatalog 里恰好也有 gpt-5.2。catalog 保真逻辑会保留请求模型，
+        // 但显式自定义映射标记必须强制改写为上游模型，否则请求会发给供应商
+        // 自己的 gpt-5.2 而不是 deepseek-v4-flash。
+        let provider = create_provider(json!({
+            "cc_switch_custom_route": true,
+            "model": "deepseek-v4-flash",
+            "modelCatalog": {
+                "models": [{ "model": "gpt-5.2" }]
+            }
+        }));
+        let mut body = json!({ "model": "gpt-5.2", "input": "hi" });
+        let result = apply_codex_upstream_model(&provider, &mut body);
+        assert_eq!(
+            result.as_deref(),
+            Some("deepseek-v4-flash"),
+            "custom route must force the upstream model"
+        );
+        assert_eq!(
+            body.get("model").and_then(|v| v.as_str()),
+            Some("deepseek-v4-flash"),
+            "body model must be rewritten even when the slot is in the provider catalog"
+        );
+    }
+
+    #[test]
+    fn test_resolve_codex_custom_model_prefers_exact_model_over_upstream_alias() {
+        // 条目A 的 upstreamModel 等于条目B 的对外 model（gpt-5.4）。请求 gpt-5.4
+        // 必须精确命中条目B（glm），而不是被条目A 的兼容匹配抢先路由到 deepseek。
+        let db = crate::database::Database::memory().expect("memory db");
+
+        let mut deepseek = create_provider(json!({ "config": "model = \"deepseek-v4-flash\"" }));
+        deepseek.id = "deepseek".to_string();
+        db.save_provider("codex", &deepseek).expect("save deepseek");
+
+        let mut glm = create_provider(json!({ "config": "model = \"glm-5\"" }));
+        glm.id = "glm".to_string();
+        db.save_provider("codex", &glm).expect("save glm");
+
+        let mut official = create_provider(json!({
+            "enableOfficialLogin": false,
+            "codexCustomModels": [
+                {
+                    "model": "gpt-5.2",
+                    "providerId": "deepseek",
+                    "upstreamModel": "gpt-5.4",
+                    "displayName": "DeepSeek"
+                },
+                {
+                    "model": "gpt-5.4",
+                    "providerId": "glm",
+                    "displayName": "GLM"
+                }
+            ]
+        }));
+        official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+        official.category = Some("official".to_string());
+
+        let resolved = resolve_codex_custom_model_provider(&db, &official, "gpt-5.4")
+            .expect("resolve gpt-5.4");
+        assert_eq!(
+            resolved.as_ref().unwrap().id,
+            "glm",
+            "exact model match must beat an earlier entry's upstream alias"
+        );
+
+        // 未映射的模型仍不路由
+        let unknown = resolve_codex_custom_model_provider(&db, &official, "gpt-5.5")
+            .expect("resolve unknown");
+        assert!(unknown.is_none(), "unmapped model must not route");
+    }
+
+    #[test]
+    fn test_resolve_codex_custom_model_rejects_official_target_in_aggregate() {
+        // 聚合模式（官方登录关闭）下把插槽绑定到官方供应商自身是坏配置：
+        // 请求会拿 Bearer PROXY_MANAGED 被官方校验拒绝，后端应拒绝解析。
+        let db = crate::database::Database::memory().expect("memory db");
+
+        let mut official_target = create_provider(json!({ "auth": { "OPENAI_API_KEY": "sk-x" } }));
+        official_target.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+        official_target.category = Some("official".to_string());
+        db.save_provider("codex", &official_target)
+            .expect("save official provider");
+
+        let mut official = create_provider(json!({
+            "enableOfficialLogin": false,
+            "codexCustomModels": [{
+                "model": "gpt-5.2",
+                "providerId": "codex-official",
+                "displayName": "GPT-5.2"
+            }]
+        }));
+        official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+        official.category = Some("official".to_string());
+
+        let result = resolve_codex_custom_model_provider(&db, &official, "gpt-5.2");
+        assert!(
+            result.is_err(),
+            "aggregate mode must reject binding a slot to the official provider"
         );
     }
 

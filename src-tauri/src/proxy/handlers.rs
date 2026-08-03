@@ -171,6 +171,11 @@ async fn forward_codex_official_models(
     if let Some(auth) = headers.get(axum::http::header::AUTHORIZATION) {
         builder = builder.header(axum::http::header::AUTHORIZATION, auth);
     }
+    // ChatGPT 多账号/workspace 需要 ChatGPT-Account-Id 才能拿到正确的模型目录，
+    // 与正常 /responses 转发一致透传，否则官方登录聚合会返回 401/403 或错误账号目录。
+    if let Some(account_id) = headers.get("chatgpt-account-id") {
+        builder = builder.header("chatgpt-account-id", account_id);
+    }
     let upstream = builder
         .send()
         .await
