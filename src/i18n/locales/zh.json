@@ -2273,6 +2273,7 @@
     "loading": "加载中...",
     "installed": "已安装",
     "install": "安装",
+    "enableAfterInstall": "安装后为当前应用启用",
     "installing": "安装中...",
     "uninstall": "卸载",
     "uninstalling": "卸载中...",
