@@ -8,6 +8,7 @@ pub mod mcp;
 pub mod model_fetch;
 pub mod model_pricing;
 pub mod omo;
+pub mod plugin;
 pub mod profile;
 pub mod prompt;
 pub mod provider;
