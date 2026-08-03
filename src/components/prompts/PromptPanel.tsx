@@ -97,16 +97,18 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
 
     const promptEntries = useMemo(() => Object.entries(prompts), [prompts]);
 
-    const enabledPrompt = promptEntries.find(([_, p]) => p.enabled);
+    const enabledPrompts = promptEntries.filter(([_, p]) => p.enabled);
 
     return (
       <div className="flex flex-col flex-1 min-h-0 px-6">
         <div className="flex-shrink-0 py-4 glass rounded-xl border border-white/10 mb-4 px-6">
           <div className="text-sm text-muted-foreground">
             {t("prompts.count", { count: promptEntries.length })} ·{" "}
-            {enabledPrompt
-              ? t("prompts.enabledName", { name: enabledPrompt[1].name })
-              : t("prompts.noneEnabled")}
+            {appId === "codex" && enabledPrompts.length > 0
+              ? t("prompts.enabledCount", { count: enabledPrompts.length })
+              : enabledPrompts[0]
+                ? t("prompts.enabledName", { name: enabledPrompts[0][1].name })
+                : t("prompts.noneEnabled")}
           </div>
         </div>
 

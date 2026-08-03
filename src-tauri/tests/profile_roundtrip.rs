@@ -185,7 +185,7 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
         payload.skills.claude,
         Some(vec!["local:test-skill".to_string()])
     );
-    assert_eq!(payload.prompts.claude.as_deref(), Some("pr1"));
+    assert_eq!(payload.prompts.claude, Some(vec!["pr1".to_string()]));
     assert_eq!(
         payload.providers.codex, None,
         "codex side not captured when creating from the claude group"
@@ -410,7 +410,7 @@ fn profile_apply_reports_dangling_references_and_continues() {
         "providers": { "claude": "ghost-provider" },
         "mcp": { "claude": ["m1", "ghost-mcp"] },
         "skills": { "claude": ["ghost-skill"] },
-        "prompts": { "claude": "ghost-prompt" }
+        "prompts": { "claude": ["ghost-prompt"] }
     });
     let profile = cc_switch_lib::Profile {
         id: "dangling-test".to_string(),
@@ -586,7 +586,7 @@ fn switching_profile_autosaves_previous_profile_state() {
         serde_json::from_str(&saved_a.payload).expect("parse project A payload");
     assert_eq!(payload_a.providers.claude.as_deref(), Some("p2"));
     assert_eq!(payload_a.mcp.claude, Some(vec!["m2".to_string()]));
-    assert_eq!(payload_a.prompts.claude.as_deref(), Some("pr2"));
+    assert_eq!(payload_a.prompts.claude, Some(vec!["pr2".to_string()]));
 
     // ---- 在 B 下改回状态 X，再切换回 A ----
     ProviderService::switch(&state, AppType::Claude, "p1").expect("switch to p1");
@@ -640,7 +640,7 @@ fn switching_profile_autosaves_previous_profile_state() {
         serde_json::from_str(&saved_b.payload).expect("parse project B payload");
     assert_eq!(payload_b.providers.claude.as_deref(), Some("p1"));
     assert_eq!(payload_b.mcp.claude, Some(vec!["m1".to_string()]));
-    assert_eq!(payload_b.prompts.claude.as_deref(), Some("pr1"));
+    assert_eq!(payload_b.prompts.claude, Some(vec!["pr1".to_string()]));
 }
 
 #[test]
@@ -810,5 +810,71 @@ fn claude_desktop_profile_scope_is_independent() {
             .as_deref(),
         Some(project.id.as_str()),
         "desktop scope marker set"
+    );
+}
+
+#[test]
+fn upsert_prompt_keeps_non_codex_prompts_exclusive() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    fs::create_dir_all(home.join(".claude")).expect("create Claude prompt directory");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_prompt(AppType::Claude.as_str(), &prompt("first", true))
+        .expect("save first prompt");
+
+    PromptService::upsert_prompt(&state, AppType::Claude, "second", prompt("second", true))
+        .expect("upsert enabled second prompt");
+
+    let prompts = state
+        .db
+        .get_prompts(AppType::Claude.as_str())
+        .expect("read prompts");
+    assert!(prompts.get("second").expect("second prompt").enabled);
+    assert!(
+        !prompts.get("first").expect("first prompt").enabled,
+        "non-Codex upsert must disable the previously enabled prompt"
+    );
+}
+
+#[test]
+fn upsert_prompt_backs_up_manual_codex_content_before_recomposing() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create Codex prompt directory");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_prompt(AppType::Codex.as_str(), &prompt("first", true))
+        .expect("save first prompt");
+    state
+        .db
+        .save_prompt(AppType::Codex.as_str(), &prompt("second", true))
+        .expect("save second prompt");
+
+    let live_path = codex_dir.join("AGENTS.md");
+    fs::write(&live_path, "# manual Codex instruction\n").expect("write manual AGENTS.md");
+
+    let mut updated = prompt("first", true);
+    updated.content = "# updated first prompt\n".to_string();
+    PromptService::upsert_prompt(&state, AppType::Codex, "first", updated)
+        .expect("upsert enabled Codex prompt");
+
+    let prompts = state
+        .db
+        .get_prompts(AppType::Codex.as_str())
+        .expect("read prompts");
+    assert!(prompts
+        .values()
+        .any(|prompt| { !prompt.enabled && prompt.content == "# manual Codex instruction\n" }));
+    assert_eq!(
+        fs::read_to_string(live_path).expect("read recomposed AGENTS.md"),
+        "# updated first prompt\n\n# prompt second"
     );
 }

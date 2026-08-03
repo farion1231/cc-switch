@@ -17,6 +17,55 @@ fn get_unix_timestamp() -> Result<i64, AppError> {
 
 pub struct PromptService;
 
+fn enabled_prompt_content(prompts: &IndexMap<String, Prompt>) -> String {
+    prompts
+        .values()
+        .filter(|prompt| prompt.enabled)
+        .map(|prompt| prompt.content.trim())
+        .filter(|content| !content.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn backup_diverged_live_content(
+    state: &AppState,
+    app: &AppType,
+    target_path: &std::path::Path,
+    prompts: &IndexMap<String, Prompt>,
+) -> Result<(), AppError> {
+    let Ok(live_content) = std::fs::read_to_string(target_path) else {
+        return Ok(());
+    };
+
+    if live_content.trim().is_empty()
+        || live_content.trim() == enabled_prompt_content(prompts).trim()
+        || prompts
+            .values()
+            .any(|prompt| prompt.content.trim() == live_content.trim())
+    {
+        return Ok(());
+    }
+
+    let timestamp = get_unix_timestamp()?;
+    let backup_id = format!("backup-{timestamp}");
+    let backup_prompt = Prompt {
+        id: backup_id.clone(),
+        name: format!(
+            "Original prompt {}",
+            chrono::Local::now().format("%Y-%m-%d %H:%M")
+        ),
+        content: live_content,
+        description: Some(
+            "Automatically backed up before overwriting the live prompt file".to_string(),
+        ),
+        enabled: false,
+        created_at: Some(timestamp),
+        updated_at: Some(timestamp),
+    };
+    log::info!("Backed up diverged live prompt content: {backup_id}");
+    state.db.save_prompt(app.as_str(), &backup_prompt)
+}
+
 impl PromptService {
     pub fn get_prompts(
         state: &AppState,
@@ -31,26 +80,39 @@ impl PromptService {
         _id: &str,
         prompt: Prompt,
     ) -> Result<(), AppError> {
-        // 检查是否为已启用的提示词
         let is_enabled = prompt.enabled;
+        let prompt_content = prompt.content.clone();
+        let target_path = prompt_file_path(&app)?;
+        let mut prompts = state.db.get_prompts(app.as_str())?;
 
-        state.db.save_prompt(app.as_str(), &prompt)?;
+        if matches!(app, AppType::Codex) {
+            backup_diverged_live_content(state, &app, &target_path, &prompts)?;
+        }
+
+        if is_enabled && !matches!(app, AppType::Codex) {
+            for existing_prompt in prompts.values_mut() {
+                existing_prompt.enabled = false;
+            }
+        }
+
+        prompts.insert(prompt.id.clone(), prompt);
+
+        for prompt in prompts.values() {
+            state.db.save_prompt(app.as_str(), prompt)?;
+        }
 
         if is_enabled {
-            // 启用提示词：写入内容到文件
-            let target_path = prompt_file_path(&app)?;
-            write_text_file(&target_path, &prompt.content)?;
+            let content = if matches!(app, AppType::Codex) {
+                enabled_prompt_content(&prompts)
+            } else {
+                prompt_content
+            };
+            write_text_file(&target_path, &content)?;
         } else {
-            // 禁用提示词：检查是否还有其他已启用的提示词
-            let prompts = state.db.get_prompts(app.as_str())?;
-            let any_enabled = prompts.values().any(|p| p.enabled);
-
-            if !any_enabled {
-                // 所有提示词都已禁用，清空文件
-                let target_path = prompt_file_path(&app)?;
-                if target_path.exists() {
-                    write_text_file(&target_path, "")?;
-                }
+            if matches!(app, AppType::Codex) && target_path.exists() {
+                write_text_file(&target_path, &enabled_prompt_content(&prompts))?;
+            } else if !prompts.values().any(|p| p.enabled) && target_path.exists() {
+                write_text_file(&target_path, "")?;
             }
         }
 
@@ -71,6 +133,7 @@ impl PromptService {
     }
 
     pub fn enable_prompt(state: &AppState, app: AppType, id: &str) -> Result<(), AppError> {
+        let allow_multiple = matches!(app, AppType::Codex);
         // 回填当前 live 文件内容到已启用的提示词，或创建备份
         let target_path = prompt_file_path(&app)?;
         if target_path.exists() {
@@ -78,18 +141,23 @@ impl PromptService {
                 if !live_content.trim().is_empty() {
                     let mut prompts = state.db.get_prompts(app.as_str())?;
 
-                    // 尝试回填到当前已启用的提示词
-                    if let Some((enabled_id, enabled_prompt)) = prompts
-                        .iter_mut()
-                        .find(|(_, p)| p.enabled)
-                        .map(|(id, p)| (id.clone(), p))
-                    {
+                    // A generated file with multiple enabled prompts must not be
+                    // imported back into one prompt, or later enables would duplicate it.
+                    let enabled_count = prompts.values().filter(|p| p.enabled).count();
+                    if enabled_count == 1 {
+                        let (enabled_id, enabled_prompt) = prompts
+                            .iter_mut()
+                            .find(|(_, p)| p.enabled)
+                            .map(|(id, p)| (id.clone(), p))
+                            .expect("enabled_count guarantees one enabled prompt");
                         let timestamp = get_unix_timestamp()?;
                         enabled_prompt.content = live_content.clone();
                         enabled_prompt.updated_at = Some(timestamp);
                         log::info!("回填 live 提示词内容到已启用项: {enabled_id}");
                         state.db.save_prompt(app.as_str(), enabled_prompt)?;
-                    } else {
+                    } else if enabled_count == 0
+                        || live_content.trim() != enabled_prompt_content(&prompts).trim()
+                    {
                         // 没有已启用的提示词，则创建一次备份（避免重复备份）
                         let content_exists = prompts
                             .values()
@@ -123,17 +191,28 @@ impl PromptService {
         // 启用目标提示词并写入文件
         let mut prompts = state.db.get_prompts(app.as_str())?;
 
-        for prompt in prompts.values_mut() {
-            prompt.enabled = false;
+        if !allow_multiple {
+            for prompt in prompts.values_mut() {
+                prompt.enabled = false;
+            }
         }
 
         if let Some(prompt) = prompts.get_mut(id) {
             prompt.enabled = true;
-            write_text_file(&target_path, &prompt.content)?; // 原子写入
-            state.db.save_prompt(app.as_str(), prompt)?;
         } else {
             return Err(AppError::InvalidInput(format!("提示词 {id} 不存在")));
         }
+
+        let content = if allow_multiple {
+            enabled_prompt_content(&prompts)
+        } else {
+            prompts
+                .get(id)
+                .expect("target prompt exists after enabling")
+                .content
+                .clone()
+        };
+        write_text_file(&target_path, &content)?;
 
         // Save all prompts to disable others
         for (_, prompt) in prompts.iter() {
