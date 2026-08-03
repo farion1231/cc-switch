@@ -54,11 +54,21 @@ pub(crate) fn strip_leading_anthropic_billing_header(text: &str) -> &str {
 }
 
 /// Detect OpenAI o-series reasoning models (o1, o3, o4-mini, etc.)
-/// These models require `max_completion_tokens` instead of `max_tokens`.
 pub fn is_openai_o_series(model: &str) -> bool {
     model.len() > 1
         && model.starts_with('o')
         && model.as_bytes().get(1).is_some_and(|b| b.is_ascii_digit())
+}
+
+/// Detect models that require `max_completion_tokens` instead of `max_tokens`.
+/// Covers o-series (o1, o3, o4-mini) and gpt-5+ (gpt-5, gpt-5.1, gpt-5-mini, etc.)
+pub fn requires_max_completion_tokens(model: &str) -> bool {
+    let normalized = model.to_lowercase();
+    is_openai_o_series(&normalized)
+        || normalized
+            .strip_prefix("gpt-")
+            .and_then(|rest| rest.chars().next())
+            .is_some_and(|c| c.is_ascii_digit() && c >= '5')
 }
 
 /// Detect Responses-compatible models that support reasoning effort.
@@ -70,11 +80,7 @@ pub fn is_openai_o_series(model: &str) -> bool {
 ///   model; retain the previous `grok-build-*` family for saved providers.
 pub fn supports_reasoning_effort(model: &str) -> bool {
     let normalized = model.to_lowercase();
-    is_openai_o_series(&normalized)
-        || normalized
-            .strip_prefix("gpt-")
-            .and_then(|rest| rest.chars().next())
-            .is_some_and(|c| c.is_ascii_digit() && c >= '5')
+    requires_max_completion_tokens(&normalized)
         || normalized == "grok-4.5"
         || normalized.starts_with("grok-4.5-")
         || normalized.starts_with("grok-build-")
@@ -183,10 +189,10 @@ pub fn anthropic_to_openai_with_reasoning_content(
     normalize_openai_system_messages(&mut messages);
     result["messages"] = json!(messages);
 
-    // 转换参数 — o-series 模型需要 max_completion_tokens
+    // 转换参数 — o-series 和 gpt-5+ 需要 max_completion_tokens
     let model = body.get("model").and_then(|m| m.as_str()).unwrap_or("");
     if let Some(v) = body.get("max_tokens") {
-        if is_openai_o_series(model) {
+        if requires_max_completion_tokens(model) {
             result["max_completion_tokens"] = v.clone();
         } else {
             result["max_tokens"] = v.clone();
@@ -1739,6 +1745,23 @@ mod tests {
         assert!(!is_openai_o_series("openai-gpt"));
         assert!(!is_openai_o_series("o"));
         assert!(!is_openai_o_series(""));
+    }
+
+    #[test]
+    fn test_requires_max_completion_tokens() {
+        // o-series
+        assert!(requires_max_completion_tokens("o1"));
+        assert!(requires_max_completion_tokens("o3-mini"));
+        assert!(requires_max_completion_tokens("o4-mini"));
+        // gpt-5+
+        assert!(requires_max_completion_tokens("gpt-5"));
+        assert!(requires_max_completion_tokens("gpt-5.4"));
+        assert!(requires_max_completion_tokens("gpt-5-mini"));
+        assert!(requires_max_completion_tokens("gpt-5-codex"));
+        // not affected
+        assert!(!requires_max_completion_tokens("gpt-4o"));
+        assert!(!requires_max_completion_tokens("gpt-4-turbo"));
+        assert!(!requires_max_completion_tokens("claude-sonnet-4-6"));
     }
 
     #[test]
