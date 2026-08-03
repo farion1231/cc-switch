@@ -55,7 +55,11 @@ jobs:
 
   backend:
     name: Backend Checks
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -66,6 +70,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Install Linux system deps
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -87,6 +92,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Create frontend dist placeholder
+        shell: bash
         run: mkdir -p dist
 
       - name: Check Rust formatting

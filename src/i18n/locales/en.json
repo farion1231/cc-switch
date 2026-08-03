@@ -23,7 +23,6 @@
     "unknown": "Unknown",
     "enterValidValue": "Please enter a valid value",
     "clear": "Clear",
-    "toggleTheme": "Toggle theme",
     "format": "Format",
     "formatSuccess": "Formatted successfully",
     "formatError": "Format failed: {{error}}",
@@ -173,7 +172,8 @@
         "oauthHint": "Google official uses OAuth personal authentication, no need to fill in API Key. The browser will automatically open for login on first use.",
         "apiKeyPlaceholder": "Enter Gemini API Key"
       }
-    }
+    },
+    "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again"
   },
   "claudeCode": {
     "needsRouting": "Needs Routing",
@@ -222,7 +222,8 @@
       "tooltip": {
         "active": "Claude Desktop local routing is running - {{address}}:{{port}}",
         "inactive": "Turn on Claude Desktop local routing for providers that need model mapping or format conversion. Configured address: {{address}}:{{port}}"
-      }
+      },
+      "stopBlockedByTakeover": "Another app is using proxy takeover. Please disable that app's takeover in settings before stopping local routing."
     }
   },
   "notifications": {
@@ -231,6 +232,7 @@
     "providerDeleted": "Provider deleted successfully",
     "switchSuccess": "Switch successful!",
     "codexRestartRequired": "Switched successfully. Restart the client to apply changes.",
+    "grokBuildRestartRequired": "Switched successfully. Restart Grok Build to apply changes.",
     "claudeDesktopRestartRequired": "Switched successfully. Restart Claude Desktop to apply changes.",
     "claudeDesktopProxyRestartRequired": "Switched successfully. Keep CC Switch running and restart Claude Desktop to apply changes.",
     "addToConfigSuccess": "Added to config",
@@ -258,6 +260,8 @@
     "proxyReasonOpenAIResponses": "uses OpenAI Responses API format",
     "proxyReasonAnthropicMessages": "uses Anthropic Messages API format",
     "proxyReasonFullUrl": "has full URL connection mode enabled",
+    "proxyReasonManagedOAuth": "uses managed OAuth login (token injected by local routing)",
+    "proxyReasonRoutingRequired": "requires local routing to process requests",
     "openAIFormatHint": "This provider uses OpenAI-compatible format and requires the routing service to be enabled",
     "copilotProxyHint": "GitHub Copilot as a Claude provider always requires local routing; routing automatically selects Chat Completions or Responses based on the current model.",
     "openLinkFailed": "Failed to open link",
@@ -268,7 +272,8 @@
     "backfillWarning": "Switched successfully, but failed to save changes back to the previous provider",
     "windowControlFailed": "Window control failed: {{error}}",
     "officialBlockedByProxy": "Cannot switch to official provider while local routing is active. Using routing with official APIs may cause account bans.",
-    "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing."
+    "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing.",
+    "proxyReasonClaudeDesktop": "Using Claude Desktop local routing mode"
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -325,7 +330,8 @@
       "description": "Use your other subscriptions in Claude Code — please be mindful of compliance risks.",
       "beta": "Beta",
       "copilotDescription": "Manage GitHub Copilot accounts",
-      "codexOauthDescription": "Manage ChatGPT accounts"
+      "codexOauthDescription": "Manage ChatGPT accounts",
+      "xaiOauthDescription": "Manage xAI / Grok accounts"
     },
     "advanced": {
       "configDir": {
@@ -396,10 +402,10 @@
         "cacheInjectionDescription": "Automatically inject standard 5-minute cache breakpoints at key positions to reduce duplicate token billing"
       },
       "logConfig": {
-        "title": "Log Management",
-        "description": "Control log output level",
-        "enabled": "Enable Logging",
-        "enabledDescription": "Master switch, all logging will be disabled when turned off",
+        "title": "Application Diagnostic Logs",
+        "description": "Control the output level for application diagnostic logs",
+        "enabled": "Enable Diagnostic Logs",
+        "enabledDescription": "Controls cc-switch.log; request usage records and crash.log are unaffected",
         "level": "Log Level",
         "levelDescription": "Set the minimum log level to output",
         "levels": {
@@ -756,6 +762,8 @@
     "codexConfigDirDescription": "Override Codex configuration directory.",
     "geminiConfigDir": "Gemini Configuration Directory",
     "geminiConfigDirDescription": "Override Gemini configuration directory (.env).",
+    "grokConfigDir": "Grok Build Configuration Directory",
+    "grokConfigDirDescription": "Override Grok Build configuration directory (config.toml).",
     "opencodeConfigDir": "OpenCode Configuration Directory",
     "opencodeConfigDirDescription": "Override OpenCode configuration directory (opencode.json).",
     "openclawConfigDir": "OpenClaw Configuration Directory",
@@ -765,6 +773,7 @@
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
+    "browsePlaceholderGrok": "e.g., /home/<your-username>/.grok",
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
@@ -875,13 +884,22 @@
     "claude-desktop": "Claude Desktop",
     "codex": "Codex",
     "gemini": "Gemini",
+    "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes"
   },
+  "grokBuild": {
+    "apiBackend": "API backend",
+    "contextWindow": "Context window",
+    "contextWindowInvalid": "Context window must be a positive integer",
+    "profile": "Client model profile",
+    "rawConfig": "config.toml",
+    "invalidToml": "Invalid config.toml: {{error}}"
+  },
   "sessionManager": {
     "title": "Session Manager",
-    "subtitle": "Manage Claude Code, Codex, OpenCode, OpenClaw, Hermes and Gemini CLI sessions",
+    "subtitle": "Manage Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw and Hermes sessions",
     "searchPlaceholder": "Search by content, directory, or ID",
     "searchSessions": "Search sessions",
     "providerFilterAll": "All",
@@ -1001,9 +1019,11 @@
     "customApiKeyHint": "💡 Custom configuration requires manually filling all necessary fields",
     "omoHint": "💡 OMO config manages Agent model assignments and supports both oh-my-openagent.jsonc and oh-my-opencode.jsonc",
     "officialHint": "💡 Official provider uses browser login, no API Key needed",
+    "providerKeyStatusLoading": "Provider identifier status is still loading. Please try again shortly.",
     "getApiKey": "Get API Key",
     "partnerPromotion": {
-      "sudocode": "With one SudoCode key, Claude Code and Claude Desktop use Claude Opus 4.8, while Codex uses GPT-5.6. Sign up, join QQ group 726213516, and contact the group owner to claim CNY ¥10 in trial credit.",
+      "a6api": "A6API is a token aggregation platform with a built-in real-time price leaderboard that automatically picks the lowest price on the market. Smooth and stable, simple to operate, and no more tedious price comparisons. Register now to claim free trial credits!",
+      "sudocode": "With one SudoCode key, Claude Code and Claude Desktop use Claude Opus 5, while Codex uses GPT-5.6. Sign up, join QQ group 726213516, and contact the group owner to claim CNY ¥10 in trial credit.",
       "code0": "code0.ai is an AI coding service platform for developers, supporting Claude Code, Codex, and Gemini. Exclusive for CC Switch users: contact support via the official website to claim free trial credits!",
       "nekocode": "NekoCode gives developers a stable, efficient, and reliable API relay for Claude, Codex, and other AI models, with transparent pay-as-you-go pricing. Exclusive 10% off for CC Switch users: register via the link above and enter promo code cc-switch at recharge to save 10%!",
       "packycode": "PackyCode is an official partner of CC Switch. Register using this link and enter \"cc-switch\" promo code during recharge to get 10% off",
@@ -1022,6 +1042,7 @@
       "aigocode": "AIGoCode is an official partner of CC Switch. Register using this link and get 10% bonus credit on your first top-up!",
       "rightcode": "RightCode is an official partner of CC Switch. Register using this link and get 5% bonus credit on every top-up!",
       "aicodemirror": "AICodeMirror is an official partner of CC Switch. Register using this link to get 20% off!",
+      "aicoding": "AI Coding offers an exclusive discount for CC Switch users — 10% off your first top-up!",
       "crazyrouter": "CrazyRouter offers an exclusive bonus for CC Switch users — 30% extra credit on your first top-up!",
       "sssaicode": "SSAI Code offers an exclusive bonus for CC Switch users — $10 extra credit on every top-up!",
       "siliconflow": "SiliconFlow is an official partner of CC Switch",
@@ -1037,8 +1058,7 @@
       "qiniu": "Qiniu Cloud is a multi-protocol AI relay: one key for native Claude, GPT, and Gemini models, with the Anthropic, OpenAI, and Gemini APIs all supported.",
       "fenno": "Fenno.ai is a stable, efficient API relay giving you access to a wide range of mainstream models. Exclusive CC Switch offer: subscribe via this link to the ¥9.9 Coding Plan worth $150 in credits!",
       "zetaapi": "ZetaAPI delivers real, undegraded models at as low as 35% of official pricing. Exclusive CC Switch offer: register via this link and use promo code CC-SWITCH for 10% off your first top-up!",
-      "teamorouter": "TeamoRouter is an enterprise-grade Agentic LLM gateway with pricing up to 90% off. It offers exclusive benefits for CC Switch users: register via this link as a new user for 10% off your first top-up!",
-      "unity2": "Unity2.ai offers exclusive benefits for CC Switch users: register via this link to get $2 in credits, plus another $10 for joining the official group — up to $12 in free credits!"
+      "teamorouter": "TeamoRouter is an enterprise-grade Agentic LLM gateway with pricing up to 90% off. It offers exclusive benefits for CC Switch users: register via this link as a new user for 10% off your first top-up!"
     },
     "presets": {
       "ucloud": "Compshare",
@@ -1150,7 +1170,8 @@
     "fetchModelsAuthFailed": "API Key is invalid or lacks permission",
     "fetchModelsNotSupported": "This provider does not support fetching model list",
     "fetchModelsEndpointNotFound": "No reachable models endpoint found. Please check the Base URL or confirm whether the provider exposes this API.",
-    "fetchModelsTimeout": "Request timed out, please check network connection"
+    "fetchModelsTimeout": "Request timed out, please check network connection",
+    "requiredFields": "Please fill in provider name, API endpoint, API Key and model"
   },
   "copilot": {
     "authSection": "GitHub Copilot Authentication",
@@ -1208,6 +1229,31 @@
     "copyCode": "Copy code",
     "fastMode": "FAST mode",
     "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate."
+  },
+  "xaiOauth": {
+    "authStatus": "xAI OAuth authentication",
+    "accountCount": "Usable accounts: {{count}}",
+    "reauthRequired": "Sign-in required",
+    "notAuthenticated": "Not authenticated",
+    "selectAccount": "Select account",
+    "selectAccountPlaceholder": "Select an xAI account",
+    "useDefaultAccount": "Use default account",
+    "accounts": "xAI accounts",
+    "defaultAccount": "Default",
+    "expired": "Credentials expired",
+    "setAsDefault": "Set as default",
+    "removeAccount": "Remove account",
+    "addOrReauth": "Add account or sign in again",
+    "login": "Sign in with xAI",
+    "waitingForAuth": "Waiting for xAI authorization…",
+    "enterCode": "If the browser did not fill it in automatically, enter:",
+    "retry": "Retry",
+    "logoutAll": "Remove all xAI accounts",
+    "loginRequired": "Sign in to an xAI account first"
+  },
+  "managedAuth": {
+    "selectedAccountNeedsReauth": "The linked account is missing or needs you to sign in again",
+    "selectedAccountUnavailable": "The linked account is missing or needs you to sign in again. Select another account."
   },
   "endpointTest": {
     "title": "API Endpoint Management",
@@ -1302,7 +1348,7 @@
     "modelMetadataAdvanced": "Model Metadata Advanced Options",
     "modelMetadataAdvancedHint": "Overrides Codex metadata for unknown models; clearing a field removes the matching config.toml entry.",
     "defaultModelLabel": "Default Model",
-    "defaultModelPlaceholder": "e.g. gpt-5.6",
+    "defaultModelPlaceholder": "e.g. gpt-5.6-sol",
     "defaultModelHint": "The model Codex requests by default; change it anytime without waiting for a preset update. If left empty while model mapping is configured, the first mapping row is used.",
     "defaultModelNotInCatalog": "This model is not in the model mapping, so the Codex /model menu won't list it (direct requests still work).",
     "addToModelMapping": "Add to mapping",
@@ -1322,7 +1368,8 @@
     "reasoningEffortHint": "Enable when the upstream supports thinking-depth control such as low/high/max. Enabling this also turns on thinking mode and converts Codex's reasoning.effort into the upstream Chat parameter.",
     "reasoningGroupTitle": "Reasoning Capability",
     "reasoningSectionHint": "Preset providers are configured automatically; custom providers are inferred from name/URL. Override manually only when auto-detection is wrong.",
-    "advancedSectionHint": "Includes upstream format, model mapping, reasoning overrides and custom User-Agent. Providers using the Chat Completions protocol require routing takeover to be enabled."
+    "advancedSectionHint": "Includes upstream format, model mapping, reasoning overrides and custom User-Agent. Providers using the Chat Completions protocol require routing takeover to be enabled.",
+    "noCommonConfigToApply": "The common config snippet is empty or contains nothing to write"
   },
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",
@@ -1421,6 +1468,7 @@
     "totalRequests": "Total Requests",
     "totalCost": "Total Cost",
     "cost": "Cost",
+    "unpriced": "Unpriced",
     "perMillion": "(per million)",
     "trends": "Usage Trends",
     "rangeToday": "Last 24 hours (hourly)",
@@ -1459,25 +1507,20 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "grokbuild": "Grok Build"
     },
     "rawInputLabel": "Raw",
-    "dataSources": "Data Sources",
-    "dataSource": {
-      "proxy": "Routing",
-      "session_log": "Session Log",
-      "codex_db": "Codex DB",
-      "codex_session": "Codex Session",
-      "gemini_session": "Gemini Session",
-      "opencode_session": "OpenCode Session"
-    },
-    "sessionSync": {
-      "trigger": "Sync session logs",
-      "import": "Import Sessions",
-      "resync": "Sync",
-      "imported": "Imported {{count}} records from session logs",
-      "upToDate": "Session logs are up to date",
-      "failed": "Session sync failed"
+    "rebuildCodex": {
+      "title": "Codex Usage Maintenance",
+      "description": "Rebuild Codex session usage from local rollout logs",
+      "warning": "The database is backed up first. History whose source JSONL has been deleted cannot be re-imported.",
+      "action": "Rebuild Codex Usage",
+      "confirmTitle": "Rebuild Codex usage?",
+      "confirmMessage": "This clears existing Codex session details and rollups, then imports them again from local Codex logs.\n\nHistory with deleted logs will be lost. Forks whose parent rollout is missing will be deferred.",
+      "confirmAction": "Back Up and Rebuild",
+      "completed": "Rebuild complete: {{imported}} imported, {{errors}} errors, {{suspected}} suspected duplicates, {{deferred}} deferred files",
+      "failed": "Codex usage rebuild failed: {{error}}"
     },
     "totalRecords": "{{total}} records total",
     "goToPage": "Go",
@@ -1577,6 +1620,40 @@
     "modelsDevNoResults": "No matching models",
     "modelsDevTruncated": "Showing first {{shown}} of {{total}} results — refine your search",
     "modelsDevDefaultHint": "Showing the {{shown}} most recently released models (of {{total}}) — type to search all",
+    "modelsDevAutoSync": {
+      "title": "Automatic models.dev pricing sync",
+      "description": "When enabled, periodically fetch selected prices when CC Switch launches and keep them in your local pricing file.",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "enableConfirmTitle": "Enable automatic pricing sync?",
+      "enableConfirmMessage": "After enabling, CC Switch will periodically update prices for the selected models from models.dev when it launches (at most once every 6 hours). Built-in and manually configured prices with the same model ID will be overwritten.",
+      "enableConfirmAction": "Enable automatic sync",
+      "configure": "Choose models",
+      "configureTitle": "Choose models for automatic pricing sync",
+      "configureDescription": "Search and filter models to update automatically. Your choices are stored locally.",
+      "commonModels": "Automatically include common models",
+      "commonModelsDescription": "Selects {{count}} recent Claude, GPT, Gemini, Grok, DeepSeek, Qwen, MiMo, LongCat, Kimi, MiniMax, and GLM models.",
+      "selectFiltered": "Select filtered ({{count}})",
+      "clearFiltered": "Clear filtered",
+      "selectedCount": "{{count}} models selected",
+      "selectionHint": "Selections with the same normalized model ID are imported once.",
+      "commonBadge": "Common",
+      "selectionSaved": "Automatic pricing selection saved",
+      "syncSuccess": "Pricing sync complete: {{imported}} models checked, {{changed}} updated",
+      "syncFailed": "Pricing sync failed: {{error}}",
+      "configLoadFailed": "Failed to load local pricing configuration: {{error}}",
+      "neverSynced": "Never",
+      "lastSync": "Last sync",
+      "commonStatus": "Common models",
+      "lastError": "Last automatic sync failed: {{error}}",
+      "localFile": "Local pricing file",
+      "openFolder": "Open folder",
+      "openFolderFailed": "Failed to open the local pricing folder: {{error}}",
+      "reloadLocalFile": "Reload file",
+      "localFileReloaded": "Local pricing file reloaded",
+      "localFileReloadFailed": "Failed to reload local pricing file: {{error}}",
+      "syncNow": "Sync now"
+    },
     "cacheReadCostPerMillion": "Cache Read Cost (per million tokens, USD)",
     "cacheCreationCostPerMillion": "Cache Write Cost (per million tokens, USD)"
   },
@@ -1688,7 +1765,10 @@
   "errors": {
     "usage_query_failed": "Usage query failed",
     "configLoadFailedTitle": "Configuration Load Failed",
-    "configLoadFailedMessage": "Unable to read configuration file:\n{{path}}\n\nError details:\n{{detail}}\n\nPlease check if the JSON is valid, or restore from a backup file (e.g., config.json.bak) in the same directory.\n\nThe app will exit so you can fix this."
+    "configLoadFailedMessage": "Unable to read configuration file:\n{{path}}\n\nError details:\n{{detail}}\n\nPlease check if the JSON is valid, or restore from a backup file (e.g., config.json.bak) in the same directory.\n\nThe app will exit so you can fix this.",
+    "frontendCrashTitle": "Something went wrong in the interface",
+    "frontendCrashMessage": "An attempt was made to write the error to the application diagnostic log. Reload the interface, and attach the log when opening an issue if the problem continues.",
+    "reloadInterface": "Reload interface"
   },
   "presetSelector": {
     "title": "Select Configuration Type",
@@ -1719,6 +1799,7 @@
         "claude": "Claude",
         "codex": "Codex",
         "gemini": "Gemini",
+        "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes"
@@ -2100,9 +2181,9 @@
       "addModel": "Add model",
       "noModels": "No models configured. Switching to this provider won't change the default model.",
       "modelId": "Model ID",
-      "modelIdPlaceholder": "anthropic/claude-opus-4-8",
+      "modelIdPlaceholder": "anthropic/claude-opus-5",
       "modelName": "Display name",
-      "modelNamePlaceholder": "Claude Opus 4.8",
+      "modelNamePlaceholder": "Claude Opus 5",
       "contextLength": "Context length",
       "advancedOptions": "Advanced options",
       "modelsHint": "On switch, the first model is written to top-level model.default.",
@@ -2223,6 +2304,9 @@
       "skillDirNotFound": "Skill directory not found: {{path}}",
       "directoryConflict": "Skill directory '{{directory}}' is already occupied by {{existing_repo}}, cannot install from {{new_repo}}",
       "emptyArchive": "Downloaded archive is empty",
+      "invalidRepoRef": "Invalid repository reference: {{owner}}/{{name}}",
+      "archiveTooLarge": "Archive exceeds the {{limit_mb}} MB extraction limit; aborted",
+      "archiveTooManyEntries": "Archive has too many entries ({{count}}); the limit is {{limit}}",
       "downloadFailed": "Download failed: HTTP {{status}}",
       "allBranchesFailed": "All branches failed, tried: {{branches}}",
       "httpError": "HTTP error {{status}}",
@@ -2386,7 +2470,11 @@
       "title": "Batch Import MCP Servers",
       "targetApps": "Target Apps",
       "serverCount": "MCP Servers ({{count}})",
-      "enabledWarning": "After import, configurations will be written to all specified apps immediately"
+      "enabledWarning": "After import, configurations will be written to all specified apps immediately",
+      "command": "Command",
+      "args": "Args",
+      "env": "Env",
+      "url": "URL"
     },
     "prompt": {
       "title": "Import System Prompt",
@@ -2408,10 +2496,17 @@
     "usageScript": "Usage Query",
     "usageScriptEnabled": "Enabled",
     "usageScriptDisabled": "Disabled",
+    "usageScriptCode": "Script code",
+    "usageScriptWarning": "This is JavaScript that runs when usage is queried, once enabled. Import it only if you trust the source.",
     "usageApiKey": "Usage API Key",
     "usageBaseUrl": "Usage Query URL",
     "usageAutoInterval": "Auto Query",
-    "usageAutoIntervalValue": "Every {{minutes}} minutes"
+    "usageAutoIntervalValue": "Every {{minutes}} minutes",
+    "risk": {
+      "envHijack": "This config sets environment variables that change how processes load code (e.g. injecting libraries or replacing CA certificates). Import only from a source you trust.",
+      "privateEndpoint": "This address points at localhost or a private network. Do not import unless it is your own local service.",
+      "shellCommand": "This config runs a full command line through a shell — what actually executes is in the arguments. Review each line."
+    }
   },
   "iconPicker": {
     "search": "Search Icons",
@@ -2430,8 +2525,7 @@
     "selectIcon": "Select Icon",
     "preview": "Preview",
     "clickToChange": "Click to change icon",
-    "clickToSelect": "Click to select icon",
-    "color": "Icon Color"
+    "clickToSelect": "Click to select icon"
   },
   "migration": {
     "success": "Configuration migrated successfully",
@@ -2460,7 +2554,8 @@
     },
     "tooltip": {
       "enabled": "{{app}} failover enabled\nRequests follow queue priority (P1→P2→...)",
-      "disabled": "Enable {{app}} failover\nSwitches to queue P1 immediately, then falls back on failures"
+      "disabled": "Enable {{app}} failover\nSwitches to queue P1 immediately, then falls back on failures",
+      "takeoverRequired": "Take over {{app}} first, then enable failover"
     }
   },
   "proxy": {
@@ -2519,8 +2614,8 @@
           "description": "Maximum wait time for a single request (0 = unlimited, or 10 ~ 600 seconds)"
         },
         "enableLogging": {
-          "label": "Enable Logging",
-          "description": "Log all routing requests for troubleshooting"
+          "label": "Record Request Usage",
+          "description": "Write routing request usage and status to the local statistics database"
         },
         "streamingFirstByteTimeout": {
           "label": "Streaming First Byte Timeout (sec)",
@@ -2638,7 +2733,9 @@
     },
     "server": {
       "started": "Routing service started - {{address}}:{{port}}",
-      "startFailed": "Failed to start routing service: {{detail}}"
+      "startFailed": "Failed to start routing service: {{detail}}",
+      "stopped": "Routing service stopped",
+      "stopFailed": "Failed to stop routing service: {{detail}}"
     },
     "stoppedWithRestore": "Routing service stopped, all routing configs restored",
     "stopWithRestoreFailed": "Stop failed: {{detail}}"
@@ -2672,33 +2769,6 @@
     "streamingFirstByte": "Streaming First Byte Timeout",
     "streamingIdle": "Streaming Idle Timeout",
     "nonStreaming": "Non-Streaming Timeout"
-  },
-  "circuitBreaker": {
-    "failureThreshold": "Failure Threshold",
-    "successThreshold": "Success Threshold",
-    "timeoutSeconds": "Timeout (seconds)",
-    "errorRateThreshold": "Error Rate Threshold (%)",
-    "minRequests": "Minimum Requests",
-    "validationFailed": "The following fields are out of valid range: {{fields}}",
-    "configSaved": "Circuit breaker configuration saved",
-    "saveFailed": "Save failed",
-    "loading": "Loading...",
-    "title": "Circuit Breaker Configuration",
-    "description": "Adjust circuit breaker parameters to control fault detection and recovery behavior",
-    "failureThresholdHint": "How many consecutive failures trigger the circuit breaker",
-    "timeoutSecondsHint": "How long to wait before attempting recovery (half-open state)",
-    "successThresholdHint": "How many successes in half-open state to close the circuit breaker",
-    "errorRateThresholdHint": "Open circuit breaker when error rate exceeds this value",
-    "minRequestsHint": "Minimum requests before calculating error rate",
-    "saveConfig": "Save Configuration",
-    "instructionsTitle": "Configuration Instructions",
-    "instructions": {
-      "failureThreshold": "Circuit breaker opens when consecutive failures reach this count",
-      "timeout": "After circuit breaker opens, wait this time before attempting half-open",
-      "successThreshold": "In half-open state, close circuit breaker when successes reach this count",
-      "errorRate": "Circuit breaker opens when error rate exceeds this value",
-      "minRequests": "Error rate is only calculated after request count reaches this value"
-    }
   },
   "universalProvider": {
     "duplicate": "Duplicate",
@@ -2880,13 +2950,13 @@
       "writing": "Writing"
     },
     "categoryTooltip": {
-      "visualEngineering": "Frontend and visual engineering category for UI/UX design, styling, animation and interface implementation. Defaults to Gemini 3.5 Flash model.",
+      "visualEngineering": "Frontend and visual engineering category for UI/UX design, styling, animation and interface implementation. Defaults to Gemini 3.6 Flash model.",
       "ultrabrain": "Deep logical reasoning category for complex architectural decisions requiring extensive analysis. Defaults to GPT-5.3 Codex ultra-high reasoning variant.",
       "deep": "Deep autonomous problem-solving category with goal-oriented execution. Conducts thorough research before action, suitable for difficult problems requiring deep understanding.",
-      "artistry": "Highly creative and artistic task category that inspires novel ideas and creative solutions. Defaults to Gemini 3.5 Flash high variant.",
+      "artistry": "Highly creative and artistic task category that inspires novel ideas and creative solutions. Defaults to Gemini 3.6 Flash high variant.",
       "quick": "Lightweight task category for single-file modifications, typo fixes, and simple adjustments. Defaults to Claude Haiku 4.5 fast model.",
       "unspecifiedLow": "Uncategorized low-effort task category for tasks that don't fit other categories with small workload. Defaults to Claude Sonnet 4.5.",
-      "unspecifiedHigh": "Uncategorized high-effort task category for tasks that don't fit other categories with large workload. Defaults to Claude Opus 4.8 max variant.",
+      "unspecifiedHigh": "Uncategorized high-effort task category for tasks that don't fit other categories with large workload. Defaults to Claude Opus 5 max variant.",
       "writing": "Writing category for documentation, prose and technical writing. Defaults to Kimi K2.5 model."
     },
     "slimAgentDesc": {
@@ -2949,6 +3019,7 @@
     "geminiFlashLite": "Flash Lite",
     "weeklyLimit": "Weekly",
     "monthly": "Monthly",
+    "credits": "Credits",
     "copilotPremium": "Premium",
     "utilization": "{{value}}%",
     "resetsIn": "Resets in {{time}}",

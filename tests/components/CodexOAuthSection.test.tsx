@@ -23,6 +23,10 @@ vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
   CopilotAuthSection: () => <div />,
 }));
 
+vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
+  XaiOAuthSection: () => <div />,
+}));
+
 describe("CodexOAuthSection", () => {
   beforeEach(() => {
     mocks.useCodexOauth.mockReturnValue({

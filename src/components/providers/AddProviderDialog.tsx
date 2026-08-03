@@ -19,6 +19,8 @@ import { codexProviderPresets } from "@/config/codexProviderPresets";
 import { geminiProviderPresets } from "@/config/geminiProviderPresets";
 import { claudeDesktopProviderPresets } from "@/config/claudeDesktopProviderPresets";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import { extractGrokBuildBaseUrl } from "@/utils/grokBuildConfig";
+import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 
@@ -32,6 +34,7 @@ interface AddProviderDialogProps {
       suggestedDefaults?: OpenClawSuggestedDefaults;
       ensureClaudeDesktopOfficialSeed?: boolean;
       ensureCodexOfficialSeed?: boolean;
+      ensureGrokBuildOfficialSeed?: boolean;
     },
   ) => Promise<void> | void;
 }
@@ -48,6 +51,7 @@ export function AddProviderDialog({
     appId !== "opencode" &&
     appId !== "openclaw" &&
     appId !== "hermes" &&
+    appId !== "grokbuild" &&
     appId !== "claude-desktop";
   const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
     "app-specific",
@@ -118,6 +122,7 @@ export function AddProviderDialog({
         suggestedDefaults?: OpenClawSuggestedDefaults;
         ensureClaudeDesktopOfficialSeed?: boolean;
         ensureCodexOfficialSeed?: boolean;
+        ensureGrokBuildOfficialSeed?: boolean;
       } = {
         name: values.name.trim(),
         notes: values.notes?.trim() || undefined,
@@ -145,6 +150,12 @@ export function AddProviderDialog({
         providerData.ensureCodexOfficialSeed =
           values.presetCategory === "official" &&
           preset?.category === "official";
+      }
+
+      if (appId === "grokbuild" && values.presetId) {
+        providerData.ensureGrokBuildOfficialSeed =
+          values.presetCategory === "official" &&
+          values.presetId === GROKBUILD_OFFICIAL_PROVIDER_ID;
       }
 
       // OpenCode/OpenClaw: pass providerKey for ID generation
@@ -254,6 +265,11 @@ export function AddProviderDialog({
           const env = parsedConfig.env as Record<string, any> | undefined;
           if (env?.GOOGLE_GEMINI_BASE_URL) {
             addUrl(env.GOOGLE_GEMINI_BASE_URL);
+          }
+        } else if (appId === "grokbuild") {
+          const config = parsedConfig.config as string | undefined;
+          if (config) {
+            addUrl(extractGrokBuildBaseUrl(config));
           }
         } else if (appId === "opencode") {
           const options = parsedConfig.options as

@@ -32,8 +32,8 @@ pub const ANTHROPIC_CLAUDE_ROUTE_PREFIX: &str = "anthropic/claude-";
 /// Claude Desktop schema 不接受此后缀，import 边界翻译为 `supports1m` 字段。
 pub const ONE_M_CONTEXT_MARKER: &str = "[1m]";
 
-const CURRENT_OPUS_ROUTE_ID: &str = "claude-opus-4-8";
-const LEGACY_OPUS_ROUTE_ID: &str = "claude-opus-4-7";
+const CURRENT_OPUS_ROUTE_ID: &str = "claude-opus-5";
+const LEGACY_OPUS_ROUTE_ID: &str = "claude-opus-4-8";
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -371,7 +371,7 @@ pub fn validate_direct_provider(provider: &Provider) -> Result<(), AppError> {
 
         if matches!(
             meta.provider_type.as_deref(),
-            Some("github_copilot") | Some("codex_oauth")
+            Some("github_copilot") | Some("codex_oauth") | Some("xai_oauth")
         ) {
             return Err(AppError::localized(
                 "claude_desktop.provider.type_unsupported",
@@ -476,7 +476,12 @@ fn is_managed_oauth_proxy_provider(provider: &Provider) -> bool {
         .meta
         .as_ref()
         .and_then(|meta| meta.provider_type.as_deref())
-        .is_some_and(|provider_type| matches!(provider_type, "github_copilot" | "codex_oauth"))
+        .is_some_and(|provider_type| {
+            matches!(
+                provider_type,
+                "github_copilot" | "codex_oauth" | "xai_oauth"
+            )
+        })
 }
 
 pub fn validate_provider(provider: &Provider) -> Result<(), AppError> {
@@ -1583,6 +1588,7 @@ mod tests {
         for (provider_type, api_format) in [
             ("github_copilot", "openai_chat"),
             ("codex_oauth", "openai_responses"),
+            ("xai_oauth", "openai_responses"),
         ] {
             let provider = oauth_proxy_provider(provider_type, provider_type, api_format);
             validate_proxy_provider(&provider).expect("oauth proxy provider should validate");
@@ -1983,7 +1989,7 @@ mod tests {
             .iter()
             .find(|route| route.upstream_model == "deepseek-v4-pro")
             .expect("repaired route");
-        assert_eq!(repaired.route_id, "claude-opus-4-8");
+        assert_eq!(repaired.route_id, "claude-opus-5");
         assert_eq!(repaired.label_override.as_deref(), Some("deepseek-v4-pro"));
         assert!(repaired.supports_1m);
         let repaired_old = routes

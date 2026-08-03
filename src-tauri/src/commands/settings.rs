@@ -247,7 +247,7 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
                 "Windows 更新安装失败: {e}。已执行退出前清理，代理或 Live 接管可能已暂停；请重启应用或重新开启代理后再试。"
             )
         })?;
-        return Ok(true);
+        Ok(true)
     }
 
     #[cfg(not(target_os = "windows"))]
