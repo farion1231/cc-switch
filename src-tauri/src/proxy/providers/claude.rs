@@ -394,27 +394,34 @@ pub fn normalize_orphan_tool_pairing_for_non_official(
     // Pass 2: orphan tool_result — user tool_result with no matching tool_use
     // in the immediately preceding assistant message (including tool_results
     // injected into the first message on session resume).
+    //
+    // Matching is count-based, not set-based (mirrors pass 1): when a resumed
+    // history carries more tool_result blocks for an id than the immediately
+    // preceding assistant tool_use emits for the same id (e.g. a duplicated
+    // persisted result), the surplus must still be downgraded as an orphan so
+    // the strict gateway doesn't receive a tool_result with no tool_use.
     for i in 0..messages.len() {
         if messages[i].get("role").and_then(Value::as_str) != Some("user") {
             continue;
         }
 
-        let previous_tool_use_ids: std::collections::HashSet<String> =
-            if i > 0 && messages[i - 1].get("role").and_then(Value::as_str) == Some("assistant") {
-                messages[i - 1]
-                    .get("content")
-                    .and_then(Value::as_array)
-                    .map(|blocks| {
-                        blocks
-                            .iter()
-                            .filter(|b| b.get("type").and_then(Value::as_str) == Some("tool_use"))
-                            .filter_map(|b| b.get("id").and_then(Value::as_str).map(str::to_string))
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            } else {
-                std::collections::HashSet::new()
-            };
+        let mut previous_tool_use_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        if i > 0 && messages[i - 1].get("role").and_then(Value::as_str) == Some("assistant") {
+            if let Some(blocks) = messages[i - 1].get("content").and_then(Value::as_array) {
+                for block in blocks {
+                    if block.get("type").and_then(Value::as_str) == Some("tool_use") {
+                        if let Some(id) = block.get("id").and_then(Value::as_str) {
+                            *previous_tool_use_counts.entry(id.to_string()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+        }
+        // Clone per-message so tool_results in this user message consume the
+        // available tool_use counts in order; any result beyond that supply
+        // (including duplicates of the same id) is treated as an orphan.
+        let mut remaining_tool_use_counts = previous_tool_use_counts;
 
         let Some(content) = messages[i].get_mut("content").and_then(Value::as_array_mut) else {
             continue;
@@ -423,11 +430,20 @@ pub fn normalize_orphan_tool_pairing_for_non_official(
         let mut message_changed = false;
         let mut rewritten = Vec::with_capacity(content.len());
         for block in std::mem::take(content) {
-            let is_orphan = block.get("type").and_then(Value::as_str) == Some("tool_result")
-                && !block
-                    .get("tool_use_id")
-                    .and_then(Value::as_str)
-                    .is_some_and(|id| previous_tool_use_ids.contains(id));
+            let is_orphan = if block.get("type").and_then(Value::as_str) == Some("tool_result") {
+                match block.get("tool_use_id").and_then(Value::as_str) {
+                    Some(id) => match remaining_tool_use_counts.get_mut(id) {
+                        Some(remaining) if *remaining > 0 => {
+                            *remaining -= 1;
+                            false
+                        }
+                        _ => true,
+                    },
+                    None => true,
+                }
+            } else {
+                false
+            };
             if is_orphan {
                 if let Some(text) = tool_result_content_text(&block) {
                     rewritten.push(json!({ "type": "text", "text": text }));
@@ -3084,5 +3100,95 @@ mod tests {
             content[1]["tool_use_id"],
             "call_01_c4cDbNGDKfywY7KKkSFJ8581"
         );
+    }
+
+    // Reverse direction of the count-based pairing repair: a single tool_use
+    // followed by two tool_result blocks for the same id (e.g. a duplicated
+    // persisted result on session resume) must downgrade the surplus result
+    // to a text block. A set-based membership check would let the duplicate
+    // slip through and the strict gateway would still receive an extra
+    // tool_result with no matching tool_use, returning 400.
+    #[test]
+    fn test_orphan_tool_result_duplicate_id_downgrades_surplus() {
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "messages": [
+                { "role": "user", "content": "do it" },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_dup_abc", "name": "read", "input": {} }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_dup_abc", "content": "first" },
+                        { "type": "tool_result", "tool_use_id": "call_dup_abc", "content": "second" }
+                    ]
+                }
+            ]
+        });
+
+        let changed = normalize_orphan_tool_pairing_for_non_official(
+            &mut body,
+            &deepseek_official_provider(),
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][2]["content"].as_array().unwrap();
+        // First result stays paired with the single tool_use; the duplicate
+        // is downgraded to a text block carrying the original result text.
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "tool_result");
+        assert_eq!(content[0]["tool_use_id"], "call_dup_abc");
+        assert_eq!(content[0]["content"], "first");
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "second");
+    }
+
+    // Companion to the duplicate-id case: a tool_result with no matching
+    // tool_use at all (the previous assistant turn emitted a different id)
+    // is still downgraded, mirroring the existing single-id set behaviour.
+    #[test]
+    fn test_orphan_tool_result_unknown_id_still_downgraded() {
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "messages": [
+                { "role": "user", "content": "go" },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_real", "name": "read", "input": {} }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_orphan", "content": "leftover" }
+                    ]
+                }
+            ]
+        });
+
+        let changed = normalize_orphan_tool_pairing_for_non_official(
+            &mut body,
+            &deepseek_official_provider(),
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][2]["content"].as_array().unwrap();
+        // Pass 1 injects a synthetic error result for the unanswered call_real,
+        // so the user message now carries [synthetic, downgraded_orphan].
+        // We only assert the orphan branch: the unknown-id result is downgraded
+        // to a text block carrying its content; the synthetic stays a tool_result.
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "tool_result");
+        assert_eq!(content[0]["tool_use_id"], "call_real");
+        assert_eq!(content[0]["is_error"], true);
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "leftover");
     }
 }
