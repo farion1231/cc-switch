@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   Provider,
+  ProviderMeta,
   UniversalProvider,
   UniversalProvidersMap,
 } from "@/types";
@@ -10,6 +11,39 @@ import type { AppId } from "./types";
 export interface ProviderSortUpdate {
   id: string;
   sortIndex: number;
+}
+
+export type ProviderUpdateMeta = Omit<ProviderMeta, "custom_endpoints"> & {
+  custom_endpoints?: never;
+};
+
+export type ProviderUpdateInput = Omit<
+  Provider,
+  "createdAt" | "sortIndex" | "inFailoverQueue" | "meta"
+> & {
+  meta?: ProviderUpdateMeta;
+};
+
+export function toProviderUpdateInput(provider: Provider): ProviderUpdateInput {
+  let meta: ProviderUpdateMeta | undefined;
+  if (provider.meta) {
+    const rowMeta = { ...provider.meta };
+    delete rowMeta.custom_endpoints;
+    meta = rowMeta as ProviderUpdateMeta;
+  }
+
+  return {
+    id: provider.id,
+    name: provider.name,
+    settingsConfig: provider.settingsConfig,
+    websiteUrl: provider.websiteUrl,
+    category: provider.category,
+    notes: provider.notes,
+    isPartner: provider.isPartner,
+    meta,
+    icon: provider.icon,
+    iconColor: provider.iconColor,
+  };
 }
 
 export interface ProviderSwitchEvent {
@@ -64,7 +98,7 @@ export const providersApi = {
   },
 
   async update(
-    provider: Provider,
+    provider: ProviderUpdateInput,
     appId: AppId,
     originalId?: string,
   ): Promise<boolean> {

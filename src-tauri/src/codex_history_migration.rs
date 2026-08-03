@@ -10,6 +10,10 @@ use crate::codex_state_db::codex_state_db_paths;
 use crate::config::{atomic_write, copy_file, get_app_config_dir};
 use crate::database::{is_official_seed_id, Database};
 use crate::error::AppError;
+use crate::services::provider::{
+    provider_row_fingerprint, provider_to_mutation_input,
+    reconcile_provider_record_with_precondition, ReconcilePrecondition,
+};
 use crate::settings::{
     CodexOfficialHistoryUnifyMigration, CodexProviderTemplateMigration,
     CodexThirdPartyHistoryProviderBucketMigration,
@@ -663,7 +667,8 @@ fn migrate_codex_provider_templates_to_custom(
     let providers = db.get_all_providers("codex")?;
     let mut migrated_provider_ids = Vec::new();
 
-    for (_, provider) in providers {
+    for (_, mut provider) in providers {
+        let observed_fingerprint = provider_row_fingerprint(&provider);
         if provider.category.as_deref() == Some("official")
             || is_official_seed_id(&provider.id)
             || provider.is_codex_oauth()
@@ -694,8 +699,21 @@ fn migrate_codex_provider_templates_to_custom(
         };
         backup_provider_settings_config(&provider.id, &provider.settings_config, backup_root)?;
         obj.insert("config".to_string(), Value::String(migrated_config_text));
-        db.update_provider_settings_config("codex", &provider.id, &settings)?;
-        migrated_provider_ids.push(provider.id);
+        let provider_id = provider.id.clone();
+        provider.settings_config = settings;
+        if let Some(meta) = provider.meta.as_mut() {
+            meta.custom_endpoints.clear();
+        }
+        let input = provider_to_mutation_input(provider);
+        reconcile_provider_record_with_precondition(
+            db,
+            "codex",
+            input,
+            ReconcilePrecondition::ExpectPresent {
+                fingerprint: observed_fingerprint,
+            },
+        )?;
+        migrated_provider_ids.push(provider_id);
     }
 
     Ok(CodexProviderTemplateBucketMigrationOutcome {
@@ -1439,7 +1457,8 @@ base_url = "https://proxy.example/v1"
             ),
         ];
         for provider in providers {
-            db.save_provider("codex", &provider).expect("save provider");
+            db.reconcile_provider_fixture("codex", &provider)
+                .expect("save provider");
         }
 
         let mut official = Provider::with_id(
@@ -1449,7 +1468,8 @@ base_url = "https://proxy.example/v1"
             None,
         );
         official.category = Some("official".to_string());
-        db.save_provider("codex", &official).expect("save official");
+        db.reconcile_provider_fixture("codex", &official)
+            .expect("save official");
 
         let source_provider_ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert_eq!(
@@ -2171,9 +2191,10 @@ base_url = "https://proxy.example/v1"
         );
         official.category = Some("official".to_string());
 
-        db.save_provider("codex", &third_party)
+        db.reconcile_provider_fixture("codex", &third_party)
             .expect("save third-party");
-        db.save_provider("codex", &official).expect("save official");
+        db.reconcile_provider_fixture("codex", &official)
+            .expect("save official");
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert!(ids.contains("rightcode"));
@@ -2196,7 +2217,8 @@ base_url = "https://proxy.example/v1"
         );
         provider.category = Some("aggregator".to_string());
 
-        db.save_provider("codex", &provider).expect("save provider");
+        db.reconcile_provider_fixture("codex", &provider)
+            .expect("save provider");
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert!(!ids.contains("my-private-relay"));
@@ -2216,7 +2238,8 @@ base_url = "https://proxy.example/v1"
         );
         provider.category = Some("aggregator".to_string());
 
-        db.save_provider("codex", &provider).expect("save provider");
+        db.reconcile_provider_fixture("codex", &provider)
+            .expect("save provider");
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert!(!ids.contains("my-private-relay"));
@@ -2244,7 +2267,8 @@ model_provider = "my-private-relay"
         );
         provider.category = Some("aggregator".to_string());
 
-        db.save_provider("codex", &provider).expect("save provider");
+        db.reconcile_provider_fixture("codex", &provider)
+            .expect("save provider");
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert!(!ids.contains("my-private-relay"));
@@ -2264,7 +2288,8 @@ model_provider = "my-private-relay"
         );
         provider.category = Some("aggregator".to_string());
 
-        db.save_provider("codex", &provider).expect("save provider");
+        db.reconcile_provider_fixture("codex", &provider)
+            .expect("save provider");
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert!(ids.contains("aihubmix"));
@@ -2285,7 +2310,8 @@ model_provider = "my-private-relay"
         );
         provider.category = Some("aggregator".to_string());
 
-        db.save_provider("codex", &provider).expect("save provider");
+        db.reconcile_provider_fixture("codex", &provider)
+            .expect("save provider");
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert!(ids.contains("ccswitch"));
@@ -2317,7 +2343,8 @@ model = "gpt-5.4"
             }),
             None,
         );
-        db.save_provider("codex", &provider).expect("save provider");
+        db.reconcile_provider_fixture("codex", &provider)
+            .expect("save provider");
 
         let (outcome, backup_dir) = migrate_provider_templates_for_test(&db);
         assert_eq!(outcome.migrated_provider_ids, vec!["legacy".to_string()]);
@@ -2390,7 +2417,8 @@ base_url = "https://aihubmix.example/v1"
             }),
             None,
         );
-        db.save_provider("codex", &provider).expect("save provider");
+        db.reconcile_provider_fixture("codex", &provider)
+            .expect("save provider");
 
         let (outcome, _backup_dir) = migrate_provider_templates_for_test(&db);
         assert_eq!(
@@ -2446,7 +2474,8 @@ base_url = "http://localhost:8080/v1"
             }),
             None,
         );
-        db.save_provider("codex", &provider).expect("save provider");
+        db.reconcile_provider_fixture("codex", &provider)
+            .expect("save provider");
 
         let (outcome, _backup_dir) = migrate_provider_templates_for_test(&db);
         assert!(outcome.migrated_provider_ids.is_empty());
@@ -2495,7 +2524,8 @@ base_url = "https://proxy.example/v1"
             }),
             None,
         );
-        db.save_provider("codex", &provider).expect("save provider");
+        db.reconcile_provider_fixture("codex", &provider)
+            .expect("save provider");
 
         let (outcome, _backup_dir) = migrate_provider_templates_for_test(&db);
         assert!(outcome.migrated_provider_ids.is_empty());
@@ -2552,7 +2582,8 @@ model_provider = "aihubmix"
             }),
             None,
         );
-        db.save_provider("codex", &provider).expect("save provider");
+        db.reconcile_provider_fixture("codex", &provider)
+            .expect("save provider");
 
         let (outcome, _backup_dir) = migrate_provider_templates_for_test(&db);
         assert_eq!(outcome.migrated_provider_ids, vec!["profiled".to_string()]);
@@ -2601,7 +2632,8 @@ model_provider = "aihubmix"
         provider.category = Some("custom".to_string());
         provider.created_at = Some(1);
 
-        db.save_provider("codex", &provider).expect("save provider");
+        db.reconcile_provider_fixture("codex", &provider)
+            .expect("save provider");
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert!(!ids.contains("my-private-relay"));
@@ -2622,7 +2654,8 @@ model_provider = "aihubmix"
         );
         provider.category = Some("custom".to_string());
 
-        db.save_provider("codex", &provider).expect("save provider");
+        db.reconcile_provider_fixture("codex", &provider)
+            .expect("save provider");
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert!(!ids.contains("my-local-relay"));

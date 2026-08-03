@@ -348,8 +348,10 @@ mod tests {
         let provider_b =
             Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
 
-        db.save_provider("claude", &provider_a).unwrap();
-        db.save_provider("claude", &provider_b).unwrap();
+        db.reconcile_provider_fixture("claude", &provider_a)
+            .unwrap();
+        db.reconcile_provider_fixture("claude", &provider_b)
+            .unwrap();
         db.set_current_provider("claude", "a").unwrap();
         db.add_to_failover_queue("claude", "b").unwrap();
 
@@ -374,8 +376,10 @@ mod tests {
             Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
         provider_b.sort_index = Some(1);
 
-        db.save_provider("claude", &provider_a).unwrap();
-        db.save_provider("claude", &provider_b).unwrap();
+        db.reconcile_provider_fixture("claude", &provider_a)
+            .unwrap();
+        db.reconcile_provider_fixture("claude", &provider_b)
+            .unwrap();
         db.set_current_provider("claude", "a").unwrap();
 
         db.add_to_failover_queue("claude", "b").unwrap();
@@ -407,8 +411,10 @@ mod tests {
             Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
         provider_b.sort_index = Some(1);
 
-        db.save_provider("claude", &provider_a).unwrap();
-        db.save_provider("claude", &provider_b).unwrap();
+        db.reconcile_provider_fixture("claude", &provider_a)
+            .unwrap();
+        db.reconcile_provider_fixture("claude", &provider_b)
+            .unwrap();
         db.set_current_provider("claude", "a").unwrap();
 
         // 只把 b 加入故障转移队列（模拟“当前供应商不在队列里”的常见配置）
@@ -444,8 +450,10 @@ mod tests {
         let provider_b =
             Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
 
-        db.save_provider("claude", &provider_a).unwrap();
-        db.save_provider("claude", &provider_b).unwrap();
+        db.reconcile_provider_fixture("claude", &provider_a)
+            .unwrap();
+        db.reconcile_provider_fixture("claude", &provider_b)
+            .unwrap();
 
         db.add_to_failover_queue("claude", "a").unwrap();
         db.add_to_failover_queue("claude", "b").unwrap();
@@ -485,7 +493,8 @@ mod tests {
 
         let provider_a =
             Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
-        db.save_provider("claude", &provider_a).unwrap();
+        db.reconcile_provider_fixture("claude", &provider_a)
+            .unwrap();
         db.add_to_failover_queue("claude", "a").unwrap();
 
         // 启用自动故障转移

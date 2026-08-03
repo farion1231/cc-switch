@@ -4,15 +4,32 @@
 //! 防止并发切换导致 is_current 与 Live 备份不一致。
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::{Mutex, OwnedMutexGuard, RwLock};
+
+type PerAppLocks = Arc<RwLock<HashMap<String, Arc<Mutex<()>>>>>;
 
 /// 每个应用类型一把互斥锁，保证同一应用的切换操作串行执行。
 ///
 /// 不同应用之间（如 Claude 和 Codex）可以并行切换。
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SwitchLockManager {
-    locks: Arc<RwLock<HashMap<String, Arc<Mutex<()>>>>>,
+    locks: PerAppLocks,
+}
+
+impl Default for SwitchLockManager {
+    fn default() -> Self {
+        // Some commands construct a short-lived AppState around the shared
+        // database before running a blocking sync.  A per-ProxyService map
+        // would give those paths a different lock and defeat serialization
+        // with provider rename/switch operations in the primary AppState.
+        static LOCKS: OnceLock<PerAppLocks> = OnceLock::new();
+        Self {
+            locks: LOCKS
+                .get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
+                .clone(),
+        }
+    }
 }
 
 impl SwitchLockManager {

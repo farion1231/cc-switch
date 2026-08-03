@@ -1,9 +1,11 @@
+#![cfg(test)]
+
 //! Deep link module tests
 
 use super::mcp::parse_mcp_apps;
 use super::parser::parse_deeplink_url;
 use super::prompt::import_prompt_from_deeplink;
-use super::provider::parse_and_merge_config;
+use super::provider::{import_provider_from_deeplink, parse_and_merge_config};
 use super::utils::{infer_homepage_from_endpoint, validate_url};
 use super::DeepLinkImportRequest;
 use crate::AppType;
@@ -950,6 +952,39 @@ fn test_parse_multiple_endpoints_comma_separated() {
     assert!(endpoint.contains("https://api1.example.com"));
     assert!(endpoint.contains("https://api2.example.com"));
     assert!(endpoint.contains("https://api3.example.com"));
+}
+
+#[test]
+#[serial_test::serial]
+fn provider_deeplink_creates_all_initial_endpoints_in_one_aggregate() {
+    let _test_home = TestHomeGuard::new();
+    let request = parse_deeplink_url(
+        "ccswitch://v1/import?resource=provider&app=claude&name=Endpoint%20Aggregate&endpoint=https%3A%2F%2Fprimary.example.com,https%3A%2F%2Fsecond.example.com%2F,https%3A%2F%2Fthird.example.com&apiKey=sk-test",
+    )
+    .expect("parse provider deeplink");
+    let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
+
+    let provider_id =
+        import_provider_from_deeplink(&state, request).expect("import provider aggregate");
+    let aggregate = state
+        .db
+        .get_provider_aggregate(AppType::Claude.as_str(), &provider_id)
+        .expect("read provider aggregate")
+        .expect("provider exists");
+
+    assert_eq!(aggregate.endpoints.len(), 2);
+    assert_eq!(
+        aggregate.endpoints["https://second.example.com"].url,
+        "https://second.example.com"
+    );
+    assert_eq!(
+        aggregate.endpoints["https://third.example.com"].url,
+        "https://third.example.com"
+    );
+    assert!(aggregate
+        .endpoints
+        .values()
+        .all(|endpoint| endpoint.added_at.is_some() && endpoint.last_used.is_none()));
 }
 
 #[test]

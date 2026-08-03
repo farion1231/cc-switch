@@ -9,7 +9,7 @@ use cc_switch_lib::{
 mod support;
 use support::{
     create_test_state, create_test_state_with_config, enable_codex_official_auth_preservation,
-    ensure_test_home, reset_test_fs, test_mutex,
+    ensure_test_home, new_provider_input, reset_test_fs, test_mutex,
 };
 
 fn sanitize_provider_name(name: &str) -> String {
@@ -3084,10 +3084,8 @@ fn recover_from_crash_without_backup_cleans_placeholder_instead_of_writing_it_ba
         taken_over_live.clone(),
         None,
     );
-    state
-        .db
-        .save_provider(AppType::Claude.as_str(), &provider)
-        .expect("save placeholder provider");
+    ProviderService::add(&state, AppType::Claude, new_provider_input(provider), false)
+        .expect("create placeholder provider");
     state
         .db
         .set_current_provider(AppType::Claude.as_str(), "default")

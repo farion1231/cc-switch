@@ -13,9 +13,12 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::app_config::AppType;
-use crate::database::{validate_cost_multiplier, validate_pricing_source};
+use crate::database::{
+    validate_cost_multiplier, validate_pricing_source, NewProviderAggregate, ProviderKey,
+    ProviderRowUpdate, RenameProvider,
+};
 use crate::error::AppError;
-use crate::provider::{Provider, UsageResult};
+use crate::provider::{Provider, ProviderMutationInput, UsageResult};
 use crate::services::mcp::McpService;
 use crate::settings::CustomEndpoint;
 use crate::store::AppState;
@@ -108,6 +111,120 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
 /// Provider business logic service
 pub struct ProviderService;
 
+/// Explicit service-boundary conversion for normalized drafts and live-import
+/// records. There is intentionally no `From<Provider>` implementation: a
+/// hydrated read projection cannot silently become a write DTO via `.into()`.
+pub(crate) fn provider_to_mutation_input(provider: Provider) -> ProviderMutationInput {
+    ProviderMutationInput {
+        id: provider.id,
+        name: provider.name,
+        settings_config: provider.settings_config,
+        website_url: provider.website_url,
+        category: provider.category,
+        created_at: provider.created_at,
+        sort_index: provider.sort_index,
+        notes: provider.notes,
+        meta: provider.meta,
+        icon: provider.icon,
+        icon_color: provider.icon_color,
+        in_failover_queue: provider.in_failover_queue,
+    }
+}
+
+fn create_provider_record(
+    state: &AppState,
+    app_type: &AppType,
+    input: ProviderMutationInput,
+) -> Result<(), AppError> {
+    state
+        .db
+        .create_provider(NewProviderAggregate::from_input(app_type.as_str(), input)?)
+}
+
+fn update_provider_record(
+    state: &AppState,
+    app_type: &AppType,
+    input: &ProviderMutationInput,
+) -> Result<(), AppError> {
+    let key = ProviderKey::new(app_type.as_str(), input.id.clone())?;
+    let row = ProviderRowUpdate::from_input(input)?;
+    state.db.update_provider(&key, &row)
+}
+
+fn update_provider_record_if_unchanged(
+    state: &AppState,
+    app_type: &AppType,
+    observed_fingerprint: String,
+    input: ProviderMutationInput,
+) -> Result<(), AppError> {
+    reconcile_provider_record_with_precondition(
+        state.db.as_ref(),
+        app_type.as_str(),
+        input,
+        ReconcilePrecondition::ExpectPresent {
+            fingerprint: observed_fingerprint,
+        },
+    )
+}
+
+fn remove_hydrated_endpoints_from_row_update(provider: &mut Provider) {
+    if let Some(meta) = provider.meta.as_mut() {
+        meta.custom_endpoints.clear();
+    }
+}
+
+fn lock_additive_provider_mutation(
+    state: &AppState,
+    app_type: &AppType,
+) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+    app_type.is_additive_mode().then(|| {
+        futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()))
+    })
+}
+
+/// Reconcile 的显式前置期望(前置工程 A 认证契约 T9)。
+/// check-then-branch 的 TOCTOU 由调用方在观察时声明期望、由本层强制。
+#[derive(Debug, Clone)]
+pub(crate) enum ReconcilePrecondition {
+    /// 调用方观察到目标不存在;若已被竞争者创建,必须返回
+    /// [`AppError::Conflict`],绝不退化为覆盖更新。
+    ExpectAbsent,
+    /// 调用方观察到目标存在且内容指纹为 `fingerprint`;指纹过期必须返回
+    /// [`AppError::Conflict`],由调用方重读重试。
+    ExpectPresent { fingerprint: String },
+}
+
+/// 行内容指纹:并发前置期望的版本标记(纯函数,不含状态列与 endpoint)。
+///
+/// 决定性要求:仓库启用了 serde_json `preserve_order`,且 `ProviderMeta`
+/// 内含 HashMap——直接序列化的键序随机,会产生伪 Conflict。因此必须走
+/// 递归排序的规范化哈希;`meta.custom_endpoints` 属 endpoint authority,
+/// 不参与内容指纹(不同读 API 对其填充不一致)。
+pub(crate) fn provider_row_fingerprint(provider: &crate::provider::Provider) -> String {
+    provider.row_content_fingerprint()
+}
+
+/// Reconcile paths must carry the caller's observed state into the write.
+/// Creation is strict, while updates compare the observed row fingerprint and
+/// write under one database lock and transaction.
+pub(crate) fn reconcile_provider_record_with_precondition(
+    db: &crate::database::Database,
+    app_type: &str,
+    input: ProviderMutationInput,
+    precondition: ReconcilePrecondition,
+) -> Result<(), AppError> {
+    match precondition {
+        ReconcilePrecondition::ExpectAbsent => {
+            db.create_provider(NewProviderAggregate::from_input(app_type, input)?)
+        }
+        ReconcilePrecondition::ExpectPresent { fingerprint } => {
+            let key = ProviderKey::new(app_type, input.id.clone())?;
+            let row = ProviderRowUpdate::from_input(&input)?;
+            db.update_provider_if_content_fingerprint(&key, &fingerprint, &row)
+        }
+    }
+}
+
 /// Result of a provider switch operation, including any non-fatal warnings
 #[derive(Debug, serde::Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -132,7 +249,9 @@ mod tests {
     use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::{mpsc, Arc, Mutex, OnceLock};
+    use std::thread;
+    use std::time::Duration;
     use tempfile::TempDir;
 
     struct TempHome {
@@ -437,6 +556,610 @@ mod tests {
         })
     }
 
+    fn endpoint(url: &str, added_at: Option<i64>, last_used: Option<i64>) -> CustomEndpoint {
+        CustomEndpoint {
+            url: url.to_string(),
+            added_at,
+            last_used,
+        }
+    }
+
+    fn provider_snapshot(state: &AppState, app_type: &str, id: &str) -> (Value, i64, i64) {
+        let aggregate = state
+            .db
+            .get_provider_aggregate(app_type, id)
+            .expect("read aggregate")
+            .map(|aggregate| serde_json::to_value(aggregate).expect("serialize aggregate"))
+            .unwrap_or(Value::Null);
+        let conn = state.db.conn.lock().expect("lock test database");
+        let state_bits = conn
+            .query_row(
+                "SELECT is_current, in_failover_queue
+                   FROM providers
+                  WHERE app_type = ?1 AND id = ?2",
+                rusqlite::params![app_type, id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap_or((0, 0));
+        (aggregate, state_bits.0, state_bits.1)
+    }
+
+    #[test]
+    #[serial]
+    fn provider_service_create_owns_initial_endpoints_and_duplicate_is_atomic() {
+        with_test_home(|state, _| {
+            let mut provider = opencode_provider("typed-create");
+            provider.in_failover_queue = true;
+            let expected_endpoints = HashMap::from([
+                (
+                    "https://one.example".to_string(),
+                    endpoint("https://one.example", None, Some(11)),
+                ),
+                (
+                    "https://two.example".to_string(),
+                    endpoint("https://two.example", Some(20), None),
+                ),
+            ]);
+            provider.meta = Some(ProviderMeta {
+                custom_endpoints: expected_endpoints.clone(),
+                ..Default::default()
+            });
+            let input = provider_to_mutation_input(provider);
+
+            ProviderService::add(state, AppType::OpenCode, input.clone(), false)
+                .expect("strict service create");
+            let aggregate = state
+                .db
+                .get_provider_aggregate("opencode", "typed-create")
+                .expect("read")
+                .expect("aggregate");
+            let hydrated_endpoints = aggregate.endpoints.into_iter().collect::<HashMap<_, _>>();
+            assert_eq!(
+                hydrated_endpoints, expected_endpoints,
+                "the public create entry must hydrate the complete initial endpoint set losslessly"
+            );
+
+            let before = provider_snapshot(state, "opencode", "typed-create");
+            assert!(
+                ProviderService::add(state, AppType::OpenCode, input, false).is_err(),
+                "duplicate create must not reconcile as update"
+            );
+            assert_eq!(
+                provider_snapshot(state, "opencode", "typed-create"),
+                before,
+                "row, endpoints, current and failover state remain byte-logically unchanged"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn provider_service_create_canonicalizes_initial_endpoint_identity() {
+        with_test_home(|state, _| {
+            let raw_url = " https://canonical.example/// ";
+            let mut provider = opencode_provider("canonical-endpoint");
+            provider.meta = Some(ProviderMeta {
+                custom_endpoints: HashMap::from([(
+                    raw_url.to_string(),
+                    endpoint(raw_url, None, Some(11)),
+                )]),
+                ..Default::default()
+            });
+
+            ProviderService::add(
+                state,
+                AppType::OpenCode,
+                provider_to_mutation_input(provider),
+                false,
+            )
+            .expect("create with a non-canonical initial endpoint");
+            let aggregate = state
+                .db
+                .get_provider_aggregate("opencode", "canonical-endpoint")
+                .expect("read canonical aggregate")
+                .expect("canonical aggregate");
+            assert_eq!(aggregate.endpoints.len(), 1);
+            assert!(aggregate
+                .endpoints
+                .contains_key("https://canonical.example"));
+
+            ProviderService::update_endpoint_last_used(
+                state,
+                AppType::OpenCode,
+                "canonical-endpoint",
+                " https://canonical.example/ ".to_string(),
+            )
+            .expect("touch must resolve the same canonical endpoint");
+            ProviderService::remove_custom_endpoint(
+                state,
+                AppType::OpenCode,
+                "canonical-endpoint",
+                "https://canonical.example///".to_string(),
+            )
+            .expect("remove must resolve the same canonical endpoint");
+            assert!(state
+                .db
+                .get_provider_aggregate("opencode", "canonical-endpoint")
+                .expect("read after remove")
+                .expect("provider after remove")
+                .endpoints
+                .is_empty());
+
+            let mut duplicate = opencode_provider("duplicate-canonical-endpoint");
+            duplicate.meta = Some(ProviderMeta {
+                custom_endpoints: HashMap::from([
+                    (
+                        "https://duplicate.example".to_string(),
+                        endpoint("https://duplicate.example", None, None),
+                    ),
+                    (
+                        " https://duplicate.example/ ".to_string(),
+                        endpoint(" https://duplicate.example/ ", Some(1), None),
+                    ),
+                ]),
+                ..Default::default()
+            });
+            assert!(matches!(
+                ProviderService::add(
+                    state,
+                    AppType::OpenCode,
+                    provider_to_mutation_input(duplicate),
+                    false,
+                ),
+                Err(AppError::InvalidInput(_))
+            ));
+            assert!(state
+                .db
+                .get_provider_aggregate("opencode", "duplicate-canonical-endpoint")
+                .expect("read duplicate candidate")
+                .is_none());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn provider_service_stale_edit_payload_cannot_overwrite_endpoint_operations() {
+        with_test_home(|state, _| {
+            let mut provider = opencode_provider("stale-edit");
+            provider.meta = Some(ProviderMeta {
+                custom_endpoints: HashMap::from([
+                    (
+                        "https://remove.example".to_string(),
+                        endpoint("https://remove.example", Some(1), None),
+                    ),
+                    (
+                        "https://touch.example".to_string(),
+                        endpoint("https://touch.example", None, None),
+                    ),
+                ]),
+                ..Default::default()
+            });
+            ProviderService::add(
+                state,
+                AppType::OpenCode,
+                provider_to_mutation_input(provider),
+                false,
+            )
+            .expect("create");
+
+            // This is the existing-provider form snapshot: endpoints are
+            // intentionally absent from the update IPC.
+            let mut edit = state
+                .db
+                .get_provider_by_id("stale-edit", "opencode")
+                .expect("read")
+                .expect("provider");
+            edit.name = "Edited row".to_string();
+            edit.meta
+                .get_or_insert_with(Default::default)
+                .custom_endpoints
+                .clear();
+            let stale_row_payload = provider_to_mutation_input(edit);
+
+            ProviderService::add_custom_endpoint(
+                state,
+                AppType::OpenCode,
+                "stale-edit",
+                "https://added.example".to_string(),
+            )
+            .expect("concurrent add");
+            ProviderService::remove_custom_endpoint(
+                state,
+                AppType::OpenCode,
+                "stale-edit",
+                "https://remove.example".to_string(),
+            )
+            .expect("concurrent remove");
+            ProviderService::update_endpoint_last_used(
+                state,
+                AppType::OpenCode,
+                "stale-edit",
+                "https://touch.example".to_string(),
+            )
+            .expect("concurrent touch");
+
+            ProviderService::update(state, AppType::OpenCode, None, stale_row_payload)
+                .expect("row-only service update");
+            let aggregate = state
+                .db
+                .get_provider_aggregate("opencode", "stale-edit")
+                .expect("read")
+                .expect("aggregate");
+            assert_eq!(aggregate.provider.name, "Edited row");
+            assert!(!aggregate.endpoints.contains_key("https://remove.example"));
+            assert!(aggregate.endpoints.contains_key("https://added.example"));
+            assert!(aggregate.endpoints["https://touch.example"]
+                .last_used
+                .is_some());
+
+            let mut forbidden = provider_to_mutation_input(aggregate.into_provider());
+            forbidden
+                .meta
+                .get_or_insert_with(Default::default)
+                .custom_endpoints
+                .insert(
+                    "https://forbidden.example".to_string(),
+                    endpoint("https://forbidden.example", None, None),
+                );
+            let before = provider_snapshot(state, "opencode", "stale-edit");
+            assert!(
+                ProviderService::update(state, AppType::OpenCode, None, forbidden).is_err(),
+                "endpoint-bearing update IPC is rejected"
+            );
+            assert_eq!(provider_snapshot(state, "opencode", "stale-edit"), before);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn provider_service_db_only_rename_matrix_is_atomic_and_lossless() {
+        with_test_home(|state, _| {
+            let mut source = opencode_provider("rename-source");
+            let expected_endpoints = HashMap::from([
+                (
+                    "https://nullable.example".to_string(),
+                    endpoint("https://nullable.example", None, None),
+                ),
+                (
+                    "https://timed.example".to_string(),
+                    endpoint("https://timed.example", Some(10), Some(11)),
+                ),
+            ]);
+            source.meta = Some(ProviderMeta {
+                custom_endpoints: expected_endpoints.clone(),
+                ..Default::default()
+            });
+            ProviderService::add(
+                state,
+                AppType::OpenCode,
+                provider_to_mutation_input(source),
+                false,
+            )
+            .expect("DB-only source");
+            let mut renamed = opencode_provider("rename-target");
+            renamed.name = "Renamed".to_string();
+            ProviderService::update(
+                state,
+                AppType::OpenCode,
+                Some("rename-source"),
+                provider_to_mutation_input(renamed),
+            )
+            .expect("DB-only additive rename");
+            assert!(state
+                .db
+                .get_provider_aggregate("opencode", "rename-source")
+                .expect("old read")
+                .is_none());
+            let renamed = state
+                .db
+                .get_provider_aggregate("opencode", "rename-target")
+                .expect("new read")
+                .expect("renamed");
+            let renamed_endpoints = renamed.endpoints.into_iter().collect::<HashMap<_, _>>();
+            assert_eq!(
+                renamed_endpoints, expected_endpoints,
+                "rename preserves every endpoint field, including NULL timestamps"
+            );
+
+            for id in ["conflict-source", "conflict-target"] {
+                ProviderService::add(
+                    state,
+                    AppType::OpenCode,
+                    provider_to_mutation_input(opencode_provider(id)),
+                    false,
+                )
+                .expect("conflict fixture");
+            }
+            let source_before = provider_snapshot(state, "opencode", "conflict-source");
+            let target_before = provider_snapshot(state, "opencode", "conflict-target");
+            assert!(ProviderService::update(
+                state,
+                AppType::OpenCode,
+                Some("conflict-source"),
+                provider_to_mutation_input(opencode_provider("conflict-target")),
+            )
+            .is_err());
+            assert_eq!(
+                provider_snapshot(state, "opencode", "conflict-source"),
+                source_before
+            );
+            assert_eq!(
+                provider_snapshot(state, "opencode", "conflict-target"),
+                target_before
+            );
+
+            ProviderService::add(
+                state,
+                AppType::OpenCode,
+                provider_to_mutation_input(opencode_provider("live-source")),
+                true,
+            )
+            .expect("live source");
+            let live_before = provider_snapshot(state, "opencode", "live-source");
+            assert!(ProviderService::update(
+                state,
+                AppType::OpenCode,
+                Some("live-source"),
+                provider_to_mutation_input(opencode_provider("live-target")),
+            )
+            .is_err());
+            assert_eq!(
+                provider_snapshot(state, "opencode", "live-source"),
+                live_before
+            );
+
+            ProviderService::add(
+                state,
+                AppType::OpenCode,
+                provider_to_mutation_input(opencode_omo_provider("omo-source", "omo")),
+                false,
+            )
+            .expect("OMO source");
+            let omo_before = provider_snapshot(state, "opencode", "omo-source");
+            let mut omo_target = opencode_omo_provider("omo-target", "omo");
+            omo_target.name = "Forbidden OMO rename".to_string();
+            assert!(ProviderService::update(
+                state,
+                AppType::OpenCode,
+                Some("omo-source"),
+                provider_to_mutation_input(omo_target),
+            )
+            .is_err());
+            assert_eq!(
+                provider_snapshot(state, "opencode", "omo-source"),
+                omo_before
+            );
+
+            ProviderService::add(
+                state,
+                AppType::Hermes,
+                provider_to_mutation_input(hermes_provider("hermes-source")),
+                false,
+            )
+            .expect("Hermes source");
+            let hermes_before = provider_snapshot(state, "hermes", "hermes-source");
+            assert!(ProviderService::update(
+                state,
+                AppType::Hermes,
+                Some("hermes-source"),
+                provider_to_mutation_input(hermes_provider("hermes-target")),
+            )
+            .is_err());
+            assert_eq!(
+                provider_snapshot(state, "hermes", "hermes-source"),
+                hermes_before
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn provider_service_rename_fails_closed_for_malformed_additive_live_config() {
+        with_test_home(|state, home| {
+            let cases = [
+                (
+                    AppType::OpenCode,
+                    opencode_provider("malformed-source"),
+                    opencode_provider("malformed-target"),
+                    home.join(".config").join("opencode").join("opencode.json"),
+                    r#"{"provider":{"malformed-source":{"npm":"@ai-sdk/openai-compatible"}"#,
+                ),
+                (
+                    AppType::OpenClaw,
+                    openclaw_provider("corrupt-source"),
+                    openclaw_provider("corrupt-target"),
+                    home.join(".openclaw").join("openclaw.json"),
+                    r#"{"models":{"providers":{"corrupt-target":{"baseUrl":"https://example.test"}"#,
+                ),
+            ];
+
+            for (app_type, source, target, live_path, malformed_live) in cases {
+                let app_name = app_type.as_str().to_string();
+                let source_id = source.id.clone();
+                let target_id = target.id.clone();
+                ProviderService::add(
+                    state,
+                    app_type.clone(),
+                    provider_to_mutation_input(source),
+                    false,
+                )
+                .expect("create DB-only rename source");
+
+                fs::create_dir_all(live_path.parent().expect("live config parent"))
+                    .expect("create live config directory");
+                fs::write(&live_path, malformed_live).expect("write malformed live config");
+                let source_before = provider_snapshot(state, &app_name, &source_id);
+                let target_before = provider_snapshot(state, &app_name, &target_id);
+
+                let error = ProviderService::update(
+                    state,
+                    app_type,
+                    Some(&source_id),
+                    provider_to_mutation_input(target),
+                )
+                .expect_err("rename must fail closed when live identity cannot be inspected");
+                assert!(
+                    matches!(error, AppError::Config(_)),
+                    "rename should surface the live parse error, got {error:?}"
+                );
+                assert_eq!(
+                    provider_snapshot(state, &app_name, &source_id),
+                    source_before,
+                    "source aggregate must remain unchanged"
+                );
+                assert_eq!(
+                    provider_snapshot(state, &app_name, &target_id),
+                    target_before,
+                    "target aggregate must remain unchanged"
+                );
+                assert_eq!(
+                    fs::read_to_string(&live_path).expect("reread malformed live config"),
+                    malformed_live,
+                    "failed rename must not rewrite the live config"
+                );
+            }
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn automated_row_transform_conflicts_instead_of_reverting_a_newer_edit() {
+        with_test_home(|state, _| {
+            let provider = opencode_provider("observed-row");
+            ProviderService::add(
+                state,
+                AppType::OpenCode,
+                provider_to_mutation_input(provider),
+                false,
+            )
+            .expect("create observed provider");
+
+            let observed = state
+                .db
+                .get_provider_by_id("observed-row", "opencode")
+                .expect("read observed provider")
+                .expect("observed provider exists");
+            let fingerprint = provider_row_fingerprint(&observed);
+            let mut stale_transform = observed.clone();
+            stale_transform.notes = Some("automatic transform".to_string());
+            remove_hydrated_endpoints_from_row_update(&mut stale_transform);
+
+            let mut user_edit = observed;
+            user_edit.name = "Concurrent user edit".to_string();
+            user_edit
+                .meta
+                .get_or_insert_with(Default::default)
+                .custom_endpoints
+                .clear();
+            ProviderService::update(
+                state,
+                AppType::OpenCode,
+                None,
+                provider_to_mutation_input(user_edit),
+            )
+            .expect("persist concurrent user edit");
+
+            let error = update_provider_record_if_unchanged(
+                state,
+                &AppType::OpenCode,
+                fingerprint,
+                provider_to_mutation_input(stale_transform),
+            )
+            .expect_err("stale automatic transform must conflict");
+            assert!(matches!(error, AppError::Conflict(_)));
+
+            let saved = state
+                .db
+                .get_provider_by_id("observed-row", "opencode")
+                .expect("read saved provider")
+                .expect("saved provider exists");
+            assert_eq!(saved.name, "Concurrent user edit");
+            assert_eq!(saved.notes, None);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn rename_waits_for_shared_live_lock_and_rechecks_source_ownership() {
+        let _test_guard = test_guard();
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().expect("in-memory database"));
+        let lock_owner_state = AppState::new(db.clone());
+        let rename_state = AppState::new(db.clone());
+
+        ProviderService::add(
+            &lock_owner_state,
+            AppType::OpenCode,
+            provider_to_mutation_input(opencode_provider("race-source")),
+            false,
+        )
+        .expect("create DB-only source");
+
+        let live_guard = futures::executor::block_on(
+            lock_owner_state
+                .proxy_service
+                .lock_switch_for_app(AppType::OpenCode.as_str()),
+        );
+        let (started_tx, started_rx) = mpsc::channel();
+        let rename_thread = thread::spawn(move || {
+            started_tx.send(()).expect("signal rename start");
+            ProviderService::update(
+                &rename_state,
+                AppType::OpenCode,
+                Some("race-source"),
+                provider_to_mutation_input(opencode_provider("race-target")),
+            )
+        });
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("rename thread started");
+        thread::sleep(Duration::from_millis(30));
+        assert!(
+            !rename_thread.is_finished(),
+            "a distinct AppState must share the same per-app live mutation lock"
+        );
+
+        let mut switched = db
+            .get_provider_by_id("race-source", "opencode")
+            .expect("read source during simulated switch")
+            .expect("source exists");
+        ProviderService::set_provider_live_config_managed(&mut switched, true);
+        remove_hydrated_endpoints_from_row_update(&mut switched);
+        let key = ProviderKey::new("opencode", "race-source").expect("source key");
+        let row = ProviderRowUpdate::from_input(&provider_to_mutation_input(switched))
+            .expect("marker row");
+        db.update_provider(&key, &row)
+            .expect("persist simulated switch marker");
+        drop(live_guard);
+
+        let error = rename_thread
+            .join()
+            .expect("join rename thread")
+            .expect_err("live-managed source must not be renamed");
+        assert!(
+            matches!(&error, AppError::Conflict(_) | AppError::Message(_)),
+            "ownership recheck should reject with a structured conflict or service error: {error}"
+        );
+        assert!(db
+            .get_provider_by_id("race-source", "opencode")
+            .expect("read source")
+            .is_some());
+        assert!(db
+            .get_provider_by_id("race-target", "opencode")
+            .expect("read target")
+            .is_none());
+
+        let rename = RenameProvider::from_input(
+            ProviderKey::new("opencode", "race-source").expect("source key"),
+            &provider_to_mutation_input(opencode_provider("direct-target")),
+        )
+        .expect("build direct rename");
+        assert!(matches!(
+            db.rename_db_only_additive_provider(rename),
+            Err(AppError::Conflict(_))
+        ));
+    }
+
     #[test]
     #[serial]
     fn add_clears_usage_credentials_that_match_provider_config() {
@@ -450,7 +1173,13 @@ mod tests {
                 None,
             );
 
-            ProviderService::add(state, AppType::Codex, provider, false).expect("add provider");
+            ProviderService::add(
+                state,
+                AppType::Codex,
+                provider_to_mutation_input(provider),
+                false,
+            )
+            .expect("add provider");
 
             let saved = state
                 .db
@@ -482,14 +1211,19 @@ mod tests {
             );
             state
                 .db
-                .save_provider(AppType::Codex.as_str(), &provider)
+                .reconcile_provider_fixture(AppType::Codex.as_str(), &provider)
                 .expect("seed provider with explicit usage credentials");
 
             let mut updated = provider.clone();
             updated.settings_config = codex_settings("https://api.b.example/v1/", "sk-b");
 
-            ProviderService::update(state, AppType::Codex, None, updated)
-                .expect("update provider main credentials");
+            ProviderService::update(
+                state,
+                AppType::Codex,
+                None,
+                provider_to_mutation_input(updated),
+            )
+            .expect("update provider main credentials");
 
             let saved = state
                 .db
@@ -527,8 +1261,13 @@ mod tests {
                 None,
             );
 
-            ProviderService::add(state, AppType::Codex, copied_provider, false)
-                .expect("add copied provider");
+            ProviderService::add(
+                state,
+                AppType::Codex,
+                provider_to_mutation_input(copied_provider),
+                false,
+            )
+            .expect("add copied provider");
 
             let saved_after_add = state
                 .db
@@ -546,8 +1285,13 @@ mod tests {
             let mut edited_provider = saved_after_add.clone();
             edited_provider.settings_config = codex_settings("https://api.b.example/v1/", "sk-b");
 
-            ProviderService::update(state, AppType::Codex, None, edited_provider)
-                .expect("edit copied provider credentials");
+            ProviderService::update(
+                state,
+                AppType::Codex,
+                None,
+                provider_to_mutation_input(edited_provider),
+            )
+            .expect("edit copied provider credentials");
 
             let saved_after_update = state
                 .db
@@ -583,7 +1327,7 @@ mod tests {
             );
             state
                 .db
-                .save_provider(AppType::Codex.as_str(), &provider)
+                .reconcile_provider_fixture(AppType::Codex.as_str(), &provider)
                 .expect("seed provider with distinct usage credentials");
 
             let mut updated = provider.clone();
@@ -597,8 +1341,13 @@ mod tests {
                 ..Default::default()
             });
 
-            ProviderService::update(state, AppType::Codex, None, updated)
-                .expect("update provider with redundant usage credentials");
+            ProviderService::update(
+                state,
+                AppType::Codex,
+                None,
+                provider_to_mutation_input(updated),
+            )
+            .expect("update provider with redundant usage credentials");
 
             let saved = state
                 .db
@@ -629,7 +1378,13 @@ mod tests {
                 None,
             );
 
-            ProviderService::add(state, AppType::Codex, provider, false).expect("add provider");
+            ProviderService::add(
+                state,
+                AppType::Codex,
+                provider_to_mutation_input(provider),
+                false,
+            )
+            .expect("add provider");
 
             let saved = state
                 .db
@@ -663,7 +1418,13 @@ mod tests {
                 Some("token_plan"),
             );
 
-            ProviderService::add(state, AppType::Codex, provider, false).expect("add provider");
+            ProviderService::add(
+                state,
+                AppType::Codex,
+                provider_to_mutation_input(provider),
+                false,
+            )
+            .expect("add provider");
 
             let saved = state
                 .db
@@ -810,7 +1571,8 @@ mod tests {
             }}),
             None,
         );
-        db.save_provider("gemini", &victim).expect("save victim");
+        db.reconcile_provider_fixture("gemini", &victim)
+            .expect("save victim");
 
         // 供应商 C：自己写了同名键但值不同，不能被误删
         let unrelated = Provider::with_id(
@@ -822,7 +1584,8 @@ mod tests {
             }}),
             None,
         );
-        db.save_provider("gemini", &unrelated).expect("save c");
+        db.reconcile_provider_fixture("gemini", &unrelated)
+            .expect("save c");
     }
 
     #[tokio::test]
@@ -1469,7 +2232,7 @@ command = "legacy-cmd"
             }),
             None,
         );
-        db.save_provider("claude", &original)
+        db.reconcile_provider_fixture("claude", &original)
             .expect("save provider");
         db.set_current_provider("claude", "p1")
             .expect("set current provider");
@@ -1527,8 +2290,13 @@ command = "legacy-cmd"
             None,
         );
 
-        ProviderService::update(&state, AppType::Claude, None, updated.clone())
-            .expect("update current provider");
+        ProviderService::update(
+            &state,
+            AppType::Claude,
+            None,
+            provider_to_mutation_input(updated.clone()),
+        )
+        .expect("update current provider");
 
         let backup = db
             .get_live_backup("claude")
@@ -1604,7 +2372,8 @@ requires_openai_auth = true
             api_format: Some("openai_responses".into()),
             ..Default::default()
         });
-        db.save_provider("codex", &original).expect("save provider");
+        db.reconcile_provider_fixture("codex", &original)
+            .expect("save provider");
         db.set_current_provider("codex", "p1")
             .expect("set current provider");
         crate::settings::set_current_provider(&AppType::Codex, Some("p1"))
@@ -1667,8 +2436,13 @@ requires_openai_auth = true
             "models": [{ "model": "gpt-5.4", "displayName": "GPT 5.4" }]
         });
 
-        ProviderService::update(&state, AppType::Codex, None, updated.clone())
-            .expect("update current Codex provider mapping");
+        ProviderService::update(
+            &state,
+            AppType::Codex,
+            None,
+            provider_to_mutation_input(updated.clone()),
+        )
+        .expect("update current Codex provider mapping");
 
         let catalog_path = crate::codex_config::get_codex_model_catalog_path();
         let catalog: Value = read_json_file(&catalog_path).expect("read generated catalog");
@@ -1683,8 +2457,13 @@ requires_openai_auth = true
         assert!(live_config.contains("model_catalog_json"));
 
         updated.settings_config["modelCatalog"] = json!({ "models": [] });
-        ProviderService::update(&state, AppType::Codex, None, updated)
-            .expect("remove current Codex provider mapping");
+        ProviderService::update(
+            &state,
+            AppType::Codex,
+            None,
+            provider_to_mutation_input(updated),
+        )
+        .expect("remove current Codex provider mapping");
 
         let live_config = fs::read_to_string(crate::codex_config::get_codex_config_path())
             .expect("read Codex config.toml after mapping removal");
@@ -1734,7 +2513,7 @@ requires_openai_auth = true
             )]),
             ..Default::default()
         });
-        db.save_provider("claude-desktop", &original)
+        db.reconcile_provider_fixture("claude-desktop", &original)
             .expect("save provider");
         db.set_current_provider("claude-desktop", "p1")
             .expect("set current provider");
@@ -1821,8 +2600,13 @@ requires_openai_auth = true
     fn rename_rejects_missing_original_provider() {
         with_test_home(|state, _| {
             let original = openclaw_provider("deepseek");
-            ProviderService::add(state, AppType::OpenClaw, original.clone(), false)
-                .expect("seed db-only provider");
+            ProviderService::add(
+                state,
+                AppType::OpenClaw,
+                provider_to_mutation_input(original.clone()),
+                false,
+            )
+            .expect("seed db-only provider");
 
             let mut renamed = original.clone();
             renamed.id = "deepseek-copy".to_string();
@@ -1831,7 +2615,7 @@ requires_openai_auth = true
                 state,
                 AppType::OpenClaw,
                 Some("missing-provider"),
-                renamed,
+                provider_to_mutation_input(renamed),
             )
             .expect_err("stale originalId should be rejected");
 
@@ -1855,8 +2639,13 @@ requires_openai_auth = true
     fn db_only_additive_update_survives_live_config_parse_errors() {
         with_test_home(|state, home| {
             let provider = openclaw_provider("deepseek");
-            ProviderService::add(state, AppType::OpenClaw, provider.clone(), false)
-                .expect("seed db-only provider");
+            ProviderService::add(
+                state,
+                AppType::OpenClaw,
+                provider_to_mutation_input(provider.clone()),
+                false,
+            )
+            .expect("seed db-only provider");
 
             let stored = state
                 .db
@@ -1881,8 +2670,13 @@ requires_openai_auth = true
             updated.name = "DeepSeek Edited".to_string();
             updated.meta.get_or_insert_with(ProviderMeta::default);
 
-            ProviderService::update(state, AppType::OpenClaw, None, updated)
-                .expect("db-only update should ignore live parse errors");
+            ProviderService::update(
+                state,
+                AppType::OpenClaw,
+                None,
+                provider_to_mutation_input(updated),
+            )
+            .expect("db-only update should ignore live parse errors");
 
             let saved = state
                 .db
@@ -1898,8 +2692,13 @@ requires_openai_auth = true
     fn sync_current_provider_for_app_skips_db_only_opencode_provider() {
         with_test_home(|state, _| {
             let provider = opencode_provider("db-only-opencode");
-            ProviderService::add(state, AppType::OpenCode, provider.clone(), false)
-                .expect("seed db-only opencode provider");
+            ProviderService::add(
+                state,
+                AppType::OpenCode,
+                provider_to_mutation_input(provider.clone()),
+                false,
+            )
+            .expect("seed db-only opencode provider");
 
             ProviderService::sync_current_provider_for_app(state, AppType::OpenCode)
                 .expect("sync additive opencode providers");
@@ -1918,8 +2717,13 @@ requires_openai_auth = true
     fn sync_current_provider_for_app_skips_db_only_openclaw_provider() {
         with_test_home(|state, _| {
             let provider = openclaw_provider("db-only-openclaw");
-            ProviderService::add(state, AppType::OpenClaw, provider.clone(), false)
-                .expect("seed db-only openclaw provider");
+            ProviderService::add(
+                state,
+                AppType::OpenClaw,
+                provider_to_mutation_input(provider.clone()),
+                false,
+            )
+            .expect("seed db-only openclaw provider");
 
             ProviderService::sync_current_provider_for_app(state, AppType::OpenClaw)
                 .expect("sync additive openclaw providers");
@@ -1942,14 +2746,14 @@ requires_openai_auth = true
                 .expect("seed opencode live provider");
             state
                 .db
-                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .reconcile_provider_fixture(AppType::OpenCode.as_str(), &provider)
                 .expect("seed legacy opencode provider in db");
 
             let mut updated = provider.clone();
             updated.settings_config["options"]["apiKey"] = Value::String("updated-key".to_string());
             state
                 .db
-                .save_provider(AppType::OpenCode.as_str(), &updated)
+                .reconcile_provider_fixture(AppType::OpenCode.as_str(), &updated)
                 .expect("update legacy opencode provider in db");
 
             ProviderService::sync_current_provider_for_app(state, AppType::OpenCode)
@@ -1975,7 +2779,7 @@ requires_openai_auth = true
             let provider = opencode_provider("legacy-opencode-reset");
             state
                 .db
-                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .reconcile_provider_fixture(AppType::OpenCode.as_str(), &provider)
                 .expect("seed legacy opencode provider in db");
 
             ProviderService::sync_current_provider_for_app(state, AppType::OpenCode)
@@ -2003,7 +2807,7 @@ requires_openai_auth = true
             ]);
             state
                 .db
-                .save_provider(AppType::OpenClaw.as_str(), &provider)
+                .reconcile_provider_fixture(AppType::OpenClaw.as_str(), &provider)
                 .expect("seed legacy openclaw provider in db");
 
             ProviderService::sync_current_provider_for_app(state, AppType::OpenClaw)
@@ -2053,7 +2857,7 @@ requires_openai_auth = true
             let provider = opencode_provider("existing-opencode");
             state
                 .db
-                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .reconcile_provider_fixture(AppType::OpenCode.as_str(), &provider)
                 .expect("seed existing opencode provider");
 
             let mut live_settings = provider.settings_config.clone();
@@ -2127,7 +2931,7 @@ requires_openai_auth = true
             ]);
             state
                 .db
-                .save_provider(AppType::OpenClaw.as_str(), &provider)
+                .reconcile_provider_fixture(AppType::OpenClaw.as_str(), &provider)
                 .expect("seed existing openclaw provider");
 
             let mut live_settings = provider.settings_config.clone();
@@ -2164,7 +2968,7 @@ requires_openai_auth = true
             let provider = hermes_provider("existing-hermes");
             state
                 .db
-                .save_provider(AppType::Hermes.as_str(), &provider)
+                .reconcile_provider_fixture(AppType::Hermes.as_str(), &provider)
                 .expect("seed existing hermes provider");
 
             let mut live_settings = provider.settings_config.clone();
@@ -2204,7 +3008,7 @@ requires_openai_auth = true
             let provider = openclaw_provider("legacy-provider");
             state
                 .db
-                .save_provider(AppType::OpenClaw.as_str(), &provider)
+                .reconcile_provider_fixture(AppType::OpenClaw.as_str(), &provider)
                 .expect("seed legacy provider without live_config_managed marker");
 
             let openclaw_dir = home.join(".openclaw");
@@ -2215,8 +3019,13 @@ requires_openai_auth = true
             let mut updated = provider.clone();
             updated.name = "Legacy Edited".to_string();
 
-            let err = ProviderService::update(state, AppType::OpenClaw, None, updated)
-                .expect_err("legacy providers should still surface live parse errors");
+            let err = ProviderService::update(
+                state,
+                AppType::OpenClaw,
+                None,
+                provider_to_mutation_input(updated),
+            )
+            .expect_err("legacy providers should still surface live parse errors");
             assert!(
                 err.to_string().contains("Failed to parse OpenClaw config"),
                 "expected parse error, got {err:?}"
@@ -2232,7 +3041,7 @@ requires_openai_auth = true
                 let provider = opencode_omo_provider(&format!("{category}-provider"), category);
                 state
                     .db
-                    .save_provider(AppType::OpenCode.as_str(), &provider)
+                    .reconcile_provider_fixture(AppType::OpenCode.as_str(), &provider)
                     .unwrap_or_else(|err| panic!("seed {category} provider: {err}"));
 
                 let mut updated = provider.clone();
@@ -2240,8 +3049,13 @@ requires_openai_auth = true
                 updated.settings_config["agents"]["writer"]["model"] =
                     Value::String(format!("{category}-next-model"));
 
-                ProviderService::update(state, AppType::OpenCode, None, updated)
-                    .unwrap_or_else(|err| panic!("update {category} provider: {err}"));
+                ProviderService::update(
+                    state,
+                    AppType::OpenCode,
+                    None,
+                    provider_to_mutation_input(updated),
+                )
+                .unwrap_or_else(|err| panic!("update {category} provider: {err}"));
 
                 let saved = state
                     .db
@@ -2267,7 +3081,7 @@ requires_openai_auth = true
                 let provider = opencode_omo_provider(&format!("{category}-current"), category);
                 state
                     .db
-                    .save_provider(AppType::OpenCode.as_str(), &provider)
+                    .reconcile_provider_fixture(AppType::OpenCode.as_str(), &provider)
                     .unwrap_or_else(|err| panic!("seed current {category} provider: {err}"));
                 state
                     .db
@@ -2281,8 +3095,13 @@ requires_openai_auth = true
                 updated.settings_config["otherFields"]["theme"] =
                     Value::String(format!("{category}-light"));
 
-                ProviderService::update(state, AppType::OpenCode, None, updated)
-                    .unwrap_or_else(|err| panic!("update current {category} provider: {err}"));
+                ProviderService::update(
+                    state,
+                    AppType::OpenCode,
+                    None,
+                    provider_to_mutation_input(updated),
+                )
+                .unwrap_or_else(|err| panic!("update current {category} provider: {err}"));
 
                 let saved = state
                     .db
@@ -2317,7 +3136,7 @@ requires_openai_auth = true
             let provider = opencode_omo_provider("omo-current", "omo");
             state
                 .db
-                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .reconcile_provider_fixture(AppType::OpenCode.as_str(), &provider)
                 .unwrap_or_else(|err| panic!("seed current omo provider: {err}"));
             state
                 .db
@@ -2334,8 +3153,13 @@ requires_openai_auth = true
             updated.settings_config["agents"]["writer"]["model"] =
                 Value::String("omo-saved-model".to_string());
 
-            ProviderService::update(state, AppType::OpenCode, None, updated)
-                .expect_err("update should fail when current omo file write fails");
+            ProviderService::update(
+                state,
+                AppType::OpenCode,
+                None,
+                provider_to_mutation_input(updated),
+            )
+            .expect_err("update should fail when current omo file write fails");
 
             let saved = state
                 .db
@@ -2359,7 +3183,7 @@ requires_openai_auth = true
             let provider = opencode_omo_provider("omo-current", "omo");
             state
                 .db
-                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .reconcile_provider_fixture(AppType::OpenCode.as_str(), &provider)
                 .unwrap_or_else(|err| panic!("seed current omo provider: {err}"));
             state
                 .db
@@ -2393,8 +3217,13 @@ requires_openai_auth = true
             updated.settings_config["otherFields"]["theme"] =
                 Value::String("omo-light".to_string());
 
-            ProviderService::update(state, AppType::OpenCode, None, updated)
-                .expect_err("update should fail when plugin sync fails");
+            ProviderService::update(
+                state,
+                AppType::OpenCode,
+                None,
+                provider_to_mutation_input(updated),
+            )
+            .expect_err("update should fail when plugin sync fails");
 
             let saved = state
                 .db
@@ -2455,6 +3284,38 @@ impl ProviderService {
             .meta
             .get_or_insert_with(Default::default)
             .live_config_managed = Some(managed);
+    }
+
+    fn persist_live_config_managed(
+        state: &AppState,
+        app_type: &AppType,
+        provider_id: &str,
+        managed: bool,
+    ) -> Result<(), AppError> {
+        // This is a narrow metadata transformation, so a concurrent content
+        // edit can be preserved by rereading and reapplying it.  Every attempt
+        // still uses the single-lock/single-transaction fingerprint primitive.
+        for attempt in 0..3 {
+            let mut provider = state
+                .db
+                .get_provider_aggregate(app_type.as_str(), provider_id)?
+                .ok_or_else(|| {
+                    AppError::NotFound(format!("provider '{}/{}'", app_type.as_str(), provider_id))
+                })?
+                .provider;
+            if Self::provider_live_config_managed(&provider) == Some(managed) {
+                return Ok(());
+            }
+            let fingerprint = provider_row_fingerprint(&provider);
+            Self::set_provider_live_config_managed(&mut provider, managed);
+            remove_hydrated_endpoints_from_row_update(&mut provider);
+            let input = provider_to_mutation_input(provider);
+            match update_provider_record_if_unchanged(state, app_type, fingerprint, input) {
+                Err(AppError::Conflict(_)) if attempt < 2 => continue,
+                result => return result,
+            }
+        }
+        unreachable!("bounded live-config marker retry always returns")
     }
 
     fn normalize_usage_script_credential_overrides(app_type: &AppType, provider: &mut Provider) {
@@ -2551,10 +3412,11 @@ impl ProviderService {
     pub fn add(
         state: &AppState,
         app_type: AppType,
-        provider: Provider,
+        input: ProviderMutationInput,
         add_to_live: bool,
     ) -> Result<bool, AppError> {
-        let mut provider = provider;
+        let _provider_mutation_guard = lock_additive_provider_mutation(state, &app_type);
+        let mut provider: Provider = input.into();
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
@@ -2564,8 +3426,12 @@ impl ProviderService {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
         }
 
-        // Save to database
-        state.db.save_provider(app_type.as_str(), &provider)?;
+        // Strict create owns both the provider row and initial endpoints.
+        create_provider_record(
+            state,
+            &app_type,
+            provider_to_mutation_input(provider.clone()),
+        )?;
 
         // Additive mode apps (OpenCode, OpenClaw): optionally write to live config.
         if app_type.is_additive_mode() {
@@ -2602,9 +3468,13 @@ impl ProviderService {
         state: &AppState,
         app_type: AppType,
         original_id: Option<&str>,
-        provider: Provider,
+        input: ProviderMutationInput,
     ) -> Result<bool, AppError> {
-        let mut provider = provider;
+        // Reject endpoint-bearing edit payloads before any live or DB side
+        // effect. Endpoints have their own typed mutation API.
+        ProviderRowUpdate::from_input(&input)?;
+        let _provider_mutation_guard = lock_additive_provider_mutation(state, &app_type);
+        let mut provider: Provider = input.into();
         let original_id = original_id.unwrap_or(provider.id.as_str()).to_string();
         let provider_id_changed = original_id != provider.id;
         let existing_provider = state
@@ -2646,11 +3516,12 @@ impl ProviderService {
                 ));
             }
 
-            let original_in_live = Self::check_live_config_exists(
-                &app_type,
-                &original_id,
-                Self::provider_live_config_managed(&existing_provider),
-            )?;
+            // A rename changes durable identity, so "cannot inspect live
+            // config" must never be treated as "not live".  DB-only
+            // same-ID edits deliberately retain their tolerant path below,
+            // but rename proves both identities absent from a readable live
+            // config before committing the SQLite transaction.
+            let original_in_live = provider_exists_in_live_config(&app_type, &original_id)?;
             if original_in_live {
                 return Err(AppError::Message(
                     "Provider key cannot be changed after the provider has been added to the app config"
@@ -2658,11 +3529,7 @@ impl ProviderService {
                 ));
             }
 
-            let next_id_in_live = Self::check_live_config_exists(
-                &app_type,
-                &provider.id,
-                Self::provider_live_config_managed(&existing_provider),
-            )?;
+            let next_id_in_live = provider_exists_in_live_config(&app_type, &provider.id)?;
             if state
                 .db
                 .get_provider_by_id(&provider.id, app_type.as_str())?
@@ -2677,8 +3544,13 @@ impl ProviderService {
             }
 
             Self::set_provider_live_config_managed(&mut provider, false);
-            state.db.save_provider(app_type.as_str(), &provider)?;
-            state.db.delete_provider(app_type.as_str(), &original_id)?;
+            let source = ProviderKey::new(app_type.as_str(), original_id.clone())?;
+            state
+                .db
+                .rename_db_only_additive_provider(RenameProvider::from_input(
+                    source,
+                    &provider_to_mutation_input(provider.clone()),
+                )?)?;
 
             if crate::settings::get_current_provider(&app_type).as_deref() == Some(&original_id) {
                 crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
@@ -2708,7 +3580,11 @@ impl ProviderService {
                 if is_current {
                     crate::services::OmoService::write_provider_config_to_file(&provider, variant)?;
                 }
-                if let Err(err) = state.db.save_provider(app_type.as_str(), &provider) {
+                if let Err(err) = update_provider_record(
+                    state,
+                    &app_type,
+                    &provider_to_mutation_input(provider.clone()),
+                ) {
                     if is_current {
                         if let Err(rollback_err) =
                             crate::services::OmoService::write_config_to_file(state, variant)
@@ -2737,7 +3613,11 @@ impl ProviderService {
 
             // Save to database after live-config presence is resolved so parse errors
             // do not report failure after already mutating DB state.
-            state.db.save_provider(app_type.as_str(), &provider)?;
+            update_provider_record(
+                state,
+                &app_type,
+                &provider_to_mutation_input(provider.clone()),
+            )?;
 
             if !live_config_managed {
                 return Ok(true);
@@ -2747,7 +3627,11 @@ impl ProviderService {
         }
 
         // Save to database
-        state.db.save_provider(app_type.as_str(), &provider)?;
+        update_provider_record(
+            state,
+            &app_type,
+            &provider_to_mutation_input(provider.clone()),
+        )?;
 
         // For other apps: Check if this is current provider (use effective current, not just DB)
         let effective_current =
@@ -2829,6 +3713,7 @@ impl ProviderService {
     /// 同时检查本地 settings 和数据库的当前供应商，防止删除任一端正在使用的供应商。
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
+        let _provider_mutation_guard = lock_additive_provider_mutation(state, &app_type);
         // Additive mode apps - no current provider concept
         if app_type.is_additive_mode() {
             // Single DB read shared across all additive-mode sub-paths below.
@@ -2900,6 +3785,7 @@ impl ProviderService {
         app_type: AppType,
         id: &str,
     ) -> Result<(), AppError> {
+        let _provider_mutation_guard = lock_additive_provider_mutation(state, &app_type);
         match app_type {
             AppType::OpenCode => {
                 let provider_category = state
@@ -2943,9 +3829,12 @@ impl ProviderService {
             }
         }
 
-        if let Some(mut provider) = state.db.get_provider_by_id(id, app_type.as_str())? {
-            Self::set_provider_live_config_managed(&mut provider, false);
-            state.db.save_provider(app_type.as_str(), &provider)?;
+        if state
+            .db
+            .get_provider_aggregate(app_type.as_str(), id)?
+            .is_some()
+        {
+            Self::persist_live_config_managed(state, &app_type, id, false)?;
         }
 
         Ok(())
@@ -2964,6 +3853,21 @@ impl ProviderService {
     ///    d. Write target provider config to live files
     ///    e. Sync MCP configuration
     pub fn switch(state: &AppState, app_type: AppType, id: &str) -> Result<SwitchResult, AppError> {
+        // The same per-app lock also guards additive provider key changes and
+        // bulk live sync.  Acquire it before observing the provider map so a
+        // queued rename cannot leave this switch holding a stale source key.
+        let _switch_guard = if app_type.is_additive_mode()
+            || matches!(
+                app_type,
+                AppType::Claude | AppType::Codex | AppType::Gemini | AppType::GrokBuild
+            ) {
+            Some(futures::executor::block_on(
+                state.proxy_service.lock_switch_for_app(app_type.as_str()),
+            ))
+        } else {
+            None
+        };
+
         // Check if provider exists
         let providers = state.db.get_all_providers(app_type.as_str())?;
         let _provider = providers
@@ -2985,21 +3889,6 @@ impl ProviderService {
         if matches!(app_type, AppType::ClaudeDesktop) {
             return Self::switch_normal(state, app_type, id, &providers);
         }
-
-        // Provider switches and takeover toggles both mutate live config and the
-        // restore backup. Serialize them per app, then decide from the locked
-        // current state so a just-started takeover cannot be overwritten by a
-        // normal live write.
-        let _switch_guard = if matches!(
-            app_type,
-            AppType::Claude | AppType::Codex | AppType::Gemini | AppType::GrokBuild
-        ) {
-            Some(futures::executor::block_on(
-                state.proxy_service.lock_switch_for_app(app_type.as_str()),
-            ))
-        } else {
-            None
-        };
 
         // Backup or live placeholders mean the live file is owned by proxy
         // takeover, even if the proxy server is temporarily stopped or is in the
@@ -3098,7 +3987,12 @@ impl ProviderService {
                 if !app_type.is_additive_mode() {
                     // Only backfill when switching to a different provider
                     if let Ok(live_config) = read_live_settings(app_type.clone()) {
-                        if let Some(mut current_provider) = providers.get(&current_id).cloned() {
+                        if let Some(mut current_provider) = state
+                            .db
+                            .get_provider_aggregate(app_type.as_str(), &current_id)?
+                            .map(|aggregate| aggregate.provider)
+                        {
+                            let fingerprint = provider_row_fingerprint(&current_provider);
                             // 切走前先把 live 里的可共享改动（含用户直接在应用内
                             // 装插件/加 hook/改偏好）同步进通用配置片段，再做剥离回填。
                             // 详见 sync_common_config_snippet_from_live 的文档。
@@ -3117,9 +4011,13 @@ impl ProviderService {
                                     &current_provider,
                                     live_config,
                                 );
-                            if let Err(e) =
-                                state.db.save_provider(app_type.as_str(), &current_provider)
-                            {
+                            remove_hydrated_endpoints_from_row_update(&mut current_provider);
+                            if let Err(e) = update_provider_record_if_unchanged(
+                                state,
+                                &app_type,
+                                fingerprint,
+                                provider_to_mutation_input(current_provider),
+                            ) {
                                 log::warn!("Backfill failed: {e}");
                                 result
                                     .warnings
@@ -3196,9 +4094,8 @@ impl ProviderService {
         // the provider in a silent inconsistent state (present in live, but still marked DB-only).
         if app_type.is_additive_mode() && Self::provider_live_config_managed(provider) != Some(true)
         {
-            let mut updated = provider.clone();
-            Self::set_provider_live_config_managed(&mut updated, true);
-            if let Err(e) = state.db.save_provider(app_type.as_str(), &updated) {
+            if let Err(e) = Self::persist_live_config_managed(state, &app_type, &provider.id, true)
+            {
                 let rollback_result = match app_type {
                     AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
@@ -3246,6 +4143,7 @@ impl ProviderService {
         state: &AppState,
         app_type: AppType,
     ) -> Result<(), AppError> {
+        let _provider_mutation_guard = lock_additive_provider_mutation(state, &app_type);
         if app_type.is_additive_mode() {
             return sync_current_provider_for_app_to_live(state, &app_type);
         }
@@ -3300,9 +4198,10 @@ impl ProviderService {
             return Ok(());
         }
 
-        let providers = state.db.get_all_providers(app_type.as_str())?;
+        let providers = state.db.get_all_provider_aggregates(app_type.as_str())?;
 
-        for provider in providers.values() {
+        for aggregate in providers.values() {
+            let provider = &aggregate.provider;
             if provider
                 .meta
                 .as_ref()
@@ -3316,6 +4215,7 @@ impl ProviderService {
                 continue;
             }
 
+            let fingerprint = provider_row_fingerprint(provider);
             let mut updated_provider = provider.clone();
             updated_provider
                 .meta
@@ -3337,9 +4237,13 @@ impl ProviderService {
                 }
             }
 
-            state
-                .db
-                .save_provider(app_type.as_str(), &updated_provider)?;
+            remove_hydrated_endpoints_from_row_update(&mut updated_provider);
+            update_provider_record_if_unchanged(
+                state,
+                &app_type,
+                fingerprint,
+                provider_to_mutation_input(updated_provider),
+            )?;
         }
 
         Ok(())
@@ -3855,9 +4759,11 @@ impl ProviderService {
             .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))?;
 
         // 1) 先算出各供应商清理后的配置，但**先不落库**
-        let providers = state.db.get_all_providers(app.as_str())?;
-        let mut pending: Vec<(String, Provider, Value)> = Vec::new();
-        for (id, provider) in providers {
+        let providers = state.db.get_all_provider_aggregates(app.as_str())?;
+        let mut pending: Vec<(String, Provider, Value, String)> = Vec::new();
+        for (id, aggregate) in providers {
+            let provider = aggregate.provider;
+            let fingerprint = provider_row_fingerprint(&provider);
             let cleaned = match live::remove_common_config_from_settings(
                 &app,
                 &provider.settings_config,
@@ -3870,7 +4776,7 @@ impl ProviderService {
                 }
             };
             if cleaned != provider.settings_config {
-                pending.push((id, provider, cleaned));
+                pending.push((id, provider, cleaned, fingerprint));
             }
         }
 
@@ -3899,7 +4805,7 @@ impl ProviderService {
             "removedFromSnippet": poison_keys,
             "providers": pending
                 .iter()
-                .map(|(id, provider, cleaned)| serde_json::json!({
+                .map(|(id, provider, cleaned, _)| serde_json::json!({
                     "id": id,
                     "removedKeys": removed_env_keys(&provider.settings_config, cleaned),
                 }))
@@ -3907,7 +4813,7 @@ impl ProviderService {
         });
         let audit_text = serde_json::to_string(&audit)
             .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))?;
-        // 只在没有记录时写。provider 的写入不是一个事务（每次 save_provider 各自
+        // 只在没有记录时写。provider 的写入不是一个事务（每次类型化行更新各自
         // 提交），上一轮可能改到一半就中止；此时完成标记没置位，下次启动会重跑，
         // 而重跑看到的"原始状态"已经残缺。无条件 INSERT OR REPLACE 会拿这份残缺
         // 记录盖掉第一轮那份完整的。
@@ -3916,10 +4822,11 @@ impl ProviderService {
         }
 
         // 3) 各供应商 settings_config：按值相等定向删除扩散出去的副本
-        for (id, provider, cleaned) in pending {
-            let mut updated = provider;
-            updated.settings_config = cleaned;
-            state.db.save_provider(app.as_str(), &updated)?;
+        for (id, mut provider, cleaned, fingerprint) in pending {
+            provider.settings_config = cleaned;
+            remove_hydrated_endpoints_from_row_update(&mut provider);
+            let update = provider_to_mutation_input(provider);
+            update_provider_record_if_unchanged(state, &app, fingerprint, update)?;
             log::info!("已从 Gemini 供应商 '{id}' 中清除泄漏的共享凭据");
         }
 
@@ -4101,13 +5008,11 @@ impl ProviderService {
         app_type: AppType,
         updates: Vec<ProviderSortUpdate>,
     ) -> Result<bool, AppError> {
-        let mut providers = state.db.get_all_providers(app_type.as_str())?;
-
         for update in updates {
-            if let Some(provider) = providers.get_mut(&update.id) {
-                provider.sort_index = Some(update.sort_index);
-                state.db.save_provider(app_type.as_str(), provider)?;
-            }
+            let key = ProviderKey::new(app_type.as_str(), update.id)?;
+            state
+                .db
+                .update_provider_sort_index(&key, update.sort_index)?;
         }
 
         Ok(true)
@@ -4655,12 +5560,23 @@ impl ProviderService {
         // 同步到 Claude
         if let Some(mut claude_provider) = provider.to_claude_provider() {
             // 合并已有配置
-            if let Some(existing) = state.db.get_provider_by_id(&claude_provider.id, "claude")? {
+            let precondition = if let Some(existing) =
+                state.db.get_provider_by_id(&claude_provider.id, "claude")?
+            {
+                let fingerprint = provider_row_fingerprint(&existing);
                 let mut merged = existing.settings_config.clone();
                 Self::merge_json(&mut merged, &claude_provider.settings_config);
                 claude_provider.settings_config = merged;
-            }
-            state.db.save_provider("claude", &claude_provider)?;
+                ReconcilePrecondition::ExpectPresent { fingerprint }
+            } else {
+                ReconcilePrecondition::ExpectAbsent
+            };
+            reconcile_provider_record_with_precondition(
+                &state.db,
+                "claude",
+                provider_to_mutation_input(claude_provider),
+                precondition,
+            )?;
         } else {
             // 如果禁用了 Claude，删除对应的子供应商
             let claude_id = format!("universal-claude-{id}");
@@ -4670,12 +5586,22 @@ impl ProviderService {
         // 同步到 Codex
         if let Some(mut codex_provider) = provider.to_codex_provider() {
             // 合并已有配置
-            if let Some(existing) = state.db.get_provider_by_id(&codex_provider.id, "codex")? {
-                let mut merged = existing.settings_config.clone();
-                Self::merge_json(&mut merged, &codex_provider.settings_config);
-                codex_provider.settings_config = merged;
-            }
-            state.db.save_provider("codex", &codex_provider)?;
+            let precondition =
+                if let Some(existing) = state.db.get_provider_by_id(&codex_provider.id, "codex")? {
+                    let fingerprint = provider_row_fingerprint(&existing);
+                    let mut merged = existing.settings_config.clone();
+                    Self::merge_json(&mut merged, &codex_provider.settings_config);
+                    codex_provider.settings_config = merged;
+                    ReconcilePrecondition::ExpectPresent { fingerprint }
+                } else {
+                    ReconcilePrecondition::ExpectAbsent
+                };
+            reconcile_provider_record_with_precondition(
+                &state.db,
+                "codex",
+                provider_to_mutation_input(codex_provider),
+                precondition,
+            )?;
         } else {
             let codex_id = format!("universal-codex-{id}");
             let _ = state.db.delete_provider("codex", &codex_id);
@@ -4684,12 +5610,23 @@ impl ProviderService {
         // 同步到 Gemini
         if let Some(mut gemini_provider) = provider.to_gemini_provider() {
             // 合并已有配置
-            if let Some(existing) = state.db.get_provider_by_id(&gemini_provider.id, "gemini")? {
+            let precondition = if let Some(existing) =
+                state.db.get_provider_by_id(&gemini_provider.id, "gemini")?
+            {
+                let fingerprint = provider_row_fingerprint(&existing);
                 let mut merged = existing.settings_config.clone();
                 Self::merge_json(&mut merged, &gemini_provider.settings_config);
                 gemini_provider.settings_config = merged;
-            }
-            state.db.save_provider("gemini", &gemini_provider)?;
+                ReconcilePrecondition::ExpectPresent { fingerprint }
+            } else {
+                ReconcilePrecondition::ExpectAbsent
+            };
+            reconcile_provider_record_with_precondition(
+                &state.db,
+                "gemini",
+                provider_to_mutation_input(gemini_provider),
+                precondition,
+            )?;
         } else {
             let gemini_id = format!("universal-gemini-{id}");
             let _ = state.db.delete_provider("gemini", &gemini_id);

@@ -1,4 +1,5 @@
 use crate::config::{atomic_write, write_json_file};
+use crate::database::NewProviderAggregate;
 use crate::error::AppError;
 use crate::opencode_config::get_opencode_dir;
 use crate::provider::Provider;
@@ -288,7 +289,10 @@ impl OmoService {
             in_failover_queue: false,
         };
 
-        state.db.save_provider("opencode", &provider)?;
+        state.db.create_provider(NewProviderAggregate::from_input(
+            "opencode",
+            crate::services::provider::provider_to_mutation_input(provider.clone()),
+        )?)?;
         state
             .db
             .set_omo_provider_current("opencode", &provider.id, v.category)?;

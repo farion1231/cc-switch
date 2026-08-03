@@ -9,6 +9,13 @@ pub enum AppError {
     Config(String),
     #[error("无效输入: {0}")]
     InvalidInput(String),
+    #[error("未找到: {0}")]
+    NotFound(String),
+    /// 结构化冲突:并发前置期望失败(如 reconcile 的 ExpectAbsent 撞上竞争
+    /// 创建、ExpectPresent 的指纹过期)。调用方据此重读重试或上浮,不得解析
+    /// Database(String) 文本。由前置工程 A 认证契约引入(T9)。
+    #[error("并发冲突: {0}")]
+    Conflict(String),
     #[error("IO 错误: {path}: {source}")]
     Io {
         path: String,

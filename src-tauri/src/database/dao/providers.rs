@@ -1,111 +1,212 @@
-use crate::database::{lock_conn, Database};
+use crate::database::{lock_conn, Database, NewProviderAggregate};
 use crate::error::AppError;
-use crate::provider::{Provider, ProviderMeta};
+use crate::provider::{Provider, ProviderAggregate, ProviderMeta, ProviderMutationInput};
+use crate::settings::CustomEndpoint;
 use indexmap::IndexMap;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension, Row};
 use std::collections::{HashMap, HashSet};
 
-type OmoProviderRow = (
-    String,
-    String,
-    String,
-    Option<String>,
-    Option<i64>,
-    Option<usize>,
-    Option<String>,
-    String,
-);
+pub(super) struct StoredProviderRow {
+    id: String,
+    name: String,
+    settings_config: String,
+    website_url: Option<String>,
+    category: Option<String>,
+    created_at: Option<i64>,
+    sort_index: Option<usize>,
+    notes: Option<String>,
+    icon: Option<String>,
+    icon_color: Option<String>,
+    meta: String,
+    in_failover_queue: bool,
+}
+
+impl StoredProviderRow {
+    pub(super) fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            settings_config: row.get(2)?,
+            website_url: row.get(3)?,
+            category: row.get(4)?,
+            created_at: row.get(5)?,
+            sort_index: row.get(6)?,
+            notes: row.get(7)?,
+            icon: row.get(8)?,
+            icon_color: row.get(9)?,
+            meta: row.get(10)?,
+            in_failover_queue: row.get(11)?,
+        })
+    }
+
+    pub(super) fn decode(self, app_type: &str) -> Result<Provider, AppError> {
+        let (settings_config, mut meta) =
+            decode_provider_json(app_type, &self.id, &self.settings_config, &self.meta)?;
+        // Child rows are the sole endpoint authority. Do not expose a stale
+        // legacy copy that happens to remain embedded in provider metadata.
+        meta.custom_endpoints.clear();
+        Ok(Provider {
+            id: self.id,
+            name: self.name,
+            settings_config,
+            website_url: self.website_url,
+            category: self.category,
+            created_at: self.created_at,
+            sort_index: self.sort_index,
+            notes: self.notes,
+            meta: Some(meta),
+            icon: self.icon,
+            icon_color: self.icon_color,
+            in_failover_queue: self.in_failover_queue,
+        })
+    }
+}
+
+fn decode_provider_json(
+    app_type: &str,
+    provider_id: &str,
+    settings_config: &str,
+    meta: &str,
+) -> Result<(serde_json::Value, ProviderMeta), AppError> {
+    let settings_config = serde_json::from_str(settings_config).map_err(|error| {
+        AppError::Database(format!(
+            "invalid settings_config for provider '{app_type}/{provider_id}': {error}"
+        ))
+    })?;
+    let meta = if meta.trim().is_empty() {
+        ProviderMeta::default()
+    } else {
+        serde_json::from_str(meta).map_err(|error| {
+            AppError::Database(format!(
+                "invalid meta for provider '{app_type}/{provider_id}': {error}"
+            ))
+        })?
+    };
+    Ok((settings_config, meta))
+}
+
+pub(super) const PROVIDER_SELECT: &str =
+    "SELECT id, name, settings_config, website_url, category, created_at, sort_index,
+            notes, icon, icon_color, meta, in_failover_queue
+     FROM providers";
+
+fn load_endpoints(
+    conn: &rusqlite::Connection,
+    app_type: &str,
+    provider_id: Option<&str>,
+) -> Result<HashMap<String, IndexMap<String, CustomEndpoint>>, AppError> {
+    let mut grouped: HashMap<String, IndexMap<String, CustomEndpoint>> = HashMap::new();
+    if let Some(provider_id) = provider_id {
+        let mut stmt = conn
+            .prepare(
+                "SELECT provider_id, url, added_at, last_used
+                 FROM provider_endpoints
+                 WHERE app_type = ?1 AND provider_id = ?2
+                 ORDER BY added_at, url, id",
+            )
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let rows = stmt
+            .query_map(params![app_type, provider_id], decode_endpoint_row)
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        collect_endpoints(rows, app_type, &mut grouped)?;
+    } else {
+        let mut stmt = conn
+            .prepare(
+                "SELECT provider_id, url, added_at, last_used
+                 FROM provider_endpoints
+                 WHERE app_type = ?1
+                 ORDER BY provider_id, added_at, url, id",
+            )
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let rows = stmt
+            .query_map([app_type], decode_endpoint_row)
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        collect_endpoints(rows, app_type, &mut grouped)?;
+    }
+    Ok(grouped)
+}
+
+type StoredEndpoint = (String, String, CustomEndpoint);
+
+fn decode_endpoint_row(row: &Row<'_>) -> rusqlite::Result<StoredEndpoint> {
+    let provider_id: String = row.get(0)?;
+    let url: String = row.get(1)?;
+    Ok((
+        provider_id,
+        url.clone(),
+        CustomEndpoint {
+            url,
+            added_at: row.get(2)?,
+            last_used: row.get(3)?,
+        },
+    ))
+}
+
+fn collect_endpoints(
+    rows: rusqlite::MappedRows<'_, impl FnMut(&Row<'_>) -> rusqlite::Result<StoredEndpoint>>,
+    app_type: &str,
+    grouped: &mut HashMap<String, IndexMap<String, CustomEndpoint>>,
+) -> Result<(), AppError> {
+    for row in rows {
+        let (provider_id, url, endpoint) =
+            row.map_err(|error| AppError::Database(error.to_string()))?;
+        if grouped
+            .entry(provider_id.clone())
+            .or_default()
+            .insert(url.clone(), endpoint)
+            .is_some()
+        {
+            return Err(AppError::Database(format!(
+                "duplicate endpoint '{url}' for provider '{app_type}/{provider_id}'"
+            )));
+        }
+    }
+    Ok(())
+}
 
 impl Database {
+    pub fn get_all_provider_aggregates(
+        &self,
+        app_type: &str,
+    ) -> Result<IndexMap<String, ProviderAggregate>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn
+            .prepare(&format!(
+                "{PROVIDER_SELECT}
+                 WHERE app_type = ?1
+                 ORDER BY COALESCE(sort_index, 999999), created_at, id"
+            ))
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let rows = stmt
+            .query_map([app_type], StoredProviderRow::from_row)
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let mut endpoints = load_endpoints(&conn, app_type, None)?;
+        let mut aggregates = IndexMap::new();
+        for row in rows {
+            let provider = row
+                .map_err(|error| AppError::Database(error.to_string()))?
+                .decode(app_type)?;
+            let provider_id = provider.id.clone();
+            aggregates.insert(
+                provider_id.clone(),
+                ProviderAggregate {
+                    provider,
+                    endpoints: endpoints.remove(&provider_id).unwrap_or_default(),
+                },
+            );
+        }
+        Ok(aggregates)
+    }
+
     pub fn get_all_providers(
         &self,
         app_type: &str,
     ) -> Result<IndexMap<String, Provider>, AppError> {
-        let conn = lock_conn!(self.conn);
-        let mut stmt = conn.prepare(
-            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
-             FROM providers WHERE app_type = ?1
-             ORDER BY COALESCE(sort_index, 999999), created_at ASC, id ASC"
-        ).map_err(|e| AppError::Database(e.to_string()))?;
-
-        let provider_iter = stmt
-            .query_map(params![app_type], |row| {
-                let id: String = row.get(0)?;
-                let name: String = row.get(1)?;
-                let settings_config_str: String = row.get(2)?;
-                let website_url: Option<String> = row.get(3)?;
-                let category: Option<String> = row.get(4)?;
-                let created_at: Option<i64> = row.get(5)?;
-                let sort_index: Option<usize> = row.get(6)?;
-                let notes: Option<String> = row.get(7)?;
-                let icon: Option<String> = row.get(8)?;
-                let icon_color: Option<String> = row.get(9)?;
-                let meta_str: String = row.get(10)?;
-                let in_failover_queue: bool = row.get(11)?;
-
-                let settings_config =
-                    serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
-                let meta: ProviderMeta = serde_json::from_str(&meta_str).unwrap_or_default();
-
-                Ok((
-                    id,
-                    Provider {
-                        id: "".to_string(), // Placeholder, set below
-                        name,
-                        settings_config,
-                        website_url,
-                        category,
-                        created_at,
-                        sort_index,
-                        notes,
-                        meta: Some(meta),
-                        icon,
-                        icon_color,
-                        in_failover_queue,
-                    },
-                ))
-            })
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        let mut providers = IndexMap::new();
-        for provider_res in provider_iter {
-            let (id, mut provider) = provider_res.map_err(|e| AppError::Database(e.to_string()))?;
-            provider.id = id.clone();
-
-            let mut stmt_endpoints = conn.prepare(
-                "SELECT url, added_at FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2 ORDER BY added_at ASC, url ASC"
-            ).map_err(|e| AppError::Database(e.to_string()))?;
-
-            let endpoints_iter = stmt_endpoints
-                .query_map(params![id, app_type], |row| {
-                    let url: String = row.get(0)?;
-                    let added_at: Option<i64> = row.get(1)?;
-                    Ok((
-                        url,
-                        crate::settings::CustomEndpoint {
-                            url: "".to_string(),
-                            added_at: added_at.unwrap_or(0),
-                            last_used: None,
-                        },
-                    ))
-                })
-                .map_err(|e| AppError::Database(e.to_string()))?;
-
-            let mut custom_endpoints = HashMap::new();
-            for ep_res in endpoints_iter {
-                let (url, mut ep) = ep_res.map_err(|e| AppError::Database(e.to_string()))?;
-                ep.url = url.clone();
-                custom_endpoints.insert(url, ep);
-            }
-
-            if let Some(meta) = &mut provider.meta {
-                meta.custom_endpoints = custom_endpoints;
-            }
-
-            providers.insert(id, provider);
-        }
-
-        Ok(providers)
+        Ok(self
+            .get_all_provider_aggregates(app_type)?
+            .into_iter()
+            .map(|(id, aggregate)| (id, aggregate.into_provider()))
+            .collect())
     }
 
     pub fn get_current_provider(&self, app_type: &str) -> Result<Option<String>, AppError> {
@@ -132,149 +233,34 @@ impl Database {
         id: &str,
         app_type: &str,
     ) -> Result<Option<Provider>, AppError> {
-        let conn = lock_conn!(self.conn);
-        let result = conn.query_row(
-            "SELECT name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
-             FROM providers WHERE id = ?1 AND app_type = ?2",
-            params![id, app_type],
-            |row| {
-                let name: String = row.get(0)?;
-                let settings_config_str: String = row.get(1)?;
-                let website_url: Option<String> = row.get(2)?;
-                let category: Option<String> = row.get(3)?;
-                let created_at: Option<i64> = row.get(4)?;
-                let sort_index: Option<usize> = row.get(5)?;
-                let notes: Option<String> = row.get(6)?;
-                let icon: Option<String> = row.get(7)?;
-                let icon_color: Option<String> = row.get(8)?;
-                let meta_str: String = row.get(9)?;
-                let in_failover_queue: bool = row.get(10)?;
-
-                let settings_config = serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
-                let meta: ProviderMeta = serde_json::from_str(&meta_str).unwrap_or_default();
-
-                Ok(Provider {
-                    id: id.to_string(),
-                    name,
-                    settings_config,
-                    website_url,
-                    category,
-                    created_at,
-                    sort_index,
-                    notes,
-                    meta: Some(meta),
-                    icon,
-                    icon_color,
-                    in_failover_queue,
-                })
-            },
-        );
-
-        match result {
-            Ok(provider) => Ok(Some(provider)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(AppError::Database(e.to_string())),
-        }
+        Ok(self
+            .get_provider_aggregate(app_type, id)?
+            .map(ProviderAggregate::into_provider))
     }
 
-    pub fn save_provider(&self, app_type: &str, provider: &Provider) -> Result<(), AppError> {
-        let mut conn = lock_conn!(self.conn);
-        let tx = conn
-            .transaction()
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        let mut meta_clone = provider.meta.clone().unwrap_or_default();
-        let endpoints = std::mem::take(&mut meta_clone.custom_endpoints);
-
-        let existing: Option<(bool, bool)> = tx
+    pub fn get_provider_aggregate(
+        &self,
+        app_type: &str,
+        id: &str,
+    ) -> Result<Option<ProviderAggregate>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let row = conn
             .query_row(
-                "SELECT is_current, in_failover_queue FROM providers WHERE id = ?1 AND app_type = ?2",
-                params![provider.id, app_type],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                &format!("{PROVIDER_SELECT} WHERE id = ?1 AND app_type = ?2"),
+                params![id, app_type],
+                StoredProviderRow::from_row,
             )
-            .ok();
-
-        let is_update = existing.is_some();
-        let (is_current, in_failover_queue) =
-            existing.unwrap_or((false, provider.in_failover_queue));
-
-        if is_update {
-            tx.execute(
-                "UPDATE providers SET
-                    name = ?1,
-                    settings_config = ?2,
-                    website_url = ?3,
-                    category = ?4,
-                    created_at = ?5,
-                    sort_index = ?6,
-                    notes = ?7,
-                    icon = ?8,
-                    icon_color = ?9,
-                    meta = ?10,
-                    is_current = ?11,
-                    in_failover_queue = ?12
-                WHERE id = ?13 AND app_type = ?14",
-                params![
-                    provider.name,
-                    serde_json::to_string(&provider.settings_config).map_err(|e| {
-                        AppError::Database(format!("Failed to serialize settings_config: {e}"))
-                    })?,
-                    provider.website_url,
-                    provider.category,
-                    provider.created_at,
-                    provider.sort_index,
-                    provider.notes,
-                    provider.icon,
-                    provider.icon_color,
-                    serde_json::to_string(&meta_clone).map_err(|e| AppError::Database(format!(
-                        "Failed to serialize meta: {e}"
-                    )))?,
-                    is_current,
-                    in_failover_queue,
-                    provider.id,
-                    app_type,
-                ],
-            )
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        } else {
-            tx.execute(
-                "INSERT INTO providers (
-                    id, app_type, name, settings_config, website_url, category,
-                    created_at, sort_index, notes, icon, icon_color, meta, is_current, in_failover_queue
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-                params![
-                    provider.id,
-                    app_type,
-                    provider.name,
-                    serde_json::to_string(&provider.settings_config)
-                        .map_err(|e| AppError::Database(format!("Failed to serialize settings_config: {e}")))?,
-                    provider.website_url,
-                    provider.category,
-                    provider.created_at,
-                    provider.sort_index,
-                    provider.notes,
-                    provider.icon,
-                    provider.icon_color,
-                    serde_json::to_string(&meta_clone)
-                        .map_err(|e| AppError::Database(format!("Failed to serialize meta: {e}")))?,
-                    is_current,
-                    in_failover_queue,
-                ],
-            )
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-            for (url, endpoint) in endpoints {
-                tx.execute(
-                    "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at)
-                     VALUES (?1, ?2, ?3, ?4)",
-                    params![provider.id, app_type, url, endpoint.added_at],
-                )
-                .map_err(|e| AppError::Database(e.to_string()))?;
-            }
-        }
-
-        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(())
+            .optional()
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let provider = row.decode(app_type)?;
+        let mut endpoints = load_endpoints(&conn, app_type, Some(id))?;
+        Ok(Some(ProviderAggregate {
+            provider,
+            endpoints: endpoints.remove(id).unwrap_or_default(),
+        }))
     }
 
     pub fn delete_provider(&self, app_type: &str, id: &str) -> Result<(), AppError> {
@@ -306,57 +292,6 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))?;
 
         tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(())
-    }
-
-    pub fn update_provider_settings_config(
-        &self,
-        app_type: &str,
-        provider_id: &str,
-        settings_config: &serde_json::Value,
-    ) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
-        conn.execute(
-            "UPDATE providers SET settings_config = ?1 WHERE id = ?2 AND app_type = ?3",
-            params![
-                serde_json::to_string(settings_config).map_err(|e| AppError::Database(format!(
-                    "Failed to serialize settings_config: {e}"
-                )))?,
-                provider_id,
-                app_type
-            ],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(())
-    }
-
-    pub fn add_custom_endpoint(
-        &self,
-        app_type: &str,
-        provider_id: &str,
-        url: &str,
-    ) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
-        let added_at = chrono::Utc::now().timestamp_millis();
-        conn.execute(
-            "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at) VALUES (?1, ?2, ?3, ?4)",
-            params![provider_id, app_type, url, added_at],
-        ).map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(())
-    }
-
-    pub fn remove_custom_endpoint(
-        &self,
-        app_type: &str,
-        provider_id: &str,
-        url: &str,
-    ) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
-        conn.execute(
-            "DELETE FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2 AND url = ?3",
-            params![provider_id, app_type, url],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 
@@ -443,63 +378,22 @@ impl Database {
         app_type: &str,
         category: &str,
     ) -> Result<Option<Provider>, AppError> {
-        let conn = lock_conn!(self.conn);
-        let row_data: Result<OmoProviderRow, rusqlite::Error> = conn.query_row(
-            "SELECT id, name, settings_config, category, created_at, sort_index, notes, meta
-             FROM providers
-             WHERE app_type = ?1 AND category = ?2 AND is_current = 1
-             LIMIT 1",
-            params![app_type, category],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                    row.get(7)?,
-                ))
-            },
-        );
-
-        let (id, name, settings_config_str, _row_category, created_at, sort_index, notes, meta_str) =
-            match row_data {
-                Ok(v) => v,
-                Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
-                Err(e) => return Err(AppError::Database(e.to_string())),
-            };
-
-        let settings_config = serde_json::from_str(&settings_config_str).map_err(|e| {
-            AppError::Database(format!(
-                "Failed to parse {category} provider settings_config (provider_id={id}): {e}"
-            ))
-        })?;
-        let meta: crate::provider::ProviderMeta = if meta_str.trim().is_empty() {
-            crate::provider::ProviderMeta::default()
-        } else {
-            serde_json::from_str(&meta_str).map_err(|e| {
-                AppError::Database(format!(
-                    "Failed to parse {category} provider meta (provider_id={id}): {e}"
-                ))
-            })?
+        let provider_id = {
+            let conn = lock_conn!(self.conn);
+            conn.query_row(
+                "SELECT id FROM providers
+                 WHERE app_type = ?1 AND category = ?2 AND is_current = 1
+                 LIMIT 1",
+                params![app_type, category],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| AppError::Database(error.to_string()))?
         };
-
-        Ok(Some(Provider {
-            id,
-            name,
-            settings_config,
-            website_url: None,
-            category: Some(category.to_string()),
-            created_at,
-            sort_index,
-            notes,
-            meta: Some(meta),
-            icon: None,
-            icon_color: None,
-            in_failover_queue: false,
-        }))
+        provider_id
+            .map(|provider_id| self.get_provider_by_id(&provider_id, app_type))
+            .transpose()
+            .map(Option::flatten)
     }
 
     /// 判断 providers 表是否为空（全 app_type 一起算）。
@@ -593,8 +487,8 @@ impl Database {
     /// - 老用户升级：同样会触发一次（flag 不存在），追加到末尾，不影响已有排序
     /// - 用户删除 seed 后：不再重建（flag 已为 true），尊重用户意图
     ///
-    /// 与 `Database::save_provider` 的 UPSERT 语义配合，即使被意外重复调用
-    /// 也不会覆盖用户当前激活的供应商（is_current 字段会被保留）。
+    /// 每条 seed 都先读存在性，再走严格 create；并发冲突向上传播，不会覆盖
+    /// 用户已有的同名供应商或当前状态。
     pub fn init_default_official_providers(&self) -> Result<usize, AppError> {
         use crate::database::dao::providers_seed::OFFICIAL_SEEDS;
 
@@ -623,19 +517,23 @@ impl Database {
                     AppError::Database(format!("Seed JSON parse failed for {}: {e}", seed.id))
                 })?;
 
-            let mut provider = Provider::with_id(
-                seed.id.to_string(),
-                seed.name.to_string(),
-                settings_config,
-                Some(seed.website_url.to_string()),
-            );
-            provider.category = Some("official".to_string());
-            provider.icon = Some(seed.icon.to_string());
-            provider.icon_color = Some(seed.icon_color.to_string());
-            provider.sort_index = Some(next_sort_index);
-            provider.created_at = Some(now_ms);
-
-            self.save_provider(app_type_str, &provider)?;
+            self.create_provider(NewProviderAggregate::from_input(
+                app_type_str,
+                ProviderMutationInput {
+                    id: seed.id.to_string(),
+                    name: seed.name.to_string(),
+                    settings_config,
+                    website_url: Some(seed.website_url.to_string()),
+                    category: Some("official".to_string()),
+                    created_at: Some(now_ms),
+                    sort_index: Some(next_sort_index),
+                    notes: None,
+                    meta: None,
+                    icon: Some(seed.icon.to_string()),
+                    icon_color: Some(seed.icon_color.to_string()),
+                    in_failover_queue: false,
+                },
+            )?)?;
             inserted += 1;
             log::info!(
                 "✓ Seeded official provider: {} ({})",
@@ -689,19 +587,23 @@ impl Database {
         let next_sort_index = self.next_sort_index_for_app(app_type_str)?;
         let now_ms = chrono::Utc::now().timestamp_millis();
 
-        let mut provider = Provider::with_id(
-            seed.id.to_string(),
-            seed.name.to_string(),
-            settings_config,
-            Some(seed.website_url.to_string()),
-        );
-        provider.category = Some("official".to_string());
-        provider.icon = Some(seed.icon.to_string());
-        provider.icon_color = Some(seed.icon_color.to_string());
-        provider.sort_index = Some(next_sort_index);
-        provider.created_at = Some(now_ms);
-
-        self.save_provider(app_type_str, &provider)?;
+        self.create_provider(NewProviderAggregate::from_input(
+            app_type_str,
+            ProviderMutationInput {
+                id: seed.id.to_string(),
+                name: seed.name.to_string(),
+                settings_config,
+                website_url: Some(seed.website_url.to_string()),
+                category: Some("official".to_string()),
+                created_at: Some(now_ms),
+                sort_index: Some(next_sort_index),
+                notes: None,
+                meta: None,
+                icon: Some(seed.icon.to_string()),
+                icon_color: Some(seed.icon_color.to_string()),
+                in_failover_queue: false,
+            },
+        )?)?;
 
         Ok(true)
     }
@@ -751,7 +653,7 @@ mod ensure_official_seed_tests {
             .expect("query ok")
             .expect("seed present");
         renamed.name = "My Custom Backup".to_string();
-        db.save_provider(AppType::ClaudeDesktop.as_str(), &renamed)
+        db.reconcile_provider_fixture(AppType::ClaudeDesktop.as_str(), &renamed)
             .expect("save customization");
 
         let inserted = db
@@ -824,5 +726,346 @@ mod ensure_official_seed_tests {
         let result =
             db.ensure_official_seed_by_id(CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, AppType::Claude);
         assert!(result.is_err(), "(id, app_type) mismatch should be Err");
+    }
+}
+
+#[cfg(test)]
+mod aggregate_tests {
+    use crate::database::dao::provider_write;
+    use crate::database::{
+        Database, NewEndpoint, NewProviderAggregate, ProviderKey, ProviderRowUpdate,
+    };
+    use crate::error::AppError;
+    use crate::provider::{Provider, ProviderAggregate, ProviderMeta, ProviderMutationInput};
+    use crate::settings::CustomEndpoint;
+    use indexmap::IndexMap;
+    use serde_json::json;
+
+    fn aggregate() -> ProviderAggregate {
+        ProviderAggregate {
+            provider: Provider::with_id(
+                "pi-provider".into(),
+                "Pi Provider".into(),
+                json!({"models": [{"id": "m"}]}),
+                Some("https://example.test".into()),
+            ),
+            endpoints: IndexMap::from([
+                (
+                    "https://one.test".into(),
+                    CustomEndpoint {
+                        url: "https://one.test".into(),
+                        added_at: Some(10),
+                        last_used: Some(11),
+                    },
+                ),
+                (
+                    "https://two.test".into(),
+                    CustomEndpoint {
+                        url: "https://two.test".into(),
+                        added_at: Some(20),
+                        last_used: Some(21),
+                    },
+                ),
+            ]),
+        }
+    }
+
+    fn mutation_input(provider: Provider) -> ProviderMutationInput {
+        ProviderMutationInput {
+            id: provider.id,
+            name: provider.name,
+            settings_config: provider.settings_config,
+            website_url: provider.website_url,
+            category: provider.category,
+            created_at: provider.created_at,
+            sort_index: provider.sort_index,
+            notes: provider.notes,
+            meta: provider.meta,
+            icon: provider.icon,
+            icon_color: provider.icon_color,
+            in_failover_queue: provider.in_failover_queue,
+        }
+    }
+
+    fn create_aggregate(db: &Database, app_type: &str) -> Result<(), AppError> {
+        db.create_provider(NewProviderAggregate::from_input(
+            app_type,
+            mutation_input(aggregate().into_provider()),
+        )?)
+    }
+
+    #[test]
+    fn aggregate_single_and_all_hydration_match() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        create_aggregate(&db, "pi")?;
+
+        let single = db
+            .get_provider_aggregate("pi", "pi-provider")?
+            .expect("single aggregate");
+        let all = db.get_all_provider_aggregates("pi")?;
+        assert_eq!(
+            serde_json::to_value(&single).expect("serialize single"),
+            serde_json::to_value(&all["pi-provider"]).expect("serialize all")
+        );
+        assert_eq!(single.endpoints["https://one.test"].last_used, Some(11));
+        let legacy = db
+            .get_provider_by_id("pi-provider", "pi")?
+            .expect("legacy projection");
+        assert_eq!(
+            legacy
+                .meta
+                .expect("meta")
+                .custom_endpoints
+                .get("https://two.test")
+                .and_then(|endpoint| endpoint.last_used),
+            Some(21)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn strict_create_rolls_back_and_never_upserts() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let mut malformed = aggregate();
+        malformed.provider.id = "duplicate-payload".into();
+        malformed.endpoints.insert(
+            "wrong-map-key".into(),
+            CustomEndpoint {
+                url: "https://duplicate.test".into(),
+                added_at: Some(1),
+                last_used: None,
+            },
+        );
+        assert!(
+            NewProviderAggregate::from_input("pi", mutation_input(malformed.into_provider()))
+                .and_then(|input| db.create_provider(input))
+                .is_err()
+        );
+        assert!(db
+            .get_provider_aggregate("pi", "duplicate-payload")?
+            .is_none());
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute_batch(
+                "CREATE TRIGGER reject_bad_endpoint
+                 BEFORE INSERT ON provider_endpoints
+                 WHEN NEW.url = 'https://reject.test'
+                 BEGIN SELECT RAISE(ABORT, 'injected endpoint failure'); END;",
+            )?;
+        }
+        let mut rejected = aggregate();
+        rejected.provider.id = "rejected".into();
+        rejected.endpoints = IndexMap::from([(
+            "https://reject.test".into(),
+            CustomEndpoint {
+                url: "https://reject.test".into(),
+                added_at: Some(99),
+                last_used: None,
+            },
+        )]);
+        assert!(
+            NewProviderAggregate::from_input("pi", mutation_input(rejected.into_provider()))
+                .and_then(|input| db.create_provider(input))
+                .is_err()
+        );
+        assert!(db.get_provider_aggregate("pi", "rejected")?.is_none());
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute_batch("DROP TRIGGER reject_bad_endpoint;")?;
+        }
+        create_aggregate(&db, "pi")?;
+        let original = db
+            .get_provider_aggregate("pi", "pi-provider")?
+            .expect("baseline aggregate");
+        let mut conflicting = original.clone();
+        conflicting.provider.meta = Some(ProviderMeta {
+            custom_endpoints: conflicting.endpoints.clone().into_iter().collect(),
+            ..conflicting.provider.meta.clone().unwrap_or_default()
+        });
+        let mut conflicting = conflicting.into_provider();
+        conflicting.name = "Must not upsert".into();
+        assert!(
+            NewProviderAggregate::from_input("pi", mutation_input(conflicting))
+                .and_then(|input| db.create_provider(input))
+                .is_err()
+        );
+        let after = db
+            .get_provider_aggregate("pi", "pi-provider")?
+            .expect("unchanged aggregate");
+        assert_eq!(
+            serde_json::to_value(after).expect("serialize after"),
+            serde_json::to_value(original).expect("serialize original")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stale_row_update_cannot_overwrite_endpoint_mutations() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        create_aggregate(&db, "pi")?;
+        let mut stale = db
+            .get_provider_aggregate("pi", "pi-provider")?
+            .expect("stale aggregate");
+
+        let key = ProviderKey::new("pi", "pi-provider")?;
+        db.add_provider_endpoint(&key, NewEndpoint::now("https://three.test")?)?;
+        db.remove_provider_endpoint(&key, "https://one.test")?;
+        db.touch_provider_endpoint(&key, "https://two.test", 222)?;
+
+        stale.provider.name = "Row-only edit".into();
+        stale
+            .provider
+            .meta
+            .get_or_insert_with(ProviderMeta::default)
+            .custom_endpoints = stale.endpoints.clone().into_iter().collect();
+        stale
+            .provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .custom_endpoints
+            .clear();
+        db.update_provider(
+            &key,
+            &ProviderRowUpdate::from_input(&mutation_input(stale.provider))?,
+        )?;
+
+        let after = db
+            .get_provider_aggregate("pi", "pi-provider")?
+            .expect("provider after row-only update");
+        assert_eq!(after.provider.name, "Row-only edit");
+        assert_eq!(
+            after.endpoints.keys().cloned().collect::<Vec<_>>(),
+            vec!["https://two.test", "https://three.test"]
+        );
+        assert_eq!(after.endpoints["https://two.test"].last_used, Some(222));
+        assert!(matches!(
+            db.touch_provider_endpoint(&key, "https://missing.test", 1),
+            Err(AppError::NotFound(_))
+        ));
+        let stored_meta: String = {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.query_row(
+                "SELECT meta FROM providers WHERE id = 'pi-provider' AND app_type = 'pi'",
+                [],
+                |row| row.get(0),
+            )?
+        };
+        let stored_meta: ProviderMeta = serde_json::from_str(&stored_meta)
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        assert!(stored_meta.custom_endpoints.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn projection_failure_compensation_restores_exact_aggregate() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        create_aggregate(&db, "pi")?;
+        let snapshot = db
+            .get_provider_aggregate("pi", "pi-provider")?
+            .expect("rollback snapshot");
+
+        {
+            let mut conn = crate::database::lock_conn!(db.conn);
+            conn.execute_batch(
+                "CREATE TRIGGER reject_projection
+                 BEFORE INSERT ON pi_provider_projections
+                 BEGIN SELECT RAISE(ABORT, 'injected projection failure'); END;",
+            )?;
+            let tx = conn.transaction()?;
+            tx.execute(
+                "DELETE FROM provider_endpoints
+                  WHERE provider_id = 'pi-provider'
+                    AND app_type = 'pi'
+                    AND url = 'https://one.test'",
+                [],
+            )?;
+            assert!(tx
+                .execute(
+                    "INSERT INTO pi_provider_projections
+                        (provider_id, provider_key, created_at, updated_at)
+                     VALUES ('pi-provider', 'native-key', 1, 1)",
+                    [],
+                )
+                .is_err());
+            let key = ProviderKey::new("pi", "pi-provider")?;
+            let row = ProviderRowUpdate::from_input(&mutation_input(snapshot.provider.clone()))?;
+            let endpoints = snapshot
+                .endpoints
+                .values()
+                .cloned()
+                .map(NewEndpoint::try_from)
+                .collect::<Result<Vec<_>, _>>()?;
+            provider_write::restore_provider_aggregate_on_tx(
+                &tx,
+                &key,
+                &row,
+                snapshot.provider.created_at,
+                snapshot.provider.sort_index,
+                false,
+                snapshot.provider.in_failover_queue,
+                &endpoints,
+            )?;
+            tx.commit()?;
+        }
+
+        let single = db
+            .get_provider_aggregate("pi", "pi-provider")?
+            .expect("restored single aggregate");
+        let all = db.get_all_provider_aggregates("pi")?;
+        assert_eq!(
+            serde_json::to_value(&single).expect("serialize single"),
+            serde_json::to_value(&snapshot).expect("serialize snapshot")
+        );
+        assert_eq!(
+            serde_json::to_value(&all["pi-provider"]).expect("serialize all"),
+            serde_json::to_value(&snapshot).expect("serialize snapshot")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn custom_endpoint_add_is_strict_for_one_logical_url() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        create_aggregate(&db, "pi")?;
+        let key = ProviderKey::new("pi", "pi-provider")?;
+        db.add_provider_endpoint(&key, NewEndpoint::now("https://repeat.test")?)?;
+        assert!(db
+            .add_provider_endpoint(&key, NewEndpoint::now("https://repeat.test")?)
+            .is_err());
+
+        let saved = db
+            .get_provider_aggregate("pi", "pi-provider")?
+            .expect("aggregate");
+        assert_eq!(
+            saved
+                .endpoints
+                .keys()
+                .filter(|url| url.as_str() == "https://repeat.test")
+                .count(),
+            1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn aggregate_read_rejects_corrupt_json_consistently() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO providers
+                    (id, app_type, name, settings_config, meta)
+                 VALUES ('corrupt', 'pi', 'Corrupt', '{', '{}')",
+                [],
+            )?;
+        }
+        assert!(db.get_provider_aggregate("pi", "corrupt").is_err());
+        assert!(db.get_all_provider_aggregates("pi").is_err());
+        assert!(db.get_provider_by_id("corrupt", "pi").is_err());
+        assert!(db.get_all_providers("pi").is_err());
+        Ok(())
     }
 }

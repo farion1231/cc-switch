@@ -1,7 +1,31 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use cc_switch_lib::{update_settings, AppSettings, AppState, Database, MultiAppConfig};
+use cc_switch_lib::{
+    update_settings, AppSettings, AppState, Database, MultiAppConfig, Provider,
+    ProviderMutationInput,
+};
+
+/// Build the public write DTO explicitly for integration tests. Keeping this
+/// conversion test-only avoids reintroducing a production `From<Provider>`
+/// path from hydrated read projections to provider mutations.
+#[allow(dead_code)]
+pub fn new_provider_input(provider: Provider) -> ProviderMutationInput {
+    ProviderMutationInput {
+        id: provider.id,
+        name: provider.name,
+        settings_config: provider.settings_config,
+        website_url: provider.website_url,
+        category: provider.category,
+        created_at: provider.created_at,
+        sort_index: provider.sort_index,
+        notes: provider.notes,
+        meta: provider.meta,
+        icon: provider.icon,
+        icon_color: provider.icon_color,
+        in_failover_queue: provider.in_failover_queue,
+    }
+}
 
 /// 为测试设置隔离的 HOME 目录，避免污染真实用户数据。
 pub fn ensure_test_home() -> &'static Path {

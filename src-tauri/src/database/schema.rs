@@ -53,7 +53,10 @@ impl Database {
                 app_type TEXT NOT NULL,
                 url TEXT NOT NULL,
                 added_at INTEGER,
-                FOREIGN KEY (provider_id, app_type) REFERENCES providers(id, app_type) ON DELETE CASCADE
+                last_used INTEGER,
+                FOREIGN KEY (provider_id, app_type)
+                    REFERENCES providers(id, app_type) ON DELETE CASCADE,
+                UNIQUE (provider_id, app_type, url)
             )",
             [],
         )
@@ -97,10 +100,41 @@ impl Database {
             enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_pi BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0
         )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // Reserve the v17 device-local ledgers here so later stacked features
+        // never mutate the semantics of an already-published migration.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS pi_provider_projections (
+                provider_id TEXT PRIMARY KEY,
+                provider_key TEXT NOT NULL UNIQUE,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS skill_deployments (
+                app_type TEXT NOT NULL CHECK (app_type = 'pi'),
+                skill_id TEXT NOT NULL,
+                destination TEXT NOT NULL,
+                destination_key TEXT NOT NULL,
+                method TEXT NOT NULL CHECK (method IN ('symlink', 'copy')),
+                source_identity TEXT NOT NULL,
+                deployed_digest TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (app_type, skill_id, destination_key),
+                UNIQUE (app_type, destination_key)
+            )",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -510,6 +544,13 @@ impl Database {
                         log::info!("迁移数据库从 v15 到 v16（重建 Codex 会话用量）");
                         Self::migrate_v15_to_v16(conn)?;
                         Self::set_user_version(conn, 16)?;
+                    }
+                    16 => {
+                        log::info!(
+                            "迁移数据库从 v16 到 v17（规范化 provider endpoint 并预留设备本地 ledger）"
+                        );
+                        Self::migrate_v16_to_v17(conn)?;
+                        Self::set_user_version(conn, 17)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1521,6 +1562,112 @@ impl Database {
     fn migrate_v15_to_v16(conn: &Connection) -> Result<(), AppError> {
         let codex_dir = crate::codex_config::get_codex_config_dir();
         crate::services::session_usage_codex::reset_codex_usage_on_conn(conn, &codex_dir)
+    }
+
+    /// v16 -> v17: make endpoint rows a lossless, uniquely owned child
+    /// collection. The device-local ledger DDL is reserved in the same
+    /// migration because later stacked PRs must not rewrite a released
+    /// user_version step.
+    fn migrate_v16_to_v17(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "provider_endpoints")? {
+            Self::add_column_if_missing(conn, "provider_endpoints", "last_used", "INTEGER")?;
+            conn.execute_batch(
+                "UPDATE provider_endpoints AS kept
+                    SET added_at = (
+                            SELECT MIN(other.added_at)
+                            FROM provider_endpoints AS other
+                            WHERE other.provider_id = kept.provider_id
+                              AND other.app_type = kept.app_type
+                              AND other.url = kept.url
+                        ),
+                        last_used = (
+                            SELECT MAX(other.last_used)
+                            FROM provider_endpoints AS other
+                            WHERE other.provider_id = kept.provider_id
+                              AND other.app_type = kept.app_type
+                              AND other.url = kept.url
+                        )
+                  WHERE kept.id = (
+                            SELECT MIN(other.id)
+                            FROM provider_endpoints AS other
+                            WHERE other.provider_id = kept.provider_id
+                              AND other.app_type = kept.app_type
+                              AND other.url = kept.url
+                        );
+                 DELETE FROM provider_endpoints
+                  WHERE id NOT IN (
+                        SELECT MIN(id)
+                        FROM provider_endpoints
+                        GROUP BY provider_id, app_type, url
+                  );
+                 DROP TABLE IF EXISTS provider_endpoints_v17_canonical;
+                 CREATE TABLE provider_endpoints_v17_canonical (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provider_id TEXT NOT NULL,
+                    app_type TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    added_at INTEGER,
+                    last_used INTEGER,
+                    FOREIGN KEY (provider_id, app_type)
+                        REFERENCES providers(id, app_type) ON DELETE CASCADE,
+                    UNIQUE (provider_id, app_type, url)
+                 );
+                 INSERT INTO provider_endpoints_v17_canonical
+                    (id, provider_id, app_type, url, added_at, last_used)
+                 SELECT id, provider_id, app_type, url, added_at, last_used
+                 FROM provider_endpoints;
+                 DROP TABLE provider_endpoints;
+                 ALTER TABLE provider_endpoints_v17_canonical
+                    RENAME TO provider_endpoints;",
+            )
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        } else {
+            conn.execute(
+                "CREATE TABLE provider_endpoints (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provider_id TEXT NOT NULL,
+                    app_type TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    added_at INTEGER,
+                    last_used INTEGER,
+                    FOREIGN KEY (provider_id, app_type)
+                        REFERENCES providers(id, app_type) ON DELETE CASCADE,
+                    UNIQUE (provider_id, app_type, url)
+                )",
+                [],
+            )
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        }
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "enabled_pi",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS pi_provider_projections (
+                provider_id TEXT PRIMARY KEY,
+                provider_key TEXT NOT NULL UNIQUE,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS skill_deployments (
+                app_type TEXT NOT NULL CHECK (app_type = 'pi'),
+                skill_id TEXT NOT NULL,
+                destination TEXT NOT NULL,
+                destination_key TEXT NOT NULL,
+                method TEXT NOT NULL CHECK (method IN ('symlink', 'copy')),
+                source_identity TEXT NOT NULL,
+                deployed_digest TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (app_type, skill_id, destination_key),
+                UNIQUE (app_type, destination_key)
+             );",
+        )
+        .map_err(|error| AppError::Database(error.to_string()))
     }
 
     /// 插入默认模型定价数据
@@ -3222,7 +3369,7 @@ mod tests {
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
-        assert_eq!(Database::get_user_version(&conn)?, 16);
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         let counts: (i64, i64, i64, i64) = conn.query_row(
             "SELECT
                 (SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'),
@@ -3233,6 +3380,69 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
         assert_eq!(counts, (0, 1, 0, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v16_to_v17_preserves_endpoint_metadata_and_starts_ledgers_empty(
+    ) -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE providers (
+                id TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                PRIMARY KEY (id, app_type)
+             );
+             CREATE TABLE provider_endpoints (
+                id INTEGER PRIMARY KEY,
+                provider_id TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                url TEXT NOT NULL,
+                added_at INTEGER
+             );
+             CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                enabled_codex BOOLEAN NOT NULL DEFAULT 0
+             );
+             INSERT INTO providers (id, app_type) VALUES ('provider', 'pi');
+             INSERT INTO provider_endpoints
+                (id, provider_id, app_type, url, added_at)
+             VALUES
+                (1, 'provider', 'pi', 'https://duplicate.test', 20),
+                (2, 'provider', 'pi', 'https://duplicate.test', 10);
+             INSERT INTO skills (id, enabled_codex) VALUES ('existing', 1);",
+        )?;
+        Database::set_user_version(&conn, 16)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::has_column(
+            &conn,
+            "provider_endpoints",
+            "last_used"
+        )?);
+        assert!(Database::has_column(&conn, "skills", "enabled_pi")?);
+        assert!(Database::table_exists(&conn, "pi_provider_projections")?);
+        assert!(Database::table_exists(&conn, "skill_deployments")?);
+        let endpoint: (i64, Option<i64>) = conn.query_row(
+            "SELECT COUNT(*), MIN(added_at)
+             FROM provider_endpoints
+             WHERE provider_id = 'provider'
+               AND app_type = 'pi'
+               AND url = 'https://duplicate.test'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(endpoint, (1, Some(10)));
+        let ledgers: (i64, i64) = conn.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM pi_provider_projections),
+                (SELECT COUNT(*) FROM skill_deployments)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(ledgers, (0, 0));
         Ok(())
     }
 }

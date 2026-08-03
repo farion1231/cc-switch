@@ -10,7 +10,9 @@ use crate::proxy::server::ProxyServer;
 use crate::proxy::switch_lock::SwitchLockManager;
 use crate::proxy::types::*;
 use crate::services::provider::{
-    build_effective_settings_with_common_config, write_live_with_common_config,
+    build_effective_settings_with_common_config, provider_row_fingerprint,
+    provider_to_mutation_input, reconcile_provider_record_with_precondition,
+    write_live_with_common_config, ReconcilePrecondition,
 };
 use serde_json::{json, Map, Value};
 use std::str::FromStr;
@@ -980,6 +982,27 @@ impl ProxyService {
             .await
     }
 
+    fn persist_synced_live_token(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        observed_fingerprint: String,
+        mut provider: Provider,
+    ) -> Result<(), String> {
+        if let Some(meta) = provider.meta.as_mut() {
+            meta.custom_endpoints.clear();
+        }
+        reconcile_provider_record_with_precondition(
+            self.db.as_ref(),
+            app_type,
+            provider_to_mutation_input(provider),
+            ReconcilePrecondition::ExpectPresent {
+                fingerprint: observed_fingerprint,
+            },
+        )
+        .map_err(|error| format!("同步 {app_type}/{provider_id} Live Token 到数据库失败: {error}"))
+    }
+
     async fn sync_live_config_to_provider(
         &self,
         app_type: &AppType,
@@ -992,91 +1015,89 @@ impl ProxyService {
                         .map_err(|e| format!("获取 Claude 当前供应商失败: {e}"))?;
 
                 if let Some(provider_id) = provider_id {
-                    if let Ok(Some(mut provider)) =
-                        self.db.get_provider_by_id(&provider_id, "claude")
-                    {
-                        if let Some(env) = live_config.get("env").and_then(|v| v.as_object()) {
-                            let token_pair = [
-                                "ANTHROPIC_AUTH_TOKEN",
-                                "ANTHROPIC_API_KEY",
-                                "OPENROUTER_API_KEY",
-                                "OPENAI_API_KEY",
-                            ]
-                            .into_iter()
-                            .find_map(|key| {
-                                env.get(key)
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| (key, s.trim()))
-                            })
-                            .filter(|(_, token)| {
-                                !token.is_empty() && *token != PROXY_TOKEN_PLACEHOLDER
-                            });
+                    let Some(mut provider) = self
+                        .db
+                        .get_provider_by_id(&provider_id, "claude")
+                        .map_err(|error| {
+                            format!("读取 Claude 供应商 '{provider_id}' 失败: {error}")
+                        })?
+                    else {
+                        return Err(format!("Claude 当前供应商不存在: {provider_id}"));
+                    };
+                    let observed_fingerprint = provider_row_fingerprint(&provider);
+                    if let Some(env) = live_config.get("env").and_then(|v| v.as_object()) {
+                        let token_pair = [
+                            "ANTHROPIC_AUTH_TOKEN",
+                            "ANTHROPIC_API_KEY",
+                            "OPENROUTER_API_KEY",
+                            "OPENAI_API_KEY",
+                        ]
+                        .into_iter()
+                        .find_map(|key| {
+                            env.get(key)
+                                .and_then(|v| v.as_str())
+                                .map(|s| (key, s.trim()))
+                        })
+                        .filter(|(_, token)| {
+                            !token.is_empty() && *token != PROXY_TOKEN_PLACEHOLDER
+                        });
 
-                            if let Some((token_key, token)) = token_pair {
-                                let env_obj = provider
-                                    .settings_config
-                                    .get_mut("env")
-                                    .and_then(|v| v.as_object_mut());
+                        if let Some((token_key, token)) = token_pair {
+                            let env_obj = provider
+                                .settings_config
+                                .get_mut("env")
+                                .and_then(|v| v.as_object_mut());
 
-                                match env_obj {
-                                    Some(obj) => {
-                                        if token_key == "ANTHROPIC_AUTH_TOKEN"
-                                            || token_key == "ANTHROPIC_API_KEY"
-                                        {
-                                            let mut updated = false;
-                                            if obj.contains_key("ANTHROPIC_AUTH_TOKEN") {
-                                                obj.insert(
-                                                    "ANTHROPIC_AUTH_TOKEN".to_string(),
-                                                    json!(token),
-                                                );
-                                                updated = true;
-                                            }
-                                            if obj.contains_key("ANTHROPIC_API_KEY") {
-                                                obj.insert(
-                                                    "ANTHROPIC_API_KEY".to_string(),
-                                                    json!(token),
-                                                );
-                                                updated = true;
-                                            }
-                                            if !updated {
-                                                obj.insert(token_key.to_string(), json!(token));
-                                            }
-                                        } else {
+                            match env_obj {
+                                Some(obj) => {
+                                    if token_key == "ANTHROPIC_AUTH_TOKEN"
+                                        || token_key == "ANTHROPIC_API_KEY"
+                                    {
+                                        let mut updated = false;
+                                        if obj.contains_key("ANTHROPIC_AUTH_TOKEN") {
+                                            obj.insert(
+                                                "ANTHROPIC_AUTH_TOKEN".to_string(),
+                                                json!(token),
+                                            );
+                                            updated = true;
+                                        }
+                                        if obj.contains_key("ANTHROPIC_API_KEY") {
+                                            obj.insert(
+                                                "ANTHROPIC_API_KEY".to_string(),
+                                                json!(token),
+                                            );
+                                            updated = true;
+                                        }
+                                        if !updated {
                                             obj.insert(token_key.to_string(), json!(token));
                                         }
+                                    } else {
+                                        obj.insert(token_key.to_string(), json!(token));
                                     }
-                                    None => {
-                                        // 至少写入一份可用的 Token
-                                        if provider.settings_config.is_null() {
-                                            provider.settings_config = json!({});
-                                        }
+                                }
+                                None => {
+                                    // 至少写入一份可用的 Token
+                                    if provider.settings_config.is_null() {
+                                        provider.settings_config = json!({});
+                                    }
 
-                                        if let Some(root) = provider.settings_config.as_object_mut()
-                                        {
-                                            root.insert(
-                                                "env".to_string(),
-                                                json!({ token_key: token }),
-                                            );
-                                        } else {
-                                            log::warn!(
+                                    if let Some(root) = provider.settings_config.as_object_mut() {
+                                        root.insert("env".to_string(), json!({ token_key: token }));
+                                    } else {
+                                        log::warn!(
                                                 "Claude provider settings_config 格式异常（非对象），跳过写入 Token (provider: {provider_id})"
                                             );
-                                        }
                                     }
                                 }
-
-                                if let Err(e) = self.db.update_provider_settings_config(
-                                    "claude",
-                                    &provider_id,
-                                    &provider.settings_config,
-                                ) {
-                                    log::warn!("同步 Claude Token 到数据库失败: {e}");
-                                } else {
-                                    log::info!(
-                                        "已同步 Claude Token 到数据库 (provider: {provider_id})"
-                                    );
-                                }
                             }
+
+                            self.persist_synced_live_token(
+                                "claude",
+                                &provider_id,
+                                observed_fingerprint,
+                                provider,
+                            )?;
+                            log::info!("已同步 Claude Token 到数据库 (provider: {provider_id})");
                         }
                     }
                 }
@@ -1087,55 +1108,56 @@ impl ProxyService {
                         .map_err(|e| format!("获取 Codex 当前供应商失败: {e}"))?;
 
                 if let Some(provider_id) = provider_id {
-                    if let Ok(Some(mut provider)) =
-                        self.db.get_provider_by_id(&provider_id, "codex")
+                    let Some(mut provider) = self
+                        .db
+                        .get_provider_by_id(&provider_id, "codex")
+                        .map_err(|error| {
+                            format!("读取 Codex 供应商 '{provider_id}' 失败: {error}")
+                        })?
+                    else {
+                        return Err(format!("Codex 当前供应商不存在: {provider_id}"));
+                    };
+                    let observed_fingerprint = provider_row_fingerprint(&provider);
+                    // The built-in official row is a routing capability, not
+                    // a credential store. Its auth must remain empty even
+                    // when the live Codex login uses OPENAI_API_KEY mode.
+                    if crate::proxy::providers::is_codex_official_provider(&provider) {
+                        return Ok(());
+                    }
+                    if let Some(token) = live_config
+                        .get("auth")
+                        .and_then(|v| v.get("OPENAI_API_KEY"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty() && *s != PROXY_TOKEN_PLACEHOLDER)
                     {
-                        // The built-in official row is a routing capability, not
-                        // a credential store. Its auth must remain empty even
-                        // when the live Codex login uses OPENAI_API_KEY mode.
-                        if crate::proxy::providers::is_codex_official_provider(&provider) {
-                            return Ok(());
-                        }
-                        if let Some(token) = live_config
-                            .get("auth")
-                            .and_then(|v| v.get("OPENAI_API_KEY"))
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.trim())
-                            .filter(|s| !s.is_empty() && *s != PROXY_TOKEN_PLACEHOLDER)
+                        if let Some(auth_obj) = provider
+                            .settings_config
+                            .get_mut("auth")
+                            .and_then(|v| v.as_object_mut())
                         {
-                            if let Some(auth_obj) = provider
-                                .settings_config
-                                .get_mut("auth")
-                                .and_then(|v| v.as_object_mut())
-                            {
-                                auth_obj.insert("OPENAI_API_KEY".to_string(), json!(token));
-                            } else {
-                                if provider.settings_config.is_null() {
-                                    provider.settings_config = json!({});
-                                }
+                            auth_obj.insert("OPENAI_API_KEY".to_string(), json!(token));
+                        } else {
+                            if provider.settings_config.is_null() {
+                                provider.settings_config = json!({});
+                            }
 
-                                if let Some(root) = provider.settings_config.as_object_mut() {
-                                    root.insert(
-                                        "auth".to_string(),
-                                        json!({ "OPENAI_API_KEY": token }),
-                                    );
-                                } else {
-                                    log::warn!(
+                            if let Some(root) = provider.settings_config.as_object_mut() {
+                                root.insert("auth".to_string(), json!({ "OPENAI_API_KEY": token }));
+                            } else {
+                                log::warn!(
                                         "Codex provider settings_config 格式异常（非对象），跳过写入 Token (provider: {provider_id})"
                                     );
-                                }
-                            }
-
-                            if let Err(e) = self.db.update_provider_settings_config(
-                                "codex",
-                                &provider_id,
-                                &provider.settings_config,
-                            ) {
-                                log::warn!("同步 Codex Token 到数据库失败: {e}");
-                            } else {
-                                log::info!("已同步 Codex Token 到数据库 (provider: {provider_id})");
                             }
                         }
+
+                        self.persist_synced_live_token(
+                            "codex",
+                            &provider_id,
+                            observed_fingerprint,
+                            provider,
+                        )?;
+                        log::info!("已同步 Codex Token 到数据库 (provider: {provider_id})");
                     }
                 }
             }
@@ -1145,51 +1167,50 @@ impl ProxyService {
                         .map_err(|e| format!("获取 Gemini 当前供应商失败: {e}"))?;
 
                 if let Some(provider_id) = provider_id {
-                    if let Ok(Some(mut provider)) =
-                        self.db.get_provider_by_id(&provider_id, "gemini")
+                    let Some(mut provider) = self
+                        .db
+                        .get_provider_by_id(&provider_id, "gemini")
+                        .map_err(|error| {
+                            format!("读取 Gemini 供应商 '{provider_id}' 失败: {error}")
+                        })?
+                    else {
+                        return Err(format!("Gemini 当前供应商不存在: {provider_id}"));
+                    };
+                    let observed_fingerprint = provider_row_fingerprint(&provider);
+                    if let Some(token) = live_config
+                        .get("env")
+                        .and_then(|v| v.get("GEMINI_API_KEY"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty() && *s != PROXY_TOKEN_PLACEHOLDER)
                     {
-                        if let Some(token) = live_config
-                            .get("env")
-                            .and_then(|v| v.get("GEMINI_API_KEY"))
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.trim())
-                            .filter(|s| !s.is_empty() && *s != PROXY_TOKEN_PLACEHOLDER)
+                        if let Some(env_obj) = provider
+                            .settings_config
+                            .get_mut("env")
+                            .and_then(|v| v.as_object_mut())
                         {
-                            if let Some(env_obj) = provider
-                                .settings_config
-                                .get_mut("env")
-                                .and_then(|v| v.as_object_mut())
-                            {
-                                env_obj.insert("GEMINI_API_KEY".to_string(), json!(token));
-                            } else {
-                                if provider.settings_config.is_null() {
-                                    provider.settings_config = json!({});
-                                }
+                            env_obj.insert("GEMINI_API_KEY".to_string(), json!(token));
+                        } else {
+                            if provider.settings_config.is_null() {
+                                provider.settings_config = json!({});
+                            }
 
-                                if let Some(root) = provider.settings_config.as_object_mut() {
-                                    root.insert(
-                                        "env".to_string(),
-                                        json!({ "GEMINI_API_KEY": token }),
-                                    );
-                                } else {
-                                    log::warn!(
+                            if let Some(root) = provider.settings_config.as_object_mut() {
+                                root.insert("env".to_string(), json!({ "GEMINI_API_KEY": token }));
+                            } else {
+                                log::warn!(
                                         "Gemini provider settings_config 格式异常（非对象），跳过写入 Token (provider: {provider_id})"
                                     );
-                                }
-                            }
-
-                            if let Err(e) = self.db.update_provider_settings_config(
-                                "gemini",
-                                &provider_id,
-                                &provider.settings_config,
-                            ) {
-                                log::warn!("同步 Gemini Token 到数据库失败: {e}");
-                            } else {
-                                log::info!(
-                                    "已同步 Gemini Token 到数据库 (provider: {provider_id})"
-                                );
                             }
                         }
+
+                        self.persist_synced_live_token(
+                            "gemini",
+                            &provider_id,
+                            observed_fingerprint,
+                            provider,
+                        )?;
+                        log::info!("已同步 Gemini Token 到数据库 (provider: {provider_id})");
                     }
                 }
             }
@@ -1199,38 +1220,41 @@ impl ProxyService {
                         .map_err(|e| format!("获取 Grok Build 当前供应商失败: {e}"))?;
 
                 if let Some(provider_id) = provider_id {
-                    if let Ok(Some(mut provider)) =
-                        self.db.get_provider_by_id(&provider_id, "grokbuild")
+                    let Some(mut provider) = self
+                        .db
+                        .get_provider_by_id(&provider_id, "grokbuild")
+                        .map_err(|error| {
+                            format!("读取 Grok Build 供应商 '{provider_id}' 失败: {error}")
+                        })?
+                    else {
+                        return Err(format!("Grok Build 当前供应商不存在: {provider_id}"));
+                    };
+                    let observed_fingerprint = provider_row_fingerprint(&provider);
+                    let live_config_toml = live_config
+                        .get("config")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    if let Some(token) =
+                        crate::grok_config::extract_inline_api_key(live_config_toml)
                     {
-                        let live_config_toml = live_config
-                            .get("config")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default();
-                        if let Some(token) =
-                            crate::grok_config::extract_inline_api_key(live_config_toml)
-                        {
-                            if !token.is_empty() && token != PROXY_TOKEN_PLACEHOLDER {
-                                if let Some(provider_config) = provider
-                                    .settings_config
-                                    .get("config")
-                                    .and_then(Value::as_str)
-                                {
-                                    let updated =
-                                        crate::grok_config::update_api_key(provider_config, &token)
-                                            .map_err(|e| {
-                                                format!("更新 Grok Build API Key 失败: {e}")
-                                            })?;
-                                    provider.settings_config["config"] = json!(updated);
-                                    self.db
-                                        .update_provider_settings_config(
-                                            "grokbuild",
-                                            &provider_id,
-                                            &provider.settings_config,
-                                        )
+                        if !token.is_empty() && token != PROXY_TOKEN_PLACEHOLDER {
+                            if let Some(provider_config) = provider
+                                .settings_config
+                                .get("config")
+                                .and_then(Value::as_str)
+                            {
+                                let updated =
+                                    crate::grok_config::update_api_key(provider_config, &token)
                                         .map_err(|e| {
-                                            format!("同步 Grok Build Token 到数据库失败: {e}")
+                                            format!("更新 Grok Build API Key 失败: {e}")
                                         })?;
-                                }
+                                provider.settings_config["config"] = json!(updated);
+                                self.persist_synced_live_token(
+                                    "grokbuild",
+                                    &provider_id,
+                                    observed_fingerprint,
+                                    provider,
+                                )?;
                             }
                         }
                     }
@@ -3813,7 +3837,7 @@ mod tests {
             }),
             None,
         );
-        db.save_provider("claude", &provider)
+        db.reconcile_provider_fixture("claude", &provider)
             .expect("save provider");
         db.set_current_provider("claude", "p1")
             .expect("set db current provider");
@@ -3999,7 +4023,7 @@ wire_api = "responses"
             None,
         );
         provider.category = Some("cn_official".to_string());
-        db.save_provider("codex", &provider)
+        db.reconcile_provider_fixture("codex", &provider)
             .expect("save DeepSeek provider");
         db.set_current_provider("codex", "deepseek")
             .expect("set current provider");
@@ -4085,7 +4109,7 @@ wire_api = "responses"
             None,
         );
         provider.category = Some("official".to_string());
-        db.save_provider("codex", &provider)
+        db.reconcile_provider_fixture("codex", &provider)
             .expect("save misclassified DeepSeek provider");
         db.set_current_provider("codex", "deepseek")
             .expect("set current provider");
@@ -4146,7 +4170,7 @@ wire_api = "responses"
             None,
         );
         official.category = Some("official".to_string());
-        db.save_provider("codex", &official)
+        db.reconcile_provider_fixture("codex", &official)
             .expect("save official provider");
 
         let mut third_party = Provider::with_id(
@@ -4165,7 +4189,7 @@ wire_api = "responses"
             None,
         );
         third_party.category = Some("custom".to_string());
-        db.save_provider("codex", &third_party)
+        db.reconcile_provider_fixture("codex", &third_party)
             .expect("save third-party provider");
         db.set_current_provider("codex", "codex-official")
             .expect("set current provider");
@@ -4314,7 +4338,8 @@ wire_api = "responses"
             None,
         );
         official.category = Some("official".to_string());
-        db.save_provider("codex", &official).expect("save official");
+        db.reconcile_provider_fixture("codex", &official)
+            .expect("save official");
         db.set_current_provider("codex", crate::database::CODEX_OFFICIAL_PROVIDER_ID)
             .expect("set current");
         crate::settings::set_current_provider(
@@ -4392,7 +4417,7 @@ wire_api = "responses"
             None,
         );
         provider.category = Some("official".to_string());
-        db.save_provider("codex", &provider)
+        db.reconcile_provider_fixture("codex", &provider)
             .expect("save misclassified DeepSeek provider");
         db.set_current_provider("codex", "deepseek")
             .expect("set current provider");
@@ -4472,7 +4497,7 @@ wire_api = "responses"
             None,
         );
         provider.category = Some("official".to_string());
-        db.save_provider("codex", &provider)
+        db.reconcile_provider_fixture("codex", &provider)
             .expect("save misclassified DeepSeek provider");
         db.set_current_provider("codex", "deepseek")
             .expect("set current provider");
@@ -4584,7 +4609,7 @@ wire_api = "responses"
             None,
         );
         provider.category = Some("official".to_string());
-        db.save_provider("codex", &provider)
+        db.reconcile_provider_fixture("codex", &provider)
             .expect("save misclassified DeepSeek provider");
         db.set_current_provider("codex", "deepseek")
             .expect("set current provider");
@@ -4702,7 +4727,7 @@ wire_api = "responses"
             None,
         );
         provider.category = Some("official".to_string());
-        db.save_provider("codex", &provider)
+        db.reconcile_provider_fixture("codex", &provider)
             .expect("save misclassified DeepSeek provider");
         db.set_current_provider("codex", "deepseek")
             .expect("set current provider");
@@ -4838,7 +4863,7 @@ wire_api = "responses"
             None,
         );
         provider.category = Some("cn_official".to_string());
-        db.save_provider("codex", &provider)
+        db.reconcile_provider_fixture("codex", &provider)
             .expect("save DeepSeek provider");
         db.set_current_provider("codex", "deepseek")
             .expect("set current provider");
@@ -5315,7 +5340,7 @@ model = "gpt-5.1-codex"
             }),
             None,
         );
-        db.save_provider("claude", &provider)
+        db.reconcile_provider_fixture("claude", &provider)
             .expect("save provider");
         db.set_current_provider("claude", "p1")
             .expect("set current provider");
@@ -5371,7 +5396,7 @@ model = "gpt-5.1-codex"
             }),
             None,
         );
-        db.save_provider("claude", &provider)
+        db.reconcile_provider_fixture("claude", &provider)
             .expect("save provider");
         db.set_current_provider("claude", "p1")
             .expect("set current provider");
@@ -5407,6 +5432,54 @@ model = "gpt-5.1-codex"
         );
     }
 
+    #[test]
+    fn synced_live_token_cannot_revert_a_concurrent_provider_edit() {
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "Original".to_string(),
+            json!({ "env": { "ANTHROPIC_AUTH_TOKEN": "stale" } }),
+            None,
+        );
+        db.reconcile_provider_fixture("claude", &provider)
+            .expect("save provider");
+
+        let observed = db
+            .get_provider_by_id("p1", "claude")
+            .expect("read observed provider")
+            .expect("provider exists");
+        let fingerprint = provider_row_fingerprint(&observed);
+        let mut token_update = observed.clone();
+        token_update.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"] = json!("from-live");
+
+        let mut concurrent_edit = observed;
+        concurrent_edit.name = "Concurrent user edit".to_string();
+        if let Some(meta) = concurrent_edit.meta.as_mut() {
+            meta.custom_endpoints.clear();
+        }
+        let input = provider_to_mutation_input(concurrent_edit);
+        let key = crate::database::ProviderKey::new("claude", "p1").expect("provider key");
+        let row = crate::database::ProviderRowUpdate::from_input(&input).expect("row update");
+        db.update_provider(&key, &row)
+            .expect("persist concurrent user edit");
+
+        let error = service
+            .persist_synced_live_token("claude", "p1", fingerprint, token_update)
+            .expect_err("stale token sync must fail closed");
+        assert!(error.contains("changed since it was read"), "{error}");
+
+        let saved = db
+            .get_provider_by_id("p1", "claude")
+            .expect("read saved provider")
+            .expect("saved provider exists");
+        assert_eq!(saved.name, "Concurrent user edit");
+        assert_eq!(
+            saved.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"],
+            json!("stale")
+        );
+    }
+
     #[tokio::test]
     #[serial]
     async fn switch_proxy_target_updates_live_backup_when_taken_over() {
@@ -5436,9 +5509,9 @@ model = "gpt-5.1-codex"
             }),
             None,
         );
-        db.save_provider("claude", &provider_a)
+        db.reconcile_provider_fixture("claude", &provider_a)
             .expect("save provider a");
-        db.save_provider("claude", &provider_b)
+        db.reconcile_provider_fixture("claude", &provider_b)
             .expect("save provider b");
         db.set_current_provider("claude", "a")
             .expect("set current provider");
@@ -5511,9 +5584,9 @@ model = "gpt-5.1-codex"
             None,
         );
 
-        db.save_provider("claude", &provider_a)
+        db.reconcile_provider_fixture("claude", &provider_a)
             .expect("save provider a");
-        db.save_provider("claude", &provider_b)
+        db.reconcile_provider_fixture("claude", &provider_b)
             .expect("save provider b");
         db.set_current_provider("claude", "a")
             .expect("set current provider");
@@ -5662,11 +5735,11 @@ model = "gpt-5.1-codex"
             None,
         );
 
-        db.save_provider("claude", &provider_a)
+        db.reconcile_provider_fixture("claude", &provider_a)
             .expect("save provider a");
-        db.save_provider("claude", &provider_b)
+        db.reconcile_provider_fixture("claude", &provider_b)
             .expect("save provider b");
-        db.save_provider("claude", &provider_c)
+        db.reconcile_provider_fixture("claude", &provider_c)
             .expect("save provider c");
         db.set_current_provider("claude", "a")
             .expect("set current provider");
@@ -5749,9 +5822,9 @@ model = "gpt-5.1-codex"
             None,
         );
 
-        db.save_provider("claude", &provider_a)
+        db.reconcile_provider_fixture("claude", &provider_a)
             .expect("save provider a");
-        db.save_provider("claude", &provider_b)
+        db.reconcile_provider_fixture("claude", &provider_b)
             .expect("save provider b");
         db.set_current_provider("claude", "a")
             .expect("set current provider");
@@ -6049,9 +6122,9 @@ requires_openai_auth = true
             None,
         );
 
-        db.save_provider("codex", &provider_a)
+        db.reconcile_provider_fixture("codex", &provider_a)
             .expect("save provider a");
-        db.save_provider("codex", &provider_b)
+        db.reconcile_provider_fixture("codex", &provider_b)
             .expect("save provider b");
         db.set_current_provider("codex", "a")
             .expect("set current provider");
@@ -6224,9 +6297,9 @@ requires_openai_auth = true
             ..Default::default()
         });
 
-        db.save_provider("codex", &provider_a)
+        db.reconcile_provider_fixture("codex", &provider_a)
             .expect("save provider a");
-        db.save_provider("codex", &provider_b)
+        db.reconcile_provider_fixture("codex", &provider_b)
             .expect("save provider b");
         db.set_current_provider("codex", "a")
             .expect("set current provider");
@@ -6468,9 +6541,9 @@ requires_openai_auth = true
             ..Default::default()
         });
 
-        db.save_provider("codex", &provider_a)
+        db.reconcile_provider_fixture("codex", &provider_a)
             .expect("save provider a");
-        db.save_provider("codex", &provider_b)
+        db.reconcile_provider_fixture("codex", &provider_b)
             .expect("save provider b");
         db.set_current_provider("codex", "a")
             .expect("set current provider a");
@@ -6604,9 +6677,9 @@ requires_openai_auth = true
             None,
         );
 
-        db.save_provider("codex", &provider_a)
+        db.reconcile_provider_fixture("codex", &provider_a)
             .expect("save provider a");
-        db.save_provider("codex", &provider_b)
+        db.reconcile_provider_fixture("codex", &provider_b)
             .expect("save provider b");
         db.set_current_provider("codex", "a")
             .expect("set current provider a");
@@ -6686,9 +6759,9 @@ requires_openai_auth = true
             }),
             None,
         );
-        db.save_provider("codex", &provider_a)
+        db.reconcile_provider_fixture("codex", &provider_a)
             .expect("save provider a");
-        db.save_provider("codex", &provider_b)
+        db.reconcile_provider_fixture("codex", &provider_b)
             .expect("save provider b");
         db.set_current_provider("codex", "a")
             .expect("set current provider a");
@@ -6970,7 +7043,7 @@ requires_openai_auth = true
             }),
             None,
         );
-        db.save_provider("claude", &provider)
+        db.reconcile_provider_fixture("claude", &provider)
             .expect("save provider");
         db.set_current_provider("claude", "p1")
             .expect("set current provider");
@@ -7224,9 +7297,9 @@ experimental_bearer_token = "PROXY_MANAGED"
             grok_provider_config("https://b.example.com/v1", "b-key"),
             None,
         );
-        db.save_provider("grokbuild", &provider_a)
+        db.reconcile_provider_fixture("grokbuild", &provider_a)
             .expect("save provider a");
-        db.save_provider("grokbuild", &provider_b)
+        db.reconcile_provider_fixture("grokbuild", &provider_b)
             .expect("save provider b");
         db.set_current_provider("grokbuild", "grok-a")
             .expect("set db current");
@@ -7291,9 +7364,9 @@ experimental_bearer_token = "PROXY_MANAGED"
             json!({ "config": "not valid toml = [" }),
             None,
         );
-        db.save_provider("grokbuild", &provider_a)
+        db.reconcile_provider_fixture("grokbuild", &provider_a)
             .expect("save provider a");
-        db.save_provider("grokbuild", &provider_b)
+        db.reconcile_provider_fixture("grokbuild", &provider_b)
             .expect("save provider b");
         db.set_current_provider("grokbuild", "grok-a")
             .expect("set db current");

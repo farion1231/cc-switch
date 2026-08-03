@@ -1537,8 +1537,16 @@ function ProviderFormFull({
       }
     }
 
-    const baseMeta: ProviderMeta | undefined =
-      payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
+    const metaSource = payload.meta ?? initialData?.meta;
+    const baseMeta: ProviderMeta | undefined = metaSource
+      ? { ...metaSource }
+      : undefined;
+    // Existing-provider edits never own endpoint membership. The backend
+    // rejects endpoint-bearing update payloads; add/remove/touch use their
+    // dedicated commands and remain safe from stale form snapshots.
+    if (isEditMode && baseMeta) {
+      delete baseMeta.custom_endpoints;
+    }
 
     // 确定 providerType（新建时从预设获取，编辑时从现有数据获取）
     const providerType = presetProviderType || initialData?.meta?.providerType;

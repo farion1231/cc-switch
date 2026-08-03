@@ -19,7 +19,10 @@ use crate::store::AppState;
 use super::gemini_auth::{
     detect_gemini_auth_type, ensure_google_oauth_security_flag, GeminiAuthType,
 };
-use super::normalize_claude_models_in_value;
+use super::{
+    normalize_claude_models_in_value, provider_row_fingerprint, provider_to_mutation_input,
+    reconcile_provider_record_with_precondition, ReconcilePrecondition,
+};
 
 /// ChatGPT Codex catalogs gpt-5.6 at a 372K context window with a ~353K
 /// effective budget (openai/codex#31860), far below the 1.05M API spec.
@@ -1279,6 +1282,12 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     // Sync providers based on mode
     for app_type in AppType::all() {
         if app_type.is_additive_mode() {
+            // Provider rename and every additive live mutation share this
+            // per-app lock.  Acquire it before reading the catalog so a key
+            // cannot be renamed after this sync captured a stale provider map.
+            let _guard = futures::executor::block_on(
+                state.proxy_service.lock_switch_for_app(app_type.as_str()),
+            );
             // Additive mode: sync ALL providers
             sync_all_providers_to_live(state, &app_type)?;
         } else {
@@ -1564,7 +1573,12 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         .to_string(),
     );
 
-    state.db.save_provider(app_type.as_str(), &provider)?;
+    reconcile_provider_record_with_precondition(
+        &state.db,
+        app_type.as_str(),
+        provider_to_mutation_input(provider.clone()),
+        ReconcilePrecondition::ExpectAbsent,
+    )?;
     state
         .db
         .set_current_provider(app_type.as_str(), &provider.id)?;
@@ -1732,15 +1746,25 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
         };
 
         if existing_ids.contains(&id) {
-            match state.db.get_provider_by_id(&id, "opencode") {
+            match state.db.get_provider_aggregate("opencode", &id) {
                 Ok(Some(existing)) => {
+                    let existing = existing.provider;
                     let display_name = config.name.clone().unwrap_or_else(|| existing.name.clone());
                     if existing.settings_config != settings_config || existing.name != display_name
                     {
+                        let fingerprint = provider_row_fingerprint(&existing);
                         let mut provider = existing;
                         provider.name = display_name;
                         provider.settings_config = settings_config;
-                        if let Err(e) = state.db.save_provider("opencode", &provider) {
+                        if let Some(meta) = provider.meta.as_mut() {
+                            meta.custom_endpoints.clear();
+                        }
+                        if let Err(e) = reconcile_provider_record_with_precondition(
+                            &state.db,
+                            "opencode",
+                            provider_to_mutation_input(provider),
+                            ReconcilePrecondition::ExpectPresent { fingerprint },
+                        ) {
                             log::warn!(
                                 "Failed to update OpenCode provider '{id}' from live config: {e}"
                             );
@@ -1767,7 +1791,12 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
         });
 
         // Save to database
-        if let Err(e) = state.db.save_provider("opencode", &provider) {
+        if let Err(e) = reconcile_provider_record_with_precondition(
+            &state.db,
+            "opencode",
+            provider_to_mutation_input(provider),
+            ReconcilePrecondition::ExpectAbsent,
+        ) {
             log::warn!("Failed to import OpenCode provider '{id}': {e}");
             continue;
         }
@@ -1817,12 +1846,22 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
         };
 
         if existing_ids.contains(&id) {
-            match state.db.get_provider_by_id(&id, "openclaw") {
+            match state.db.get_provider_aggregate("openclaw", &id) {
                 Ok(Some(existing)) => {
+                    let existing = existing.provider;
                     if existing.settings_config != settings_config {
+                        let fingerprint = provider_row_fingerprint(&existing);
                         let mut provider = existing;
                         provider.settings_config = settings_config;
-                        if let Err(e) = state.db.save_provider("openclaw", &provider) {
+                        if let Some(meta) = provider.meta.as_mut() {
+                            meta.custom_endpoints.clear();
+                        }
+                        if let Err(e) = reconcile_provider_record_with_precondition(
+                            &state.db,
+                            "openclaw",
+                            provider_to_mutation_input(provider),
+                            ReconcilePrecondition::ExpectPresent { fingerprint },
+                        ) {
                             log::warn!(
                                 "Failed to update OpenClaw provider '{id}' from live config: {e}"
                             );
@@ -1855,7 +1894,12 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
         });
 
         // Save to database
-        if let Err(e) = state.db.save_provider("openclaw", &provider) {
+        if let Err(e) = reconcile_provider_record_with_precondition(
+            &state.db,
+            "openclaw",
+            provider_to_mutation_input(provider),
+            ReconcilePrecondition::ExpectAbsent,
+        ) {
             log::warn!("Failed to import OpenClaw provider '{id}': {e}");
             continue;
         }
@@ -1892,12 +1936,22 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
         }
 
         if existing_ids.contains(&name) {
-            match state.db.get_provider_by_id(&name, "hermes") {
+            match state.db.get_provider_aggregate("hermes", &name) {
                 Ok(Some(existing)) => {
+                    let existing = existing.provider;
                     if existing.settings_config != config {
+                        let fingerprint = provider_row_fingerprint(&existing);
                         let mut provider = existing;
                         provider.settings_config = config;
-                        if let Err(e) = state.db.save_provider("hermes", &provider) {
+                        if let Some(meta) = provider.meta.as_mut() {
+                            meta.custom_endpoints.clear();
+                        }
+                        if let Err(e) = reconcile_provider_record_with_precondition(
+                            &state.db,
+                            "hermes",
+                            provider_to_mutation_input(provider),
+                            ReconcilePrecondition::ExpectPresent { fingerprint },
+                        ) {
                             log::warn!(
                                 "Failed to update Hermes provider '{name}' from live config: {e}"
                             );
@@ -1923,7 +1977,12 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
         });
 
         // Save to database
-        if let Err(e) = state.db.save_provider("hermes", &provider) {
+        if let Err(e) = reconcile_provider_record_with_precondition(
+            &state.db,
+            "hermes",
+            provider_to_mutation_input(provider),
+            ReconcilePrecondition::ExpectAbsent,
+        ) {
             log::warn!("Failed to import Hermes provider '{name}': {e}");
             continue;
         }

@@ -5,6 +5,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::app_config::AppType;
+use crate::database::{NewEndpoint, ProviderKey};
 use crate::error::AppError;
 use crate::settings::CustomEndpoint;
 use crate::store::AppState;
@@ -47,9 +48,10 @@ pub fn add_custom_endpoint(
         ));
     }
 
+    let key = ProviderKey::new(app_type.as_str(), provider_id)?;
     state
         .db
-        .add_custom_endpoint(app_type.as_str(), provider_id, &normalized)?;
+        .add_provider_endpoint(&key, NewEndpoint::now(normalized)?)?;
     Ok(())
 }
 
@@ -61,9 +63,8 @@ pub fn remove_custom_endpoint(
     url: String,
 ) -> Result<(), AppError> {
     let normalized = url.trim().trim_end_matches('/').to_string();
-    state
-        .db
-        .remove_custom_endpoint(app_type.as_str(), provider_id, &normalized)?;
+    let key = ProviderKey::new(app_type.as_str(), provider_id)?;
+    state.db.remove_provider_endpoint(&key, &normalized)?;
     Ok(())
 }
 
@@ -76,17 +77,10 @@ pub fn update_endpoint_last_used(
 ) -> Result<(), AppError> {
     let normalized = url.trim().trim_end_matches('/').to_string();
 
-    // Get provider, update last_used, save back
-    let mut providers = state.db.get_all_providers(app_type.as_str())?;
-    if let Some(provider) = providers.get_mut(provider_id) {
-        if let Some(meta) = provider.meta.as_mut() {
-            if let Some(endpoint) = meta.custom_endpoints.get_mut(&normalized) {
-                endpoint.last_used = Some(now_millis());
-                state.db.save_provider(app_type.as_str(), provider)?;
-            }
-        }
-    }
-    Ok(())
+    let key = ProviderKey::new(app_type.as_str(), provider_id)?;
+    state
+        .db
+        .touch_provider_endpoint(&key, &normalized, now_millis())
 }
 
 /// Get current timestamp in milliseconds

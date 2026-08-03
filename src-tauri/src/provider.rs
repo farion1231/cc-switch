@@ -43,6 +43,84 @@ pub struct Provider {
     pub in_failover_queue: bool,
 }
 
+/// IPC/service input for creating or editing a provider.
+///
+/// This deliberately is not the hydrated [`Provider`] read projection.  In
+/// particular, callers cannot pass a DAO aggregate back into the provider-row
+/// writer without first crossing the service boundary, where endpoint
+/// ownership is checked.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderMutationInput {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "settingsConfig")]
+    pub settings_config: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "websiteUrl")]
+    pub website_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "createdAt")]
+    pub created_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "sortIndex")]
+    pub sort_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<ProviderMeta>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "iconColor")]
+    pub icon_color: Option<String>,
+    #[serde(default)]
+    #[serde(rename = "inFailoverQueue")]
+    pub in_failover_queue: bool,
+}
+
+impl From<ProviderMutationInput> for Provider {
+    fn from(input: ProviderMutationInput) -> Self {
+        Self {
+            id: input.id,
+            name: input.name,
+            settings_config: input.settings_config,
+            website_url: input.website_url,
+            category: input.category,
+            created_at: input.created_at,
+            sort_index: input.sort_index,
+            notes: input.notes,
+            meta: input.meta,
+            icon: input.icon,
+            icon_color: input.icon_color,
+            in_failover_queue: input.in_failover_queue,
+        }
+    }
+}
+
+/// A provider row and every endpoint owned by that row.
+///
+/// SQLite stores endpoints separately from provider metadata.  This aggregate
+/// is the only lossless DAO boundary; legacy `Provider` reads are projections
+/// of it for API compatibility.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderAggregate {
+    pub provider: Provider,
+    #[serde(default)]
+    pub endpoints: IndexMap<String, crate::settings::CustomEndpoint>,
+}
+
+impl ProviderAggregate {
+    pub(crate) fn into_provider(mut self) -> Provider {
+        self.provider
+            .meta
+            .get_or_insert_with(ProviderMeta::default)
+            .custom_endpoints = self.endpoints.into_iter().collect();
+        self.provider
+    }
+}
+
 impl Provider {
     /// 从现有ID创建供应商
     pub fn with_id(
@@ -65,6 +143,72 @@ impl Provider {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    pub(crate) fn row_content_fingerprint(&self) -> String {
+        use sha2::{Digest, Sha256};
+
+        fn hash_canonical(value: &serde_json::Value, hasher: &mut Sha256) {
+            match value {
+                serde_json::Value::Null => hasher.update(b"n"),
+                serde_json::Value::Bool(value) => {
+                    hasher.update(b"b");
+                    hasher.update([*value as u8]);
+                }
+                serde_json::Value::Number(value) => {
+                    let text = value.to_string();
+                    hasher.update(b"#");
+                    hasher.update((text.len() as u64).to_le_bytes());
+                    hasher.update(text.as_bytes());
+                }
+                serde_json::Value::String(value) => {
+                    hasher.update(b"s");
+                    hasher.update((value.len() as u64).to_le_bytes());
+                    hasher.update(value.as_bytes());
+                }
+                serde_json::Value::Array(items) => {
+                    hasher.update(b"[");
+                    hasher.update((items.len() as u64).to_le_bytes());
+                    for item in items {
+                        hash_canonical(item, hasher);
+                    }
+                    hasher.update(b"]");
+                }
+                serde_json::Value::Object(map) => {
+                    hasher.update(b"{");
+                    hasher.update((map.len() as u64).to_le_bytes());
+                    let mut keys: Vec<&String> = map.keys().collect();
+                    keys.sort();
+                    for key in keys {
+                        hasher.update((key.len() as u64).to_le_bytes());
+                        hasher.update(key.as_bytes());
+                        hash_canonical(&map[key.as_str()], hasher);
+                    }
+                    hasher.update(b"}");
+                }
+            }
+        }
+
+        let mut meta = serde_json::to_value(&self.meta).unwrap_or(serde_json::Value::Null);
+        if let serde_json::Value::Object(map) = &mut meta {
+            map.remove("custom_endpoints");
+            map.remove("customEndpoints");
+        }
+        let mut hasher = Sha256::new();
+        for part in [
+            serde_json::Value::String(self.name.clone()),
+            self.settings_config.clone(),
+            serde_json::to_value(&self.website_url).unwrap_or(serde_json::Value::Null),
+            serde_json::to_value(&self.category).unwrap_or(serde_json::Value::Null),
+            serde_json::to_value(&self.notes).unwrap_or(serde_json::Value::Null),
+            serde_json::to_value(&self.icon).unwrap_or(serde_json::Value::Null),
+            serde_json::to_value(&self.icon_color).unwrap_or(serde_json::Value::Null),
+            meta,
+        ] {
+            hash_canonical(&part, &mut hasher);
+            hasher.update([0u8]);
+        }
+        format!("{:x}", hasher.finalize())
     }
 
     pub fn is_codex_oauth(&self) -> bool {

@@ -45,7 +45,10 @@ pub use codex_config::{
 pub use commands::open_provider_terminal;
 pub use commands::*;
 pub use config::{get_claude_mcp_path, get_claude_settings_path, read_json_file};
-pub use database::{Database, Profile};
+pub use database::{
+    Database, NewEndpoint, NewProviderAggregate, Profile, ProviderKey, ProviderRowUpdate,
+    RenameProvider,
+};
 pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
 pub use error::AppError;
 pub use grok_config::get_grok_config_path;
@@ -57,7 +60,7 @@ pub use mcp::{
     sync_single_server_to_gemini, sync_single_server_to_grokbuild,
 };
 pub use prompt::Prompt;
-pub use provider::{Provider, ProviderMeta};
+pub use provider::{Provider, ProviderAggregate, ProviderMeta, ProviderMutationInput};
 pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService},
     provider::reapply_current_codex_official_live,
@@ -1988,6 +1991,7 @@ fn initialize_common_config_snippets(state: &store::AppState) {
         .unwrap_or(true);
 
     if should_run_legacy_migration {
+        let mut legacy_migration_succeeded = true;
         for app_type in [
             crate::app_config::AppType::Claude,
             crate::app_config::AppType::Codex,
@@ -2001,11 +2005,14 @@ fn initialize_common_config_snippets(state: &store::AppState) {
                     "✗ Failed to migrate legacy common-config usage for {}: {e}",
                     app_type.as_str()
                 );
+                legacy_migration_succeeded = false;
             }
         }
 
-        if let Err(e) = state.db.set_legacy_common_config_migrated(true) {
-            log::warn!("✗ Failed to persist legacy common-config migration flag: {e}");
+        if legacy_migration_succeeded {
+            if let Err(e) = state.db.set_legacy_common_config_migrated(true) {
+                log::warn!("✗ Failed to persist legacy common-config migration flag: {e}");
+            }
         }
     }
 }

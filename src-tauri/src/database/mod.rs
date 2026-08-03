@@ -32,6 +32,9 @@ mod schema;
 mod tests;
 
 // DAO 类型导出供外部使用
+pub use dao::provider_write::{
+    NewEndpoint, NewProviderAggregate, ProviderKey, ProviderRowUpdate, RenameProvider,
+};
 pub(crate) use dao::providers_seed::{
     is_official_seed_id, CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, CODEX_OFFICIAL_PROVIDER_ID,
     GROKBUILD_OFFICIAL_PROVIDER_ID,
@@ -53,7 +56,7 @@ use std::sync::Mutex;
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub(crate) const SCHEMA_VERSION: i32 = 16;
+pub(crate) const SCHEMA_VERSION: i32 = 17;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {
@@ -197,6 +200,11 @@ impl Database {
             conn: Mutex::new(conn),
         };
         db.create_tables()?;
+        // Keep the test database structurally identical to a fresh production
+        // database. Marking the base DDL as current without running the
+        // migration chain creates a false-current schema and makes restore
+        // tests certify columns that do not actually exist.
+        db.apply_schema_migrations()?;
         db.ensure_model_pricing_seeded()?;
 
         Ok(db)
@@ -291,5 +299,41 @@ impl Database {
             .query_row("SELECT COUNT(*) FROM prompts", [], |row| row.get(0))
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(count == 0)
+    }
+}
+
+#[cfg(test)]
+impl Database {
+    /// Test-fixture reconciliation helper. Production code cannot call this:
+    /// provider writes there must choose a typed create or update operation.
+    pub(crate) fn reconcile_provider_fixture(
+        &self,
+        app_type: &str,
+        provider: &crate::provider::Provider,
+    ) -> Result<(), AppError> {
+        let mut input = crate::provider::ProviderMutationInput {
+            id: provider.id.clone(),
+            name: provider.name.clone(),
+            settings_config: provider.settings_config.clone(),
+            website_url: provider.website_url.clone(),
+            category: provider.category.clone(),
+            created_at: provider.created_at,
+            sort_index: provider.sort_index,
+            notes: provider.notes.clone(),
+            meta: provider.meta.clone(),
+            icon: provider.icon.clone(),
+            icon_color: provider.icon_color.clone(),
+            in_failover_queue: provider.in_failover_queue,
+        };
+        if self.get_provider_aggregate(app_type, &input.id)?.is_some() {
+            if let Some(meta) = input.meta.as_mut() {
+                meta.custom_endpoints.clear();
+            }
+            let key = ProviderKey::new(app_type, input.id.clone())?;
+            let row = ProviderRowUpdate::from_input(&input)?;
+            self.update_provider(&key, &row)
+        } else {
+            self.create_provider(NewProviderAggregate::from_input(app_type, input)?)
+        }
     }
 }

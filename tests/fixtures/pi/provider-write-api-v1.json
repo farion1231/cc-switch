@@ -1,0 +1,35 @@
+{
+  "manifestVersion": 1,
+  "codeAuthority": "src-tauri/src/database/dao/provider_write.rs",
+  "types": {
+    "ProviderKey": ["app_type", "id"],
+    "ProviderRowCreate": ["content", "created_at"],
+    "ProviderRowUpdate": [
+      "name",
+      "settings_config",
+      "website_url",
+      "category",
+      "notes",
+      "meta",
+      "icon",
+      "icon_color"
+    ],
+    "NewEndpoint": ["url", "added_at", "last_used"],
+    "NewProviderAggregate": [
+      "key",
+      "row",
+      "sort_index",
+      "in_failover_queue",
+      "initial_endpoints"
+    ],
+    "RenameProvider": ["source", "target_id", "row"]
+  },
+  "databaseMethods": {
+    "create_provider": ["NewProviderAggregate"],
+    "update_provider": ["ProviderKey", "ProviderRowUpdate"],
+    "rename_db_only_additive_provider": ["RenameProvider"],
+    "add_provider_endpoint": ["ProviderKey", "NewEndpoint"],
+    "remove_provider_endpoint": ["ProviderKey", "str"],
+    "touch_provider_endpoint": ["ProviderKey", "str", "i64"]
+  }
+}

@@ -7,13 +7,14 @@ use std::fs;
 use serde_json::json;
 
 use cc_switch_lib::{
-    AppType, InstalledSkill, McpServer, McpService, ProfilePayload, ProfileScope, ProfileService,
-    Prompt, PromptService, Provider, ProviderService, SkillApps, SkillService,
+    AppType, InstalledSkill, McpServer, McpService, NewProviderAggregate, ProfilePayload,
+    ProfileScope, ProfileService, Prompt, PromptService, Provider, ProviderService, SkillApps,
+    SkillService,
 };
 
 #[path = "support.rs"]
 mod support;
-use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
+use support::{create_test_state, ensure_test_home, new_provider_input, reset_test_fs, test_mutex};
 
 fn claude_provider(id: &str, token: &str) -> Provider {
     Provider::with_id(
@@ -107,34 +108,41 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
     let state = create_test_state().expect("create test state");
 
     // ---- 种子数据：2 个 Claude 供应商（p1 为当前）+ 2 个 MCP + 1 个 Skill + 2 个 Prompt ----
-    state
-        .db
-        .save_provider(AppType::Claude.as_str(), &claude_provider("p1", "key-1"))
-        .expect("save provider p1");
-    state
-        .db
-        .save_provider(AppType::Claude.as_str(), &claude_provider("p2", "key-2"))
-        .expect("save provider p2");
+    ProviderService::add(
+        &state,
+        AppType::Claude,
+        new_provider_input(claude_provider("p1", "key-1")),
+        false,
+    )
+    .expect("create provider p1");
+    ProviderService::add(
+        &state,
+        AppType::Claude,
+        new_provider_input(claude_provider("p2", "key-2")),
+        false,
+    )
+    .expect("create provider p2");
     state
         .db
         .set_current_provider(AppType::Claude.as_str(), "p1")
         .expect("set current provider p1");
 
     // Claude Desktop 只有供应商一个活跃维度（MCP/Skills/Prompt 对它不适用）
-    state
-        .db
-        .save_provider(
-            AppType::ClaudeDesktop.as_str(),
-            &desktop_provider("d1", "dk-1"),
-        )
-        .expect("save desktop provider d1");
-    state
-        .db
-        .save_provider(
-            AppType::ClaudeDesktop.as_str(),
-            &desktop_provider("d2", "dk-2"),
-        )
-        .expect("save desktop provider d2");
+    for provider in [
+        desktop_provider("d1", "dk-1"),
+        desktop_provider("d2", "dk-2"),
+    ] {
+        state
+            .db
+            .create_provider(
+                NewProviderAggregate::from_input(
+                    AppType::ClaudeDesktop.as_str(),
+                    new_provider_input(provider),
+                )
+                .expect("build typed desktop create"),
+            )
+            .expect("create desktop provider");
+    }
     state
         .db
         .set_current_provider(AppType::ClaudeDesktop.as_str(), "d1")
@@ -287,10 +295,13 @@ fn shared_profile_sides_are_isolated_and_mergeable() {
     let state = create_test_state().expect("create test state");
 
     // 种子：Claude 侧有当前供应商 + 启用的 MCP
-    state
-        .db
-        .save_provider(AppType::Claude.as_str(), &claude_provider("p1", "key-1"))
-        .expect("save provider p1");
+    ProviderService::add(
+        &state,
+        AppType::Claude,
+        new_provider_input(claude_provider("p1", "key-1")),
+        false,
+    )
+    .expect("create provider p1");
     state
         .db
         .set_current_provider(AppType::Claude.as_str(), "p1")
@@ -496,14 +507,20 @@ fn switching_profile_autosaves_previous_profile_state() {
     let state = create_test_state().expect("create test state");
 
     // ---- 种子：Claude 侧两套供应商 / MCP / Prompt ----
-    state
-        .db
-        .save_provider(AppType::Claude.as_str(), &claude_provider("p1", "key-1"))
-        .expect("save provider p1");
-    state
-        .db
-        .save_provider(AppType::Claude.as_str(), &claude_provider("p2", "key-2"))
-        .expect("save provider p2");
+    ProviderService::add(
+        &state,
+        AppType::Claude,
+        new_provider_input(claude_provider("p1", "key-1")),
+        false,
+    )
+    .expect("create provider p1");
+    ProviderService::add(
+        &state,
+        AppType::Claude,
+        new_provider_input(claude_provider("p2", "key-2")),
+        false,
+    )
+    .expect("create provider p2");
     state
         .db
         .set_current_provider(AppType::Claude.as_str(), "p1")
@@ -665,17 +682,13 @@ fn profile_switch_auto_disables_takeover_before_apply() {
     // ---- 两个 Claude 供应商：custom1 与 custom2 ----
     let mut custom1 = claude_provider("custom1", "custom-key-1");
     custom1.category = Some("custom".to_string());
-    state
-        .db
-        .save_provider(AppType::Claude.as_str(), &custom1)
-        .expect("save custom1 provider");
+    ProviderService::add(&state, AppType::Claude, new_provider_input(custom1), false)
+        .expect("create custom1 provider");
 
     let mut custom2 = claude_provider("custom2", "custom-key-2");
     custom2.category = Some("custom".to_string());
-    state
-        .db
-        .save_provider(AppType::Claude.as_str(), &custom2)
-        .expect("save custom2 provider");
+    ProviderService::add(&state, AppType::Claude, new_provider_input(custom2), false)
+        .expect("create custom2 provider");
 
     // 初始状态：custom1 + 代理接管
     ProviderService::switch(&state, AppType::Claude, "custom1").expect("switch to custom1");
@@ -757,20 +770,20 @@ fn claude_desktop_profile_scope_is_independent() {
 
     let state = create_test_state().expect("create test state");
 
-    state
-        .db
-        .save_provider(
-            AppType::ClaudeDesktop.as_str(),
-            &desktop_provider("d1", "dk-1"),
-        )
-        .expect("save desktop provider d1");
-    state
-        .db
-        .save_provider(
-            AppType::ClaudeDesktop.as_str(),
-            &desktop_provider("d2", "dk-2"),
-        )
-        .expect("save desktop provider d2");
+    ProviderService::add(
+        &state,
+        AppType::ClaudeDesktop,
+        new_provider_input(desktop_provider("d1", "dk-1")),
+        false,
+    )
+    .expect("create desktop provider d1");
+    ProviderService::add(
+        &state,
+        AppType::ClaudeDesktop,
+        new_provider_input(desktop_provider("d2", "dk-2")),
+        false,
+    )
+    .expect("create desktop provider d2");
     state
         .db
         .set_current_provider(AppType::ClaudeDesktop.as_str(), "d1")

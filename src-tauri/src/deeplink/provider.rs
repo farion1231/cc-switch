@@ -109,26 +109,34 @@ pub fn import_provider_from_deeplink(
 
     let provider_id = provider.id.clone();
 
-    // Use ProviderService to add the provider
-    ProviderService::add(state, app_type.clone(), provider, true)?;
-
-    // Add extra endpoints as custom endpoints (skip first one as it's the primary)
-    for ep in all_endpoints.iter().skip(1) {
-        let normalized = ep.trim().trim_end_matches('/').to_string();
+    // All endpoints supplied by one import request belong to the same create
+    // intent. Put the non-primary endpoints into the initial aggregate so the
+    // provider row and its complete endpoint set commit atomically.
+    let initial_endpoints = &mut provider
+        .meta
+        .get_or_insert_with(ProviderMeta::default)
+        .custom_endpoints;
+    for endpoint in all_endpoints.iter().skip(1) {
+        let normalized = endpoint.trim().trim_end_matches('/').to_string();
         if !normalized.is_empty() {
-            if let Err(e) = ProviderService::add_custom_endpoint(
-                state,
-                app_type.clone(),
-                &provider_id,
+            initial_endpoints.insert(
                 normalized.clone(),
-            ) {
-                log::warn!(
-                    "Failed to add custom endpoint '{}': {e}",
-                    crate::url_for_log(&normalized)
-                );
-            }
+                crate::settings::CustomEndpoint {
+                    url: normalized,
+                    added_at: Some(timestamp),
+                    last_used: None,
+                },
+            );
         }
     }
+
+    // ProviderService owns the strict aggregate create.
+    ProviderService::add(
+        state,
+        app_type.clone(),
+        crate::services::provider::provider_to_mutation_input(provider),
+        true,
+    )?;
 
     // If enabled=true, set as current provider
     if merged_request.enabled.unwrap_or(false) {

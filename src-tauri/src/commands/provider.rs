@@ -4,8 +4,9 @@ use tauri::{Emitter, Manager, State};
 use crate::app_config::AppType;
 use crate::commands::copilot::CopilotAuthState;
 use crate::commands::xai_oauth::XaiOAuthState;
+use crate::database::NewProviderAggregate;
 use crate::error::AppError;
-use crate::provider::{ClaudeDesktopMode, Provider};
+use crate::provider::{ClaudeDesktopMode, Provider, ProviderMutationInput};
 use crate::services::{
     EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService, SwitchResult,
 };
@@ -39,7 +40,7 @@ pub fn get_current_provider(state: State<'_, AppState>, app: String) -> Result<S
 pub fn add_provider(
     state: State<'_, AppState>,
     app: String,
-    provider: Provider,
+    provider: ProviderMutationInput,
     #[allow(non_snake_case)] addToLive: Option<bool>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
@@ -51,7 +52,7 @@ pub fn add_provider(
 pub fn update_provider(
     state: State<'_, AppState>,
     app: String,
-    provider: Provider,
+    provider: ProviderMutationInput,
     #[allow(non_snake_case)] originalId: Option<String>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
@@ -250,7 +251,13 @@ pub fn import_claude_desktop_providers_from_claude(
 
         state
             .db
-            .save_provider(AppType::ClaudeDesktop.as_str(), &desktop_provider)
+            .create_provider(
+                NewProviderAggregate::from_input(
+                    AppType::ClaudeDesktop.as_str(),
+                    crate::services::provider::provider_to_mutation_input(desktop_provider),
+                )
+                .map_err(|e| e.to_string())?,
+            )
             .map_err(|e| e.to_string())?;
         imported += 1;
     }

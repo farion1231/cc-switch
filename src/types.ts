@@ -38,7 +38,7 @@ export interface AppConfig {
 // 自定义端点配置
 export interface CustomEndpoint {
   url: string;
-  addedAt: number;
+  addedAt: number | null;
   lastUsed?: number;
 }
 

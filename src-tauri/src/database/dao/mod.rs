@@ -6,6 +6,9 @@ pub mod failover;
 pub mod mcp;
 pub mod profiles;
 pub mod prompts;
+pub mod provider_write;
+#[cfg(test)]
+mod provider_write_certification;
 pub mod providers;
 pub mod providers_seed;
 pub mod proxy;

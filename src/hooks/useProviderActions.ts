@@ -30,6 +30,7 @@ import {
   supportsOfficialProxyTakeover,
 } from "@/utils/providerCapabilities";
 import { isOAuthProviderType } from "@/config/constants";
+import { toProviderUpdateInput } from "@/lib/api/providers";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -362,7 +363,10 @@ export function useProviderActions(
           },
         };
 
-        await providersApi.update(updatedProvider, activeApp);
+        await providersApi.update(
+          toProviderUpdateInput(updatedProvider),
+          activeApp,
+        );
         await queryClient.invalidateQueries({
           queryKey: ["providers", activeApp],
         });

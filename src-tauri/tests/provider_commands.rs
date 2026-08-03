@@ -12,7 +12,7 @@ mod support;
 use std::collections::HashMap;
 use support::{
     create_test_state, create_test_state_with_config, enable_codex_official_auth_preservation,
-    ensure_test_home, reset_test_fs, test_mutex,
+    ensure_test_home, new_provider_input, reset_test_fs, test_mutex,
 };
 
 fn settings_path(home: &Path) -> PathBuf {
@@ -64,18 +64,18 @@ fn grokbuild_import_and_switch_write_live_config() {
     );
 
     let next_config = grokbuild_config("Relay", "https://new.example/v1", "new-key");
-    state
-        .db
-        .save_provider(
-            AppType::GrokBuild.as_str(),
-            &Provider::with_id(
-                "relay".to_string(),
-                "Relay".to_string(),
-                json!({ "config": next_config }),
-                None,
-            ),
-        )
-        .expect("save second Grok Build provider");
+    ProviderService::add(
+        &state,
+        AppType::GrokBuild,
+        new_provider_input(Provider::with_id(
+            "relay".to_string(),
+            "Relay".to_string(),
+            json!({ "config": next_config }),
+            None,
+        )),
+        false,
+    )
+    .expect("create second Grok Build provider");
 
     switch_provider_test_hook(&state, AppType::GrokBuild, "relay")
         .expect("switch Grok Build provider");
