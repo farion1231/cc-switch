@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, Edit2, Trash2, Globe, Power, PowerOff } from "lucide-react";
+import { Plus, Edit2, Trash2, Globe, Power, PowerOff, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -10,9 +10,10 @@ import type { UpstreamRoute } from "@/types";
 interface RouteTableEditorProps {
   routes: UpstreamRoute[];
   onChange: (routes: UpstreamRoute[]) => void;
+  onSaveRoutes?: () => void;
 }
 
-export function RouteTableEditor({ routes, onChange }: RouteTableEditorProps) {
+export function RouteTableEditor({ routes, onChange, onSaveRoutes }: RouteTableEditorProps) {
   const { t } = useTranslation();
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<UpstreamRoute | null>(null);
@@ -51,18 +52,31 @@ export function RouteTableEditor({ routes, onChange }: RouteTableEditorProps) {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium">路由表</p>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-7 text-xs"
-          onClick={() => {
-            setEditing(null);
-            setFormOpen(true);
-          }}
-        >
-          <Plus className="mr-1 h-3.5 w-3.5" />
-          添加路由目标
-        </Button>
+        <div className="flex items-center gap-2">
+          {onSaveRoutes && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              onClick={onSaveRoutes}
+            >
+              <Save className="mr-1 h-3.5 w-3.5" />
+              保存路由表
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={() => {
+              setEditing(null);
+              setFormOpen(true);
+            }}
+          >
+            <Plus className="mr-1 h-3.5 w-3.5" />
+            添加路由目标
+          </Button>
+        </div>
       </div>
 
       <p className="text-xs text-muted-foreground">

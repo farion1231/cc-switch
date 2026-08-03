@@ -106,6 +106,27 @@ export function UniversalProviderPanel() {
     [editingProvider, loadProviders, t],
   );
 
+  // 保存路由表配置（仅 DB，不同步）
+  const handleSaveRoutes = useCallback(
+    async (provider: UniversalProvider) => {
+      try {
+        await universalProvidersApi.upsert(provider);
+        // 重新加载，确保下次打开编辑时显示最新数据
+        const data = await universalProvidersApi.getAll();
+        setProviders(data);
+        const updated = data[provider.id];
+        if (updated) {
+          setEditingProvider(updated);
+        }
+        toast.success("路由表已保存");
+      } catch (error) {
+        console.error("Failed to save routes:", error);
+        toast.error("保存路由表失败");
+      }
+    },
+    [],
+  );
+
   // 保存并同步供应商
   const handleSaveAndSync = useCallback(
     async (provider: UniversalProvider) => {
@@ -310,6 +331,7 @@ export function UniversalProviderPanel() {
         }}
         onSave={handleSave}
         onSaveAndSync={handleSaveAndSync}
+        onSaveRoutes={handleSaveRoutes}
         editingProvider={editingProvider}
       />
 

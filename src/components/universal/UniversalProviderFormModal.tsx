@@ -28,6 +28,7 @@ interface UniversalProviderFormModalProps {
   onClose: () => void;
   onSave: (provider: UniversalProvider) => void;
   onSaveAndSync?: (provider: UniversalProvider) => void;
+  onSaveRoutes?: (provider: UniversalProvider) => void;
   editingProvider?: UniversalProvider | null;
   initialPreset?: UniversalProviderPreset | null;
 }
@@ -37,6 +38,7 @@ export function UniversalProviderFormModal({
   onClose,
   onSave,
   onSaveAndSync,
+  onSaveRoutes,
   editingProvider,
   initialPreset,
 }: UniversalProviderFormModalProps) {
@@ -355,31 +357,29 @@ requires_openai_auth = true`;
     onClose();
   }, [pendingProvider, onSaveAndSync, onClose]);
 
+  // 保存路由表配置（仅 DB，不同步）
+  const handleSaveRoutes = useCallback(() => {
+    if (!onSaveRoutes) return;
+    const provider = buildProvider();
+    if (!provider) return;
+    onSaveRoutes(provider);
+  }, [buildProvider, onSaveRoutes]);
+
   const footer = (
     <>
       <Button variant="outline" onClick={onClose}>
         {t("common.cancel", { defaultValue: "取消" })}
       </Button>
       {isEditMode && onSaveAndSync ? (
-        <>
-          <Button
-            onClick={handleSubmit}
-            disabled={
-              !name.trim() || (!isCcSwitch && (!baseUrl.trim() || !apiKey.trim()))
-            }
-          >
-            {t("common.save", { defaultValue: "保存" })}
-          </Button>
-          <Button
-            onClick={handleSaveAndSyncClick}
-            disabled={
-              !name.trim() || (!isCcSwitch && (!baseUrl.trim() || !apiKey.trim()))
-            }
-          >
-            <RefreshCw className="mr-1.5 h-4 w-4" />
-            {t("universalProvider.saveAndSync", { defaultValue: "保存并同步" })}
-          </Button>
-        </>
+        <Button
+          onClick={handleSaveAndSyncClick}
+          disabled={
+            !name.trim() || (!isCcSwitch && (!baseUrl.trim() || !apiKey.trim()))
+          }
+        >
+          <RefreshCw className="mr-1.5 h-4 w-4" />
+          {t("universalProvider.saveAndSync", { defaultValue: "保存并同步" })}
+        </Button>
       ) : (
         <Button
           onClick={handleSubmit}
@@ -459,7 +459,11 @@ requires_openai_auth = true`;
           </div>
 
           {isCcSwitch ? (
-            <RouteTableEditor routes={routes} onChange={setRoutes} />
+            <RouteTableEditor
+              routes={routes}
+              onChange={setRoutes}
+              onSaveRoutes={handleSaveRoutes}
+            />
           ) : (
             <>
               <div className="space-y-2">
