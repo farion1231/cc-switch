@@ -100,15 +100,6 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
         ));
     }
 
-    // Guard against path traversal before any filesystem mutation:
-    // session_id must be a single safe component (no separators, not
-    // `.` or `..`) before we join it onto the jobs directory below.
-    if !is_safe_path_component(session_id) {
-        return Err(format!(
-            "Refusing to clean up jobs for unsafe session ID: {session_id}"
-        ));
-    }
-
     if let Some(stem) = path.file_stem() {
         let sibling = path.parent().unwrap_or_else(|| Path::new("")).join(stem);
         remove_path_if_exists(&sibling).map_err(|e| {
@@ -118,25 +109,6 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
             )
         })?;
     }
-
-    // Clean up Claude Code jobs directory entries associated with this
-    // session so the built-in agents panel (← key) does not show stale
-    // entries after the session has been deleted.
-    let jobs_dir = get_claude_config_dir().join("jobs");
-    let jobs_subdir = jobs_dir.join(session_id);
-    let jobs_file = jobs_dir.join(format!("{session_id}.json"));
-    remove_path_if_exists(&jobs_subdir).map_err(|e| {
-        format!(
-            "Failed to delete Claude jobs directory {}: {e}",
-            jobs_subdir.display()
-        )
-    })?;
-    remove_path_if_exists(&jobs_file).map_err(|e| {
-        format!(
-            "Failed to delete Claude jobs file {}: {e}",
-            jobs_file.display()
-        )
-    })?;
 
     std::fs::remove_file(path).map_err(|e| {
         format!(
@@ -351,21 +323,9 @@ fn remove_path_if_exists(path: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Returns true when `component` is a single safe filesystem name — no path
-/// separators, not `.` or `..`, and not empty.  Used to guard against path-
-/// traversal when joining a caller-supplied session id onto a directory.
-fn is_safe_path_component(component: &str) -> bool {
-    !component.is_empty()
-        && component != "."
-        && component != ".."
-        && !component.contains('/')
-        && !component.contains('\\')
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
     use tempfile::tempdir;
 
     #[test]
@@ -725,75 +685,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
-    fn delete_session_cleans_up_jobs_directory() {
-        let temp = tempdir().expect("tempdir");
-        let sessions_dir = temp.path().join("projects");
-        std::fs::create_dir_all(&sessions_dir).expect("create sessions dir");
-
-        // Redirect Claude config dir under temp via CC_SWITCH_TEST_HOME so
-        // that get_claude_config_dir() returns temp/.claude.
-        let original = std::env::var_os("CC_SWITCH_TEST_HOME");
-        unsafe {
-            std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
-        }
-
-        // Lay out ~/.claude/jobs/{session_id}/ and ~/.claude/jobs/{session_id}.json
-        let jobs_dir = temp.path().join(".claude").join("jobs");
-        let jobs_subdir = jobs_dir.join("test-session-jobs");
-        std::fs::create_dir_all(&jobs_subdir).expect("create jobs subdir");
-        std::fs::write(jobs_subdir.join("state.json"), "{}").expect("write state.json");
-        let jobs_file = jobs_dir.join("test-session-jobs.json");
-        std::fs::write(&jobs_file, "{}").expect("write jobs file");
-
-        // Create session JSONL
-        let path = sessions_dir.join("test-session-jobs.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
-                "{\"sessionId\":\"test-session-jobs\",\"cwd\":\"/tmp/project\",",
-                "\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
-                "{\"message\":{\"role\":\"user\",\"content\":\"hello\"},",
-                "\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
-            ),
-        )
-        .expect("write session");
-
-        delete_session(&sessions_dir, &path, "test-session-jobs").expect("delete session");
-
-        assert!(!path.exists(), "session JSONL should be deleted");
-        assert!(!jobs_subdir.exists(), "jobs subdirectory should be deleted");
-        assert!(!jobs_file.exists(), "jobs JSON file should be deleted");
-
-        // Restore env
-        match original {
-            Some(v) => unsafe { std::env::set_var("CC_SWITCH_TEST_HOME", v) },
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
-    }
-
-    #[test]
-    fn is_safe_path_component_accepts_normal_names() {
-        assert!(is_safe_path_component("abc"));
-        assert!(is_safe_path_component("session-12345"));
-        assert!(is_safe_path_component(
-            "48ed2288-f025-4d54-8b69-10b40d97b006"
-        ));
-        assert!(is_safe_path_component("a"));
-    }
-
-    #[test]
-    fn is_safe_path_component_rejects_traversal() {
-        assert!(!is_safe_path_component(""));
-        assert!(!is_safe_path_component("."));
-        assert!(!is_safe_path_component(".."));
-        assert!(!is_safe_path_component("../etc"));
-        assert!(!is_safe_path_component("a/b"));
-        assert!(!is_safe_path_component("c:\\windows"));
-        assert!(!is_safe_path_component("/etc/passwd"));
-    }
-
-    #[test]
     fn parse_session_multiple_renames_in_head_uses_latest() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("session-multi-rename.jsonl");
@@ -814,39 +705,6 @@ mod tests {
             meta.title.as_deref(),
             Some("new-name"),
             "the most recent custom-title (new-name at line 4) should win"
-        );
-    }
-
-    #[test]
-    fn delete_session_rejects_unsafe_session_id() {
-        let temp = tempdir().expect("tempdir");
-        let sessions_dir = temp.path().join("projects");
-        std::fs::create_dir_all(&sessions_dir).expect("create sessions dir");
-
-        // Create a JSONL whose sessionId contains path traversal.
-        // The file itself has a normal name — the traversal lives in
-        // the JSONL content.
-        let path = sessions_dir.join("safe-name.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
-                "{\"sessionId\":\"../../etc\",\"cwd\":\"/tmp/project\",",
-                "\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
-                "{\"message\":{\"role\":\"user\",\"content\":\"hello\"},",
-                "\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
-            ),
-        )
-        .expect("write session");
-
-        let result = delete_session(&sessions_dir, &path, "../../etc");
-        assert!(
-            result.is_err(),
-            "should reject session_id with path traversal"
-        );
-        let err = result.unwrap_err();
-        assert!(
-            err.contains("unsafe"),
-            "error should mention unsafe session ID, got: {err}"
         );
     }
 
