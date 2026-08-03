@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 const STANDARD_OMO_PLUGIN_PREFIXES: [&str; 2] = ["oh-my-openagent", "oh-my-opencode"];
 const SLIM_OMO_PLUGIN_PREFIXES: [&str; 1] = ["oh-my-opencode-slim"];
+pub type ConfigFileVersions = (Option<Vec<u8>>, Option<Vec<u8>>);
 
 fn matches_plugin_prefix(plugin_name: &str, prefix: &str) -> bool {
     plugin_name == prefix
@@ -276,9 +277,7 @@ pub fn add_plugin(plugin_name: &str) -> Result<(), AppError> {
     write_opencode_config(&config)
 }
 
-pub fn remove_plugins_by_prefixes(
-    prefixes: &[&str],
-) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), AppError> {
+pub fn remove_plugins_by_prefixes(prefixes: &[&str]) -> Result<ConfigFileVersions, AppError> {
     let path = get_opencode_config_path();
     let previous_contents = if path.exists() {
         Some(std::fs::read(&path).map_err(|e| AppError::io(&path, e))?)
