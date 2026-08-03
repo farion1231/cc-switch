@@ -79,6 +79,31 @@ fn test_parse_valid_claude_deeplink() {
 }
 
 #[test]
+fn test_parse_codex_ticket_deeplink() {
+    let ticket = "a".repeat(64);
+    let url = format!(
+        "ccswitch://v1/import?resource=provider&app=codex&name=Codex&endpoint=https%3A%2F%2Fapi.tu-zi.com%2Fcoding&model=gpt-5.6-sol&enabled=true&ticket={ticket}&ticketUrl=https%3A%2F%2Fstore.tu-zi.com%2Fportal%2Fapi%2FcodexImport%2Fexchange"
+    );
+
+    let request = parse_deeplink_url(&url).expect("parse Codex ticket deep link");
+
+    assert_eq!(request.app.as_deref(), Some("codex"));
+    assert_eq!(request.name.as_deref(), Some("Codex"));
+    assert_eq!(request.model.as_deref(), Some("gpt-5.6-sol"));
+    assert_eq!(request.enabled, Some(true));
+    let expected_ticket = format!("codex-ticket:{ticket}");
+    assert_eq!(
+        request.usage_user_id.as_deref(),
+        Some(expected_ticket.as_str())
+    );
+    assert_eq!(
+        request.usage_base_url.as_deref(),
+        Some("codex-ticket-url:https://store.tu-zi.com/portal/api/codexImport/exchange")
+    );
+    assert!(request.api_key.is_none());
+}
+
+#[test]
 fn test_parse_deeplink_with_notes() {
     let url = "ccswitch://v1/import?resource=provider&app=codex&name=Codex&homepage=https%3A%2F%2Fcodex.com&endpoint=https%3A%2F%2Fapi.codex.com&apiKey=key123&notes=Test%20notes";
 

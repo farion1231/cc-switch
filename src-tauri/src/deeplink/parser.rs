@@ -128,6 +128,13 @@ fn parse_provider_deeplink(
     let config_format = params.get("configFormat").cloned();
     let config_url = params.get("configUrl").cloned();
     let enabled = params.get("enabled").and_then(|v| v.parse::<bool>().ok());
+    let ticket = params
+        .get("ticket")
+        .filter(|value| value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit()))
+        .map(|value| format!("codex-ticket:{value}"));
+    let ticket_url = params
+        .get("ticketUrl")
+        .map(|value| format!("codex-ticket-url:{value}"));
 
     // Extract usage script fields (v3.9+)
     let usage_enabled = params
@@ -169,9 +176,9 @@ fn parse_provider_deeplink(
         usage_enabled,
         usage_script,
         usage_api_key,
-        usage_base_url,
+        usage_base_url: ticket_url.or(usage_base_url),
         usage_access_token,
-        usage_user_id,
+        usage_user_id: ticket.or(usage_user_id),
         usage_auto_interval,
     })
 }
