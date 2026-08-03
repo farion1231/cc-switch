@@ -2446,9 +2446,35 @@ mod tests {
         let result = anthropic_response_to_responses(input).unwrap();
         assert_eq!(result["status"], "completed");
         assert_eq!(result["output"][0]["type"], "function_call");
+        assert_eq!(result["output"][0]["id"], "fc_call_1");
         assert_eq!(result["output"][0]["call_id"], "call_1");
         assert_eq!(result["output"][0]["name"], "get_weather");
         assert_eq!(result["output"][0]["arguments"], "{\"city\":\"Tokyo\"}");
+    }
+
+    #[test]
+    fn test_response_tool_search_use_has_typed_item_id() {
+        let context = build_codex_tool_context_from_request(&json!({
+            "tools": [{"type": "tool_search"}]
+        }));
+        let result = anthropic_response_to_responses_with_context(
+            json!({
+                "id": "msg_search",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "call_search_1",
+                    "name": "tool_search",
+                    "input": {"query": "calendar tools"}
+                }],
+                "stop_reason": "tool_use"
+            }),
+            &context,
+        )
+        .unwrap();
+
+        assert_eq!(result["output"][0]["type"], "tool_search_call");
+        assert_eq!(result["output"][0]["id"], "tsc_call_search_1");
+        assert_eq!(result["output"][0]["call_id"], "call_search_1");
     }
 
     #[test]

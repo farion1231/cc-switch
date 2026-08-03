@@ -1182,10 +1182,38 @@ mod tests {
         )
         .await;
 
-        assert!(output.contains("\"type\":\"tool_search_call\""));
-        assert!(output.contains("\"execution\":\"client\""));
-        assert!(output.contains("\"call_id\":\"call_tool_search_1\""));
-        assert!(output.contains("\"query\":\"Gmail search emails\""));
+        let events = parse_sse_events(&output);
+        let added = events
+            .iter()
+            .find(|event| event["type"] == "response.output_item.added")
+            .unwrap();
+        let delta = events
+            .iter()
+            .find(|event| event["type"] == "response.function_call_arguments.delta")
+            .unwrap();
+        let arguments_done = events
+            .iter()
+            .find(|event| event["type"] == "response.function_call_arguments.done")
+            .unwrap();
+        let done = events
+            .iter()
+            .find(|event| event["type"] == "response.output_item.done")
+            .unwrap();
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+
+        let expected_id = "tsc_call_tool_search_1";
+        assert_eq!(added["item"]["id"], expected_id);
+        assert_eq!(delta["item_id"], expected_id);
+        assert_eq!(arguments_done["item_id"], expected_id);
+        assert_eq!(done["item"]["id"], expected_id);
+        assert_eq!(completed["response"]["output"][0]["id"], expected_id);
+        assert_eq!(done["item"]["type"], "tool_search_call");
+        assert_eq!(done["item"]["execution"], "client");
+        assert_eq!(done["item"]["call_id"], "call_tool_search_1");
+        assert_eq!(done["item"]["arguments"]["query"], "Gmail search emails");
     }
 
     #[tokio::test]

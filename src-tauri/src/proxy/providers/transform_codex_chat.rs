@@ -1825,10 +1825,13 @@ pub(crate) fn response_tool_call_item_id_from_chat_name(
     chat_name: &str,
     tool_context: &CodexToolContext,
 ) -> String {
-    if tool_context.is_custom_tool_chat_name(chat_name) {
-        format!("ctc_{call_id}")
-    } else {
-        format!("fc_{call_id}")
+    match tool_context
+        .lookup_chat_name(chat_name)
+        .map(|spec| &spec.kind)
+    {
+        Some(CodexToolKind::ToolSearch) => format!("tsc_{call_id}"),
+        Some(CodexToolKind::Custom) => format!("ctc_{call_id}"),
+        _ => format!("fc_{call_id}"),
     }
 }
 
@@ -1843,7 +1846,7 @@ pub(crate) fn response_tool_call_item_from_chat_name(
 ) -> Value {
     match tool_context.lookup_chat_name(chat_name) {
         Some(spec) if spec.kind == CodexToolKind::ToolSearch => {
-            response_tool_search_call_item(call_id, status, arguments, reasoning)
+            response_tool_search_call_item(item_id, call_id, status, arguments, reasoning)
         }
         Some(spec) if spec.kind == CodexToolKind::Custom => response_custom_tool_call_item(
             item_id, status, call_id, &spec.name, arguments, reasoning,
@@ -1864,6 +1867,7 @@ pub(crate) fn response_tool_call_item_from_chat_name(
 }
 
 fn response_tool_search_call_item(
+    item_id: &str,
     call_id: &str,
     status: &str,
     arguments: &str,
@@ -1871,6 +1875,7 @@ fn response_tool_search_call_item(
 ) -> Value {
     let parsed_arguments = parse_tool_search_arguments_str(arguments);
     let mut item = json!({
+        "id": item_id,
         "type": "tool_search_call",
         "call_id": call_id,
         "status": status,
@@ -4232,6 +4237,7 @@ mod tests {
         assert_eq!(result["output"][1]["type"], "message");
         assert_eq!(result["output"][1]["content"][0]["text"], "Let me check.");
         assert_eq!(result["output"][2]["type"], "function_call");
+        assert_eq!(result["output"][2]["id"], "fc_call_1");
         assert_eq!(result["output"][2]["call_id"], "call_1");
         assert_eq!(
             result["output"][2]["reasoning_content"],
@@ -4341,6 +4347,7 @@ mod tests {
         let result = chat_completion_to_response_with_context(chat, &context).unwrap();
 
         assert_eq!(result["output"][0]["type"], "tool_search_call");
+        assert_eq!(result["output"][0]["id"], "tsc_call_tool_search_1");
         assert_eq!(result["output"][0]["call_id"], "call_tool_search_1");
         assert_eq!(result["output"][0]["execution"], "client");
         assert_eq!(
@@ -4381,6 +4388,7 @@ mod tests {
 
         let result = chat_completion_to_response_with_context(chat, &context).unwrap();
         assert_eq!(result["output"][0]["type"], "tool_search_call");
+        assert_eq!(result["output"][0]["id"], "tsc_call_tool_search_1");
         assert_eq!(result["output"][0]["execution"], "client");
         assert_eq!(result["output"][0]["call_id"], "call_tool_search_1");
         assert_eq!(result["output"][0]["status"], "completed");
@@ -4426,6 +4434,7 @@ mod tests {
 
         let result = chat_completion_to_response_with_context(chat, &context).unwrap();
         assert_eq!(result["output"][0]["type"], "function_call");
+        assert_eq!(result["output"][0]["id"], "fc_call_tool_search_1");
         assert_eq!(result["output"][0]["name"], "tool_search");
     }
 
