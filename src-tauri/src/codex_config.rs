@@ -910,6 +910,11 @@ fn write_codex_models_cache_for_aggregate_at(
 /// 桌面端读这份缓存展示模型列表，跳过写入会让自定义模型在官方登录模式下
 /// 不可见。合并保留缓存中已有的官方模型条目（官方登录下可路由），再追加/
 /// 覆盖当前配置的自定义条目（同名时自定义优先）。
+///
+/// 仅在现有缓存里有可靠官方基线时写入：缓存缺失/为空/还是聚合模式写的
+/// （cc-switch 生成的 etag）时直接跳过，让 Codex 桌面端自己去拉官方模型。
+/// 否则把一个没有官方模型的缓存标成 fresh（300s TTL），会阻断桌面端恢复
+/// 真实官方目录，自定义模型也会一直排挤掉官方模型。
 fn write_codex_models_cache_for_official_login_at(
     codex_dir: PathBuf,
     settings: &Value,
@@ -919,6 +924,16 @@ fn write_codex_models_cache_for_official_login_at(
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_else(|| json!({ "models": [] }));
+
+    let has_official_baseline = cache
+        .get("models")
+        .and_then(|models| models.as_array())
+        .is_some_and(|models| !models.is_empty())
+        && !codex_cache_has_cc_switch_etag(&cache);
+    if !has_official_baseline {
+        log::info!("[codex] official-login aggregation: 无可靠官方基线，跳过缓存刷新");
+        return Ok(());
+    }
 
     let mut models: Vec<Value> = cache
         .get("models")
@@ -948,6 +963,15 @@ fn write_codex_models_cache_for_official_login_at(
     write_models_cache_json(&codex_dir, models)?;
     log::info!("[codex] models_cache.json refreshed for official-login aggregation");
     Ok(())
+}
+
+/// 该缓存是否为 cc-switch 自己生成的（聚合模式/无官方基线时写入），而非
+/// Codex 桌面端从官方后端拉取后落盘的。区分两种来源用于判断官方基线可靠性。
+fn codex_cache_has_cc_switch_etag(cache: &Value) -> bool {
+    cache
+        .get("etag")
+        .and_then(|value| value.as_str())
+        .is_some_and(|etag| etag.starts_with("W/\"cc-switch-"))
 }
 
 /// 写 `models_cache.json`：保留既有 `client_version`（桌面端按该版本号校验
@@ -1026,23 +1050,70 @@ fn write_codex_models_cache_for_provider_at(
 
     let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
     let catalog = codex_model_catalog_from_settings(settings, config_text, profile)?;
-    let models: Vec<Value> = catalog
-        .and_then(|catalog| {
-            catalog
+    match catalog {
+        Some(catalog) => {
+            let models: Vec<Value> = catalog
                 .get("models")
                 .and_then(|models| models.as_array())
                 .cloned()
-        })
-        .unwrap_or_default();
-    let model_count = models.len();
-
-    write_models_cache_json(&codex_dir, models)?;
-    log::info!(
-        "[codex] models_cache.json rebuilt for provider `{}`: {} models",
-        provider.name,
-        model_count
-    );
+                .unwrap_or_default();
+            let model_count = models.len();
+            write_models_cache_json(&codex_dir, models)?;
+            log::info!(
+                "[codex] models_cache.json rebuilt for provider `{}`: {} models",
+                provider.name,
+                model_count
+            );
+        }
+        None => {
+            // 无 modelCatalog（只有顶层 model，如仓库自带的自定义供应商模板）：
+            // 从配置的 model 派生单条缓存，桌面端至少能发现默认模型；连 model
+            // 都没有则跳过，避免把空列表标成 fresh 阻断桌面端发现模型。
+            let Some(model) = codex_top_level_model(config_text) else {
+                return Ok(());
+            };
+            let Some(entry) = codex_single_model_cache_entry(&model, profile, config_text) else {
+                return Ok(());
+            };
+            write_models_cache_json(&codex_dir, vec![entry])?;
+            log::info!(
+                "[codex] models_cache.json rebuilt for provider `{}`: 1 model from config",
+                provider.name
+            );
+        }
+    }
     Ok(())
+}
+
+/// 无 `modelCatalog` 时从配置顶层 `model` 派生单条缓存条目。
+fn codex_single_model_cache_entry(
+    model: &str,
+    profile: CodexCatalogToolProfile,
+    config_text: &str,
+) -> Option<Value> {
+    let template = match profile {
+        CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
+            load_codex_native_responses_template()
+        }
+        CodexCatalogToolProfile::ProxyChat => load_codex_model_catalog_template().ok()?,
+    };
+    let spec = CodexCatalogModelSpec {
+        model: model.to_string(),
+        display_name: None,
+        context_window: None,
+        supports_parallel_tool_calls: None,
+        input_modalities: None,
+        base_instructions: None,
+    };
+    let default_context_window =
+        extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
+    Some(codex_catalog_model_entry(
+        &template,
+        &spec,
+        0,
+        profile,
+        default_context_window,
+    ))
 }
 
 /// 加载 Codex 内置的完整官方模型目录（`models_cache.json`，Codex 连接
@@ -5109,6 +5180,152 @@ web_search = "disabled"
         assert!(
             slugs.contains(&"deepseek-v4-flash"),
             "custom model must be present in aggregate mode: {slugs:?}"
+        );
+    }
+
+    #[test]
+    fn write_codex_models_cache_for_official_login_skips_without_official_baseline() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        // 空缓存（models 为空数组）：没有可靠官方基线，跳过写入且不刷新 fetched_at。
+        let empty_cache = json!({
+            "fetched_at": "2026-08-01T00:00:00.000000000Z",
+            "etag": "W/\"old\"",
+            "client_version": "0.146.0",
+            "models": []
+        });
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&empty_cache).expect("serialize empty cache"),
+        )
+        .expect("write empty cache");
+
+        let settings = json!({
+            "enableOfficialLogin": true,
+            "codexCustomModels": [{
+                "model": "gpt-5.2",
+                "providerId": "deepseek",
+                "upstreamModel": "deepseek-v4-flash",
+                "displayName": "DeepSeek V4 Flash"
+            }]
+        });
+
+        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "")
+            .expect("skip must not error");
+
+        let written: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("models_cache.json")).expect("read cache"),
+        )
+        .expect("parse cache");
+        assert_eq!(
+            written.get("models").and_then(|v| v.as_array()).map(|m| m.len()),
+            Some(0),
+            "empty cache must be left untouched when no official baseline exists"
+        );
+        assert_eq!(
+            written.get("fetched_at").and_then(|v| v.as_str()),
+            Some("2026-08-01T00:00:00.000000000Z"),
+            "fetched_at must not be refreshed without a reliable official baseline"
+        );
+    }
+
+    #[test]
+    fn write_codex_models_cache_for_official_login_skips_aggregate_leftover_cache() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        // 缓存是聚合模式（关闭官方登录）写的：etag 是 cc-switch 生成的，
+        // 里面的条目不是官方基线，跳过写入让 Codex 自己去拉官方模型。
+        let aggregate_cache = json!({
+            "fetched_at": "2026-08-01T00:00:00.000000000Z",
+            "etag": "W/\"cc-switch-1754000000\"",
+            "client_version": "0.146.0",
+            "models": [{"slug": "gpt-5.2", "display_name": "DeepSeek V4 Flash"}]
+        });
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&aggregate_cache).expect("serialize aggregate cache"),
+        )
+        .expect("write aggregate cache");
+
+        let settings = json!({
+            "enableOfficialLogin": true,
+            "codexCustomModels": [{
+                "model": "gpt-5.5",
+                "providerId": "glm",
+                "upstreamModel": "glm-5",
+                "displayName": "GLM-5"
+            }]
+        });
+
+        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "")
+            .expect("skip must not error");
+
+        let written: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("models_cache.json")).expect("read cache"),
+        )
+        .expect("parse cache");
+        assert_eq!(
+            written.get("etag").and_then(|v| v.as_str()),
+            Some("W/\"cc-switch-1754000000\""),
+            "aggregate-written cache must be left untouched (no official baseline)"
+        );
+        let slugs: Vec<&str> = written
+            .get("models")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|m| m.get("slug").and_then(|s| s.as_str()))
+            .collect();
+        assert_eq!(slugs, vec!["gpt-5.2"], "custom-only aggregate cache not merged in");
+    }
+
+    #[test]
+    fn write_codex_models_cache_derives_single_entry_from_top_level_model() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        // 供应商只有顶层 model、没有 modelCatalog：从配置的 model 派生单条缓存，
+        // 桌面端至少能发现默认模型，而不是写入空列表。
+        let config_text = "model_provider = \"custom\"\nmodel = \"deepseek-v4-flash\"\n[model_providers.custom]\nbase_url = \"https://api.deepseek.com\"\nwire_api = \"responses\"\n";
+        let provider = Provider {
+            id: "deepseek".to_string(),
+            name: "DeepSeek".to_string(),
+            settings_config: json!({}),
+            website_url: None,
+            category: Some("codex".to_string()),
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: Some(crate::provider::ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                ..Default::default()
+            }),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, config_text)
+            .expect("write must succeed");
+
+        let written: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("models_cache.json")).expect("read cache"),
+        )
+        .expect("parse cache");
+        let models = written
+            .get("models")
+            .and_then(|v| v.as_array())
+            .expect("models array");
+        assert_eq!(models.len(), 1, "single entry derived from top-level model");
+        assert_eq!(
+            models[0].get("slug").and_then(|v| v.as_str()),
+            Some("deepseek-v4-flash"),
+            "derived entry carries the configured model slug"
         );
     }
 
