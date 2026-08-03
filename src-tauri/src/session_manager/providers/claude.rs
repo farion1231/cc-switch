@@ -519,4 +519,19 @@ mod tests {
 
         assert!(is_agent_session(&path));
     }
+
+    #[test]
+    fn real_session_file_is_not_excluded() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp
+            .path()
+            .join("8f8e7c8e-0000-0000-0000-000000000000.jsonl");
+        std::fs::write(
+            &path,
+            "{\"sessionId\":\"8f8e7c8e-0000-0000-0000-000000000000\"}\n",
+        )
+        .expect("write");
+
+        assert!(!is_agent_session(&path));
+    }
 }
