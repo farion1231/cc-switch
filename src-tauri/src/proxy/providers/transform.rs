@@ -146,14 +146,10 @@ pub(crate) fn parse_qwen_version(model: &str) -> Option<(u32, u32)> {
             .take_while(|c| c.is_ascii_digit() || *c == '.')
             .collect();
         let mut segments = version_span.split('.');
-        let Some(Ok(major)) = segments.next().filter(|s| !s.is_empty()).map(|s| s.parse())
-        else {
+        let Some(Ok(major)) = segments.next().filter(|s| !s.is_empty()).map(|s| s.parse()) else {
             continue;
         };
-        let minor = segments
-            .next()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
+        let minor = segments.next().and_then(|s| s.parse().ok()).unwrap_or(0);
         return Some((major, minor));
     }
     None
@@ -2285,13 +2281,22 @@ mod tests {
             "output_config": {"effort": "high"},
             "thinking": {"type": "enabled", "budget_tokens": 2048}
         });
-        assert_eq!(qwen_reasoning_effort_from_anthropic_body(&body), Some("xhigh"));
+        assert_eq!(
+            qwen_reasoning_effort_from_anthropic_body(&body),
+            Some("xhigh")
+        );
 
         let body = json!({"output_config": {"effort": "low"}});
-        assert_eq!(qwen_reasoning_effort_from_anthropic_body(&body), Some("low"));
+        assert_eq!(
+            qwen_reasoning_effort_from_anthropic_body(&body),
+            Some("low")
+        );
 
         let body = json!({"output_config": {"effort": "max"}});
-        assert_eq!(qwen_reasoning_effort_from_anthropic_body(&body), Some("xhigh"));
+        assert_eq!(
+            qwen_reasoning_effort_from_anthropic_body(&body),
+            Some("xhigh")
+        );
     }
 
     #[test]
@@ -2317,15 +2322,24 @@ mod tests {
     #[test]
     fn test_qwen_reasoning_effort_from_anthropic_body_type_variants() {
         let body = json!({"thinking": {"type": "adaptive"}});
-        assert_eq!(qwen_reasoning_effort_from_anthropic_body(&body), Some("xhigh"));
+        assert_eq!(
+            qwen_reasoning_effort_from_anthropic_body(&body),
+            Some("xhigh")
+        );
 
         // enabled without budget → vendor default tier
         let body = json!({"thinking": {"type": "enabled"}});
-        assert_eq!(qwen_reasoning_effort_from_anthropic_body(&body), Some("xhigh"));
+        assert_eq!(
+            qwen_reasoning_effort_from_anthropic_body(&body),
+            Some("xhigh")
+        );
 
         // disabled → low (thinking-only model cannot turn off)
         let body = json!({"thinking": {"type": "disabled"}});
-        assert_eq!(qwen_reasoning_effort_from_anthropic_body(&body), Some("low"));
+        assert_eq!(
+            qwen_reasoning_effort_from_anthropic_body(&body),
+            Some("low")
+        );
 
         // no thinking signal → None (caller must not inject)
         assert_eq!(qwen_reasoning_effort_from_anthropic_body(&json!({})), None);
@@ -2373,7 +2387,10 @@ mod tests {
             "output_config": {"effort": "max"},
             "messages": [{"role": "user", "content": "hello"}]
         });
-        assert_eq!(anthropic_to_openai(input).unwrap()["reasoning_effort"], "xhigh");
+        assert_eq!(
+            anthropic_to_openai(input).unwrap()["reasoning_effort"],
+            "xhigh"
+        );
     }
 
     #[test]

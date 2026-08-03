@@ -1834,9 +1834,14 @@ mod tests {
             "messages": [{ "role": "user", "content": "hello" }],
             "max_tokens": 128
         });
-        let transformed =
-            transform_claude_request_for_api_format(body.clone(), &provider, "anthropic", None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body.clone(),
+            &provider,
+            "anthropic",
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(transformed, body);
     }
 
@@ -1852,9 +1857,14 @@ mod tests {
             "messages": [{ "role": "user", "content": "hello" }],
             "max_tokens": 128
         });
-        let transformed =
-            transform_claude_request_for_api_format(body.clone(), &provider, "anthropic", None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body.clone(),
+            &provider,
+            "anthropic",
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(transformed, body);
     }
 

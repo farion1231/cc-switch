@@ -2176,7 +2176,10 @@ mod tests {
             });
             let result = responses_request_to_anthropic(input, 4096).unwrap();
             assert_eq!(result["thinking"]["type"], "enabled", "effort={effort}");
-            assert_eq!(result["thinking"]["budget_tokens"], budget, "effort={effort}");
+            assert_eq!(
+                result["thinking"]["budget_tokens"], budget,
+                "effort={effort}"
+            );
             assert!(result.get("temperature").is_none(), "effort={effort}");
         }
     }
