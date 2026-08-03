@@ -361,15 +361,25 @@ requires_openai_auth = true`;
         {t("common.cancel", { defaultValue: "取消" })}
       </Button>
       {isEditMode && onSaveAndSync ? (
-        <Button
-          onClick={handleSaveAndSyncClick}
-          disabled={
-            !name.trim() || (!isCcSwitch && (!baseUrl.trim() || !apiKey.trim()))
-          }
-        >
-          <RefreshCw className="mr-1.5 h-4 w-4" />
-          {t("universalProvider.saveAndSync", { defaultValue: "保存并同步" })}
-        </Button>
+        <>
+          <Button
+            onClick={handleSubmit}
+            disabled={
+              !name.trim() || (!isCcSwitch && (!baseUrl.trim() || !apiKey.trim()))
+            }
+          >
+            {t("common.save", { defaultValue: "保存" })}
+          </Button>
+          <Button
+            onClick={handleSaveAndSyncClick}
+            disabled={
+              !name.trim() || (!isCcSwitch && (!baseUrl.trim() || !apiKey.trim()))
+            }
+          >
+            <RefreshCw className="mr-1.5 h-4 w-4" />
+            {t("universalProvider.saveAndSync", { defaultValue: "保存并同步" })}
+          </Button>
+        </>
       ) : (
         <Button
           onClick={handleSubmit}
