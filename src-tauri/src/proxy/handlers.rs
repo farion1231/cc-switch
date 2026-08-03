@@ -2630,7 +2630,7 @@ async fn log_usage(
         model
     };
 
-    let dedup_scope = (app_type != "claude").then_some((app_type, provider_id));
+    let dedup_scope = super::usage::parser::dedup_scope_for_app(app_type, provider_id);
     let request_id = usage.dedup_request_id(dedup_scope);
 
     if let Err(e) = logger.log_with_calculation(
