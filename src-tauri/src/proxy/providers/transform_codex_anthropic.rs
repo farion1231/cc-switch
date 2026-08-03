@@ -1689,6 +1689,32 @@ mod tests {
     }
 
     #[test]
+    fn test_request_skips_tool_search_when_compat_is_disabled() {
+        let input = json!({
+            "model": "grok-4.1-fast",
+            "max_output_tokens": 100,
+            "input": [{ "role": "user", "content": "hi" }],
+            "tools": [{
+                "type": "function",
+                "name": "get_weather",
+                "description": "d",
+                "parameters": {"type": "object"}
+            }]
+        });
+
+        let result =
+            responses_request_to_anthropic_with_tool_search_compat(input, 4096, false).unwrap();
+        let tool_names = result["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+
+        assert_eq!(tool_names, vec!["get_weather"]);
+    }
+
+    #[test]
     fn test_request_tool_search_output_schema_defaults_root_type_to_object() {
         let input = json!({
             "model": "claude",
@@ -3057,31 +3083,5 @@ data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":
         let sse =
             "data: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"content\":[]}}\n\n";
         assert!(anthropic_sse_to_message_value(sse).is_err());
-    }
-
-    #[test]
-    fn test_request_skips_tool_search_when_compat_is_disabled() {
-        let input = json!({
-            "model": "grok-4.1-fast",
-            "max_output_tokens": 100,
-            "input": [{ "role": "user", "content": "hi" }],
-            "tools": [{
-                "type": "function",
-                "name": "get_weather",
-                "description": "d",
-                "parameters": {"type": "object"}
-            }]
-        });
-
-        let result =
-            responses_request_to_anthropic_with_tool_search_compat(input, 4096, false).unwrap();
-        let tool_names = result["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
-            .collect::<Vec<_>>();
-
-        assert_eq!(tool_names, vec!["get_weather"]);
     }
 }
