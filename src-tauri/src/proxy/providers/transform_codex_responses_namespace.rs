@@ -497,7 +497,7 @@ pub(crate) fn restore_response_tool_calls(
     if map.is_empty() && !restore_tool_search {
         return false;
     }
-    restore_value(value, map, restore_tool_search, &mut HashMap::new())
+    restore_response_output_items(value, map, restore_tool_search, &mut HashMap::new())
 }
 
 /// Restore a single parsed SSE event (e.g. `response.output_item.added` /
@@ -511,7 +511,46 @@ pub(crate) fn restore_sse_event_tool_calls(
     if map.is_empty() && !restore_tool_search {
         return false;
     }
-    restore_value(event, map, restore_tool_search, tool_search_item_ids)
+    let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
+    let mut changed = false;
+
+    if matches!(
+        event_type,
+        "response.output_item.added" | "response.output_item.done"
+    ) {
+        if let Some(item) = event.get_mut("item") {
+            changed |= restore_output_item(item, map, restore_tool_search, tool_search_item_ids);
+        }
+    } else if matches!(
+        event_type,
+        "response.created"
+            | "response.queued"
+            | "response.in_progress"
+            | "response.completed"
+            | "response.incomplete"
+            | "response.failed"
+    ) {
+        if let Some(response) = event.get_mut("response") {
+            changed |= restore_response_output_items(
+                response,
+                map,
+                restore_tool_search,
+                tool_search_item_ids,
+            );
+        }
+    }
+
+    let restored_item_id = event
+        .get("item_id")
+        .and_then(Value::as_str)
+        .and_then(|item_id| tool_search_item_ids.get(item_id))
+        .cloned();
+    if let Some(restored_item_id) = restored_item_id {
+        event["item_id"] = json!(restored_item_id);
+        changed = true;
+    }
+
+    changed
 }
 
 fn namespace_children(tool: &Value) -> Vec<Value> {
@@ -584,66 +623,66 @@ fn typed_tool_search_item_id(obj: &serde_json::Map<String, Value>) -> Option<Str
         .map(|call_id| format!("tsc_{call_id}"))
 }
 
-fn restore_value(
-    value: &mut Value,
+fn restore_response_output_items(
+    response: &mut Value,
     map: &HashMap<String, NamespacedName>,
     restore_tool_search: bool,
     tool_search_item_ids: &mut HashMap<String, String>,
 ) -> bool {
+    let Some(output) = response.get_mut("output").and_then(Value::as_array_mut) else {
+        return false;
+    };
     let mut changed = false;
-    match value {
-        Value::Array(items) => {
-            for item in items {
-                changed |= restore_value(item, map, restore_tool_search, tool_search_item_ids);
-            }
-        }
-        Value::Object(obj) => {
-            if obj.get("type").and_then(Value::as_str) == Some("function_call") {
-                let is_tool_search = restore_tool_search
-                    && obj.get("namespace").is_none()
-                    && obj.get("name").and_then(Value::as_str) == Some("tool_search");
-                if is_tool_search {
-                    let previous_item_id =
-                        obj.get("id").and_then(Value::as_str).map(str::to_string);
-                    let item_id = typed_tool_search_item_id(obj);
-                    let arguments = tool_search_arguments_from_value(obj.get("arguments"));
-                    obj.insert("type".to_string(), json!("tool_search_call"));
-                    obj.insert("execution".to_string(), json!("client"));
-                    obj.insert("arguments".to_string(), arguments);
-                    obj.remove("name");
-                    if let Some(item_id) = item_id {
-                        if previous_item_id.as_deref() != Some(item_id.as_str()) {
-                            if let Some(previous_item_id) = previous_item_id {
-                                tool_search_item_ids.insert(previous_item_id, item_id.clone());
-                            }
-                            obj.insert("id".to_string(), json!(item_id));
-                        }
-                    }
-                    changed = true;
-                } else if let Some(flat) = obj.get("name").and_then(Value::as_str) {
-                    if let Some(entry) = map.get(flat) {
-                        obj.insert("name".to_string(), json!(entry.name));
-                        obj.insert("namespace".to_string(), json!(entry.namespace));
-                        changed = true;
-                    }
-                }
-            }
-            for child in obj.values_mut() {
-                changed |= restore_value(child, map, restore_tool_search, tool_search_item_ids);
-            }
-            let restored_item_id = obj
-                .get("item_id")
-                .and_then(Value::as_str)
-                .and_then(|item_id| tool_search_item_ids.get(item_id))
-                .cloned();
-            if let Some(restored_item_id) = restored_item_id {
-                obj.insert("item_id".to_string(), json!(restored_item_id));
-                changed = true;
-            }
-        }
-        _ => {}
+    for item in output {
+        changed |= restore_output_item(item, map, restore_tool_search, tool_search_item_ids);
     }
     changed
+}
+
+fn restore_output_item(
+    item: &mut Value,
+    map: &HashMap<String, NamespacedName>,
+    restore_tool_search: bool,
+    tool_search_item_ids: &mut HashMap<String, String>,
+) -> bool {
+    let Some(obj) = item.as_object_mut() else {
+        return false;
+    };
+    if obj.get("type").and_then(Value::as_str) != Some("function_call") {
+        return false;
+    }
+
+    let is_tool_search = restore_tool_search
+        && obj.get("namespace").is_none()
+        && obj.get("name").and_then(Value::as_str) == Some("tool_search");
+    if is_tool_search {
+        let previous_item_id = obj.get("id").and_then(Value::as_str).map(str::to_string);
+        let item_id = typed_tool_search_item_id(obj);
+        let arguments = tool_search_arguments_from_value(obj.get("arguments"));
+        obj.insert("type".to_string(), json!("tool_search_call"));
+        obj.insert("execution".to_string(), json!("client"));
+        obj.insert("arguments".to_string(), arguments);
+        obj.remove("name");
+        if let Some(item_id) = item_id {
+            if previous_item_id.as_deref() != Some(item_id.as_str()) {
+                if let Some(previous_item_id) = previous_item_id {
+                    tool_search_item_ids.insert(previous_item_id, item_id.clone());
+                }
+                obj.insert("id".to_string(), json!(item_id));
+            }
+        }
+        true
+    } else if let Some(flat) = obj.get("name").and_then(Value::as_str) {
+        if let Some(entry) = map.get(flat) {
+            obj.insert("name".to_string(), json!(entry.name));
+            obj.insert("namespace".to_string(), json!(entry.namespace));
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    }
 }
 
 /// Wrap a native Responses SSE byte stream, restoring flattened namespace
@@ -1212,6 +1251,57 @@ mod tests {
         assert!(call.get("name").is_none());
         assert_eq!(response["output"][1]["id"], "fc_regular-1");
         assert_eq!(response["output"][1]["type"], "function_call");
+    }
+
+    #[test]
+    fn restore_ignores_function_call_shaped_metadata() {
+        let metadata_call = json!({
+            "id": "fc_metadata",
+            "type": "function_call",
+            "name": "tool_search",
+            "call_id": "metadata-call",
+            "arguments": "{}"
+        });
+        let mut response = json!({
+            "metadata": {"echo": metadata_call.clone()},
+            "output": [{
+                "id": "fc_output",
+                "type": "function_call",
+                "name": "tool_search",
+                "call_id": "output-call",
+                "arguments": "{}"
+            }]
+        });
+
+        assert!(restore_response_tool_calls(
+            &mut response,
+            &HashMap::new(),
+            true
+        ));
+        assert_eq!(response["metadata"]["echo"], metadata_call);
+        assert_eq!(response["output"][0]["type"], "tool_search_call");
+
+        let mut event = json!({
+            "type": "response.output_item.added",
+            "metadata": {"echo": metadata_call.clone()},
+            "item": {
+                "id": "fc_event",
+                "type": "function_call",
+                "name": "tool_search",
+                "call_id": "event-call",
+                "arguments": "{}"
+            }
+        });
+        let mut item_ids = HashMap::new();
+
+        assert!(restore_sse_event_tool_calls(
+            &mut event,
+            &HashMap::new(),
+            true,
+            &mut item_ids
+        ));
+        assert_eq!(event["metadata"]["echo"], metadata_call);
+        assert_eq!(event["item"]["type"], "tool_search_call");
     }
 
     #[test]
