@@ -871,11 +871,10 @@ pub(crate) fn codex_official_login_enabled(settings: &Value) -> bool {
 /// 模型列表）。因此聚合模式下必须主动把自定义模型写入这份缓存，并刷新
 /// `fetched_at`，否则桌面端永远只显示官方内置模型。
 ///
-/// - 仅对官方供应商 + 关闭官方登录生效（聚合模式）；
-/// - 合并保留缓存中已有的官方模型条目，再追加当前供应商配置的自定义条目
-///   （与 `codex_model_catalog_from_settings` 的聚合目录语义一致）；
-/// - 保留既有 `client_version`（桌面端按该版本号校验缓存有效性），仅刷新
-///   `fetched_at`，使缓存落在 300 秒 TTL 窗口内。
+/// 聚合模式（官方登录关闭）只包含映射到供应商的自定义模型：官方模型请求
+/// 会被本地代理拒绝（`RequestContext`），把它们留在缓存里只会显示成可选
+/// 却实际不可用。因此不再克隆旧缓存里的官方/残留条目，仅从当前
+/// `codexCustomModels` 映射重建。
 fn write_codex_models_cache_for_aggregate_at(
     codex_dir: PathBuf,
     settings: &Value,
@@ -885,8 +884,38 @@ fn write_codex_models_cache_for_aggregate_at(
         return Ok(());
     }
 
-    let path = codex_dir.join("models_cache.json");
-    let cache: Value = fs::read_to_string(&path)
+    let mut models: Vec<Value> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for entry in codex_custom_catalog_entries(settings, config_text) {
+        let Some(slug) = entry.get("slug").and_then(|slug| slug.as_str()) else {
+            continue;
+        };
+        if seen.insert(slug.to_string()) {
+            models.push(entry);
+        } else if let Some(existing) = models
+            .iter_mut()
+            .find(|model| model.get("slug").and_then(|s| s.as_str()) == Some(slug))
+        {
+            *existing = entry;
+        }
+    }
+
+    write_models_cache_json(&codex_dir, models)?;
+    log::info!("[codex] models_cache.json refreshed for aggregate mode");
+    Ok(())
+}
+
+/// 官方登录 + 自定义模型时刷新 `models_cache.json`。
+///
+/// 桌面端读这份缓存展示模型列表，跳过写入会让自定义模型在官方登录模式下
+/// 不可见。合并保留缓存中已有的官方模型条目（官方登录下可路由），再追加/
+/// 覆盖当前配置的自定义条目（同名时自定义优先）。
+fn write_codex_models_cache_for_official_login_at(
+    codex_dir: PathBuf,
+    settings: &Value,
+    config_text: &str,
+) -> Result<(), AppError> {
+    let cache: Value = fs::read_to_string(codex_dir.join("models_cache.json"))
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_else(|| json!({ "models": [] }));
@@ -912,82 +941,18 @@ fn write_codex_models_cache_for_aggregate_at(
             .iter_mut()
             .find(|model| model.get("slug").and_then(|s| s.as_str()) == Some(slug))
         {
-            // 聚合模式没有官方模型：自定义条目与官方同名（如 gpt-5.2 映射）时
-            // 覆盖官方条目，保证桌面端列表里出现的是绑定了供应商的映射模型。
             *existing = entry;
         }
     }
 
-    let now = chrono::Utc::now();
-    let fetched_at = now
-        .to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
-        .to_string();
-    let client_version = cache
-        .get("client_version")
-        .and_then(|value| value.as_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| "0.146.0".to_string());
-    let etag = cache
-        .get("etag")
-        .and_then(|value| value.as_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("W/\"cc-switch-{}\"", now.timestamp()));
-
-    let updated = json!({
-        "fetched_at": fetched_at,
-        "etag": etag,
-        "client_version": client_version,
-        "models": models,
-    });
-
-    crate::config::write_json_file(&path, &updated)?;
-    log::info!(
-        "[codex] models_cache.json refreshed for aggregate mode: {} models, fetched_at={}",
-        models.len(),
-        fetched_at
-    );
+    write_models_cache_json(&codex_dir, models)?;
+    log::info!("[codex] models_cache.json refreshed for official-login aggregation");
     Ok(())
 }
 
-/// 切换/接管任意 Codex 供应商后重建 `models_cache.json`（桌面端模型列表的
-/// 来源），使列表始终反映当前供应商而不是残留的旧条目。
-///
-/// - 官方供应商 + 启用官方登录：不写缓存（桌面端走 ChatGPT 后端拉取）；
-/// - 官方供应商 + 关闭官方登录（聚合模式）：合并保留官方模型 + 自定义条目
-///   （见 [`write_codex_models_cache_for_aggregate_at`]）；
-/// - 其他供应商：直接用当前供应商自己的模型目录重建，清掉残留的官方/旧条目。
-pub fn write_codex_models_cache_for_provider(
-    provider: &Provider,
-    config_text: &str,
-) -> Result<(), AppError> {
-    write_codex_models_cache_for_provider_at(get_codex_config_dir(), provider, config_text)
-}
-
-fn write_codex_models_cache_for_provider_at(
-    codex_dir: PathBuf,
-    provider: &Provider,
-    config_text: &str,
-) -> Result<(), AppError> {
-    let settings = &provider.settings_config;
-
-    if crate::proxy::providers::is_codex_official_provider(provider) {
-        if codex_official_login_enabled(settings) {
-            return Ok(());
-        }
-        return write_codex_models_cache_for_aggregate_at(codex_dir, settings, config_text);
-    }
-
-    let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
-    let catalog = codex_model_catalog_from_settings(settings, config_text, profile)?;
-    let models: Vec<Value> = catalog
-        .and_then(|catalog| {
-            catalog
-                .get("models")
-                .and_then(|models| models.as_array())
-                .cloned()
-        })
-        .unwrap_or_default();
-
+/// 写 `models_cache.json`：保留既有 `client_version`（桌面端按该版本号校验
+/// 缓存有效性），仅刷新 `fetched_at` 与 `etag`，使缓存落在 300 秒 TTL 窗口内。
+fn write_models_cache_json(codex_dir: &Path, models: Vec<Value>) -> Result<(), AppError> {
     let path = codex_dir.join("models_cache.json");
     let existing: Value = fs::read_to_string(&path)
         .ok()
@@ -1017,11 +982,65 @@ fn write_codex_models_cache_for_provider_at(
     });
 
     crate::config::write_json_file(&path, &updated)?;
+    Ok(())
+}
+
+/// 切换/接管任意 Codex 供应商后重建 `models_cache.json`（桌面端模型列表的
+/// 来源），使列表始终反映当前供应商而不是残留的旧条目。
+///
+/// - 官方供应商 + 启用官方登录：无自定义模型时不写缓存（桌面端走 ChatGPT
+///   后端拉取）；有自定义模型时合并保留缓存中的官方模型 + 追加自定义条目
+///   （见 [`write_codex_models_cache_for_official_login_at`]）；
+/// - 官方供应商 + 关闭官方登录（聚合模式）：仅用当前 `codexCustomModels`
+///   映射重建，清掉残留的官方/旧条目（见 [`write_codex_models_cache_for_aggregate_at`]）；
+/// - 其他供应商：直接用当前供应商自己的模型目录重建，清掉残留的官方/旧条目。
+pub fn write_codex_models_cache_for_provider(
+    provider: &Provider,
+    config_text: &str,
+) -> Result<(), AppError> {
+    write_codex_models_cache_for_provider_at(get_codex_config_dir(), provider, config_text)
+}
+
+fn write_codex_models_cache_for_provider_at(
+    codex_dir: PathBuf,
+    provider: &Provider,
+    config_text: &str,
+) -> Result<(), AppError> {
+    let settings = &provider.settings_config;
+
+    if crate::proxy::providers::is_codex_official_provider(provider) {
+        if codex_official_login_enabled(settings) {
+            // 官方登录 + 自定义模型：桌面端读 models_cache.json，需合并写入
+            // 官方与自定义模型，否则自定义模型不可见。
+            if codex_custom_models_nonempty(settings) {
+                return write_codex_models_cache_for_official_login_at(
+                    codex_dir,
+                    settings,
+                    config_text,
+                );
+            }
+            return Ok(());
+        }
+        return write_codex_models_cache_for_aggregate_at(codex_dir, settings, config_text);
+    }
+
+    let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
+    let catalog = codex_model_catalog_from_settings(settings, config_text, profile)?;
+    let models: Vec<Value> = catalog
+        .and_then(|catalog| {
+            catalog
+                .get("models")
+                .and_then(|models| models.as_array())
+                .cloned()
+        })
+        .unwrap_or_default();
+    let model_count = models.len();
+
+    write_models_cache_json(&codex_dir, models)?;
     log::info!(
-        "[codex] models_cache.json rebuilt for provider `{}`: {} models, fetched_at={}",
+        "[codex] models_cache.json rebuilt for provider `{}`: {} models",
         provider.name,
-        models.len(),
-        fetched_at
+        model_count
     );
     Ok(())
 }
@@ -4750,32 +4769,33 @@ web_search = "disabled"
             .filter_map(|m| m.get("slug").and_then(|s| s.as_str()))
             .collect();
         assert!(
-            slugs.contains(&"gpt-5.5"),
-            "official entries from the existing cache must be preserved"
+            !slugs.contains(&"gpt-5.5"),
+            "stale official entries must be cleared in aggregate mode: {slugs:?}"
         );
         assert!(
             slugs.contains(&"deepseek-v4-flash"),
-            "custom model must be appended: {slugs:?}"
+            "custom model must be present: {slugs:?}"
         );
+        assert_eq!(slugs.len(), 1, "only the mapped custom model should remain");
     }
 
     #[test]
-    fn write_codex_models_cache_for_aggregate_replaces_same_slug_official_entry() {
+    fn write_codex_models_cache_for_aggregate_builds_from_custom_mappings_only() {
         let temp_home = tempfile::tempdir().expect("create temp home");
         let codex_dir = temp_home.path().join(".codex");
         std::fs::create_dir_all(&codex_dir).expect("create codex dir");
 
-        // 缓存里已有官方 gpt-5.2；聚合模式下自定义条目映射同名（gpt-5.2 -> DeepSeek）
-        // 时必须覆盖官方条目，而不是被去重逻辑跳过。
+        // 旧缓存残留多个官方/旧供应商条目：聚合模式下不可路由，必须全部清掉，
+        // 只保留当前 codexCustomModels 映射的条目。
         let stale_cache = json!({
             "fetched_at": "2026-08-01T00:00:00.000000000Z",
             "etag": "W/\"old\"",
             "client_version": "0.146.0",
-            "models": [{
-                "slug": "gpt-5.2",
-                "display_name": "GPT-5.2",
-                "context_window": 400000
-            }]
+            "models": [
+                {"slug": "gpt-5.5", "display_name": "GPT-5.5"},
+                {"slug": "gpt-5.4", "display_name": "GPT-5.4"},
+                {"slug": "deepseek-v4-pro", "display_name": "DeepSeek V4 Pro"}
+            ]
         });
         std::fs::write(
             codex_dir.join("models_cache.json"),
@@ -4785,13 +4805,22 @@ web_search = "disabled"
 
         let settings = json!({
             "enableOfficialLogin": false,
-            "codexCustomModels": [{
-                "model": "gpt-5.2",
-                "providerId": "deepseek",
-                "upstreamModel": "deepseek-v4-flash",
-                "displayName": "DeepSeek V4 Flash",
-                "contextWindow": 131072
-            }]
+            "codexCustomModels": [
+                {
+                    "model": "gpt-5.2",
+                    "providerId": "deepseek",
+                    "upstreamModel": "deepseek-v4-flash",
+                    "displayName": "DeepSeek V4 Flash",
+                    "contextWindow": 131072
+                },
+                {
+                    "model": "gpt-5.5",
+                    "providerId": "glm",
+                    "upstreamModel": "glm-5",
+                    "displayName": "GLM-5",
+                    "contextWindow": 131072
+                }
+            ]
         });
 
         write_codex_models_cache_for_aggregate_at(codex_dir.clone(), &settings, "")
@@ -4806,17 +4835,14 @@ web_search = "disabled"
             .get("models")
             .and_then(|v| v.as_array())
             .expect("models array");
-        assert_eq!(models.len(), 1, "same slug must collapse to a single entry");
-        let entry = &models[0];
+        let slugs: Vec<&str> = models
+            .iter()
+            .filter_map(|m| m.get("slug").and_then(|s| s.as_str()))
+            .collect();
         assert_eq!(
-            entry.get("slug").and_then(|v| v.as_str()),
-            Some("gpt-5.2"),
-            "slug must stay as the mapped display name"
-        );
-        assert_eq!(
-            entry.get("display_name").and_then(|v| v.as_str()),
-            Some("DeepSeek V4 Flash"),
-            "custom entry must replace the official entry"
+            slugs,
+            vec!["gpt-5.2", "gpt-5.5"],
+            "only mapped carrier slots remain, stale official entries cleared"
         );
     }
 
@@ -4897,7 +4923,76 @@ web_search = "disabled"
     }
 
     #[test]
-    fn write_codex_models_cache_for_provider_skips_official_with_login_enabled() {
+    fn write_codex_models_cache_for_official_login_merges_custom_entries() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        // 缓存已有官方 gpt-5.5（官方登录拉取后 Codex 自行写入）。
+        let stale_cache = json!({
+            "fetched_at": "2026-08-01T00:00:00.000000000Z",
+            "etag": "W/\"old\"",
+            "client_version": "0.146.0",
+            "models": [{"slug": "gpt-5.5", "display_name": "GPT-5.5"}]
+        });
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&stale_cache).expect("serialize stale cache"),
+        )
+        .expect("write stale cache");
+
+        // 官方登录 + 自定义模型：桌面端读 models_cache.json，需把自定义条目
+        // 合并进去，否则官方登录下看不到聚合模型。
+        let provider = Provider {
+            id: crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            name: "OpenAI Official".to_string(),
+            settings_config: json!({
+                "enableOfficialLogin": true,
+                "codexCustomModels": [{
+                    "model": "gpt-5.2",
+                    "providerId": "deepseek",
+                    "upstreamModel": "deepseek-v4-flash",
+                    "displayName": "DeepSeek V4 Flash"
+                }]
+            }),
+            website_url: None,
+            category: Some("official".to_string()),
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, "")
+            .expect("official-login aggregation write must succeed");
+
+        let written: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("models_cache.json")).expect("read cache"),
+        )
+        .expect("parse cache");
+        let models = written
+            .get("models")
+            .and_then(|v| v.as_array())
+            .expect("models array");
+        let slugs: Vec<&str> = models
+            .iter()
+            .filter_map(|m| m.get("slug").and_then(|s| s.as_str()))
+            .collect();
+        assert!(
+            slugs.contains(&"gpt-5.5"),
+            "official model must be preserved under official login: {slugs:?}"
+        );
+        assert!(
+            slugs.contains(&"gpt-5.2"),
+            "custom model must be merged into the desktop cache: {slugs:?}"
+        );
+    }
+
+    #[test]
+    fn write_codex_models_cache_for_official_login_skips_without_custom_models() {
         let temp_home = tempfile::tempdir().expect("create temp home");
         let codex_dir = temp_home.path().join(".codex");
         std::fs::create_dir_all(&codex_dir).expect("create codex dir");
@@ -4914,18 +5009,12 @@ web_search = "disabled"
         )
         .expect("write stale cache");
 
-        // 官方登录开启：桌面端自己从 ChatGPT 后端拉取，cc-switch 不写缓存。
+        // 官方登录开启且无自定义模型：桌面端自己从 ChatGPT 后端拉取，cc-switch 不写缓存。
         let provider = Provider {
             id: crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
             name: "OpenAI Official".to_string(),
             settings_config: json!({
                 "enableOfficialLogin": true,
-                "codexCustomModels": [{
-                    "model": "gpt-5.2",
-                    "providerId": "deepseek",
-                    "upstreamModel": "deepseek-v4-flash",
-                    "displayName": "DeepSeek V4 Flash"
-                }]
             }),
             website_url: None,
             category: Some("official".to_string()),
@@ -4951,7 +5040,7 @@ web_search = "disabled"
                 .and_then(|v| v.as_array())
                 .map(|m| m.len()),
             Some(1),
-            "cache must be left untouched when official login is enabled"
+            "cache must be left untouched when official login is enabled without custom models"
         );
     }
 
@@ -4973,7 +5062,8 @@ web_search = "disabled"
         )
         .expect("write stale cache");
 
-        // 聚合模式（官方 + 关登录）：保持既有合并语义。
+        // 聚合模式（官方 + 关登录）：只保留映射到供应商的自定义模型，
+        // 旧缓存里的官方/残留条目全部清掉。
         let provider = Provider {
             id: crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
             name: "OpenAI Official".to_string(),
@@ -5013,12 +5103,12 @@ web_search = "disabled"
             .filter_map(|m| m.get("slug").and_then(|s| s.as_str()))
             .collect();
         assert!(
-            slugs.contains(&"gpt-5.5"),
-            "official entries must be preserved in aggregate mode: {slugs:?}"
+            !slugs.contains(&"gpt-5.5"),
+            "stale official entries must be cleared in aggregate mode: {slugs:?}"
         );
         assert!(
             slugs.contains(&"deepseek-v4-flash"),
-            "custom model must be merged in aggregate mode: {slugs:?}"
+            "custom model must be present in aggregate mode: {slugs:?}"
         );
     }
 
