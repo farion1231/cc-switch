@@ -1498,6 +1498,7 @@
     "responseModel": "回傳模型",
     "noData": "暫無資料",
     "unknownProvider": "未知供應商",
+    "routeBadge": "路由",
     "stream": "串流",
     "nonStream": "非串流",
     "source": "來源",

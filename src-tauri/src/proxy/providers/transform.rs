@@ -664,6 +664,15 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
         }
     }
 
+    // 响应只有 thinking 块而无文本/工具调用时，注入空文本块，避免客户端收到
+    // 无 text 内容的 assistant 消息而判定不完整后重试（与流式路径一致）。
+    let has_text = content
+        .iter()
+        .any(|block| block.get("type").and_then(|t| t.as_str()) == Some("text"));
+    if !has_tool_use && !has_text {
+        content.push(json!({"type": "text", "text": ""}));
+    }
+
     // 映射 finish_reason → stop_reason
     let stop_reason = choice
         .get("finish_reason")
@@ -1361,6 +1370,39 @@ mod tests {
             usage.dedup_request_id(None),
             "session:chatcmpl-claude-compatible"
         );
+    }
+
+    // 回归：思考模型在 max_tokens 极低时只输出 thinking、无文本内容。
+    // 修复前返回的 assistant 消息只有 thinking 块而无 text，客户端会判定
+    // 不完整而重试。现在应注入空文本块。
+    #[test]
+    fn test_openai_to_anthropic_injects_empty_text_when_thinking_only() {
+        let input = json!({
+            "id": "chatcmpl-64",
+            "object": "chat.completion",
+            "created": 1234567890,
+            "model": "deepseek-v4-flash",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "reasoning_content": "思考中",
+                    "content": null
+                },
+                "finish_reason": "length"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 64, "total_tokens": 74}
+        });
+
+        let result = openai_to_anthropic(input).unwrap();
+        let content = result["content"].as_array().unwrap();
+
+        assert_eq!(content.len(), 2, "expected thinking + injected empty text");
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[0]["thinking"], "思考中");
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "");
+        assert_eq!(result["stop_reason"], "max_tokens");
     }
 
     #[test]

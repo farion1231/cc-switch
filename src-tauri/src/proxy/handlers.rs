@@ -102,7 +102,29 @@ pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
         }
         json!({"models": []})
     };
-    Ok(Json(catalog))
+    // 同时返回两种格式：原始 catalog 格式（Codex 使用）+ data 格式（fetchModelsForConfig 使用）
+    let mut resp = catalog;
+    let models = resp
+        .get("models")
+        .and_then(|m| m.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let data: Vec<Value> = models
+        .into_iter()
+        .map(|m| {
+            let id = m
+                .get("id")
+                .or_else(|| m.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            json!({"id": id, "owned_by": null})
+        })
+        .collect();
+    if let Some(obj) = resp.as_object_mut() {
+        obj.insert("data".to_string(), json!(data));
+    }
+    Ok(Json(resp))
 }
 
 // ============================================================================
@@ -294,6 +316,7 @@ struct ClaudeUsageLog {
     latency_ms: u64,
     status_code: u16,
     is_streaming: bool,
+    provider_type: Option<String>,
 }
 
 fn prepare_claude_usage_log(
@@ -321,12 +344,13 @@ fn prepare_claude_usage_log(
             .clone()
             .unwrap_or_else(|| ctx.request_model.clone()),
         app_type: ctx.app_type_str,
-        provider_id: ctx.provider.id.clone(),
+        provider_id: ctx.usage_provider_label(),
         session_id: ctx.session_id.clone(),
         usage,
         latency_ms: ctx.latency_ms(),
         status_code,
         is_streaming,
+        provider_type: ctx.usage_provider_type(),
     })
 }
 
@@ -344,6 +368,7 @@ async fn write_claude_usage_log(state: &ProxyState, log: ClaudeUsageLog) {
         log.is_streaming,
         log.status_code,
         Some(log.session_id),
+        log.provider_type,
     )
     .await;
 }
@@ -425,7 +450,8 @@ async fn handle_claude_transform(
         // 创建使用量收集器；关闭 usage logging 时不要再解析转换后的 SSE。
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
-            let provider_id = ctx.provider.id.clone();
+            let provider_id = ctx.usage_provider_label();
+            let provider_type = ctx.usage_provider_type();
             let request_model = ctx.request_model.clone();
             // 上游/转换层未回显模型时，优先用映射后的出站模型兜底（路由接管真值），
             // 其次才是客户端请求别名。空字符串视为缺失（转换器对无回显上游会合成 ""）。
@@ -456,6 +482,7 @@ async fn handle_claude_transform(
                         let session_id = session_id.clone();
                         let request_model = request_model.clone();
                         let outbound_model = fallback_model.clone();
+                        let provider_type = provider_type.clone();
 
                         tokio::spawn(async move {
                             log_usage(
@@ -471,6 +498,7 @@ async fn handle_claude_transform(
                                 true,
                                 status_code,
                                 Some(session_id),
+                                provider_type,
                             )
                             .await;
                         });
@@ -1122,7 +1150,8 @@ async fn handle_codex_responses_namespace_restore(
                 let app_type_str = ctx.app_type_str;
                 tokio::spawn({
                     let state = state.clone();
-                    let provider_id = ctx.provider.id.clone();
+                    let provider_id = ctx.usage_provider_label();
+                    let provider_type = ctx.usage_provider_type();
                     let session_id = ctx.session_id.clone();
                     let latency_ms = ctx.latency_ms();
                     async move {
@@ -1139,6 +1168,7 @@ async fn handle_codex_responses_namespace_restore(
                             false,
                             status.as_u16(),
                             Some(session_id),
+                            provider_type,
                         )
                         .await;
                     }
@@ -1198,7 +1228,8 @@ async fn handle_codex_chat_to_responses_transform(
 
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
-            let provider_id = ctx.provider.id.clone();
+            let provider_id = ctx.usage_provider_label();
+            let provider_type = ctx.usage_provider_type();
             let request_model = ctx.request_model.clone();
             // 接管/模型覆写场景的归因兜底：出站真值优先于客户端请求别名
             let fallback_model = ctx
@@ -1236,6 +1267,7 @@ async fn handle_codex_chat_to_responses_transform(
                     let request_model = request_model.clone();
                     let outbound_model = fallback_model.clone();
                     let session_id = session_id.clone();
+                    let provider_type = provider_type.clone();
 
                     tokio::spawn(async move {
                         log_usage(
@@ -1251,6 +1283,7 @@ async fn handle_codex_chat_to_responses_transform(
                             true,
                             status.as_u16(),
                             Some(session_id),
+                            provider_type,
                         )
                         .await;
                     });
@@ -1355,7 +1388,8 @@ async fn handle_codex_chat_to_responses_transform(
         let app_type_str = ctx.app_type_str;
         tokio::spawn({
             let state = state.clone();
-            let provider_id = ctx.provider.id.clone();
+            let provider_id = ctx.usage_provider_label();
+            let provider_type = ctx.usage_provider_type();
             let session_id = ctx.session_id.clone();
             let latency_ms = ctx.latency_ms();
             async move {
@@ -1372,6 +1406,7 @@ async fn handle_codex_chat_to_responses_transform(
                     false,
                     status.as_u16(),
                     Some(session_id),
+                    provider_type,
                 )
                 .await;
             }
@@ -1520,7 +1555,8 @@ async fn handle_codex_anthropic_to_responses_transform(
         let app_type_str = ctx.app_type_str;
         tokio::spawn({
             let state = state.clone();
-            let provider_id = ctx.provider.id.clone();
+            let provider_id = ctx.usage_provider_label();
+            let provider_type = ctx.usage_provider_type();
             let session_id = ctx.session_id.clone();
             let latency_ms = ctx.latency_ms();
             async move {
@@ -1537,6 +1573,7 @@ async fn handle_codex_anthropic_to_responses_transform(
                     false,
                     status.as_u16(),
                     Some(session_id),
+                    provider_type,
                 )
                 .await;
             }
@@ -1578,7 +1615,8 @@ fn build_codex_anthropic_sse_response(
 ) -> Result<axum::response::Response, ProxyError> {
     let usage_collector = if usage_logging_enabled(state) {
         let state = state.clone();
-        let provider_id = ctx.provider.id.clone();
+        let provider_id = ctx.usage_provider_label();
+        let provider_type = ctx.usage_provider_type();
         let request_model = ctx.request_model.clone();
         let fallback_model = ctx
             .outbound_model
@@ -1609,6 +1647,7 @@ fn build_codex_anthropic_sse_response(
                 let request_model = request_model.clone();
                 let outbound_model = fallback_model.clone();
                 let session_id = session_id.clone();
+                let provider_type = provider_type.clone();
 
                 tokio::spawn(async move {
                     log_usage(
@@ -1624,6 +1663,7 @@ fn build_codex_anthropic_sse_response(
                         true,
                         status.as_u16(),
                         Some(session_id),
+                        provider_type,
                     )
                     .await;
                 });
@@ -1943,7 +1983,16 @@ pub async fn handle_gemini(
             .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?
     };
 
-    // Gemini 的模型名称在 URI 中
+    // Gemini 的模型名在 URI 中，提前注入 body 以便路由匹配能读到
+    let gemini_model = crate::proxy::handler_context::extract_gemini_model_from_path(uri.path());
+    let mut body = body;
+    if let Some(ref model) = gemini_model {
+        if let serde_json::Value::Object(ref mut map) = body {
+            map.entry("model")
+                .or_insert_with(|| serde_json::Value::String(model.clone()));
+        }
+    }
+
     let mut ctx = RequestContext::new(&state, &body, &headers, AppType::Gemini, "Gemini", "gemini")
         .await?
         .with_model_from_uri(&uri);
@@ -2581,7 +2630,7 @@ fn log_forward_error(
 
     if let Err(e) = logger.log_error_with_context(
         request_id,
-        ctx.provider.id.clone(),
+        ctx.usage_provider_label(),
         ctx.app_type_str.to_string(),
         ctx.request_model.clone(),
         status_code,
@@ -2589,7 +2638,11 @@ fn log_forward_error(
         ctx.latency_ms(),
         is_streaming,
         Some(ctx.session_id.clone()),
-        None,
+        // 路由 provider 的 meta.provider_type = "cc_switch_route"，标记该行来自 UP 路由
+        ctx.provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.provider_type.clone()),
     ) {
         log::warn!("记录失败请求日志失败: {e}");
     }
@@ -2613,6 +2666,7 @@ async fn log_usage(
     is_streaming: bool,
     status_code: u16,
     session_id: Option<String>,
+    provider_type: Option<String>,
 ) {
     use super::usage::logger::UsageLogger;
 
@@ -2646,7 +2700,7 @@ async fn log_usage(
         first_token_ms,
         status_code,
         session_id,
-        None, // provider_type
+        provider_type,
         is_streaming,
     ) {
         log::warn!("[USG-001] 记录使用量失败: {e}");

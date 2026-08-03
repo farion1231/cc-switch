@@ -472,7 +472,13 @@ pub(crate) fn create_usage_collector(
     }
 
     let state = state.clone();
-    let provider_id = ctx.provider.id.clone();
+    let provider_id = ctx.usage_provider_label();
+    // 路由 provider 的 meta.provider_type = "cc_switch_route"，用量日志据此标记行来源
+    let provider_type = ctx
+        .provider
+        .meta
+        .as_ref()
+        .and_then(|m| m.provider_type.clone());
     let request_model = ctx.request_model.clone();
     // 流式事件缺失模型名时的归因兜底：映射后的出站模型（路由接管真值）优先，
     // 其次才是客户端请求别名
@@ -503,6 +509,7 @@ pub(crate) fn create_usage_collector(
                 let session_id = session_id.clone();
                 let request_model = request_model.clone();
                 let outbound_model = fallback_model.clone();
+                let provider_type = provider_type.clone();
 
                 tokio::spawn(async move {
                     log_usage_internal(
@@ -518,6 +525,7 @@ pub(crate) fn create_usage_collector(
                         true, // is_streaming
                         status_code,
                         Some(session_id),
+                        provider_type,
                     )
                     .await;
                 });
@@ -529,6 +537,7 @@ pub(crate) fn create_usage_collector(
                 let session_id = session_id.clone();
                 let request_model = request_model.clone();
                 let outbound_model = fallback_model.clone();
+                let provider_type = provider_type.clone();
 
                 tokio::spawn(async move {
                     log_usage_internal(
@@ -544,6 +553,7 @@ pub(crate) fn create_usage_collector(
                         true, // is_streaming
                         status_code,
                         Some(session_id),
+                        provider_type,
                     )
                     .await;
                 });
@@ -571,11 +581,17 @@ fn spawn_log_usage(
     }
 
     let state = state.clone();
-    let provider_id = ctx.provider.id.clone();
+    let provider_id = ctx.usage_provider_label();
     let app_type_str = ctx.app_type_str.to_string();
     let model = model.to_string();
     let request_model = request_model.to_string();
-    // 「按请求计价」模式的锚点：映射后的出站模型，无映射时等于 request_model
+    // 路由 provider 的 meta.provider_type 为 "cc_switch_route"，用量日志据此
+    // 标记该行来自 UP 路由（前端据此显示徽标，区分普通供应商）。
+    let provider_type = ctx
+        .provider
+        .meta
+        .as_ref()
+        .and_then(|m| m.provider_type.clone());
     let outbound_model = ctx
         .outbound_model
         .clone()
@@ -597,6 +613,7 @@ fn spawn_log_usage(
             is_streaming,
             status_code,
             Some(session_id),
+            provider_type,
         )
         .await;
     });
@@ -630,6 +647,7 @@ async fn log_usage_internal(
     is_streaming: bool,
     status_code: u16,
     session_id: Option<String>,
+    provider_type: Option<String>,
 ) {
     use super::usage::logger::UsageLogger;
 
@@ -667,7 +685,7 @@ async fn log_usage_internal(
         first_token_ms,
         status_code,
         session_id,
-        None, // provider_type
+        provider_type,
         is_streaming,
     ) {
         log::warn!("[USG-001] 记录使用量失败: {e}");
@@ -1078,6 +1096,7 @@ mod tests {
             false,
             200,
             None,
+            None,
         )
         .await;
 
@@ -1147,6 +1166,7 @@ mod tests {
             None,
             false,
             200,
+            None,
             None,
         )
         .await;
@@ -1227,6 +1247,7 @@ mod tests {
             None,
             false,
             200,
+            None,
             None,
         )
         .await;

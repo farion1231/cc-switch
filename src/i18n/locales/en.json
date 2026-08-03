@@ -1497,6 +1497,7 @@
     "responseModel": "Response Model",
     "noData": "No data",
     "unknownProvider": "Unknown Provider",
+    "routeBadge": "Route",
     "stream": "Stream",
     "nonStream": "Non-stream",
     "source": "Source",

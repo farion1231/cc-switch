@@ -285,7 +285,11 @@ export function ClaudeFormFields({
   );
 
   const handleFetchModels = useCallback(() => {
-    if (!baseUrl || !apiKey) {
+    // 本地代理地址不校验 apiKey（CC Switch 代理不需要鉴权）
+    const isLocalProxy =
+      baseUrl &&
+      (baseUrl.includes("127.0.0.1") || baseUrl === "http://localhost");
+    if (!baseUrl || (!apiKey && !isLocalProxy)) {
       showFetchModelsError(null, t, {
         hasApiKey: !!apiKey,
         hasBaseUrl: !!baseUrl,

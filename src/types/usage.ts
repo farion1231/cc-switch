@@ -34,6 +34,8 @@ export interface RequestLog {
   errorMessage?: string;
   createdAt: number;
   dataSource?: string;
+  /** 供应商类型；UP 路由 provider 为 "cc_switch_route"，用于标记路由来源 */
+  providerType?: string;
 }
 
 export interface SessionSyncResult {

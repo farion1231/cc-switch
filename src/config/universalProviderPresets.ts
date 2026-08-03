@@ -60,6 +60,35 @@ const NEWAPI_DEFAULT_MODELS: UniversalProviderModels = {
  */
 export const universalProviderPresets: UniversalProviderPreset[] = [
   {
+    name: "CC Switch 代理",
+    providerType: "cc_switch",
+    defaultApps: {
+      claude: true,
+      codex: true,
+      gemini: true,
+    },
+    defaultModels: {
+      claude: {
+        model: "claude-sonnet-5",
+        haikuModel: "claude-haiku-4-5-20251001",
+        sonnetModel: "claude-sonnet-5",
+        opusModel: "claude-opus-4-8",
+      },
+      codex: {
+        model: "gpt-5.5",
+        reasoningEffort: "high",
+      },
+      gemini: {
+        model: "gemini-3.5-flash",
+      },
+    },
+    websiteUrl: "",
+    icon: "cc-switch",
+    iconColor: "#22C55E",
+    description:
+      "使用本机的 CC Switch 代理作为统一入口，按模型自动路由到已配置的上游供应商",
+  },
+  {
     name: "NewAPI",
     providerType: "newapi",
     defaultApps: {

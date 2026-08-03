@@ -944,6 +944,38 @@ pub fn get_opencode_live_provider_ids() -> Result<Vec<String>, String> {
         .map_err(|e| e.to_string())
 }
 
+/// 获取所有供应商（扁平列表，跨所有 app_type + universal）
+#[tauri::command]
+pub fn get_all_providers_flat(
+    state: State<'_, AppState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let mut all = Vec::new();
+    for app_type in &[
+        "claude", "codex", "gemini", "opencode", "openclaw", "hermes",
+    ] {
+        if let Ok(providers) = state.db.get_all_providers(app_type) {
+            for (_, provider) in providers {
+                let mut entry = serde_json::to_value(&provider).unwrap_or(serde_json::Value::Null);
+                if let Some(obj) = entry.as_object_mut() {
+                    obj.insert("appType".to_string(), serde_json::json!(app_type));
+                }
+                all.push(entry);
+            }
+        }
+    }
+    // 追加 UniversalProvider
+    if let Ok(universal_providers) = state.db.get_all_universal_providers() {
+        for (_, up) in universal_providers {
+            let mut entry = serde_json::to_value(&up).unwrap_or(serde_json::Value::Null);
+            if let Some(obj) = entry.as_object_mut() {
+                obj.insert("appType".to_string(), serde_json::json!("universal"));
+            }
+            all.push(entry);
+        }
+    }
+    Ok(all)
+}
+
 // ============================================================================
 // OpenClaw 专属命令 → 已迁移至 commands/openclaw.rs
 // ============================================================================
