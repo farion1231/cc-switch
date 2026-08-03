@@ -17,6 +17,7 @@ describe("TokenRouter provider preset", () => {
     ).env;
 
     expect(preset?.websiteUrl).toBe("https://tokenrouter.com");
+    expect(preset?.apiKeyUrl).toBe("https://tokenrouter.com");
     expect(preset?.category).toBe("aggregator");
     expect(preset?.endpointCandidates).toEqual(["https://api.tokenrouter.com"]);
     expect(env.ANTHROPIC_BASE_URL).toBe("https://api.tokenrouter.com");
@@ -24,7 +25,7 @@ describe("TokenRouter provider preset", () => {
     expect(env.ANTHROPIC_MODEL).toBe("anthropic/claude-sonnet-5");
     expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe("anthropic/claude-haiku-4.5");
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("anthropic/claude-sonnet-5");
-    expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("anthropic/claude-opus-4.8");
+    expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("anthropic/claude-opus-5");
   });
 
   it("uses Anthropic proxy routes for Claude Desktop", () => {
@@ -33,11 +34,12 @@ describe("TokenRouter provider preset", () => {
     );
 
     expect(preset?.baseUrl).toBe("https://api.tokenrouter.com");
+    expect(preset?.apiKeyUrl).toBe("https://tokenrouter.com");
     expect(preset?.mode).toBe("proxy");
     expect(preset?.apiFormat).toBe("anthropic");
     expect(preset?.modelRoutes?.map((route) => route.upstreamModel)).toEqual([
       "anthropic/claude-sonnet-5",
-      "anthropic/claude-opus-4.8",
+      "anthropic/claude-opus-5",
       "anthropic/claude-haiku-4.5",
     ]);
   });
@@ -49,13 +51,14 @@ describe("TokenRouter provider preset", () => {
 
     expect(preset).toBeDefined();
     expect(preset?.websiteUrl).toBe("https://tokenrouter.com");
+    expect(preset?.apiKeyUrl).toBe("https://tokenrouter.com");
     expect(preset?.category).toBe("aggregator");
     expect(preset?.endpointCandidates).toEqual([
       "https://api.tokenrouter.com/v1",
     ]);
     expect(preset?.auth).toEqual({ OPENAI_API_KEY: "" });
     expect(preset?.config).toContain('model_provider = "custom"');
-    expect(preset?.config).toContain('model = "gpt-5.5"');
+    expect(preset?.config).toContain('model = "gpt-5.6-sol"');
     expect(preset?.config).toContain("[model_providers.custom]");
     expect(preset?.config).toContain('name = "tokenrouter"');
     expect(preset?.config).toContain(
@@ -70,16 +73,18 @@ describe("TokenRouter provider preset", () => {
       (item) => item.name === "TokenRouter",
     );
 
-    expect(preset?.settingsConfig.npm).toBe("@ai-sdk/openai-compatible");
+    expect(preset?.settingsConfig.npm).toBe("@ai-sdk/openai");
     expect(preset?.settingsConfig.options?.baseURL).toBe(
       "https://api.tokenrouter.com/v1",
     );
+    expect(preset?.apiKeyUrl).toBe("https://tokenrouter.com");
+    expect(preset?.settingsConfig.options?.setCacheKey).toBe(true);
     expect(preset?.settingsConfig.models).toEqual({
-      "gpt-5.5": { name: "GPT-5.5" },
+      "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
     });
   });
 
-  it("uses Chat Completions for Hermes", () => {
+  it("uses OpenAI Responses for Hermes", () => {
     const preset = hermesProviderPresets.find(
       (item) => item.name === "TokenRouter",
     );
@@ -88,15 +93,16 @@ describe("TokenRouter provider preset", () => {
       name: "tokenrouter",
       base_url: "https://api.tokenrouter.com/v1",
       api_key: "",
-      api_mode: "chat_completions",
+      api_mode: "codex_responses",
     });
+    expect(preset?.apiKeyUrl).toBe("https://tokenrouter.com");
     expect(preset?.suggestedDefaults?.model).toEqual({
-      default: "gpt-5.5",
+      default: "gpt-5.6-sol",
       provider: "tokenrouter",
     });
   });
 
-  it("uses OpenAI Completions for OpenClaw", () => {
+  it("uses OpenAI Responses for OpenClaw", () => {
     const preset = openclawProviderPresets.find(
       (item) => item.name === "TokenRouter",
     );
@@ -104,14 +110,15 @@ describe("TokenRouter provider preset", () => {
     expect(preset?.settingsConfig).toMatchObject({
       baseUrl: "https://api.tokenrouter.com/v1",
       apiKey: "",
-      api: "openai-completions",
+      api: "openai-responses",
     });
+    expect(preset?.apiKeyUrl).toBe("https://tokenrouter.com");
     expect(preset?.suggestedDefaults?.model?.primary).toBe(
-      "tokenrouter/gpt-5.5",
+      "tokenrouter/gpt-5.6-sol",
     );
   });
 
-  it("does not offer a broken Gemini preset without a native v1beta endpoint", () => {
+  it("omits Gemini until its native v1beta path is verified", () => {
     expect(
       geminiProviderPresets.some((item) => item.name === "TokenRouter"),
     ).toBe(false);

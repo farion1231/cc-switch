@@ -1204,6 +1204,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "TokenRouter",
     websiteUrl: "https://tokenrouter.com",
+    apiKeyUrl: "https://tokenrouter.com",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://api.tokenrouter.com",
@@ -1211,7 +1212,7 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_MODEL: "anthropic/claude-sonnet-5",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "anthropic/claude-haiku-4.5",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "anthropic/claude-sonnet-5",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "anthropic/claude-opus-4.8",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "anthropic/claude-opus-5",
       },
     },
     category: "aggregator",

@@ -1095,13 +1095,14 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "TokenRouter",
     websiteUrl: "https://tokenrouter.com",
+    apiKeyUrl: "https://tokenrouter.com",
     category: "aggregator",
     baseUrl: "https://api.tokenrouter.com",
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: mappedRoutes(
       "anthropic/claude-sonnet-5",
-      "anthropic/claude-opus-4.8",
+      "anthropic/claude-opus-5",
       "anthropic/claude-haiku-4.5",
       true,
     ),

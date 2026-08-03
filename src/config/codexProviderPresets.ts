@@ -1661,11 +1661,12 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
   {
     name: "TokenRouter",
     websiteUrl: "https://tokenrouter.com",
+    apiKeyUrl: "https://tokenrouter.com",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "tokenrouter",
       "https://api.tokenrouter.com/v1",
-      "gpt-5.5",
+      "gpt-5.6-sol",
     ),
     endpointCandidates: ["https://api.tokenrouter.com/v1"],
     category: "aggregator",
