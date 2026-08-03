@@ -37,6 +37,8 @@ mod store;
 mod tray;
 mod usage_events;
 mod usage_script;
+#[cfg(target_os = "windows")]
+mod windows_fix;
 
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
 pub use codex_config::{
@@ -1285,6 +1287,14 @@ pub fn run() {
             // 静默启动：根据设置决定是否显示主窗口
             let settings = crate::settings::get_settings();
             if let Some(window) = app.get_webview_window("main") {
+                // Windows: window-state 插件恢复 SIZE 时没有任何上限校验，跨不同 DPI
+                // 显示器拖动产生的溢出尺寸会被原样恢复（详见 windows_fix 模块注释）。
+                // 显示前先收敛回可用尺寸，并监听后续的 DPI 变化。
+                #[cfg(target_os = "windows")]
+                {
+                    windows_fix::clamp_main_window_size(&window);
+                    windows_fix::watch_scale_factor_changes(&window);
+                }
                 // 在窗口首次显示前同步装饰状态，避免前端加载后再切换导致标题栏闪烁
                 // 仅 Linux 生效：解决 Wayland 下系统窗口按钮不可用的问题
                 #[cfg(target_os = "linux")]
