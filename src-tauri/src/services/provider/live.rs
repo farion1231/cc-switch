@@ -30,6 +30,25 @@ use super::normalize_claude_models_in_value;
 const CODEX_OAUTH_CLAUDE_MAX_CONTEXT_TOKENS: &str = "372000";
 const CODEX_OAUTH_CLAUDE_AUTO_COMPACT_WINDOW: &str = "372000";
 const KIMI_FOR_CODING_CONTEXT_TOKENS: &str = "262144";
+/// Kimi K3 (`kimi-k3` on the Moonshot platform, `k3` / `k3-256k` on Kimi Code)
+/// serves a 1M-token context window. Only applied on the Moonshot Anthropic
+/// endpoint where `kimi-k3` is selectable; the Kimi Code endpoint never
+/// serves K3, so it stays at the 256K default.
+const KIMI_K3_CONTEXT_TOKENS: &str = "1048576";
+
+/// Env keys that may carry the routed model id for an Anthropic-protocol Kimi
+/// provider. Mirrors `CODEX_OAUTH_MODEL_ENV_KEYS` — we only need to peek at
+/// `ANTHROPIC_MODEL` for the K3 detection, but multiple slots let a user pick
+/// any of the per-tier overrides (default-haiku/sonnet/opus) without us
+/// missing the model id.
+const KIMI_MODEL_ENV_KEYS: [&str; 6] = [
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL",
+    "CLAUDE_CODE_SUBAGENT_MODEL",
+];
 
 /// Model env keys Claude Code may route requests through. The defaults above
 /// are calibrated against gpt-5.6's Codex catalog, so every configured model
@@ -149,6 +168,11 @@ fn apply_codex_oauth_claude_context_defaults(settings: &mut Value, provider: &Pr
 /// bite when the provider also routes the endpoint's `kimi-for-coding` /
 /// `kimi-k2.7-code` alias (the presets do). Keep the defaults provider-owned
 /// so an old shared snippet cannot override them.
+///
+/// The Moonshot endpoint (`api.moonshot.cn/anthropic`) now also serves K3
+/// (`kimi-k3`), a 1M-context model. Pick the default from the routed model
+/// rather than the endpoint alone: a provider that targets `kimi-k3` must
+/// get the 1M default; everything else (including K2.7) keeps 256K.
 fn apply_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provider) {
     if !is_kimi_for_coding_provider(provider) {
         return;
@@ -158,6 +182,7 @@ fn apply_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provi
         .settings_config
         .get("env")
         .and_then(Value::as_object);
+    let default_tokens = kimi_for_coding_default_context_tokens(provider_env);
     let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) else {
         return;
     };
@@ -169,9 +194,91 @@ fn apply_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provi
         let value = provider_env
             .and_then(|provider_env| provider_env.get(key))
             .cloned()
-            .unwrap_or_else(|| Value::String(KIMI_FOR_CODING_CONTEXT_TOKENS.to_string()));
+            .unwrap_or_else(|| Value::String(default_tokens.to_string()));
         env.insert(key.to_string(), value);
     }
+}
+
+/// Returns the fallback context window (as a string) for an Anthropic-protocol
+/// Kimi provider whose explicit `CLAUDE_CODE_MAX_CONTEXT_TOKENS` is unset.
+///
+/// - Kimi Code endpoint (`api.kimi.com/coding`) only serves 256K models, so it
+///   always falls back to 262144.
+/// - Moonshot endpoint (`api.moonshot.cn/anthropic`) serves both K2.7 (256K)
+///   and K3 (1M). When every configured model slot points at `kimi-k3` we
+///   fall back to 1048576; otherwise we stay at the K2.7 default.
+/// - If no model slot is set, default to the conservative 262144 — the
+///   provider can override via explicit env on next save.
+fn kimi_for_coding_default_context_tokens(
+    provider_env: Option<&serde_json::Map<String, Value>>,
+) -> &'static str {
+    let Some(env) = provider_env else {
+        return KIMI_FOR_CODING_CONTEXT_TOKENS;
+    };
+    let base_url = env
+        .get("ANTHROPIC_BASE_URL")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .map(|url| url.trim_end_matches('/'));
+    match base_url {
+        // Kimi Code service: never serves K3.
+        Some("https://api.kimi.com/coding") => KIMI_FOR_CODING_CONTEXT_TOKENS,
+        Some("https://api.moonshot.cn/anthropic") => {
+            if provider_env_targets_kimi_k3(Some(env)) {
+                KIMI_K3_CONTEXT_TOKENS
+            } else {
+                KIMI_FOR_CODING_CONTEXT_TOKENS
+            }
+        }
+        // Defensive default for any future endpoint that is_kimi_for_coding_provider
+        // matches — keep the conservative K2.7 window.
+        _ => KIMI_FOR_CODING_CONTEXT_TOKENS,
+    }
+}
+
+/// Returns true when at least one configured Kimi model slot is set AND every
+/// set slot targets `kimi-k3`. Empty slots are ignored so the user can leave
+/// tier-specific defaults unset without us losing the K3 signal.
+fn provider_env_targets_kimi_k3(
+    provider_env: Option<&serde_json::Map<String, Value>>,
+) -> bool {
+    let Some(env) = provider_env else {
+        return false;
+    };
+    let mut saw_model = false;
+    for key in KIMI_MODEL_ENV_KEYS {
+        let Some(value) = env.get(key) else {
+            continue;
+        };
+        let Some(model) = value.as_str() else {
+            return false;
+        };
+        let model = model.trim();
+        if model.is_empty() {
+            continue;
+        }
+        saw_model = true;
+        if !is_kimi_k3_model(model) {
+            return false;
+        }
+    }
+    saw_model
+}
+
+/// K3 model id matching — covers the Moonshot platform alias (`kimi-k3`),
+/// the Kimi Code service alias (`k3`), the cost-saving K3 256K tier
+/// (`k3-256k`), and the high-speed variant (`kimi-for-coding-highspeed`
+/// shares the K3 family prefix but stays at 256K — see below). Match is
+/// case-insensitive on the leading token, and the K3 256K / HighSpeed
+/// variants are explicitly excluded so we keep the 256K default for them.
+fn is_kimi_k3_model(model: &str) -> bool {
+    let lower = model.to_ascii_lowercase();
+    let token = lower.split_whitespace().next().unwrap_or("");
+    // `k3-256k` keeps the 256K window — do not classify as full K3.
+    if token == "k3-256k" || token.starts_with("k3-256k") {
+        return false;
+    }
+    token == "kimi-k3" || token == "k3"
 }
 
 pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
@@ -2625,5 +2732,126 @@ base_url = "https://a.example/v1"
 
         assert!(!config_text.contains("mcp_servers"));
         assert!(config_text.contains("model = \"grok-4.5\""));
+    }
+
+    // Codex P2 feedback on #6038: the Moonshot endpoint serves both K2.7
+    // (256K) and K3 (1M). Without an explicit `CLAUDE_CODE_MAX_CONTEXT_TOKENS`,
+    // the endpoint-only fallback was forcing every Moonshot provider to
+    // 262144 even when the user picked `kimi-k3`. With the model-aware
+    // default, an existing Moonshot provider whose `ANTHROPIC_MODEL`
+    // targets `kimi-k3` must now pick up the 1M window.
+    #[test]
+    fn moonshot_kimi_k3_provider_default_context_is_1m() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "moonshot-k3".to_string(),
+            "Moonshot K3".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.moonshot.cn/anthropic",
+                    "ANTHROPIC_MODEL": "kimi-k3"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("1048576")
+        );
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("1048576")
+        );
+    }
+
+    // Companion: a Moonshot provider whose model still points at K2.7 keeps
+    // the legacy 262144 default — the model-aware branch must not regress
+    // the K2.7 path.
+    #[test]
+    fn moonshot_kimi_k2_7_provider_default_context_is_256k() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "moonshot-k27".to_string(),
+            "Moonshot K2.7".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.moonshot.cn/anthropic",
+                    "ANTHROPIC_MODEL": "kimi-k2-0711-preview"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("262144")
+        );
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("262144")
+        );
+    }
+
+    // A Moonshot provider that has not set a model slot at all stays on the
+    // conservative K2.7 default — the user can still override via the explicit
+    // env keys and the new behaviour must not surprise them with a 1M window
+    // they never asked for.
+    #[test]
+    fn moonshot_provider_without_model_falls_back_to_256k() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "moonshot-bare".to_string(),
+            "Moonshot".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.moonshot.cn/anthropic"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("262144")
+        );
+    }
+
+    // Tier-specific model slot: when only `ANTHROPIC_DEFAULT_HAIKU_MODEL`
+    // (not `ANTHROPIC_MODEL`) targets `kimi-k3`, the detection must still
+    // classify the provider as K3 and inject the 1M default. Without
+    // `ANTHROPIC_MODEL` set, the user's choice of tier-default signals the
+    // intended model family.
+    #[test]
+    fn moonshot_provider_with_only_tier_model_targeting_k3_picks_1m() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "moonshot-tier-k3".to_string(),
+            "Moonshot tier K3".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.moonshot.cn/anthropic",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "kimi-k3"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("1048576")
+        );
     }
 }
