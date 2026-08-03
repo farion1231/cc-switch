@@ -2554,6 +2554,46 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "Abliteration",
+    websiteUrl: "https://abliteration.ai",
+    apiKeyUrl: "https://abliteration.ai/console",
+    settingsConfig: {
+      baseUrl: "https://api.abliteration.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "abliterated-model-large",
+          name: "Abliterated Large",
+          contextWindow: 1000000,
+        },
+        {
+          id: "abliterated-model",
+          name: "Abliterated Model",
+          contextWindow: 262144,
+        },
+      ],
+    },
+    category: "third_party",
+    icon: "abliteration",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "abliteration/abliterated-model-large",
+      },
+      modelCatalog: {
+        "abliteration/abliterated-model-large": { alias: "Abliterated Large" },
+        "abliteration/abliterated-model": { alias: "Abliterated Model" },
+      },
+    },
+  },
+  {
     name: "AWS Bedrock",
     websiteUrl: "https://aws.amazon.com/bedrock/",
     settingsConfig: {

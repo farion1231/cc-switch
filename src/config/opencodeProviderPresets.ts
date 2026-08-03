@@ -2044,6 +2044,41 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "Abliteration",
+    websiteUrl: "https://abliteration.ai",
+    apiKeyUrl: "https://abliteration.ai/console",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Abliteration",
+      options: {
+        baseURL: "https://api.abliteration.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "abliterated-model-large": {
+          name: "Abliterated Large",
+          limit: { context: 1000000 },
+          modalities: { input: ["text"], output: ["text"] },
+        },
+        "abliterated-model": {
+          name: "Abliterated Model",
+          limit: { context: 262144 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "third_party",
+    icon: "abliteration",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "AWS Bedrock",
     websiteUrl: "https://aws.amazon.com/bedrock/",
     settingsConfig: {

@@ -1184,4 +1184,22 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "xiaomimimo",
     iconColor: "#000000",
   },
+  {
+    name: "Abliteration",
+    websiteUrl: "https://abliteration.ai",
+    apiKeyUrl: "https://abliteration.ai/console",
+    category: "third_party",
+    baseUrl: "https://api.abliteration.ai",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "abliterated-model-large",
+      "abliterated-model-large",
+      "abliterated-model-large",
+      true,
+    ),
+    endpointCandidates: ["https://api.abliteration.ai"],
+    icon: "abliteration",
+    iconColor: "#0A0A0A",
+  },
 ];

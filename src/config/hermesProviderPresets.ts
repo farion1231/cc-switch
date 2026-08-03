@@ -1569,4 +1569,32 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "mimo-v2.5-pro", provider: "xiaomi_mimo_token_plan" },
     },
   },
+  {
+    name: "Abliteration",
+    websiteUrl: "https://abliteration.ai",
+    apiKeyUrl: "https://abliteration.ai/console",
+    settingsConfig: {
+      name: "abliteration",
+      base_url: "https://api.abliteration.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "abliterated-model-large",
+          name: "Abliterated Large",
+          context_length: 1000000,
+        },
+        {
+          id: "abliterated-model",
+          name: "Abliterated Model",
+          context_length: 262144,
+        },
+      ],
+    },
+    category: "third_party",
+    icon: "abliteration",
+    suggestedDefaults: {
+      model: { default: "abliterated-model-large", provider: "abliteration" },
+    },
+  },
 ];
