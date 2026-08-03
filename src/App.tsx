@@ -1224,7 +1224,7 @@ function App() {
                     setCurrentView("settings");
                   }}
                 />
-                {isCurrentAppTakeoverActive && (
+                {(isCurrentAppTakeoverActive || activeApp === "claude-desktop") && (
                   <Button
                     variant="ghost"
                     size="icon"
