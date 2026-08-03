@@ -6,10 +6,23 @@ use crate::error::AppError;
 use crate::services::provider::ProviderService;
 use crate::settings;
 use crate::store::AppState;
+use crate::AppType;
 
-pub(crate) fn run_post_import_sync(db: Arc<Database>) -> Result<(), AppError> {
+pub(crate) fn with_codex_mutation_lock<T>(
+    db: Arc<Database>,
+    operation: impl FnOnce(&AppState) -> Result<T, AppError>,
+) -> Result<T, AppError> {
     let app_state = AppState::new(db);
-    ProviderService::sync_current_to_live(&app_state)?;
+    let _guard = futures::executor::block_on(
+        app_state
+            .proxy_service
+            .lock_switch_for_app(AppType::Codex.as_str()),
+    );
+    operation(&app_state)
+}
+
+pub(crate) fn run_post_import_sync_locked(app_state: &AppState) -> Result<(), AppError> {
+    ProviderService::sync_current_to_live_locked(app_state)?;
     settings::reload_settings()?;
     Ok(())
 }

@@ -1221,7 +1221,7 @@ pub(crate) fn sync_current_provider_for_app_to_live(
     // 本函数语义是"把这个应用同步到 live"，MCP 重投影也只针对该应用；
     // 全量 sync_all_enabled 会把无关应用的 live 损坏牵连进来。投影失败
     // 上抛（不降级）：这里没有已变更的 DB 状态需要保护，调用方重试即可。
-    McpService::sync_enabled_for_app(state, app_type)?;
+    McpService::sync_enabled_for_app_locked(state, app_type)?;
 
     Ok(())
 }
@@ -1255,12 +1255,20 @@ fn sync_current_provider_for_app_respecting_takeover(
         if matches!(app_type, AppType::ClaudeDesktop) {
             write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
         } else {
-            futures::executor::block_on(
-                state
-                    .proxy_service
-                    .update_live_backup_from_provider(app_type.as_str(), provider),
-            )
-            .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+            let update = if matches!(app_type, AppType::Codex) {
+                futures::executor::block_on(
+                    state
+                        .proxy_service
+                        .update_live_backup_from_provider_inner(app_type.as_str(), provider),
+                )
+            } else {
+                futures::executor::block_on(
+                    state
+                        .proxy_service
+                        .update_live_backup_from_provider(app_type.as_str(), provider),
+                )
+            };
+            update.map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
         }
         return Ok(());
     }

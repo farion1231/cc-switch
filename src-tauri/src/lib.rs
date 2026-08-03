@@ -42,11 +42,19 @@ pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig
 pub use codex_config::{
     get_codex_auth_path, get_codex_config_path, read_codex_live_settings, write_codex_live_atomic,
 };
+#[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
+pub fn migrate_codex_provider_templates_test_hook(state: &AppState) -> Result<usize, AppError> {
+    codex_history_migration::maybe_migrate_codex_provider_template_bucket(&state.db)
+        .map(|outcome| outcome.migrated_provider_ids.len())
+}
 pub use commands::open_provider_terminal;
 pub use commands::*;
 pub use config::{get_claude_mcp_path, get_claude_settings_path, read_json_file};
 pub use database::{Database, Profile};
-pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
+pub use deeplink::{
+    import_provider_from_deeplink, parse_deeplink_request_url, parse_deeplink_url,
+    DeepLinkImportRequest, DeepLinkRequest, ProviderSwitchRequest,
+};
 pub use error::AppError;
 pub use grok_config::get_grok_config_path;
 pub use mcp::{
@@ -219,6 +227,21 @@ fn runtime_log_level_allows(level: log::Level, max_level: log::LevelFilter) -> b
     max_level.to_level().is_some_and(|maximum| level <= maximum)
 }
 
+fn deeplink_error_payload(error: impl Into<String>) -> serde_json::Value {
+    serde_json::json!({ "error": error.into() })
+}
+
+fn provider_switch_review_blocks_session_sync(state: &AppState) -> Result<bool, AppError> {
+    state.has_active_provider_switch_reviews()
+}
+
+#[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
+pub fn provider_switch_review_blocks_session_sync_test_hook(
+    state: &AppState,
+) -> Result<bool, AppError> {
+    provider_switch_review_blocks_session_sync(state)
+}
+
 /// 统一处理 ccswitch:// 深链接 URL
 ///
 /// - 解析 URL
@@ -239,13 +262,13 @@ fn handle_deeplink_url(
         url_for_log(url_str)
     );
 
-    match crate::deeplink::parse_deeplink_url(url_str) {
+    match crate::deeplink::parse_deeplink_request_url(url_str) {
         Ok(request) => {
             log::info!(
                 "✓ Successfully parsed deep link: resource={}, app={:?}, name={:?}",
-                request.resource,
-                request.app,
-                request.name
+                request.resource(),
+                request.app(),
+                request.name()
             );
 
             if let Err(e) = app.emit("deeplink-import", &request) {
@@ -270,13 +293,8 @@ fn handle_deeplink_url(
         Err(e) => {
             log::error!("✗ Failed to parse deep link URL: {e}");
 
-            if let Err(emit_err) = app.emit(
-                "deeplink-error",
-                serde_json::json!({
-                    "url": url_str,
-                    "error": e.to_string()
-                }),
-            ) {
+            if let Err(emit_err) = app.emit("deeplink-error", deeplink_error_payload(e.to_string()))
+            {
                 log::error!("✗ Failed to emit deeplink-error event: {emit_err}");
             }
         }
@@ -1223,14 +1241,38 @@ pub fn run() {
                 });
 
                 // Session log usage sync: 启动时同步一次，之后每 60 秒检查
-                let db_for_session_sync = state.db.clone();
+                let app_for_session_sync = app_handle.clone();
                 tauri::async_runtime::spawn(async move {
                     const SESSION_SYNC_INTERVAL_SECS: u64 = 60;
 
-                    async fn run_session_sync(db: std::sync::Arc<crate::database::Database>, backfill: bool) {
+                    async fn run_session_sync(app: tauri::AppHandle, backfill: bool) {
                         let _guard = crate::services::session_usage::session_sync_mutex()
                             .lock()
                             .await;
+                        let db = {
+                            let Some(state) = app.try_state::<AppState>() else {
+                                log::warn!(
+                                    "Session usage sync skipped: application state unavailable"
+                                );
+                                return;
+                            };
+                            match provider_switch_review_blocks_session_sync(state.inner()) {
+                                Ok(true) => {
+                                    log::debug!(
+                                        "Session usage sync paused while a provider switch is under review"
+                                    );
+                                    return;
+                                }
+                                Ok(false) => {}
+                                Err(error) => {
+                                    log::warn!(
+                                        "Session usage sync skipped: provider review state unavailable: {error}"
+                                    );
+                                    return;
+                                }
+                            }
+                            state.db.clone()
+                        };
                         let task = tauri::async_runtime::spawn_blocking(move || {
                             if backfill {
                                 if let Err(error) = db.backfill_missing_usage_costs() {
@@ -1252,7 +1294,7 @@ pub fn run() {
                     }
 
                     // 首次同步（含费用回填）
-                    run_session_sync(db_for_session_sync.clone(), true).await;
+                    run_session_sync(app_for_session_sync.clone(), true).await;
 
                     // 定期同步
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
@@ -1262,7 +1304,7 @@ pub fn run() {
                     interval.tick().await; // skip immediate first tick
                     loop {
                         interval.tick().await;
-                        run_session_sync(db_for_session_sync.clone(), false).await;
+                        run_session_sync(app_for_session_sync.clone(), false).await;
                     }
                 });
             });
@@ -1452,6 +1494,9 @@ pub fn run() {
             commands::sync_current_providers_live,
             // Deep link import
             commands::parse_deeplink,
+            commands::previewProviderSwitch,
+            commands::cancelProviderSwitch,
+            commands::confirmProviderSwitch,
             commands::merge_deeplink_config,
             commands::import_from_deeplink,
             commands::import_from_deeplink_unified,
@@ -1736,61 +1781,18 @@ pub fn run() {
                 RunEvent::Opened { urls } => {
                     if let Some(url) = urls.first() {
                         let url_str = url.to_string();
-                        log::info!(
-                            "RunEvent::Opened with URL: {}",
-                            url_for_log(&url_str)
-                        );
+                        log::info!("RunEvent::Opened with URL: {}", url_for_log(&url_str));
 
                         if url_str.starts_with("ccswitch://") {
                             if crate::lightweight::is_lightweight_mode() {
-                                if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle)
+                                if let Err(e) =
+                                    crate::lightweight::exit_lightweight_mode(app_handle)
                                 {
                                     log::error!("退出轻量模式重建窗口失败: {e}");
                                 }
                             }
 
-                            // 解析并广播深链接事件，复用与 single_instance 相同的逻辑
-                            match crate::deeplink::parse_deeplink_url(&url_str) {
-                                Ok(request) => {
-                                    log::info!(
-                                        "Successfully parsed deep link from RunEvent::Opened: resource={}, app={:?}",
-                                        request.resource,
-                                        request.app
-                                    );
-
-                                    if let Err(e) =
-                                        app_handle.emit("deeplink-import", &request)
-                                    {
-                                        log::error!(
-                                            "Failed to emit deep link event from RunEvent::Opened: {e}"
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    log::error!(
-                                        "Failed to parse deep link URL from RunEvent::Opened: {e}"
-                                    );
-
-                                    if let Err(emit_err) = app_handle.emit(
-                                        "deeplink-error",
-                                        serde_json::json!({
-                                            "url": url_str,
-                                            "error": e.to_string()
-                                        }),
-                                    ) {
-                                        log::error!(
-                                            "Failed to emit deep link error event from RunEvent::Opened: {emit_err}"
-                                        );
-                                    }
-                                }
-                            }
-
-                            // 确保主窗口可见
-                            if let Some(window) = app_handle.get_webview_window("main") {
-                                let _ = window.unminimize();
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
+                            handle_deeplink_url(app_handle, &url_str, true, "RunEvent::Opened");
                         }
                     }
                 }
@@ -2216,9 +2218,9 @@ pub fn restart_process(app_handle: &tauri::AppHandle) -> ! {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_exit_request, enabled_proxy_apps_on_startup, redact_url_for_log,
-        redact_url_for_log_with_secrets, redact_url_origin_for_log, runtime_log_level_allows,
-        ExitRequestAction,
+        classify_exit_request, deeplink_error_payload, enabled_proxy_apps_on_startup,
+        redact_url_for_log, redact_url_for_log_with_secrets, redact_url_origin_for_log,
+        runtime_log_level_allows, ExitRequestAction,
     };
     use crate::database::Database;
 
@@ -2263,6 +2265,14 @@ mod tests {
         assert_eq!(
             redact_url_for_log_with_secrets("https://api.example.com/v1", &short_secrets),
             "https://api.example.com/v1"
+        );
+    }
+
+    #[test]
+    fn deeplink_error_event_payload_contains_no_source_url() {
+        assert_eq!(
+            deeplink_error_payload("request rejected"),
+            serde_json::json!({"error": "request rejected"})
         );
     }
 

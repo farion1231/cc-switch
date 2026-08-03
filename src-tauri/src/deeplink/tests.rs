@@ -1,11 +1,11 @@
 //! Deep link module tests
 
 use super::mcp::parse_mcp_apps;
-use super::parser::parse_deeplink_url;
+use super::parser::{parse_deeplink_request_url, parse_deeplink_url};
 use super::prompt::import_prompt_from_deeplink;
 use super::provider::parse_and_merge_config;
 use super::utils::{infer_homepage_from_endpoint, validate_url};
-use super::DeepLinkImportRequest;
+use super::{DeepLinkImportRequest, DeepLinkRequest};
 use crate::AppType;
 use crate::{store::AppState, Database};
 use base64::prelude::*;
@@ -58,6 +58,73 @@ impl Drop for TestHomeGuard {
 // =============================================================================
 // Parser Tests
 // =============================================================================
+
+#[test]
+fn provider_switch_deeplink_accepts_only_a_codex_provider_id() {
+    let request = parse_deeplink_request_url(
+        "ccswitch://v1/import?resource=provider-switch&app=codex&id=provider-2",
+    )
+    .expect("parse provider switch request");
+
+    let DeepLinkRequest::ProviderSwitch(request) = request else {
+        panic!("expected a provider-switch request");
+    };
+    assert_eq!(request.version, "v1");
+    assert_eq!(request.resource, "provider-switch");
+    assert_eq!(request.app, "codex");
+    assert_eq!(request.id, "provider-2");
+}
+
+#[test]
+fn provider_switch_deeplink_rejects_fields_other_than_resource_app_and_id() {
+    for forbidden_field in ["apiKey", "config", "auth", "unexpected"] {
+        let url = format!(
+            "ccswitch://v1/import?resource=provider-switch&app=codex&id=provider-2&{forbidden_field}=secret"
+        );
+
+        assert!(
+            parse_deeplink_request_url(&url).is_err(),
+            "provider-switch accepted forbidden field {forbidden_field}"
+        );
+    }
+}
+
+#[test]
+fn provider_switch_deeplink_rejects_duplicate_fields() {
+    for duplicate in ["resource=provider-switch", "app=codex", "id=provider-3"] {
+        let url = format!(
+            "ccswitch://v1/import?resource=provider-switch&app=codex&id=provider-2&{duplicate}"
+        );
+
+        assert!(
+            parse_deeplink_request_url(&url).is_err(),
+            "provider-switch accepted duplicate field {duplicate}"
+        );
+    }
+
+    assert!(
+        parse_deeplink_request_url(
+            "ccswitch://v1/import?resource=provider&resource=provider-switch&app=codex&id=provider-2"
+        )
+        .is_err(),
+        "provider-switch escaped narrow parsing through an earlier resource field"
+    );
+}
+
+#[test]
+fn provider_switch_deeplink_rejects_extra_authority_and_fragment_components() {
+    for url in [
+        "ccswitch://user@v1/import?resource=provider-switch&app=codex&id=provider-2",
+        "ccswitch://user:password@v1/import?resource=provider-switch&app=codex&id=provider-2",
+        "ccswitch://v1:7897/import?resource=provider-switch&app=codex&id=provider-2",
+        "ccswitch://v1/import?resource=provider-switch&app=codex&id=provider-2#config=hidden",
+    ] {
+        assert!(
+            parse_deeplink_request_url(url).is_err(),
+            "provider-switch accepted an unreviewed URL component"
+        );
+    }
+}
 
 #[test]
 fn test_parse_valid_claude_deeplink() {

@@ -211,6 +211,20 @@ impl Database {
         Ok(())
     }
 
+    /// 只读获取应用级代理是否启用。
+    ///
+    /// 与 `get_proxy_config_for_app` 不同，此方法在配置行缺失时直接报错，
+    /// 不会初始化或写入数据库。用于必须保持零写入的安全检查。
+    pub fn get_proxy_enabled_read_only(&self, app_type: &str) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.query_row(
+            "SELECT enabled FROM proxy_config WHERE app_type = ?1",
+            [app_type],
+            |row| Ok(row.get::<_, i32>(0)? != 0),
+        )
+        .map_err(|e| AppError::Database(e.to_string()))
+    }
+
     /// 获取应用级代理配置
     pub async fn get_proxy_config_for_app(
         &self,
@@ -906,6 +920,30 @@ impl Database {
 mod tests {
     use crate::database::Database;
     use crate::error::AppError;
+
+    #[test]
+    fn proxy_enabled_read_only_does_not_initialize_a_missing_row() {
+        let db = Database::memory().expect("initialize database");
+        {
+            let conn = db.conn.lock().expect("lock database");
+            conn.execute("DELETE FROM proxy_config WHERE app_type = 'codex'", [])
+                .expect("delete Codex proxy row");
+        }
+
+        db.get_proxy_enabled_read_only("codex")
+            .expect_err("missing row must fail closed");
+
+        let row_count: i64 = {
+            let conn = db.conn.lock().expect("lock database");
+            conn.query_row(
+                "SELECT COUNT(*) FROM proxy_config WHERE app_type = 'codex'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count Codex proxy rows")
+        };
+        assert_eq!(row_count, 0, "read-only check must not initialize a row");
+    }
 
     #[tokio::test]
     async fn test_default_cost_multiplier_round_trip() -> Result<(), AppError> {

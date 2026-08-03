@@ -56,6 +56,35 @@ export interface DeepLinkImportRequest {
   usageAutoInterval?: number;
 }
 
+export interface ProviderSwitchRequest {
+  version: "v1";
+  resource: "provider-switch";
+  app: "codex";
+  id: string;
+}
+
+export interface ProviderSwitchPreview {
+  name: string;
+  hostname: string;
+  isCurrent: boolean;
+  reviewToken: string;
+}
+
+export interface ConfirmedProviderSwitch {
+  name: string;
+  hostname: string;
+  isCurrent: boolean;
+  hasWarnings: boolean;
+}
+
+export type DeepLinkRequest = DeepLinkImportRequest | ProviderSwitchRequest;
+
+export function isProviderSwitchRequest(
+  request: DeepLinkRequest,
+): request is ProviderSwitchRequest {
+  return request.resource === "provider-switch";
+}
+
 export interface McpImportResult {
   importedCount: number;
   importedIds: string[];
@@ -82,8 +111,24 @@ export const deeplinkApi = {
    * @param url The ccswitch:// URL to parse
    * @returns Parsed deep link request
    */
-  parseDeeplink: async (url: string): Promise<DeepLinkImportRequest> => {
+  parseDeeplink: async (url: string): Promise<DeepLinkRequest> => {
     return invoke("parse_deeplink", { url });
+  },
+
+  previewProviderSwitch: async (
+    request: ProviderSwitchRequest,
+  ): Promise<ProviderSwitchPreview> => {
+    return invoke("previewProviderSwitch", { request });
+  },
+
+  confirmProviderSwitch: async (
+    reviewToken: string,
+  ): Promise<ConfirmedProviderSwitch> => {
+    return invoke("confirmProviderSwitch", { reviewToken });
+  },
+
+  cancelProviderSwitch: async (reviewToken: string): Promise<void> => {
+    return invoke("cancelProviderSwitch", { reviewToken });
   },
 
   /**

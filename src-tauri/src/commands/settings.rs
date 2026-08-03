@@ -58,11 +58,18 @@ pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
 }
 
 /// 保存设置
-#[tauri::command]
-pub async fn save_settings(
-    state: tauri::State<'_, crate::store::AppState>,
+async fn save_settings_internal(
+    state: &crate::store::AppState,
     settings: crate::settings::AppSettings,
 ) -> Result<bool, String> {
+    // Settings include the guardrail that permits mixed ChatGPT OAuth plus a
+    // provider-scoped bearer. Keep the complete read/merge/save/reapply
+    // transaction serialized with reviewed Codex provider switches so that
+    // the guardrail cannot change between their locked pre/postconditions.
+    let _codex_guard = state
+        .proxy_service
+        .lock_switch_for_app(crate::app_config::AppType::Codex.as_str())
+        .await;
     let existing = crate::settings::get_settings();
     let merged = merge_settings_for_save(settings, &existing);
     let unify_codex_changed =
@@ -79,7 +86,7 @@ pub async fn save_settings(
         // 报错让前端 saved=false 短路还原；回滚是整次保存的事务语义
         // （本开关的保存只携带开关相关字段）。
         if let Err(err) =
-            crate::services::provider::reapply_current_codex_official_live(state.inner())
+            crate::services::provider::reapply_current_codex_official_live_locked(state)
         {
             log::warn!("统一 Codex 会话历史开关变更后重写 live 配置失败，回滚设置: {err}");
             if let Err(rollback_err) = crate::settings::update_settings(existing) {
@@ -124,6 +131,22 @@ pub async fn save_settings(
         }
     }
     Ok(true)
+}
+
+#[tauri::command]
+pub async fn save_settings(
+    state: tauri::State<'_, crate::store::AppState>,
+    settings: crate::settings::AppSettings,
+) -> Result<bool, String> {
+    save_settings_internal(state.inner(), settings).await
+}
+
+#[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
+pub async fn save_settings_test_hook(
+    state: &crate::store::AppState,
+    settings: crate::settings::AppSettings,
+) -> Result<bool, String> {
+    save_settings_internal(state, settings).await
 }
 
 #[derive(serde::Serialize)]
