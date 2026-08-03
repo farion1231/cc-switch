@@ -196,6 +196,38 @@ describe("SkillsPage - skills.sh install (regression)", () => {
     expect(callArgs.skill.repoOwner).toBe("owner-b");
     expect(callArgs.skill.repoName).toBe("repo-b");
     expect(callArgs.skill.name).toBe("Agent Browser B");
+    expect(callArgs.currentApp).toBe("claude");
+    expect(callArgs.enableForCurrentApp).toBe(true);
+  });
+
+  it("can install a repository skill without enabling the current app", async () => {
+    const skill = makeDiscoverableSkill({ name: "Inactive Skill" });
+    discoverableSkillsMock = [skill];
+    skillReposMock = [makeSkillRepo()];
+
+    render(<SkillsPage initialApp="claude" />);
+    const user = userEvent.setup();
+
+    const enableAfterInstall = screen.getByRole("checkbox", {
+      name: "skills.enableAfterInstall",
+    });
+    expect(enableAfterInstall).toBeChecked();
+    await user.click(enableAfterInstall);
+
+    const card = screen.getByText("Inactive Skill").closest("div.glass-card");
+    expect(card).not.toBeNull();
+    const installButton = card!.querySelector(
+      "button:last-of-type",
+    ) as HTMLButtonElement;
+    await user.click(installButton);
+
+    await waitFor(() => {
+      expect(installMutateAsyncMock).toHaveBeenCalledWith({
+        skill,
+        currentApp: "claude",
+        enableForCurrentApp: false,
+      });
+    });
   });
 
   it("keeps skills.sh results when submitting the same query again", async () => {

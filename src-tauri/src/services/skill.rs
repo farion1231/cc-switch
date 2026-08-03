@@ -604,6 +604,21 @@ impl SkillService {
         skill: &DiscoverableSkill,
         current_app: &AppType,
     ) -> Result<InstalledSkill> {
+        self.install_with_apps(db, skill, SkillApps::only(current_app))
+            .await
+    }
+
+    /// Install a Skill with an explicit initial app set.
+    ///
+    /// An empty set keeps the Skill managed in the SSOT and database without
+    /// projecting it into any consumer directory. Existing same-source rows
+    /// retain their current app flags and only merge explicitly requested apps.
+    pub async fn install_with_apps(
+        &self,
+        db: &Arc<Database>,
+        skill: &DiscoverableSkill,
+        initial_apps: SkillApps,
+    ) -> Result<InstalledSkill> {
         let ssot_dir = Self::get_ssot_dir()?;
 
         // 允许多级目录（如 a/b/c），但必须是安全的相对路径。
@@ -634,15 +649,21 @@ impl SkillService {
                 let same_repo = existing.repo_owner.as_deref() == Some(&skill.repo_owner)
                     && existing.repo_name.as_deref() == Some(&skill.repo_name);
                 if same_repo {
-                    // 同一仓库的同名 skill，返回现有记录（可能需要更新启用状态）
+                    // 同一仓库的同名 skill，仅合并显式请求的启用状态。
+                    // 空集合表示保持 inactive，不得隐式启用当前应用。
                     let mut updated = existing.clone();
-                    updated.apps.set_enabled_for(current_app, true);
+                    let requested_apps = initial_apps.enabled_apps();
+                    for app in &requested_apps {
+                        updated.apps.set_enabled_for(app, true);
+                    }
                     db.save_skill(&updated)?;
-                    Self::sync_to_app_dir(&updated.directory, current_app)?;
+                    for app in &requested_apps {
+                        Self::sync_to_app_dir(&updated.directory, app)?;
+                    }
                     log::info!(
-                        "Skill {} 已存在，更新 {:?} 启用状态",
+                        "Skill {} 已存在，合并 {} 个显式应用启用状态",
                         updated.name,
-                        current_app
+                        requested_apps.len()
                     );
                     return Ok(updated);
                 } else {
@@ -782,7 +803,7 @@ impl SkillService {
             repo_name: Some(skill.repo_name.clone()),
             repo_branch: Some(repo_branch),
             readme_url,
-            apps: SkillApps::only(current_app),
+            apps: initial_apps.clone(),
             installed_at: chrono::Utc::now().timestamp(),
             content_hash,
             updated_at: 0,
@@ -791,13 +812,16 @@ impl SkillService {
         // 保存到数据库
         db.save_skill(&installed_skill)?;
 
-        // 同步到当前应用目录
-        Self::sync_to_app_dir(&install_name, current_app)?;
+        // 仅同步到显式启用的应用目录；空集合保持完全 inactive。
+        let enabled_apps = initial_apps.enabled_apps();
+        for app in &enabled_apps {
+            Self::sync_to_app_dir(&install_name, app)?;
+        }
 
         log::info!(
-            "Skill {} 安装成功，已启用 {:?}",
+            "Skill {} 安装成功，已启用 {} 个应用",
             installed_skill.name,
-            current_app
+            enabled_apps.len()
         );
 
         Ok(installed_skill)
@@ -4164,6 +4188,94 @@ mod tests {
             content_hash: None,
             updated_at: 0,
         }
+    }
+
+    fn discoverable_skill(directory: &str) -> DiscoverableSkill {
+        DiscoverableSkill {
+            key: format!("owner/repo:{directory}"),
+            name: directory.to_string(),
+            description: "Test skill".to_string(),
+            directory: directory.to_string(),
+            readme_url: None,
+            repo_owner: "owner".to_string(),
+            repo_name: "repo".to_string(),
+            repo_branch: "main".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn install_with_empty_apps_persists_inactive_without_consumer_projection() {
+        let temp = tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        let skill = discoverable_skill("inactive-skill");
+
+        // Keep this unit test offline: the install path reuses an already materialized
+        // SSOT directory, while the assertions exercise the real DB and consumer roots.
+        let ssot_dir = SkillService::get_ssot_dir().expect("ssot dir");
+        write_skill(&ssot_dir.join(&skill.directory), &skill.name);
+
+        let installed = SkillService::new()
+            .install_with_apps(&db, &skill, SkillApps::default())
+            .await
+            .expect("inactive install");
+
+        assert!(installed.apps.is_empty(), "new row must remain disabled");
+        let persisted = db
+            .get_installed_skill(&installed.id)
+            .expect("query installed skill")
+            .expect("installed row");
+        assert!(
+            persisted.apps.is_empty(),
+            "database row must remain disabled"
+        );
+        for app in [AppType::Claude, AppType::Codex] {
+            let app_dir = SkillService::get_app_skills_dir(&app).expect("consumer root");
+            assert!(
+                !app_dir.join(&installed.directory).exists(),
+                "inactive install must not project to {app:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn install_with_empty_apps_does_not_enable_existing_same_source_skill() {
+        let temp = tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        let skill = discoverable_skill("existing-inactive-skill");
+        let mut existing = poisoned_skill(&skill.key, &skill.directory);
+        existing.name = skill.name.clone();
+        existing.repo_owner = Some(skill.repo_owner.clone());
+        existing.repo_name = Some(skill.repo_name.clone());
+        existing.repo_branch = Some(skill.repo_branch.clone());
+        db.save_skill(&existing).expect("seed existing skill");
+
+        let returned = SkillService::new()
+            .install_with_apps(&db, &skill, SkillApps::default())
+            .await
+            .expect("idempotent inactive install");
+
+        assert!(
+            returned.apps.is_empty(),
+            "same-source row must not be enabled"
+        );
+        let persisted = db
+            .get_installed_skill(&skill.key)
+            .expect("query existing skill")
+            .expect("existing row");
+        assert!(
+            persisted.apps.is_empty(),
+            "database flags must stay unchanged"
+        );
+        let claude_dir =
+            SkillService::get_app_skills_dir(&AppType::Claude).expect("claude consumer root");
+        assert!(
+            !claude_dir.join(&skill.directory).exists(),
+            "same-source inactive install must not project to Claude"
+        );
     }
 
     #[test]

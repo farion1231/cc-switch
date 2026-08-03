@@ -4,7 +4,7 @@
 //! - 支持三应用开关（Claude/Codex/Gemini）
 //! - SSOT 存储在 ~/.cc-switch/skills/
 
-use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
+use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
 use crate::error::format_skill_error;
 use crate::services::skill::{
     DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillBackupEntry, SkillRepo,
@@ -48,18 +48,25 @@ pub fn delete_skill_backup(backup_id: String) -> Result<bool, String> {
 /// 参数：
 /// - skill: 从发现列表获取的技能信息
 /// - current_app: 当前选中的应用，安装后默认启用该应用
+/// - enable_for_current_app: 是否为当前应用启用；缺省保持旧行为
 #[tauri::command]
 pub async fn install_skill_unified(
     skill: DiscoverableSkill,
     current_app: String,
+    enable_for_current_app: Option<bool>,
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<InstalledSkill, String> {
     let app_type = parse_app_type(&current_app)?;
+    let initial_apps = if enable_for_current_app.unwrap_or(true) {
+        SkillApps::only(&app_type)
+    } else {
+        SkillApps::default()
+    };
 
     service
         .0
-        .install(&app_state.db, &skill, &app_type)
+        .install_with_apps(&app_state.db, &skill, initial_apps)
         .await
         .map_err(|e| e.to_string())
 }
