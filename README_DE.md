@@ -135,11 +135,6 @@ TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team
 </tr>
 
 <tr>
-<td width="180"><a href="https://nekocode.ai?aff=CCSWITCH"><img src="assets/partners/logos/nekocode-banner.png" alt="NekoCode" width="150"></a></td>
-<td>Vielen Dank an <a href="https://nekocode.ai?aff=CCSWITCH">NekoCode</a> für die Unterstützung dieses Projekts! NekoCode bietet Entwicklern einen stabilen, effizienten und zuverlässigen API-Relay-Dienst für Claude, Codex und weitere KI-Modelle. Mit transparenter Preisgestaltung und flexibler nutzungsbasierter Abrechnung bietet es einen einfachen und kostengünstigen Zugang zu KI-Modellen. CC-Switch-Nutzer erhalten einen exklusiven Rabatt von 10 %: Registrieren Sie sich über <a href="https://nekocode.ai?aff=CCSWITCH">diesen Link</a> und geben Sie beim Aufladen den Gutscheincode <code>cc-switch</code> ein, um 10 % Rabatt auf Ihre Aufladung zu erhalten!</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://a6api.com/register?aff=AqNr"><img src="assets/partners/logos/a6-banner-en.jpg" alt="A6API" width="150"></a></td>
 <td>Vielen Dank an <a href="https://a6api.com/register?aff=AqNr">A6API</a> für die Unterstützung dieses Projekts! A6API ist eine All-in-one-Aggregationsplattform für KI-Modell-APIs und deckt Claude, GPT, Gemini, Codex und weitere gängige Modelle ab. Mehrere Anbieter können ihr Angebot einstellen, sodass dasselbe Modell von verschiedenen Upstream-Anbietern im Preiswettbewerb bereitgestellt wird. Intelligentes Routing wählt automatisch die stabilere und günstigere verfügbare Route und schaltet bei Fehlern automatisch um – das reduziert fehlgeschlagene Anfragen, senkt die Kosten und erhöht die Stabilität. Ob einzelne Entwickler, KI-Produktteams oder Studios: Die Anbindung erfolgt schnell über eine einheitliche Schnittstelle, kompatibel mit allen Formaten und mit geringem Migrationsaufwand. Neue Nutzer erhalten bei der Registrierung über <a href="https://a6api.com/register?aff=AqNr">diesen Link</a> kostenloses Testguthaben – erst testen, dann günstig loslegen.</td>
 </tr>

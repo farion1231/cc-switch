@@ -267,18 +267,6 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "claudecn",
   },
   {
-    name: "NekoCode",
-    websiteUrl: "https://nekocode.ai",
-    apiKeyUrl: "https://nekocode.ai?aff=CCSWITCH",
-    auth: grokAuth(),
-    config: grokPresetConfig("NekoCode", "https://nekocode.ai/v1"),
-    endpointCandidates: ["https://nekocode.ai/v1"],
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "nekocode",
-    icon: "nekocode",
-  },
-  {
     name: "A6API",
     websiteUrl: "https://www.a6api.com",
     apiKeyUrl: "https://a6api.com/register?aff=AqNr",

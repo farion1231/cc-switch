@@ -135,11 +135,6 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 </tr>
 
 <tr>
-<td width="180"><a href="https://nekocode.ai?aff=CCSWITCH"><img src="assets/partners/logos/nekocode-banner.png" alt="NekoCode" width="150"></a></td>
-<td>本プロジェクトをご支援いただいている <a href="https://nekocode.ai?aff=CCSWITCH">NekoCode</a> に感謝します！NekoCode は、Claude や Codex などの AI モデルに対応した、安定性・効率性・信頼性に優れた API 中継サービスを提供しています。料金体系は明瞭で、柔軟な従量課金にも対応しています。CC Switch ユーザー限定の 10%オフ特典：<a href="https://nekocode.ai?aff=CCSWITCH">こちらのリンク</a> から登録し、チャージ時にクーポンコード <code>cc-switch</code> を入力すると、チャージが 10%オフになります！</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://a6api.com/register?aff=AqNr"><img src="assets/partners/logos/a6-banner-en.jpg" alt="A6API" width="150"></a></td>
 <td>本プロジェクトをご支援いただいている <a href="https://a6api.com/register?aff=AqNr">A6API</a> に感謝します！A6API は、Claude、GPT、Gemini、Codex などの主要モデルを網羅するワンストップの AI モデル API アグリゲーションプラットフォームです。複数のベンダーが出品でき、同じモデルを複数の上流プロバイダーが競争価格で提供します。スマートルーティングにより、より安定して安価な利用可能ルートを自動で選択し、失敗時には自動で切り替えるため、リクエストの失敗を減らし、コストを抑え、安定性を高められます。個人開発者でも、AI プロダクトチームでも、スタジオでも、統一されたインターフェースからすぐに接続でき、あらゆるフォーマットに対応、移行コストも低く抑えられます。<a href="https://a6api.com/register?aff=AqNr">こちらのリンク</a> から新規登録すると無料の体験クレジットがもらえます。まず試してから、低価格で使い始められます。</td>
 </tr>

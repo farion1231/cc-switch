@@ -135,11 +135,6 @@ TeamoRouter 还提供企业级功能，包括集中账单、团队管理、BYOK�
 </tr>
 
 <tr>
-<td width="180"><a href="https://nekocode.ai?aff=CCSWITCH"><img src="assets/partners/logos/nekocode-banner.png" alt="NekoCode" width="150"></a></td>
-<td>感谢 <a href="https://nekocode.ai?aff=CCSWITCH">NekoCode</a> 赞助本项目！NekoCode 为开发者提供稳定、高效、可靠的 Claude、Codex 等 AI 模型 API 中转服务，价格透明，接入便捷，支持灵活的按量计费。CC Switch 用户专享 9 折福利：通过 <a href="https://nekocode.ai?aff=CCSWITCH">此链接</a> 注册，并在充值时输入优惠码 <code>cc-switch</code>，即可享受充值 9 折优惠！</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://a6api.com/register?aff=AqNr"><img src="assets/partners/logos/a6-banner-zh.jpg" alt="A6API" width="150"></a></td>
 <td>感谢 <a href="https://a6api.com/register?aff=AqNr">A6API</a> 赞助本项目！A6API 是一站式 AI 模型 API 聚合平台，覆盖 Claude、GPT、Gemini、Codex 等主流模型，支持多商家入驻供货，同一个模型可由多个上游商家竞争报价。平台通过智能路由自动优选更稳定、更低价的可用线路，并支持失败自动切换，帮助用户减少请求失败、降低调用成本、提升使用稳定性。无论你是开发者、AI 产品团队还是工作室，都可以通过统一接口快速接入，兼容所有格式，迁移成本低，使用更省心。新用户通过 <a href="https://a6api.com/register?aff=AqNr">此链接</a> 注册即可获得免费体验额度，先试再用，低价开用。</td>
 </tr>

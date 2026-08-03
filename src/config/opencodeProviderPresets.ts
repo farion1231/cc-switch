@@ -866,34 +866,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "NekoCode",
-    websiteUrl: "https://nekocode.ai",
-    apiKeyUrl: "https://nekocode.ai?aff=CCSWITCH",
-    settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
-      name: "NekoCode",
-      options: {
-        baseURL: "https://nekocode.ai/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
-      },
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "nekocode",
-    icon: "nekocode",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-  {
     name: "A6API",
     websiteUrl: "https://www.a6api.com",
     apiKeyUrl: "https://a6api.com/register?aff=AqNr",

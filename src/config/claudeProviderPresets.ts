@@ -508,21 +508,6 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#000000",
   },
   {
-    name: "NekoCode",
-    websiteUrl: "https://nekocode.ai",
-    apiKeyUrl: "https://nekocode.ai?aff=CCSWITCH",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://nekocode.ai",
-        ANTHROPIC_AUTH_TOKEN: "",
-      },
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "nekocode",
-    icon: "nekocode",
-  },
-  {
     name: "A6API",
     websiteUrl: "https://www.a6api.com",
     apiKeyUrl: "https://a6api.com/register?aff=AqNr",

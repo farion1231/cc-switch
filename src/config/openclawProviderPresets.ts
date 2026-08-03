@@ -958,42 +958,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "NekoCode",
-    websiteUrl: "https://nekocode.ai",
-    apiKeyUrl: "https://nekocode.ai?aff=CCSWITCH",
-    settingsConfig: {
-      baseUrl: "https://nekocode.ai/v1",
-      apiKey: "",
-      api: "openai-completions",
-      models: [
-        {
-          id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          contextWindow: 400000,
-        },
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "nekocode",
-    icon: "nekocode",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "nekocode/gpt-5.6-sol",
-      },
-      modelCatalog: {
-        "nekocode/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
-      },
-    },
-  },
-  {
     name: "A6API",
     websiteUrl: "https://www.a6api.com",
     apiKeyUrl: "https://a6api.com/register?aff=AqNr",
