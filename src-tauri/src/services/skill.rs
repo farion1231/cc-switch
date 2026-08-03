@@ -647,14 +647,14 @@ impl SkillService {
 
     // ========== 统一管理方法 ==========
 
-    fn lock_skill_writes() -> Result<std::sync::MutexGuard<'static, ()>> {
+    pub(crate) fn lock_skill_writes() -> Result<std::sync::MutexGuard<'static, ()>> {
         SKILL_WRITE_TRANSACTION_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
             .map_err(|error| anyhow!("Skill write transaction lock poisoned: {error}"))
     }
 
-    fn recover_before_skill_write(db: &Arc<Database>) -> Result<()> {
+    pub(crate) fn recover_before_skill_write(db: &Database) -> Result<()> {
         let recovery_root = Self::get_cohort_recovery_dir()?;
         let ssot_dir = Self::get_ssot_dir()?;
         Self::recover_inactive_cohort_transactions_at(db, &recovery_root, &ssot_dir)?;
@@ -959,6 +959,14 @@ impl SkillService {
         Ok(format!("{:x}", sha2::Sha256::digest(bytes)))
     }
 
+    fn path_entry_exists(path: &Path) -> Result<bool> {
+        match fs::symlink_metadata(path) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     /// Hash every managed entry without following symlinks.
     ///
     /// Unlike the update-comparison hash, this ownership hash includes hidden
@@ -1061,18 +1069,6 @@ impl SkillService {
         }
     }
 
-    fn validate_resolved_commit_revision(requested: &str, resolved: &str) -> Result<()> {
-        Self::validate_exact_commit_revision(requested)?;
-        Self::validate_exact_commit_revision(resolved)?;
-        if requested == resolved {
-            Ok(())
-        } else {
-            Err(anyhow!(
-                "GitHub resolved exact Skill revision {requested} to a different commit {resolved}"
-            ))
-        }
-    }
-
     fn validate_sha256(label: &str, value: &str) -> Result<()> {
         if value.len() == 64
             && value
@@ -1134,8 +1130,12 @@ impl SkillService {
             .file_name()
             .and_then(|name| Self::sanitize_install_name(&name.to_string_lossy()))
             .ok_or_else(|| anyhow!("invalid cohort install directory"))?;
-        let source = Self::resolve_skill_source_dir(repository, &item.skill.directory)
-            .ok_or_else(|| anyhow!("Skill source not found: {}", item.skill.directory))?;
+        // Cohort identity is exact: unlike the legacy single-item installer,
+        // never fall back to another same-name directory or the repository root.
+        let source = repository.join(&source_rel);
+        if !source.is_dir() {
+            return Err(anyhow!("Skill source not found: {}", item.skill.directory));
+        }
         let repository = repository.canonicalize()?;
         let source = source.canonicalize()?;
         if !source.starts_with(&repository) || !source.join("SKILL.md").is_file() {
@@ -1291,7 +1291,7 @@ impl SkillService {
     }
 
     fn recover_inactive_cohort_transactions_at(
-        db: &Arc<Database>,
+        db: &Database,
         recovery_root: &Path,
         ssot_dir: &Path,
     ) -> Result<InactiveSkillCohortRecoveryResult> {
@@ -1314,7 +1314,7 @@ impl SkillService {
                     ));
                 }
                 let staged_root = ssot_dir.join(format!(".cc-switch-{transaction_id}-staging"));
-                if staged_root.exists() {
+                if Self::path_entry_exists(&staged_root)? {
                     fs::remove_dir_all(staged_root)?;
                 }
                 fs::remove_dir_all(&transaction_root)?;
@@ -1371,7 +1371,7 @@ impl SkillService {
                     None => false,
                 };
                 let destination = ssot_dir.join(directory);
-                let destination_owned = if destination.exists() {
+                let destination_owned = if Self::path_entry_exists(&destination)? {
                     let actual_hash = Self::compute_cohort_tree_hash(&destination)?;
                     if actual_hash != item.tree_hash {
                         return Err(anyhow!(
@@ -1397,7 +1397,7 @@ impl SkillService {
             if fully_committed {
                 let staged_root =
                     ssot_dir.join(format!(".cc-switch-{}-staging", journal.transaction_id));
-                if staged_root.exists() {
+                if Self::path_entry_exists(&staged_root)? {
                     fs::remove_dir_all(staged_root)?;
                 }
                 fs::remove_dir_all(&transaction_root)?;
@@ -1423,7 +1423,7 @@ impl SkillService {
             }
             let staged_root =
                 ssot_dir.join(format!(".cc-switch-{}-staging", journal.transaction_id));
-            if staged_root.exists() {
+            if Self::path_entry_exists(&staged_root)? {
                 fs::remove_dir_all(staged_root)?;
             }
             fs::remove_dir_all(&transaction_root)?;
@@ -1490,7 +1490,7 @@ impl SkillService {
                     "cohort Skill already exists in database: {directory}"
                 ));
             }
-            if ssot_dir.join(&directory).exists() {
+            if Self::path_entry_exists(&ssot_dir.join(&directory))? {
                 return Err(anyhow!("cohort Skill already exists in SSOT: {directory}"));
             }
             item.skill.content_hash = Some(Self::compute_dir_hash(&item.source)?);
@@ -1499,7 +1499,7 @@ impl SkillService {
         let transaction_id = format!("skill-cohort-{}", uuid::Uuid::new_v4().simple());
         let transaction_root = recovery_root.join(&transaction_id);
         let staged_root = ssot_dir.join(format!(".cc-switch-{transaction_id}-staging"));
-        if staged_root.exists() {
+        if Self::path_entry_exists(&staged_root)? {
             return Err(anyhow!("inactive Skill cohort staging collision"));
         }
         let journal_path = transaction_root.join("journal.json");
@@ -1562,7 +1562,7 @@ impl SkillService {
                     let mut owned_rows = Vec::new();
                     for item in &journal.items {
                         let destination = ssot_dir.join(&item.skill.directory);
-                        if destination.exists() {
+                        if Self::path_entry_exists(&destination).unwrap_or(true) {
                             if !item.moved_to_ssot {
                                 rollback_errors.push(format!(
                                     "refusing to remove an unmoved cohort path: {}",
@@ -1609,7 +1609,9 @@ impl SkillService {
                     if rollback_errors.is_empty() {
                         for item in &journal.items {
                             let destination = ssot_dir.join(&item.skill.directory);
-                            if item.moved_to_ssot && destination.exists() {
+                            if item.moved_to_ssot
+                                && Self::path_entry_exists(&destination).unwrap_or(true)
+                            {
                                 if let Err(rollback_error) = fs::remove_dir_all(destination) {
                                     rollback_errors.push(rollback_error.to_string());
                                     break;
@@ -1619,7 +1621,7 @@ impl SkillService {
                     }
                 }
             }
-            if staged_root.exists() {
+            if Self::path_entry_exists(&staged_root).unwrap_or(true) {
                 if let Err(rollback_error) = fs::remove_dir_all(&staged_root) {
                     rollback_errors.push(rollback_error.to_string());
                 }
@@ -1636,7 +1638,7 @@ impl SkillService {
             )));
         }
 
-        let cleanup_pending = if staged_root.exists() {
+        let cleanup_pending = if Self::path_entry_exists(&staged_root).unwrap_or(true) {
             match fs::remove_dir_all(&staged_root) {
                 Ok(()) => false,
                 Err(error) => {
@@ -3382,30 +3384,6 @@ impl SkillService {
     ) -> Result<(tempfile::TempDir, String)> {
         Self::validate_repo_ref(owner, name, revision)?;
         Self::validate_exact_commit_revision(revision)?;
-        let api_url = format!("https://api.github.com/repos/{owner}/{name}/commits/{revision}");
-        let client = crate::proxy::http_client::get();
-        let response = client
-            .get(&api_url)
-            .header(reqwest::header::USER_AGENT, "cc-switch")
-            .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-            .send()
-            .await
-            .context("failed to resolve exact Skill revision through GitHub")?;
-        if !response.status().is_success() {
-            return Err(anyhow!(
-                "GitHub could not verify exact Skill commit {owner}/{name}@{revision}: HTTP {}",
-                response.status()
-            ));
-        }
-        let response: serde_json::Value = response
-            .json()
-            .await
-            .context("invalid GitHub exact-commit response")?;
-        let resolved = response
-            .get("sha")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| anyhow!("GitHub exact-commit response lacks sha"))?;
-        Self::validate_resolved_commit_revision(revision, resolved)?;
         let url = format!("https://github.com/{owner}/{name}/archive/{revision}.zip");
         let parsed = url::Url::parse(&url)?;
         let expected_path = format!("/{owner}/{name}/archive/{revision}.zip");
@@ -5331,6 +5309,39 @@ mod tests {
         assert!(ssot.join("beta").join("SKILL.md").is_file());
     }
 
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn inactive_cohort_broken_symlink_collision_fails_before_write() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir().expect("tempdir");
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        let ssot = temp.path().join("ssot");
+        let recovery = temp.path().join("recovery");
+        let source = temp.path().join("source").join("alpha");
+        write_skill(&source, "alpha");
+        fs::create_dir_all(&ssot).expect("ssot root");
+        symlink(ssot.join("missing-target"), ssot.join("alpha")).expect("broken symlink");
+
+        let result = SkillService::commit_prepared_inactive_cohort_at(
+            &db,
+            vec![PreparedInactiveSkill {
+                skill: poisoned_skill("owner/repo:alpha", "alpha"),
+                source,
+            }],
+            &ssot,
+            &recovery,
+        );
+
+        assert!(result.is_err());
+        assert!(fs::symlink_metadata(ssot.join("alpha")).is_ok());
+        assert!(db
+            .get_all_installed_skills()
+            .expect("query skills")
+            .is_empty());
+    }
+
     #[test]
     #[serial_test::serial]
     fn inactive_cohort_recovery_rolls_back_partial_filesystem_commit() {
@@ -5555,12 +5566,6 @@ mod tests {
     fn inactive_cohort_requires_an_exact_commit_revision() {
         let exact = "0123456789abcdef0123456789abcdef01234567";
         assert!(SkillService::validate_exact_commit_revision(exact).is_ok());
-        assert!(SkillService::validate_resolved_commit_revision(exact, exact).is_ok());
-        assert!(SkillService::validate_resolved_commit_revision(
-            exact,
-            "1123456789abcdef0123456789abcdef01234567"
-        )
-        .is_err());
         for invalid in [
             "main",
             "0123456789abcdef0123456789abcdef0123456",
@@ -5652,6 +5657,31 @@ mod tests {
         );
 
         assert!(result.is_err());
+        assert!(!prepared_root.join("alpha").exists());
+    }
+
+    #[test]
+    fn materialized_cohort_item_does_not_fallback_to_a_same_name_source() {
+        let temp = tempdir().expect("tempdir");
+        let repository = temp.path().join("repository");
+        let actual_source = repository.join("other").join("alpha");
+        write_skill(&actual_source, "alpha");
+        let prepared_root = temp.path().join("prepared");
+        fs::create_dir_all(&prepared_root).expect("prepared root");
+        let request = InactiveSkillCohortItem {
+            skill: discoverable_skill("missing/alpha"),
+            revision: "0123456789abcdef0123456789abcdef01234567".to_string(),
+            admission: cohort_admission(&actual_source, true),
+        };
+
+        let error = SkillService::prepare_inactive_skill_from_repository(
+            &repository,
+            &prepared_root,
+            &request,
+        )
+        .expect_err("exact cohort paths must not use legacy basename fallback");
+
+        assert!(error.to_string().contains("Skill source not found"));
         assert!(!prepared_root.join("alpha").exists());
     }
 
