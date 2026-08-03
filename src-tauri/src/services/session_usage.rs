@@ -257,12 +257,21 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
     let metadata = fs::metadata(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
     let file_modified = metadata_modified_nanos(&metadata);
+    let file_size = metadata.len() as i64;
 
     // 检查同步状态
-    let (last_modified, last_offset) = get_sync_state(db, &file_path_str)?;
+    let (last_modified, mut last_offset, last_size) = get_sync_state(db, &file_path_str)?;
 
-    // 文件未变化则跳过
-    if file_modified <= last_modified {
+    // 文件被截断/替换（size 变小）时旧 cursor 失效：继续用旧 offset 过滤会
+    // 把替换后文件的所有行都跳过。此时从零重扫，request_id 幂等保证不重复导入。
+    if last_size > 0 && file_size < last_size {
+        last_offset = 0;
+    }
+
+    // 文件未变化则跳过。mtime 相等不代表未变化：写入中的会话文件 mtime
+    // 可能不更新（Windows 实测），若上次在写入中间态落盘，最终版本会因
+    // mtime 相等被误判跳过，故必须同时校验文件大小。
+    if file_modified <= last_modified && file_size == last_size {
         return Ok((0, 0));
     }
 
@@ -421,23 +430,57 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
         }
     }
 
-    // 更新同步状态
-    update_sync_state(db, &file_path_str, file_modified, line_offset)?;
+    // 更新同步状态。末行未以换行符结束时视为未完成（写入方可能还在补写），
+    // 不推进 cursor，否则补全后该行会被 line_offset <= last_offset 永久跳过。
+    let synced_offset = if file_size > 0 && !file_ends_with_newline(file_path) {
+        line_offset.saturating_sub(1)
+    } else {
+        line_offset
+    };
+    update_sync_state(db, &file_path_str, file_modified, synced_offset, file_size)?;
 
     Ok((imported, skipped))
 }
 
+/// 文件最后一个字节是否为换行符（空文件视为完整）。
+fn file_ends_with_newline(file_path: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let Ok(mut file) = fs::File::open(file_path) else {
+        return true;
+    };
+    let Ok(len) = file.metadata().map(|m| m.len()) else {
+        return true;
+    };
+    if len == 0 {
+        return true;
+    }
+    if file.seek(SeekFrom::End(-1)).is_err() {
+        return true;
+    }
+    let mut last = [0u8; 1];
+    file.read_exact(&mut last).is_ok() && last[0] == b'\n'
+}
+
 /// 获取 session_log_sync 表中某条目的同步进度。
 ///
+/// 返回 (last_modified, last_line_offset, last_size)。
 /// Shared by all session_usage_* parsers.
-pub(crate) fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64), AppError> {
+pub(crate) fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64, i64), AppError> {
     let conn = lock_conn!(db.conn);
     let result = conn.query_row(
-        "SELECT last_modified, last_line_offset FROM session_log_sync WHERE file_path = ?1",
+        "SELECT last_modified, last_line_offset, last_size
+         FROM session_log_sync WHERE file_path = ?1",
         rusqlite::params![file_path],
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        },
     );
-    Ok(result.unwrap_or((0, 0)))
+    Ok(result.unwrap_or((0, 0, 0)))
 }
 
 /// 返回文件 mtime 的纳秒时间戳。
@@ -455,12 +498,16 @@ pub(crate) fn metadata_modified_nanos(metadata: &fs::Metadata) -> i64 {
 
 /// 更新 session_log_sync 表中某条目的同步进度。
 ///
-/// Shared by all session_usage_* parsers.
+/// `last_size` 是同步时文件的字节数，用于弥补 mtime 不可靠的场景
+/// （写入中的会话文件 mtime 可能不更新，见 migrate_v16_to_v17）。
+/// Shared by all session_usage_* parsers；非文件型同步方（如 opencode）
+/// 无 size 语义，传 0 即可。
 pub(crate) fn update_sync_state(
     db: &Database,
     file_path: &str,
     last_modified: i64,
     last_offset: i64,
+    last_size: i64,
 ) -> Result<(), AppError> {
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -469,9 +516,9 @@ pub(crate) fn update_sync_state(
 
     let conn = lock_conn!(db.conn);
     conn.execute(
-        "INSERT OR REPLACE INTO session_log_sync (file_path, last_modified, last_line_offset, last_synced_at)
-         VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![file_path, last_modified, last_offset, now],
+        "INSERT OR REPLACE INTO session_log_sync (file_path, last_modified, last_line_offset, last_size, last_synced_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![file_path, last_modified, last_offset, last_size, now],
     )
     .map_err(|e| AppError::Database(format!("更新同步状态失败: {e}")))?;
     Ok(())
@@ -877,6 +924,35 @@ mod tests {
         )?;
         assert!(!empty_exists, "全 0 token 的 message 应被跳过");
         drop(conn);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_partial_last_line_does_not_advance_cursor() -> Result<(), AppError> {
+        // 回归：末行无换行符时（写入方可能还在补写）cursor 不得包含该行，
+        // 否则补全后该行会因 line_offset <= last_offset 被永久跳过。
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("agent-partial.jsonl");
+
+        let billable = r#"{"type":"assistant","message":{"id":"msg_first","model":"claude-opus-4-8","usage":{"input_tokens":2,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-06-07T13:01:23Z","sessionId":"session-p"}"#;
+        // 第一行完整，第二行半截（无换行符结尾）
+        fs::write(&file, format!("{billable}\n{{")).unwrap();
+
+        let (imported, _) = sync_single_file(&db, &file)?;
+        assert_eq!(imported, 1, "完整的第一行正常导入");
+        let (_, offset, _) = get_sync_state(&db, &file.to_string_lossy())?;
+        assert_eq!(offset, 1, "cursor 只推进到完整行");
+
+        // 写入方补全半截行 → size 变化触发重扫 → 该行导入一次
+        let full = r#"{"type":"assistant","message":{"id":"msg_second","model":"claude-opus-4-8","usage":{"input_tokens":3,"output_tokens":2,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-06-07T13:01:24Z","sessionId":"session-p"}"#;
+        fs::write(&file, format!("{billable}\n{full}\n")).unwrap();
+
+        let (imported2, _) = sync_single_file(&db, &file)?;
+        assert_eq!(imported2, 1, "补全后的行必须导入一次");
 
         fs::remove_dir_all(&tmp).ok();
         Ok(())

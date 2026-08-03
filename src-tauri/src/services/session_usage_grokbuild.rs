@@ -156,9 +156,11 @@ fn sync_single_grok_file(db: &Database, file_path: &Path) -> Result<SessionSyncR
     let metadata = fs::metadata(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
     let file_modified = metadata_modified_nanos(&metadata);
+    let file_size = metadata.len() as i64;
 
-    let (last_modified, _last_offset) = get_sync_state(db, &file_path_str)?;
-    if file_modified <= last_modified {
+    let (last_modified, _last_offset, last_size) = get_sync_state(db, &file_path_str)?;
+    // mtime 相等不代表未变化（写入中的会话文件 mtime 可能不更新），须同时校验 size
+    if file_modified <= last_modified && file_size == last_size {
         return Ok(SessionSyncResult::default());
     }
 
@@ -254,7 +256,13 @@ fn sync_single_grok_file(db: &Database, file_path: &Path) -> Result<SessionSyncR
         // 不落同步状态：下一轮重读整个文件，把沉降后的事件补入。
         result.deferred_files += 1;
     } else {
-        update_sync_state(db, &file_path_str, file_modified, events.len() as i64)?;
+        update_sync_state(
+            db,
+            &file_path_str,
+            file_modified,
+            events.len() as i64,
+            file_size,
+        )?;
     }
 
     Ok(result)
@@ -822,7 +830,7 @@ mod tests {
         assert_eq!(result.deferred_files, 1);
         assert_eq!(query_rows(&db)?.len(), 1);
 
-        let (last_modified, _) = get_sync_state(&db, &path.to_string_lossy())?;
+        let (last_modified, _, _) = get_sync_state(&db, &path.to_string_lossy())?;
         assert_eq!(last_modified, 0, "延后时不得记录同步状态");
 
         // 下一轮重读：旧事件 UPSERT 无变化，新事件仍未沉降继续延后

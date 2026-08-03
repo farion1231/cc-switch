@@ -302,6 +302,23 @@ fn sqlite_column_exists(
     .map_err(|error| AppError::Database(format!("查询列 {table}.{column} 失败: {error}")))
 }
 
+/// 删除某 thread 的全部会话用量记录。
+///
+/// 文件被截断/替换（size 变小）时，重扫前先清掉该 thread 的旧记录：
+/// event_index 会重新从 1 计数，若不清除，新内容会撞上旧 request_id
+/// 被 should_skip_session_insert 幂等跳过。
+fn delete_codex_thread_session_records(db: &Database, thread_id: &str) -> Result<(), AppError> {
+    let pattern = format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{thread_id}:%");
+    let conn = lock_conn!(db.conn);
+    conn.execute(
+        "DELETE FROM proxy_request_logs
+         WHERE request_id LIKE ?1 AND data_source = 'codex_session'",
+        rusqlite::params![pattern],
+    )
+    .map_err(|e| AppError::Database(format!("清理被替换会话的旧用量失败: {e}")))?;
+    Ok(())
+}
+
 pub(crate) fn reset_codex_usage_on_conn(
     conn: &rusqlite::Connection,
     codex_dir: &Path,
@@ -450,10 +467,10 @@ fn parse_token_signature(info: &serde_json::Value) -> Option<TokenUsageSignature
     (total.is_some() || last.is_some()).then_some(TokenUsageSignature { total, last })
 }
 
-fn get_codex_sync_state(db: &Database, file_path: &Path) -> Result<(i64, i64), AppError> {
+fn get_codex_sync_state(db: &Database, file_path: &Path) -> Result<(i64, i64, i64), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
     let state = get_sync_state(db, &file_path_str)?;
-    if state != (0, 0)
+    if state != (0, 0, 0)
         || file_path
             .parent()
             .and_then(Path::file_name)
@@ -470,7 +487,7 @@ fn get_codex_sync_state(db: &Database, file_path: &Path) -> Result<(i64, i64), A
     let backslash_suffix = format!("\\{file_name}");
     let conn = lock_conn!(db.conn);
     let inherited = conn.query_row(
-        "SELECT last_modified, last_line_offset
+        "SELECT last_modified, last_line_offset, last_size
          FROM session_log_sync
          WHERE file_path <> ?1
            AND (substr(file_path, -length(?2)) = ?2
@@ -478,13 +495,19 @@ fn get_codex_sync_state(db: &Database, file_path: &Path) -> Result<(i64, i64), A
          ORDER BY last_line_offset DESC, last_modified DESC
          LIMIT 1",
         rusqlite::params![file_path_str, slash_suffix, backslash_suffix],
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        },
     );
     drop(conn);
 
     match inherited {
         Ok(inherited) => {
-            update_sync_state(db, &file_path_str, inherited.0, inherited.1)?;
+            update_sync_state(db, &file_path_str, inherited.0, inherited.1, inherited.2)?;
             Ok(inherited)
         }
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(state),
@@ -994,6 +1017,47 @@ fn matching_replay_prefix(child: &[ParsedTokenEvent], parent: &[TokenUsageSignat
     matched
 }
 
+/// 判断文件是否需要重新同步。
+///
+/// mtime 不可靠：Windows 上会话文件在写入过程中 mtime 可能不更新，
+/// 若上次同步恰好读到写入中间态并记录该 mtime，文件最终版本会因
+/// `mtime <= last_modified` 被永久误判为"未变化"而漏同步（实测：56 MB
+/// 会话文件同步停在 13 行后 7000+ 行永久丢失）。因此只有当 mtime 和
+/// size 都未变化时才跳过；重读由 last_line_offset 去重保证不重复导入。
+fn should_resync(last_modified: i64, last_size: i64, file_modified: i64, file_size: u64) -> bool {
+    file_modified > last_modified || file_size as i64 != last_size
+}
+
+/// 末行未以换行符结束时，cursor 不包含该行。
+///
+/// `BufRead::lines()` 会把无换行符的末尾片段作为完整行返回，解析器会为它
+/// 递增 line_offset 并（因 JSON 不完整）跳过。若把该 offset 持久化，写入方
+/// 补完同一物理行后即使 size 变化触发重扫，也会因 `line_offset <= last_offset`
+/// 永远错过这一行。因此只有以 `\n` 结尾的行才算"已消费"。
+fn complete_line_offset(file_path: &Path, parsed_offset: i64) -> Result<i64, AppError> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file =
+        fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
+    let len = file
+        .metadata()
+        .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?
+        .len();
+    if len == 0 {
+        return Ok(parsed_offset);
+    }
+    file.seek(SeekFrom::End(-1))
+        .map_err(|e| AppError::Config(format!("无法定位文件末尾: {e}")))?;
+    let mut last = [0u8; 1];
+    file.read_exact(&mut last)
+        .map_err(|e| AppError::Config(format!("无法读取文件末尾: {e}")))?;
+    if last[0] == b'\n' {
+        Ok(parsed_offset)
+    } else {
+        Ok(parsed_offset.saturating_sub(1))
+    }
+}
+
 fn mark_deferred(
     file_path: &Path,
     modified: i64,
@@ -1043,10 +1107,24 @@ fn sync_single_codex_file(
     let file_size = metadata.len();
 
     // 检查同步状态
-    let (last_modified, last_offset) = get_codex_sync_state(db, file_path)?;
+    let (last_modified, mut last_offset, last_size) = get_codex_sync_state(db, file_path)?;
 
-    // 文件未变化则跳过
-    if file_modified <= last_modified {
+    // 文件被截断/替换（size 变小）时旧 cursor 失效：继续用旧 offset 过滤会
+    // 把替换后文件的所有行都跳过。此时从零重扫，并删除该 thread 的旧会话
+    // 记录——否则 event_index 重新计数会撞上旧 request_id 被幂等跳过，
+    // 替换后的新内容仍然丢失。
+    if last_size > 0 && file_size < last_size as u64 {
+        last_offset = 0;
+        if let Some(thread_id) = thread_id_from_filename(file_path) {
+            delete_codex_thread_session_records(db, &thread_id)?;
+        }
+    }
+
+    // 文件未变化则跳过。mtime 相等不代表未变化：写入中的会话文件 mtime
+    // 可能不更新（Windows 上 Codex 实测），若上次在写入中间态落盘（如只
+    // 读到 13 行），最终版本会因 mtime 相等被永久误判为"未变化"而漏同步，
+    // 故必须同时校验文件大小。last_line_offset 去重保证重读不重复导入。
+    if !should_resync(last_modified, last_size, file_modified, file_size) {
         return Ok(CodexFileSyncResult::default());
     }
 
@@ -1078,8 +1156,15 @@ fn sync_single_codex_file(
     }
 
     let parsed = parse_codex_file(file_path, thread_id_from_filename(file_path))?;
+    let synced_offset = complete_line_offset(file_path, parsed.line_offset)?;
     if !parsed.has_billable_tokens {
-        update_sync_state(db, &file_path_str, file_modified, parsed.line_offset)?;
+        update_sync_state(
+            db,
+            &file_path_str,
+            file_modified,
+            synced_offset,
+            file_size as i64,
+        )?;
         return Ok(CodexFileSyncResult::default());
     }
     let Some(root_thread_id) = parsed.root_thread_id.as_deref() else {
@@ -1206,7 +1291,13 @@ fn sync_single_codex_file(
         }
     }
 
-    update_sync_state(db, &file_path_str, file_modified, parsed.line_offset)?;
+    update_sync_state(
+        db,
+        &file_path_str,
+        file_modified,
+        synced_offset,
+        file_size as i64,
+    )?;
     Ok(result)
 }
 
@@ -1344,6 +1435,117 @@ mod tests {
     const PARENT_ID: &str = "00000000-0000-4000-8000-000000000001";
     const CHILD_A_ID: &str = "00000000-0000-4000-8000-000000000002";
     const CHILD_B_ID: &str = "00000000-0000-4000-8000-000000000003";
+
+    #[test]
+    fn test_should_resync_mtime_same_size_grew() {
+        // 写入中的会话文件 mtime 不更新：上次同步停在中间态（13 行的小 size），
+        // 文件最终版本 mtime 不变但 size 变大 → 必须重读，否则 7000+ 行永久丢失
+        assert!(should_resync(
+            1_755_960_000_000_000_000,
+            96_000,
+            1_755_960_000_000_000_000,
+            56_945_631
+        ));
+    }
+
+    #[test]
+    fn test_should_resync_unchanged_file_skips() {
+        // mtime 和 size 都未变化 → 跳过（保持原有增量同步行为）
+        assert!(!should_resync(
+            1_755_960_000_000_000_000,
+            56_945_631,
+            1_755_960_000_000_000_000,
+            56_945_631
+        ));
+    }
+
+    #[test]
+    fn test_should_resync_mtime_grew() {
+        // mtime 变大 → 重读（原有行为）
+        assert!(should_resync(
+            1_755_960_000_000_000_000,
+            56_945_631,
+            1_755_960_000_000_000_100,
+            56_945_631
+        ));
+    }
+
+    #[test]
+    fn test_should_resync_size_shrunk() {
+        // size 变小（如文件被截断重写）→ 重读，offset 去重兜底
+        assert!(should_resync(
+            1_755_960_000_000_000_000,
+            56_945_631,
+            1_755_960_000_000_000_000,
+            13_000
+        ));
+    }
+
+    #[test]
+    fn test_truncated_file_resets_cursor_and_reimports() -> Result<(), AppError> {
+        // 回归：文件被截断/替换（size 变小）后，旧 cursor 与旧 request_id
+        // 都会导致替换后的新内容丢失——cursor 必须重置，且该 thread 的旧
+        // 记录必须删除（否则 event_index 重新计数撞上旧 request_id 被跳过）。
+        let dir = tempdir().unwrap();
+        let db = Database::memory()?;
+        let path = rollout_path(dir.path(), CHILD_A_ID);
+        write_jsonl(
+            &path,
+            &[
+                session_meta(CHILD_A_ID),
+                turn_context(),
+                token_count(100, 50, 10),
+                token_count(200, 100, 20),
+            ],
+        );
+        assert_eq!(sync_test_file(&db, &path, &[&path])?.imported, 2);
+
+        // 同一路径被替换为更短内容（event_index 从 1 重新计数）
+        write_jsonl(
+            &path,
+            &[
+                session_meta(CHILD_A_ID),
+                turn_context(),
+                token_count(500, 250, 40),
+            ],
+        );
+        assert_eq!(sync_test_file(&db, &path, &[&path])?.imported, 1);
+
+        let conn = lock_conn!(db.conn);
+        let (count, input): (i64, i64) = conn.query_row(
+            "SELECT COUNT(*), SUM(input_tokens) FROM proxy_request_logs
+             WHERE request_id LIKE ?1 AND data_source = 'codex_session'",
+            [format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{CHILD_A_ID}:%")],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        drop(conn);
+        assert_eq!((count, input), (1, 500), "旧记录已清、新内容已导入");
+        Ok(())
+    }
+
+    #[test]
+    fn test_partial_last_line_does_not_advance_cursor() -> Result<(), AppError> {
+        // 回归：末行无换行符时（写入方可能还在补写）cursor 不得包含该行，
+        // 否则补全后该行会因 line_offset <= last_offset 被永久跳过。
+        let dir = tempdir().unwrap();
+        let db = Database::memory()?;
+        let path = rollout_path(dir.path(), CHILD_A_ID);
+        let meta = session_meta(CHILD_A_ID).to_string();
+        let ctx = turn_context().to_string();
+        let full_line = token_count(100, 50, 10).to_string();
+        // 第一行完整、第二行完整、第三行是截断的 JSON（无换行符结尾，解析必失败）
+        let partial = full_line[..full_line.len() / 2].to_string();
+        fs::write(&path, format!("{meta}\n{ctx}\n{partial}")).unwrap();
+
+        assert_eq!(sync_test_file(&db, &path, &[&path])?.imported, 0);
+        let (_, offset, _) = get_sync_state(&db, &path.to_string_lossy())?;
+        assert_eq!(offset, 2, "cursor 只推进到完整行");
+
+        // 写入方补全截断行（补全 + 换行）→ size 变化触发重扫 → 该行导入一次
+        fs::write(&path, format!("{meta}\n{ctx}\n{full_line}\n")).unwrap();
+        assert_eq!(sync_test_file(&db, &path, &[&path])?.imported, 1);
+        Ok(())
+    }
 
     fn write_jsonl(path: &Path, values: &[serde_json::Value]) {
         let contents = values
@@ -1848,7 +2050,7 @@ mod tests {
 
         let result = sync_test_file(&db, &child, &[&child])?;
         assert!(result.deferred);
-        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
+        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0, 0));
         Ok(())
     }
 
@@ -1903,7 +2105,7 @@ mod tests {
 
         let deferred = sync_test_file(&db, &child, &[&child])?;
         assert!(deferred.deferred);
-        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
+        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0, 0));
 
         write_jsonl(
             &parent,
@@ -1929,7 +2131,7 @@ mod tests {
 
         let result = sync_test_file(&db, &child, &[&child])?;
         assert!(result.deferred);
-        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
+        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0, 0));
 
         std::thread::sleep(std::time::Duration::from_millis(2));
         write_jsonl(
@@ -2053,7 +2255,7 @@ mod tests {
             )?;
         }
         let source_path = source.to_string_lossy().to_string();
-        update_sync_state(&db, &source_path, 1, 3)?;
+        update_sync_state(&db, &source_path, 1, 3, 0)?;
 
         assert_eq!(
             sync_test_file(&db, &archived_file, &[&archived_file])?.imported,

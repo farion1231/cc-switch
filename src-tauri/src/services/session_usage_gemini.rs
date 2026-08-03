@@ -131,12 +131,14 @@ fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32)
     let metadata = fs::metadata(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
     let file_modified = metadata_modified_nanos(&metadata);
+    let file_size = metadata.len() as i64;
 
     // 检查同步状态
-    let (last_modified, _last_offset) = get_sync_state(db, &file_path_str)?;
+    let (last_modified, _last_offset, last_size) = get_sync_state(db, &file_path_str)?;
 
-    // 文件未变化则跳过
-    if file_modified <= last_modified {
+    // 文件未变化则跳过。mtime 相等不代表未变化（写入中的会话文件 mtime
+    // 可能不更新），须同时校验文件大小，见 session_usage::update_sync_state。
+    if file_modified <= last_modified && file_size == last_size {
         return Ok((0, 0));
     }
 
@@ -211,7 +213,13 @@ fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32)
     }
 
     // 更新同步状态
-    update_sync_state(db, &file_path_str, file_modified, gemini_msg_count)?;
+    update_sync_state(
+        db,
+        &file_path_str,
+        file_modified,
+        gemini_msg_count,
+        file_size,
+    )?;
 
     Ok((imported, skipped))
 }
