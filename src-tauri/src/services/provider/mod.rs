@@ -2567,8 +2567,13 @@ requires_openai_auth = true
             ..Default::default()
         });
 
-        ProviderService::update(&state, AppType::ClaudeDesktop, None, updated.clone())
-            .expect("update current provider");
+        ProviderService::update(
+            &state,
+            AppType::ClaudeDesktop,
+            None,
+            provider_to_mutation_input(updated.clone()),
+        )
+        .expect("update current provider");
 
         let backup = db
             .get_live_backup("claude-desktop")
