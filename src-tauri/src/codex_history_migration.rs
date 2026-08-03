@@ -18,9 +18,11 @@ use chrono::{Local, Utc};
 use rusqlite::{backup::Backup, params_from_iter, Connection};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::cell::Cell;
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use toml_edit::DocumentMut;
@@ -29,6 +31,7 @@ const MIGRATION_NAME: &str = "codex-history-provider-migration-v1";
 const OFFICIAL_UNIFY_MIGRATION_NAME: &str = "codex-official-history-unify-v1";
 /// 还原操作自身的备份目录（与迁移备份分开，保持迁移账本目录纯净）。
 const OFFICIAL_UNIFY_RESTORE_BACKUP_NAME: &str = "codex-official-history-unify-restore-v1";
+const TOOL_SEARCH_ITEM_ID_REPAIR_NAME: &str = "codex-tool-search-item-id-repair-v1";
 /// SQLite 变量上限保守值，IN 列表按此分块。
 const STATE_DB_ID_CHUNK: usize = 500;
 
@@ -110,6 +113,16 @@ pub struct CodexHistoryProviderBucketMigrationOutcome {
 pub struct CodexProviderTemplateBucketMigrationOutcome {
     pub migrated_provider_ids: Vec<String>,
     pub skipped_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexToolSearchItemIdRepairOutcome {
+    pub scanned_jsonl_files: usize,
+    pub repaired_jsonl_files: usize,
+    pub repaired_items: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup_root: Option<PathBuf>,
 }
 
 pub fn maybe_migrate_codex_third_party_history_provider_bucket(
@@ -958,6 +971,158 @@ fn rewrite_legacy_provider_profile_refs(doc: &mut DocumentMut, source_provider_i
     changed
 }
 
+/// Explicit repair capability for legacy proxy-generated Tool Search history.
+///
+/// This function is intentionally not part of startup migration. A UI or provider-switch
+/// confirmation must invoke it explicitly before any live Codex history is rewritten.
+pub fn repair_codex_tool_search_history_item_ids(
+) -> Result<CodexToolSearchItemIdRepairOutcome, AppError> {
+    let codex_dir = get_codex_config_dir();
+    let backup_root = migration_backup_root(TOOL_SEARCH_ITEM_ID_REPAIR_NAME);
+    let lock_path = tool_search_history_repair_lock_path(&codex_dir);
+    repair_codex_tool_search_history_item_ids_in_dir(&codex_dir, &backup_root, &lock_path)
+}
+
+fn repair_codex_tool_search_history_item_ids_in_dir(
+    codex_dir: &Path,
+    backup_root: &Path,
+    lock_path: &Path,
+) -> Result<CodexToolSearchItemIdRepairOutcome, AppError> {
+    let _lock = ToolSearchHistoryRepairLock::acquire(lock_path, codex_dir)?;
+    let mut files = Vec::new();
+    collect_jsonl_files(&codex_dir.join("sessions"), &mut files, 0, 8);
+    collect_jsonl_files(&codex_dir.join("archived_sessions"), &mut files, 0, 4);
+
+    let scanned_jsonl_files = files.len();
+    let mut repaired_jsonl_files = 0;
+    let mut repaired_items = 0;
+    for file_path in files {
+        let file_repaired_items = Cell::new(0usize);
+        let changed =
+            rewrite_codex_session_file_lines(&file_path, codex_dir, backup_root, |line| {
+                let rewritten = rewrite_codex_tool_search_call_item_id_line(line);
+                if rewritten.is_some() {
+                    file_repaired_items.set(file_repaired_items.get() + 1);
+                }
+                rewritten
+            })?;
+        if changed {
+            repaired_jsonl_files += 1;
+            repaired_items += file_repaired_items.get();
+        }
+    }
+
+    Ok(CodexToolSearchItemIdRepairOutcome {
+        scanned_jsonl_files,
+        repaired_jsonl_files,
+        repaired_items,
+        backup_root: (repaired_jsonl_files > 0).then(|| backup_root.to_path_buf()),
+    })
+}
+
+fn tool_search_history_repair_lock_path(codex_dir: &Path) -> PathBuf {
+    let digest = Sha256::digest(canonical_dir_string(codex_dir).as_bytes());
+    let suffix = digest[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    get_app_config_dir()
+        .join("locks")
+        .join(format!("codex-tool-search-item-id-repair-{suffix}.lock"))
+}
+
+struct ToolSearchHistoryRepairLock {
+    path: PathBuf,
+}
+
+impl ToolSearchHistoryRepairLock {
+    fn acquire(lock_path: &Path, codex_dir: &Path) -> Result<Self, AppError> {
+        if let Some(parent) = lock_path.parent() {
+            fs::create_dir_all(parent).map_err(|error| AppError::io(parent, error))?;
+        }
+        let mut file = match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(lock_path)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let details = fs::read_to_string(lock_path).unwrap_or_default();
+                return Err(AppError::Message(format!(
+                    "Codex Tool Search history repair is locked at {}{}",
+                    lock_path.display(),
+                    if details.trim().is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {}", details.trim())
+                    }
+                )));
+            }
+            Err(error) => return Err(AppError::io(lock_path, error)),
+        };
+
+        if let Err(error) = writeln!(
+            file,
+            "pid={} started_at={} codex_dir={}",
+            std::process::id(),
+            Utc::now().to_rfc3339(),
+            canonical_dir_string(codex_dir)
+        )
+        .and_then(|_| file.flush())
+        {
+            let _ = fs::remove_file(lock_path);
+            return Err(AppError::io(lock_path, error));
+        }
+
+        Ok(Self {
+            path: lock_path.to_path_buf(),
+        })
+    }
+}
+
+impl Drop for ToolSearchHistoryRepairLock {
+    fn drop(&mut self) {
+        if let Err(error) = fs::remove_file(&self.path) {
+            log::warn!(
+                "Failed to remove Codex Tool Search history repair lock {}: {error}",
+                self.path.display()
+            );
+        }
+    }
+}
+
+fn rewrite_codex_tool_search_call_item_id_line(line: &str) -> Option<String> {
+    if !line.contains("\"response_item\"") || !line.contains("\"tool_search_call\"") {
+        return None;
+    }
+
+    let mut value: Value = serde_json::from_str(line).ok()?;
+    if value.get("type").and_then(Value::as_str) != Some("response_item") {
+        return None;
+    }
+    let payload = value.get_mut("payload")?.as_object_mut()?;
+    if payload.get("type").and_then(Value::as_str) != Some("tool_search_call") {
+        return None;
+    }
+    let call_id = payload.get("call_id")?.as_str()?.trim().to_string();
+    if call_id.is_empty() {
+        return None;
+    }
+
+    let needs_repair = match payload.get("id") {
+        None | Some(Value::Null) => true,
+        Some(Value::String(id)) if id.is_empty() || id == "tsc_" => true,
+        Some(Value::String(id)) if id.starts_with("fc_") => true,
+        _ => false,
+    };
+    if !needs_repair {
+        return None;
+    }
+
+    payload.insert("id".to_string(), Value::String(format!("tsc_{call_id}")));
+    serde_json::to_string(&value).ok()
+}
+
 fn migrate_codex_jsonl_files(
     codex_dir: &Path,
     source_provider_ids: &BTreeSet<String>,
@@ -1311,6 +1476,117 @@ mod tests {
 
     fn source_ids(values: &[&str]) -> BTreeSet<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn repairs_legacy_tool_search_history_item_ids_with_backup_and_idempotency() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        let session_dir = codex_dir.join("sessions/2026/08/03");
+        fs::create_dir_all(&session_dir).expect("create session dir");
+        let path = session_dir.join("rollout-tool-search.jsonl");
+        let original = concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"session-1\",\"model_provider\":\"custom\"}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"tool_search_call\",\"id\":\"fc_call_search_1\",\"call_id\":\"call_search_1\",\"status\":\"completed\",\"execution\":\"client\",\"arguments\":{\"query\":\"calendar\"}}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"tool_search_output\",\"call_id\":\"call_search_1\",\"status\":\"completed\",\"execution\":\"client\",\"tools\":[]}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"tool_search_call\",\"id\":\"tsc_server_opaque\",\"call_id\":\"call_search_2\",\"execution\":\"client\",\"arguments\":{\"query\":\"mail\"}}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"tool_search_call\",\"call_id\":\"call_search_3\",\"execution\":\"client\",\"arguments\":{\"query\":\"files\"}}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"id\":\"fc_call_function\",\"call_id\":\"call_function\",\"name\":\"tool_search\",\"arguments\":\"{}\"}}\n"
+        );
+        fs::write(&path, original).expect("write fixture");
+        let backup_root = dir.path().join("backup");
+        let lock_path = dir.path().join("locks/tool-search.lock");
+
+        let outcome =
+            repair_codex_tool_search_history_item_ids_in_dir(&codex_dir, &backup_root, &lock_path)
+                .expect("repair history");
+
+        assert_eq!(outcome.scanned_jsonl_files, 1);
+        assert_eq!(outcome.repaired_jsonl_files, 1);
+        assert_eq!(outcome.repaired_items, 2);
+        assert_eq!(outcome.backup_root.as_deref(), Some(backup_root.as_path()));
+        assert!(!lock_path.exists());
+
+        let values = fs::read_to_string(&path)
+            .expect("read repaired fixture")
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("parse jsonl line"))
+            .collect::<Vec<_>>();
+        assert_eq!(values[1]["payload"]["id"], "tsc_call_search_1");
+        assert_eq!(values[1]["payload"]["call_id"], "call_search_1");
+        assert_eq!(values[2]["payload"]["type"], "tool_search_output");
+        assert_eq!(values[2]["payload"]["call_id"], "call_search_1");
+        assert_eq!(values[3]["payload"]["id"], "tsc_server_opaque");
+        assert_eq!(values[4]["payload"]["id"], "tsc_call_search_3");
+        assert_eq!(values[5]["payload"]["id"], "fc_call_function");
+
+        let backup_path = backup_root.join("jsonl/sessions/2026/08/03/rollout-tool-search.jsonl");
+        assert_eq!(
+            fs::read_to_string(backup_path).expect("read backup"),
+            original
+        );
+        let repaired_once = fs::read_to_string(&path).expect("read first repair");
+        let rerun =
+            repair_codex_tool_search_history_item_ids_in_dir(&codex_dir, &backup_root, &lock_path)
+                .expect("rerun repair");
+        assert_eq!(rerun.repaired_jsonl_files, 0);
+        assert_eq!(rerun.repaired_items, 0);
+        assert_eq!(
+            fs::read_to_string(&path).expect("read rerun"),
+            repaired_once
+        );
+    }
+
+    #[test]
+    fn tool_search_history_item_ids_repair_reports_lock_and_preserves_file() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        let session_dir = codex_dir.join("sessions");
+        fs::create_dir_all(&session_dir).expect("create session dir");
+        let path = session_dir.join("locked.jsonl");
+        let original = "{\"type\":\"response_item\",\"payload\":{\"type\":\"tool_search_call\",\"id\":\"fc_call_locked\",\"call_id\":\"call_locked\"}}\n";
+        fs::write(&path, original).expect("write fixture");
+        let backup_root = dir.path().join("backup");
+        let lock_path = dir.path().join("locks/tool-search.lock");
+        fs::create_dir_all(lock_path.parent().unwrap()).expect("create lock dir");
+        fs::write(&lock_path, "pid=123").expect("seed lock");
+
+        let error =
+            repair_codex_tool_search_history_item_ids_in_dir(&codex_dir, &backup_root, &lock_path)
+                .expect_err("existing lock must block repair");
+
+        assert!(error.to_string().contains(&lock_path.display().to_string()));
+        assert_eq!(fs::read_to_string(path).expect("read fixture"), original);
+        assert!(!backup_root.exists());
+    }
+
+    #[test]
+    fn tool_search_history_item_ids_backup_failure_leaves_no_partial_file() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        let session_dir = codex_dir.join("sessions");
+        fs::create_dir_all(&session_dir).expect("create session dir");
+        let path = session_dir.join("backup-failure.jsonl");
+        let original = "{\"type\":\"response_item\",\"payload\":{\"type\":\"tool_search_call\",\"call_id\":\"call_backup_failure\"}}\n";
+        fs::write(&path, original).expect("write fixture");
+        let backup_root = dir.path().join("backup-as-file");
+        fs::write(&backup_root, "not a directory").expect("seed invalid backup root");
+        let lock_path = dir.path().join("locks/tool-search.lock");
+
+        let error =
+            repair_codex_tool_search_history_item_ids_in_dir(&codex_dir, &backup_root, &lock_path)
+                .expect_err("backup failure must abort repair");
+
+        assert!(error.to_string().contains("backup-as-file"));
+        assert_eq!(fs::read_to_string(&path).expect("read fixture"), original);
+        assert!(!lock_path.exists());
+        assert!(fs::read_dir(&session_dir)
+            .expect("read session dir")
+            .all(|entry| !entry
+                .expect("session entry")
+                .file_name()
+                .to_string_lossy()
+                .contains(".tmp.")));
     }
 
     #[test]

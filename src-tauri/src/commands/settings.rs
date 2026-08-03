@@ -170,6 +170,29 @@ pub async fn restore_codex_unified_history() -> Result<CodexUnifyHistoryRestoreR
     })
 }
 
+/// Explicitly repair legacy proxy-generated Tool Search item IDs in Codex JSONL history.
+///
+/// No startup path calls this command. The frontend must obtain explicit user authorization
+/// before invoking it because it creates backups and rewrites matching live history files.
+#[tauri::command]
+pub async fn repair_codex_tool_search_history_item_ids(
+) -> Result<crate::codex_history_migration::CodexToolSearchItemIdRepairOutcome, String> {
+    let outcome = tauri::async_runtime::spawn_blocking(|| {
+        crate::codex_history_migration::repair_codex_tool_search_history_item_ids()
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())?;
+
+    log::info!(
+        "Codex Tool Search history ID repair completed: scanned_jsonl_files={}, repaired_jsonl_files={}, repaired_items={}",
+        outcome.scanned_jsonl_files,
+        outcome.repaired_jsonl_files,
+        outcome.repaired_items
+    );
+    Ok(outcome)
+}
+
 /// 重启应用程序（当 app_config_dir 变更后使用）
 #[tauri::command]
 pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
