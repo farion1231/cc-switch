@@ -67,11 +67,23 @@ export interface InactiveSkillCohortItem {
   skill: DiscoverableSkill;
   /** Immutable lowercase 40-character Git commit SHA. */
   revision: string;
+  admission: InactiveSkillCohortAdmission;
+}
+
+export interface InactiveSkillCohortAdmission {
+  /** Complete candidate-root tree hash computed over all entry types. */
+  sourceTreeHash: string;
+  /** Digest of the separately governed dependency-closure review. */
+  dependencyClosureDigest: string;
+  /** Explicit admission decision; false is a hard execution stop. */
+  dependencyComplete: boolean;
 }
 
 export interface InactiveSkillCohortResult {
   transactionId: string;
   skills: InstalledSkill[];
+  /** Commit succeeded, but startup recovery still needs to remove journal/staging residue. */
+  cleanupPending: boolean;
 }
 
 export interface InactiveSkillCohortRecoveryResult {

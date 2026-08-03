@@ -207,6 +207,64 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))
     }
 
+    /// Delete cohort rows only if every persisted field still matches the
+    /// transaction journal. A concurrent writer must turn rollback into a
+    /// conflict instead of having its replacement row deleted by id alone.
+    pub fn delete_skills_if_unchanged_atomically(
+        &self,
+        expected: &[InstalledSkill],
+    ) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let transaction = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        {
+            let mut statement = transaction
+                .prepare(
+                    "DELETE FROM skills
+                     WHERE id = ?1 AND name = ?2 AND description IS ?3 AND directory = ?4
+                       AND repo_owner IS ?5 AND repo_name IS ?6 AND repo_branch IS ?7
+                       AND readme_url IS ?8 AND enabled_claude = ?9 AND enabled_codex = ?10
+                       AND enabled_gemini = ?11 AND enabled_grokbuild = ?12
+                       AND enabled_opencode = ?13 AND enabled_hermes = ?14
+                       AND installed_at = ?15 AND content_hash IS ?16 AND updated_at = ?17",
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            for skill in expected {
+                let affected = statement
+                    .execute(params![
+                        skill.id,
+                        skill.name,
+                        skill.description,
+                        skill.directory,
+                        skill.repo_owner,
+                        skill.repo_name,
+                        skill.repo_branch,
+                        skill.readme_url,
+                        skill.apps.claude,
+                        skill.apps.codex,
+                        skill.apps.gemini,
+                        skill.apps.grokbuild,
+                        skill.apps.opencode,
+                        skill.apps.hermes,
+                        skill.installed_at,
+                        skill.content_hash,
+                        skill.updated_at,
+                    ])
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+                if affected != 1 {
+                    return Err(AppError::Database(format!(
+                        "Skill row changed during cohort rollback: {}",
+                        skill.id
+                    )));
+                }
+            }
+        }
+        transaction
+            .commit()
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
     /// 删除 Skill
     pub fn delete_skill(&self, id: &str) -> Result<bool, AppError> {
         let conn = lock_conn!(self.conn);

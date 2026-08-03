@@ -73,8 +73,9 @@ pub async fn install_skill_unified(
 }
 
 /// Install an exact-revision Skill cohort into manager storage with every
-/// consumer flag disabled. The service prefetches and validates the complete
-/// cohort before starting its journaled filesystem/database transaction.
+/// consumer flag disabled. The service prefetches every requested repository,
+/// verifies exact source trees plus caller-supplied dependency admission, then
+/// starts its journaled filesystem/database transaction.
 #[tauri::command]
 pub async fn install_skill_cohort_inactive(
     items: Vec<InactiveSkillCohortItem>,

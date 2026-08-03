@@ -267,6 +267,18 @@ pub struct PreparedInactiveSkill {
 pub struct InactiveSkillCohortItem {
     pub skill: DiscoverableSkill,
     pub revision: String,
+    pub admission: InactiveSkillCohortAdmission,
+}
+
+/// Evidence envelope produced by a separate candidate-review authority.
+/// CC Switch verifies the pinned source tree itself and refuses requests that
+/// do not explicitly carry a dependency-complete review decision.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InactiveSkillCohortAdmission {
+    pub source_tree_hash: String,
+    pub dependency_closure_digest: String,
+    pub dependency_complete: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -274,6 +286,7 @@ pub struct InactiveSkillCohortItem {
 pub struct InactiveSkillCohortResult {
     pub transaction_id: String,
     pub skills: Vec<InstalledSkill>,
+    pub cleanup_pending: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -295,9 +308,8 @@ struct InactiveSkillCohortJournal {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct InactiveSkillCohortJournalItem {
-    id: String,
-    directory: String,
-    content_hash: String,
+    skill: InstalledSkill,
+    tree_hash: String,
     moved_to_ssot: bool,
 }
 
@@ -310,7 +322,10 @@ struct SkillBackupMetadata {
 }
 
 const SKILL_BACKUP_RETAIN_COUNT: usize = 20;
-static INACTIVE_COHORT_TRANSACTION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static SKILL_WRITE_TRANSACTION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+const MAX_INACTIVE_COHORT_ITEMS: usize = 64;
+const MAX_INACTIVE_COHORT_REPOSITORIES: usize = 16;
+const MAX_INACTIVE_COHORT_MATERIALIZED_BYTES: u64 = 1024 * 1024 * 1024;
 
 /// 仓库归档解压上限：条目数与解压后总字节数。
 ///
@@ -632,6 +647,68 @@ impl SkillService {
 
     // ========== 统一管理方法 ==========
 
+    fn lock_skill_writes() -> Result<std::sync::MutexGuard<'static, ()>> {
+        SKILL_WRITE_TRANSACTION_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .map_err(|error| anyhow!("Skill write transaction lock poisoned: {error}"))
+    }
+
+    fn recover_before_skill_write(db: &Arc<Database>) -> Result<()> {
+        let recovery_root = Self::get_cohort_recovery_dir()?;
+        let ssot_dir = Self::get_ssot_dir()?;
+        Self::recover_inactive_cohort_transactions_at(db, &recovery_root, &ssot_dir)?;
+        Ok(())
+    }
+
+    fn merge_existing_install_if_present(
+        db: &Arc<Database>,
+        skill: &DiscoverableSkill,
+        install_name: &str,
+        initial_apps: &SkillApps,
+    ) -> Result<Option<InstalledSkill>> {
+        let existing_skills = db.get_all_installed_skills()?;
+        for existing in existing_skills.values() {
+            if !existing.directory.eq_ignore_ascii_case(install_name) {
+                continue;
+            }
+            let same_repo = existing.repo_owner.as_deref() == Some(&skill.repo_owner)
+                && existing.repo_name.as_deref() == Some(&skill.repo_name);
+            if !same_repo {
+                return Err(anyhow!(format_skill_error(
+                    "SKILL_DIRECTORY_CONFLICT",
+                    &[
+                        ("directory", install_name),
+                        (
+                            "existing_repo",
+                            &format!(
+                                "{}/{}",
+                                existing.repo_owner.as_deref().unwrap_or("unknown"),
+                                existing.repo_name.as_deref().unwrap_or("unknown")
+                            ),
+                        ),
+                        (
+                            "new_repo",
+                            &format!("{}/{}", skill.repo_owner, skill.repo_name),
+                        ),
+                    ],
+                    Some("uninstallFirst"),
+                )));
+            }
+            let mut updated = existing.clone();
+            let requested_apps = initial_apps.enabled_apps();
+            for app in &requested_apps {
+                updated.apps.set_enabled_for(app, true);
+            }
+            db.save_skill(&updated)?;
+            for app in &requested_apps {
+                Self::sync_to_app_dir(&updated.directory, app)?;
+            }
+            return Ok(Some(updated));
+        }
+        Ok(None)
+    }
+
     /// 获取所有已安装的 Skills
     pub fn get_all_installed(db: &Arc<Database>) -> Result<Vec<InstalledSkill>> {
         let skills = db.get_all_installed_skills()?;
@@ -687,62 +764,21 @@ impl SkillService {
                 ))
             })?;
 
-        // 检查数据库中是否已有同名 directory 的 skill（来自其他仓库）
-        let existing_skills = db.get_all_installed_skills()?;
-        for existing in existing_skills.values() {
-            if existing.directory.eq_ignore_ascii_case(&install_name) {
-                // 检查是否来自同一仓库
-                let same_repo = existing.repo_owner.as_deref() == Some(&skill.repo_owner)
-                    && existing.repo_name.as_deref() == Some(&skill.repo_name);
-                if same_repo {
-                    // 同一仓库的同名 skill，仅合并显式请求的启用状态。
-                    // 空集合表示保持 inactive，不得隐式启用当前应用。
-                    let mut updated = existing.clone();
-                    let requested_apps = initial_apps.enabled_apps();
-                    for app in &requested_apps {
-                        updated.apps.set_enabled_for(app, true);
-                    }
-                    db.save_skill(&updated)?;
-                    for app in &requested_apps {
-                        Self::sync_to_app_dir(&updated.directory, app)?;
-                    }
-                    log::info!(
-                        "Skill {} 已存在，合并 {} 个显式应用启用状态",
-                        updated.name,
-                        requested_apps.len()
-                    );
-                    return Ok(updated);
-                } else {
-                    // 不同仓库的同名 skill，报错
-                    return Err(anyhow!(format_skill_error(
-                        "SKILL_DIRECTORY_CONFLICT",
-                        &[
-                            ("directory", &install_name),
-                            (
-                                "existing_repo",
-                                &format!(
-                                    "{}/{}",
-                                    existing.repo_owner.as_deref().unwrap_or("unknown"),
-                                    existing.repo_name.as_deref().unwrap_or("unknown")
-                                )
-                            ),
-                            (
-                                "new_repo",
-                                &format!("{}/{}", skill.repo_owner, skill.repo_name)
-                            ),
-                        ],
-                        Some("uninstallFirst"),
-                    )));
-                }
-            }
-        }
-
         let dest = ssot_dir.join(&install_name);
+        let needs_download = {
+            let _write_guard = Self::lock_skill_writes()?;
+            Self::recover_before_skill_write(db)?;
+            if let Some(existing) =
+                Self::merge_existing_install_if_present(db, skill, &install_name, &initial_apps)?
+            {
+                return Ok(existing);
+            }
+            !dest.exists()
+        };
 
-        let mut repo_branch = skill.repo_branch.clone();
-
-        // 如果已存在则跳过下载
-        if !dest.exists() {
+        // Network acquisition is deliberately outside the shared Skill write
+        // lock. The second preflight below closes the race before any mutation.
+        let prepared_download = if needs_download {
             let repo = SkillRepo {
                 owner: skill.repo_owner.clone(),
                 name: skill.repo_name.clone(),
@@ -768,7 +804,6 @@ impl SkillService {
                 ))
             })??;
             let temp_dir = temp_guard.path();
-            repo_branch = used_branch;
 
             // 复制到 SSOT
             let source =
@@ -799,18 +834,44 @@ impl SkillService {
                 )));
             }
 
-            Self::copy_dir_recursive(&canonical_source, &dest)?;
+            Some((temp_guard, canonical_source, used_branch))
+        } else {
+            None
+        };
 
-            // 使用实际下载成功的分支，避免 readme_url / repo_branch 与真实分支不一致。
-            if repo_branch != skill.repo_branch {
-                log::info!(
-                    "Skill {}/{} 分支自动回退: {} -> {}",
-                    skill.repo_owner,
-                    skill.repo_name,
-                    skill.repo_branch,
-                    repo_branch
-                );
+        let repo_branch = prepared_download
+            .as_ref()
+            .map(|(_, _, branch)| branch.clone())
+            .unwrap_or_else(|| skill.repo_branch.clone());
+        let _write_guard = Self::lock_skill_writes()?;
+        Self::recover_before_skill_write(db)?;
+        if let Some(existing) =
+            Self::merge_existing_install_if_present(db, skill, &install_name, &initial_apps)?
+        {
+            return Ok(existing);
+        }
+        if let Some((_, source, _)) = &prepared_download {
+            if dest.exists() || Self::is_symlink(&dest) {
+                return Err(anyhow!(format_skill_error(
+                    "SKILL_DIRECTORY_CONFLICT",
+                    &[("directory", &install_name)],
+                    Some("uninstallFirst"),
+                )));
             }
+            Self::copy_dir_recursive(source, &dest)?;
+        } else if !dest.is_dir() {
+            return Err(anyhow!("Skill SSOT path disappeared before installation"));
+        }
+
+        // 使用实际下载成功的分支，避免 readme_url / repo_branch 与真实分支不一致。
+        if repo_branch != skill.repo_branch {
+            log::info!(
+                "Skill {}/{} 分支自动回退: {} -> {}",
+                skill.repo_owner,
+                skill.repo_name,
+                skill.repo_branch,
+                repo_branch
+            );
         }
 
         let doc_path = skill
@@ -882,9 +943,108 @@ impl SkillService {
     fn write_cohort_journal(path: &Path, journal: &InactiveSkillCohortJournal) -> Result<()> {
         let temporary = path.with_extension("json.tmp");
         let bytes = serde_json::to_vec_pretty(journal)?;
-        fs::write(&temporary, bytes)?;
+        let mut file = fs::File::create(&temporary)?;
+        use std::io::Write;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        drop(file);
         fs::rename(&temporary, path)?;
         Ok(())
+    }
+
+    fn cohort_record_hash(skill: &InstalledSkill) -> Result<String> {
+        use sha2::Digest;
+
+        let bytes = serde_json::to_vec(skill)?;
+        Ok(format!("{:x}", sha2::Sha256::digest(bytes)))
+    }
+
+    /// Hash every managed entry without following symlinks.
+    ///
+    /// Unlike the update-comparison hash, this ownership hash includes hidden
+    /// files, empty directories, entry kinds, and symlink targets. Recovery may
+    /// delete a path only while this complete tree identity still matches.
+    fn compute_cohort_tree_hash(root: &Path) -> Result<String> {
+        use sha2::Digest;
+
+        let root_metadata = fs::symlink_metadata(root)
+            .with_context(|| format!("read cohort tree root: {}", root.display()))?;
+        if !root_metadata.is_dir() || root_metadata.file_type().is_symlink() {
+            return Err(anyhow!("cohort tree root is not a physical directory"));
+        }
+
+        fn hash_directory(root: &Path, current: &Path, hasher: &mut sha2::Sha256) -> Result<()> {
+            let mut entries = fs::read_dir(current)?.collect::<std::io::Result<Vec<_>>>()?;
+            entries.sort_by_key(|entry| entry.file_name());
+            for entry in entries {
+                let path = entry.path();
+                let relative = path
+                    .strip_prefix(root)
+                    .map_err(|_| anyhow!("cohort tree entry escaped root"))?;
+                let relative = relative.to_string_lossy().replace('\\', "/");
+                let metadata = fs::symlink_metadata(&path)?;
+                let file_type = metadata.file_type();
+                if file_type.is_symlink() {
+                    hasher.update(b"symlink\0");
+                    hasher.update(relative.as_bytes());
+                    hasher.update(b"\0");
+                    let target = fs::read_link(&path)?;
+                    hasher.update(target.to_string_lossy().replace('\\', "/").as_bytes());
+                    hasher.update(b"\0");
+                } else if file_type.is_dir() {
+                    hasher.update(b"directory\0");
+                    hasher.update(relative.as_bytes());
+                    hasher.update(b"\0");
+                    hash_directory(root, &path, hasher)?;
+                } else if file_type.is_file() {
+                    hasher.update(b"file\0");
+                    hasher.update(relative.as_bytes());
+                    hasher.update(b"\0");
+                    hasher.update(fs::read(&path)?);
+                    hasher.update(b"\0");
+                } else {
+                    return Err(anyhow!(
+                        "unsupported cohort tree entry type: {}",
+                        path.display()
+                    ));
+                }
+            }
+            Ok(())
+        }
+
+        let mut hasher = sha2::Sha256::new();
+        hash_directory(root, root, &mut hasher)?;
+        Ok(format!("{:x}", hasher.finalize()))
+    }
+
+    fn cohort_materialized_bytes(root: &Path) -> Result<u64> {
+        fn measure(path: &Path, total: &mut u64) -> Result<()> {
+            let metadata = fs::symlink_metadata(path)?;
+            let file_type = metadata.file_type();
+            let cost = if file_type.is_file() {
+                metadata.len()
+            } else if file_type.is_dir() || file_type.is_symlink() {
+                DIRECTORY_BUDGET_COST
+            } else {
+                return Err(anyhow!(
+                    "unsupported cohort materialization entry: {}",
+                    path.display()
+                ));
+            };
+            *total = total
+                .checked_add(cost)
+                .ok_or_else(|| anyhow!("inactive cohort materialization size overflow"))?;
+            if file_type.is_dir() && !file_type.is_symlink() {
+                for entry in fs::read_dir(path)? {
+                    measure(&entry?.path(), total)?;
+                }
+            }
+            Ok(())
+        }
+
+        let mut total = 0;
+        measure(root, &mut total)?;
+        Ok(total)
     }
 
     fn validate_exact_commit_revision(revision: &str) -> Result<()> {
@@ -898,6 +1058,30 @@ impl SkillService {
             Err(anyhow!(
                 "exact Skill revision must be a 40-character lowercase commit SHA"
             ))
+        }
+    }
+
+    fn validate_resolved_commit_revision(requested: &str, resolved: &str) -> Result<()> {
+        Self::validate_exact_commit_revision(requested)?;
+        Self::validate_exact_commit_revision(resolved)?;
+        if requested == resolved {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "GitHub resolved exact Skill revision {requested} to a different commit {resolved}"
+            ))
+        }
+    }
+
+    fn validate_sha256(label: &str, value: &str) -> Result<()> {
+        if value.len() == 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            Ok(())
+        } else {
+            Err(anyhow!("{label} must be a lowercase SHA-256 digest"))
         }
     }
 
@@ -916,6 +1100,19 @@ impl SkillService {
         item: &InactiveSkillCohortItem,
     ) -> Result<PreparedInactiveSkill> {
         Self::validate_exact_commit_revision(&item.revision)?;
+        Self::validate_sha256(
+            "inactive cohort source tree hash",
+            &item.admission.source_tree_hash,
+        )?;
+        Self::validate_sha256(
+            "inactive cohort dependency closure digest",
+            &item.admission.dependency_closure_digest,
+        )?;
+        if !item.admission.dependency_complete {
+            return Err(anyhow!(
+                "inactive cohort admission does not establish dependency completeness"
+            ));
+        }
         let expected_key = format!(
             "{}/{}:{}",
             item.skill.repo_owner, item.skill.repo_name, item.skill.directory
@@ -943,6 +1140,12 @@ impl SkillService {
         let source = source.canonicalize()?;
         if !source.starts_with(&repository) || !source.join("SKILL.md").is_file() {
             return Err(anyhow!("Skill source escapes exact-revision repository"));
+        }
+        let actual_tree_hash = Self::compute_cohort_tree_hash(&source)?;
+        if actual_tree_hash != item.admission.source_tree_hash {
+            return Err(anyhow!(
+                "inactive cohort source tree does not match reviewed admission evidence"
+            ));
         }
         let prepared_source = prepared_root.join(&install_name);
         if prepared_source.exists() {
@@ -1001,6 +1204,12 @@ impl SkillService {
         if items.is_empty() {
             return Err(anyhow!("inactive Skill cohort must not be empty"));
         }
+        if items.len() > MAX_INACTIVE_COHORT_ITEMS {
+            return Err(anyhow!(
+                "inactive Skill cohort exceeds {} items",
+                MAX_INACTIVE_COHORT_ITEMS
+            ));
+        }
         let mut groups: BTreeMap<(String, String, String), Vec<InactiveSkillCohortItem>> =
             BTreeMap::new();
         for item in items {
@@ -1019,27 +1228,48 @@ impl SkillService {
                 .or_default()
                 .push(item);
         }
-        let prepared_guard = tempfile::tempdir()?;
-        let mut prepared = Vec::new();
-        for ((owner, name, revision), group) in groups {
-            let (repository_guard, _) = timeout(
-                std::time::Duration::from_secs(60),
-                self.download_repo_exact_revision(&owner, &name, &revision),
-            )
-            .await
-            .map_err(|_| anyhow!("exact-revision Skill repository download timed out"))??;
-            for item in group {
-                prepared.push(Self::prepare_inactive_skill_from_repository(
-                    repository_guard.path(),
-                    prepared_guard.path(),
-                    &item,
-                )?);
-            }
+        if groups.len() > MAX_INACTIVE_COHORT_REPOSITORIES {
+            return Err(anyhow!(
+                "inactive Skill cohort exceeds {} repositories",
+                MAX_INACTIVE_COHORT_REPOSITORIES
+            ));
         }
+        let prepared_guard = tempfile::tempdir()?;
+        let prepared = timeout(std::time::Duration::from_secs(300), async {
+            let mut prepared = Vec::new();
+            let mut materialized_bytes = 0_u64;
+            for ((owner, name, revision), group) in groups {
+                let (repository_guard, _) = timeout(
+                    std::time::Duration::from_secs(60),
+                    self.download_repo_exact_revision(&owner, &name, &revision),
+                )
+                .await
+                .map_err(|_| anyhow!("exact-revision Skill repository download timed out"))??;
+                for item in group {
+                    let candidate = Self::prepare_inactive_skill_from_repository(
+                        repository_guard.path(),
+                        prepared_guard.path(),
+                        &item,
+                    )?;
+                    materialized_bytes = materialized_bytes
+                        .checked_add(Self::cohort_materialized_bytes(&candidate.source)?)
+                        .ok_or_else(|| anyhow!("inactive cohort materialization size overflow"))?;
+                    if materialized_bytes > MAX_INACTIVE_COHORT_MATERIALIZED_BYTES {
+                        return Err(anyhow!(
+                            "inactive Skill cohort exceeds materialization budget"
+                        ));
+                    }
+                    prepared.push(candidate);
+                }
+            }
+            Ok::<_, anyhow::Error>(prepared)
+        })
+        .await
+        .map_err(|_| anyhow!("inactive Skill cohort acquisition timed out"))??;
         Self::commit_prepared_inactive_cohort(db, prepared)
     }
 
-    /// Recover durable inactive-cohort journals left by an interrupted process.
+    /// Recover flushed inactive-cohort journals left by an interrupted process.
     ///
     /// A transaction with every planned DB row and SSOT directory is already
     /// committed; only its stale journal is removed. Any other state is partial
@@ -1048,10 +1278,7 @@ impl SkillService {
     pub fn recover_inactive_cohort_transactions(
         db: &Arc<Database>,
     ) -> Result<InactiveSkillCohortRecoveryResult> {
-        let transaction_lock = INACTIVE_COHORT_TRANSACTION_LOCK.get_or_init(|| Mutex::new(()));
-        let _guard = transaction_lock
-            .lock()
-            .map_err(|error| anyhow!("inactive Skill cohort lock poisoned: {error}"))?;
+        let _guard = Self::lock_skill_writes()?;
         Self::recover_inactive_cohort_transactions_unlocked(db)
     }
 
@@ -1096,7 +1323,7 @@ impl SkillService {
             }
             let journal: InactiveSkillCohortJournal =
                 serde_json::from_slice(&fs::read(&journal_path)?)?;
-            if journal.schema != 1 || journal.transaction_id != entry.file_name().to_string_lossy()
+            if journal.schema != 2 || journal.transaction_id != entry.file_name().to_string_lossy()
             {
                 return Err(anyhow!(
                     "invalid inactive Skill cohort journal identity: {}",
@@ -1108,25 +1335,65 @@ impl SkillService {
             }
             let mut validated = Vec::with_capacity(journal.items.len());
             for item in &journal.items {
-                let directory = Self::require_valid_directory(&item.directory)?;
-                if item.content_hash.len() != 64
-                    || !item
-                        .content_hash
-                        .bytes()
-                        .all(|byte| byte.is_ascii_hexdigit())
-                {
-                    return Err(anyhow!("invalid inactive Skill cohort content hash"));
+                let directory = Self::require_valid_directory(&item.skill.directory)?;
+                let content_hash =
+                    item.skill.content_hash.as_deref().ok_or_else(|| {
+                        anyhow!("inactive Skill cohort journal lacks content hash")
+                    })?;
+                for (label, hash) in [("content", content_hash), ("tree", &item.tree_hash)] {
+                    if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                        return Err(anyhow!("invalid inactive Skill cohort {label} hash"));
+                    }
                 }
-                validated.push((item.id.clone(), directory, item.content_hash.clone()));
+                if !item.skill.apps.is_empty() {
+                    return Err(anyhow!(
+                        "inactive Skill cohort journal contains enabled apps"
+                    ));
+                }
+                validated.push((item, directory));
             }
             let current = db.get_all_installed_skills()?;
-            let fully_committed = validated.iter().all(|(id, directory, expected_hash)| {
-                current.get(id).is_some_and(|skill| {
-                    skill.directory.eq_ignore_ascii_case(directory)
-                        && skill.content_hash.as_deref() == Some(expected_hash)
-                }) && Self::compute_dir_hash(&ssot_dir.join(directory))
-                    .is_ok_and(|actual| actual == *expected_hash)
-            });
+            let mut current_rows_owned = Vec::with_capacity(validated.len());
+            let mut destinations_owned = Vec::with_capacity(validated.len());
+            for (item, directory) in &validated {
+                let current_row_owned = match current.get(&item.skill.id) {
+                    Some(skill) => {
+                        if Self::cohort_record_hash(skill)?
+                            != Self::cohort_record_hash(&item.skill)?
+                        {
+                            return Err(anyhow!(
+                                "inactive Skill cohort recovery collision for DB row {}: record changed",
+                                item.skill.id
+                            ));
+                        }
+                        true
+                    }
+                    None => false,
+                };
+                let destination = ssot_dir.join(directory);
+                let destination_owned = if destination.exists() {
+                    let actual_hash = Self::compute_cohort_tree_hash(&destination)?;
+                    if actual_hash != item.tree_hash {
+                        return Err(anyhow!(
+                            "inactive Skill cohort recovery collision at {}: tree hash changed",
+                            destination.display()
+                        ));
+                    }
+                    if !item.moved_to_ssot && !current_row_owned {
+                        return Err(anyhow!(
+                            "inactive Skill cohort recovery collision at {}: path was not moved by this transaction",
+                            destination.display()
+                        ));
+                    }
+                    true
+                } else {
+                    false
+                };
+                current_rows_owned.push(current_row_owned);
+                destinations_owned.push(destination_owned);
+            }
+            let fully_committed = current_rows_owned.iter().all(|owned| *owned)
+                && destinations_owned.iter().all(|owned| *owned);
             if fully_committed {
                 let staged_root =
                     ssot_dir.join(format!(".cc-switch-{}-staging", journal.transaction_id));
@@ -1138,30 +1405,22 @@ impl SkillService {
                 continue;
             }
 
-            for (_, directory, expected_hash) in &validated {
-                let destination = ssot_dir.join(directory);
-                if destination.exists() {
-                    let actual_hash = Self::compute_dir_hash(&destination)?;
-                    if actual_hash != *expected_hash {
-                        return Err(anyhow!(
-                            "inactive Skill cohort recovery collision at {}: content hash changed",
-                            destination.display()
-                        ));
-                    }
-                }
+            let owned_rows = validated
+                .iter()
+                .zip(current_rows_owned.iter())
+                .filter_map(|((item, _), owned)| owned.then_some(item.skill.clone()))
+                .collect::<Vec<_>>();
+            if !owned_rows.is_empty() {
+                db.delete_skills_if_unchanged_atomically(&owned_rows)?;
             }
-            for (_, directory, _) in &validated {
+            for ((_, directory), destination_owned) in
+                validated.iter().zip(destinations_owned.iter())
+            {
                 let destination = ssot_dir.join(directory);
-                if destination.exists() {
+                if *destination_owned {
                     fs::remove_dir_all(&destination)?;
                 }
             }
-            db.delete_skills_atomically(
-                &validated
-                    .iter()
-                    .map(|(id, _, _)| id.clone())
-                    .collect::<Vec<_>>(),
-            )?;
             let staged_root =
                 ssot_dir.join(format!(".cc-switch-{}-staging", journal.transaction_id));
             if staged_root.exists() {
@@ -1177,7 +1436,7 @@ impl SkillService {
     ///
     /// Every item is preflighted before staging. Staging and SSOT live under the
     /// same application root so each final move is a same-filesystem rename. A
-    /// durable journal makes an interrupted multi-directory move recoverable,
+    /// flushed journal makes an interrupted multi-directory move recoverable,
     /// while all database rows are inserted by one SQLite transaction. The
     /// method never writes a consumer projection because inactive rows have no
     /// enabled applications.
@@ -1185,10 +1444,7 @@ impl SkillService {
         db: &Arc<Database>,
         prepared: Vec<PreparedInactiveSkill>,
     ) -> Result<InactiveSkillCohortResult> {
-        let transaction_lock = INACTIVE_COHORT_TRANSACTION_LOCK.get_or_init(|| Mutex::new(()));
-        let _guard = transaction_lock
-            .lock()
-            .map_err(|error| anyhow!("inactive Skill cohort lock poisoned: {error}"))?;
+        let _guard = Self::lock_skill_writes()?;
         let ssot_dir = Self::get_ssot_dir()?;
         let recovery_root = Self::get_cohort_recovery_dir()?;
         Self::commit_prepared_inactive_cohort_at(db, prepared, &ssot_dir, &recovery_root)
@@ -1247,23 +1503,21 @@ impl SkillService {
             return Err(anyhow!("inactive Skill cohort staging collision"));
         }
         let journal_path = transaction_root.join("journal.json");
-        let mut journal = InactiveSkillCohortJournal {
-            schema: 1,
-            transaction_id: transaction_id.clone(),
-            state: "staging".to_string(),
-            items: prepared
-                .iter()
-                .map(|item| InactiveSkillCohortJournalItem {
-                    id: item.skill.id.clone(),
-                    directory: item.skill.directory.clone(),
-                    content_hash: item
-                        .skill
-                        .content_hash
-                        .clone()
-                        .expect("cohort content hash was computed during preflight"),
+        let journal_items = prepared
+            .iter()
+            .map(|item| {
+                Ok(InactiveSkillCohortJournalItem {
+                    skill: item.skill.clone(),
+                    tree_hash: Self::compute_cohort_tree_hash(&item.source)?,
                     moved_to_ssot: false,
                 })
-                .collect(),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut journal = InactiveSkillCohortJournal {
+            schema: 2,
+            transaction_id: transaction_id.clone(),
+            state: "staging".to_string(),
+            items: journal_items,
         };
         fs::create_dir_all(&transaction_root)?;
         if let Err(error) = Self::write_cohort_journal(&journal_path, &journal) {
@@ -1301,20 +1555,69 @@ impl SkillService {
 
         if let Err(error) = operation {
             let mut rollback_errors = Vec::new();
-            for item in &prepared {
-                let destination = ssot_dir.join(&item.skill.directory);
-                if destination.exists() {
-                    if let Err(rollback_error) = fs::remove_dir_all(destination) {
-                        rollback_errors.push(rollback_error.to_string());
+            let current = db.get_all_installed_skills();
+            match current {
+                Err(rollback_error) => rollback_errors.push(rollback_error.to_string()),
+                Ok(current) => {
+                    let mut owned_rows = Vec::new();
+                    for item in &journal.items {
+                        let destination = ssot_dir.join(&item.skill.directory);
+                        if destination.exists() {
+                            if !item.moved_to_ssot {
+                                rollback_errors.push(format!(
+                                    "refusing to remove an unmoved cohort path: {}",
+                                    destination.display()
+                                ));
+                            } else {
+                                match Self::compute_cohort_tree_hash(&destination) {
+                                    Ok(actual) if actual == item.tree_hash => {}
+                                    Ok(_) => rollback_errors.push(format!(
+                                        "refusing to remove changed cohort path: {}",
+                                        destination.display()
+                                    )),
+                                    Err(rollback_error) => {
+                                        rollback_errors.push(rollback_error.to_string())
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(skill) = current.get(&item.skill.id) {
+                            match (
+                                Self::cohort_record_hash(skill),
+                                Self::cohort_record_hash(&item.skill),
+                            ) {
+                                (Ok(actual), Ok(expected)) if actual == expected => {
+                                    owned_rows.push(item.skill.clone());
+                                }
+                                (Ok(_), Ok(_)) => rollback_errors.push(format!(
+                                    "refusing to delete changed cohort DB row: {}",
+                                    item.skill.id
+                                )),
+                                (Err(rollback_error), _) | (_, Err(rollback_error)) => {
+                                    rollback_errors.push(rollback_error.to_string())
+                                }
+                            }
+                        }
+                    }
+                    if rollback_errors.is_empty() && !owned_rows.is_empty() {
+                        if let Err(rollback_error) =
+                            db.delete_skills_if_unchanged_atomically(&owned_rows)
+                        {
+                            rollback_errors.push(rollback_error.to_string());
+                        }
+                    }
+                    if rollback_errors.is_empty() {
+                        for item in &journal.items {
+                            let destination = ssot_dir.join(&item.skill.directory);
+                            if item.moved_to_ssot && destination.exists() {
+                                if let Err(rollback_error) = fs::remove_dir_all(destination) {
+                                    rollback_errors.push(rollback_error.to_string());
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
-            }
-            let ids = prepared
-                .iter()
-                .map(|item| item.skill.id.clone())
-                .collect::<Vec<_>>();
-            if let Err(rollback_error) = db.delete_skills_atomically(&ids) {
-                rollback_errors.push(rollback_error.to_string());
             }
             if staged_root.exists() {
                 if let Err(rollback_error) = fs::remove_dir_all(&staged_root) {
@@ -1333,18 +1636,36 @@ impl SkillService {
             )));
         }
 
-        if staged_root.exists() {
-            fs::remove_dir_all(&staged_root)?;
-        }
-        fs::remove_dir_all(&transaction_root).with_context(|| {
-            format!(
-                "cohort committed but failed to remove recovery journal {}",
-                transaction_root.display()
-            )
-        })?;
+        let cleanup_pending = if staged_root.exists() {
+            match fs::remove_dir_all(&staged_root) {
+                Ok(()) => false,
+                Err(error) => {
+                    log::warn!(
+                        "Inactive Skill cohort {transaction_id} committed; staging cleanup is pending: {error}"
+                    );
+                    true
+                }
+            }
+        } else {
+            false
+        };
+        let cleanup_pending = if cleanup_pending {
+            true
+        } else {
+            match fs::remove_dir_all(&transaction_root) {
+                Ok(()) => false,
+                Err(error) => {
+                    log::warn!(
+                        "Inactive Skill cohort {transaction_id} committed; journal cleanup is pending: {error}"
+                    );
+                    true
+                }
+            }
+        };
         Ok(InactiveSkillCohortResult {
             transaction_id,
             skills: prepared.into_iter().map(|item| item.skill).collect(),
+            cleanup_pending,
         })
     }
 
@@ -1355,6 +1676,8 @@ impl SkillService {
     /// 2. 从 SSOT 删除
     /// 3. 从数据库删除
     pub fn uninstall(db: &Arc<Database>, id: &str) -> Result<SkillUninstallResult> {
+        let _write_guard = Self::lock_skill_writes()?;
+        Self::recover_before_skill_write(db)?;
         // 获取 skill 信息
         let skill = db
             .get_installed_skill(id)?
@@ -1669,6 +1992,15 @@ impl SkillService {
                 ))
             })?;
 
+        let _write_guard = Self::lock_skill_writes()?;
+        Self::recover_before_skill_write(db)?;
+        let current = db
+            .get_installed_skill(skill_id)?
+            .ok_or_else(|| anyhow!("Skill changed during update: {skill_id}"))?;
+        if Self::cohort_record_hash(&current)? != Self::cohort_record_hash(&skill)? {
+            return Err(anyhow!("Skill changed during update: {skill_id}"));
+        }
+
         // 备份旧文件
         let _ = Self::create_uninstall_backup(&skill);
 
@@ -1770,6 +2102,8 @@ impl SkillService {
                 errors: vec![],
             });
         }
+        let _write_guard = Self::lock_skill_writes()?;
+        Self::recover_before_skill_write(db)?;
 
         // 1. 解析旧目录和新目录（不改设置）
         let old_dir = Self::get_ssot_dir()?;
@@ -1914,6 +2248,8 @@ impl SkillService {
                 backup_path.display()
             ));
         }
+        let _write_guard = Self::lock_skill_writes()?;
+        Self::recover_before_skill_write(db)?;
 
         let existing_skills = db.get_all_installed_skills()?;
         if existing_skills.contains_key(&metadata.skill.id)
@@ -1980,6 +2316,8 @@ impl SkillService {
     /// 启用：复制到应用目录
     /// 禁用：从应用目录删除
     pub fn toggle_app(db: &Arc<Database>, id: &str, app: &AppType, enabled: bool) -> Result<()> {
+        let _write_guard = Self::lock_skill_writes()?;
+        Self::recover_before_skill_write(db)?;
         // 获取当前 skill
         let mut skill = db
             .get_installed_skill(id)?
@@ -2073,6 +2411,8 @@ impl SkillService {
         db: &Arc<Database>,
         imports: Vec<ImportSkillSelection>,
     ) -> Result<Vec<InstalledSkill>> {
+        let _write_guard = Self::lock_skill_writes()?;
+        Self::recover_before_skill_write(db)?;
         let ssot_dir = Self::get_ssot_dir()?;
         let agents_lock = parse_agents_lock();
         let mut imported = Vec::new();
@@ -3042,6 +3382,30 @@ impl SkillService {
     ) -> Result<(tempfile::TempDir, String)> {
         Self::validate_repo_ref(owner, name, revision)?;
         Self::validate_exact_commit_revision(revision)?;
+        let api_url = format!("https://api.github.com/repos/{owner}/{name}/commits/{revision}");
+        let client = crate::proxy::http_client::get();
+        let response = client
+            .get(&api_url)
+            .header(reqwest::header::USER_AGENT, "cc-switch")
+            .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+            .send()
+            .await
+            .context("failed to resolve exact Skill revision through GitHub")?;
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "GitHub could not verify exact Skill commit {owner}/{name}@{revision}: HTTP {}",
+                response.status()
+            ));
+        }
+        let response: serde_json::Value = response
+            .json()
+            .await
+            .context("invalid GitHub exact-commit response")?;
+        let resolved = response
+            .get("sha")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow!("GitHub exact-commit response lacks sha"))?;
+        Self::validate_resolved_commit_revision(revision, resolved)?;
         let url = format!("https://github.com/{owner}/{name}/archive/{revision}.zip");
         let parsed = url::Url::parse(&url)?;
         let expected_path = format!("/{owner}/{name}/archive/{revision}.zip");
@@ -3582,6 +3946,9 @@ impl SkillService {
             )));
         }
 
+        let _write_guard = Self::lock_skill_writes()?;
+        Self::recover_before_skill_write(db)?;
+
         let ssot_dir = Self::get_ssot_dir()?;
         let mut installed = Vec::new();
         let existing_skills = db.get_all_installed_skills()?;
@@ -4024,6 +4391,8 @@ fn save_repos_from_lock(
 
 /// 首次启动迁移：扫描应用目录，重建数据库
 pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
+    let _write_guard = SkillService::lock_skill_writes()?;
+    SkillService::recover_before_skill_write(db)?;
     let ssot_dir = SkillService::get_ssot_dir()?;
     let agents_lock = parse_agents_lock();
     let snapshot: Vec<LegacySkillMigrationRow> =
@@ -4758,6 +5127,27 @@ mod tests {
         }
     }
 
+    fn cohort_journal_item(
+        mut skill: InstalledSkill,
+        source: &Path,
+        moved_to_ssot: bool,
+    ) -> InactiveSkillCohortJournalItem {
+        skill.content_hash = Some(SkillService::compute_dir_hash(source).expect("content hash"));
+        InactiveSkillCohortJournalItem {
+            skill,
+            tree_hash: SkillService::compute_cohort_tree_hash(source).expect("tree hash"),
+            moved_to_ssot,
+        }
+    }
+
+    fn cohort_admission(source: &Path, dependency_complete: bool) -> InactiveSkillCohortAdmission {
+        InactiveSkillCohortAdmission {
+            source_tree_hash: SkillService::compute_cohort_tree_hash(source).expect("source tree"),
+            dependency_closure_digest: "a".repeat(64),
+            dependency_complete,
+        }
+    }
+
     fn discoverable_skill(directory: &str) -> DiscoverableSkill {
         DiscoverableSkill {
             key: format!("owner/repo:{directory}"),
@@ -4879,6 +5269,7 @@ mod tests {
         .expect("commit inactive cohort");
 
         assert_eq!(result.skills.len(), 2);
+        assert!(!result.cleanup_pending);
         for skill in [&alpha, &beta] {
             assert!(ssot.join(&skill.directory).join("SKILL.md").is_file());
             let persisted = db
@@ -4952,26 +5343,20 @@ mod tests {
         fs::create_dir_all(transaction_root.join("staged")).expect("staging root");
         write_skill(&transaction_root.join("staged").join("beta"), "beta");
         let journal = InactiveSkillCohortJournal {
-            schema: 1,
+            schema: 2,
             transaction_id: "skill-cohort-partial".to_string(),
             state: "moving".to_string(),
             items: vec![
-                InactiveSkillCohortJournalItem {
-                    id: "owner/repo:alpha".to_string(),
-                    directory: "alpha".to_string(),
-                    content_hash: SkillService::compute_dir_hash(&ssot.join("alpha"))
-                        .expect("alpha hash"),
-                    moved_to_ssot: true,
-                },
-                InactiveSkillCohortJournalItem {
-                    id: "owner/repo:beta".to_string(),
-                    directory: "beta".to_string(),
-                    content_hash: SkillService::compute_dir_hash(
-                        &transaction_root.join("staged").join("beta"),
-                    )
-                    .expect("beta hash"),
-                    moved_to_ssot: false,
-                },
+                cohort_journal_item(
+                    poisoned_skill("owner/repo:alpha", "alpha"),
+                    &ssot.join("alpha"),
+                    true,
+                ),
+                cohort_journal_item(
+                    poisoned_skill("owner/repo:beta", "beta"),
+                    &transaction_root.join("staged").join("beta"),
+                    false,
+                ),
             ],
         };
         SkillService::write_cohort_journal(&transaction_root.join("journal.json"), &journal)
@@ -5005,16 +5390,14 @@ mod tests {
         let transaction_root = recovery.join("skill-cohort-committed");
         fs::create_dir_all(&transaction_root).expect("transaction root");
         let journal = InactiveSkillCohortJournal {
-            schema: 1,
+            schema: 2,
             transaction_id: "skill-cohort-committed".to_string(),
             state: "moving".to_string(),
-            items: vec![InactiveSkillCohortJournalItem {
-                id: alpha.id.clone(),
-                directory: alpha.directory.clone(),
-                content_hash: SkillService::compute_dir_hash(&ssot.join("alpha"))
-                    .expect("alpha hash"),
-                moved_to_ssot: true,
-            }],
+            items: vec![cohort_journal_item(
+                alpha.clone(),
+                &ssot.join("alpha"),
+                true,
+            )],
         };
         SkillService::write_cohort_journal(&transaction_root.join("journal.json"), &journal)
             .expect("write journal");
@@ -5043,24 +5426,23 @@ mod tests {
         write_skill(&ssot.join("beta"), "replacement beta");
         let transaction_root = recovery.join("skill-cohort-conflict");
         fs::create_dir_all(&transaction_root).expect("transaction root");
+        let mut mismatched_beta = cohort_journal_item(
+            poisoned_skill("owner/repo:beta", "beta"),
+            &ssot.join("beta"),
+            true,
+        );
+        mismatched_beta.tree_hash = "0".repeat(64);
         let journal = InactiveSkillCohortJournal {
-            schema: 1,
+            schema: 2,
             transaction_id: "skill-cohort-conflict".to_string(),
             state: "moving".to_string(),
             items: vec![
-                InactiveSkillCohortJournalItem {
-                    id: "owner/repo:alpha".to_string(),
-                    directory: "alpha".to_string(),
-                    content_hash: SkillService::compute_dir_hash(&ssot.join("alpha"))
-                        .expect("alpha hash"),
-                    moved_to_ssot: true,
-                },
-                InactiveSkillCohortJournalItem {
-                    id: "owner/repo:beta".to_string(),
-                    directory: "beta".to_string(),
-                    content_hash: "0".repeat(64),
-                    moved_to_ssot: true,
-                },
+                cohort_journal_item(
+                    poisoned_skill("owner/repo:alpha", "alpha"),
+                    &ssot.join("alpha"),
+                    true,
+                ),
+                mismatched_beta,
             ],
         };
         SkillService::write_cohort_journal(&transaction_root.join("journal.json"), &journal)
@@ -5074,6 +5456,81 @@ mod tests {
         );
         assert!(ssot.join("alpha").join("SKILL.md").is_file());
         assert!(ssot.join("beta").join("SKILL.md").is_file());
+        assert!(transaction_root.join("journal.json").is_file());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn inactive_cohort_recovery_preserves_hidden_file_drift() {
+        let temp = tempdir().expect("tempdir");
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        let ssot = temp.path().join("ssot");
+        let recovery = temp.path().join("recovery");
+        write_skill(&ssot.join("alpha"), "transaction alpha");
+        let transaction_root = recovery.join("skill-cohort-hidden-drift");
+        fs::create_dir_all(&transaction_root).expect("transaction root");
+        let journal = InactiveSkillCohortJournal {
+            schema: 2,
+            transaction_id: "skill-cohort-hidden-drift".to_string(),
+            state: "moving".to_string(),
+            items: vec![cohort_journal_item(
+                poisoned_skill("owner/repo:alpha", "alpha"),
+                &ssot.join("alpha"),
+                true,
+            )],
+        };
+        SkillService::write_cohort_journal(&transaction_root.join("journal.json"), &journal)
+            .expect("write journal");
+        fs::write(ssot.join("alpha").join(".env"), "user-owned drift").expect("write hidden drift");
+
+        let result = SkillService::recover_inactive_cohort_transactions_at(&db, &recovery, &ssot);
+
+        assert!(result.is_err(), "hidden-file drift must block recovery");
+        assert!(ssot.join("alpha").join(".env").is_file());
+        assert!(transaction_root.join("journal.json").is_file());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn inactive_cohort_recovery_preserves_unmoved_same_name_path_and_foreign_db_row() {
+        let temp = tempdir().expect("tempdir");
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        let ssot = temp.path().join("ssot");
+        let recovery = temp.path().join("recovery");
+        write_skill(&ssot.join("alpha"), "same bytes as staged transaction item");
+        let expected = cohort_journal_item(
+            poisoned_skill("owner/repo:alpha", "alpha"),
+            &ssot.join("alpha"),
+            false,
+        );
+        let mut foreign = expected.skill.clone();
+        foreign.repo_owner = Some("other-owner".to_string());
+        db.save_skill(&foreign).expect("seed foreign row");
+        let transaction_root = recovery.join("skill-cohort-unmoved-race");
+        fs::create_dir_all(&transaction_root).expect("transaction root");
+        let journal = InactiveSkillCohortJournal {
+            schema: 2,
+            transaction_id: "skill-cohort-unmoved-race".to_string(),
+            state: "prepared".to_string(),
+            items: vec![expected],
+        };
+        SkillService::write_cohort_journal(&transaction_root.join("journal.json"), &journal)
+            .expect("write journal");
+
+        let result = SkillService::recover_inactive_cohort_transactions_at(&db, &recovery, &ssot);
+
+        assert!(
+            result.is_err(),
+            "an unmoved path or foreign DB row must block automatic deletion"
+        );
+        assert!(ssot.join("alpha").join("SKILL.md").is_file());
+        assert_eq!(
+            db.get_installed_skill(&foreign.id)
+                .expect("query foreign row")
+                .expect("foreign row preserved")
+                .repo_owner,
+            Some("other-owner".to_string())
+        );
         assert!(transaction_root.join("journal.json").is_file());
     }
 
@@ -5096,10 +5553,14 @@ mod tests {
 
     #[test]
     fn inactive_cohort_requires_an_exact_commit_revision() {
-        assert!(SkillService::validate_exact_commit_revision(
-            "0123456789abcdef0123456789abcdef01234567"
+        let exact = "0123456789abcdef0123456789abcdef01234567";
+        assert!(SkillService::validate_exact_commit_revision(exact).is_ok());
+        assert!(SkillService::validate_resolved_commit_revision(exact, exact).is_ok());
+        assert!(SkillService::validate_resolved_commit_revision(
+            exact,
+            "1123456789abcdef0123456789abcdef01234567"
         )
-        .is_ok());
+        .is_err());
         for invalid in [
             "main",
             "0123456789abcdef0123456789abcdef0123456",
@@ -5110,6 +5571,27 @@ mod tests {
                 "invalid revision must be rejected: {invalid}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn inactive_cohort_rejects_unbounded_item_count_before_network() {
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        let item = InactiveSkillCohortItem {
+            skill: discoverable_skill("skills/alpha"),
+            revision: "0123456789abcdef0123456789abcdef01234567".to_string(),
+            admission: InactiveSkillCohortAdmission {
+                source_tree_hash: "a".repeat(64),
+                dependency_closure_digest: "b".repeat(64),
+                dependency_complete: true,
+            },
+        };
+
+        let error = SkillService::new()
+            .install_inactive_cohort(&db, vec![item; MAX_INACTIVE_COHORT_ITEMS + 1])
+            .await
+            .expect_err("oversized cohort must fail before acquisition");
+
+        assert!(error.to_string().contains("exceeds 64 items"));
     }
 
     #[test]
@@ -5124,6 +5606,7 @@ mod tests {
         let request = InactiveSkillCohortItem {
             skill: discoverable_skill("skills/alpha"),
             revision: "0123456789abcdef0123456789abcdef01234567".to_string(),
+            admission: cohort_admission(&source, true),
         };
 
         let prepared = SkillService::prepare_inactive_skill_from_repository(
@@ -5159,6 +5642,7 @@ mod tests {
         let request = InactiveSkillCohortItem {
             skill,
             revision: "0123456789abcdef0123456789abcdef01234567".to_string(),
+            admission: cohort_admission(&repository.join("skills").join("alpha"), true),
         };
 
         let result = SkillService::prepare_inactive_skill_from_repository(
@@ -5168,6 +5652,31 @@ mod tests {
         );
 
         assert!(result.is_err());
+        assert!(!prepared_root.join("alpha").exists());
+    }
+
+    #[test]
+    fn materialized_cohort_item_requires_dependency_complete_admission() {
+        let temp = tempdir().expect("tempdir");
+        let repository = temp.path().join("repository");
+        let source = repository.join("skills").join("alpha");
+        write_skill(&source, "alpha");
+        let prepared_root = temp.path().join("prepared");
+        fs::create_dir_all(&prepared_root).expect("prepared root");
+        let request = InactiveSkillCohortItem {
+            skill: discoverable_skill("skills/alpha"),
+            revision: "0123456789abcdef0123456789abcdef01234567".to_string(),
+            admission: cohort_admission(&source, false),
+        };
+
+        let error = SkillService::prepare_inactive_skill_from_repository(
+            &repository,
+            &prepared_root,
+            &request,
+        )
+        .expect_err("incomplete dependencies must block materialization");
+
+        assert!(error.to_string().contains("dependency completeness"));
         assert!(!prepared_root.join("alpha").exists());
     }
 
