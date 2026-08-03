@@ -15,6 +15,7 @@ use crate::settings::{
     CodexThirdPartyHistoryProviderBucketMigration,
 };
 use chrono::{Local, Utc};
+use fs2::FileExt;
 use rusqlite::{backup::Backup, params_from_iter, Connection};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -22,7 +23,7 @@ use std::cell::Cell;
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use toml_edit::DocumentMut;
@@ -973,8 +974,8 @@ fn rewrite_legacy_provider_profile_refs(doc: &mut DocumentMut, source_provider_i
 
 /// Explicit repair capability for legacy proxy-generated Tool Search history.
 ///
-/// This function is intentionally not part of startup migration. A UI or provider-switch
-/// confirmation must invoke it explicitly before any live Codex history is rewritten.
+/// This function is intentionally not part of startup migration. Provider switches invoke it
+/// only when crossing the built-in Codex OAuth/API-provider boundary.
 pub fn repair_codex_tool_search_history_item_ids(
 ) -> Result<CodexToolSearchItemIdRepairOutcome, AppError> {
     let codex_dir = get_codex_config_dir();
@@ -997,18 +998,11 @@ fn repair_codex_tool_search_history_item_ids_in_dir(
     let mut repaired_jsonl_files = 0;
     let mut repaired_items = 0;
     for file_path in files {
-        let file_repaired_items = Cell::new(0usize);
-        let changed =
-            rewrite_codex_session_file_lines(&file_path, codex_dir, backup_root, |line| {
-                let rewritten = rewrite_codex_tool_search_call_item_id_line(line);
-                if rewritten.is_some() {
-                    file_repaired_items.set(file_repaired_items.get() + 1);
-                }
-                rewritten
-            })?;
-        if changed {
+        let file_repaired_items =
+            rewrite_codex_tool_search_session_file(&file_path, codex_dir, backup_root)?;
+        if file_repaired_items > 0 {
             repaired_jsonl_files += 1;
-            repaired_items += file_repaired_items.get();
+            repaired_items += file_repaired_items;
         }
     }
 
@@ -1032,6 +1026,7 @@ fn tool_search_history_repair_lock_path(codex_dir: &Path) -> PathBuf {
 }
 
 struct ToolSearchHistoryRepairLock {
+    file: fs::File,
     path: PathBuf,
 }
 
@@ -1040,13 +1035,16 @@ impl ToolSearchHistoryRepairLock {
         if let Some(parent) = lock_path.parent() {
             fs::create_dir_all(parent).map_err(|error| AppError::io(parent, error))?;
         }
-        let mut file = match fs::OpenOptions::new()
+        let mut file = fs::OpenOptions::new()
+            .read(true)
             .write(true)
-            .create_new(true)
+            .create(true)
+            .truncate(false)
             .open(lock_path)
-        {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            .map_err(|error| AppError::io(lock_path, error))?;
+
+        if let Err(error) = file.try_lock_exclusive() {
+            if file_lock_is_contended(&error) {
                 let details = fs::read_to_string(lock_path).unwrap_or_default();
                 return Err(AppError::Message(format!(
                     "Codex Tool Search history repair is locked at {}{}",
@@ -1058,23 +1056,29 @@ impl ToolSearchHistoryRepairLock {
                     }
                 )));
             }
-            Err(error) => return Err(AppError::io(lock_path, error)),
-        };
+            return Err(AppError::io(lock_path, error));
+        }
 
-        if let Err(error) = writeln!(
-            file,
-            "pid={} started_at={} codex_dir={}",
-            std::process::id(),
-            Utc::now().to_rfc3339(),
-            canonical_dir_string(codex_dir)
-        )
-        .and_then(|_| file.flush())
-        {
-            let _ = fs::remove_file(lock_path);
+        let write_metadata = (|| -> std::io::Result<()> {
+            file.set_len(0)?;
+            file.seek(SeekFrom::Start(0))?;
+            writeln!(
+                file,
+                "pid={} started_at={} codex_dir={}",
+                std::process::id(),
+                Utc::now().to_rfc3339(),
+                canonical_dir_string(codex_dir)
+            )?;
+            file.flush()?;
+            file.sync_data()
+        })();
+        if let Err(error) = write_metadata {
+            let _ = FileExt::unlock(&file);
             return Err(AppError::io(lock_path, error));
         }
 
         Ok(Self {
+            file,
             path: lock_path.to_path_buf(),
         })
     }
@@ -1082,13 +1086,108 @@ impl ToolSearchHistoryRepairLock {
 
 impl Drop for ToolSearchHistoryRepairLock {
     fn drop(&mut self) {
-        if let Err(error) = fs::remove_file(&self.path) {
+        if let Err(error) = FileExt::unlock(&self.file) {
             log::warn!(
-                "Failed to remove Codex Tool Search history repair lock {}: {error}",
+                "Failed to unlock Codex Tool Search history repair lock {}: {error}",
                 self.path.display()
             );
         }
     }
+}
+
+fn file_lock_is_contended(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::WouldBlock
+        || error.raw_os_error() == fs2::lock_contended_error().raw_os_error()
+}
+
+fn rewrite_codex_tool_search_session_file(
+    path: &Path,
+    codex_dir: &Path,
+    backup_root: &Path,
+) -> Result<usize, AppError> {
+    let repaired_items = Cell::new(0usize);
+    let changed =
+        rewrite_codex_session_file_lines_in_place(path, codex_dir, backup_root, |line| {
+            let rewritten = rewrite_codex_tool_search_call_item_id_line(line);
+            if rewritten.is_some() {
+                repaired_items.set(repaired_items.get() + 1);
+            }
+            rewritten
+        })?;
+    Ok(if changed { repaired_items.get() } else { 0 })
+}
+
+fn rewrite_codex_session_file_lines_in_place(
+    path: &Path,
+    codex_dir: &Path,
+    backup_root: &Path,
+    rewrite_line: impl Fn(&str) -> Option<String>,
+) -> Result<bool, AppError> {
+    // Codex keeps an append handle open for active rollouts. Rewrite only the snapshot prefix on
+    // the same file object, at exactly the same byte length, so an append that lands after the
+    // snapshot stays beyond the rewritten prefix instead of being replaced or truncated.
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|error| AppError::io(path, error))?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|error| AppError::io(path, error))?;
+
+    let mut rewritten = String::with_capacity(content.len());
+    let mut changed = false;
+    for segment in content.split_inclusive('\n') {
+        let (line, newline) = segment
+            .strip_suffix('\n')
+            .map(|line| (line, "\n"))
+            .unwrap_or((segment, ""));
+        if let Some(next_line) = rewrite_line(line) {
+            if next_line.len() > line.len() {
+                return Err(AppError::Message(format!(
+                    "Codex Tool Search history repair cannot safely grow a live JSONL line: {}",
+                    path.display()
+                )));
+            }
+            rewritten.push_str(&next_line);
+            rewritten.extend(std::iter::repeat_n(' ', line.len() - next_line.len()));
+            changed = true;
+        } else {
+            rewritten.push_str(line);
+        }
+        rewritten.push_str(newline);
+    }
+
+    if !changed {
+        return Ok(false);
+    }
+    if rewritten.len() != content.len() {
+        return Err(AppError::Message(format!(
+            "Codex Tool Search history repair changed snapshot length unexpectedly: {}",
+            path.display()
+        )));
+    }
+
+    backup_codex_jsonl_content(path, codex_dir, backup_root, content.as_bytes())?;
+    #[cfg(test)]
+    run_codex_session_before_in_place_write_hook();
+    if let Err(write_error) = write_codex_session_prefix(&mut file, rewritten.as_bytes()) {
+        if let Err(restore_error) = write_codex_session_prefix(&mut file, content.as_bytes()) {
+            return Err(AppError::Message(format!(
+                "Failed to rewrite Codex session file {}: {write_error}; rollback failed: {restore_error}",
+                path.display()
+            )));
+        }
+        return Err(AppError::io(path, write_error));
+    }
+    Ok(true)
+}
+
+fn write_codex_session_prefix(file: &mut fs::File, data: &[u8]) -> std::io::Result<()> {
+    file.seek(SeekFrom::Start(0))?;
+    file.write_all(data)?;
+    file.flush()?;
+    file.sync_data()
 }
 
 fn rewrite_codex_tool_search_call_item_id_line(line: &str) -> Option<String> {
@@ -1104,13 +1203,16 @@ fn rewrite_codex_tool_search_call_item_id_line(line: &str) -> Option<String> {
     if payload.get("type").and_then(Value::as_str) != Some("tool_search_call") {
         return None;
     }
-    let call_id = payload.get("call_id")?.as_str()?.trim().to_string();
-    if call_id.is_empty() {
+    if payload
+        .get("call_id")
+        .and_then(Value::as_str)
+        .is_none_or(|call_id| call_id.trim().is_empty())
+    {
         return None;
     }
 
     let needs_repair = match payload.get("id") {
-        None | Some(Value::Null) => true,
+        Some(Value::Null) => true,
         Some(Value::String(id)) if id.is_empty() || id == "tsc_" => true,
         Some(Value::String(id)) if id.starts_with("fc_") => true,
         _ => false,
@@ -1119,7 +1221,10 @@ fn rewrite_codex_tool_search_call_item_id_line(line: &str) -> Option<String> {
         return None;
     }
 
-    payload.insert("id".to_string(), Value::String(format!("tsc_{call_id}")));
+    // Responses accepts Tool Search input items without an `id`. Removing the malformed optional
+    // value lets Codex/OpenAI normalize it from `call_id`, and—unlike growing `fc_` to `tsc_`—keeps
+    // a live JSONL line eligible for fixed-width, append-safe in-place repair.
+    payload.remove("id");
     serde_json::to_string(&value).ok()
 }
 
@@ -1220,6 +1325,28 @@ fn rewrite_codex_session_file_lines(
     ensure_codex_session_file_unchanged(path, modified_before, len_before)?;
     atomic_write(path, rewritten.as_bytes())?;
     Ok(true)
+}
+
+#[cfg(test)]
+type CodexSessionBeforeInPlaceWriteHook = Box<dyn FnOnce() + Send + 'static>;
+
+#[cfg(test)]
+fn codex_session_before_in_place_write_hook(
+) -> &'static std::sync::Mutex<Option<CodexSessionBeforeInPlaceWriteHook>> {
+    static HOOK: std::sync::OnceLock<std::sync::Mutex<Option<CodexSessionBeforeInPlaceWriteHook>>> =
+        std::sync::OnceLock::new();
+    HOOK.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+#[cfg(test)]
+fn run_codex_session_before_in_place_write_hook() {
+    let hook = codex_session_before_in_place_write_hook()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take();
+    if let Some(hook) = hook {
+        hook();
+    }
 }
 
 fn ensure_codex_session_file_unchanged(
@@ -1338,6 +1465,18 @@ fn placeholders(count: usize) -> String {
     std::iter::repeat_n("?", count)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn backup_codex_jsonl_content(
+    path: &Path,
+    codex_dir: &Path,
+    backup_root: &Path,
+    content: &[u8],
+) -> Result<(), AppError> {
+    let backup_path = backup_root
+        .join("jsonl")
+        .join(relative_backup_path(path, codex_dir));
+    atomic_write(&backup_path, content)
 }
 
 fn backup_codex_jsonl_file(
@@ -1503,21 +1642,21 @@ mod tests {
 
         assert_eq!(outcome.scanned_jsonl_files, 1);
         assert_eq!(outcome.repaired_jsonl_files, 1);
-        assert_eq!(outcome.repaired_items, 2);
+        assert_eq!(outcome.repaired_items, 1);
         assert_eq!(outcome.backup_root.as_deref(), Some(backup_root.as_path()));
-        assert!(!lock_path.exists());
+        assert!(lock_path.exists());
 
         let values = fs::read_to_string(&path)
             .expect("read repaired fixture")
             .lines()
             .map(|line| serde_json::from_str::<Value>(line).expect("parse jsonl line"))
             .collect::<Vec<_>>();
-        assert_eq!(values[1]["payload"]["id"], "tsc_call_search_1");
+        assert!(values[1]["payload"].get("id").is_none());
         assert_eq!(values[1]["payload"]["call_id"], "call_search_1");
         assert_eq!(values[2]["payload"]["type"], "tool_search_output");
         assert_eq!(values[2]["payload"]["call_id"], "call_search_1");
         assert_eq!(values[3]["payload"]["id"], "tsc_server_opaque");
-        assert_eq!(values[4]["payload"]["id"], "tsc_call_search_3");
+        assert!(values[4]["payload"].get("id").is_none());
         assert_eq!(values[5]["payload"]["id"], "fc_call_function");
 
         let backup_path = backup_root.join("jsonl/sessions/2026/08/03/rollout-tool-search.jsonl");
@@ -1538,7 +1677,75 @@ mod tests {
     }
 
     #[test]
-    fn tool_search_history_item_ids_repair_reports_lock_and_preserves_file() {
+    #[serial]
+    fn tool_search_history_item_ids_repair_preserves_append_after_final_check() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        let session_dir = codex_dir.join("sessions");
+        fs::create_dir_all(&session_dir).expect("create session dir");
+        let path = session_dir.join("concurrent.jsonl");
+        let original = "{\"type\":\"response_item\",\"payload\":{\"type\":\"tool_search_call\",\"id\":\"fc_call_concurrent\",\"call_id\":\"call_concurrent\"}}\n";
+        let appended = "{\"type\":\"response_item\",\"payload\":{\"type\":\"tool_search_output\",\"call_id\":\"call_concurrent\",\"output\":\"late\"}}\n";
+        fs::write(&path, original).expect("write fixture");
+        let hook_path = path.clone();
+        *codex_session_before_in_place_write_hook()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Box::new(move || {
+            let mut file = fs::OpenOptions::new()
+                .append(true)
+                .open(&hook_path)
+                .expect("open append handle");
+            file.write_all(appended.as_bytes()).expect("append fixture");
+            file.flush().expect("flush append");
+        }));
+
+        let outcome = repair_codex_tool_search_history_item_ids_in_dir(
+            &codex_dir,
+            &dir.path().join("backup"),
+            &dir.path().join("locks/tool-search.lock"),
+        )
+        .expect("repair history");
+
+        assert_eq!(outcome.repaired_items, 1);
+        let repaired = fs::read_to_string(path).expect("read repaired fixture");
+        assert!(!repaired.contains("fc_call_concurrent"));
+        assert!(repaired.contains(appended.trim_end()));
+    }
+
+    #[test]
+    fn tool_search_history_item_ids_repair_reclaims_stale_lock_file() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        let session_dir = codex_dir.join("sessions");
+        fs::create_dir_all(&session_dir).expect("create session dir");
+        let path = session_dir.join("locked.jsonl");
+        fs::write(
+            &path,
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"tool_search_call\",\"id\":\"fc_call_locked\",\"call_id\":\"call_locked\"}}\n",
+        )
+        .expect("write fixture");
+        let backup_root = dir.path().join("backup");
+        let lock_path = dir.path().join("locks/tool-search.lock");
+        fs::create_dir_all(lock_path.parent().unwrap()).expect("create lock dir");
+        fs::write(
+            &lock_path,
+            "pid=4294967295 started_at=2000-01-01T00:00:00Z codex_dir=stale",
+        )
+        .expect("seed stale lock");
+
+        let outcome =
+            repair_codex_tool_search_history_item_ids_in_dir(&codex_dir, &backup_root, &lock_path)
+                .expect("stale lock must be reclaimed");
+
+        assert_eq!(outcome.repaired_items, 1);
+        assert!(!fs::read_to_string(path)
+            .expect("read fixture")
+            .contains("fc_call_locked"));
+        assert!(backup_root.exists());
+    }
+
+    #[test]
+    fn tool_search_history_item_ids_repair_reports_live_lock_and_preserves_file() {
         let dir = tempdir().expect("tempdir");
         let codex_dir = dir.path().join(".codex");
         let session_dir = codex_dir.join("sessions");
@@ -1548,12 +1755,12 @@ mod tests {
         fs::write(&path, original).expect("write fixture");
         let backup_root = dir.path().join("backup");
         let lock_path = dir.path().join("locks/tool-search.lock");
-        fs::create_dir_all(lock_path.parent().unwrap()).expect("create lock dir");
-        fs::write(&lock_path, "pid=123").expect("seed lock");
+        let _live_lock = ToolSearchHistoryRepairLock::acquire(&lock_path, &codex_dir)
+            .expect("acquire live repair lock");
 
         let error =
             repair_codex_tool_search_history_item_ids_in_dir(&codex_dir, &backup_root, &lock_path)
-                .expect_err("existing lock must block repair");
+                .expect_err("live lock must block repair");
 
         assert!(error.to_string().contains(&lock_path.display().to_string()));
         assert_eq!(fs::read_to_string(path).expect("read fixture"), original);
@@ -1567,7 +1774,7 @@ mod tests {
         let session_dir = codex_dir.join("sessions");
         fs::create_dir_all(&session_dir).expect("create session dir");
         let path = session_dir.join("backup-failure.jsonl");
-        let original = "{\"type\":\"response_item\",\"payload\":{\"type\":\"tool_search_call\",\"call_id\":\"call_backup_failure\"}}\n";
+        let original = "{\"type\":\"response_item\",\"payload\":{\"type\":\"tool_search_call\",\"id\":\"fc_call_backup_failure\",\"call_id\":\"call_backup_failure\"}}\n";
         fs::write(&path, original).expect("write fixture");
         let backup_root = dir.path().join("backup-as-file");
         fs::write(&backup_root, "not a directory").expect("seed invalid backup root");
@@ -1579,7 +1786,7 @@ mod tests {
 
         assert!(error.to_string().contains("backup-as-file"));
         assert_eq!(fs::read_to_string(&path).expect("read fixture"), original);
-        assert!(!lock_path.exists());
+        assert!(lock_path.exists());
         assert!(fs::read_dir(&session_dir)
             .expect("read session dir")
             .all(|entry| !entry
