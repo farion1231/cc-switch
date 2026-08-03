@@ -138,6 +138,75 @@ impl Database {
         Ok(())
     }
 
+    /// Save a cohort in one SQLite transaction.
+    ///
+    /// Filesystem preparation is owned by the Skill service. This method only
+    /// guarantees that observers see either every cohort row or none of them.
+    pub fn save_skills_atomically(&self, skills: &[InstalledSkill]) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let transaction = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        {
+            let mut statement = transaction
+                .prepare(
+                    "INSERT INTO skills
+                     (id, name, description, directory, repo_owner, repo_name, repo_branch,
+                      readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
+                      installed_at, content_hash, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            for skill in skills {
+                statement
+                    .execute(params![
+                        skill.id,
+                        skill.name,
+                        skill.description,
+                        skill.directory,
+                        skill.repo_owner,
+                        skill.repo_name,
+                        skill.repo_branch,
+                        skill.readme_url,
+                        skill.apps.claude,
+                        skill.apps.codex,
+                        skill.apps.gemini,
+                        skill.apps.grokbuild,
+                        skill.apps.opencode,
+                        skill.apps.hermes,
+                        skill.installed_at,
+                        skill.content_hash,
+                        skill.updated_at,
+                    ])
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+            }
+        }
+        transaction
+            .commit()
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    /// Delete a set of Skill rows in one SQLite transaction.
+    pub fn delete_skills_atomically(&self, ids: &[String]) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let transaction = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        {
+            let mut statement = transaction
+                .prepare("DELETE FROM skills WHERE id = ?1")
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            for id in ids {
+                statement
+                    .execute(params![id])
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+            }
+        }
+        transaction
+            .commit()
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
     /// 删除 Skill
     pub fn delete_skill(&self, id: &str) -> Result<bool, AppError> {
         let conn = lock_conn!(self.conn);

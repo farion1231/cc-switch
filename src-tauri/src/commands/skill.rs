@@ -7,9 +7,10 @@
 use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
 use crate::error::format_skill_error;
 use crate::services::skill::{
-    DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillBackupEntry, SkillRepo,
-    SkillService, SkillStorageLocation, SkillUninstallResult, SkillUpdateInfo,
-    SkillsShSearchResult,
+    DiscoverableSkill, ImportSkillSelection, InactiveSkillCohortItem,
+    InactiveSkillCohortRecoveryResult, InactiveSkillCohortResult, MigrationResult, Skill,
+    SkillBackupEntry, SkillRepo, SkillService, SkillStorageLocation, SkillUninstallResult,
+    SkillUpdateInfo, SkillsShSearchResult,
 };
 use crate::store::AppState;
 use std::str::FromStr;
@@ -69,6 +70,29 @@ pub async fn install_skill_unified(
         .install_with_apps(&app_state.db, &skill, initial_apps)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Install an exact-revision Skill cohort into manager storage with every
+/// consumer flag disabled. The service prefetches and validates the complete
+/// cohort before starting its journaled filesystem/database transaction.
+#[tauri::command]
+pub async fn install_skill_cohort_inactive(
+    items: Vec<InactiveSkillCohortItem>,
+    service: State<'_, SkillServiceState>,
+    app_state: State<'_, AppState>,
+) -> Result<InactiveSkillCohortResult, String> {
+    service
+        .0
+        .install_inactive_cohort(&app_state.db, items)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn recover_inactive_skill_cohort_transactions(
+    app_state: State<'_, AppState>,
+) -> Result<InactiveSkillCohortRecoveryResult, String> {
+    SkillService::recover_inactive_cohort_transactions(&app_state.db).map_err(|e| e.to_string())
 }
 
 /// 卸载 Skill（新版统一卸载）
