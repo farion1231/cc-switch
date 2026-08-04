@@ -14,6 +14,7 @@ import type {
   PaginatedLogs,
   SessionSyncResult,
   DataSourceSummary,
+  HermesUsageMetadata,
 } from "@/types/usage";
 import type { UsageResult } from "@/types";
 import type { AppId } from "./types";
@@ -56,6 +57,8 @@ export const usageApi = {
     appType?: string,
     providerName?: string,
     model?: string,
+    profileName?: string,
+    task?: string,
   ): Promise<UsageSummary> => {
     return invoke("get_usage_summary", {
       startDate,
@@ -63,6 +66,8 @@ export const usageApi = {
       appType,
       providerName,
       model,
+      profileName,
+      task,
     });
   },
 
@@ -71,12 +76,16 @@ export const usageApi = {
     endDate?: number,
     providerName?: string,
     model?: string,
+    profileName?: string,
+    task?: string,
   ): Promise<UsageSummaryByApp[]> => {
     return invoke("get_usage_summary_by_app", {
       startDate,
       endDate,
       providerName,
       model,
+      profileName,
+      task,
     });
   },
 
@@ -86,6 +95,8 @@ export const usageApi = {
     appType?: string,
     providerName?: string,
     model?: string,
+    profileName?: string,
+    task?: string,
   ): Promise<DailyStats[]> => {
     return invoke("get_usage_trends", {
       startDate,
@@ -93,6 +104,8 @@ export const usageApi = {
       appType,
       providerName,
       model,
+      profileName,
+      task,
     });
   },
 
@@ -102,6 +115,8 @@ export const usageApi = {
     appType?: string,
     providerName?: string,
     model?: string,
+    profileName?: string,
+    task?: string,
   ): Promise<ProviderStats[]> => {
     return invoke("get_provider_stats", {
       startDate,
@@ -109,6 +124,8 @@ export const usageApi = {
       appType,
       providerName,
       model,
+      profileName,
+      task,
     });
   },
 
@@ -118,6 +135,8 @@ export const usageApi = {
     appType?: string,
     providerName?: string,
     model?: string,
+    profileName?: string,
+    task?: string,
   ): Promise<ModelStats[]> => {
     return invoke("get_model_stats", {
       startDate,
@@ -125,6 +144,8 @@ export const usageApi = {
       appType,
       providerName,
       model,
+      profileName,
+      task,
     });
   },
 
@@ -209,5 +230,9 @@ export const usageApi = {
 
   getDataSourceBreakdown: async (): Promise<DataSourceSummary[]> => {
     return invoke("get_usage_data_sources");
+  },
+
+  getHermesUsageMetadata: async (): Promise<HermesUsageMetadata> => {
+    return invoke("get_hermes_usage_metadata");
   },
 };

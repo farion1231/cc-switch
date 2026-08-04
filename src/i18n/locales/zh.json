@@ -1502,13 +1502,35 @@
     "source": "来源",
     "requestsLabel": "次请求",
     "costLabel": "总成本",
+    "countLabel": {
+      "requests": "请求数",
+      "hermesApiCalls": "聚合 API 调用数",
+      "mixedActivity": "计数活动"
+    },
+    "averageCostLabel": {
+      "perRequest": "平均成本",
+      "perApiCall": "平均每次 API 调用成本",
+      "perActivity": "平均每次计数活动成本"
+    },
     "appFilter": {
       "all": "全部",
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "grokbuild": "Grok Build"
+      "grokbuild": "Grok Build",
+      "hermes": "Hermes"
+    },
+    "hermes": {
+      "profile": "Profile",
+      "profilePlaceholder": "全部 Profile",
+      "task": "任务",
+      "taskPlaceholder": "全部任务",
+      "precisionNotice": "计数是 Hermes 累计 api_call_count 的差值，并不等同于精确的物理 HTTP 请求、重试或回退次数。",
+      "syncWindowNotice": "趋势时间点表示同步窗口，而不是精确的请求时间。",
+      "requestDetailsUnavailable": "Hermes 仅提供聚合数据，没有逐请求详情、状态码或延迟信息。",
+      "reasoningTokens": "推理 Token",
+      "notAvailable": "未上报"
     },
     "rawInputLabel": "原始",
     "rebuildCodex": {
