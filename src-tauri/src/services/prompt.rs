@@ -31,6 +31,9 @@ impl PromptService {
     ///
     /// "DB 期望内容"定义：当前 enabled 提示词的 content；若无 enabled 项则为空串。
     /// 仅在 `live.trim() != expected.trim()` 时才动作，避免无谓的回填与冗余备份。
+    ///
+    /// live 为空（文件不存在、被外部删除或内容全为空白）时一律不动 DB：空文件不
+    /// 表达"用户想清空提示词"这个意图，若据此回填会把已启用项的内容抹成空串。
     fn backfill_live_if_dirty(state: &AppState, app: AppType) -> Result<bool, AppError> {
         let target_path = prompt_file_path(&app)?;
         let live = if target_path.exists() {
@@ -38,6 +41,10 @@ impl PromptService {
         } else {
             String::new()
         };
+
+        if live.trim().is_empty() {
+            return Ok(false);
+        }
 
         // 计算 DB 期望内容
         let prompts = state.db.get_prompts(app.as_str())?;
@@ -323,6 +330,33 @@ mod tests {
             let prompts = state.db.get_prompts(app.as_str()).unwrap();
             assert_eq!(prompts.len(), 1);
             assert_eq!(prompts.get("p1").unwrap().content, "hello");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn backfill_is_noop_when_live_is_empty_or_missing() {
+        with_test_home(|state| {
+            let app = AppType::Claude;
+            let prompt = make_prompt("p1", "db content", true);
+            state.db.save_prompt(app.as_str(), &prompt).unwrap();
+
+            // live 文件不存在：不能把空内容当作"用户清空了文件"回填进 DB
+            let dirty = PromptService::backfill_live_if_dirty(state, app.clone()).unwrap();
+            assert!(!dirty);
+            let prompts = state.db.get_prompts(app.as_str()).unwrap();
+            assert_eq!(prompts.get("p1").unwrap().content, "db content");
+
+            // live 文件存在但为空：同样不回填
+            let target_path = prompt_file_path(&app).unwrap();
+            std::fs::create_dir_all(target_path.parent().unwrap()).unwrap();
+            write_text_file(&target_path, "   \n").unwrap();
+
+            let dirty = PromptService::backfill_live_if_dirty(state, app.clone()).unwrap();
+            assert!(!dirty);
+            let prompts = state.db.get_prompts(app.as_str()).unwrap();
+            assert_eq!(prompts.len(), 1);
+            assert_eq!(prompts.get("p1").unwrap().content, "db content");
         });
     }
 
