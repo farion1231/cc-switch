@@ -1824,6 +1824,9 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
     let cached = usage
         .pointer("/prompt_tokens_details/cached_tokens")
         .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
+        // DeepSeek Chat 格式专有缓存命中字段（与 usage/parser.rs 的处理对应）：
+        // 少了它，经转换的 Responses 事件 cached_tokens 恒为 0，缓存命中计费丢失。
+        .or_else(|| usage.get("prompt_cache_hit_tokens"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
     let cache_write = usage
@@ -2501,6 +2504,26 @@ mod tests {
 
         assert_eq!(result["thinking"]["type"], "enabled");
         assert_eq!(result["reasoning_effort"], "max");
+    }
+
+    #[test]
+    fn chat_usage_to_responses_usage_maps_deepseek_cache_hit_tokens() {
+        // DeepSeek Chat 的缓存命中字段必须进 Responses 的 input_tokens_details
+        // （issue #6073 关联）：路由模式下少了它，合成的 response.completed 里
+        // cached_tokens 恒为 0，Codex 侧会话记录与本地日志都拿不到缓存命中。
+        let usage = json!({
+            "prompt_tokens": 1000,
+            "completion_tokens": 100,
+            "total_tokens": 1100,
+            "prompt_cache_hit_tokens": 600,
+            "prompt_cache_miss_tokens": 400
+        });
+
+        let result = chat_usage_to_responses_usage(Some(&usage));
+        assert_eq!(result["input_tokens"], 1000);
+        assert_eq!(result["output_tokens"], 100);
+        assert_eq!(result["input_tokens_details"]["cached_tokens"], 600);
+        assert_eq!(result["input_tokens_details"]["cache_write_tokens"], 0);
     }
 
     #[test]
