@@ -191,6 +191,7 @@ mod tests {
         MAX_AUTO_SYNC_WAIT_MS,
     };
     use crate::settings::WebDavSyncSettings;
+    use serial_test::serial;
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc::channel;
 
@@ -204,6 +205,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn suppression_guard_enables_and_restores_state() {
         assert!(!is_auto_sync_suppressed());
         {
