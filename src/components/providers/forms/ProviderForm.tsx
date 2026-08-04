@@ -20,6 +20,7 @@ import type {
   ClaudeApiFormat,
   CodexApiFormat,
   CodexCatalogModel,
+  CodexModelMapping,
   CodexChatReasoning,
   PromptCacheRoutingMode,
   ClaudeApiKeyField,
@@ -78,7 +79,7 @@ import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
 import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
 import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
-import { CodexFormFields } from "./CodexFormFields";
+import { CodexFormFields, type CodexModelMappingRow } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
 import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
@@ -177,6 +178,30 @@ export const normalizeCodexCatalogModelsForSave = (
   }
 
   return normalized;
+};
+
+const codexModelMappingToRows = (
+  mapping?: CodexModelMapping,
+): CodexModelMappingRow[] =>
+  Object.entries(mapping ?? {}).map(([requestModel, upstreamModel]) => ({
+    rowId: crypto.randomUUID(),
+    requestModel,
+    upstreamModel,
+  }));
+
+export const normalizeCodexModelMappingForSave = (
+  rows: CodexModelMappingRow[],
+): CodexModelMapping | undefined => {
+  const mapping: CodexModelMapping = {};
+
+  for (const row of rows) {
+    const requestModel = row.requestModel.trim();
+    const upstreamModel = row.upstreamModel.trim();
+    if (!requestModel || !upstreamModel || requestModel in mapping) continue;
+    mapping[requestModel] = upstreamModel;
+  }
+
+  return Object.keys(mapping).length > 0 ? mapping : undefined;
 };
 
 const normalizeCodexChatReasoningForSave = (
@@ -552,6 +577,9 @@ function ProviderFormFull({
     useState<PromptCacheRoutingMode>(
       () => initialData?.meta?.promptCacheRouting ?? "auto",
     );
+  const [codexModelMappingRows, setCodexModelMappingRows] = useState<
+    CodexModelMappingRow[]
+  >(() => codexModelMappingToRows(initialData?.meta?.codexModelMapping));
   const [customUserAgent, setCustomUserAgent] = useState<string>(
     () => initialData?.meta?.customUserAgent ?? "",
   );
@@ -656,6 +684,7 @@ function ProviderFormFull({
       resetCodexConfig(template.auth, template.config);
       setCodexChatReasoning({});
       setPromptCacheRouting("auto");
+      setCodexModelMappingRows([]);
     }
   }, [appId, initialData, selectedPresetId, resetCodexConfig]);
 
@@ -1375,8 +1404,8 @@ function ProviderFormFull({
           category !== "official" && (codexConfig ?? "").trim()
             ? setCodexWireApi(codexConfig ?? "", "responses")
             : (codexConfig ?? "");
-        // 模型映射与「路由接管」解耦：对所有非官方供应商，填了就持久化
-        //（Chat 生成兼容路由、原生 Responses 生成 model-catalogs.json），
+        // 模型目录与「路由接管」解耦：对所有非官方供应商，填了就持久化
+        //（Chat 生成兼容目录，原生 Responses 生成 model-catalogs.json），
         // 留空归一化为 [] 即不写。后端只看 modelCatalog.models 是否非空。
         const normalizedCatalogModels =
           category !== "official"
@@ -1384,7 +1413,7 @@ function ProviderFormFull({
             : [];
         // The default-model field writes the top-level `model` into the TOML
         // as the user types; only when it was left empty fall back to the
-        // first catalog row so "fill mapping only" keeps its old behavior.
+        // first catalog row so "fill catalog only" keeps its old behavior.
         if (
           normalizedCatalogModels.length > 0 &&
           !extractCodexModelName(normalizedCodexConfig)
@@ -1540,6 +1569,11 @@ function ProviderFormFull({
     const baseMeta: ProviderMeta | undefined =
       payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
 
+    const normalizedCodexModelMapping =
+      appId === "codex" && category !== "official"
+        ? normalizeCodexModelMappingForSave(codexModelMappingRows)
+        : undefined;
+
     // 确定 providerType（新建时从预设获取，编辑时从现有数据获取）
     const providerType = presetProviderType || initialData?.meta?.providerType;
 
@@ -1588,6 +1622,7 @@ function ProviderFormFull({
         localCodexApiFormat === "openai_chat"
           ? normalizeCodexChatReasoningForSave(codexChatReasoning)
           : undefined,
+      codexModelMapping: normalizedCodexModelMapping,
       promptCacheRouting:
         appId === "codex" &&
         category !== "official" &&
@@ -1769,6 +1804,7 @@ function ProviderFormFull({
         resetCodexConfig(template.auth, template.config);
         setCodexChatReasoning({});
         setPromptCacheRouting("auto");
+        setCodexModelMappingRows([]);
         setLocalCodexApiFormat(
           codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
             "openai_responses",
@@ -1811,6 +1847,9 @@ function ProviderFormFull({
       resetCodexConfig(auth, config, preset.modelCatalog ?? []);
       setCodexChatReasoning(preset.codexChatReasoning ?? {});
       setPromptCacheRouting(preset.promptCacheRouting ?? "auto");
+      setCodexModelMappingRows(
+        codexModelMappingToRows(preset.codexModelMapping),
+      );
       setLocalCodexApiFormat(
         preset.apiFormat ??
           codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
@@ -2321,6 +2360,8 @@ function ProviderFormFull({
               onPromptCacheRoutingChange={setPromptCacheRouting}
               catalogModels={codexCatalogModels}
               onCatalogModelsChange={setCodexCatalogModels}
+              modelMappingRows={codexModelMappingRows}
+              onModelMappingRowsChange={setCodexModelMappingRows}
               speedTestEndpoints={speedTestEndpoints}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}

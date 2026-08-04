@@ -39,6 +39,8 @@ export interface CodexProviderPreset {
   requiresOAuth?: boolean;
   // Codex Chat 本地路由模式下的模型目录
   modelCatalog?: CodexCatalogModel[];
+  // Codex local-routing aliases: request model -> upstream model
+  codexModelMapping?: Record<string, string>;
   // Codex Responses -> Chat Completions reasoning capability defaults
   codexChatReasoning?: CodexChatReasoning;
   // Session-based prompt-cache routing override for Chat Completions upstreams
