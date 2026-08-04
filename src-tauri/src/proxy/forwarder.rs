@@ -1572,6 +1572,18 @@ impl RequestForwarder {
             );
         }
 
+        // 原生 Responses 直连（Codex/GrokBuild）：应用供应商的上游模型映射。
+        // 自定义模型路由会把绑定供应商的 `model` 覆盖为映射的上游模型
+        // （如 gpt-5.2 -> deepseek-v4-flash）；不在这里改写的话，上游会收到
+        // Codex 对外展示的模型名并报 400。Chat/Anthropic 转换分支已各自调用，
+        // 这里补齐纯透传路径。
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+        {
+            super::providers::apply_codex_upstream_model(provider, &mut request_body);
+        }
+
         if matches!(app_type, AppType::Codex | AppType::GrokBuild) {
             self.apply_media_prevention(&mut request_body, provider);
         }

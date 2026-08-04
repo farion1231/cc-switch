@@ -3158,6 +3158,7 @@ impl ProviderService {
         {
             let db_auth = provider.settings_config.get("auth");
             match crate::codex_config::clear_stale_codex_live_auth_after_official_switch(
+                &provider.settings_config,
                 db_auth.unwrap_or(&serde_json::Value::Null),
             ) {
                 Ok(true) => log::info!(

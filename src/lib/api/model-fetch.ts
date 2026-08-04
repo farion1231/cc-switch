@@ -62,6 +62,14 @@ export async function fetchXaiOauthModels(
 }
 
 /**
+ * 获取官方 Codex 当前模型 slug 列表（供自定义模型插槽下拉使用）。
+ * 未登录或请求失败时 reject，调用方应回退到内置插槽列表。
+ */
+export async function fetchCodexOfficialModels(): Promise<string[]> {
+  return invoke("get_codex_official_models");
+}
+
+/**
  * 根据错误类型显示对应的 toast 提示
  */
 export function showFetchModelsError(

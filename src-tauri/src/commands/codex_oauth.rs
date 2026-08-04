@@ -89,3 +89,19 @@ pub async fn get_codex_oauth_models(
 
     crate::services::codex_oauth_models::fetch_models_with_token(&token, &id).await
 }
+
+/// 获取官方 Codex 当前模型列表（供自定义模型插槽下拉使用）。
+///
+/// 使用 `auth.json` 里 ChatGPT 登录的 access_token 与账号 ID 直接拉官方 /models；
+/// 未登录或请求失败时返回错误，前端回退到内置插槽列表。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_codex_official_models() -> Result<Vec<String>, String> {
+    let credentials = crate::codex_config::read_codex_auth_credentials()
+        .ok_or_else(|| "未登录 ChatGPT（auth.json 缺少 access_token）".to_string())?;
+    let models = crate::services::codex_oauth_models::fetch_official_models_with_token(
+        &credentials.access_token,
+        credentials.account_id.as_deref(),
+    )
+    .await?;
+    Ok(models.into_iter().map(|m| m.id).collect())
+}

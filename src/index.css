@@ -190,6 +190,49 @@ html[data-window-active="false"] .status-heartbeat {
     overflow-x: hidden;
   }
 
+  /* 长文本右侧渐隐：填满可用宽度的值在溢出时才淡出，短文本保持完整左对齐。 */
+  .text-fade-out {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-align: left;
+    -webkit-mask-image: linear-gradient(
+      to right,
+      black 0%,
+      black 80%,
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to right,
+      black 0%,
+      black 80%,
+      transparent 100%
+    );
+  }
+
+  /* Radix SelectValue 会丢弃传入的 className，无法直接给值 span 加样式。
+     这里用触发框的第一个 span 子元素定位值文本：填满剩余宽度、左对齐，
+     仅当文本溢出时才在右侧渐隐，保证长值不把右侧箭头挤出边框。 */
+  .select-fade-value > span:first-child {
+    min-width: 0;
+    flex: 1 1 0%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-align: left;
+    -webkit-mask-image: linear-gradient(
+      to right,
+      black 0%,
+      black 80%,
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to right,
+      black 0%,
+      black 80%,
+      transparent 100%
+    );
+  }
+
   .border-default {
     border-width: 1px;
     border-color: hsl(var(--border));
