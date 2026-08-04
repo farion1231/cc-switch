@@ -80,6 +80,7 @@ struct ChatToResponsesState {
     latest_usage: Option<Value>,
     finish_reason: Option<String>,
     tool_context: CodexToolContext,
+    last_message_snapshot: String,
     /// 本回合因缺少合法函数名而被丢弃的工具调用数（见 `finalize_tools`）。
     dropped_tool_calls: usize,
 }
@@ -102,6 +103,7 @@ impl Default for ChatToResponsesState {
             latest_usage: None,
             finish_reason: None,
             tool_context: CodexToolContext::default(),
+            last_message_snapshot: String::new(),
             dropped_tool_calls: 0,
         }
     }
@@ -170,6 +172,17 @@ impl ChatToResponsesState {
             if let Some(content) = message.get("content").and_then(chat_delta_content_text) {
                 if self.text.text.is_empty() {
                     events.extend(self.push_content_delta(&content));
+                    self.last_message_snapshot = content;
+                } else if let Some(remainder) = content.strip_prefix(&self.text.text) {
+                    if !remainder.is_empty() {
+                        events.extend(self.push_content_delta(remainder));
+                        self.last_message_snapshot = content;
+                    }
+                } else if let Some(remainder) = content.strip_prefix(&self.last_message_snapshot) {
+                    if !remainder.is_empty() {
+                        events.extend(self.push_content_delta(remainder));
+                        self.last_message_snapshot = content;
+                    }
                 }
             }
         }
@@ -792,10 +805,12 @@ fn chat_delta_content_text(value: &Value) -> Option<String> {
     let parts = value.as_array()?;
     let text: String = parts
         .iter()
-        .filter_map(|part| {
-            part.get("text")
+        .filter_map(|part| match part.get("type").and_then(|v| v.as_str()) {
+            Some(t) if t != "text" => None,
+            _ => part
+                .get("text")
                 .and_then(|v| v.as_str())
-                .or_else(|| part.as_str())
+                .or_else(|| part.as_str()),
         })
         .collect();
     (!text.is_empty()).then_some(text)
@@ -1024,6 +1039,47 @@ mod tests {
 
         assert!(output.contains("\"delta\":\"Full answer\""));
         assert!(output.contains("\"text\":\"Full answer\""));
+    }
+
+    #[tokio::test]
+    async fn reconciles_cumulative_message_snapshots() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_cum\",\"model\":\"gpt-5.4\",\"choices\":[{\"message\":{\"content\":\"Hel\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_cum\",\"model\":\"gpt-5.4\",\"choices\":[{\"message\":{\"content\":\"Hello\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("\"delta\":\"Hel\""));
+        assert!(output.contains("\"delta\":\"lo\""));
+        assert!(output.contains("\"text\":\"Hello\""));
+    }
+
+    #[tokio::test]
+    async fn appends_message_snapshot_remainder_after_partial_delta() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_rem\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_rem\",\"model\":\"gpt-5.4\",\"choices\":[{\"message\":{\"content\":\"Hello\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("\"delta\":\"Hel\""));
+        assert!(output.contains("\"delta\":\"lo\""));
+        assert!(output.contains("\"text\":\"Hello\""));
+    }
+
+    #[tokio::test]
+    async fn content_parts_array_ignores_non_text_parts() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_parts2\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"image\",\"image_url\":\"x\"},{\"type\":\"text\",\"text\":\"Hi\"}]},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("\"delta\":\"Hi\""));
+        assert!(!output.contains("image_url"));
+        assert!(output.contains("\"text\":\"Hi\""));
     }
 
     #[tokio::test]
