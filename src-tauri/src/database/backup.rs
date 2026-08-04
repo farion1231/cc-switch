@@ -2623,6 +2623,86 @@ mod tests {
 
     #[test]
     #[serial]
+    fn sync_import_safety_backup_captures_late_local_writes() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let remote_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(remote_db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('remote-provider', 'claude', 'Remote Provider', '{}', '{}')",
+                [],
+            )?;
+        }
+        let remote_sql = remote_db.export_sql_string_for_sync()?;
+
+        let local_db = Database::init()?;
+        {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            conn.execute("DELETE FROM providers", [])?;
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('local-provider', 'claude', 'Local Provider', '{}', '{}')",
+                [],
+            )?;
+        }
+
+        let safety_id = local_db.import_sql_string_inner_with_hook(
+            &remote_sql,
+            super::SYNC_PRESERVE_TABLES,
+            || {
+                let conn = crate::database::lock_conn!(local_db.conn);
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                         request_id, provider_id, app_type, model,
+                         input_tokens, output_tokens, total_cost_usd,
+                         latency_ms, status_code, created_at
+                     ) VALUES ('late-request', 'local-provider', 'claude', 'late-model', 1, 1, '0', 1, 200, 1)",
+                    [],
+                )?;
+                Ok(())
+            },
+        )?;
+        assert!(!safety_id.is_empty());
+
+        {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            let live_provider: String =
+                conn.query_row("SELECT id FROM providers", [], |row| row.get(0))?;
+            assert_eq!(live_provider, "remote-provider");
+            let late_request_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = 'late-request'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(late_request_count, 1);
+        }
+
+        let safety_path = crate::config::get_app_config_dir()
+            .join("backups")
+            .join(format!("{safety_id}.db"));
+        let safety_conn =
+            Connection::open_with_flags(&safety_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let safety_provider: String =
+            safety_conn.query_row("SELECT id FROM providers", [], |row| row.get(0))?;
+        assert_eq!(
+            safety_provider, "local-provider",
+            "safety backup must capture the exact pre-import provider state"
+        );
+        let safety_late_request_count: i64 = safety_conn.query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = 'late-request'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            safety_late_request_count, 1,
+            "safety backup must include writes that arrived after staging"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
     fn restore_with_retain_one_keeps_source_and_exact_safety_snapshot() -> Result<(), AppError> {
         let _test_home = TestHomeGuard::new();
         let _settings = SettingsGuard::with_backup_retain_count(1);
