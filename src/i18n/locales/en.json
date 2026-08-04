@@ -2558,6 +2558,11 @@
       "takeoverRequired": "Take over {{app}} first, then enable failover"
     }
   },
+  "claudeScience": {
+    "launch": "Launch Claude Science through proxy",
+    "launchSuccess": "Claude Science launched through the local proxy.",
+    "launchFailed": "Failed to launch Claude Science"
+  },
   "proxy": {
     "panel": {
       "serviceAddress": "Service Address",
