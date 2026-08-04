@@ -136,7 +136,10 @@ command = "echo"
                 "Latest".to_string(),
                 json!({
                     "auth": {"OPENAI_API_KEY": "fresh-key"},
-                    "config": r#"[mcp_servers.latest]
+                    "config": r#"model = "claude-sonnet-4-6"
+model_context_window = 200000
+
+[mcp_servers.latest]
 type = "stdio"
 command = "say"
 "#
@@ -197,6 +200,24 @@ command = "say"
     assert!(
         config_text.contains("experimental_bearer_token"),
         "config.toml should carry the selected provider API key"
+    );
+    let catalog_path = cc_switch_lib::get_codex_config_path()
+        .parent()
+        .expect("Codex config has a parent")
+        .join("cc-switch-model-catalog.json");
+    let catalog: serde_json::Value = read_json_file(&catalog_path).expect("read generated catalog");
+    assert_eq!(
+        catalog["models"][0]
+            .get("slug")
+            .and_then(serde_json::Value::as_str),
+        Some("claude-sonnet-4-6"),
+        "a route-only Codex provider should catalog its configured active model"
+    );
+    assert_eq!(
+        catalog["models"][0]
+            .get("context_window")
+            .and_then(serde_json::Value::as_u64),
+        Some(200_000)
     );
 
     let current_id = state
