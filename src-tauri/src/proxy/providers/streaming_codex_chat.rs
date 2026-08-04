@@ -150,10 +150,8 @@ impl ChatToResponsesState {
                 self.append_reasoning_to_active_tools(&reasoning);
             }
 
-            if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
-                if !content.is_empty() {
-                    events.extend(self.push_content_delta(content));
-                }
+            if let Some(content) = delta.get("content").and_then(chat_delta_content_text) {
+                events.extend(self.push_content_delta(&content));
             }
 
             if let Some(tool_calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
@@ -164,6 +162,14 @@ impl ChatToResponsesState {
                     events.extend(
                         self.push_tool_call_delta(tool_call, reasoning_for_tool_call.as_deref()),
                     );
+                }
+            }
+        }
+
+        if let Some(message) = choice.get("message") {
+            if let Some(content) = message.get("content").and_then(chat_delta_content_text) {
+                if self.text.text.is_empty() {
+                    events.extend(self.push_content_delta(&content));
                 }
             }
         }
@@ -779,6 +785,22 @@ fn chat_delta_reasoning_text(delta: &Value) -> Option<String> {
     extract_reasoning_field_text(delta)
 }
 
+fn chat_delta_content_text(value: &Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        return (!text.is_empty()).then(|| text.to_string());
+    }
+    let parts = value.as_array()?;
+    let text: String = parts
+        .iter()
+        .filter_map(|part| {
+            part.get("text")
+                .and_then(|v| v.as_str())
+                .or_else(|| part.as_str())
+        })
+        .collect();
+    (!text.is_empty()).then_some(text)
+}
+
 enum ThinkPrefixDecision {
     NeedMore,
     Reasoning,
@@ -975,6 +997,33 @@ mod tests {
         assert!(output.contains("\"text\":\"Hello\""));
         assert!(output.contains("event: response.completed"));
         assert!(output.contains("\"input_tokens\":4"));
+    }
+
+    #[tokio::test]
+    async fn converts_content_parts_array_chat_sse_to_responses_sse() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_parts\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"text\",\"text\":\"Hel\"}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_parts\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"text\",\"text\":\"lo\"}]},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("\"delta\":\"Hel\""));
+        assert!(output.contains("\"delta\":\"lo\""));
+        assert!(output.contains("\"text\":\"Hello\""));
+    }
+
+    #[tokio::test]
+    async fn converts_message_snapshot_chat_sse_to_responses_sse() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_msg\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_msg\",\"model\":\"gpt-5.4\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Full answer\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("\"delta\":\"Full answer\""));
+        assert!(output.contains("\"text\":\"Full answer\""));
     }
 
     #[tokio::test]
