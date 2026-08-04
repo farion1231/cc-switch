@@ -33,6 +33,7 @@ mod xai_oauth;
 mod lightweight;
 mod s3_sync;
 mod usage;
+mod detail_capture;
 mod webdav_sync;
 mod workspace;
 
@@ -68,5 +69,6 @@ pub use xai_oauth::*;
 pub use lightweight::*;
 pub use s3_sync::*;
 pub use usage::*;
+pub use detail_capture::*;
 pub use webdav_sync::*;
 pub use workspace::*;

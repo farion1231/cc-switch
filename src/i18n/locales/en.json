@@ -422,7 +422,9 @@
           "info": "General operation info (default)",
           "debug": "Detailed info including SSE stream and request/response",
           "trace": "All logs, most verbose"
-        }
+        },
+        "captureDetails": "Record request/response body",
+        "captureDetailsDescription": "Record full request and response body for debugging (enable only when needed)"
       }
     },
     "language": "Language",
@@ -1580,6 +1582,15 @@
     "withMultiplier": "with multiplier",
     "requestDetail": "Request Detail",
     "requestNotFound": "Request not found",
+    "detailTabs": {
+      "overview": "Overview",
+      "request": "Request Details",
+      "response": "Response Details",
+      "requestHeaders": "Request Headers",
+      "requestBody": "Request Body",
+      "responseHeaders": "Response Headers",
+      "responseBody": "Response Body"
+    },
     "basicInfo": "Basic Info",
     "tokenUsage": "Token Usage",
     "cacheCreationCost": "Cache Creation Cost",

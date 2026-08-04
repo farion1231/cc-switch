@@ -422,7 +422,9 @@
           "info": "一般的な操作情報（デフォルト）",
           "debug": "SSE ストリームとリクエスト/レスポンスを含む詳細情報",
           "trace": "すべてのログ、最も詳細"
-        }
+        },
+        "captureDetails": "リクエスト/レスポンス本体を記録",
+        "captureDetailsDescription": "デバッグ用に完全なリクエスト/レスポンス本体を記録（必要な時のみ有効化）"
       }
     },
     "language": "言語",
@@ -1580,6 +1582,15 @@
     "withMultiplier": "倍率込み",
     "requestDetail": "リクエスト詳細",
     "requestNotFound": "リクエストが見つかりません",
+    "detailTabs": {
+      "overview": "概要",
+      "request": "リクエスト詳細",
+      "response": "レスポンス詳細",
+      "requestHeaders": "リクエストヘッダー",
+      "requestBody": "リクエスト本体",
+      "responseHeaders": "レスポンスヘッダー",
+      "responseBody": "レスポンス本体"
+    },
     "basicInfo": "基本情報",
     "tokenUsage": "Token 使用量",
     "cacheCreationCost": "キャッシュ作成コスト",
