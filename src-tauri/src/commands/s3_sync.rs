@@ -111,17 +111,24 @@ pub async fn s3_sync_download(state: State<'_, AppState>) -> Result<Value, Strin
     let mut settings = require_enabled_s3_settings()?;
     let _auto_sync_suppression = crate::services::s3_auto_sync::AutoSyncSuppressionGuard::new();
 
-    let sync_result = run_with_s3_lock(s3_sync_service::download(&db, &mut settings)).await;
-    let mut result = map_sync_result(sync_result, |error| {
+    // Keep the derived live configuration refresh in the same global sync
+    // operation. Otherwise another WebDAV/S3 restore can start after the DB
+    // apply but before this snapshot has finished projecting its live files.
+    let sync_result = run_with_s3_lock(async {
+        let result = s3_sync_service::download(&db, &mut settings).await?;
+        let post_sync_result =
+            tauri::async_runtime::spawn_blocking(move || run_post_import_sync(db_for_sync))
+                .await
+                .map_err(|e| e.to_string());
+        Ok((result, post_sync_result))
+    })
+    .await;
+    let (mut result, post_sync_result) = map_sync_result(sync_result, |error| {
         persist_sync_error(&mut settings, error, "manual")
     })?;
 
     // Post-download sync is best-effort: snapshot restore has already succeeded.
-    let warning = post_sync_warning_from_result(
-        tauri::async_runtime::spawn_blocking(move || run_post_import_sync(db_for_sync))
-            .await
-            .map_err(|e| e.to_string()),
-    );
+    let warning = post_sync_warning_from_result(post_sync_result);
     if let Some(msg) = warning.as_ref() {
         log::warn!("[S3] post-download sync warning: {msg}");
     }
