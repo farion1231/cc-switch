@@ -4,7 +4,9 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::future::Future;
 use std::process::Command;
+use std::sync::OnceLock;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -32,6 +34,26 @@ pub(crate) const REMOTE_MANIFEST: &str = "manifest.json";
 pub(crate) const MAX_DEVICE_NAME_LEN: usize = 64;
 pub(crate) const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_SYNC_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
+
+// ─── Sync operation lock ────────────────────────────────────
+
+/// Serialize every snapshot upload/download across all transports.
+///
+/// WebDAV and S3 used to own separate mutexes, which allowed two transports to
+/// restore the database and Skills SSOT concurrently. Keep the lock in this
+/// transport-agnostic layer so future transports automatically share it too.
+pub(crate) fn sync_mutex() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+pub(crate) async fn run_with_sync_lock<T, Fut>(operation: Fut) -> Result<T, AppError>
+where
+    Fut: Future<Output = Result<T, AppError>>,
+{
+    let _guard = sync_mutex().lock().await;
+    operation.await
+}
 
 // ─── Error helpers ───────────────────────────────────────────
 
@@ -418,6 +440,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn webdav_and_s3_operations_share_one_sync_mutex() {
+        let webdav_lock = crate::services::webdav_sync::sync_mutex();
+        let s3_lock = crate::services::s3_sync::sync_mutex();
+        assert!(
+            std::ptr::eq(webdav_lock, s3_lock),
+            "every transport must expose the same global sync lock"
+        );
+
+        let guard = webdav_lock.lock().await;
+        assert!(s3_lock.try_lock().is_err());
+        drop(guard);
+        assert!(s3_lock.try_lock().is_ok());
+    }
 
     fn artifact(sha256: &str, size: u64) -> ArtifactMeta {
         ArtifactMeta {
