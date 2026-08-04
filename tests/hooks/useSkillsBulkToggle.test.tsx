@@ -5,18 +5,26 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   useBulkToggleSkillApp,
   useDeleteSkillBackup,
+  useCheckSkillUpdates,
+  useInstalledSkills,
   useRestoreSkillBackup,
   useToggleSkillApp,
   useUninstallSkill,
   useUpdateSkill,
 } from "@/hooks/useSkills";
-import type { SkillBackupEntry, SkillUpdateInfo } from "@/lib/api/skills";
+import type {
+  InstalledSkill,
+  SkillBackupEntry,
+  SkillUpdateInfo,
+} from "@/lib/api/skills";
 
 const toggleAppMock = vi.hoisted(() => vi.fn());
 const restoreBackupMock = vi.hoisted(() => vi.fn());
 const uninstallMock = vi.hoisted(() => vi.fn());
 const deleteBackupMock = vi.hoisted(() => vi.fn());
 const updateSkillMock = vi.hoisted(() => vi.fn());
+const checkUpdatesMock = vi.hoisted(() => vi.fn());
+const getInstalledMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/api/skills", () => ({
   skillsApi: {
@@ -25,6 +33,8 @@ vi.mock("@/lib/api/skills", () => ({
     uninstallUnified: uninstallMock,
     deleteBackup: deleteBackupMock,
     updateSkill: updateSkillMock,
+    checkUpdates: checkUpdatesMock,
+    getInstalled: getInstalledMock,
   },
 }));
 
@@ -43,6 +53,94 @@ describe("Skills management mutation hooks", () => {
     uninstallMock.mockReset();
     deleteBackupMock.mockReset();
     updateSkillMock.mockReset();
+    checkUpdatesMock.mockReset();
+    getInstalledMock.mockReset();
+  });
+
+  it("refreshes installed metadata after checking updates", async () => {
+    const oldSkill: InstalledSkill = {
+      id: "aliyun/alibabacloud-aiops-skills/alibabacloud-cli-guidance",
+      name: "Alibaba Cloud CLI Guidance",
+      directory: "alibabacloud-cli-guidance",
+      repoOwner: "aliyun",
+      repoName: "alibabacloud-aiops-skills",
+      repoBranch: "main",
+      readmeUrl:
+        "https://github.com/aliyun/alibabacloud-aiops-skills/blob/main/alibabacloud-cli-guidance/SKILL.md",
+      apps: {
+        claude: false,
+        codex: true,
+        gemini: false,
+        opencode: false,
+        openclaw: false,
+        hermes: false,
+      },
+      installedAt: 1,
+      updatedAt: 0,
+    };
+    const repairedSkill: InstalledSkill = {
+      ...oldSkill,
+      repoBranch: "master",
+      readmeUrl:
+        "https://github.com/aliyun/alibabacloud-aiops-skills/blob/master/skills/developertools/solutions/alibabacloud-cli-guidance/SKILL.md",
+    };
+    let metadataRepaired = false;
+    getInstalledMock.mockImplementation(async () => [
+      metadataRepaired ? repairedSkill : oldSkill,
+    ]);
+    checkUpdatesMock.mockImplementationOnce(async () => {
+      metadataRepaired = true;
+      return [];
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { result } = renderHook(
+      () => ({
+        installed: useInstalledSkills(),
+        updates: useCheckSkillUpdates(),
+      }),
+      { wrapper: createWrapper(queryClient) },
+    );
+
+    await waitFor(() =>
+      expect(result.current.installed.data?.[0]?.repoBranch).toBe("main"),
+    );
+    await act(async () => {
+      await result.current.updates.refetch();
+    });
+
+    expect(getInstalledMock).toHaveBeenCalledTimes(2);
+    await waitFor(() =>
+      expect(result.current.installed.data?.[0]?.readmeUrl).toBe(
+        repairedSkill.readmeUrl,
+      ),
+    );
+  });
+
+  it("still refreshes installed metadata when checking updates rejects", async () => {
+    getInstalledMock.mockResolvedValue([]);
+    checkUpdatesMock.mockRejectedValueOnce(new Error("check failed"));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { result } = renderHook(
+      () => ({
+        installed: useInstalledSkills(),
+        updates: useCheckSkillUpdates(),
+      }),
+      { wrapper: createWrapper(queryClient) },
+    );
+    await waitFor(() => expect(getInstalledMock).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await expect(
+        result.current.updates.refetch({ throwOnError: true }),
+      ).rejects.toThrow("check failed");
+    });
+
+    expect(getInstalledMock).toHaveBeenCalledTimes(2);
   });
 
   it("stays pending until the refreshed skill list is available", async () => {

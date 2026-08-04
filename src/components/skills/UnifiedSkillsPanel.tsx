@@ -412,7 +412,7 @@ const UnifiedSkillsPanel = React.forwardRef<
     }
     checkUpdatesLockRef.current = true;
     try {
-      const result = await checkUpdates();
+      const result = await checkUpdates({ throwOnError: true });
       const updates = result.data || [];
       if (updates.length === 0) {
         toast.success(t("skills.noUpdates"), { closeButton: true });

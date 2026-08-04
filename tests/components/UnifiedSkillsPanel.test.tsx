@@ -512,6 +512,31 @@ describe("UnifiedSkillsPanel", () => {
     });
   });
 
+  it("reports a check-update request failure instead of showing no updates", async () => {
+    installedSkillsMock = [makeInstalledSkill()];
+    checkUpdatesMock.mockRejectedValueOnce(new Error("check failed"));
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+      />,
+    );
+
+    await act(async () => {
+      await ref.current?.checkUpdates();
+    });
+
+    expect(checkUpdatesMock).toHaveBeenCalledWith({ throwOnError: true });
+    expect(toastErrorMock).toHaveBeenCalledWith("common.error", {
+      description: "Error: check failed",
+    });
+    expect(toastSuccessMock).not.toHaveBeenCalledWith("skills.noUpdates", {
+      closeButton: true,
+    });
+  });
+
   it("blocks actions but not navigation while checking updates", async () => {
     installedSkillsMock = [makeInstalledSkill()];
     checkUpdatesFetching = true;
