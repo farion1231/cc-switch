@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::UpdaterExt;
 
 /// 应用更新下载进度（通过 `update-download-progress` 事件发给前端）。
@@ -57,18 +57,73 @@ pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
     Ok(crate::settings::get_settings_for_frontend())
 }
 
+/// 显示或隐藏桌面用量悬浮窗
+pub fn set_floating_usage_window_visible(app: &AppHandle, visible: bool) {
+    if visible {
+        match app.get_webview_window("floating_usage") {
+            Some(floating_window) => {
+                let _ = floating_window.show();
+            }
+            None => {
+                if let Some(cfg) = app
+                    .config()
+                    .app
+                    .windows
+                    .iter()
+                    .find(|w| w.label == "floating_usage")
+                {
+                    if let Ok(builder) = tauri::WebviewWindowBuilder::from_config(app, cfg) {
+                        if let Ok(floating_window) =
+                            builder.resizable(true).maximizable(false).build()
+                        {
+                            let _ = floating_window.show();
+                        } else {
+                            log::error!("Failed to build floating_usage window");
+                        }
+                    } else {
+                        log::error!("Failed to create WebviewWindowBuilder from config");
+                    }
+                } else {
+                    log::error!("floating_usage window configuration not found in tauri.conf.json");
+                }
+            }
+        }
+    } else if let Some(floating_window) = app.get_webview_window("floating_usage") {
+        let _ = floating_window.hide();
+    }
+}
+
+/// 从后端调整悬浮窗大小
+#[tauri::command(rename_all = "camelCase")]
+pub async fn resize_floating_usage_window(
+    app: AppHandle,
+    width: f64,
+    height: f64,
+) -> Result<bool, String> {
+    if let Some(window) = app.get_webview_window("floating_usage") {
+        window
+            .set_size(tauri::LogicalSize::new(width, height))
+            .map_err(|e| format!("Failed to resize floating window: {e}"))?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
 /// 保存设置
 #[tauri::command]
 pub async fn save_settings(
+    app: AppHandle,
     state: tauri::State<'_, crate::store::AppState>,
     settings: crate::settings::AppSettings,
 ) -> Result<bool, String> {
     let existing = crate::settings::get_settings();
     let merged = merge_settings_for_save(settings, &existing);
+    let enable_floating_changed = merged.enable_floating_usage != existing.enable_floating_usage;
     let unify_codex_changed =
         merged.unify_codex_session_history != existing.unify_codex_session_history;
     let unify_codex_enabled = merged.unify_codex_session_history;
-    crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
+    crate::settings::update_settings(merged.clone()).map_err(|e| e.to_string())?;
 
     // 统一会话开关变更时立即重写当前官方 Codex 供应商的 live 配置，
     // 不必等下一次切换才生效。
@@ -122,6 +177,10 @@ pub async fn save_settings(
                 log::warn!("清除统一会话迁移意愿失败: {err}");
             }
         }
+    }
+
+    if enable_floating_changed {
+        set_floating_usage_window_visible(&app, merged.enable_floating_usage);
     }
     Ok(true)
 }

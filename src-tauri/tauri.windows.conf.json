@@ -9,6 +9,20 @@
         "visible": false,
         "minWidth": 900,
         "minHeight": 600
+      },
+      {
+        "label": "floating_usage",
+        "title": "Floating Usage",
+        "width": 220,
+        "height": 300,
+        "resizable": true,
+        "maximizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "transparent": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "shadow": false
       }
     ]
   }
