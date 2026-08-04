@@ -1038,6 +1038,23 @@ impl SkillService {
         Ok(updates)
     }
 
+    /// 持久化更新后的 Skill 元数据，并重新读取数据库中的权威应用启用状态。
+    ///
+    /// 更新过程包含网络下载，期间用户可能切换启用状态或卸载 Skill。这里必须
+    /// 使用只更新现有记录的 DAO，避免旧快照覆盖 `enabled_*`，也避免已卸载记录
+    /// 被重新插入。
+    fn persist_updated_skill_metadata(
+        db: &Arc<Database>,
+        updated_skill: &InstalledSkill,
+    ) -> Result<InstalledSkill> {
+        if !db.update_skill_metadata(updated_skill)? {
+            return Err(anyhow!("Skill no longer installed: {}", updated_skill.id));
+        }
+
+        db.get_installed_skill(&updated_skill.id)?
+            .ok_or_else(|| anyhow!("Skill no longer installed: {}", updated_skill.id))
+    }
+
     /// 更新单个 Skill（重新下载并替换本地文件）
     pub async fn update_skill(&self, db: &Arc<Database>, skill_id: &str) -> Result<InstalledSkill> {
         let skill = db
@@ -1113,6 +1130,23 @@ impl SkillService {
                 ))
             })?;
 
+        // 下载和扫描期间用户可能已经卸载了该 Skill。必须在任何备份、删除或
+        // 复制之前重新确认记录仍存在；否则即使最终的 metadata UPDATE 能发现
+        // 缺行，这里也会先把已卸载的 SSOT 目录重新创建出来。
+        let current_skill = db
+            .get_installed_skill(&skill.id)?
+            .ok_or_else(|| anyhow!("Skill no longer installed: {}", skill.id))?;
+        if current_skill.directory != skill.directory
+            || current_skill.repo_owner != skill.repo_owner
+            || current_skill.repo_name != skill.repo_name
+            || current_skill.repo_branch != skill.repo_branch
+            || current_skill.installed_at != skill.installed_at
+        {
+            return Err(anyhow!("Skill changed during update: {}", skill.id));
+        }
+        Self::require_valid_directory(&current_skill.directory)?;
+        let skill = current_skill;
+
         // 备份旧文件
         let _ = Self::create_uninstall_backup(&skill);
 
@@ -1136,7 +1170,7 @@ impl SkillService {
             .unwrap_or_else(|| format!("{}/SKILL.md", skill.directory.trim_end_matches('/')));
         let readme_url = Self::build_skill_doc_url(&owner, &name, &used_branch, &doc_path);
 
-        let updated_skill = InstalledSkill {
+        let updated_metadata = InstalledSkill {
             id: skill.id.clone(),
             name: new_name,
             description: new_description,
@@ -1151,7 +1185,7 @@ impl SkillService {
             updated_at: chrono::Utc::now().timestamp(),
         };
 
-        db.save_skill(&updated_skill)?;
+        let updated_skill = Self::persist_updated_skill_metadata(db, &updated_metadata)?;
 
         // 同步到所有已启用的应用目录
         for app in updated_skill.apps.enabled_apps() {
@@ -4164,6 +4198,65 @@ mod tests {
             content_hash: None,
             updated_at: 0,
         }
+    }
+
+    #[test]
+    fn persist_updated_skill_metadata_uses_database_apps() {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let mut installed = poisoned_skill("owner/repo:skill", "skill");
+        installed.name = "old name".to_string();
+        installed.apps = SkillApps::only(&AppType::Claude);
+        db.save_skill(&installed).expect("seed skill");
+
+        // 模拟下载期间用户将 Skill 从 Claude 切换到 Codex。待写入的 metadata
+        // 仍携带下载开始时的旧 apps 快照。
+        let authoritative_apps = SkillApps::only(&AppType::Codex);
+        db.update_skill_apps(&installed.id, &authoritative_apps)
+            .expect("toggle apps");
+
+        let mut updated_metadata = installed.clone();
+        updated_metadata.name = "new name".to_string();
+        updated_metadata.content_hash = Some("new hash".to_string());
+        updated_metadata.updated_at = 42;
+
+        let persisted = SkillService::persist_updated_skill_metadata(&db, &updated_metadata)
+            .expect("persist metadata");
+
+        assert_eq!(persisted.name, "new name");
+        assert_eq!(persisted.content_hash.as_deref(), Some("new hash"));
+        assert_eq!(persisted.updated_at, 42);
+        assert_eq!(persisted.apps, authoritative_apps);
+        assert_eq!(
+            db.get_installed_skill(&installed.id)
+                .expect("query skill")
+                .expect("skill remains installed")
+                .apps,
+            authoritative_apps
+        );
+    }
+
+    #[test]
+    fn persist_updated_skill_metadata_does_not_restore_uninstalled_skill() {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let installed = poisoned_skill("owner/repo:skill", "skill");
+        db.save_skill(&installed).expect("seed skill");
+
+        // 模拟下载期间卸载完成，随后旧的更新任务才尝试落库。
+        assert!(db.delete_skill(&installed.id).expect("uninstall skill"));
+
+        let mut updated_metadata = installed.clone();
+        updated_metadata.name = "downloaded update".to_string();
+        let err = SkillService::persist_updated_skill_metadata(&db, &updated_metadata)
+            .expect_err("an uninstalled skill must not be restored");
+
+        assert!(
+            err.to_string().contains("Skill no longer installed"),
+            "unexpected error: {err}"
+        );
+        assert!(db
+            .get_installed_skill(&installed.id)
+            .expect("query skill")
+            .is_none());
     }
 
     #[test]

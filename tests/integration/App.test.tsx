@@ -13,6 +13,10 @@ import { emitTauriEvent } from "../msw/tauriMocks";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
+const skillsPanelMocks = vi.hoisted(() => ({
+  checkUpdates: vi.fn(),
+  openDiscovery: vi.fn(),
+}));
 
 vi.mock("sonner", () => ({
   toast: {
@@ -128,6 +132,32 @@ vi.mock("@/components/AppSwitcher", () => ({
   ),
 }));
 
+vi.mock("@/components/skills/UnifiedSkillsPanel", async () => {
+  const React = await import("react");
+  const MockUnifiedSkillsPanel = React.forwardRef(
+    ({ onCheckUpdatesStateChange }: any, ref) => {
+      React.useEffect(() => {
+        onCheckUpdatesStateChange?.({ isChecking: false, hasSkills: true });
+        return () =>
+          onCheckUpdatesStateChange?.({
+            isChecking: false,
+            hasSkills: false,
+          });
+      }, [onCheckUpdatesStateChange]);
+      React.useImperativeHandle(ref, () => ({
+        openDiscovery: skillsPanelMocks.openDiscovery,
+        openImport: vi.fn(),
+        openInstallFromZip: vi.fn(),
+        openRestoreFromBackup: vi.fn(),
+        checkUpdates: skillsPanelMocks.checkUpdates,
+      }));
+      return <div data-testid="unified-skills-panel" />;
+    },
+  );
+  MockUnifiedSkillsPanel.displayName = "MockUnifiedSkillsPanel";
+  return { default: MockUnifiedSkillsPanel };
+});
+
 vi.mock("@/components/UpdateBadge", () => ({
   UpdateBadge: ({ onClick }: any) => (
     <button onClick={onClick}>update-badge</button>
@@ -161,6 +191,9 @@ describe("App integration with MSW", () => {
     resetProviderState();
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
+    skillsPanelMocks.checkUpdates.mockReset();
+    skillsPanelMocks.openDiscovery.mockReset();
+    localStorage.removeItem("cc-switch-last-view");
   });
 
   it("covers basic provider flows via real hooks", async () => {
@@ -351,5 +384,40 @@ describe("App integration with MSW", () => {
     );
 
     liveIdsSpy.mockRestore();
+  });
+
+  it("hosts the Skills check-update action in the App toolbar", async () => {
+    localStorage.setItem("cc-switch-last-view", "skills");
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    expect(
+      await screen.findByTestId("unified-skills-panel"),
+    ).toBeInTheDocument();
+    const checkUpdatesButton = await screen.findByRole("button", {
+      name: "skills.checkUpdates",
+    });
+    await waitFor(() => expect(checkUpdatesButton).toBeEnabled());
+
+    fireEvent.click(checkUpdatesButton);
+    expect(skillsPanelMocks.checkUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes the Skills discover toolbar action through the panel guard", async () => {
+    localStorage.setItem("cc-switch-last-view", "skills");
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    expect(
+      await screen.findByTestId("unified-skills-panel"),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "skills.discover",
+      }),
+    );
+
+    expect(skillsPanelMocks.openDiscovery).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("unified-skills-panel")).toBeInTheDocument();
   });
 });
