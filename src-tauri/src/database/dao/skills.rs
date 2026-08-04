@@ -144,8 +144,22 @@ impl Database {
     /// 下载期间与启用状态切换或卸载并发发生，因此调用方必须保留数据库中的
     /// `enabled_*` 字段，并在记录已被删除时停止后续处理。
     pub fn update_skill_metadata(&self, skill: &InstalledSkill) -> Result<bool, AppError> {
-        let conn = lock_conn!(self.conn);
-        let affected = conn
+        Ok(self.update_skill_metadata_and_get(skill)?.is_some())
+    }
+
+    /// 条件更新 Skill 元数据，并在同一事务中返回包含权威应用启用状态的记录。
+    ///
+    /// UPDATE 与后续 SELECT 必须原子执行：若读取失败，事务会回滚 UPDATE，调用方
+    /// 才能安全地恢复已替换的 SSOT 目录，避免“新元数据 + 旧文件”的分裂状态。
+    pub fn update_skill_metadata_and_get(
+        &self,
+        skill: &InstalledSkill,
+    ) -> Result<Option<InstalledSkill>, AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let affected = tx
             .execute(
                 "UPDATE skills
                  SET name = ?1,
@@ -173,6 +187,70 @@ impl Database {
                     skill.id,
                     skill.installed_at,
                 ],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if affected == 0 {
+            tx.rollback()
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            return Ok(None);
+        }
+
+        let updated = tx
+            .query_row(
+                "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
+                        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
+                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at
+                 FROM skills WHERE id = ?1 AND installed_at = ?2",
+                params![skill.id, skill.installed_at],
+                |row| {
+                    Ok(InstalledSkill {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        description: row.get(2)?,
+                        directory: row.get(3)?,
+                        repo_owner: row.get(4)?,
+                        repo_name: row.get(5)?,
+                        repo_branch: row.get(6)?,
+                        readme_url: row.get(7)?,
+                        apps: SkillApps {
+                            claude: row.get(8)?,
+                            codex: row.get(9)?,
+                            gemini: row.get(10)?,
+                            grokbuild: row.get(11)?,
+                            opencode: row.get(12)?,
+                            hermes: row.get(13)?,
+                        },
+                        installed_at: row.get(14)?,
+                        content_hash: row.get(15)?,
+                        updated_at: row.get::<_, i64>(16).unwrap_or(0),
+                    })
+                },
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(Some(updated))
+    }
+
+    /// 仅修复仓库来源字段，不触碰内容哈希、展示元数据或各应用启用状态。
+    ///
+    /// 检查更新会在网络请求后调用本方法自愈旧版保存的错误分支/文档路径；用
+    /// `installed_at` 约束安装代次，避免卸载后重装的同 ID Skill 被旧请求覆盖。
+    pub fn update_skill_source_metadata(
+        &self,
+        id: &str,
+        installed_at: i64,
+        repo_branch: &str,
+        readme_url: Option<&str>,
+    ) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        let affected = conn
+            .execute(
+                "UPDATE skills
+                 SET repo_branch = ?1,
+                     readme_url = ?2
+                 WHERE id = ?3 AND installed_at = ?4",
+                params![repo_branch, readme_url, id, installed_at],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(affected > 0)
@@ -352,6 +430,93 @@ mod tests {
         assert_eq!(stored.content_hash, candidate.content_hash);
         assert_eq!(stored.updated_at, candidate.updated_at);
         assert_eq!(stored.apps, installed_apps);
+    }
+
+    #[test]
+    fn update_skill_metadata_and_get_returns_authoritative_apps_atomically() {
+        let db = Database::memory().expect("memory db");
+        let installed_apps = SkillApps::only(&AppType::Codex);
+        let original = skill("owner/repo:skill", "original", installed_apps.clone());
+        db.save_skill(&original).expect("seed skill");
+
+        let mut candidate = original.clone();
+        candidate.name = "updated".to_string();
+        candidate.apps = SkillApps::only(&AppType::Claude);
+
+        let returned = db
+            .update_skill_metadata_and_get(&candidate)
+            .expect("atomic update")
+            .expect("skill remains installed");
+
+        assert_eq!(returned.name, "updated");
+        assert_eq!(returned.apps, installed_apps);
+    }
+
+    #[test]
+    fn update_skill_source_metadata_only_changes_source_fields() {
+        let db = Database::memory().expect("memory db");
+        let original = skill(
+            "owner/repo:skill",
+            "original",
+            SkillApps::only(&AppType::Codex),
+        );
+        db.save_skill(&original).expect("seed skill");
+
+        assert!(db
+            .update_skill_source_metadata(
+                &original.id,
+                original.installed_at,
+                "master",
+                Some("https://github.com/owner/repo/blob/master/nested/SKILL.md"),
+            )
+            .expect("repair source metadata"));
+
+        let stored = db
+            .get_installed_skill(&original.id)
+            .expect("query skill")
+            .expect("skill remains installed");
+        assert_eq!(stored.repo_branch.as_deref(), Some("master"));
+        assert_eq!(
+            stored.readme_url.as_deref(),
+            Some("https://github.com/owner/repo/blob/master/nested/SKILL.md")
+        );
+        assert_eq!(stored.name, original.name);
+        assert_eq!(stored.description, original.description);
+        assert_eq!(stored.directory, original.directory);
+        assert_eq!(stored.apps, original.apps);
+        assert_eq!(stored.content_hash, original.content_hash);
+        assert_eq!(stored.updated_at, original.updated_at);
+    }
+
+    #[test]
+    fn update_skill_source_metadata_does_not_touch_a_reinstalled_generation() {
+        let db = Database::memory().expect("memory db");
+        let stale = skill(
+            "owner/repo:skill",
+            "stale",
+            SkillApps::only(&AppType::Claude),
+        );
+        let mut reinstalled = skill(&stale.id, "reinstalled", SkillApps::only(&AppType::Gemini));
+        reinstalled.installed_at = stale.installed_at + 1;
+        db.save_skill(&reinstalled).expect("seed reinstalled skill");
+
+        assert!(!db
+            .update_skill_source_metadata(
+                &stale.id,
+                stale.installed_at,
+                "master",
+                Some("https://github.com/owner/repo/blob/master/stale/SKILL.md"),
+            )
+            .expect("stale repair is not an error"));
+
+        let stored = db
+            .get_installed_skill(&reinstalled.id)
+            .expect("query skill")
+            .expect("reinstalled skill remains");
+        assert_eq!(stored.name, reinstalled.name);
+        assert_eq!(stored.repo_branch, reinstalled.repo_branch);
+        assert_eq!(stored.readme_url, reinstalled.readme_url);
+        assert_eq!(stored.apps, reinstalled.apps);
     }
 
     #[test]
