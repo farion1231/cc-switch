@@ -4230,6 +4230,60 @@ mod tests {
     }
 
     #[test]
+    fn chat_response_to_responses_splits_inline_thinking_content() {
+        let input = json!({
+            "id": "chatcmpl_thinking",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "gpt-5-codex",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "<thinking>\nChecking final status\n</thinking>\n\nDone"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+
+        let result = chat_completion_to_response(input).unwrap();
+
+        assert_eq!(result["output"][0]["type"], "reasoning");
+        assert_eq!(
+            result["output"][0]["summary"][0]["text"],
+            "Checking final status"
+        );
+        assert_eq!(result["output"][1]["type"], "message");
+        assert_eq!(result["output"][1]["content"][0]["text"], "Done");
+    }
+
+    #[test]
+    fn chat_response_to_responses_splits_mismatched_think_tags() {
+        let input = json!({
+            "id": "chatcmpl_thinking",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "gpt-5-codex",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "<think>Checking final status</thinking>Done"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+
+        let result = chat_completion_to_response(input).unwrap();
+
+        assert_eq!(result["output"][0]["type"], "reasoning");
+        assert_eq!(
+            result["output"][0]["summary"][0]["text"],
+            "Checking final status"
+        );
+        assert_eq!(result["output"][1]["type"], "message");
+        assert_eq!(result["output"][1]["content"][0]["text"], "Done");
+    }
+
+    #[test]
     fn chat_response_length_maps_to_incomplete_response() {
         let input = json!({
             "id": "chatcmpl_2",

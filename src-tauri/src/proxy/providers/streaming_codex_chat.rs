@@ -791,11 +791,14 @@ fn leading_think_prefix_decision(buffer: &str) -> ThinkPrefixDecision {
         return ThinkPrefixDecision::NeedMore;
     }
 
-    if trimmed.starts_with("<think>") {
+    if trimmed.starts_with("<think>") || trimmed.starts_with("<thinking>") {
         return ThinkPrefixDecision::Reasoning;
     }
 
-    if "<think>".starts_with(trimmed) {
+    if ["<think>", "<thinking>"]
+        .iter()
+        .any(|tag| tag.starts_with(trimmed))
+    {
         return ThinkPrefixDecision::NeedMore;
     }
 
@@ -1015,6 +1018,23 @@ mod tests {
         assert!(output.contains("\"reasoning_tokens\":3"));
         assert!(!output.contains("<think>"));
         assert!(!output.contains("</think>"));
+        assert!(output.contains("event: response.completed"));
+    }
+
+    #[tokio::test]
+    async fn converts_inline_thinking_chat_sse_to_reasoning_without_leaking_tags() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_codex\",\"created\":123,\"model\":\"gpt-5-codex\",\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"<thinking>Checking\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_codex\",\"created\":123,\"model\":\"gpt-5-codex\",\"choices\":[{\"delta\":{\"content\":\" final status</thinking>Done\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.reasoning_summary_text.delta"));
+        assert!(output.contains("Checking final status"));
+        assert!(output.contains("\"text\":\"Done\""));
+        assert!(!output.contains("<thinking>"));
+        assert!(!output.contains("</thinking>"));
         assert!(output.contains("event: response.completed"));
     }
 
