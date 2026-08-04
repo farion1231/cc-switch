@@ -302,11 +302,20 @@ impl Database {
                 file_path TEXT PRIMARY KEY,
                 last_modified INTEGER NOT NULL,
                 last_line_offset INTEGER NOT NULL DEFAULT 0,
+                last_file_size INTEGER NOT NULL DEFAULT 0,
                 last_synced_at INTEGER NOT NULL
             )",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+        // Compatibility migration kept outside user_version so the patched build can
+        // still be rolled back to an official v3.19.1 binary if needed.
+        Self::add_column_if_missing(
+            conn,
+            "session_log_sync",
+            "last_file_size",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
 
         // 19. Profiles 表（全应用共享的项目实体，payload 按 app 分槽快照
         //     供应商/MCP/Skills/Prompt；各应用分组的 current 标记在 settings 表）
@@ -1212,6 +1221,7 @@ impl Database {
                 file_path TEXT PRIMARY KEY,
                 last_modified INTEGER NOT NULL,
                 last_line_offset INTEGER NOT NULL DEFAULT 0,
+                last_file_size INTEGER NOT NULL DEFAULT 0,
                 last_synced_at INTEGER NOT NULL
             )",
             [],

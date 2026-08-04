@@ -18,8 +18,11 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
+#[cfg(test)]
+use crate::services::session_usage::get_sync_state;
 use crate::services::session_usage::{
-    get_sync_state, metadata_modified_nanos, update_sync_state, SessionSyncResult,
+    get_sync_state_with_size, metadata_modified_nanos, update_sync_state_with_size,
+    SessionSyncResult,
 };
 use crate::services::usage_stats::{
     find_model_pricing, has_suspected_codex_session_duplicate, should_skip_session_insert, DedupKey,
@@ -450,10 +453,10 @@ fn parse_token_signature(info: &serde_json::Value) -> Option<TokenUsageSignature
     (total.is_some() || last.is_some()).then_some(TokenUsageSignature { total, last })
 }
 
-fn get_codex_sync_state(db: &Database, file_path: &Path) -> Result<(i64, i64), AppError> {
+fn get_codex_sync_state(db: &Database, file_path: &Path) -> Result<(i64, i64, i64), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
-    let state = get_sync_state(db, &file_path_str)?;
-    if state != (0, 0)
+    let state = get_sync_state_with_size(db, &file_path_str)?;
+    if state != (0, 0, 0)
         || file_path
             .parent()
             .and_then(Path::file_name)
@@ -470,7 +473,7 @@ fn get_codex_sync_state(db: &Database, file_path: &Path) -> Result<(i64, i64), A
     let backslash_suffix = format!("\\{file_name}");
     let conn = lock_conn!(db.conn);
     let inherited = conn.query_row(
-        "SELECT last_modified, last_line_offset
+        "SELECT last_modified, last_line_offset, last_file_size
          FROM session_log_sync
          WHERE file_path <> ?1
            AND (substr(file_path, -length(?2)) = ?2
@@ -478,13 +481,19 @@ fn get_codex_sync_state(db: &Database, file_path: &Path) -> Result<(i64, i64), A
          ORDER BY last_line_offset DESC, last_modified DESC
          LIMIT 1",
         rusqlite::params![file_path_str, slash_suffix, backslash_suffix],
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        },
     );
     drop(conn);
 
     match inherited {
         Ok(inherited) => {
-            update_sync_state(db, &file_path_str, inherited.0, inherited.1)?;
+            update_sync_state_with_size(db, &file_path_str, inherited.0, inherited.1, inherited.2)?;
             Ok(inherited)
         }
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(state),
@@ -1041,12 +1050,14 @@ fn sync_single_codex_file(
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
     let file_modified = metadata_modified_nanos(&metadata);
     let file_size = metadata.len();
+    let sync_file_size = file_size.min(i64::MAX as u64) as i64;
 
     // 检查同步状态
-    let (last_modified, last_offset) = get_codex_sync_state(db, file_path)?;
+    let (last_modified, last_offset, last_file_size) = get_codex_sync_state(db, file_path)?;
 
-    // 文件未变化则跳过
-    if file_modified <= last_modified {
+    // Windows may keep mtime unchanged while Codex appends to an open rollout.
+    // Skip only when both the timestamp and the persisted file size are unchanged.
+    if file_modified <= last_modified && sync_file_size == last_file_size {
         return Ok(CodexFileSyncResult::default());
     }
 
@@ -1079,7 +1090,13 @@ fn sync_single_codex_file(
 
     let parsed = parse_codex_file(file_path, thread_id_from_filename(file_path))?;
     if !parsed.has_billable_tokens {
-        update_sync_state(db, &file_path_str, file_modified, parsed.line_offset)?;
+        update_sync_state_with_size(
+            db,
+            &file_path_str,
+            file_modified,
+            parsed.line_offset,
+            sync_file_size,
+        )?;
         return Ok(CodexFileSyncResult::default());
     }
     let Some(root_thread_id) = parsed.root_thread_id.as_deref() else {
@@ -1206,7 +1223,13 @@ fn sync_single_codex_file(
         }
     }
 
-    update_sync_state(db, &file_path_str, file_modified, parsed.line_offset)?;
+    update_sync_state_with_size(
+        db,
+        &file_path_str,
+        file_modified,
+        parsed.line_offset,
+        sync_file_size,
+    )?;
     Ok(result)
 }
 
@@ -1355,6 +1378,17 @@ mod tests {
         fs::write(path, contents).unwrap();
     }
 
+    fn append_jsonl(path: &Path, values: &[serde_json::Value]) {
+        let contents = values
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
+        std::io::Write::write_all(&mut file, contents.as_bytes()).unwrap();
+    }
+
     fn rollout_path(dir: &Path, thread_id: &str) -> PathBuf {
         dir.join(format!("rollout-2026-07-10T03-00-00-{thread_id}.jsonl"))
     }
@@ -1442,6 +1476,56 @@ mod tests {
             .map(|path| path.to_path_buf())
             .collect::<Vec<_>>();
         sync_single_codex_file(db, file, &build_rollout_index(&files))
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_file_growth_syncs_when_mtime_does_not_advance() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let rollout = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &rollout,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:02Z"),
+            ],
+        );
+
+        assert_eq!(sync_test_file(&db, &rollout, &[&rollout])?.imported, 1);
+        let rollout_path_str = rollout.to_string_lossy().to_string();
+        let first_state = get_sync_state_with_size(&db, &rollout_path_str)?;
+        assert_eq!(first_state.1, 3);
+        assert_eq!(first_state.2, fs::metadata(&rollout).unwrap().len() as i64);
+
+        append_jsonl(
+            &rollout,
+            &[token_count_at(200, 100, 20, "2026-07-10T03:00:03Z")],
+        );
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "UPDATE session_log_sync SET last_modified = ?1 WHERE file_path = ?2",
+                rusqlite::params![i64::MAX, rollout_path_str],
+            )?;
+        }
+
+        assert_eq!(sync_test_file(&db, &rollout, &[&rollout])?.imported, 1);
+        let second_state = get_sync_state_with_size(&db, &rollout.to_string_lossy())?;
+        assert_eq!(second_state.1, 4);
+        assert_eq!(second_state.2, fs::metadata(&rollout).unwrap().len() as i64);
+
+        let conn = lock_conn!(db.conn);
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs
+             WHERE data_source = 'codex_session' AND session_id = ?1",
+            [PARENT_ID],
+            |row| row.get(0),
+        )?;
+        assert_eq!(count, 2);
+        Ok(())
     }
 
     #[test]
@@ -2053,7 +2137,7 @@ mod tests {
             )?;
         }
         let source_path = source.to_string_lossy().to_string();
-        update_sync_state(&db, &source_path, 1, 3)?;
+        update_sync_state_with_size(&db, &source_path, 1, 3, 0)?;
 
         assert_eq!(
             sync_test_file(&db, &archived_file, &[&archived_file])?.imported,
@@ -2081,7 +2165,10 @@ mod tests {
         )?;
         assert_eq!(usage, (100, 50, 10));
         drop(conn);
-        assert_eq!(get_sync_state(&db, &archived_file.to_string_lossy())?.1, 4);
+        assert_eq!(
+            get_sync_state_with_size(&db, &archived_file.to_string_lossy())?.1,
+            4
+        );
 
         Ok(())
     }
