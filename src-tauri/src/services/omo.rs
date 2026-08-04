@@ -221,11 +221,17 @@ impl UnifiedConfigDocument {
                 e.message
             ))
         })?;
-        json5::from_str::<Value>(&next_source).map_err(|e| {
+        let reparsed: Value = json5::from_str(&next_source).map_err(|e| {
             AppError::Config(format!(
                 "Refusing to write invalid OMO config after round-trip serialization: {e}"
             ))
         })?;
+        if reparsed != self.semantic {
+            return Err(AppError::Config(
+                "Refusing to write OMO config: serialized output does not match the intended state"
+                    .to_string(),
+            ));
+        }
 
         let next_contents = next_source.into_bytes();
         atomic_write(&self.path, &next_contents)?;
@@ -1454,6 +1460,28 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("omo.jsonc");
         let original = r#"{ /* keep */ "[opencode]": {"agents": {}} }"#;
+        std::fs::write(&path, original).unwrap();
+        let mut document = UnifiedConfigDocument::load(&path).unwrap();
+        document
+            .set_opencode_section(&serde_json::json!({"agents": {"new": {}}}))
+            .unwrap();
+
+        let result = document.save();
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn test_unified_config_write_rejects_parseable_semantic_corruption() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("omo.jsonc");
+        let original = r#"{
+  /* block */
+  "[codex]": {"agents": {"reviewer": {}}},
+  // tail */
+  "[opencode]": {"agents": {}}
+}"#;
         std::fs::write(&path, original).unwrap();
         let mut document = UnifiedConfigDocument::load(&path).unwrap();
         document
