@@ -253,22 +253,42 @@ pub fn read_json_file<T: for<'a> Deserialize<'a>>(path: &Path) -> Result<T, AppE
     serde_json::from_str(&content).map_err(|e| AppError::json(path, e))
 }
 
-/// Ensure a directory is available for use.
-///
-/// On Windows, `std::fs::create_dir_all` may return OS error 183 when the
-/// requested path is an existing directory junction/reparse point.  Check the
-/// resolved path before creating it, and check again after an error to also
-/// tolerate another process creating the directory concurrently.
+/// Create a directory and provide a useful error when a Windows directory
+/// reparse point exists but its target cannot be reached.
 pub fn ensure_dir_exists(path: &Path) -> Result<(), AppError> {
-    if path.is_dir() {
-        return Ok(());
-    }
-
     match fs::create_dir_all(path) {
         Ok(()) => Ok(()),
-        Err(_) if path.is_dir() => Ok(()),
+        #[cfg(windows)]
+        Err(_) if is_unreachable_directory_reparse_point(path) => Err(AppError::localized(
+            "config.directory_junction_unreachable",
+            format!(
+                "配置目录是一个指向不可达目标的目录联接：{}。请确认目标磁盘已挂载且该目录可访问。",
+                path.display()
+            ),
+            format!(
+                "The configuration directory is a directory junction whose target is unreachable: {}. Make sure the target drive is mounted and the directory is accessible.",
+                path.display()
+            ),
+        )),
         Err(error) => Err(AppError::io(path, error)),
     }
+}
+
+#[cfg(windows)]
+fn is_unreachable_directory_reparse_point(path: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    let attributes = metadata.file_attributes();
+
+    attributes & FILE_ATTRIBUTE_DIRECTORY != 0
+        && attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        && fs::metadata(path).is_err()
 }
 
 /// 递归排序 JSON 对象的键（按字母顺序），确保序列化输出是确定性的
@@ -389,12 +409,49 @@ mod tests {
             .expect("run mklink");
         assert!(status.success(), "create directory junction");
 
+        fs::create_dir_all(&junction)
+            .expect("standard create_dir_all accepts a reachable directory junction");
+
         let file = junction.join("config.toml");
         write_text_file(&file, "model = \"gpt-test\"\n").expect("write through directory junction");
         assert_eq!(
             fs::read_to_string(target.join("config.toml")).expect("read target file"),
             "model = \"gpt-test\"\n"
         );
+
+        fs::remove_dir(&junction).expect("remove directory junction");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn write_text_file_reports_unreachable_directory_junction_target() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let target = temp.path().join("target");
+        let junction = temp.path().join("junction");
+        fs::create_dir(&target).expect("create junction target");
+
+        let status = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&target)
+            .status()
+            .expect("run mklink");
+        assert!(status.success(), "create directory junction");
+        fs::remove_dir(&target).expect("remove junction target");
+
+        let file = junction.join("config.toml");
+        let error = write_text_file(&file, "model = \"gpt-test\"\n")
+            .expect_err("an unreachable junction target must fail");
+        match error {
+            AppError::Localized { key, zh, en } => {
+                assert_eq!(key, "config.directory_junction_unreachable");
+                assert!(zh.contains(&junction.display().to_string()));
+                assert!(zh.contains("不可达目标的目录联接"));
+                assert!(en.contains(&junction.display().to_string()));
+                assert!(en.contains("target is unreachable"));
+            }
+            other => panic!("expected localized junction diagnostic, got {other:?}"),
+        }
 
         fs::remove_dir(&junction).expect("remove directory junction");
     }
