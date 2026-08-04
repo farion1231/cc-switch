@@ -1201,7 +1201,11 @@ impl RequestForwarder {
         } else {
             let (mapped_body, _original_model, _mapped_model) =
                 super::model_mapper::apply_model_mapping(body.clone(), provider);
-            mapped_body
+            // auto mode 分类器请求可单独指向一个快而稳的模型：该请求非流式、带完整
+            // transcript 且 stage1 只有 60s 预算，跟随主模型时容易因延迟抖动而
+            // "temporarily unavailable"，把工具调用一并拦下。放在模型映射之后，
+            // 覆写值仍会走下方统一的 [1m] 后缀剥离。
+            super::classifier_route::apply_classifier_model_override(mapped_body, provider)
         };
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）

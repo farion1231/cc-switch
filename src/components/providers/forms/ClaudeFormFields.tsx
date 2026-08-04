@@ -159,6 +159,10 @@ interface ClaudeFormFieldsProps {
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
   onLocalProxyBodyOverrideChange: (value: string) => void;
+
+  // auto mode 安全分类器专用模型（需启用代理才生效）
+  classifierModel: string;
+  onClassifierModelChange: (value: string) => void;
 }
 
 export function ClaudeFormFields({
@@ -224,6 +228,8 @@ export function ClaudeFormFields({
   onLocalProxyHeadersOverrideChange,
   localProxyBodyOverride,
   onLocalProxyBodyOverrideChange,
+  classifierModel,
+  onClassifierModelChange,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
   const hasRequestOverrides = Boolean(
@@ -239,6 +245,7 @@ export function ClaudeFormFields({
     (!isXaiOauthPreset && apiFormat !== "anthropic") ||
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
     customUserAgent ||
+    classifierModel ||
     hasRequestOverrides
   );
   const [advancedExpanded, setAdvancedExpanded] = useState(
@@ -1100,6 +1107,30 @@ export function ClaudeFormFields({
                 {t("providerForm.fallbackModelHint", {
                   defaultValue:
                     "用于未明确落到 Sonnet、Opus、Fable、Haiku 角色的请求。使用第三方/中转端点时建议填写：否则这些请求（含 Haiku 后台子任务）会以原始 Claude 模型名透传给上游，可能因上游无此模型而报错。官方端点可留空。",
+                })}
+              </p>
+            </div>
+
+            <div className="space-y-2 border-t pt-4">
+              <FormLabel htmlFor="claudeClassifierModel">
+                {t("providerForm.classifierModelLabel", {
+                  defaultValue: "安全分类器模型",
+                })}
+              </FormLabel>
+              <Input
+                id="claudeClassifierModel"
+                value={classifierModel}
+                onChange={(event) =>
+                  onClassifierModelChange(event.target.value)
+                }
+                placeholder={t("providerForm.classifierModelPlaceholder", {
+                  defaultValue: "留空则跟随主模型",
+                })}
+              />
+              <p className="text-xs text-muted-foreground">
+                {t("providerForm.classifierModelHint", {
+                  defaultValue:
+                    "Claude Code 自动模式在放行每次工具调用前会先发一次安全评分请求，默认复用主模型；该请求非流式、带完整会话上下文，且只有 60 秒预算。主模型响应偏慢或延迟波动时，分类器会间歇性报「暂时不可用」并连带拦下工具调用。填入一个更快更稳的模型可避免此问题。仅在启用本地代理时生效。",
                 })}
               </p>
             </div>

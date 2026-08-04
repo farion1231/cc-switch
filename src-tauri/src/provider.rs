@@ -450,6 +450,14 @@ pub struct ProviderMeta {
     /// - "openai_responses": OpenAI Responses API 格式，需要转换
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
+    /// auto mode 安全分类器专用模型（仅 Claude 供应商，需启用代理才生效）
+    ///
+    /// Claude Code 每次放行工具调用前会先发一次分类请求，默认复用主模型，
+    /// 且 stage1 有 60s 硬超时。主模型延迟不稳时分类器会间歇性不可用，
+    /// 表现为 `<model> is temporarily unavailable`。指定一个快而稳的模型
+    /// 可将该请求与主对话解耦。留空则跟随主模型。
+    #[serde(rename = "classifierModel", skip_serializing_if = "Option::is_none")]
+    pub classifier_model: Option<String>,
     /// 通用认证绑定（provider_config / managed_account）
     ///
     /// 新代码应只写入该字段；githubAccountId 仅保留兼容读取。

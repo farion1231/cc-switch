@@ -200,6 +200,11 @@ export interface ProviderMeta {
     | "openai_chat"
     | "openai_responses"
     | "gemini_native";
+  // auto mode 安全分类器专用模型（仅 Claude 供应商，需启用代理才生效）
+  // Claude Code 每次放行工具调用前会先发一次分类请求，默认复用主模型，
+  // 且 stage1 有 60s 硬超时；主模型延迟不稳时分类器会间歇性不可用。
+  // 留空则跟随主模型。
+  classifierModel?: string;
   // 通用认证绑定
   authBinding?: AuthBinding;
   // Claude 认证字段名

@@ -354,6 +354,12 @@ function ProviderFormFull({
     return initialData?.meta?.isFullUrl ?? false;
   });
 
+  // auto mode 安全分类器专用模型：仅 Claude，且需启用代理才生效
+  const supportsClassifierModel = appId === "claude";
+  const [localClassifierModel, setLocalClassifierModel] = useState<string>(
+    () => initialData?.meta?.classifierModel ?? "",
+  );
+
   const [pricingConfig, setPricingConfig] = useState<{
     enabled: boolean;
     costMultiplier?: string;
@@ -388,6 +394,9 @@ function ProviderFormFull({
     setEndpointAutoSelect(initialData?.meta?.endpointAutoSelect ?? true);
     setLocalIsFullUrl(
       supportsFullUrl ? (initialData?.meta?.isFullUrl ?? false) : false,
+    );
+    setLocalClassifierModel(
+      supportsClassifierModel ? (initialData?.meta?.classifierModel ?? "") : "",
     );
     setPricingConfig({
       enabled:
@@ -1708,6 +1717,10 @@ function ProviderFormFull({
         localIsFullUrl
           ? true
           : undefined,
+      classifierModel:
+        supportsClassifierModel && localClassifierModel.trim() !== ""
+          ? localClassifierModel.trim()
+          : undefined,
     };
 
     if (!isCodexOauthProvider && "codexFastMode" in nextMeta) {
@@ -2330,6 +2343,8 @@ function ProviderFormFull({
               onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
               localProxyBodyOverride={localProxyBodyOverride}
               onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
+              classifierModel={localClassifierModel}
+              onClassifierModelChange={setLocalClassifierModel}
             />
           )}
 
