@@ -559,6 +559,13 @@ impl ProxyService {
             });
         }
 
+        // 走到这里说明是一次全新启动：内存熔断器随之重置为 Closed。
+        // 清空 DB 里跨重启残留的 provider_health——否则旧的 is_healthy=0 会让
+        // 前端徽章误显示"熔断"，而实际并未熔断。best-effort，不阻断启动。
+        if let Err(e) = self.db.clear_all_provider_health().await {
+            log::warn!("启动时清空 provider_health 失败（忽略）: {e}");
+        }
+
         // 4. 创建并启动服务器
         let app_handle = self.app_handle.read().await.clone();
         let server = ProxyServer::new(config.clone(), self.db.clone(), app_handle);
@@ -3790,6 +3797,57 @@ mod tests {
                 .is_none(),
             "non-managed providers should retain the legacy fallback behavior"
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn start_clears_stale_provider_health() {
+        // 回归：proxy 重启后内存熔断器重置为 Closed，但 provider_health DB 行跨重启
+        // 持久化——残留的 is_healthy=0 会让前端徽章误显示"熔断"而实际未熔断。
+        // start() 必须清空 provider_health，使 DB 对齐全新的内存状态。
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        use_ephemeral_proxy_port(&db).await;
+        let service = ProxyService::new(db.clone());
+
+        // 先存 provider（provider_health 有外键约束），再种 stale 熔断记录
+        let provider = Provider::with_id(
+            "stale-p".to_string(),
+            "Stale".to_string(),
+            json!({ "env": { "ANTHROPIC_BASE_URL": "https://example.com", "ANTHROPIC_AUTH_TOKEN": "t" } }),
+            None,
+        );
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.update_provider_health_with_threshold(
+            "stale-p",
+            "claude",
+            false,
+            Some("boom".into()),
+            1,
+        )
+        .await
+        .expect("seed stale health");
+        let before = db
+            .get_provider_health("stale-p", "claude")
+            .await
+            .expect("read before");
+        assert!(!before.is_healthy, "种子行应标记为熔断");
+
+        let info = service.start().await.expect("start proxy");
+        assert_ne!(info.port, 0, "ephemeral port should be assigned");
+
+        // start() 应清空 provider_health——前端徽章的数据源
+        let after = db
+            .get_provider_health("stale-p", "claude")
+            .await
+            .expect("read after");
+        assert!(after.is_healthy, "start() 后 stale 熔断记录应被清除");
+        assert_eq!(after.consecutive_failures, 0);
+
+        let _ = service.stop().await;
     }
 
     #[tokio::test]
