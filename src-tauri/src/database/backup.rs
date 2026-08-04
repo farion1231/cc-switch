@@ -171,6 +171,12 @@ impl Database {
         let temp_path = temp_file.path().to_path_buf();
         let temp_conn =
             Connection::open(&temp_path).map_err(|e| AppError::Database(e.to_string()))?;
+        // SQLite Backup copies the source database header into the destination.
+        // Configure the empty staging database before creating any tables so a
+        // SQL import cannot downgrade the main DB from incremental vacuum to NONE.
+        temp_conn
+            .execute("PRAGMA auto_vacuum = INCREMENTAL;", [])
+            .map_err(|e| AppError::Database(format!("设置暂存库 auto_vacuum 失败: {e}")))?;
 
         // authorizer 只覆盖外部 SQL，执行完立刻摘掉：紧随其后的
         // `create_tables_on_conn` / `apply_schema_migrations_on_conn` 是本程序自己的
@@ -937,6 +943,38 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(name, "Provider One");
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn sql_import_preserves_incremental_auto_vacuum() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let source = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(source.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('vacuum-provider', 'claude', 'Vacuum Provider', '{}', '{}')",
+                [],
+            )?;
+        }
+        let sql = source.export_sql_string()?;
+
+        let target = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(target.conn);
+            assert_eq!(Database::get_auto_vacuum_mode(&conn)?, 2);
+        }
+
+        target.import_sql_string(&sql)?;
+
+        let conn = crate::database::lock_conn!(target.conn);
+        assert_eq!(
+            Database::get_auto_vacuum_mode(&conn)?,
+            2,
+            "SQL 导入不得把主库的 INCREMENTAL auto_vacuum 降级为 NONE"
+        );
         Ok(())
     }
 
