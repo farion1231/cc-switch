@@ -92,6 +92,10 @@ function modelCatalog(
         // Vendor's OFFICIAL base_instructions; omit to inherit the neutral
         // template default. Required by Codex, so the backend always emits one.
         baseInstructions?: string;
+        // 网关侧逐模型合法 reasoning effort 档位（镜像 models.dev
+        // reasoning_options 的 effort values）。缺省 = 该模型未声明 effort
+        // 控制（toggle/budget 型），代理转换层将不发 reasoning_effort。
+        effortLevels?: string[];
       }
   >,
 ): CodexCatalogModel[] {
@@ -105,6 +109,7 @@ function modelCatalog(
           supportsParallelToolCalls: entry.supportsParallelToolCalls,
           inputModalities: entry.inputModalities,
           baseInstructions: entry.baseInstructions,
+          effortLevels: entry.effortLevels,
         },
   );
 }
@@ -1520,7 +1525,9 @@ requires_openai_auth = true`,
     endpointCandidates: ["https://opencode.ai/zen/go/v1"],
     apiFormat: "openai_chat",
     // OpenCode Zen 网关：统一接受顶层 reasoning_effort（其自家客户端同款参数），
-    // 档位 low|medium|high|max 由网关按模型归一；不发厂商原生 thinking 字段。
+    // 但合法档位逐模型（见各条目的 effortLevels，镜像 models.dev；opencode 客户端
+    // 同样严格按模型声明发值）——代理转换层按表钳制，未声明 effort 的模型
+    // （toggle 型如 glm-5.1）不发该字段。不发厂商原生 thinking 字段。
     codexChatReasoning: {
       supportsThinking: true,
       supportsEffort: true,
@@ -1530,15 +1537,28 @@ requires_openai_auth = true`,
       outputFormat: "reasoning_content",
     },
     modelCatalog: modelCatalog([
-      { model: "glm-5.2", displayName: "GLM 5.2", contextWindow: 204800 },
+      {
+        model: "glm-5.2",
+        displayName: "GLM 5.2",
+        contextWindow: 204800,
+        effortLevels: ["high", "max"],
+      },
       { model: "glm-5.1", displayName: "GLM 5.1", contextWindow: 204800 },
       {
         model: "kimi-k2.7-code",
         displayName: "Kimi K2.7 Code",
         contextWindow: 262144,
       },
-      { model: "deepseek-v4-pro", displayName: "DeepSeek V4 Pro" },
-      { model: "deepseek-v4-flash", displayName: "DeepSeek V4 Flash" },
+      {
+        model: "deepseek-v4-pro",
+        displayName: "DeepSeek V4 Pro",
+        effortLevels: ["high", "max"],
+      },
+      {
+        model: "deepseek-v4-flash",
+        displayName: "DeepSeek V4 Flash",
+        effortLevels: ["low", "high", "max"],
+      },
       {
         model: "mimo-v2.5-pro",
         displayName: "MiMo V2.5 Pro",

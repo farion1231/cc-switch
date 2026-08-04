@@ -331,15 +331,53 @@ pub fn resolve_codex_chat_reasoning_config(
     provider: &Provider,
     body: &JsonValue,
 ) -> Option<CodexChatReasoningConfig> {
-    if let Some(config) = provider
+    let mut config = if let Some(config) = provider
         .meta
         .as_ref()
         .and_then(|meta| meta.codex_chat_reasoning.clone())
     {
-        return Some(normalize_codex_chat_reasoning_config(config));
+        normalize_codex_chat_reasoning_config(config)
+    } else {
+        infer_codex_chat_reasoning_config(provider, body)?
+    };
+
+    // zen 的合法 effort 档位是逐模型的（models.dev：glm-5.2 仅 high|max、
+    // kimi-k3 仅 max、qwen/glm-5.1 等为 toggle 型无 effort），opencode 客户端
+    // 也严格按模型声明发值。按请求模型从 modelCatalog 查表附上；查不到（模型
+    // 未收录 / 条目未声明 effort）→ None，转换层将完全不发 reasoning_effort。
+    if config.effort_value_mode.as_deref() == Some("zen") {
+        config.effort_levels = zen_catalog_effort_levels(provider, body);
     }
 
-    infer_codex_chat_reasoning_config(provider, body)
+    Some(config)
+}
+
+/// 按请求模型从供应商 modelCatalog 查 Zen 合法 effort 档位（逐模型数据镜像
+/// models.dev 的 reasoning_options effort values）。仅做档位查表，不参与平台
+/// 判定——平台身份仍只由 name/base_url 决定（见 infer_aggregator_platform_config）。
+fn zen_catalog_effort_levels(provider: &Provider, body: &JsonValue) -> Option<Vec<String>> {
+    let model = body.get("model")?.as_str()?.trim();
+    if model.is_empty() {
+        return None;
+    }
+    let entries = provider
+        .settings_config
+        .get("modelCatalog")?
+        .get("models")?
+        .as_array()?;
+    let entry = entries.iter().find(|entry| {
+        entry
+            .get("model")
+            .and_then(|value| value.as_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case(model))
+    })?;
+    let levels: Vec<String> = entry
+        .get("effortLevels")?
+        .as_array()?
+        .iter()
+        .filter_map(|level| level.as_str().map(str::to_string))
+        .collect();
+    (!levels.is_empty()).then_some(levels)
 }
 
 fn normalize_codex_chat_reasoning_config(
@@ -395,6 +433,7 @@ fn infer_codex_chat_reasoning_config(
             effort_param: Some("reasoning_effort".to_string()),
             effort_value_mode: Some("deepseek".to_string()),
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
         });
     }
 
@@ -409,6 +448,7 @@ fn infer_codex_chat_reasoning_config(
             effort_param: Some("reasoning_effort".to_string()),
             effort_value_mode: Some("low_high".to_string()),
             output_format: Some("reasoning".to_string()),
+            effort_levels: None,
         });
     }
 
@@ -420,6 +460,7 @@ fn infer_codex_chat_reasoning_config(
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
         });
     }
 
@@ -431,6 +472,7 @@ fn infer_codex_chat_reasoning_config(
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
         });
     }
 
@@ -442,6 +484,7 @@ fn infer_codex_chat_reasoning_config(
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
         });
     }
 
@@ -453,6 +496,7 @@ fn infer_codex_chat_reasoning_config(
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
             output_format: Some("reasoning_details".to_string()),
+            effort_levels: None,
         });
     }
 
@@ -464,6 +508,7 @@ fn infer_codex_chat_reasoning_config(
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
         });
     }
 
@@ -493,6 +538,7 @@ fn infer_aggregator_platform_config(
             effort_param: Some("reasoning.effort".to_string()),
             effort_value_mode: Some("openrouter".to_string()),
             output_format: Some("auto".to_string()),
+            effort_levels: None,
         });
     }
 
@@ -507,6 +553,7 @@ fn infer_aggregator_platform_config(
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
         });
     }
 
@@ -525,6 +572,7 @@ fn infer_aggregator_platform_config(
             effort_param: Some("reasoning_effort".to_string()),
             effort_value_mode: Some("zen".to_string()),
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
         });
     }
 
@@ -1495,6 +1543,7 @@ wire_api = "chat"
                 effort_param: Some("none".to_string()),
                 effort_value_mode: None,
                 output_format: Some("auto".to_string()),
+                effort_levels: None,
             }),
             ..Default::default()
         });
@@ -1585,6 +1634,112 @@ wire_api = "chat"
         assert_eq!(config.effort_param.as_deref(), Some("reasoning_effort"));
         assert_eq!(config.effort_value_mode.as_deref(), Some("zen"));
         assert_eq!(config.supports_effort, Some(true));
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_zen_attaches_per_model_effort_levels() {
+        // zen 档位表按请求模型从 modelCatalog 查（镜像 models.dev，2026-08）：
+        // glm-5.2=high|max、deepseek-v4-flash=low|high|max、glm-5.1=toggle 型无声明。
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "opencode_go"
+model = "glm-5.2"
+
+[model_providers.opencode_go]
+name = "OpenCode Go"
+base_url = "https://opencode.ai/zen/go/v1"
+wire_api = "chat"
+"#,
+            "modelCatalog": {
+                "models": [
+                    { "model": "glm-5.2", "effortLevels": ["high", "max"] },
+                    { "model": "deepseek-v4-flash", "effortLevels": ["low", "high", "max"] },
+                    { "model": "glm-5.1" }
+                ]
+            }
+        }));
+
+        let config =
+            resolve_codex_chat_reasoning_config(&provider, &json!({ "model": "glm-5.2" })).unwrap();
+        assert_eq!(
+            config.effort_levels,
+            Some(vec!["high".to_string(), "max".to_string()])
+        );
+
+        // 模型名大小写不敏感（Codex 侧可能改写大小写）。
+        let config =
+            resolve_codex_chat_reasoning_config(&provider, &json!({ "model": "GLM-5.2" })).unwrap();
+        assert_eq!(
+            config.effort_levels,
+            Some(vec!["high".to_string(), "max".to_string()])
+        );
+
+        let config = resolve_codex_chat_reasoning_config(
+            &provider,
+            &json!({ "model": "deepseek-v4-flash" }),
+        )
+        .unwrap();
+        assert_eq!(
+            config.effort_levels,
+            Some(vec![
+                "low".to_string(),
+                "high".to_string(),
+                "max".to_string()
+            ])
+        );
+
+        // toggle 型（条目无 effortLevels）→ None：转换层不发 reasoning_effort。
+        let config =
+            resolve_codex_chat_reasoning_config(&provider, &json!({ "model": "glm-5.1" })).unwrap();
+        assert_eq!(config.effort_levels, None);
+
+        // 目录未收录的模型 → None：同上，不发字段。
+        let config =
+            resolve_codex_chat_reasoning_config(&provider, &json!({ "model": "kimi-k3" })).unwrap();
+        assert_eq!(config.effort_levels, None);
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_zen_levels_attach_on_explicit_meta_too() {
+        // 显式 meta 配置（预设默认值路径）同样要附上逐模型档位表——查表发生在
+        // resolve 的公共尾部，显式/推断两条路径行为一致。
+        let mut provider = create_provider(json!({
+            "config": r#"
+model_provider = "opencode_go"
+model = "glm-5.2"
+
+[model_providers.opencode_go]
+name = "OpenCode Go"
+base_url = "https://opencode.ai/zen/go/v1"
+wire_api = "chat"
+"#,
+            "modelCatalog": {
+                "models": [
+                    { "model": "glm-5.2", "effortLevels": ["high", "max"] }
+                ]
+            }
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            codex_chat_reasoning: Some(CodexChatReasoningConfig {
+                supports_thinking: Some(true),
+                supports_effort: Some(true),
+                thinking_param: Some("none".to_string()),
+                effort_param: Some("reasoning_effort".to_string()),
+                effort_value_mode: Some("zen".to_string()),
+                output_format: Some("reasoning_content".to_string()),
+                effort_levels: None,
+            }),
+            ..Default::default()
+        });
+
+        let config =
+            resolve_codex_chat_reasoning_config(&provider, &json!({ "model": "glm-5.2" })).unwrap();
+
+        assert_eq!(config.effort_value_mode.as_deref(), Some("zen"));
+        assert_eq!(
+            config.effort_levels,
+            Some(vec!["high".to_string(), "max".to_string()])
+        );
     }
 
     #[test]
