@@ -588,6 +588,67 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
 }
 
 #[test]
+fn enabling_codex_mcp_rolls_back_database_when_live_config_is_invalid() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    let invalid_config = "model = \"gpt-5.5\"\ninvalid = [\n";
+    fs::write(codex_dir.join("config.toml"), invalid_config).expect("seed invalid config.toml");
+
+    let state = create_test_state().expect("create test state");
+    McpService::upsert_server(
+        &state,
+        McpServer {
+            id: "codex-server".to_string(),
+            name: "Codex Server".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: false,
+                gemini: false,
+                grokbuild: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    )
+    .expect("insert disabled Codex MCP");
+
+    let err = McpService::toggle_app(&state, "codex-server", AppType::Codex, true)
+        .expect_err("an invalid live config must reject the toggle");
+    assert!(
+        err.to_string().contains("解析 config.toml 失败"),
+        "toggle should surface the live-config projection error: {err}"
+    );
+
+    let server = state
+        .db
+        .get_all_mcp_servers()
+        .expect("read MCP servers")
+        .shift_remove("codex-server")
+        .expect("server should remain in database");
+    assert!(
+        !server.apps.codex,
+        "failed Codex projection must restore the database/UI enabled state"
+    );
+    assert_eq!(
+        fs::read_to_string(codex_dir.join("config.toml")).expect("read invalid config"),
+        invalid_config,
+        "a failed projection must not overwrite the user's invalid config"
+    );
+}
+
+#[test]
 fn enabling_codex_mcp_skips_when_codex_dir_missing() {
     use support::create_test_state;
 
