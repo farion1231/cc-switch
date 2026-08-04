@@ -271,6 +271,13 @@ export interface CodexCatalogModel {
   baseInstructions?: string;
 }
 
+export interface CodexSubagentSettingsView {
+  model: string | null;
+  reasoningEffort: string | null;
+  availableModels: string[];
+  configPath: string;
+}
+
 // Claude 认证字段类型
 export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 

@@ -2534,6 +2534,27 @@
     "skillsFailedDescription": "Open the Skills page and click \"Import Existing\" to import manually (or restart and try again)."
   },
   "agents": {
+    "codexTitle": "Codex sub-agent defaults",
+    "codexDescription": "Set the default model and reasoning effort used by Codex sub-agents.",
+    "modelLabel": "Sub-agent model",
+    "modelPlaceholder": "Enter a Codex model id",
+    "modelHint": "Leave empty to remove the default model.",
+    "reasoningLabel": "Reasoning effort",
+    "reasoningHint": "Leave unset to let Codex choose the default.",
+    "notSet": "Not set",
+    "configPath": "Codex config",
+    "reset": "Reset changes",
+    "saveSuccess": "Codex sub-agent settings saved",
+    "saveFailed": "Failed to save Codex sub-agent settings",
+    "loadFailed": "Failed to load Codex sub-agent settings",
+    "reasoning": {
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "xhigh": "Extra high",
+      "max": "Maximum",
+      "ultra": "Ultra"
+    },
     "title": "Agents"
   },
   "health": {

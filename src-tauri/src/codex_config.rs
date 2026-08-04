@@ -248,6 +248,7 @@ pub fn write_codex_live_atomic(
         Some(s) => s.to_string(),
         None => String::new(),
     };
+    let cfg_text = crate::codex_subagents::apply_persisted_settings_to_config_text(&cfg_text)?;
     if !cfg_text.trim().is_empty() {
         toml::from_str::<toml::Table>(&cfg_text).map_err(|e| AppError::toml(&config_path, e))?;
     }
@@ -323,6 +324,7 @@ pub fn write_codex_live_config_atomic(config_text_opt: Option<&str>) -> Result<(
         Some(config_text) => config_text.to_string(),
         None => String::new(),
     };
+    let cfg_text = crate::codex_subagents::apply_persisted_settings_to_config_text(&cfg_text)?;
 
     if !cfg_text.trim().is_empty() {
         toml::from_str::<toml::Table>(&cfg_text).map_err(|e| AppError::toml(&config_path, e))?;
