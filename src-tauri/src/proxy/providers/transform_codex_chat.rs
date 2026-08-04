@@ -291,14 +291,15 @@ pub fn responses_to_chat_completions_with_reasoning(
 
     let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
     if let Some(max_tokens) = body.get("max_output_tokens") {
+        let clamped = super::transform::clamp_max_tokens(model, max_tokens);
         if super::transform::requires_max_completion_tokens(model) {
-            result["max_completion_tokens"] = max_tokens.clone();
+            result["max_completion_tokens"] = clamped;
         } else {
-            result["max_tokens"] = max_tokens.clone();
+            result["max_tokens"] = clamped;
         }
     }
     if let Some(max_tokens) = body.get("max_tokens") {
-        result["max_tokens"] = max_tokens.clone();
+        result["max_tokens"] = super::transform::clamp_max_tokens(model, max_tokens);
     }
     if let Some(max_tokens) = body.get("max_completion_tokens") {
         result["max_completion_tokens"] = max_tokens.clone();

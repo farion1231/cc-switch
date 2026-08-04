@@ -328,9 +328,11 @@ pub fn anthropic_to_responses(
     }
 
     // max_tokens → max_output_tokens (Responses API uses max_output_tokens for all models)
-    // Clamp to >= 16: Claude Code may send 1 as a probe value, which OpenAI rejects.
+    // Clamp: >= 16 (OpenAI minimum) and <= model's known output-token cap.
     if let Some(v) = body.get("max_tokens") {
-        let clamped = v.as_i64().map(|n| n.max(16)).map(|n| json!(n)).unwrap_or_else(|| v.clone());
+        let model = body.get("model").and_then(|m| m.as_str()).unwrap_or("");
+        let clamped = super::transform::clamp_max_tokens(model, v);
+        let clamped = clamped.as_i64().map(|n| n.max(16)).map(|n| json!(n)).unwrap_or(clamped);
         result["max_output_tokens"] = clamped;
     }
 
