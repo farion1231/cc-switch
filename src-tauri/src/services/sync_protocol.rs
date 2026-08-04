@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 use crate::error::AppError;
+use crate::services::skill::{skill_state_read_guard, skill_state_write_guard};
 
 // Re-export archive functions for use by transport layers.
 pub(crate) use super::webdav_sync::archive::{
@@ -127,6 +128,10 @@ impl RemoteLayout {
 pub(crate) fn build_local_snapshot(
     db: &crate::database::Database,
 ) -> Result<LocalSnapshot, AppError> {
+    // Keep the DB's skill rows and the filesystem SSOT at one logical point in
+    // time. Skill writers take the matching write guard around both mutations.
+    let _skill_state_guard = skill_state_read_guard();
+
     // Export database to SQL string
     let sql_string = db.export_sql_string_for_sync()?;
     let db_sql = sql_string.into_bytes();
@@ -340,6 +345,9 @@ pub(crate) fn apply_snapshot(
             format!("SQL is not valid UTF-8: {e}"),
         )
     })?;
+    // Exclude installs, uninstalls, updates, and local projection while Skills
+    // are backed up/replaced and the corresponding database snapshot is applied.
+    let _skill_state_guard = skill_state_write_guard();
     let skills_backup = backup_current_skills()?;
 
     // Replace skills first, then import database; roll back skills on DB failure.

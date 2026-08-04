@@ -12,7 +12,17 @@ use crate::database::backup::BackupEntry;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::services::provider::ProviderService;
+use crate::services::skill::skill_state_write_guard;
+use crate::services::sync_protocol::sync_mutex;
 use crate::store::AppState;
+
+async fn run_with_database_restore_lock<T, Fut>(operation: Fut) -> T
+where
+    Fut: std::future::Future<Output = T>,
+{
+    let _sync_guard = sync_mutex().lock().await;
+    operation.await
+}
 
 // ─── File import/export ──────────────────────────────────────
 
@@ -45,15 +55,20 @@ pub async fn import_config_from_file(
 ) -> Result<Value, String> {
     let db = state.db.clone();
     let db_for_sync = db.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    run_with_database_restore_lock(tauri::async_runtime::spawn_blocking(move || {
         let path_buf = PathBuf::from(&filePath);
-        let backup_id = db.import_sql(&path_buf)?;
+        let backup_id = {
+            // SQL restore replaces the `skills` table. Exclude local Skill
+            // mutations while the database image is being swapped.
+            let _skill_state_guard = skill_state_write_guard();
+            db.import_sql(&path_buf)?
+        };
         let warning = post_sync_warning_from_result(Ok(run_post_import_sync(db_for_sync)));
         if let Some(msg) = warning.as_ref() {
             log::warn!("[Import] post-import sync warning: {msg}");
         }
         Ok::<_, AppError>(success_payload_with_warning(backup_id, warning))
-    })
+    }))
     .await
     .map_err(|e| format!("导入配置失败: {e}"))?
     .map_err(|e: AppError| e.to_string())
@@ -154,10 +169,13 @@ pub async fn restore_db_backup(
     filename: String,
 ) -> Result<String, String> {
     let db = state.db.clone();
-    tauri::async_runtime::spawn_blocking(move || db.restore_from_backup(&filename))
-        .await
-        .map_err(|e| format!("Restore failed: {e}"))?
-        .map_err(|e: AppError| e.to_string())
+    run_with_database_restore_lock(tauri::async_runtime::spawn_blocking(move || {
+        let _skill_state_guard = skill_state_write_guard();
+        db.restore_from_backup(&filename)
+    }))
+    .await
+    .map_err(|e| format!("Restore failed: {e}"))?
+    .map_err(|e: AppError| e.to_string())
 }
 
 /// Rename a database backup file
@@ -173,4 +191,36 @@ pub fn rename_db_backup(
 #[tauri::command]
 pub fn delete_db_backup(filename: String) -> Result<(), String> {
     Database::delete_backup(&filename).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run_with_database_restore_lock;
+    use crate::services::sync_protocol::sync_mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn manual_restore_waits_for_the_global_sync_operation_lock() {
+        let guard = sync_mutex().lock().await;
+        let entered = Arc::new(AtomicBool::new(false));
+        let entered_in_task = Arc::clone(&entered);
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+
+        let waiter = tokio::spawn(async move {
+            let _ = ready_tx.send(());
+            run_with_database_restore_lock(async move {
+                entered_in_task.store(true, Ordering::SeqCst);
+            })
+            .await;
+        });
+
+        ready_rx.await.expect("restore waiter should start");
+        tokio::task::yield_now().await;
+        assert!(!entered.load(Ordering::SeqCst));
+
+        drop(guard);
+        waiter.await.expect("restore waiter should complete");
+        assert!(entered.load(Ordering::SeqCst));
+    }
 }
