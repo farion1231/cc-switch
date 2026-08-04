@@ -1183,6 +1183,15 @@ impl RequestForwarder {
                 super::providers::copilot_model_map::apply_copilot_model_normalization(mapped_body);
             self.apply_copilot_live_model_resolution(provider, &mut mapped_body)
                 .await;
+            // Strip the [1M] context marker after Copilot normalization/resolve.
+            // A user's mapped value (e.g. "gpt-5.6-sol[1M]") carries [1M] as a
+            // Claude Code context-capability declaration that upstream APIs reject
+            // as part of the model name. The preceding normalization step already
+            // rewrites claude-xxx[1M] into the "-1m" dash form Copilot accepts, and
+            // the strip helper only touches the "[1m]" bracket form, so "-1m"
+            // variants pass through unchanged.
+            mapped_body =
+                super::model_mapper::strip_one_m_suffix_for_upstream_from_body(mapped_body);
         } else if !codex_responses_to_anthropic {
             // Skip on the Codex→Anthropic path: stripping [1m] here would break both the
             // model-catalog match (apply_codex_upstream_model) and the transform's own

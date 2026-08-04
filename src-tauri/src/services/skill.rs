@@ -266,6 +266,26 @@ struct SkillBackupMetadata {
 
 const SKILL_BACKUP_RETAIN_COUNT: usize = 20;
 
+/// 仓库归档解压上限：条目数与解压后总字节数。
+///
+/// 归档字节由第三方完全控制（仓库可经 deeplink 添加，且 branch 可把下载落点
+/// 改写到攻击者自传的 release asset），没有上限时一个几 MB 的压缩炸弹就能塞满磁盘。
+/// 取值对齐 `webdav_sync/archive.rs` 里同款保护的量级。
+const MAX_ARCHIVE_ENTRIES: usize = 10_000;
+const MAX_ARCHIVE_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
+/// symlink 目标就是一条路径，几十字节就够；给到 4 KiB 是宽松上限。
+/// 必须有这个上限：zip 2.4.2 的 `make_reader` 不按声明的 uncompressed_size
+/// 截断读取，所以一个打了 symlink 标志、deflate 流却能膨胀到数 GB 的条目，
+/// 会被 `read_to_string` 整个读进内存。
+const MAX_SYMLINK_TARGET_BYTES: u64 = 4 * 1024;
+/// 物化一个目录按一个目录块计费。空目录不写内容字节，但照样吃 inode 和磁盘块，
+/// 不计费就等于允许无限量地造目录。
+const DIRECTORY_BUDGET_COST: u64 = 4096;
+/// 压缩体上限。解压预算只有在 ZipArchive 建起来之后才生效，而那时整个响应体
+/// 已经在内存里了，所以下载这一步需要自己的上限。技能仓库是 Markdown，
+/// 128 MiB 的压缩包已经远超正常规模。
+const MAX_ARCHIVE_DOWNLOAD_BYTES: u64 = 128 * 1024 * 1024;
+
 /// 技能元数据 (从 SKILL.md 解析)
 #[derive(Debug, Clone, Deserialize)]
 pub struct SkillMetadata {
@@ -447,8 +467,22 @@ impl SkillService {
     }
 
     /// 构建 Skill 文档 URL（指向仓库中的 SKILL.md 文件）
-    fn build_skill_doc_url(owner: &str, repo: &str, branch: &str, doc_path: &str) -> String {
-        format!("https://github.com/{owner}/{repo}/blob/{branch}/{doc_path}")
+    ///
+    /// 坐标不合法时返回 None：这个值会存进 `readme_url`，前端「查看文档」用
+    /// `openExternal` 直接打开，恶意 branch 能把它指到 github.com 上的任意路径。
+    fn build_skill_doc_url(
+        owner: &str,
+        repo: &str,
+        branch: &str,
+        doc_path: &str,
+    ) -> Option<String> {
+        if Self::validate_repo_ref(owner, repo, branch).is_err() {
+            log::warn!("跳过非法仓库坐标的文档链接: {owner}/{repo}@{branch}");
+            return None;
+        }
+        Some(format!(
+            "https://github.com/{owner}/{repo}/blob/{branch}/{doc_path}"
+        ))
     }
 
     /// 从旧 readme_url 中提取仓库内文档路径，兼容 `blob`/`tree` 两种格式
@@ -650,7 +684,7 @@ impl SkillService {
             };
 
             // 下载仓库
-            let (temp_dir, used_branch) = timeout(
+            let (temp_guard, used_branch) = timeout(
                 std::time::Duration::from_secs(60),
                 self.download_repo(&repo),
             )
@@ -666,13 +700,13 @@ impl SkillService {
                     Some("checkNetwork"),
                 ))
             })??;
+            let temp_dir = temp_guard.path();
             repo_branch = used_branch;
 
             // 复制到 SSOT
             let source =
-                Self::resolve_skill_source_dir(&temp_dir, &skill.directory).ok_or_else(|| {
+                Self::resolve_skill_source_dir(temp_dir, &skill.directory).ok_or_else(|| {
                     let missing = temp_dir.join(&source_rel).display().to_string();
-                    let _ = fs::remove_dir_all(&temp_dir);
                     anyhow!(format_skill_error(
                         "SKILL_DIR_NOT_FOUND",
                         &[("path", &missing)],
@@ -680,7 +714,9 @@ impl SkillService {
                     ))
                 })?;
 
-            let canonical_temp = temp_dir.canonicalize().unwrap_or_else(|_| temp_dir.clone());
+            let canonical_temp = temp_dir
+                .canonicalize()
+                .unwrap_or_else(|_| temp_dir.to_path_buf());
             let canonical_source = source.canonicalize().map_err(|_| {
                 anyhow!(format_skill_error(
                     "SKILL_DIR_NOT_FOUND",
@@ -689,7 +725,6 @@ impl SkillService {
                 ))
             })?;
             if !canonical_source.starts_with(&canonical_temp) || !canonical_source.is_dir() {
-                let _ = fs::remove_dir_all(&temp_dir);
                 return Err(anyhow!(format_skill_error(
                     "INVALID_SKILL_DIRECTORY",
                     &[("directory", &skill.directory)],
@@ -698,7 +733,6 @@ impl SkillService {
             }
 
             Self::copy_dir_recursive(&canonical_source, &dest)?;
-            let _ = fs::remove_dir_all(&temp_dir);
 
             // 使用实际下载成功的分支，避免 readme_url / repo_branch 与真实分支不一致。
             if repo_branch != skill.repo_branch {
@@ -725,12 +759,8 @@ impl SkillService {
             })
             .unwrap_or_else(|| format!("{}/SKILL.md", skill.directory.trim_end_matches('/')));
 
-        let readme_url = Some(Self::build_skill_doc_url(
-            &skill.repo_owner,
-            &skill.repo_name,
-            &repo_branch,
-            &doc_path,
-        ));
+        let readme_url =
+            Self::build_skill_doc_url(&skill.repo_owner, &skill.repo_name, &repo_branch, &doc_path);
 
         // 创建 InstalledSkill 记录
         // 计算内容哈希
@@ -785,20 +815,40 @@ impl SkillService {
             .get_installed_skill(id)?
             .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
 
-        let backup_path =
-            Self::create_uninstall_backup(&skill)?.map(|path| path.to_string_lossy().to_string());
+        // DB 行可能被同步导入污染（远端快照 raw SQL 直接灌库，绕过安装期校验），
+        // 也可能是 v3.11.0 引入 sanitize_install_name 之前留下的存量脏值
+        // （当年扫描不过滤点开头目录，`.github/SKILL.md` 会存成 `.github`）。
+        //
+        // 守卫失败时**跳过全部文件系统操作、但仍删除 DB 行**：`db.delete_skill`
+        // 全项目只有这一处调用且未暴露为命令，若在此直接返回 Err，用户就再也无法
+        // 从界面删掉这条记录，只能手改 SQLite。安全目标是「不碰危险路径」，
+        // 不是「把用户锁在坏状态里」。
+        let backup_path = match Self::require_valid_directory(&skill.directory) {
+            Ok(directory) => {
+                let backup_path = Self::create_uninstall_backup(&skill)?
+                    .map(|path| path.to_string_lossy().to_string());
 
-        // 从所有应用目录删除
-        for app in AppType::all() {
-            let _ = Self::remove_from_app(&skill.directory, &app);
-        }
+                // 从所有应用目录删除
+                for app in AppType::all() {
+                    let _ = Self::remove_from_app(&directory, &app);
+                }
 
-        // 从 SSOT 删除
-        let ssot_dir = Self::get_ssot_dir()?;
-        let skill_path = ssot_dir.join(&skill.directory);
-        if skill_path.exists() {
-            fs::remove_dir_all(&skill_path)?;
-        }
+                // 从 SSOT 删除
+                let ssot_dir = Self::get_ssot_dir()?;
+                let skill_path = ssot_dir.join(&directory);
+                if skill_path.exists() {
+                    fs::remove_dir_all(&skill_path)?;
+                }
+                backup_path
+            }
+            Err(err) => {
+                log::warn!(
+                    "Skill {id} 的 directory 非法（{:?}），跳过文件清理，仅删除数据库记录: {err}",
+                    skill.directory
+                );
+                None
+            }
+        };
 
         // 从数据库删除
         db.delete_skill(id)?;
@@ -900,7 +950,7 @@ impl SkillService {
             };
 
             // 下载仓库 ZIP
-            let (temp_dir, _used_branch) = match timeout(
+            let (temp_guard, _used_branch) = match timeout(
                 std::time::Duration::from_secs(60),
                 self.download_repo(&repo),
             )
@@ -916,10 +966,11 @@ impl SkillService {
                     continue;
                 }
             };
+            let temp_dir = temp_guard.path();
 
             // 扫描仓库中的所有 Skill 目录
             let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
-            let _ = self.scan_dir_recursive(&temp_dir, &temp_dir, &repo, &mut remote_skills);
+            let _ = self.scan_dir_recursive(temp_dir, temp_dir, &repo, &mut remote_skills);
 
             for skill in group_skills {
                 // 在远程仓库中找到匹配的 Skill 目录
@@ -931,7 +982,7 @@ impl SkillService {
                 });
 
                 let remote_skill_dir = match remote_match {
-                    Some(rs) => match Self::resolve_skill_source_dir(&temp_dir, &rs.directory) {
+                    Some(rs) => match Self::resolve_skill_source_dir(temp_dir, &rs.directory) {
                         Some(path) => path,
                         None => continue,
                     },
@@ -949,20 +1000,28 @@ impl SkillService {
                 // 本地哈希：优先数据库，否则实时计算
                 let local_hash = match &skill.content_hash {
                     Some(h) => Some(h.clone()),
-                    None => {
-                        let local_dir = ssot_dir.join(&skill.directory);
-                        if local_dir.exists() {
-                            match Self::compute_dir_hash(&local_dir) {
-                                Ok(h) => {
-                                    let _ = db.update_skill_hash(&skill.id, &h, 0);
-                                    Some(h)
-                                }
-                                Err(_) => None,
-                            }
-                        } else {
+                    // 脏 directory 会让 compute_dir_hash 递归遍历任意目录，
+                    // 且哈希结果经「有无更新」的界面状态泄露少量信息。
+                    None => match Self::require_valid_directory(&skill.directory) {
+                        Err(err) => {
+                            log::warn!("跳过非法 directory 的哈希计算: {err}");
                             None
                         }
-                    }
+                        Ok(directory) => {
+                            let local_dir = ssot_dir.join(&directory);
+                            if local_dir.exists() {
+                                match Self::compute_dir_hash(&local_dir) {
+                                    Ok(h) => {
+                                        let _ = db.update_skill_hash(&skill.id, &h, 0);
+                                        Some(h)
+                                    }
+                                    Err(_) => None,
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                    },
                 };
 
                 if local_hash.as_deref() != Some(&remote_hash) {
@@ -974,8 +1033,6 @@ impl SkillService {
                     });
                 }
             }
-
-            let _ = fs::remove_dir_all(&temp_dir);
         }
 
         Ok(updates)
@@ -986,6 +1043,11 @@ impl SkillService {
         let skill = db
             .get_installed_skill(skill_id)?
             .ok_or_else(|| anyhow!("Skill not found: {skill_id}"))?;
+
+        // 本函数后续三种危险操作都用 directory 拼路径：备份源（把任意目录复制进
+        // 备份区并在界面列出）、remove_dir_all（删任意目录）、copy_dir_recursive
+        // （把远端仓库内容写到任意路径）。校验必须在这三者之前。
+        Self::require_valid_directory(&skill.directory)?;
 
         let (owner, name, branch) = match (&skill.repo_owner, &skill.repo_name) {
             (Some(o), Some(n)) => (
@@ -1009,7 +1071,7 @@ impl SkillService {
         let ssot_dir = Self::get_ssot_dir()?;
 
         // 下载仓库
-        let (temp_dir, used_branch) = timeout(
+        let (temp_guard, used_branch) = timeout(
             std::time::Duration::from_secs(60),
             self.download_repo(&repo),
         )
@@ -1021,10 +1083,11 @@ impl SkillService {
                 Some("checkNetwork"),
             ))
         })??;
+        let temp_dir = temp_guard.path();
 
         // 在解压的仓库中查找 Skill 源目录
         let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
-        let _ = self.scan_dir_recursive(&temp_dir, &temp_dir, &repo, &mut remote_skills);
+        let _ = self.scan_dir_recursive(temp_dir, temp_dir, &repo, &mut remote_skills);
 
         let remote_match = remote_skills
             .iter()
@@ -1033,7 +1096,6 @@ impl SkillService {
                 remote_install_name.eq_ignore_ascii_case(&skill.directory)
             })
             .ok_or_else(|| {
-                let _ = fs::remove_dir_all(&temp_dir);
                 anyhow!(format_skill_error(
                     "SKILL_DIR_NOT_FOUND",
                     &[("path", &skill.directory)],
@@ -1041,10 +1103,9 @@ impl SkillService {
                 ))
             })?;
 
-        let source = Self::resolve_skill_source_dir(&temp_dir, &remote_match.directory)
-            .ok_or_else(|| {
+        let source =
+            Self::resolve_skill_source_dir(temp_dir, &remote_match.directory).ok_or_else(|| {
                 let missing = temp_dir.join(&remote_match.directory).display().to_string();
-                let _ = fs::remove_dir_all(&temp_dir);
                 anyhow!(format_skill_error(
                     "SKILL_DIR_NOT_FOUND",
                     &[("path", &missing)],
@@ -1061,7 +1122,6 @@ impl SkillService {
             fs::remove_dir_all(&dest)?;
         }
         Self::copy_dir_recursive(&source, &dest)?;
-        let _ = fs::remove_dir_all(&temp_dir);
 
         // 计算新哈希 + 解析新元数据
         let new_hash = Self::compute_dir_hash(&dest).ok();
@@ -1074,12 +1134,7 @@ impl SkillService {
             .as_deref()
             .and_then(Self::extract_doc_path_from_url)
             .unwrap_or_else(|| format!("{}/SKILL.md", skill.directory.trim_end_matches('/')));
-        let readme_url = Some(Self::build_skill_doc_url(
-            &owner,
-            &name,
-            &used_branch,
-            &doc_path,
-        ));
+        let readme_url = Self::build_skill_doc_url(&owner, &name, &used_branch, &doc_path);
 
         let updated_skill = InstalledSkill {
             id: skill.id.clone(),
@@ -1119,7 +1174,11 @@ impl SkillService {
             if skill.content_hash.is_some() {
                 continue;
             }
-            let skill_dir = ssot_dir.join(&skill.directory);
+            let Ok(directory) = Self::require_valid_directory(&skill.directory) else {
+                log::warn!("跳过非法 directory 的哈希回填: {:?}", skill.directory);
+                continue;
+            };
+            let skill_dir = ssot_dir.join(&directory);
             if !skill_dir.exists() {
                 continue;
             }
@@ -1175,8 +1234,20 @@ impl SkillService {
         };
 
         for skill in skills.values() {
-            let src = old_dir.join(&skill.directory);
-            let dst = new_dir.join(&skill.directory);
+            // 下面是 rename 与 remove_dir_all，脏 directory 可把任意目录搬走或删掉。
+            // 软失败：本函数已有 errors 收集通道，记一条继续处理其余 skill，
+            // 不要整体中断——用户只是在切换存储位置。
+            let directory = match Self::require_valid_directory(&skill.directory) {
+                Ok(directory) => directory,
+                Err(err) => {
+                    result
+                        .errors
+                        .push(format!("{}: {err}", skill.directory.escape_debug()));
+                    continue;
+                }
+            };
+            let src = old_dir.join(&directory);
+            let dst = new_dir.join(&directory);
 
             if !src.exists() {
                 result.skipped_count += 1;
@@ -1302,8 +1373,12 @@ impl SkillService {
             ));
         }
 
+        // meta.json 是文件内容（可能来自手工放置或不可信备份），directory 此前
+        // 未经任何校验就直接 join——可穿越出 SSOT 目录写任意位置。必须先校验。
+        let directory = Self::require_valid_directory(&metadata.skill.directory)?;
+
         let ssot_dir = Self::get_ssot_dir()?;
-        let restore_path = ssot_dir.join(&metadata.skill.directory);
+        let restore_path = ssot_dir.join(&directory);
         if restore_path.exists() || Self::is_symlink(&restore_path) {
             return Err(anyhow!(
                 "Restore target already exists: {}",
@@ -1312,6 +1387,7 @@ impl SkillService {
         }
 
         let mut restored_skill = metadata.skill;
+        restored_skill.directory = directory;
         restored_skill.installed_at = Utc::now().timestamp();
         restored_skill.apps = SkillApps::only(current_app);
         restored_skill.updated_at = 0;
@@ -1465,7 +1541,16 @@ impl SkillService {
         search_sources.push((ssot_dir.clone(), "cc-switch".to_string()));
 
         for selection in imports {
-            let dir_name = selection.directory;
+            // selection.directory 由前端 IPC 直接传入、此前全程无校验，而它既被
+            // 用来探测源目录、又作为 copy_dir_recursive 的目标、最后还原样入库。
+            // 在入口处拒掉，同时切断「脏值 sink」和「脏值来源」两条线。
+            let dir_name = match Self::require_valid_directory(&selection.directory) {
+                Ok(dir_name) => dir_name,
+                Err(err) => {
+                    log::warn!("跳过导入：{err}");
+                    continue;
+                }
+            };
             // 在所有候选目录中查找
             let mut source_path: Option<PathBuf> = None;
 
@@ -1581,22 +1666,25 @@ impl SkillService {
             return Ok(());
         }
 
-        let ssot_dir = Self::get_ssot_dir()?;
-        let source = ssot_dir.join(directory);
+        // directory 可能来自被污染的 DB 行（如同步导入的远端快照），join 前必须校验。
+        let directory = Self::require_valid_directory(directory)?;
 
-        Self::validate_sync_source_dir(&source, directory)?;
+        let ssot_dir = Self::get_ssot_dir()?;
+        let source = ssot_dir.join(&directory);
+
+        Self::validate_sync_source_dir(&source, &directory)?;
 
         let app_dir = Self::get_app_skills_dir(app)?;
         fs::create_dir_all(&app_dir)?;
 
-        let dest = app_dir.join(directory);
+        let dest = app_dir.join(&directory);
 
         let sync_method = Self::get_sync_method();
 
         match sync_method {
             SyncMethod::Auto => {
                 if dest.exists() && !Self::is_symlink(&dest) {
-                    Self::replace_dest_with_copy(&source, &dest, directory)?;
+                    Self::replace_dest_with_copy(&source, &dest, &directory)?;
                     log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
                     return Ok(());
                 }
@@ -1620,7 +1708,7 @@ impl SkillService {
                     }
                 }
                 // Fallback 到 copy
-                Self::replace_dest_with_copy(&source, &dest, directory)?;
+                Self::replace_dest_with_copy(&source, &dest, &directory)?;
                 log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
             }
             SyncMethod::Symlink => {
@@ -1631,7 +1719,7 @@ impl SkillService {
                 log::debug!("Skill {directory} 已通过 symlink 同步到 {app:?}");
             }
             SyncMethod::Copy => {
-                Self::replace_dest_with_copy(&source, &dest, directory)?;
+                Self::replace_dest_with_copy(&source, &dest, &directory)?;
                 log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
             }
         }
@@ -1753,8 +1841,12 @@ impl SkillService {
             return Ok(());
         }
 
+        // directory 可能来自被污染的 DB 行（如同步导入的远端快照），
+        // 这里执行的是删除操作，join 前必须校验，防止任意目录删除。
+        let directory = Self::require_valid_directory(directory)?;
+
         let app_dir = Self::get_app_skills_dir(app)?;
-        let skill_path = app_dir.join(directory);
+        let skill_path = app_dir.join(&directory);
 
         if skill_path.exists() || Self::is_symlink(&skill_path) {
             Self::remove_path(&skill_path)?;
@@ -1804,7 +1896,15 @@ impl SkillService {
 
         for skill in skills.values() {
             if skill.apps.is_enabled_for(app) {
-                Self::sync_to_app_dir(&skill.directory, app)?;
+                // 逐条容错而非 `?` 传播：本函数在切换供应商时被调用，一条脏
+                // directory（存量点开头目录、或同步导入灌进来的行）不得让整个
+                // 应用的 skill 同步全部失效。
+                if let Err(err) = Self::sync_to_app_dir(&skill.directory, app) {
+                    log::warn!(
+                        "同步 skill {} 到 {app:?} 失败，跳过该条: {err}",
+                        skill.directory
+                    );
+                }
             }
         }
 
@@ -1913,7 +2013,7 @@ impl SkillService {
 
     /// 从仓库获取技能列表
     async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
-        let (temp_dir, resolved_branch) =
+        let (temp_guard, resolved_branch) =
             timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
                 .await
                 .map_err(|_| {
@@ -1929,12 +2029,10 @@ impl SkillService {
                 })??;
 
         let mut skills = Vec::new();
-        let scan_dir = temp_dir.clone();
+        let scan_dir = temp_guard.path();
         let mut resolved_repo = repo.clone();
         resolved_repo.branch = resolved_branch;
-        self.scan_dir_recursive(&scan_dir, &scan_dir, &resolved_repo, &mut skills)?;
-
-        let _ = fs::remove_dir_all(&temp_dir);
+        self.scan_dir_recursive(scan_dir, scan_dir, &resolved_repo, &mut skills)?;
 
         Ok(skills)
     }
@@ -2002,12 +2100,7 @@ impl SkillService {
             name: meta.name.unwrap_or_else(|| directory.to_string()),
             description: meta.description.unwrap_or_default(),
             directory: directory.to_string(),
-            readme_url: Some(Self::build_skill_doc_url(
-                &repo.owner,
-                &repo.name,
-                &repo.branch,
-                doc_path,
-            )),
+            readme_url: Self::build_skill_doc_url(&repo.owner, &repo.name, &repo.branch, doc_path),
             repo_owner: repo.owner.clone(),
             repo_name: repo.name.clone(),
             repo_branch: repo.branch.clone(),
@@ -2095,6 +2188,13 @@ impl SkillService {
             return None;
         }
 
+        // 显式拒绝两种分隔符，不能依赖 components() 的平台语义：
+        // `\` 在 Linux/macOS 上不是分隔符，会被当成合法单段名放行，
+        // 但同一个值同步/还原到 Windows 上就变成了嵌套路径。
+        if trimmed.contains('/') || trimmed.contains('\\') {
+            return None;
+        }
+
         let path = Path::new(trimmed);
         let mut components = path.components();
         match (components.next(), components.next()) {
@@ -2112,6 +2212,132 @@ impl SkillService {
             }
             _ => None,
         }
+    }
+
+    /// 校验来自 DB 行 / 备份 meta.json 等外部来源的 directory 字段。
+    ///
+    /// 存储值按构造本应是单段安装名（见 sanitize_install_name），但有两个入口
+    /// 会绕过安装期校验：同步导入的远端快照直接灌库（raw SQL），以及手工放置 /
+    /// 不可信备份里的 meta.json。任何把它 join 进文件系统路径的使用点（尤其是
+    /// remove_dir_all 这类删除操作）必须先过这道校验，拒绝路径穿越。
+    ///
+    /// 只校验、不归一化：`sanitize_install_name` 会 `trim()`，若拿它的返回值替换
+    /// 原值，磁盘上真实带空格的目录名就再也 join 不中。所以这里要求归一化结果与
+    /// 原值逐字相同，否则一律视为非法。
+    fn require_valid_directory(directory: &str) -> Result<String> {
+        match Self::sanitize_install_name(directory) {
+            Some(normalized) if normalized == directory => Ok(normalized),
+            _ => Err(anyhow!(
+                "Invalid skill directory (possible path traversal): {directory:?}"
+            )),
+        }
+    }
+
+    /// GitHub 账号名（user / org login）。
+    ///
+    /// 只放行 ASCII 字母数字与 `-`。这比 GitHub 自身的规则更严，但该字段会被拼进
+    /// 下载 URL，任何 `/`、`.`、`%`、`\` 都可能改写请求落点（见 validate_repo_ref）。
+    fn is_valid_github_owner(owner: &str) -> bool {
+        !owner.is_empty()
+            && owner.len() <= 39
+            && owner.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    }
+
+    /// GitHub 仓库名。允许 `.` `-` `_`，但整体不能是 `.` 或 `..`。
+    fn is_valid_github_repo_name(name: &str) -> bool {
+        !name.is_empty()
+            && name.len() <= 100
+            && name != "."
+            && name != ".."
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+    }
+
+    /// git 分支名。
+    ///
+    /// 分支名合法含 `/`（`feature/x`），所以不能整体禁掉分隔符——按段做白名单。
+    /// 逐段 `!starts_with('.')` 比整体 `contains("..")` 更稳：它同时挡掉 `a/./b`、
+    /// `a/.../b` 这类变形。除 `git check-ref-format` 的规则外还额外禁掉 `#` 与 `%`：
+    /// 前者会把 URL 后半截变成 fragment，后者可用百分号编码绕过字符检查。
+    fn is_valid_git_branch(branch: &str) -> bool {
+        // 空串和 "HEAD" 都是 `download_repo` 的哨兵，语义都是「用仓库默认分支」：
+        // 分支候选表对两者一视同仁地跳过，改试 main / master，所以它们**永远不会
+        // 被拼进 URL**，也就没有可校验的攻击面。空串必须放行——`skill_repos` 的
+        // 存量行可以是空 branch（建表默认值是 'main'，但不禁止空串），前端两处
+        // `repo.branch || "main"` 就是照着这个前提写的。把它当非法会让那些仓库
+        // 在 download_repo 第一行就报 INVALID_REPO_REF，技能面板直接列不出来。
+        if branch.is_empty() || branch.eq_ignore_ascii_case("HEAD") {
+            return true;
+        }
+        if branch.len() > 255 {
+            return false;
+        }
+        if branch.starts_with('/') || branch.ends_with('/') || branch.contains("//") {
+            return false;
+        }
+        if branch.contains("@{") {
+            return false;
+        }
+        // `is_ascii_control()` 的范围是 U+0000..=U+001F **加上** U+007F DELETE，
+        // 所以不需要另外再点名 DEL。
+        if branch
+            .chars()
+            .any(|c| c.is_ascii_control() || " ~^:?*[\\#%".contains(c))
+        {
+            return false;
+        }
+        branch.split('/').all(|segment| {
+            !segment.is_empty()
+                && !segment.starts_with('.')
+                && !segment.ends_with('.')
+                && !segment.ends_with(".lock")
+        })
+    }
+
+    /// 校验一组仓库坐标，用于任何会被拼进 github.com URL 的地方。
+    ///
+    /// 动机：`download_repo` 把 owner/name/branch 直接 format 进
+    /// `https://github.com/{owner}/{name}/archive/refs/heads/{branch}.zip`，而 URL
+    /// 解析会消解点段——branch 写成 `../../../releases/download/v1/evil` 时，落点变成
+    /// 该仓库的 **release asset**，即攻击者可上传的任意字节。归档内容一旦可控，
+    /// 解压路径校验就成了唯一防线，所以这一层必须堵死。
+    pub(crate) fn validate_repo_ref(owner: &str, name: &str, branch: &str) -> Result<()> {
+        if !Self::is_valid_github_owner(owner) || !Self::is_valid_github_repo_name(name) {
+            return Err(anyhow!(format_skill_error(
+                "INVALID_REPO_REF",
+                &[("owner", owner), ("name", name)],
+                Some("checkRepoUrl"),
+            )));
+        }
+        if !Self::is_valid_git_branch(branch) {
+            return Err(anyhow!(format_skill_error(
+                "INVALID_REPO_REF",
+                &[("owner", owner), ("name", name), ("branch", branch)],
+                Some("checkRepoUrl"),
+            )));
+        }
+        Ok(())
+    }
+
+    /// 出口断言：URL 拼好后再确认它确实指向预期的 github.com 路径。
+    ///
+    /// 这是纵深防御——即便上面的字符集校验将来漏了某种变形（百分号编码、新的
+    /// 分隔符语义等），这里也能拦住落点被改写的请求。
+    fn assert_github_archive_url(url: &str, owner: &str, name: &str) -> Result<()> {
+        let parsed = url::Url::parse(url).map_err(|e| anyhow!("Invalid archive URL: {e}"))?;
+        let expected_prefix = format!("/{owner}/{name}/archive/refs/heads/");
+        if parsed.scheme() != "https"
+            || parsed.host_str() != Some("github.com")
+            || !parsed.path().starts_with(&expected_prefix)
+        {
+            return Err(anyhow!(format_skill_error(
+                "INVALID_REPO_REF",
+                &[("owner", owner), ("name", name)],
+                Some("checkRepoUrl"),
+            )));
+        }
+        Ok(())
     }
 
     /// 在目录树中查找名称匹配且包含 SKILL.md 的子目录
@@ -2148,31 +2374,38 @@ impl SkillService {
 
     /// 将 discoverable skill 的目录信息重新解析为解压目录中的真实源目录。
     ///
-    /// 兼容三种情况：
-    /// 1. `skills/foo` 这类直接相对路径；
-    /// 2. 仅持有安装名 `foo`，需要在仓库中递归查找真实目录；
-    /// 3. 仓库根目录本身就是 skill，此时回退到解压根目录。
+    /// **核心原则：返回的目录必定含 `SKILL.md`**（以 SKILL.md 为锚点）。解析顺序：
+    /// 1. 直接相对路径命中（如 `skills/foo`），校验含 `SKILL.md`——明确路径优先；
+    /// 2. 按安装名递归查找名字匹配 **且** 含 `SKILL.md` 的目录；
+    /// 3. 兜底：仓库根本身含 `SKILL.md`。
     fn resolve_skill_source_dir(root: &Path, raw_directory: &str) -> Option<PathBuf> {
         let source_rel = Self::sanitize_skill_source_path(raw_directory)?;
+        let install_name = source_rel
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())?;
+
+        // 1. 直接相对路径命中（明确路径优先）——必须校验 SKILL.md，否则同名空壳目录
+        //    （如 ast-grep/agent-skill 根下的 plugin 包目录 ast-grep/）会被误判为源目录。
         let direct = root.join(&source_rel);
-        if direct.is_dir() {
+        if direct.is_dir() && direct.join("SKILL.md").is_file() {
             return Some(direct);
         }
 
-        let target_name = source_rel.file_name()?.to_string_lossy().to_string();
-        if let Some(found) = Self::find_skill_dir_by_name(root, &target_name) {
+        // 2. 按名字递归查找（find_skill_dir_by_name 已校验 SKILL.md）
+        if let Some(found) = Self::find_skill_dir_by_name(root, &install_name) {
             log::info!(
                 "Skill directory '{}' not found at direct path, using fallback: {}",
-                target_name,
+                install_name,
                 found.display()
             );
             return Some(found);
         }
 
-        if root.is_dir() && root.join("SKILL.md").exists() {
+        // 3. 兜底：仓库根本身是 skill
+        if root.join("SKILL.md").is_file() {
             log::info!(
                 "Skill directory '{}' not found, but SKILL.md exists at root, using repo root",
-                target_name,
+                install_name,
             );
             return Some(root.to_path_buf());
         }
@@ -2197,10 +2430,18 @@ impl SkillService {
     }
 
     /// 下载仓库
-    async fn download_repo(&self, repo: &SkillRepo) -> Result<(PathBuf, String)> {
+    ///
+    /// 这里是仓库坐标进入 URL 的**唯一收敛点**——`fetch_repo_skills`、`install`、
+    /// `check_updates`、`update_skill` 四条路径都经过它，而 `skill_repos` / `skills`
+    /// 两张表都会被同步导入的远端快照整表覆盖，入库校验管不住它们。所以主防线放这里。
+    async fn download_repo(&self, repo: &SkillRepo) -> Result<(tempfile::TempDir, String)> {
+        Self::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)?;
+
+        // 守卫全程持有，成功后连同目录一起交给调用方（见 `extract_local_zip` 的说明）。
+        // 原来这里立刻 keep()，任何一步失败——下载超时、ARCHIVE_TOO_LARGE、解压出错
+        // ——都会把半个解压目录永久留在磁盘上，反复触发即可持续填盘。
         let temp_dir = tempfile::tempdir()?;
         let temp_path = temp_dir.path().to_path_buf();
-        let _ = temp_dir.keep();
 
         let mut branches = Vec::new();
         if !repo.branch.is_empty() && !repo.branch.eq_ignore_ascii_case("HEAD") {
@@ -2219,12 +2460,15 @@ impl SkillService {
                 "https://github.com/{}/{}/archive/refs/heads/{}.zip",
                 repo.owner, repo.name, branch
             );
+            Self::assert_github_archive_url(&url, &repo.owner, &repo.name)?;
 
             match self.download_and_extract(&url, &temp_path).await {
-                Ok(_) => {
-                    return Ok((temp_path, branch.to_string()));
-                }
+                Ok(_) => return Ok((temp_dir, branch.to_string())),
                 Err(e) => {
+                    // 每个分支各自重算预算，所以失败后必须把上一轮的残留清掉——
+                    // 否则 N 个候选分支等于 N 倍的落盘量堆在同一个目录里。
+                    let _ = fs::remove_dir_all(&temp_path);
+                    let _ = fs::create_dir_all(&temp_path);
                     last_error = Some(e);
                     continue;
                 }
@@ -2252,10 +2496,114 @@ impl SkillService {
             )));
         }
 
-        let bytes = response.bytes().await?;
-        let cursor = std::io::Cursor::new(bytes);
-        let mut archive = zip::ZipArchive::new(cursor)?;
+        // 逐块读并卡住压缩体大小：`response.bytes()` 会先把攻击者控制的整个归档
+        // 收进内存，之后才轮到 ZipArchive 和解压预算——那时候堆已经被吃光了。
+        // 不能只信 Content-Length（可以撒谎或缺失），必须按实际收到的字节数算。
+        let mut response = response;
+        let mut body: Vec<u8> = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if body.len().saturating_add(chunk.len()) as u64 > MAX_ARCHIVE_DOWNLOAD_BYTES {
+                let limit_mb = (MAX_ARCHIVE_DOWNLOAD_BYTES / 1024 / 1024).to_string();
+                return Err(anyhow::anyhow!(format_skill_error(
+                    "ARCHIVE_TOO_LARGE",
+                    &[("limit_mb", &limit_mb)],
+                    Some("checkZipContent"),
+                )));
+            }
+            body.extend_from_slice(&chunk);
+        }
 
+        let cursor = std::io::Cursor::new(body);
+        let archive = zip::ZipArchive::new(cursor)?;
+        Self::extract_repo_archive(archive, dest)
+    }
+
+    /// 按预算把单个归档条目写出，累计超限即中止。
+    ///
+    /// 逐块累加而非读取归档头里声明的 size：那个值由归档作者填写，压缩炸弹会撒谎。
+    fn copy_entry_within_budget<R: std::io::Read, W: std::io::Write>(
+        reader: &mut R,
+        writer: &mut W,
+        total_bytes: &mut u64,
+    ) -> Result<()> {
+        let mut buffer = [0u8; 16 * 1024];
+        loop {
+            let read = reader.read(&mut buffer)?;
+            if read == 0 {
+                return Ok(());
+            }
+            Self::charge_archive_budget(total_bytes, read as u64)?;
+            writer.write_all(&buffer[..read])?;
+        }
+    }
+
+    /// 读取 symlink 条目声明的目标路径。
+    ///
+    /// 这条分支曾是唯一一处不经预算的解压：`read_to_string` 直接把整条解压流吞进
+    /// 内存，而 zip 2.4.2 的 `make_reader`（read.rs:437-449）只叠了 CRC 校验，
+    /// **没有**按声明的 uncompressed_size 截断。于是一个打着 symlink 标志、
+    /// deflate 后能膨胀到数 GB 的条目就是一颗内存炸弹，且预算读数全程为 0。
+    ///
+    /// 超长或非 UTF-8 一律返回 `None` 让调用方跳过：合法的 symlink 目标是一条
+    /// 路径，这两种形状都不可能是真实数据。
+    fn read_symlink_target<R: std::io::Read>(
+        reader: &mut R,
+        total_bytes: &mut u64,
+    ) -> Result<Option<String>> {
+        let mut raw = Vec::new();
+        // 多读一个字节，用来区分"正好到上限"和"被截断"
+        let mut limited = std::io::Read::take(reader, MAX_SYMLINK_TARGET_BYTES + 1);
+        std::io::Read::read_to_end(&mut limited, &mut raw)?;
+        if raw.len() as u64 > MAX_SYMLINK_TARGET_BYTES {
+            return Ok(None);
+        }
+        Self::charge_archive_budget(total_bytes, raw.len() as u64)?;
+        Ok(String::from_utf8(raw)
+            .ok()
+            .map(|target| target.trim().to_string()))
+    }
+
+    /// 建目录并按**实际新建的层数**计费。
+    ///
+    /// `create_dir_all` 会一次性把缺失的父目录全建出来，所以一个条目名
+    /// `a/a/…/a/f.txt` 可以隐式造出几百层目录。只在 symlink 物化那条路径上给目录
+    /// 计费是不够的：常规解压这条路上，不到 10_000 个条目照样能造出数百万目录，
+    /// 而内容字节几乎为零。
+    fn create_dir_all_within_budget(path: &Path, total_bytes: &mut u64) -> Result<()> {
+        let missing = path.ancestors().take_while(|p| !p.exists()).count() as u64;
+        if missing > 0 {
+            Self::charge_archive_budget(total_bytes, missing * DIRECTORY_BUDGET_COST)?;
+        }
+        fs::create_dir_all(path)?;
+        Ok(())
+    }
+
+    /// 归档预算的唯一扣费点。
+    ///
+    /// 抽出来是因为「写文件内容」不是归档能消耗的唯一资源：symlink 物化出来的
+    /// 目录一个字节都不写，但每一个都要占 inode 与一个目录块，而第二遍的
+    /// symlink 解析可以让目录数量按层数指数增长。只按内容字节计费时，一个全是
+    /// 空目录的归档能把预算读数一直停在 0。
+    fn charge_archive_budget(total_bytes: &mut u64, amount: u64) -> Result<()> {
+        if total_bytes.saturating_add(amount) > MAX_ARCHIVE_TOTAL_BYTES {
+            let limit_mb = (MAX_ARCHIVE_TOTAL_BYTES / 1024 / 1024).to_string();
+            return Err(anyhow::anyhow!(format_skill_error(
+                "ARCHIVE_TOO_LARGE",
+                &[("limit_mb", &limit_mb)],
+                Some("checkZipContent"),
+            )));
+        }
+        *total_bytes += amount;
+        Ok(())
+    }
+
+    /// 把 GitHub 仓库归档解压到 `dest`（剥掉归档自带的一层根目录）。
+    ///
+    /// 与 `download_and_extract` 分离，使 zip-slip 防护可在不联网的情况下被单测覆盖。
+    fn extract_repo_archive<R: std::io::Read + std::io::Seek>(
+        mut archive: zip::ZipArchive<R>,
+        dest: &Path,
+    ) -> Result<()> {
         let root_name = if !archive.is_empty() {
             let first_file = archive.by_index(0)?;
             let name = first_file.name();
@@ -2268,46 +2616,109 @@ impl SkillService {
             )));
         };
 
+        // 归档字节完全由第三方控制（仓库可经 deeplink 添加），所以解压必须限量，
+        // 否则一个几 MB 的压缩炸弹就能塞满磁盘。webdav_sync/archive.rs 早有同款
+        // 双重上限，这条下载路径一直没有。
+        if archive.len() > MAX_ARCHIVE_ENTRIES {
+            let count = archive.len().to_string();
+            let limit = MAX_ARCHIVE_ENTRIES.to_string();
+            return Err(anyhow::anyhow!(format_skill_error(
+                "ARCHIVE_TOO_MANY_ENTRIES",
+                &[("count", &count), ("limit", &limit)],
+                Some("checkZipContent"),
+            )));
+        }
+        let mut total_bytes: u64 = 0;
+
         // 第一遍：解压普通文件和目录，收集 symlink 条目
         let mut symlinks: Vec<(PathBuf, String)> = Vec::new();
 
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
-            let file_path = file.name().to_string();
+            // 第一道：enclosed_name() 拒绝绝对路径、盘符前缀，以及净深度为负
+            // （即逃出归档自身根目录）的条目。skill 仓库可由 deeplink 添加，
+            // 压缩包内容属第三方可控输入。
+            let Some(safe_path) = file.enclosed_name() else {
+                log::warn!("跳过不安全的压缩包条目: {}", file.name());
+                continue;
+            };
 
-            let relative_path =
-                if let Some(stripped) = file_path.strip_prefix(&format!("{root_name}/")) {
-                    stripped
-                } else {
-                    continue;
-                };
+            // GitHub 归档统一带一层 `<repo>-<branch>/` 根目录，需剥掉后再落盘。
+            let Ok(relative_path) = safe_path.strip_prefix(&root_name) else {
+                continue;
+            };
 
-            if relative_path.is_empty() {
+            // 第二道：enclosed_name() 的保证是相对**归档根**的，且它不规范化路径
+            // ——`..` 会原样留在返回值里。上面剥掉 root_name 等于花掉一级深度预算，
+            // 于是 `repo-main/../evil` 这类条目仍能落到 dest 之外（Unix 逃一层；
+            // Windows 上 root_name 可含反斜杠而被当作多段，逃逸深度随之放大）。
+            // 因此 join 之前必须对**实际使用的相对路径**再验一次。
+            if relative_path
+                .components()
+                .any(|c| matches!(c, Component::ParentDir))
+            {
+                log::warn!("跳过越界的压缩包条目: {}", file.name());
+                continue;
+            }
+
+            if relative_path.as_os_str().is_empty() {
                 continue;
             }
 
             let outpath = dest.join(relative_path);
 
             if file.is_symlink() {
-                // 读取 symlink 目标路径
-                let mut target = String::new();
-                std::io::Read::read_to_string(&mut file, &mut target)?;
-                symlinks.push((outpath, target.trim().to_string()));
+                let Some(target) = Self::read_symlink_target(&mut file, &mut total_bytes)? else {
+                    log::warn!("跳过目标不合法的 symlink 条目: {}", file.name());
+                    continue;
+                };
+                symlinks.push((outpath, target));
             } else if file.is_dir() {
-                fs::create_dir_all(&outpath)?;
+                Self::create_dir_all_within_budget(&outpath, &mut total_bytes)?;
             } else {
                 if let Some(parent) = outpath.parent() {
-                    fs::create_dir_all(parent)?;
+                    Self::create_dir_all_within_budget(parent, &mut total_bytes)?;
                 }
                 let mut outfile = fs::File::create(&outpath)?;
-                std::io::copy(&mut file, &mut outfile)?;
+                // 按实际写入的字节累计，而不是信任归档头里声明的 size——
+                // 压缩炸弹的声明值可以是假的。
+                Self::copy_entry_within_budget(&mut file, &mut outfile, &mut total_bytes)?;
             }
         }
 
         // 第二遍：解析 symlink，将目标内容复制到 symlink 位置
-        Self::resolve_symlinks_in_dir(dest, &symlinks)?;
+        Self::resolve_symlinks_in_dir(dest, &symlinks, &mut total_bytes)?;
 
         Ok(())
+    }
+
+    /// 与 `copy_dir_recursive` 同语义，但把写出的字节计入归档总预算。
+    /// 仅用于解压期间物化 symlink——常规的目录复制（安装、备份、迁移）不该受
+    /// 归档预算约束，所以两个函数刻意不合并。
+    fn copy_dir_within_budget(src: &Path, dest: &Path, total_bytes: &mut u64) -> Result<()> {
+        Self::create_dir_all_within_budget(dest, total_bytes)?;
+
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            let path = entry.path();
+            let dest_path = dest.join(entry.file_name());
+
+            if path.is_dir() {
+                Self::copy_dir_within_budget(&path, &dest_path, total_bytes)?;
+            } else {
+                Self::copy_file_within_budget(&path, &dest_path, total_bytes)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 复制单个文件并计入归档总预算，复用 `copy_entry_within_budget` 以保证
+    /// 上限与报错文案只有一处定义。
+    fn copy_file_within_budget(src: &Path, dest: &Path, total_bytes: &mut u64) -> Result<()> {
+        let mut reader = fs::File::open(src)?;
+        let mut writer = fs::File::create(dest)?;
+        Self::copy_entry_within_budget(&mut reader, &mut writer, total_bytes)
     }
 
     /// 递归复制目录
@@ -2330,7 +2741,11 @@ impl SkillService {
     }
 
     fn resolve_uninstall_backup_source(skill: &InstalledSkill) -> Result<Option<PathBuf>> {
-        let ssot_path = Self::get_ssot_dir()?.join(&skill.directory);
+        // 返回值会被整目录复制进 ~/.cc-switch/skill-backups/ 并由 get_skill_backups
+        // 在界面上列出——脏 directory 在这里等于任意文件读取 + 外泄通道。
+        let directory = Self::require_valid_directory(&skill.directory)?;
+
+        let ssot_path = Self::get_ssot_dir()?.join(&directory);
         if ssot_path.is_dir() {
             return Ok(Some(ssot_path));
         }
@@ -2340,7 +2755,7 @@ impl SkillService {
                 Ok(dir) => dir,
                 Err(_) => continue,
             };
-            let candidate = app_dir.join(&skill.directory);
+            let candidate = app_dir.join(&directory);
             if candidate.is_dir() {
                 return Ok(Some(candidate));
             }
@@ -2472,7 +2887,11 @@ impl SkillService {
     /// GitHub ZIP 归档保留了 symlink 元数据，解压时可通过 `is_symlink()` 检测。
     /// 此方法将 symlink 解析为实际文件/目录内容（而非创建真实 symlink），
     /// 以确保跨平台兼容且 skill 内容自包含。
-    fn resolve_symlinks_in_dir(base_dir: &Path, symlinks: &[(PathBuf, String)]) -> Result<()> {
+    fn resolve_symlinks_in_dir(
+        base_dir: &Path,
+        symlinks: &[(PathBuf, String)],
+        total_bytes: &mut u64,
+    ) -> Result<()> {
         // 规范化 base_dir（macOS 上 /tmp → /private/tmp，需保持一致）
         let canonical_base = base_dir
             .canonicalize()
@@ -2496,7 +2915,7 @@ impl SkillService {
                 }
             };
 
-            // 安全检查：确保目标在 base_dir 内（防止路径穿越）
+            // 安全检查一：确保目标在 base_dir 内（防止路径穿越）
             if !resolved.starts_with(&canonical_base) {
                 log::warn!(
                     "Symlink 目标超出仓库范围，跳过: {} -> {}",
@@ -2506,14 +2925,47 @@ impl SkillService {
                 continue;
             }
 
-            // 复制目标内容到 symlink 位置
+            // 安全检查二：目标不能包含 link 自身。上面那条防的是「跑出 base」，
+            // 防不住「套进自己」——`dir/link -> ..` 解析后正是 base 本身，完全
+            // 合规，随后递归复制会把归档根复制进自己的子目录；每递归一层都重新
+            // 看到刚落盘的副本，目录树逐层膨胀直到 PATH_MAX 才失败。
+            //
+            // 比较必须在**规范形式**上做：`enclosed_name()` 不规范化路径，只保证
+            // 净深度非负，所以 link_path 里可能带着未消解的 `..`（`e/../d/self`）。
+            // 拿它按字面跟 canonicalize 过的 resolved 比组件，第一段就会错开
+            // （`e` vs `d`），检查形同虚设。link_path 自身此刻尚未落盘，但它的父
+            // 目录一定存在——`resolved` 能 canonicalize 成功就蕴含了这一点。
+            let canonical_link = match parent.canonicalize() {
+                Ok(canonical_parent) => match link_path.file_name() {
+                    Some(name) => canonical_parent.join(name),
+                    None => canonical_parent,
+                },
+                // 父目录都不存在时退回字面形式：此时 resolved 多半也解析不出来，
+                // 上面就已经 continue 了；留着只是不让守卫在意外形状上 panic。
+                Err(_) => match link_path.strip_prefix(base_dir) {
+                    Ok(relative) => canonical_base.join(relative),
+                    Err(_) => link_path.clone(),
+                },
+            };
+            if canonical_link.starts_with(&resolved) {
+                log::warn!(
+                    "Symlink 目标包含链接自身，跳过（会导致递归自复制）: {} -> {}",
+                    link_path.display(),
+                    resolved.display()
+                );
+                continue;
+            }
+
+            // 复制目标内容到 symlink 位置。必须与解压循环共用同一个字节预算：
+            // 物化走的是这条独立路径，不计费的话「一个大文件 + N 个指向它的
+            // symlink」能写下 N 倍字节，而 MAX_ARCHIVE_TOTAL_BYTES 全程显示合规。
             if resolved.is_dir() {
-                Self::copy_dir_recursive(&resolved, link_path)?;
+                Self::copy_dir_within_budget(&resolved, link_path, total_bytes)?;
             } else if resolved.is_file() {
                 if let Some(parent) = link_path.parent() {
-                    fs::create_dir_all(parent)?;
+                    Self::create_dir_all_within_budget(parent, total_bytes)?;
                 }
-                fs::copy(&resolved, link_path)?;
+                Self::copy_file_within_budget(&resolved, link_path, total_bytes)?;
             }
         }
         Ok(())
@@ -2534,13 +2986,13 @@ impl SkillService {
         current_app: &AppType,
     ) -> Result<Vec<InstalledSkill>> {
         // 解压到临时目录
-        let temp_dir = Self::extract_local_zip(zip_path)?;
+        let temp_guard = Self::extract_local_zip(zip_path)?;
+        let temp_dir = temp_guard.path();
 
         // 扫描所有包含 SKILL.md 的目录
-        let skill_dirs = Self::scan_skills_in_dir(&temp_dir)?;
+        let skill_dirs = Self::scan_skills_in_dir(temp_dir)?;
 
         if skill_dirs.is_empty() {
-            let _ = fs::remove_dir_all(&temp_dir);
             return Err(anyhow!(format_skill_error(
                 "NO_SKILLS_IN_ZIP",
                 &[],
@@ -2574,7 +3026,10 @@ impl SkillService {
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_default();
 
-                if skill_dir == temp_dir || dir_name.is_empty() || dir_name.starts_with('.') {
+                if skill_dir.as_path() == temp_dir
+                    || dir_name.is_empty()
+                    || dir_name.starts_with('.')
+                {
                     // SKILL.md 在根目录：优先用元数据 name，否则用 ZIP 文件名
                     meta.as_ref()
                         .and_then(|m| m.name.as_deref())
@@ -2593,7 +3048,6 @@ impl SkillService {
             let install_name = match install_name {
                 Some(name) => name,
                 None => {
-                    let _ = fs::remove_dir_all(&temp_dir);
                     return Err(anyhow!(format_skill_error(
                         "INVALID_SKILL_DIRECTORY",
                         &[("zip", &zip_path.display().to_string())],
@@ -2664,14 +3118,23 @@ impl SkillService {
             installed.push(skill);
         }
 
-        // 清理临时目录
-        let _ = fs::remove_dir_all(&temp_dir);
-
         Ok(installed)
     }
 
     /// 解压本地 ZIP 文件到临时目录
-    fn extract_local_zip(zip_path: &Path) -> Result<PathBuf> {
+    ///
+    /// 返回 `TempDir` 而不是 `PathBuf`：调用方在解压之后还有扫描、复制、写库、
+    /// 同步等一长串 `?`，任何一处提前返回都会把最多 512 MiB 的临时内容永久留在
+    /// 磁盘上。守卫交给调用方持有，清理就变成作用域结束时自动发生，不再依赖每条
+    /// 出口都记得手写 `remove_dir_all`（实测漏了不止一条）。
+    fn extract_local_zip(zip_path: &Path) -> Result<tempfile::TempDir> {
+        Self::extract_local_zip_in(zip_path, &std::env::temp_dir())
+    }
+
+    /// 与 [`Self::extract_local_zip`] 相同，但临时目录的落点由调用方指定。
+    /// 测试用它把解压根钉在私有目录里，而不是劫持进程级 `TMPDIR`——后者会把
+    /// 并发测试的临时目录一起吸进被观测目录，"目录必须为空"的断言就会随机失败。
+    fn extract_local_zip_in(zip_path: &Path, base_dir: &Path) -> Result<tempfile::TempDir> {
         let file = fs::File::open(zip_path)
             .with_context(|| format!("Failed to open ZIP file: {}", zip_path.display()))?;
 
@@ -2686,11 +3149,25 @@ impl SkillService {
             )));
         }
 
-        let temp_dir = tempfile::tempdir()?;
+        // 与远端归档同一套上限。本地 ZIP 是用户自选文件（信任度更高），但"用户
+        // 被诱导打开一个压缩炸弹"仍是常见路径，且两条解压路径共用同一个物化器。
+        if archive.len() > MAX_ARCHIVE_ENTRIES {
+            let count = archive.len().to_string();
+            let limit = MAX_ARCHIVE_ENTRIES.to_string();
+            return Err(anyhow!(format_skill_error(
+                "ARCHIVE_TOO_MANY_ENTRIES",
+                &[("count", &count), ("limit", &limit)],
+                Some("checkZipContent"),
+            )));
+        }
+
+        // 守卫持有到解压全部成功为止：中途任何 `?` 都会让它清掉半成品目录。
+        // 原来在这里就 keep()，超限或解压出错都会留下永久残留。
+        let temp_dir = tempfile::tempdir_in(base_dir)?;
         let temp_path = temp_dir.path().to_path_buf();
-        let _ = temp_dir.keep(); // Keep the directory, we'll clean up later
 
         let mut symlinks: Vec<(PathBuf, String)> = Vec::new();
+        let mut total_bytes: u64 = 0;
 
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
@@ -2699,27 +3176,42 @@ impl SkillService {
                 None => continue,
             };
 
+            // `enclosed_name()` 只保证净深度非负，**不消解** `..`。这里没有
+            // `strip_prefix` 吃掉深度预算，所以逃不出 temp_path；但留着未消解的
+            // 路径会让后面的 symlink 自包含检查失去可比性（`e/../d/self` 与 `d`
+            // 逐组件比在第一段就错开）。在入口就把它们挡掉，保证落进 symlinks
+            // 表里的路径都是规范形状。
+            if file_path
+                .components()
+                .any(|c| matches!(c, Component::ParentDir))
+            {
+                log::warn!("跳过越界的压缩包条目: {}", file.name());
+                continue;
+            }
+
             let outpath = temp_path.join(&file_path);
 
             if file.is_symlink() {
-                let mut target = String::new();
-                std::io::Read::read_to_string(&mut file, &mut target)?;
-                symlinks.push((outpath, target.trim().to_string()));
+                let Some(target) = Self::read_symlink_target(&mut file, &mut total_bytes)? else {
+                    log::warn!("跳过目标不合法的 symlink 条目: {}", file.name());
+                    continue;
+                };
+                symlinks.push((outpath, target));
             } else if file.is_dir() {
-                fs::create_dir_all(&outpath)?;
+                Self::create_dir_all_within_budget(&outpath, &mut total_bytes)?;
             } else {
                 if let Some(parent) = outpath.parent() {
-                    fs::create_dir_all(parent)?;
+                    Self::create_dir_all_within_budget(parent, &mut total_bytes)?;
                 }
                 let mut outfile = fs::File::create(&outpath)?;
-                std::io::copy(&mut file, &mut outfile)?;
+                Self::copy_entry_within_budget(&mut file, &mut outfile, &mut total_bytes)?;
             }
         }
 
         // 解析 symlink
-        Self::resolve_symlinks_in_dir(&temp_path, &symlinks)?;
+        Self::resolve_symlinks_in_dir(&temp_path, &symlinks, &mut total_bytes)?;
 
-        Ok(temp_path)
+        Ok(temp_dir)
     }
 
     /// 递归扫描目录查找包含 SKILL.md 的技能目录
@@ -2825,8 +3317,13 @@ impl SkillService {
                     return None;
                 }
                 let (owner, repo) = (parts[0].to_string(), parts[1].to_string());
-                // 过滤非 GitHub 来源（如 "skills.volces.com"、"mcp-hub.momenta.works"）
-                if owner.contains('.') || repo.contains('.') {
+                // 用与 download_repo 同一套坐标校验，而不是就地写启发式：下面这个
+                // readme_url 最终交给 openExternal 打开，是和 build_skill_doc_url
+                // 同一个 sink。原来的 `contains('.')` 既漏（`splitn(2, '/')` 允许
+                // repo 里带 `/`，`owner/a/b` 能拼出三段路径），又误伤（GitHub 仓库
+                // 名合法含点）。校验 owner 同时也保留了"过滤非 GitHub 来源"的效果
+                // ——`skills.volces.com` 这类带点的 owner 本来就不是合法用户名。
+                if Self::validate_repo_ref(&owner, &repo, "main").is_err() {
                     return None;
                 }
                 Some(SkillsShDiscoverableSkill {
@@ -2872,12 +3369,8 @@ fn build_repo_info_from_lock(
             // 优先使用 lock 文件中的 skillPath，否则回退到 dir_name/SKILL.md
             let fallback = format!("{dir_name}/SKILL.md");
             let doc_path = info.skill_path.as_deref().unwrap_or(&fallback);
-            let url = Some(SkillService::build_skill_doc_url(
-                &info.owner,
-                &info.repo,
-                &url_branch,
-                doc_path,
-            ));
+            let url =
+                SkillService::build_skill_doc_url(&info.owner, &info.repo, &url_branch, doc_path);
             (
                 format!("{}/{}:{dir_name}", info.owner, info.repo),
                 Some(info.owner.clone()),
@@ -2915,6 +3408,23 @@ fn save_repos_from_lock(
                     branch: info.branch.clone().unwrap_or_else(|| "HEAD".to_string()),
                     enabled: true,
                 };
+                // lock 文件由外部 agents CLI 写入，owner/repo/branch 均未经校验，
+                // 且 branch 是从 `/tree/`、fragment、`?ref=` 里抠出来的裸串。
+                if SkillService::validate_repo_ref(
+                    &skill_repo.owner,
+                    &skill_repo.name,
+                    &skill_repo.branch,
+                )
+                .is_err()
+                {
+                    log::warn!(
+                        "跳过 agents lock 中坐标非法的仓库: {}/{}@{}",
+                        skill_repo.owner,
+                        skill_repo.name,
+                        skill_repo.branch
+                    );
+                    continue;
+                }
                 if let Err(e) = db.save_skill_repo(&skill_repo) {
                     log::warn!("保存 skill 仓库 {}/{} 失败: {}", info.owner, info.repo, e);
                 } else {
@@ -2951,6 +3461,13 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 
     if has_snapshot {
         for row in &snapshot {
+            // snapshot 存在 settings 表里，而 settings 在同步范围内、可被远端快照
+            // 覆盖。下面 discovered 的每个 key 都会被 join 成路径并写回 skills 表，
+            // 所以脏值必须在进入 discovered 之前就滤掉。
+            if SkillService::require_valid_directory(&row.directory).is_err() {
+                log::warn!("跳过 SSOT 迁移快照中非法的 directory: {:?}", row.directory);
+                continue;
+            }
             if let Ok(app) = row.app_type.parse::<AppType>() {
                 discovered
                     .entry(row.directory.clone())
@@ -3053,6 +3570,557 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    /// 构造一个模拟 GitHub 归档的 ZIP：带一层 `repo-main/` 根目录，
+    /// 其中掺入用 `../` 逃逸的恶意条目。
+    ///
+    /// 两个恶意条目走的是**不同**的拦截层，缺一不可：
+    /// - 两级 `../../`：净深度为负，`enclosed_name()` 自己就会拒绝；
+    /// - 一级 `../`：净深度非负，`enclosed_name()` **放行**且原样保留 `..`，
+    ///   只有剥掉 root_name 之后的组件校验才能拦住。
+    fn build_zip_with_traversal_entry() -> Vec<u8> {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        let mut buf = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts = SimpleFileOptions::default();
+
+            // 合法条目：会被正常解压
+            zip.start_file("repo-main/SKILL.md", opts).unwrap();
+            zip.write_all(b"---\nname: ok\n---\n").unwrap();
+
+            // 恶意条目 A：被 enclosed_name() 拒绝
+            zip.start_file("repo-main/../../escaped.txt", opts).unwrap();
+            zip.write_all(b"pwned").unwrap();
+
+            // 恶意条目 B：能通过 enclosed_name()，靠组件校验拦截
+            zip.start_file("repo-main/../escaped-one-level.txt", opts)
+                .unwrap();
+            zip.write_all(b"pwned").unwrap();
+
+            zip.finish().unwrap();
+        }
+        buf
+    }
+
+    #[test]
+    fn validate_repo_ref_accepts_real_world_coordinates() {
+        // 合法分支名允许 `/`，不能因为防穿越就把它们一起禁掉
+        for branch in [
+            "main",
+            "master",
+            "HEAD",
+            "feature/new-thing",
+            "release/v1.2.3",
+            "fix-123",
+            "user.name/topic",
+        ] {
+            assert!(
+                SkillService::validate_repo_ref("farion1231", "cc-switch", branch).is_ok(),
+                "must accept branch: {branch:?}"
+            );
+        }
+        assert!(SkillService::validate_repo_ref("a", "b.c_d-e", "main").is_ok());
+    }
+
+    #[test]
+    fn validate_repo_ref_accepts_the_empty_branch_sentinel() {
+        // 空 branch 与 "HEAD" 在 download_repo 里是同一个哨兵：分支候选表跳过
+        // 两者，改试 main / master，所以它们从不进 URL。校验若把空串当非法，
+        // 存量 skill_repos 行（建表默认 'main'，但空串没被禁）会在 download_repo
+        // 第一行就 INVALID_REPO_REF，整个技能面板列不出东西——前端两处
+        // `repo.branch || "main"` 正是照着"空串可用"写的。
+        assert!(
+            SkillService::validate_repo_ref("farion1231", "cc-switch", "").is_ok(),
+            "the empty-branch sentinel must stay usable"
+        );
+    }
+
+    #[test]
+    fn validate_repo_ref_rejects_url_hijacking_branches() {
+        // 这是核心用例：branch 被拼进 archive URL，URL 解析会消解点段，
+        // 落点会从 /archive/refs/heads/ 改写成攻击者可上传的 release asset。
+        for branch in [
+            "../../../releases/download/v1/evil",
+            "..",
+            "../x",
+            "a/../../b",
+            "a/./b",
+            "..\\..\\releases\\download\\v1\\evil",
+            "/leading",
+            "trailing/",
+            "double//slash",
+            "with space",
+            "frag#ment",
+            "pct%2e%2e",
+            "ref@{0}",
+            "seg.lock",
+            ".hidden/x",
+        ] {
+            assert!(
+                SkillService::validate_repo_ref("owner", "repo", branch).is_err(),
+                "must reject branch: {branch:?}"
+            );
+        }
+        for (owner, name) in [
+            ("..", "repo"),
+            ("own/er", "repo"),
+            ("owner", ".."),
+            ("owner", "re/po"),
+            ("owner", "re po"),
+            ("", "repo"),
+            ("owner", ""),
+        ] {
+            assert!(
+                SkillService::validate_repo_ref(owner, name, "main").is_err(),
+                "must reject coordinates: {owner:?}/{name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn assert_github_archive_url_pins_host_and_path() {
+        let ok = "https://github.com/owner/repo/archive/refs/heads/main.zip";
+        assert!(SkillService::assert_github_archive_url(ok, "owner", "repo").is_ok());
+
+        // 出口断言必须挡住落点被改写到 release asset 的情况
+        for bad in [
+            "https://github.com/owner/repo/releases/download/v1/evil.zip",
+            "https://evil.example/owner/repo/archive/refs/heads/main.zip",
+            "http://github.com/owner/repo/archive/refs/heads/main.zip",
+            "https://github.com/other/repo/archive/refs/heads/main.zip",
+        ] {
+            assert!(
+                SkillService::assert_github_archive_url(bad, "owner", "repo").is_err(),
+                "must reject url: {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn build_skill_doc_url_drops_illegal_coordinates() {
+        assert_eq!(
+            SkillService::build_skill_doc_url("owner", "repo", "main", "a/SKILL.md").as_deref(),
+            Some("https://github.com/owner/repo/blob/main/a/SKILL.md")
+        );
+        // readme_url 会被前端 openExternal 直接打开，非法坐标不得产出链接
+        assert!(
+            SkillService::build_skill_doc_url("owner", "repo", "../../../issues", "x").is_none()
+        );
+    }
+
+    #[test]
+    fn copy_entry_within_budget_stops_before_exceeding_the_limit() {
+        // 预算逐块累加，超限时中止且不再继续写——压缩炸弹声明的 size 不可信，
+        // 所以判断只能基于实际读到的字节。
+        let mut total = MAX_ARCHIVE_TOTAL_BYTES - 8;
+        let mut reader = std::io::Cursor::new(vec![7u8; 64]);
+        let mut writer: Vec<u8> = Vec::new();
+
+        let err = SkillService::copy_entry_within_budget(&mut reader, &mut writer, &mut total)
+            .expect_err("must reject once the budget is exhausted");
+        assert!(
+            err.to_string().contains("ARCHIVE_TOO_LARGE"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            writer.is_empty(),
+            "nothing may be written once the chunk would exceed the budget"
+        );
+
+        // 预算充足时照常写完
+        let mut total = 0u64;
+        let mut reader = std::io::Cursor::new(vec![7u8; 64]);
+        let mut writer: Vec<u8> = Vec::new();
+        SkillService::copy_entry_within_budget(&mut reader, &mut writer, &mut total)
+            .expect("within budget");
+        assert_eq!(writer.len(), 64);
+        assert_eq!(total, 64);
+    }
+
+    #[test]
+    fn extract_repo_archive_rejects_too_many_entries() {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        let mut buf = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts = SimpleFileOptions::default();
+            for i in 0..(MAX_ARCHIVE_ENTRIES + 1) {
+                zip.start_file(format!("repo-main/f{i}"), opts).unwrap();
+                zip.write_all(b"x").unwrap();
+            }
+            zip.finish().unwrap();
+        }
+
+        let temp = tempdir().expect("tempdir");
+        let archive = zip::ZipArchive::new(std::io::Cursor::new(buf)).expect("archive parses");
+        let err = SkillService::extract_repo_archive(archive, temp.path())
+            .expect_err("entry count over the limit must be rejected");
+        assert!(
+            err.to_string().contains("ARCHIVE_TOO_MANY_ENTRIES"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn extract_repo_archive_rejects_path_traversal_entries() {
+        let temp = tempdir().expect("tempdir");
+        // dest 放在深一层，这样逃逸一层/两层都落在 temp 内、可被检出
+        let dest = temp.path().join("nested").join("dest");
+        fs::create_dir_all(&dest).expect("create dest");
+
+        let bytes = build_zip_with_traversal_entry();
+        let archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("archive parses");
+
+        SkillService::extract_repo_archive(archive, &dest).expect("extract must not fail");
+
+        // 合法条目正常落盘
+        assert!(
+            dest.join("SKILL.md").is_file(),
+            "legitimate entry should be extracted"
+        );
+        // 两级逃逸：不得写到 dest 之外
+        assert!(
+            !temp.path().join("escaped.txt").exists(),
+            "zip-slip entry must not escape dest (temp root)"
+        );
+        assert!(
+            !temp.path().join("nested").join("escaped.txt").exists(),
+            "zip-slip entry must not escape dest (parent dir)"
+        );
+        // 一级逃逸：enclosed_name() 放行的那一类，必须被组件校验拦住
+        assert!(
+            !temp
+                .path()
+                .join("nested")
+                .join("escaped-one-level.txt")
+                .exists(),
+            "single-`..` entry must not escape dest (enclosed_name allows it)"
+        );
+    }
+
+    #[test]
+    fn extract_repo_archive_skips_a_symlink_that_contains_itself() {
+        // `dir/link -> ..` 解析后正是归档根：它**通过**「目标必须在 base 内」的
+        // 检查，因为目标就是 base 本身。没有第二道自包含检查时，
+        // copy_dir_recursive(base, base/dir/link) 会把根复制进自己的子目录，
+        // 每递归一层都重新看到刚落盘的副本，直到 PATH_MAX 才以 IO 错误收场。
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        let mut buf = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts = SimpleFileOptions::default();
+            zip.start_file("repo-main/SKILL.md", opts).unwrap();
+            zip.write_all(b"---\nname: t\ndescription: d\n---\n")
+                .unwrap();
+            zip.add_directory("repo-main/dir/", opts).unwrap();
+            zip.add_symlink("repo-main/dir/link", "..", opts).unwrap();
+            zip.finish().unwrap();
+        }
+
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("dest");
+        fs::create_dir_all(&dest).expect("create dest");
+        let archive = zip::ZipArchive::new(std::io::Cursor::new(buf)).expect("archive parses");
+
+        SkillService::extract_repo_archive(archive, &dest)
+            .expect("a self-containing symlink must be skipped, not blow up the extraction");
+
+        assert!(
+            dest.join("SKILL.md").is_file(),
+            "legitimate entries must still be extracted"
+        );
+        assert!(
+            !dest.join("dir").join("link").exists(),
+            "a symlink whose target contains the link itself must not be materialized"
+        );
+    }
+
+    #[test]
+    fn symlink_materialization_is_charged_to_the_archive_budget() {
+        // symlink 的物化走第二遍、与解压循环不同的代码路径。若它不计入同一个
+        // 预算，「一个大文件 + N 个指向它的 symlink」就能写下 N 倍字节而上限
+        // 全程显示合规。这里把预算预置到接近上限来验证物化确实在计费。
+        let temp = tempdir().expect("tempdir");
+        let base = temp.path().join("base");
+        fs::create_dir_all(base.join("payload")).expect("create payload dir");
+        fs::write(base.join("payload").join("big.bin"), vec![b'x'; 4096]).expect("write payload");
+
+        let symlinks = vec![(base.join("copy"), "payload".to_string())];
+        let mut total_bytes = MAX_ARCHIVE_TOTAL_BYTES - 1024;
+
+        let err = SkillService::resolve_symlinks_in_dir(&base, &symlinks, &mut total_bytes)
+            .expect_err("materializing 4 KiB with 1 KiB of budget left must fail");
+        assert!(
+            err.to_string().contains("ARCHIVE_TOO_LARGE"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn symlink_guard_sees_through_unnormalized_link_paths() {
+        // `enclosed_name()` 不消解 `..`，所以 link_path 可能长成 `e/../d/self`。
+        // 守卫若拿它按字面跟规范化过的目标比组件，会在第一段（`e` vs `d`）就判定
+        // "不包含"——而这个位置物理上就在 `d` 里面，把 `d` 复制进去正是递归自复制。
+        let temp = tempdir().expect("tempdir");
+        let base = temp.path().join("base");
+        fs::create_dir_all(base.join("d").join("sub")).expect("create d");
+        fs::create_dir_all(base.join("e")).expect("create e");
+
+        let link_path = base.join("e").join("..").join("d").join("self");
+        let symlinks = vec![(link_path, ".".to_string())];
+        let mut total_bytes = 0u64;
+
+        SkillService::resolve_symlinks_in_dir(&base, &symlinks, &mut total_bytes)
+            .expect("a self-containing symlink must be skipped, not blow up the extraction");
+
+        assert!(
+            !base.join("d").join("self").exists(),
+            "a link that physically lives inside its own target must not be materialized"
+        );
+    }
+
+    /// 记录实际被消耗了多少字节的 reader。
+    ///
+    /// 直接断言返回值是不够的：函数末尾本就有一道长度检查，把 `take` 的上限拆掉
+    /// 之后它照样返回 `None`，断言仍然通过——而炸弹的危害全在读取过程里，不在
+    /// 返回值。只有观测消耗量才能真正钉住"读取是有界的"。
+    struct CountingReader {
+        remaining: u64,
+        consumed: u64,
+    }
+
+    impl std::io::Read for CountingReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.remaining == 0 {
+                return Ok(0);
+            }
+            let n = buf.len().min(self.remaining as usize);
+            buf[..n].fill(b'a');
+            self.remaining -= n as u64;
+            self.consumed += n as u64;
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn read_symlink_target_is_bounded_and_charged() {
+        // 一个打着 symlink 标志、解压流却极大的条目：zip 2.4.2 的 make_reader
+        // 不按声明的 uncompressed_size 截断，没有上限就会被整条读进内存。
+        let mut oversized = CountingReader {
+            remaining: 8 * 1024 * 1024,
+            consumed: 0,
+        };
+        let mut total_bytes = 0u64;
+
+        let target = SkillService::read_symlink_target(&mut oversized, &mut total_bytes)
+            .expect("an oversized target must be skipped, not raise");
+        assert!(
+            target.is_none(),
+            "a target longer than a path can plausibly be must be rejected"
+        );
+        assert_eq!(total_bytes, 0, "a rejected target must not be charged");
+        assert!(
+            oversized.consumed <= MAX_SYMLINK_TARGET_BYTES + 1,
+            "the read must stop at the cap instead of draining the stream, consumed {}",
+            oversized.consumed
+        );
+
+        // 正常目标照常读出来并计费
+        let mut normal = std::io::Cursor::new(b"../shared".to_vec());
+        let target = SkillService::read_symlink_target(&mut normal, &mut total_bytes)
+            .expect("a normal target must be read");
+        assert_eq!(target.as_deref(), Some("../shared"));
+        assert_eq!(total_bytes, 9);
+    }
+
+    #[test]
+    fn directory_materialization_is_charged_to_the_archive_budget() {
+        // 全是空目录的归档一个内容字节都不写。不给目录计费，第二遍的 symlink
+        // 解析就能让目录数按层数指数增长，而预算读数一直停在 0。
+        let temp = tempdir().expect("tempdir");
+        let src = temp.path().join("src");
+        fs::create_dir_all(src.join("a").join("b")).expect("create tree");
+
+        let mut total_bytes = MAX_ARCHIVE_TOTAL_BYTES - DIRECTORY_BUDGET_COST;
+        let err =
+            SkillService::copy_dir_within_budget(&src, &temp.path().join("dest"), &mut total_bytes)
+                .expect_err("materializing directories past the limit must fail");
+        assert!(
+            err.to_string().contains("ARCHIVE_TOO_LARGE"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn create_dir_all_charges_every_directory_it_creates() {
+        // `create_dir_all` 一次能把缺失的父目录全建出来，所以一个条目名
+        // `a/a/…/a/f.txt` 可以隐式造出几百层。按调用次数计费会严重低估。
+        let temp = tempdir().expect("tempdir");
+        let deep = temp.path().join("a").join("b").join("c");
+
+        // 预算只够两层，建三层必须被拦下
+        let mut total_bytes = MAX_ARCHIVE_TOTAL_BYTES - 2 * DIRECTORY_BUDGET_COST;
+        let err = SkillService::create_dir_all_within_budget(&deep, &mut total_bytes)
+            .expect_err("creating more directories than the budget allows must fail");
+        assert!(
+            err.to_string().contains("ARCHIVE_TOO_LARGE"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            !deep.exists(),
+            "nothing must be created once the budget is exceeded"
+        );
+    }
+
+    #[test]
+    fn extract_local_zip_leaves_no_partial_directory_when_it_fails() {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        // scratch 只喂给这一次解压：并发测试的临时目录不会落进来，
+        // 所以"必须为空"的断言观测到的恰好就是这次解压的残留
+        let holder = tempdir().expect("tempdir");
+        let scratch = tempdir().expect("tempdir");
+
+        let mut buf = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts = SimpleFileOptions::default();
+            // `x` 先落成文件，再要求把它当目录用 —— create_dir_all 必然失败，
+            // 而这个失败发生在临时目录已经建好、且已经写进去东西之后
+            zip.start_file("x", opts).unwrap();
+            zip.write_all(b"i am a file").unwrap();
+            zip.start_file("x/y", opts).unwrap();
+            zip.write_all(b"and my parent is not a directory").unwrap();
+            zip.finish().unwrap();
+        }
+        let zip_path = holder.path().join("collide.zip");
+        fs::write(&zip_path, &buf).expect("write zip");
+
+        let result = SkillService::extract_local_zip_in(&zip_path, scratch.path());
+
+        assert!(
+            result.is_err(),
+            "the fixture must actually fail after the temp dir exists"
+        );
+        let leftovers: Vec<_> = fs::read_dir(scratch.path())
+            .expect("read scratch")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "a failed extraction must not leave a partial directory behind: {leftovers:?}"
+        );
+    }
+
+    #[test]
+    fn extract_local_zip_hands_back_a_guard_that_owns_the_tree() {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        // 解压成功之后调用方还要走扫描 / 取 SSOT / 复制 / 写库 / 同步一长串 `?`。
+        // 之前返回裸 PathBuf，清理靠每条出口手写 remove_dir_all——实测漏了不止一条
+        // （install_from_zip 的 copy_dir_recursive 与 save_skill、update_skill 的
+        // copy_dir_recursive、fetch_repo_skills 的 scan_dir_recursive 都会漏）。
+        let holder = tempdir().expect("tempdir");
+        let scratch = tempdir().expect("tempdir");
+
+        let mut buf = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts = SimpleFileOptions::default();
+            zip.start_file("s/SKILL.md", opts).unwrap();
+            zip.write_all(b"# skill").unwrap();
+            zip.finish().unwrap();
+        }
+        let zip_path = holder.path().join("ok.zip");
+        fs::write(&zip_path, &buf).expect("write zip");
+
+        let extracted = SkillService::extract_local_zip_in(&zip_path, scratch.path())
+            .expect("extract must succeed");
+        assert!(
+            extracted.path().join("s").join("SKILL.md").exists(),
+            "the fixture must actually extract something worth cleaning up"
+        );
+
+        // 模拟调用方在下游任意一个 `?` 上提前返回
+        drop(extracted);
+
+        let leftovers: Vec<_> = fs::read_dir(scratch.path())
+            .expect("read scratch")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "dropping the extraction result must take the whole tree with it: {leftovers:?}"
+        );
+    }
+
+    #[test]
+    fn extract_local_zip_rejects_dot_dot_entries() {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        let mut buf = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts = SimpleFileOptions::default();
+            zip.add_directory("d/", opts).unwrap();
+            zip.add_directory("e/", opts).unwrap();
+            // 净深度非负，enclosed_name() 放行；未消解的 `..` 会把它落到 d 里面
+            zip.start_file("e/../d/leaked.txt", opts).unwrap();
+            zip.write_all(b"x").unwrap();
+            zip.finish().unwrap();
+        }
+
+        let temp = tempdir().expect("tempdir");
+        let zip_path = temp.path().join("dots.zip");
+        fs::write(&zip_path, &buf).expect("write zip");
+
+        let extracted = SkillService::extract_local_zip(&zip_path).expect("extract must not fail");
+        assert!(
+            !extracted.path().join("d").join("leaked.txt").exists(),
+            "an entry with an unresolved `..` must be skipped, not silently relocated"
+        );
+    }
+
+    #[test]
+    fn extract_local_zip_rejects_too_many_entries() {
+        // 本地 ZIP 走的是另一个解压器，条目上限曾只加在远端归档那条路径上。
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        let mut buf = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts = SimpleFileOptions::default();
+            for i in 0..(MAX_ARCHIVE_ENTRIES + 1) {
+                zip.start_file(format!("f{i}"), opts).unwrap();
+                zip.write_all(b"x").unwrap();
+            }
+            zip.finish().unwrap();
+        }
+
+        let temp = tempdir().expect("tempdir");
+        let zip_path = temp.path().join("bomb.zip");
+        fs::write(&zip_path, &buf).expect("write zip");
+
+        let err = SkillService::extract_local_zip(&zip_path)
+            .expect_err("entry count over the limit must be rejected for local ZIPs too");
+        assert!(
+            err.to_string().contains("ARCHIVE_TOO_MANY_ENTRIES"),
+            "unexpected error: {err}"
+        );
+    }
+
     fn write_skill(dir: &Path, name: &str) {
         fs::create_dir_all(dir).expect("create skill dir");
         fs::write(
@@ -3060,6 +4128,250 @@ mod tests {
             format!("---\nname: {name}\ndescription: Test skill\n---\n"),
         )
         .expect("write SKILL.md");
+    }
+
+    /// CC_SWITCH_TEST_HOME 隔离守卫（serial 测试间互斥由 #[serial] 保证，
+    /// 守卫只负责在测试结束后恢复原值）。
+    struct TestHomeGuard(Option<std::ffi::OsString>);
+    impl TestHomeGuard {
+        fn set(home: &Path) -> Self {
+            let guard = Self(std::env::var_os("CC_SWITCH_TEST_HOME"));
+            std::env::set_var("CC_SWITCH_TEST_HOME", home);
+            guard
+        }
+    }
+    impl Drop for TestHomeGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+
+    fn poisoned_skill(id: &str, directory: &str) -> InstalledSkill {
+        InstalledSkill {
+            id: id.to_string(),
+            name: "poisoned".to_string(),
+            description: None,
+            directory: directory.to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps::default(),
+            installed_at: 0,
+            content_hash: None,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn require_valid_directory_accepts_single_segment_names_only() {
+        assert_eq!(
+            SkillService::require_valid_directory("my-skill").expect("valid name"),
+            "my-skill"
+        );
+        for bad in [
+            "..",
+            "../..",
+            "../../etc",
+            "a/b",
+            "a\\b",
+            "",
+            ".hidden",
+            "C:\\evil",
+            "/etc",
+        ] {
+            assert!(
+                SkillService::require_valid_directory(bad).is_err(),
+                "must reject: {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn restore_from_backup_rejects_traversal_directory_in_metadata() {
+        let temp = tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        // 手工放置一个备份：meta.json 里的 directory 指向 SSOT 之外。
+        // SSOT 位于 {home}/.cc-switch/skills，"../../pwned-restore" 若生效会写到 {home}/pwned-restore。
+        let backup_id = "20260727_120000_evil";
+        let backup_dir = SkillService::get_backup_dir()
+            .expect("backup dir")
+            .join(backup_id);
+        write_skill(&backup_dir.join("skill"), "evil");
+        let metadata = SkillBackupMetadata {
+            skill: poisoned_skill("owner/repo:evil", "../../pwned-restore"),
+            backup_created_at: 0,
+            source_path: "x".to_string(),
+        };
+        fs::write(
+            backup_dir.join("meta.json"),
+            serde_json::to_string_pretty(&metadata).expect("serialize metadata"),
+        )
+        .expect("write meta.json");
+
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        let result = SkillService::restore_from_backup(&db, backup_id, &AppType::Claude);
+
+        assert!(
+            result.is_err(),
+            "restore must reject a traversal directory from meta.json"
+        );
+        assert!(
+            !temp.path().join("pwned-restore").exists(),
+            "restore must not write outside the SSOT dir"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn remove_from_app_rejects_traversal_directory() {
+        let temp = tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        // 受害目录与 app skills 目录都先建好，保证未修复时代码真的能删到它：
+        // app_dir = {home}/.claude/skills，"../../victim-remove" 解析为 {home}/victim-remove。
+        let victim = temp.path().join("victim-remove");
+        fs::create_dir_all(&victim).expect("create victim dir");
+        fs::create_dir_all(temp.path().join(".claude").join("skills")).expect("create app dir");
+
+        let result = SkillService::remove_from_app("../../victim-remove", &AppType::Claude);
+
+        assert!(result.is_err(), "remove_from_app must reject traversal");
+        assert!(victim.exists(), "victim directory must not be deleted");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn uninstall_rejects_traversal_directory_from_db_row() {
+        let temp = tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        // 模拟同步导入灌进来的脏数据：directory 含路径穿越（save_skill 不校验，
+        // 与 import_sql_string_for_sync 的效果一致）。SSOT = {home}/.cc-switch/skills，
+        // "../../victim-uninstall" 解析为 {home}/victim-uninstall。
+        let victim = temp.path().join("victim-uninstall");
+        fs::create_dir_all(&victim).expect("create victim dir");
+
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        let skill = poisoned_skill("owner/repo:evil", "../../victim-uninstall");
+        db.save_skill(&skill).expect("seed poisoned row");
+
+        let result = SkillService::uninstall(&db, &skill.id);
+
+        // 危险的文件系统操作必须被跳过……
+        assert!(victim.exists(), "victim directory must not be deleted");
+        // ……但记录本身必须能删掉。db.delete_skill 全项目只有 uninstall 一处调用
+        // 且未暴露为命令，若这里返回 Err，脏行就永远无法从界面清除。
+        assert!(
+            result.is_ok(),
+            "uninstall must still succeed so the poisoned row can be removed: {result:?}"
+        );
+        assert!(
+            db.get_installed_skill(&skill.id)
+                .expect("query skill")
+                .is_none(),
+            "poisoned row must be deleted from the database"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn migrate_storage_skips_bad_rows_without_moving_foreign_dirs() {
+        /// skill_storage_location 存在进程级全局 settings_store 里，migrate_storage
+        /// 成功后会改写它。#[serial] 只保证互斥、不负责还原，必须自己复位，
+        /// 否则后续测试的 get_ssot_dir() 会解析到另一个位置。
+        struct StorageLocationGuard(SkillStorageLocation);
+        impl Drop for StorageLocationGuard {
+            fn drop(&mut self) {
+                let _ = crate::settings::set_skill_storage_location(self.0);
+            }
+        }
+        let _location_guard = StorageLocationGuard(crate::settings::get_skill_storage_location());
+
+        let temp = tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        // migrate_storage 会 fs::rename / remove_dir_all，脏 directory 能把
+        // SSOT 之外的任意目录搬走或删掉。
+        let victim = temp.path().join("victim-migrate");
+        fs::create_dir_all(&victim).expect("create victim dir");
+
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        let skill = poisoned_skill("owner/repo:evil", "../../victim-migrate");
+        db.save_skill(&skill).expect("seed poisoned row");
+
+        // 必须迁到与当前不同的位置，否则函数在 current == target 处直接短路返回
+        let result = SkillService::migrate_storage(&db, SkillStorageLocation::Unified)
+            .expect("migration must not abort");
+
+        assert!(victim.exists(), "foreign directory must not be moved away");
+        assert_eq!(
+            result.migrated_count, 0,
+            "poisoned row must not count as migrated"
+        );
+        assert!(
+            !result.errors.is_empty(),
+            "the skipped row must be reported through the errors channel"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn uninstall_backup_source_rejects_traversal_directory() {
+        let temp = tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        // 备份源会被整目录复制进 skill-backups 并在界面列出 → 任意文件外泄面。
+        let secrets = temp.path().join("secrets");
+        fs::create_dir_all(&secrets).expect("create secrets dir");
+        fs::write(secrets.join("id_rsa"), b"PRIVATE").expect("write secret");
+
+        let skill = poisoned_skill("owner/repo:evil", "../../secrets");
+        let result = SkillService::resolve_uninstall_backup_source(&skill);
+
+        assert!(
+            result.is_err(),
+            "backup source must reject a traversal directory"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn sync_to_app_skips_bad_rows_instead_of_aborting_the_whole_app() {
+        let temp = tempdir().expect("tempdir");
+        let _guard = TestHomeGuard::set(temp.path());
+
+        let ssot_dir = SkillService::get_ssot_dir().expect("ssot dir");
+        write_skill(&ssot_dir.join("good-skill"), "good");
+
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        // 一条脏行 + 一条正常行。脏行来自同步导入/存量数据，不得连累正常行——
+        // sync_to_app 在切换供应商时触发，整体中断会让所有 skill 一起失效。
+        //
+        // 名字刻意让脏行排前面：查询是 `ORDER BY name ASC`，脏行必须先被处理，
+        // 否则「未修复时会中断」这个前提不成立，测试就成了摆设。
+        let mut bad = poisoned_skill("owner/repo:bad", "../../escape-sync");
+        bad.name = "a-poisoned".to_string();
+        bad.apps = SkillApps::only(&AppType::Claude);
+        db.save_skill(&bad).expect("seed poisoned row");
+
+        let mut good = poisoned_skill("owner/repo:good", "good-skill");
+        good.name = "z-healthy".to_string();
+        good.apps = SkillApps::only(&AppType::Claude);
+        db.save_skill(&good).expect("seed good row");
+
+        SkillService::sync_to_app(&db, &AppType::Claude).expect("sync must not abort");
+
+        let app_dir = SkillService::get_app_skills_dir(&AppType::Claude).expect("app dir");
+        assert!(
+            app_dir.join("good-skill").exists(),
+            "the healthy skill must still be synced despite the poisoned row"
+        );
     }
 
     #[test]
@@ -3145,6 +4457,76 @@ mod tests {
         assert!(
             dest.join("SKILL.md").is_file(),
             "existing destination skill should be preserved"
+        );
+    }
+
+    #[test]
+    fn resolve_skill_source_dir_rejects_same_name_wrapper_without_skill_md() {
+        // 复刻 issue #4141：ast-grep/agent-skill 结构。仓库根下有同名目录 ast-grep/
+        // （plugin 包，无 SKILL.md），真正的 skill 在 ast-grep/skills/ast-grep/SKILL.md。
+        let temp = tempdir().expect("tempdir");
+        let wrapper = temp.path().join("ast-grep");
+        fs::create_dir_all(wrapper.join(".claude-plugin")).expect("create wrapper plugin dir");
+        fs::write(
+            wrapper.join(".claude-plugin").join("plugin.json"),
+            "{\"name\":\"ast-grep\"}",
+        )
+        .expect("write plugin.json");
+        let real_skill = wrapper.join("skills").join("ast-grep");
+        write_skill(&real_skill, "ast-grep");
+
+        // directory 只给了 skill 名 "ast-grep"（skills.sh API 的语义），不能命中空壳 wrapper。
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "ast-grep")
+            .expect("should resolve to the inner skill dir, not the same-name wrapper");
+
+        assert_eq!(resolved, real_skill);
+        assert!(resolved.join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn resolve_skill_source_dir_finds_two_level_catalog_skill() {
+        // catalog layout：skills/category/foo/SKILL.md（depth 3，find_skill_dir_by_name 可达）。
+        let temp = tempdir().expect("tempdir");
+        let catalog_skill = temp.path().join("skills").join("category").join("foo");
+        write_skill(&catalog_skill, "Foo Skill");
+
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "foo")
+            .expect("should resolve the two-level catalog skill by name");
+
+        assert_eq!(resolved, catalog_skill);
+    }
+
+    #[test]
+    fn resolve_skill_source_dir_returns_none_for_wrapper_without_inner_skill() {
+        // 同名 wrapper 存在、无 SKILL.md，且无 inner skill / root SKILL.md 可兜底时，
+        // 必须返回 None——守住 #4141 这个 bug class 的负例（不能把空壳目录当源目录）。
+        let temp = tempdir().expect("tempdir");
+        let wrapper = temp.path().join("ast-grep");
+        fs::create_dir_all(wrapper.join(".claude-plugin")).expect("create wrapper plugin dir");
+        fs::write(
+            wrapper.join(".claude-plugin").join("plugin.json"),
+            "{\"name\":\"ast-grep\"}",
+        )
+        .expect("write plugin.json");
+
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "ast-grep");
+        assert!(
+            resolved.is_none(),
+            "wrapper dir without SKILL.md and no inner skill must resolve to None, got {:?}",
+            resolved
+        );
+    }
+
+    #[test]
+    fn resolve_skill_source_dir_returns_none_when_no_skill_md_anywhere() {
+        let temp = tempdir().expect("tempdir");
+        fs::create_dir_all(temp.path().join("skills").join("foo")).expect("create empty skill dir");
+        fs::write(temp.path().join("README.md"), "no skills here").expect("write README");
+
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "foo");
+        assert!(
+            resolved.is_none(),
+            "no SKILL.md anywhere must resolve to None"
         );
     }
 }

@@ -15,6 +15,56 @@ use tempfile::NamedTempFile;
 
 const CC_SWITCH_SQL_EXPORT_HEADER: &str = "-- CC Switch SQLite 导出";
 
+/// `dump_sql` 会写出的 PRAGMA。其余 PRAGMA 一律拒绝——`temp_store_directory`
+/// 能把临时文件重定向到任意目录，`writable_schema` 能绕过 schema 完整性检查。
+const IMPORT_ALLOWED_PRAGMAS: &[&str] = &["foreign_keys", "user_version"];
+
+/// 执行外部 SQL 期间的 authorizer：拒绝一切能**离开临时数据库文件**的动作。
+///
+/// 头部校验（`validate_cc_switch_sql_export`）只比较一个注释前缀，任何人都能在
+/// 合法前缀后面接着写别的语句。`ATTACH DATABASE '/path/x.db'` 的副作用发生在
+/// `validate_basic_state` 之前，导入即使最终失败，文件也已经被创建；而 `settings`
+/// 表不在 `SYNC_SKIP_TABLES` / `SYNC_PRESERVE_TABLES` 之列，WebDAV/S3 同步会走
+/// 同一条 `import_sql_string_inner`，所以这条路径的输入不可信。
+///
+/// 为什么是 authorizer 而不是「扫描 ATTACH 关键字」：字符串扫描会被 `/*x*/ATTACH`、
+/// 大小写、换行绕过，还漏掉 `VACUUM INTO`。authorizer 在 prepare 阶段按**解析结果**
+/// 回调，绕不过语法层。
+///
+/// 为什么是「拒绝越界动作」而不是「只放行 dump_sql 的语句」：这段 SQL 跑在
+/// `NamedTempFile` 建的一次性库上，而那个库的全部内容本来就由这份 SQL 决定。
+/// 因此 `DELETE` / `DROP` / `UPDATE` 给不了攻击者任何新东西——**唯一有意义的边界
+/// 是那个临时文件本身**。按 dump_sql 的产物做严格白名单只会带来误伤风险（用户
+/// 库里出现一种没预料到的对象就恢复不了备份），却不多挡任何攻击。
+///
+/// 越界动作是实测出来的，不是推断的：
+/// - `ATTACH DATABASE 'x'`、`VACUUM INTO 'x'`、裸 `VACUUM` **三者都**报
+///   `AuthAction::Attach`，所以拒 `Attach` 一条即可覆盖
+/// - 文件后端的虚拟表模块（`csvfile`、`zipfile` 等）能读写任意路径 → 拒 vtable
+/// - `Unknown` 是 rusqlite 对未识别动作码的兜底 → 未知即拒，将来 SQLite 新增的
+///   跨文件语句会默认落进这里，不依赖有人记得回来补名单
+fn import_authorizer(context: rusqlite::hooks::AuthContext<'_>) -> rusqlite::hooks::Authorization {
+    use rusqlite::hooks::{AuthAction, Authorization};
+
+    let escapes_temp_db = match context.action {
+        AuthAction::Attach { .. } | AuthAction::Detach { .. } => true,
+        AuthAction::CreateVtable { .. } | AuthAction::DropVtable { .. } => true,
+        AuthAction::Unknown { .. } => true,
+        AuthAction::Pragma { pragma_name, .. } => !IMPORT_ALLOWED_PRAGMAS
+            .iter()
+            .any(|allowed| pragma_name.eq_ignore_ascii_case(allowed)),
+        _ => false,
+    };
+
+    if escapes_temp_db {
+        // SQLite 只会回一句 "not authorized"，不记日志就无从知道是哪条语句被拦。
+        log::warn!("SQL 导入拒绝了越界语句: {:?}", context.action);
+        Authorization::Deny
+    } else {
+        Authorization::Allow
+    }
+}
+
 /// Tables whose data rows are skipped when exporting for WebDAV sync.
 const SYNC_SKIP_TABLES: &[&str] = &[
     "proxy_request_logs",
@@ -117,9 +167,15 @@ impl Database {
         let temp_conn =
             Connection::open(&temp_path).map_err(|e| AppError::Database(e.to_string()))?;
 
-        temp_conn
-            .execute_batch(sql_content)
-            .map_err(|e| AppError::Database(format!("执行 SQL 导入失败: {e}")))?;
+        // authorizer 只覆盖外部 SQL，执行完立刻摘掉：紧随其后的
+        // `create_tables_on_conn` / `apply_schema_migrations_on_conn` 是本程序自己的
+        // schema 维护语句，不属于需要设防的输入，没必要让它们也过一遍守卫。
+        temp_conn.authorizer(Some(import_authorizer));
+        let batch_result = temp_conn.execute_batch(sql_content);
+        temp_conn.authorizer(
+            None::<fn(rusqlite::hooks::AuthContext<'_>) -> rusqlite::hooks::Authorization>,
+        );
+        batch_result.map_err(|e| AppError::Database(format!("执行 SQL 导入失败: {e}")))?;
 
         // 补齐缺失表/索引并进行基础校验
         Self::create_tables_on_conn(&temp_conn)?;
@@ -693,6 +749,72 @@ mod tests {
     use crate::error::AppError;
     use crate::settings::{update_settings, AppSettings};
     use serial_test::serial;
+
+    #[test]
+    fn import_rejects_cross_file_statements_and_leaves_no_file_behind() -> Result<(), AppError> {
+        // `VACUUM INTO` 是关键字扫描方案最容易漏的一条：它不含 "ATTACH" 字样，
+        // 却和 ATTACH 一样落到 `AuthAction::Attach`（实测），因此同一条规则挡住两者。
+        let cases: [(&str, &str); 2] = [
+            ("attach", "ATTACH DATABASE '{path}' AS evil;"),
+            ("vacuum-into", "VACUUM INTO '{path}';"),
+        ];
+
+        for (label, template) in cases {
+            let target = std::env::temp_dir().join(format!("cc-switch-authorizer-{label}.sqlite"));
+            let _ = std::fs::remove_file(&target);
+
+            // 合法的导出头 + 越界语句。头部校验只比前缀，这份输入过得了它，
+            // 真正拦下来的必须是 authorizer。
+            let malicious = format!(
+                "{}\n{}\n",
+                super::CC_SWITCH_SQL_EXPORT_HEADER,
+                template.replace("{path}", &target.display().to_string())
+            );
+
+            let db = Database::memory()?;
+            let result = db.import_sql_string(&malicious);
+
+            assert!(result.is_err(), "{label} 必须被拒绝");
+            // 光报错不够：文件创建发生在 prepare 之后、`validate_basic_state` 之前，
+            // 守卫若失效，即便导入整体失败，文件也已经躺在磁盘上了。
+            assert!(
+                !target.exists(),
+                "被拒绝的 {label} 不得在磁盘上留下文件: {}",
+                target.display()
+            );
+
+            let _ = std::fs::remove_file(&target);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn import_still_accepts_a_genuine_export() -> Result<(), AppError> {
+        // 白名单收得紧，必须有一条回归防线证明它没误伤自家导出格式——
+        // 这条测试红了就说明 dump_sql 写出了白名单没覆盖的语句。
+        let source = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(source.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('p1', 'claude', 'Provider One', '{}', '{}')",
+                [],
+            )?;
+        }
+        let exported = source.export_sql_string()?;
+
+        let target = Database::memory()?;
+        target.import_sql_string(&exported)?;
+
+        let conn = crate::database::lock_conn!(target.conn);
+        let name: String = conn.query_row(
+            "SELECT name FROM providers WHERE id = 'p1' AND app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(name, "Provider One");
+        Ok(())
+    }
 
     #[test]
     fn sync_import_preserves_local_only_tables() -> Result<(), AppError> {
