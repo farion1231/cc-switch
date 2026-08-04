@@ -24,10 +24,12 @@ jobs:
           node-version: "20"
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-        with:
-          version: 10.12.3
-          run_install: false
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+        run: |
+          corepack enable
+          corepack install
+          pnpm --version
 
       - name: Get pnpm store directory
         id: pnpm-store
