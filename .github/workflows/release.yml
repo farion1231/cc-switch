@@ -83,19 +83,11 @@ jobs:
             || sudo apt-get install -y --no-install-recommends libsoup2.4-dev
 
       - name: Setup pnpm
-        if: runner.os != 'Windows' || matrix.arch != 'arm64'
-        uses: pnpm/action-setup@v6
-        with:
-          version: 10.12.3
-          run_install: false
-
-      - name: Setup pnpm (Windows ARM64)
-        if: runner.os == 'Windows' && matrix.arch == 'arm64'
-        shell: pwsh
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
         run: |
-          $ErrorActionPreference = 'Stop'
           corepack enable
-          corepack prepare pnpm@10.12.3 --activate
+          corepack install
           node --version
           pnpm --version
 

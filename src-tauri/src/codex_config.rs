@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::config::{
-    atomic_write, delete_file, get_home_dir, read_json_file, sanitize_provider_name,
-    write_json_file, write_text_file,
+    atomic_write, delete_file, get_home_dir, path_is_within, read_json_file,
+    sanitize_provider_name, write_json_file, write_text_file,
 };
 use crate::error::AppError;
 use crate::model_capabilities::{image_input_capability_from_modalities, ImageInputCapability};
@@ -1359,17 +1359,28 @@ pub fn prepare_codex_config_text_with_model_catalog(
 /// All failure modes (missing file, parse error, no `model_catalog_json`,
 /// entries without `slug`) collapse to `Ok(None)` so callers can treat this
 /// as best-effort enrichment without making `read_live_settings` brittle.
+/// 模型目录文件读取上限（32 MiB）。目录 JSON 正常只有几百 KiB；超过则视为异常，
+/// 避免指向外部大文件时耗尽内存。
+const MAX_CODEX_CATALOG_BYTES: u64 = 32 * 1024 * 1024;
+
 pub fn read_codex_model_catalog_simplified_from_live() -> Result<Option<Value>, AppError> {
     let config_text = read_codex_config_text()?;
-    let generated_path = get_codex_model_catalog_path();
-    let Some(catalog_path) = resolve_cc_switch_catalog_path(&config_text, &generated_path) else {
+    let config_dir = get_codex_config_dir();
+    let Some(catalog_path) = resolve_cc_switch_catalog_path(&config_text, &config_dir) else {
         return Ok(None);
     };
     if !catalog_path.exists() {
         return Ok(None);
     }
-    let Ok(catalog_text) = fs::read_to_string(&catalog_path) else {
-        return Ok(None);
+    let catalog_text = match read_limited_string(&catalog_path, MAX_CODEX_CATALOG_BYTES) {
+        Ok(text) => text,
+        Err(error) => {
+            log::warn!(
+                "拒绝读取越界或过大的 Codex 模型目录 {}: {error}",
+                catalog_path.display()
+            );
+            return Ok(None);
+        }
     };
     Ok(build_simplified_catalog_from_texts(
         &config_text,
@@ -1377,12 +1388,31 @@ pub fn read_codex_model_catalog_simplified_from_live() -> Result<Option<Value>, 
     ))
 }
 
+/// 安全地读取文件为字符串，并在超过字节上限时返回错误。
+pub(crate) fn read_limited_string(path: &Path, max_bytes: u64) -> Result<String, AppError> {
+    let metadata = fs::metadata(path).map_err(|error| AppError::io(path, error))?;
+    if metadata.len() > max_bytes {
+        return Err(AppError::Config(format!(
+            "文件 {} 超过大小上限 {} 字节",
+            path.display(),
+            max_bytes
+        )));
+    }
+    fs::read_to_string(path).map_err(|error| AppError::io(path, error))
+}
+
+/// Read the cc-switch Codex model catalog file with a size cap.
+pub(crate) fn read_codex_model_catalog_text(path: &Path) -> Result<String, AppError> {
+    read_limited_string(path, MAX_CODEX_CATALOG_BYTES)
+}
+
 /// Given `config.toml` text, resolve the on-disk path of the cc-switch–owned
 /// catalog file (returns `None` if `model_catalog_json` is absent or points at
-/// a file we don't own). Relative paths fall back to `generated_path`.
+/// a file we don't own). Relative paths are resolved under `base_dir`;
+/// absolute paths must still be inside `base_dir`.
 pub(crate) fn resolve_cc_switch_catalog_path(
     config_text: &str,
-    generated_path: &Path,
+    base_dir: &Path,
 ) -> Option<PathBuf> {
     if config_text.trim().is_empty() {
         return None;
@@ -1401,11 +1431,59 @@ pub(crate) fn resolve_cc_switch_catalog_path(
         return None;
     }
 
-    if referenced_path.is_absolute() {
-        Some(referenced_path.to_path_buf())
+    // 注意（有意的行为变更）：Windows 上 `/…` 形式的旧 WSL 风格 Linux 路径也会
+    // 被视为绝对路径，从而在下方的包含性校验中失败——此前这类路径会因无法匹配
+    // 生成文件名而回退为按文件名解析、碰巧能工作。可接受：下一次切换供应商时
+    // 写入侧会重新落一个裸文件名，配置自愈（见
+    // `set_catalog_json_none_removes_cc_switch_owned_by_filename` 的场景注释）。
+    let is_unix_absolute = catalog_path_str.starts_with('/');
+    let resolved = if referenced_path.is_absolute() || is_unix_absolute {
+        referenced_path.to_path_buf()
     } else {
-        Some(generated_path.to_path_buf())
+        base_dir.join(referenced_path)
+    };
+
+    if !path_is_within(base_dir, &resolved) {
+        log::warn!(
+            "Codex model_catalog_json 指向配置目录外: {}（允许目录: {}）",
+            resolved.display(),
+            base_dir.display()
+        );
+        return None;
     }
+
+    // 词法包含不等于运行时包含：配置目录内的符号链接（如 ~/.codex/link ->
+    // /etc）能让 `link/cc-switch-model-catalog.json` 通过上面的检查，读取却
+    // 落到目录外。文件存在时把真实路径 canonicalize 出来再校验一次，并把
+    // canonical 路径返回给调用方——后续读取不再经过 symlink 组件。
+    if resolved.exists() {
+        let canonical = match fs::canonicalize(&resolved) {
+            Ok(path) => path,
+            Err(error) => {
+                log::warn!(
+                    "Codex model_catalog_json canonicalize 失败: {}: {error}",
+                    resolved.display()
+                );
+                return None;
+            }
+        };
+        // base 同样 canonicalize，保证两侧前缀一致（Windows \\?\、
+        // macOS /tmp -> /private/tmp）；base 失败时退回词法 base——
+        // 词法 base 与 canonical 路径比较只会误拒（退化为不读），不会误放。
+        let canonical_base = fs::canonicalize(base_dir).unwrap_or_else(|_| base_dir.to_path_buf());
+        if !path_is_within(&canonical_base, &canonical) {
+            log::warn!(
+                "Codex model_catalog_json 经符号链接解析到配置目录外: {} -> {}（允许目录: {}）",
+                resolved.display(),
+                canonical.display(),
+                canonical_base.display()
+            );
+            return None;
+        }
+        return Some(canonical);
+    }
+
+    Some(resolved)
 }
 
 /// Pure reverse-parsing core: convert Codex catalog JSON text back into the
@@ -3851,30 +3929,30 @@ web_search = "disabled"
 
     #[test]
     fn resolve_catalog_path_returns_none_when_config_missing_field() {
-        let generated = PathBuf::from("/tmp/.codex/cc-switch-model-catalog.json");
-        assert!(resolve_cc_switch_catalog_path("", &generated).is_none());
+        let base = PathBuf::from("/tmp/.codex");
+        assert!(resolve_cc_switch_catalog_path("", &base).is_none());
         assert!(
-            resolve_cc_switch_catalog_path("model = \"gpt-5\"", &generated).is_none(),
+            resolve_cc_switch_catalog_path("model = \"gpt-5\"", &base).is_none(),
             "no model_catalog_json field should yield None"
         );
     }
 
     #[test]
     fn resolve_catalog_path_accepts_cc_switch_owned_file() {
-        let generated = PathBuf::from("/tmp/.codex/cc-switch-model-catalog.json");
+        let base = PathBuf::from("/tmp/.codex");
         let config = r#"model_catalog_json = "/tmp/.codex/cc-switch-model-catalog.json"
 "#;
-        let resolved = resolve_cc_switch_catalog_path(config, &generated).expect("path resolves");
-        assert_eq!(resolved, generated);
+        let resolved = resolve_cc_switch_catalog_path(config, &base).expect("path resolves");
+        assert_eq!(resolved, base.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME));
     }
 
     #[test]
     fn resolve_catalog_path_rejects_user_owned_external_file() {
-        let generated = PathBuf::from("/tmp/.codex/cc-switch-model-catalog.json");
+        let base = PathBuf::from("/tmp/.codex");
         let config = r#"model_catalog_json = "/Users/me/.codex/my-handwritten-catalog.json"
 "#;
         assert!(
-            resolve_cc_switch_catalog_path(config, &generated).is_none(),
+            resolve_cc_switch_catalog_path(config, &base).is_none(),
             "external catalog files should be left alone"
         );
     }
@@ -4223,36 +4301,109 @@ model = "glm-5"
         let config_text = r#"model_provider = "custom"
 model_catalog_json = "cc-switch-model-catalog.json"
 "#;
-        let generated_path = PathBuf::from("/home/user/.codex/cc-switch-model-catalog.json");
-        let result = resolve_cc_switch_catalog_path(config_text, &generated_path);
+        let base_dir = PathBuf::from("/home/user/.codex");
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
         assert_eq!(
             result,
-            Some(generated_path),
-            "relative filename should resolve to generated_path for file I/O"
+            Some(base_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)),
+            "relative filename should resolve under base_dir for file I/O"
         );
     }
 
     #[test]
-    fn resolve_catalog_ignores_user_owned_relative() {
-        let config_text = r#"model_catalog_json = "my-custom-catalog.json"
+    fn resolve_catalog_rejects_absolute_path_outside_config_dir() {
+        let config_text = r#"model_catalog_json = "/tmp/secret/cc-switch-model-catalog.json"
 "#;
-        let generated_path = PathBuf::from("/home/user/.codex/cc-switch-model-catalog.json");
-        let result = resolve_cc_switch_catalog_path(config_text, &generated_path);
+        let base_dir = PathBuf::from("/home/user/.codex");
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
         assert_eq!(
             result, None,
-            "user-owned catalog should not be claimed by cc-switch"
+            "absolute path outside ~/.codex must not be accepted"
         );
     }
 
     #[test]
-    fn set_catalog_json_none_removes_relative_path() {
-        let input = r#"model_catalog_json = "cc-switch-model-catalog.json"
+    fn resolve_catalog_accepts_absolute_path_inside_config_dir() {
+        let config_text = r#"model_catalog_json = "/home/user/.codex/cc-switch-model-catalog.json"
 "#;
-        let result = set_codex_model_catalog_json_field(input, None).unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        let base_dir = PathBuf::from("/home/user/.codex");
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
+        assert_eq!(
+            result,
+            Some(base_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)),
+            "absolute path inside ~/.codex should be accepted"
+        );
+    }
+
+    #[test]
+    fn resolve_catalog_rejects_traversal_to_parent_directory() {
+        let config_text = r#"model_catalog_json = "../cc-switch-model-catalog.json"
+"#;
+        let base_dir = PathBuf::from("/home/user/.codex");
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
+        assert_eq!(
+            result, None,
+            "relative traversal outside ~/.codex must not be accepted"
+        );
+    }
+
+    #[test]
+    fn resolve_catalog_rejects_symlink_escaping_config_dir() {
+        // 词法包含可被符号链接绕过：~/.codex/link -> 外部目录，
+        // "link/cc-switch-model-catalog.json" 词法上在 base 内，真实读取却落到
+        // base 外。canonicalize 之后的二次校验必须拒绝。
+        let temp = tempfile::tempdir().expect("tempdir");
+        let base_dir = temp.path().join("codex");
+        let outside_dir = temp.path().join("outside");
+        fs::create_dir_all(&base_dir).expect("create base");
+        fs::create_dir_all(&outside_dir).expect("create outside");
+        let escaped_file = outside_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+        fs::write(&escaped_file, r#"{"models":[]}"#).expect("write escaped catalog");
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside_dir, base_dir.join("link")).expect("symlink");
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&outside_dir, base_dir.join("link")).expect("symlink");
+
+        let config_text = r#"model_catalog_json = "link/cc-switch-model-catalog.json"
+"#;
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
+        assert_eq!(
+            result, None,
+            "symlink escaping the config dir must be rejected after canonicalization"
+        );
+    }
+
+    #[test]
+    fn resolve_catalog_accepts_real_file_inside_config_dir() {
+        // 存在于 base 内的真实文件：canonical 校验通过后仍应接受
+        let temp = tempfile::tempdir().expect("tempdir");
+        let base_dir = temp.path().join("codex");
+        fs::create_dir_all(&base_dir).expect("create base");
+        let catalog_file = base_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+        fs::write(&catalog_file, r#"{"models":[]}"#).expect("write catalog");
+
+        let config_text = r#"model_catalog_json = "cc-switch-model-catalog.json"
+"#;
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
+        let resolved = result.expect("real file inside config dir should be accepted");
+        assert_eq!(
+            resolved.file_name().and_then(|n| n.to_str()),
+            Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+        );
+    }
+
+    #[test]
+    fn read_limited_string_rejects_oversized_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("huge.json");
+        let file = std::fs::File::create(&path).expect("create");
+        file.set_len(MAX_CODEX_CATALOG_BYTES + 1).expect("set_len");
+
+        let result = read_limited_string(&path, MAX_CODEX_CATALOG_BYTES);
         assert!(
-            parsed.get("model_catalog_json").is_none(),
-            "None arm should remove relative cc-switch-owned field"
+            result.is_err(),
+            "file larger than MAX_CODEX_CATALOG_BYTES must be rejected"
         );
     }
 }

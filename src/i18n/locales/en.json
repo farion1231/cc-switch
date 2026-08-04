@@ -2512,6 +2512,8 @@
     "usageScriptWarning": "This is JavaScript that runs when usage is queried, once enabled. Import it only if you trust the source.",
     "usageApiKey": "Usage API Key",
     "usageBaseUrl": "Usage Query URL",
+    "usageAccessToken": "Usage Access Token",
+    "usageUserId": "Usage User ID",
     "usageAutoInterval": "Auto Query",
     "usageAutoIntervalValue": "Every {{minutes}} minutes",
     "risk": {

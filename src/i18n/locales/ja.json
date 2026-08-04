@@ -2512,6 +2512,8 @@
     "usageScriptWarning": "これは有効化すると使用量クエリ時に実行される JavaScript です。提供元が信頼できる場合のみインポートしてください。",
     "usageApiKey": "使用量 API キー",
     "usageBaseUrl": "使用量クエリ URL",
+    "usageAccessToken": "使用量アクセストークン",
+    "usageUserId": "使用量ユーザー ID",
     "usageAutoInterval": "自動クエリ",
     "usageAutoIntervalValue": "{{minutes}} 分ごと",
     "risk": {

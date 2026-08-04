@@ -129,20 +129,45 @@ pub fn sync_grokbuild_usage(db: &Database) -> Result<SessionSyncResult, AppError
 fn collect_grok_updates_files() -> Vec<PathBuf> {
     let mut files = Vec::new();
     for root in crate::session_manager::providers::grokbuild::session_roots() {
-        collect_files_named(&root, "updates.jsonl", &mut files);
+        collect_files_named(&root, "updates.jsonl", &mut files, 0);
     }
     files
 }
 
+/// 单个 updates.jsonl 文件读取上限（50 MiB）。JSONL 单行事件通常几 KiB，
+/// 正常活跃会话数月也到不了这个量级；超过则视为异常/恶意文件，跳过。
+const MAX_GROK_FILE_BYTES: u64 = 50 * 1024 * 1024;
+/// 递归收集 session 日志时的最大目录深度，防止 symlink 循环导致栈溢出。
+const MAX_COLLECT_DEPTH: usize = 16;
+
 /// 递归收集目录下指定文件名的文件（容忍布局深度变化，对齐会话浏览器的做法）
-fn collect_files_named(root: &Path, name: &str, files: &mut Vec<PathBuf>) {
+fn collect_files_named(root: &Path, name: &str, files: &mut Vec<PathBuf>, depth: usize) {
+    if depth > MAX_COLLECT_DEPTH {
+        log::warn!(
+            "Grok session directory traversal exceeded max depth {} at {}",
+            MAX_COLLECT_DEPTH,
+            root.display()
+        );
+        return;
+    }
     let Ok(entries) = fs::read_dir(root) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
-            collect_files_named(&path, name, files);
+        // `entry.metadata()` 不跟随符号链接（不同于 `path.is_dir()`），这里据此
+        // **无条件跳过一切 symlink**：目录 symlink 不递归（避免循环），文件
+        // symlink 也不收集——同名文件若经 symlink 指向 sessions 根之外，会把用户
+        // 意料之外的内容当作会话日志读入。代价：把 sessions 目录整体做成 symlink
+        // 的用户会同步不到数据，所以跳过必须留日志，便于排查"用量数据静默缺失"。
+        let metadata = entry.metadata();
+        if metadata.as_ref().map(|m| m.is_symlink()).unwrap_or(false) {
+            log::info!("[GROK-SYNC] 跳过符号链接（不跟随）: {}", path.display());
+            continue;
+        }
+        let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+        if is_dir {
+            collect_files_named(&path, name, files, depth + 1);
         } else if path.file_name().and_then(|n| n.to_str()) == Some(name) {
             files.push(path);
         }
@@ -156,6 +181,16 @@ fn sync_single_grok_file(db: &Database, file_path: &Path) -> Result<SessionSyncR
     let metadata = fs::metadata(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
     let file_modified = metadata_modified_nanos(&metadata);
+
+    // 异常大文件直接跳过，避免一次性读取耗尽内存。
+    if metadata.len() > MAX_GROK_FILE_BYTES {
+        log::warn!(
+            "Grok session log too large ({} bytes), skipping: {}",
+            metadata.len(),
+            file_path.display()
+        );
+        return Ok(SessionSyncResult::default());
+    }
 
     let (last_modified, _last_offset) = get_sync_state(db, &file_path_str)?;
     if file_modified <= last_modified {
@@ -1147,5 +1182,53 @@ mod tests {
         let expected = Decimal::from(56_540_000u64) / Decimal::from(10_000_000_000u64);
         assert_eq!(Decimal::from_str(&total).expect("decimal"), expected);
         Ok(())
+    }
+
+    #[test]
+    fn oversized_updates_jsonl_is_skipped_without_reading_into_memory() {
+        let db = Database::memory().expect("memory db");
+        let temp = tempdir().expect("tempdir");
+        let path = write_session_file(temp.path(), "sess-huge", &[]);
+
+        // 制造一个超过 50 MiB 的文件，但内容为空（不会被解析）。
+        let huge = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&path)
+            .expect("open");
+        huge.set_len(MAX_GROK_FILE_BYTES + 1).expect("set_len");
+        drop(huge);
+
+        let result = sync_single_grok_file(&db, &path).expect("sync should not fail");
+        assert_eq!(result.imported, 0, "oversized file must not be imported");
+        assert_eq!(result.skipped, 0);
+        assert_eq!(result.deferred_files, 0);
+    }
+
+    #[test]
+    fn symlink_cycle_does_not_cause_stack_overflow() {
+        let temp = tempdir().expect("tempdir");
+        let sessions = temp.path().join("sessions");
+        let enc = sessions.join("enc-project");
+        let sub = enc.join("sub");
+        std::fs::create_dir_all(&sub).expect("create dirs");
+
+        // 构造循环：sub/cycle -> enc 父目录
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&enc, sub.join("cycle")).expect("symlink");
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&enc, sub.join("cycle")).expect("symlink");
+
+        // 也放一个真实的目标文件，确认正常遍历仍工作
+        std::fs::write(enc.join("updates.jsonl"), b"{}\n").expect("write real file");
+
+        let mut files = Vec::new();
+        collect_files_named(&sessions, "updates.jsonl", &mut files, 0);
+
+        assert_eq!(
+            files.len(),
+            1,
+            "only the real updates.jsonl should be collected; symlink cycle must not crash"
+        );
     }
 }
