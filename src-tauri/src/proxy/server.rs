@@ -57,6 +57,8 @@ pub struct ProxyServer {
     shutdown_tx: Arc<RwLock<Option<oneshot::Sender<()>>>>,
     /// 服务器任务句柄，用于等待服务器实际关闭
     server_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
+    /// [cc-switch-proxy] 额外路由（admin API），由 standalone 注入；默认 None，Tauri 用法不受影响
+    extra_routes: Option<Router<ProxyState>>,
 }
 
 impl ProxyServer {
@@ -88,7 +90,16 @@ impl ProxyServer {
             state,
             shutdown_tx: Arc::new(RwLock::new(None)),
             server_handle: Arc::new(RwLock::new(None)),
+            extra_routes: None,
         }
+    }
+
+    /// [cc-switch-proxy] 注入额外路由（如 admin API），与代理路由 merge 后由
+    /// `build_router` 统一 `with_state`。调用方传入的 router 必须是
+    /// `Router<ProxyState>` 且**不要**自行 `with_state`。
+    pub fn with_extra_routes(mut self, routes: Router<ProxyState>) -> Self {
+        self.extra_routes = Some(routes);
+        self
     }
 
     pub async fn start(&self) -> Result<ProxyServerInfo, ProxyError> {
@@ -289,7 +300,7 @@ impl ProxyServer {
     }
 
     fn build_router(&self) -> Router {
-        Router::new()
+        let router = Router::new()
             // 健康检查
             .route("/health", get(handlers::health_check))
             .route("/status", get(handlers::get_status))
@@ -365,8 +376,12 @@ impl ProxyServer {
             // Gemini 的 GA 版本也叫 /v1，给原 SDK 留一条出口
             .route("/gemini/v1/*path", any(handlers::handle_gemini))
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
-            .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
-            .with_state(self.state.clone())
+            .layer(DefaultBodyLimit::max(200 * 1024 * 1024));
+        let router = match &self.extra_routes {
+            Some(extra) => router.merge(extra.clone()),
+            None => router,
+        };
+        router.with_state(self.state.clone())
     }
 
     /// 在不重启服务的情况下更新运行时配置
