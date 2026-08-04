@@ -6,9 +6,7 @@ use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
-use crate::proxy::circuit_breaker::{
-    AllowResult, CircuitBreaker, CircuitBreakerConfig, CircuitState,
-};
+use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -240,38 +238,6 @@ impl ProviderRouter {
         breakers.get(circuit_key).cloned()
     }
 
-    /// 列出指定应用故障转移队列中所有 provider 及其当前熔断状态
-    ///
-    /// 按 failover_queue 顺序返回 `(Provider, CircuitState)`。
-    /// 未创建熔断器的 provider 默认视为 Closed（未熔断）。
-    /// 仅供主动健康检查使用；不要用于路由选择（路由选择请走 [`select_providers`]）。
-    pub async fn list_providers_with_state(
-        &self,
-        app_type: &str,
-    ) -> Result<Vec<(Provider, CircuitState)>, AppError> {
-        let all_providers = self.db.get_all_providers(app_type)?;
-        let ordered_ids: Vec<String> = self
-            .db
-            .get_failover_queue(app_type)?
-            .into_iter()
-            .map(|item| item.provider_id)
-            .collect();
-
-        let mut result = Vec::with_capacity(ordered_ids.len());
-        for provider_id in ordered_ids {
-            let Some(provider) = all_providers.get(&provider_id).cloned() else {
-                continue;
-            };
-            let circuit_key = format!("{app_type}:{}", provider.id);
-            let state = match self.get_breaker(&circuit_key).await {
-                Some(breaker) => breaker.get_state().await,
-                None => CircuitState::Closed,
-            };
-            result.push((provider, state));
-        }
-        Ok(result)
-    }
-
     /// 获取或创建熔断器
     async fn get_or_create_circuit_breaker(&self, key: &str) -> Arc<CircuitBreaker> {
         // 先尝试读锁获取
@@ -316,6 +282,7 @@ impl ProviderRouter {
 mod tests {
     use super::*;
     use crate::database::Database;
+    use crate::proxy::circuit_breaker::CircuitState;
     use serde_json::json;
     use serial_test::serial;
     use std::env;
@@ -588,51 +555,5 @@ mod tests {
         assert!(breaker.is_some());
         // 与 select_providers 用的是同一个 Arc 实例
         assert_eq!(breaker.unwrap().get_state().await, CircuitState::Closed);
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn list_providers_with_state_returns_state_for_each() {
-        let _home = TempHome::new();
-        let db = Arc::new(Database::memory().unwrap());
-
-        // 先配置熔断器：1 次失败即熔断（必须在 record_result 之前生效）
-        db.update_circuit_breaker_config(&CircuitBreakerConfig {
-            failure_threshold: 1,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-
-        let provider_a =
-            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
-        let provider_b =
-            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
-        db.save_provider("claude", &provider_a).unwrap();
-        db.save_provider("claude", &provider_b).unwrap();
-        db.add_to_failover_queue("claude", "a").unwrap();
-        db.add_to_failover_queue("claude", "b").unwrap();
-
-        // 启用自动故障转移（list_providers_with_state 用于健康检查场景）
-        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
-        config.auto_failover_enabled = true;
-        db.update_proxy_config_for_app(config).await.unwrap();
-
-        let router = ProviderRouter::new(db);
-
-        // 让 a 进入 Open：1 次失败即熔断
-        router
-            .record_result("a", "claude", false, false, Some("boom".to_string()))
-            .await
-            .unwrap();
-
-        let list = router.list_providers_with_state("claude").await.unwrap();
-        assert_eq!(list.len(), 2);
-        // 队列顺序：a 在前
-        assert_eq!(list[0].0.id, "a");
-        assert_eq!(list[0].1, CircuitState::Open);
-        assert_eq!(list[1].0.id, "b");
-        // b 从未发生过请求，未创建熔断器，默认 Closed
-        assert_eq!(list[1].1, CircuitState::Closed);
     }
 }

@@ -78,61 +78,69 @@ impl HealthChecker {
         for app_type in AppType::all() {
             let app_type_str = app_type.as_str();
 
-            // 只对启用自动故障转移的 app 检查
-            let auto_failover_enabled = match self.db.get_proxy_config_for_app(app_type_str).await {
-                Ok(config) => config.auto_failover_enabled,
-                Err(_) => continue,
-            };
-            if !auto_failover_enabled {
-                continue;
-            }
-
-            let providers = match self.router.list_providers_with_state(app_type_str).await {
-                Ok(list) => list,
+            // 心跳范围：遍历该 app 的全部 provider，只探 DB 里 consecutive_failures>0
+            // （降级/熔断）的；健康（failures==0）的不打上游，避免限流/计费。
+            // 不依赖 auto-failover 开关、也不依赖 failover 队列——stale 故障 provider
+            // 可能两者都不在（例如重启后内存熔断器已重置、仅 DB 行残留）。
+            let providers = match self.db.get_all_providers(app_type_str) {
+                Ok(map) => map,
                 Err(e) => {
                     log::debug!("[Health] 读取 {app_type_str} provider 列表失败: {e}");
                     continue;
                 }
             };
 
-            for (provider, state) in providers {
-                // 探测 Open 与 HalfOpen：Open 需主动转 HalfOpen，HalfOpen 需继续 probe
-                // 累计成功直到 Closed，否则无真实流量时会永久卡在 HalfOpen，
-                // 只能靠人工关闭/开启代理来恢复。
-                if state != CircuitState::Open && state != CircuitState::HalfOpen {
+            for (provider_id, provider) in providers {
+                let health = match self
+                    .db
+                    .get_provider_health(&provider_id, app_type_str)
+                    .await
+                {
+                    Ok(h) => h,
+                    Err(e) => {
+                        log::debug!("[Health] 读取 {app_type_str}/{provider_id} 健康状态失败: {e}");
+                        continue;
+                    }
+                };
+                // 健康（failures==0）不打上游
+                if health.consecutive_failures == 0 {
                     continue;
                 }
-                if self.probe(&provider, app_type_str).await {
-                    let circuit_key = format!("{app_type_str}:{}", provider.id);
-                    if let Some(breaker) = self.router.get_breaker(&circuit_key).await {
-                        // Open → HalfOpen（已是 HalfOpen 时为 no-op，不重置累计成功数）
-                        breaker.force_half_open().await;
-                        // 累计 HalfOpen 探测成功，达 success_threshold 后自动转 Closed。
-                        breaker.record_success(false).await;
 
-                        // 把恢复同步到 DB provider_health（前端徽章的数据源）。
-                        // 徽章三态：is_healthy=false → 熔断；is_healthy=true 且 failures>0 → 降级；
-                        // failures=0 → 正常。据此实现 熔断→降级→正常 的渐进恢复：
-                        // - 已完全恢复 (Closed)：清零 failures → 正常（也覆盖 success_threshold=1
-                        //   时"熔断直跳正常"的合法路径）
-                        // - 仍在 HalfOpen 留观：仅翻 is_healthy、保留 failures → 降级
-                        let fully_recovered = breaker.get_state().await == CircuitState::Closed;
-                        let db_result = if fully_recovered {
-                            self.db
-                                .update_provider_health(&provider.id, app_type_str, true, None)
-                                .await
-                        } else {
-                            self.db
-                                .mark_provider_recovering(&provider.id, app_type_str)
-                                .await
-                        };
-                        if let Err(e) = db_result {
-                            log::warn!(
-                                "[Health] {app_type_str}/{} 恢复回写 DB 失败: {e}",
-                                provider.id
-                            );
+                if !self.probe(&provider, app_type_str).await {
+                    continue;
+                }
+
+                // 可达：把内存熔断器与 DB provider_health 同步到恢复态。
+                let circuit_key = format!("{app_type_str}:{provider_id}");
+                let breaker = self.router.get_breaker(&circuit_key).await;
+                let fully_recovered = match &breaker {
+                    // 本次会话内熔断（内存仍在 Open/HalfOpen）：推进恢复
+                    Some(b) => {
+                        let st = b.get_state().await;
+                        if matches!(st, CircuitState::Open | CircuitState::HalfOpen) {
+                            b.force_half_open().await;
+                            b.record_success(false).await;
                         }
+                        b.get_state().await == CircuitState::Closed
                     }
+                    // 无内存熔断器（重启后内存已重置、仅 DB 行残留）→ 直接清 DB
+                    None => true,
+                };
+
+                // 徽章三态：failures=0 → 正常；is_healthy=true & failures>0 → 降级；
+                // is_healthy=false → 熔断。据此 熔断→降级→正常 渐进恢复。
+                let db_result = if fully_recovered {
+                    self.db
+                        .update_provider_health(&provider_id, app_type_str, true, None)
+                        .await
+                } else {
+                    self.db
+                        .mark_provider_recovering(&provider_id, app_type_str)
+                        .await
+                };
+                if let Err(e) = db_result {
+                    log::warn!("[Health] {app_type_str}/{provider_id} 恢复回写 DB 失败: {e}");
                 }
             }
         }
@@ -726,22 +734,25 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn scan_once_skips_apps_without_auto_failover() {
+    async fn scan_once_probes_unhealthy_even_without_auto_failover() {
+        // 心跳不依赖 auto-failover 开关、也不依赖 failover 队列：
+        // 只要 DB 里 failures>0（降级/熔断），可达就恢复。覆盖重启后 stale 场景。
         let _home = TempHome::new();
-        // 不需要 mock server：scan_once 会跳过 probe，因为没有启用 auto_failover
+        let (base_url, handle) = spawn_once_server(200);
+
         let db = Arc::new(Database::memory().unwrap());
         db.update_circuit_breaker_config(&CircuitBreakerConfig {
             failure_threshold: 1,
+            success_threshold: 1,
             timeout_seconds: 3600,
             ..Default::default()
         })
         .await
         .unwrap();
 
-        let provider = claude_provider_with("http://127.0.0.1:1");
+        let provider = claude_provider_with(&base_url);
         db.save_provider("claude", &provider).unwrap();
-        db.add_to_failover_queue("claude", &provider.id).unwrap();
-        // 注意：不启用 auto_failover（默认即为 false）
+        // 不加入 failover 队列、不启用 auto_failover——心跳仍应覆盖
 
         let router = Arc::new(ProviderRouter::new(db.clone()));
         router
@@ -755,16 +766,63 @@ mod tests {
             .await
             .unwrap();
 
-        let checker = HealthChecker::new(router.clone(), db, test_client());
-        checker.scan_once().await;
-
-        // 未启用故障转移 → 跳过，状态仍为 Open
         let circuit_key = format!("claude:{}", provider.id);
         let breaker = router
             .get_breaker(&circuit_key)
             .await
             .expect("breaker exists");
         assert_eq!(breaker.get_state().await, CircuitState::Open);
+
+        let checker = HealthChecker::new(router.clone(), db.clone(), test_client());
+        checker.scan_once().await;
+
+        // 未开 failover、不在队列，但 DB 标记 unhealthy 且可达 → 仍恢复
+        assert_eq!(breaker.get_state().await, CircuitState::Closed);
+        let h = db
+            .get_provider_health(&provider.id, "claude")
+            .await
+            .unwrap();
+        assert!(h.is_healthy);
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scan_once_does_not_probe_healthy_providers() {
+        // 正常（failures==0）不打上游：探活命中计数应为 0，避免限流/计费。
+        let _home = TempHome::new();
+        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hits_clone = hits.clone();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).ok();
+        let port = listener.local_addr().expect("addr").port();
+        let handle = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_millis(1200);
+            while std::time::Instant::now() < deadline {
+                if let Ok((mut s, _)) = listener.accept() {
+                    hits_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let _ = s.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+
+        let db = Arc::new(Database::memory().unwrap());
+        let provider = claude_provider_with(&format!("http://127.0.0.1:{port}"));
+        db.save_provider("claude", &provider).unwrap();
+        // 不 record_failure → failures==0（健康）
+
+        let router = Arc::new(ProviderRouter::new(db.clone()));
+        let checker = HealthChecker::new(router, db, test_client());
+        checker.scan_once().await;
+
+        // 健康 provider 不应被打上游
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "健康 provider 不应被探活"
+        );
+        handle.join().expect("server thread");
     }
 
     #[tokio::test]
