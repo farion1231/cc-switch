@@ -1355,6 +1355,8 @@ impl SkillService {
             let current = db.get_all_installed_skills()?;
             let mut current_rows_owned = Vec::with_capacity(validated.len());
             let mut destinations_owned = Vec::with_capacity(validated.len());
+            let staged_root =
+                ssot_dir.join(format!(".cc-switch-{}-staging", journal.transaction_id));
             for (item, directory) in &validated {
                 let current_row_owned = match current.get(&item.skill.id) {
                     Some(skill) => {
@@ -1380,10 +1382,16 @@ impl SkillService {
                         ));
                     }
                     if !item.moved_to_ssot && !current_row_owned {
-                        return Err(anyhow!(
-                            "inactive Skill cohort recovery collision at {}: path was not moved by this transaction",
-                            destination.display()
-                        ));
+                        let staged_item = staged_root.join(directory);
+                        let move_can_be_inferred =
+                            matches!(journal.state.as_str(), "prepared" | "moving")
+                                && !Self::path_entry_exists(&staged_item)?;
+                        if !move_can_be_inferred {
+                            return Err(anyhow!(
+                                "inactive Skill cohort recovery collision at {}: path was not moved by this transaction",
+                                destination.display()
+                            ));
+                        }
                     }
                     true
                 } else {
@@ -1395,8 +1403,6 @@ impl SkillService {
             let fully_committed = current_rows_owned.iter().all(|owned| *owned)
                 && destinations_owned.iter().all(|owned| *owned);
             if fully_committed {
-                let staged_root =
-                    ssot_dir.join(format!(".cc-switch-{}-staging", journal.transaction_id));
                 if Self::path_entry_exists(&staged_root)? {
                     fs::remove_dir_all(staged_root)?;
                 }
@@ -1421,8 +1427,6 @@ impl SkillService {
                     fs::remove_dir_all(&destination)?;
                 }
             }
-            let staged_root =
-                ssot_dir.join(format!(".cc-switch-{}-staging", journal.transaction_id));
             if Self::path_entry_exists(&staged_root)? {
                 fs::remove_dir_all(staged_root)?;
             }
@@ -1784,6 +1788,39 @@ impl SkillService {
         Ok(())
     }
 
+    fn resolve_update_source_dir(
+        temp_dir: &Path,
+        remote_skills: &[DiscoverableSkill],
+        skill: &InstalledSkill,
+        exact_revision: bool,
+    ) -> Option<PathBuf> {
+        if exact_revision {
+            let owner = skill.repo_owner.as_deref()?;
+            let repo = skill.repo_name.as_deref()?;
+            let (repository_identity, source_path) = skill.id.split_once(':')?;
+            if !repository_identity.eq_ignore_ascii_case(&format!("{owner}/{repo}")) {
+                return None;
+            }
+            let source_path = Self::sanitize_skill_source_path(source_path)?;
+            let install_name = source_path.file_name()?.to_string_lossy();
+            if !install_name.eq_ignore_ascii_case(&skill.directory) {
+                return None;
+            }
+            let source = temp_dir.join(source_path);
+            return (source.is_dir() && source.join("SKILL.md").is_file()).then_some(source);
+        }
+
+        let remote_match = remote_skills.iter().find(|remote| {
+            let remote_install_name = remote
+                .directory
+                .rsplit('/')
+                .next()
+                .unwrap_or(&remote.directory);
+            remote_install_name.eq_ignore_ascii_case(&skill.directory)
+        })?;
+        Self::resolve_skill_source_dir(temp_dir, &remote_match.directory)
+    }
+
     /// 检查所有已安装 Skill 的更新
     ///
     /// 仅检查有 repo_owner 的 Skill（本地 Skill 跳过），
@@ -1848,19 +1885,13 @@ impl SkillService {
             let _ = self.scan_dir_recursive(temp_dir, temp_dir, &repo, &mut remote_skills);
 
             for skill in group_skills {
-                // 在远程仓库中找到匹配的 Skill 目录
-                let remote_match = remote_skills.iter().find(|rs| {
-                    // 匹配方式：安装名称的最后一段
-                    let remote_install_name =
-                        rs.directory.rsplit('/').next().unwrap_or(&rs.directory);
-                    remote_install_name.eq_ignore_ascii_case(&skill.directory)
-                });
-
-                let remote_skill_dir = match remote_match {
-                    Some(rs) => match Self::resolve_skill_source_dir(temp_dir, &rs.directory) {
-                        Some(path) => path,
-                        None => continue,
-                    },
+                let remote_skill_dir = match Self::resolve_update_source_dir(
+                    temp_dir,
+                    &remote_skills,
+                    skill,
+                    exact_revision,
+                ) {
+                    Some(path) => path,
                     None => continue,
                 };
 
@@ -5416,6 +5447,44 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn inactive_cohort_recovery_recognizes_a_move_completed_before_journal_flush() {
+        let temp = tempdir().expect("tempdir");
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        let ssot = temp.path().join("ssot");
+        let recovery = temp.path().join("recovery");
+        let transaction_id = "skill-cohort-move-before-journal";
+        let transaction_root = recovery.join(transaction_id);
+        let staged_root = ssot.join(format!(".cc-switch-{transaction_id}-staging"));
+        fs::create_dir_all(&transaction_root).expect("transaction root");
+        fs::create_dir_all(&staged_root).expect("empty staging root after rename");
+
+        // Model the crash window precisely: rename already placed alpha in SSOT,
+        // its staged path is gone, but the last durable journal still says false.
+        write_skill(&ssot.join("alpha"), "alpha");
+        let journal = InactiveSkillCohortJournal {
+            schema: 2,
+            transaction_id: transaction_id.to_string(),
+            state: "prepared".to_string(),
+            items: vec![cohort_journal_item(
+                poisoned_skill("owner/repo:alpha", "alpha"),
+                &ssot.join("alpha"),
+                false,
+            )],
+        };
+        SkillService::write_cohort_journal(&transaction_root.join("journal.json"), &journal)
+            .expect("write stale journal");
+
+        let result = SkillService::recover_inactive_cohort_transactions_at(&db, &recovery, &ssot)
+            .expect("infer the completed move and roll it back");
+
+        assert_eq!(result.rolled_back, 1);
+        assert!(!ssot.join("alpha").exists());
+        assert!(!staged_root.exists());
+        assert!(!transaction_root.exists());
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn inactive_cohort_recovery_finalizes_fully_committed_transaction() {
         let temp = tempdir().expect("tempdir");
         let db = std::sync::Arc::new(Database::memory().expect("memory db"));
@@ -5736,6 +5805,28 @@ mod tests {
 
         assert!(error.to_string().contains("dependency completeness"));
         assert!(!prepared_root.join("alpha").exists());
+    }
+
+    #[test]
+    fn exact_revision_update_source_uses_the_full_path_retained_in_the_skill_id() {
+        let temp = tempdir().expect("tempdir");
+        let repository = temp.path().join("repository");
+        write_skill(&repository.join("foo").join("shared"), "wrong shared");
+        write_skill(&repository.join("bar").join("shared"), "reviewed shared");
+        let remote_skills = vec![
+            discoverable_skill("foo/shared"),
+            discoverable_skill("bar/shared"),
+        ];
+        let mut pinned = poisoned_skill("owner/repo:bar/shared", "shared");
+        pinned.repo_owner = Some("owner".to_string());
+        pinned.repo_name = Some("repo".to_string());
+        pinned.repo_branch = Some("0123456789abcdef0123456789abcdef01234567".to_string());
+
+        let source =
+            SkillService::resolve_update_source_dir(&repository, &remote_skills, &pinned, true)
+                .expect("resolve pinned update source");
+
+        assert_eq!(source, repository.join("bar").join("shared"));
     }
 
     #[tokio::test]
