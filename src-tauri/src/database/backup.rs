@@ -310,8 +310,54 @@ impl Database {
             }
         }
 
+        Self::restore_sqlite_sequences(source_conn, &tx, tables)?;
+
         tx.commit()
             .map_err(|e| AppError::Database(format!("提交恢复事务失败: {e}")))?;
+        Ok(())
+    }
+
+    fn restore_sqlite_sequences(
+        source_conn: &Connection,
+        target_conn: &Connection,
+        tables: &[&str],
+    ) -> Result<(), AppError> {
+        if !Self::table_exists(source_conn, "sqlite_sequence")?
+            || !Self::table_exists(target_conn, "sqlite_sequence")?
+        {
+            return Ok(());
+        }
+
+        let mut source_stmt = source_conn
+            .prepare(
+                "SELECT seq FROM sqlite_sequence
+                 WHERE name = ?1 ORDER BY rowid DESC LIMIT 1",
+            )
+            .map_err(|e| AppError::Database(format!("读取 AUTOINCREMENT 序列失败: {e}")))?;
+        for table in tables {
+            target_conn
+                .execute("DELETE FROM sqlite_sequence WHERE name = ?1", [*table])
+                .map_err(|e| {
+                    AppError::Database(format!("清理表 {table} 的 AUTOINCREMENT 序列失败: {e}"))
+                })?;
+
+            let mut rows = source_stmt
+                .query([*table])
+                .map_err(|e| AppError::Database(format!("查询表 {table} 序列失败: {e}")))?;
+            if let Some(row) = rows.next().map_err(|e| AppError::Database(e.to_string()))? {
+                let sequence = row
+                    .get::<_, rusqlite::types::Value>(0)
+                    .map_err(|e| AppError::Database(format!("解析表 {table} 序列失败: {e}")))?;
+                target_conn
+                    .execute(
+                        "INSERT INTO sqlite_sequence (name, seq) VALUES (?1, ?2)",
+                        rusqlite::params![table, sequence],
+                    )
+                    .map_err(|e| {
+                        AppError::Database(format!("恢复表 {table} 的 AUTOINCREMENT 序列失败: {e}"))
+                    })?;
+            }
+        }
         Ok(())
     }
 
@@ -590,6 +636,8 @@ impl Database {
             }
         }
 
+        Self::dump_sqlite_sequences(conn, skip_tables, &mut output)?;
+
         // Triggers must be created after loading table data so they cannot
         // change dump rows or abandon the remainder of a multi-row INSERT.
         for sql in triggers {
@@ -599,6 +647,51 @@ impl Database {
 
         output.push_str("COMMIT;\nPRAGMA foreign_keys=ON;\n");
         Ok(output)
+    }
+
+    fn dump_sqlite_sequences(
+        conn: &Connection,
+        skip_tables: &[&str],
+        output: &mut String,
+    ) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "sqlite_sequence")? {
+            return Ok(());
+        }
+
+        let mut stmt = conn
+            .prepare("SELECT name, seq FROM sqlite_sequence ORDER BY name")
+            .map_err(|e| AppError::Database(format!("读取 AUTOINCREMENT 序列失败: {e}")))?;
+        let mut rows = stmt
+            .query([])
+            .map_err(|e| AppError::Database(format!("查询 AUTOINCREMENT 序列失败: {e}")))?;
+        let mut values = Vec::new();
+        while let Some(row) = rows.next().map_err(|e| AppError::Database(e.to_string()))? {
+            let table: String = row
+                .get(0)
+                .map_err(|e| AppError::Database(format!("解析 AUTOINCREMENT 表名失败: {e}")))?;
+            if skip_tables.iter().any(|skipped| *skipped == table) {
+                continue;
+            }
+            let sequence = row
+                .get_ref(1)
+                .map_err(|e| AppError::Database(format!("解析表 {table} 序列失败: {e}")))?;
+            values.push(format!(
+                "({}, {})",
+                Self::format_sql_value(ValueRef::Text(table.as_bytes()))?,
+                Self::format_sql_value(sequence)?
+            ));
+        }
+
+        // Data INSERTs update sqlite_sequence to MAX(rowid), which loses a
+        // deleted high-water mark. Replace those derived values with the exact
+        // source metadata after all user-table rows have been loaded.
+        output.push_str("DELETE FROM sqlite_sequence;\n");
+        if !values.is_empty() {
+            output.push_str("INSERT INTO sqlite_sequence (name, seq) VALUES ");
+            output.push_str(&values.join(","));
+            output.push_str(";\n");
+        }
+        Ok(())
     }
 
     fn quote_identifier(identifier: &str) -> String {
@@ -1336,6 +1429,74 @@ mod tests {
         let (storage_class, negative_infinity) = real_value("negative-infinity")?;
         assert_eq!(storage_class, "real");
         assert_eq!(negative_infinity, f64::NEG_INFINITY);
+        Ok(())
+    }
+
+    #[test]
+    fn dump_sql_preserves_autoincrement_high_water_marks() -> Result<(), AppError> {
+        let source = Connection::open_in_memory()?;
+        source.execute_batch(
+            "CREATE TABLE autoincrement_rows (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 value TEXT NOT NULL
+             );
+             INSERT INTO autoincrement_rows (value) VALUES ('one'), ('two'), ('deleted-high');
+             DELETE FROM autoincrement_rows WHERE id = 3;",
+        )?;
+
+        let sql = Database::dump_sql(&source, &[])?;
+        let target = Connection::open_in_memory()?;
+        target.execute_batch(&sql)?;
+
+        let sequence: i64 = target.query_row(
+            "SELECT seq FROM sqlite_sequence WHERE name = 'autoincrement_rows'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(sequence, 3, "已删除的最高 ID 仍应保留在序列高水位中");
+        target.execute(
+            "INSERT INTO autoincrement_rows (value) VALUES ('after-restore')",
+            [],
+        )?;
+        assert_eq!(target.last_insert_rowid(), 4);
+        Ok(())
+    }
+
+    #[test]
+    fn sync_style_restore_preserves_local_autoincrement_high_water_marks() -> Result<(), AppError> {
+        let source = Connection::open_in_memory()?;
+        source.execute_batch(
+            "CREATE TABLE autoincrement_rows (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 value TEXT NOT NULL
+             );
+             INSERT INTO autoincrement_rows (value) VALUES ('one'), ('two'), ('deleted-high');
+             DELETE FROM autoincrement_rows WHERE id = 3;",
+        )?;
+
+        // A sync dump skips device-local rows and their sequence metadata.
+        let staged_sql = Database::dump_sql(&source, &["autoincrement_rows"])?;
+        let target = Connection::open_in_memory()?;
+        target.execute_batch(&staged_sql)?;
+        let staged_sequence_count: i64 = target.query_row(
+            "SELECT COUNT(*) FROM sqlite_sequence WHERE name = 'autoincrement_rows'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(staged_sequence_count, 0);
+
+        Database::restore_tables(&source, &target, &["autoincrement_rows"])?;
+        let restored_sequence: i64 = target.query_row(
+            "SELECT seq FROM sqlite_sequence WHERE name = 'autoincrement_rows'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(restored_sequence, 3);
+        target.execute(
+            "INSERT INTO autoincrement_rows (value) VALUES ('after-sync')",
+            [],
+        )?;
+        assert_eq!(target.last_insert_rowid(), 4);
         Ok(())
     }
 
