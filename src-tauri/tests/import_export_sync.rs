@@ -3,8 +3,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use cc_switch_lib::{
-    get_claude_settings_path, read_json_file, AppError, AppType, ConfigService, MultiAppConfig,
-    Provider, ProviderMeta,
+    get_claude_settings_path, read_json_file, AppError, AppType, ConfigService, McpApps, McpServer,
+    MultiAppConfig, Provider, ProviderMeta,
 };
 
 #[path = "support.rs"]
@@ -322,6 +322,17 @@ fn sync_enabled_to_codex_writes_enabled_servers() {
             }
         }),
     );
+    config.mcp.codex.servers.insert(
+        "http-enabled".into(),
+        json!({
+            "id": "http-enabled",
+            "enabled": true,
+            "server": {
+                "type": "http",
+                "url": "https://mcp.example.com",
+            }
+        }),
+    );
 
     cc_switch_lib::sync_enabled_to_codex(&config).expect("sync codex");
 
@@ -330,6 +341,94 @@ fn sync_enabled_to_codex_writes_enabled_servers() {
     assert!(
         text.contains("mcp_servers") && text.contains("stdio-enabled"),
         "enabled servers should be serialized"
+    );
+
+    let parsed: toml::Value = toml::from_str(&text).expect("parse generated config.toml");
+    let server = parsed
+        .get("mcp_servers")
+        .and_then(|servers| servers.get("stdio-enabled"))
+        .expect("generated stdio server");
+    assert_eq!(
+        server.get("command").and_then(toml::Value::as_str),
+        Some("echo"),
+        "Codex stdio servers must retain their command"
+    );
+    assert!(
+        server.get("type").is_none(),
+        "Codex infers stdio transport from command; emitting type = \"stdio\" makes current Codex reject config.toml"
+    );
+
+    let server = parsed
+        .get("mcp_servers")
+        .and_then(|servers| servers.get("http-enabled"))
+        .expect("generated streamable HTTP server");
+    assert_eq!(
+        server.get("url").and_then(toml::Value::as_str),
+        Some("https://mcp.example.com"),
+        "Codex streamable HTTP servers must retain their URL"
+    );
+    assert!(
+        server.get("type").is_none(),
+        "Codex infers streamable HTTP transport from url; internal transport metadata must not leak into config.toml"
+    );
+
+    let mut imported = MultiAppConfig::default();
+    let changed = cc_switch_lib::import_from_codex(&mut imported).expect("re-import codex");
+    assert_eq!(changed, 2, "both generated servers should round-trip");
+
+    let imported_servers = imported
+        .mcp
+        .servers
+        .as_ref()
+        .expect("re-imported unified servers");
+    assert_eq!(
+        imported_servers["stdio-enabled"].server["type"], "stdio",
+        "command-only entries should re-import as stdio"
+    );
+    assert_eq!(
+        imported_servers["http-enabled"].server["type"], "http",
+        "url-only entries should re-import as HTTP"
+    );
+}
+
+#[test]
+fn sync_enabled_to_codex_rejects_sse_without_touching_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+
+    let path = cc_switch_lib::get_codex_config_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create codex dir");
+    }
+    let original = "# keep this content\nmodel = \"gpt-5.5\"\n";
+    fs::write(&path, original).expect("seed config.toml");
+
+    let mut config = MultiAppConfig::default();
+    config.mcp.codex.servers.insert(
+        "legacy-sse".into(),
+        json!({
+            "id": "legacy-sse",
+            "enabled": true,
+            "server": {
+                "type": "sse",
+                "url": "https://mcp.example.com/sse"
+            }
+        }),
+    );
+
+    let error = cc_switch_lib::sync_enabled_to_codex(&config).expect_err("Codex must reject SSE");
+    match error {
+        AppError::McpValidation(message) => {
+            assert!(message.contains("SSE"));
+            assert!(message.contains("Streamable HTTP"));
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+
+    assert_eq!(
+        fs::read_to_string(&path).expect("read config.toml"),
+        original,
+        "unsupported SSE transport must leave config.toml untouched"
     );
 }
 
@@ -534,6 +633,42 @@ fn sync_single_server_to_codex_fails_closed_on_invalid_toml() {
 }
 
 #[test]
+fn sync_single_server_to_codex_rejects_sse_without_touching_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+
+    let path = cc_switch_lib::get_codex_config_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create codex dir");
+    }
+    let original = "# keep this content\nmodel = \"gpt-5.5\"\n";
+    fs::write(&path, original).expect("seed config.toml");
+
+    let error = cc_switch_lib::sync_single_server_to_codex(
+        &MultiAppConfig::default(),
+        "legacy-sse",
+        &json!({
+            "type": "sse",
+            "url": "https://mcp.example.com/sse"
+        }),
+    )
+    .expect_err("Codex must reject SSE");
+    match error {
+        AppError::McpValidation(message) => {
+            assert!(message.contains("SSE"));
+            assert!(message.contains("Streamable HTTP"));
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+
+    assert_eq!(
+        fs::read_to_string(&path).expect("read config.toml"),
+        original,
+        "unsupported SSE transport must leave config.toml untouched"
+    );
+}
+
+#[test]
 fn sync_codex_provider_missing_auth_returns_error() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
@@ -713,6 +848,93 @@ url = "https://example.com"
         http_spec.get("url").and_then(|v| v.as_str()).unwrap_or(""),
         "https://example.com"
     );
+}
+
+#[test]
+fn import_from_codex_skips_explicit_legacy_sse() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+
+    let path = cc_switch_lib::get_codex_config_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create codex dir");
+    }
+    fs::write(
+        &path,
+        r#"[mcp_servers.legacy-sse]
+type = "sse"
+url = "https://mcp.example.com/sse"
+"#,
+    )
+    .expect("seed legacy Codex config");
+
+    let mut config = MultiAppConfig::default();
+    let changed = cc_switch_lib::import_from_codex(&mut config).expect("import Codex config");
+    assert_eq!(changed, 0);
+    assert!(
+        !config
+            .mcp
+            .servers
+            .as_ref()
+            .expect("unified servers")
+            .contains_key("legacy-sse"),
+        "an unsupported explicit SSE entry must not become Codex-enabled"
+    );
+}
+
+#[test]
+fn import_from_codex_does_not_enable_existing_same_id_sse() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+
+    let path = cc_switch_lib::get_codex_config_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create codex dir");
+    }
+    fs::write(
+        &path,
+        r#"[mcp_servers.shared]
+url = "https://mcp.example.com/mcp"
+"#,
+    )
+    .expect("seed Codex HTTP server");
+
+    let mut config = MultiAppConfig::default();
+    config
+        .mcp
+        .servers
+        .as_mut()
+        .expect("unified servers")
+        .insert(
+            "shared".to_string(),
+            McpServer {
+                id: "shared".to_string(),
+                name: "Shared SSE".to_string(),
+                server: json!({
+                    "type": "sse",
+                    "url": "https://mcp.example.com/sse"
+                }),
+                apps: McpApps {
+                    gemini: true,
+                    ..Default::default()
+                },
+                description: None,
+                homepage: None,
+                docs: None,
+                tags: Vec::new(),
+            },
+        );
+
+    let changed = cc_switch_lib::import_from_codex(&mut config).expect("import Codex config");
+    assert_eq!(changed, 0);
+
+    let shared = &config.mcp.servers.as_ref().expect("unified servers")["shared"];
+    assert!(shared.apps.gemini);
+    assert!(
+        !shared.apps.codex,
+        "same-ID HTTP import must not enable Codex on an existing SSE spec"
+    );
+    assert_eq!(shared.server["type"], "sse");
 }
 
 #[test]

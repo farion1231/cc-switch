@@ -25,9 +25,8 @@ fn read_config_text() -> Result<String, AppError> {
 
 fn json_server_to_grokbuild_toml_table(server_spec: &Value) -> Result<toml_edit::Table, AppError> {
     let mut table = json_server_to_toml_table(server_spec)?;
-    // Grok infers transport from `command` or `url` and uses `headers`, while
-    // Codex writes an explicit `type` plus `http_headers`.
-    table.remove("type");
+    // Both apps infer transport from `command` or `url`; Grok uses `headers`,
+    // while Codex uses `http_headers`.
     if let Some(headers) = table.remove("http_headers") {
         table.insert("headers", headers);
     }

@@ -588,6 +588,179 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
 }
 
 #[test]
+fn enabling_sse_for_codex_is_rejected_before_persisting() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    let original = "# keep this content\nmodel = \"gpt-5.5\"\n";
+    fs::write(codex_dir.join("config.toml"), original).expect("seed config.toml");
+
+    let state = create_test_state().expect("create test state");
+    McpService::upsert_server(
+        &state,
+        McpServer {
+            id: "legacy-sse".to_string(),
+            name: "Legacy SSE".to_string(),
+            server: json!({
+                "type": "sse",
+                "url": "https://mcp.example.com/sse"
+            }),
+            apps: McpApps::default(),
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    )
+    .expect("insert disabled SSE server");
+
+    let error = McpService::toggle_app(&state, "legacy-sse", AppType::Codex, true)
+        .expect_err("Codex must reject SSE");
+    assert!(error.to_string().contains("SSE"));
+
+    let servers = state.db.get_all_mcp_servers().expect("load MCP servers");
+    assert!(
+        !servers["legacy-sse"].apps.codex,
+        "failed enable must not be persisted"
+    );
+    assert_eq!(
+        fs::read_to_string(codex_dir.join("config.toml")).expect("read config.toml"),
+        original,
+        "failed enable must leave Codex config untouched"
+    );
+}
+
+#[test]
+fn upserting_codex_sse_is_rejected_before_database_or_live_writes() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    fs::create_dir_all(home.join(".claude")).expect("create Claude config dir");
+    fs::create_dir_all(home.join(".codex")).expect("create Codex config dir");
+    let state = create_test_state().expect("create test state");
+
+    let error = McpService::upsert_server(
+        &state,
+        McpServer {
+            id: "multi-app-sse".to_string(),
+            name: "Multi-app SSE".to_string(),
+            server: json!({
+                "type": "sse",
+                "url": "https://mcp.example.com/sse"
+            }),
+            apps: McpApps {
+                claude: true,
+                codex: true,
+                ..Default::default()
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    )
+    .expect_err("Codex must reject SSE before any write");
+    assert!(error.to_string().contains("SSE"));
+
+    assert!(
+        state
+            .db
+            .get_all_mcp_servers()
+            .expect("load MCP servers")
+            .get("multi-app-sse")
+            .is_none(),
+        "rejected upsert must not persist the server"
+    );
+    assert!(
+        !get_claude_mcp_path().exists(),
+        "preflight failure must occur before syncing an earlier app"
+    );
+}
+
+#[test]
+fn codex_reprojection_continues_after_legacy_sse_error() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    fs::write(
+        codex_dir.join("config.toml"),
+        r#"# keep this content
+
+[mcp_servers.a-legacy-sse]
+url = "https://mcp.example.com/sse"
+"#,
+    )
+    .expect("seed config.toml");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&McpServer {
+            id: "a-legacy-sse".to_string(),
+            name: "Legacy SSE".to_string(),
+            server: json!({
+                "type": "sse",
+                "url": "https://mcp.example.com/sse"
+            }),
+            apps: McpApps {
+                codex: true,
+                ..Default::default()
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        })
+        .expect("seed legacy SSE record");
+    state
+        .db
+        .save_mcp_server(&McpServer {
+            id: "z-valid-stdio".to_string(),
+            name: "Valid stdio".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                codex: true,
+                ..Default::default()
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        })
+        .expect("seed valid stdio record");
+
+    let error = McpService::sync_enabled_for_app(&state, &AppType::Codex)
+        .expect_err("legacy SSE should still be reported");
+    assert!(error.to_string().contains("a-legacy-sse"));
+
+    let text =
+        fs::read_to_string(codex_dir.join("config.toml")).expect("read projected config.toml");
+    let parsed: toml::Value = toml::from_str(&text).expect("parse projected config.toml");
+    let servers = parsed
+        .get("mcp_servers")
+        .and_then(toml::Value::as_table)
+        .expect("projected mcp_servers");
+    assert!(
+        servers.get("a-legacy-sse").is_none(),
+        "reprojection must remove SSE output left by older versions"
+    );
+    assert!(
+        servers.get("z-valid-stdio").is_some(),
+        "a legacy SSE error must not block later valid servers"
+    );
+}
+
+#[test]
 fn enabling_codex_mcp_skips_when_codex_dir_missing() {
     use support::create_test_state;
 
@@ -761,6 +934,58 @@ command = "echo"
     let entry = servers.get("shared").expect("shared server exists");
     assert!(entry.apps.claude, "shared should enable Claude");
     assert!(entry.apps.codex, "shared should enable Codex");
+}
+
+#[test]
+fn codex_import_rejects_same_id_collision_with_existing_sse() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    fs::write(
+        codex_dir.join("config.toml"),
+        r#"[mcp_servers.shared]
+url = "https://mcp.example.com/mcp"
+"#,
+    )
+    .expect("seed Codex HTTP server");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&McpServer {
+            id: "shared".to_string(),
+            name: "Shared SSE".to_string(),
+            server: json!({
+                "type": "sse",
+                "url": "https://mcp.example.com/sse"
+            }),
+            apps: McpApps {
+                gemini: true,
+                ..Default::default()
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        })
+        .expect("seed existing SSE server");
+
+    let error = McpService::import_from_codex(&state)
+        .expect_err("same-ID SSE/HTTP collision must not enable Codex");
+    assert!(error.to_string().contains("shared"));
+    assert!(error.to_string().contains("SSE"));
+
+    let servers = state.db.get_all_mcp_servers().expect("load MCP servers");
+    let shared = servers.get("shared").expect("existing server remains");
+    assert!(shared.apps.gemini);
+    assert!(
+        !shared.apps.codex,
+        "failed Codex import must not persist an incompatible app flag"
+    );
+    assert_eq!(shared.server["type"], "sse");
 }
 
 #[test]
