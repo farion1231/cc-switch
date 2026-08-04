@@ -241,22 +241,24 @@ pub fn resolve_codex_custom_model_provider(
     model: &str,
 ) -> Result<Option<Provider>, AppError> {
     let entries = crate::codex_config::codex_custom_model_entries(&official.settings_config);
-    // 优先按对外模型名（slug）精确匹配；没有精确命中时，才回退到旧会话里
-    // 保存的上游模型名（upstreamModel，如 deepseek-v4-flash）兼容匹配。
+    // 优先按对外模型名（slug）精确匹配；聚合模式没有官方模型，未精确命中时
+    // 才回退到旧会话保存的 upstreamModel。官方登录模式禁用该回退，否则
+    // upstreamModel 恰好是官方 slug 时会劫持真正的官方模型。
     // 否则某条目的 upstreamModel 等于另一条目的 model 时，靠前的兼容匹配会
     // 抢先于靠后的精确匹配，导致请求被路由到错误的供应商。
-    let Some(entry) = entries
-        .iter()
-        .find(|entry| entry.model == model)
-        .or_else(|| {
+    let exact = entries.iter().find(|entry| entry.model == model);
+    let legacy_alias =
+        if crate::codex_config::codex_official_login_enabled(&official.settings_config) {
+            None
+        } else {
             entries.iter().find(|entry| {
                 entry
                     .upstream_model
                     .as_deref()
                     .is_some_and(|upstream| upstream == model)
             })
-        })
-    else {
+        };
+    let Some(entry) = exact.or(legacy_alias) else {
         return Ok(None);
     };
 
@@ -1430,6 +1432,33 @@ wire_api = "responses"
         let unknown = resolve_codex_custom_model_provider(&db, &official, "gpt-5.5")
             .expect("resolve unknown");
         assert!(unknown.is_none(), "unmapped model must not route");
+    }
+
+    #[test]
+    fn test_official_login_does_not_route_official_slug_through_upstream_alias() {
+        let db = crate::database::Database::memory().expect("memory db");
+        let mut bound = create_provider(json!({ "config": "model = \"gpt-5.4\"" }));
+        bound.id = "deepseek".to_string();
+        db.save_provider("codex", &bound)
+            .expect("save bound provider");
+
+        let mut official = create_provider(json!({
+            "enableOfficialLogin": true,
+            "codexCustomModels": [{
+                "model": "gpt-5.2",
+                "providerId": "deepseek",
+                "upstreamModel": "gpt-5.4"
+            }]
+        }));
+        official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+        official.category = Some("official".to_string());
+
+        let resolved = resolve_codex_custom_model_provider(&db, &official, "gpt-5.4")
+            .expect("resolve genuine official model");
+        assert!(
+            resolved.is_none(),
+            "official-login requests must not be hijacked by a custom entry's upstream alias"
+        );
     }
 
     #[test]

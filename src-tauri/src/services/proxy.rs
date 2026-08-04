@@ -72,6 +72,49 @@ pub struct HotSwitchOutcome {
     pub logical_target_changed: bool,
 }
 
+fn codex_cache_refresh_enabled(db: &Database) -> bool {
+    db.get_proxy_flags_sync(AppType::Codex.as_str()).0
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexCacheRefresherAction {
+    Wait,
+    Refresh,
+}
+
+fn codex_cache_refresher_action(db: &Database) -> CodexCacheRefresherAction {
+    if codex_cache_refresh_enabled(db) {
+        CodexCacheRefresherAction::Refresh
+    } else {
+        CodexCacheRefresherAction::Wait
+    }
+}
+
+fn refresh_codex_models_cache_once(
+    db: &Arc<Database>,
+    switch_locks: &SwitchLockManager,
+) -> Result<bool, crate::error::AppError> {
+    let _guard = futures::executor::block_on(switch_locks.lock_for_app(AppType::Codex.as_str()));
+    if !codex_cache_refresh_enabled(db) {
+        return Ok(false);
+    }
+
+    let Some(current_id) = crate::settings::get_effective_current_provider(db, &AppType::Codex)?
+    else {
+        return Ok(false);
+    };
+    let Some(provider) = db.get_provider_by_id(&current_id, AppType::Codex.as_str())? else {
+        return Ok(false);
+    };
+    let config_text = provider
+        .settings_config
+        .get("config")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    crate::codex_config::write_codex_models_cache_for_provider(&provider, config_text)?;
+    Ok(true)
+}
+
 impl ProxyService {
     pub fn new(db: Arc<Database>) -> Self {
         Self {
@@ -608,6 +651,7 @@ impl ProxyService {
             + 1;
         Self::spawn_codex_models_cache_refresher(
             self.db.clone(),
+            self.switch_locks.clone(),
             self.codex_cache_refresher_generation.clone(),
             generation,
         );
@@ -619,13 +663,14 @@ impl ProxyService {
     /// 代理运行期间定期刷新当前 Codex 供应商的 `models_cache.json`。桌面端
     /// 模型列表按 300 秒 TTL 校验缓存，光在接管时写一次不够——用户开着 Codex
     /// 超过 5 分钟再切模型菜单就会失效回退到内置官方模型。刷新器对任何当前
-    /// 供应商都生效：官方+启用登录的供应商内部会跳过，聚合模式/普通供应商
+    /// 供应商都生效：官方登录恢复/合并 clean baseline，聚合模式/普通供应商
     /// 各自重建（见 `write_codex_models_cache_for_provider`）。
     ///
     /// 线程通过代际计数绑定服务器生命周期：`generation` 变化即停止代理或
     /// 再次启动过，本线程在下一轮醒来后退出，不随启停累积。
     fn spawn_codex_models_cache_refresher(
         db: Arc<Database>,
+        switch_locks: SwitchLockManager,
         generation: Arc<AtomicU64>,
         my_generation: u64,
     ) {
@@ -639,29 +684,10 @@ impl ProxyService {
                     let Some(db) = db.upgrade() else {
                         break;
                     };
-                    // 无当前 Codex 供应商（例如仅接管 Claude/Gemini）时没有缓存可刷，直接退出
-                    let Some(current_id) =
-                        crate::settings::get_effective_current_provider(&db, &AppType::Codex)
-                            .ok()
-                            .flatten()
-                    else {
-                        break;
-                    };
-                    let Ok(Some(provider)) =
-                        db.get_provider_by_id(&current_id, AppType::Codex.as_str())
-                    else {
-                        break;
-                    };
-                    let config_text = provider
-                        .settings_config
-                        .get("config")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or("");
-                    if let Err(e) = crate::codex_config::write_codex_models_cache_for_provider(
-                        &provider,
-                        config_text,
-                    ) {
-                        log::warn!("[codex] 定时刷新 models_cache.json 失败: {e}");
+                    if codex_cache_refresher_action(&db) == CodexCacheRefresherAction::Refresh {
+                        if let Err(e) = refresh_codex_models_cache_once(&db, &switch_locks) {
+                            log::warn!("[codex] 定时刷新 models_cache.json 失败: {e}");
+                        }
                     }
                 }
 
@@ -3377,6 +3403,143 @@ mod tests {
         db.update_proxy_config(proxy_config)
             .await
             .expect("set test proxy config to an ephemeral port");
+    }
+
+    #[test]
+    fn codex_cache_refresh_enabled_follows_codex_takeover_flag() {
+        let db = Database::memory().expect("create in-memory database");
+
+        db.set_proxy_flags_sync(AppType::Claude.as_str(), true, false)
+            .expect("enable Claude takeover");
+        assert_eq!(
+            codex_cache_refresher_action(&db),
+            CodexCacheRefresherAction::Wait,
+            "another app's takeover must keep the refresher alive without writing Codex cache"
+        );
+
+        db.set_proxy_flags_sync(AppType::Codex.as_str(), true, false)
+            .expect("enable Codex takeover");
+        assert_eq!(
+            codex_cache_refresher_action(&db),
+            CodexCacheRefresherAction::Refresh,
+            "the same refresher must resume after Codex takeover is enabled"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn codex_cache_publish_rechecks_takeover_before_write() {
+        let _home = TempHome::new();
+        let db = Database::memory().expect("create in-memory database");
+        let written = refresh_codex_models_cache_once(&Arc::new(db), &SwitchLockManager::new())
+            .expect("skip disabled Codex cache publication");
+
+        assert!(!written, "disabled Codex takeover must skip publication");
+        assert!(
+            !crate::codex_config::get_codex_config_dir()
+                .join("models_cache.json")
+                .exists(),
+            "the final enabled check must happen before creating the cache file"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn codex_cache_publish_rechecks_state_after_waiting_for_switch_lock() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().expect("create in-memory database"));
+        db.set_proxy_flags_sync(AppType::Codex.as_str(), true, false)
+            .expect("enable Codex takeover");
+        let switch_locks = SwitchLockManager::new();
+        let guard = futures::executor::block_on(switch_locks.lock_for_app(AppType::Codex.as_str()));
+
+        let worker_db = db.clone();
+        let worker_locks = switch_locks.clone();
+        let worker =
+            std::thread::spawn(move || refresh_codex_models_cache_once(&worker_db, &worker_locks));
+
+        db.set_proxy_flags_sync(AppType::Codex.as_str(), false, false)
+            .expect("disable Codex while publication waits");
+        drop(guard);
+
+        let written = worker
+            .join()
+            .expect("join refresh worker")
+            .expect("refresh after lock release");
+        assert!(
+            !written,
+            "publication must re-read enabled under the switch lock"
+        );
+        assert!(
+            !crate::codex_config::get_codex_config_dir()
+                .join("models_cache.json")
+                .exists(),
+            "a refresh queued before disable must not publish afterward"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn codex_cache_publish_reads_current_provider_after_switch_lock() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().expect("create in-memory database"));
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "Provider A".to_string(),
+            json!({ "config": "model = \"model-a\"\n" }),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "Provider B".to_string(),
+            json!({ "config": "model = \"model-b\"\n" }),
+            None,
+        );
+        db.save_provider(AppType::Codex.as_str(), &provider_a)
+            .expect("save provider A");
+        db.save_provider(AppType::Codex.as_str(), &provider_b)
+            .expect("save provider B");
+        db.set_current_provider(AppType::Codex.as_str(), "a")
+            .expect("set initial provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some("a"))
+            .expect("set initial local provider");
+        db.set_proxy_flags_sync(AppType::Codex.as_str(), true, false)
+            .expect("enable Codex takeover");
+
+        let switch_locks = SwitchLockManager::new();
+        let guard = futures::executor::block_on(switch_locks.lock_for_app(AppType::Codex.as_str()));
+        let worker_db = db.clone();
+        let worker_locks = switch_locks.clone();
+        let worker =
+            std::thread::spawn(move || refresh_codex_models_cache_once(&worker_db, &worker_locks));
+
+        db.set_current_provider(AppType::Codex.as_str(), "b")
+            .expect("switch database provider while publication waits");
+        crate::settings::set_current_provider(&AppType::Codex, Some("b"))
+            .expect("switch local provider while publication waits");
+        drop(guard);
+
+        assert!(
+            worker
+                .join()
+                .expect("join refresh worker")
+                .expect("refresh after provider switch"),
+            "enabled publication should write the current provider"
+        );
+        let cache: Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                crate::codex_config::get_codex_config_dir().join("models_cache.json"),
+            )
+            .expect("read refreshed cache"),
+        )
+        .expect("parse refreshed cache");
+        assert_eq!(
+            cache.pointer("/models/0/slug").and_then(Value::as_str),
+            Some("model-b"),
+            "publication queued before a hot switch must not write the stale provider"
+        );
+        crate::settings::set_current_provider(&AppType::Codex, None)
+            .expect("clear local provider after test");
     }
 
     async fn running_codex_base_url(service: &ProxyService) -> String {

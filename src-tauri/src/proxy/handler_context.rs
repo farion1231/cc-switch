@@ -129,59 +129,71 @@ impl RequestContext {
             session_result.client_provided
         );
 
-        // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
-        // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-        let mut providers = state
-            .provider_router
-            .select_providers(app_type_str)
-            .await
-            .map_err(|e| match e {
-                crate::error::AppError::AllProvidersCircuitOpen => {
-                    ProxyError::AllProvidersCircuitOpen
-                }
-                crate::error::AppError::NoProvidersConfigured => ProxyError::NoProvidersConfigured,
-                _ => ProxyError::DatabaseError(e.to_string()),
-            })?;
-
-        let mut provider = providers
-            .first()
-            .cloned()
-            .ok_or(ProxyError::NoAvailableProvider)?;
-
-        // Codex 官方登录 + 自定义模型：请求模型命中官方供应商的
-        // `codexCustomModels` 条目时，本次请求改用绑定的供应商（该供应商
-        // 自带凭据，不会把官方 token 转发出去；协议不限，本地代理转换）。
-        if app_type == AppType::Codex
-            && crate::proxy::providers::is_codex_official_provider(&provider)
-        {
-            if let Some(custom_provider) =
-                crate::proxy::providers::resolve_codex_custom_model_provider(
+        // Codex 聚合 slot 必须先从配置中的当前官方供应商解析，再做普通
+        // failover 选择。否则官方 provider 熔断/不在队列时，slot 会原样落到
+        // 无关的 P1 provider。显式绑定的 slot 本身不参与普通 failover。
+        let custom_codex_provider = if app_type == AppType::Codex {
+            let effective_current =
+                crate::settings::get_effective_current_provider(&state.db, &AppType::Codex)
+                    .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+            if effective_current.as_deref() == Some(crate::database::CODEX_OFFICIAL_PROVIDER_ID) {
+                let official = state
+                    .db
+                    .get_provider_by_id(
+                        crate::database::CODEX_OFFICIAL_PROVIDER_ID,
+                        AppType::Codex.as_str(),
+                    )
+                    .map_err(|e| ProxyError::DatabaseError(e.to_string()))?
+                    .ok_or(ProxyError::NoAvailableProvider)?;
+                let resolved = crate::proxy::providers::resolve_codex_custom_model_provider(
                     &state.db,
-                    &provider,
+                    &official,
                     &request_model,
                 )
-                .map_err(|e| ProxyError::DatabaseError(e.to_string()))?
-            {
-                log::info!(
-                    "[Codex] 自定义模型 `{request_model}` 路由到供应商 `{}`",
-                    custom_provider.name
-                );
-                providers = vec![custom_provider.clone()];
-                provider = custom_provider;
-                // 路由到绑定供应商是本次请求的选择，不是故障转移：同步
-                // current_provider_id，否则 forwarder 会在成功时误判为
-                // "实际供应商 ≠ 配置供应商"而把当前供应商切到绑定供应商。
-                current_provider_id = provider.id.clone();
-            } else if !crate::codex_config::codex_official_login_enabled(&provider.settings_config)
-            {
-                // 聚合模式（官方供应商、未启用官方登录）：没有官方模型可用，
-                // 不在自定义列表里的模型请求直接报错，而不是带 PROXY_MANAGED
-                // 占位 token 落到 chatgpt.com（401）。
-                return Err(ProxyError::InvalidRequest(format!(
-                    "Codex 聚合模式未启用官方登录：模型 `{request_model}` 不在自定义模型列表中"
-                )));
+                .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+                if resolved.is_none()
+                    && !crate::codex_config::codex_official_login_enabled(&official.settings_config)
+                {
+                    return Err(ProxyError::InvalidRequest(format!(
+                        "Codex 聚合模式未启用官方登录：模型 `{request_model}` 不在自定义模型列表中"
+                    )));
+                }
+                resolved
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
+
+        let (providers, provider) = if let Some(custom_provider) = custom_codex_provider {
+            log::info!(
+                "[Codex] 自定义模型 `{request_model}` 路由到供应商 `{}`",
+                custom_provider.name
+            );
+            current_provider_id = custom_provider.id.clone();
+            (vec![custom_provider.clone()], custom_provider)
+        } else {
+            // 普通请求只调用一次 ProviderRouter，避免重复消耗 HalfOpen 名额。
+            let providers = state
+                .provider_router
+                .select_providers(app_type_str)
+                .await
+                .map_err(|e| match e {
+                    crate::error::AppError::AllProvidersCircuitOpen => {
+                        ProxyError::AllProvidersCircuitOpen
+                    }
+                    crate::error::AppError::NoProvidersConfigured => {
+                        ProxyError::NoProvidersConfigured
+                    }
+                    _ => ProxyError::DatabaseError(e.to_string()),
+                })?;
+            let provider = providers
+                .first()
+                .cloned()
+                .ok_or(ProxyError::NoAvailableProvider)?;
+            (providers, provider)
+        };
 
         log::debug!(
             "[{}] Provider: {}, model: {}, failover chain: {} providers, session: {}",
@@ -335,7 +347,168 @@ pub(crate) fn extract_gemini_model_from_path(endpoint: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_gemini_model_from_path;
+    use super::{extract_gemini_model_from_path, RequestContext};
+    use crate::app_config::AppType;
+    use crate::database::Database;
+    use crate::provider::Provider;
+    use crate::proxy::{
+        failover_switch::FailoverSwitchManager,
+        provider_router::ProviderRouter,
+        providers::{codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore},
+        server::ProxyState,
+        types::{ProxyConfig, ProxyStatus},
+    };
+    use axum::http::HeaderMap;
+    use serde_json::json;
+    use serial_test::serial;
+    use std::{collections::HashMap, env, sync::Arc};
+    use tempfile::TempDir;
+    use tokio::sync::RwLock;
+
+    struct TempHome {
+        #[allow(dead_code)]
+        dir: TempDir,
+        original_home: Option<String>,
+        original_userprofile: Option<String>,
+        original_test_home: Option<String>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = TempDir::new().expect("create temp home");
+            let original_home = env::var("HOME").ok();
+            let original_userprofile = env::var("USERPROFILE").ok();
+            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
+            env::set_var("HOME", dir.path());
+            env::set_var("USERPROFILE", dir.path());
+            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            crate::settings::reload_settings().expect("reload temp settings");
+            Self {
+                dir,
+                original_home,
+                original_userprofile,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.original_home {
+                Some(value) => env::set_var("HOME", value),
+                None => env::remove_var("HOME"),
+            }
+            match &self.original_test_home {
+                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            match &self.original_userprofile {
+                Some(value) => env::set_var("USERPROFILE", value),
+                None => env::remove_var("USERPROFILE"),
+            }
+        }
+    }
+
+    fn build_state(db: Arc<Database>) -> ProxyState {
+        ProxyState {
+            db: db.clone(),
+            config: Arc::new(RwLock::new(ProxyConfig::default())),
+            status: Arc::new(RwLock::new(ProxyStatus::default())),
+            start_time: Arc::new(RwLock::new(None)),
+            current_providers: Arc::new(RwLock::new(HashMap::new())),
+            provider_router: Arc::new(ProviderRouter::new(db.clone())),
+            gemini_shadow: Arc::new(GeminiShadowStore::default()),
+            codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+            app_handle: None,
+            failover_manager: Arc::new(FailoverSwitchManager::new(db)),
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_custom_mapping_resolves_before_failover_queue_selection() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().expect("memory db"));
+
+        let mut official = Provider::with_id(
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "enableOfficialLogin": false,
+                "codexCustomModels": [{
+                    "model": "gpt-5.2",
+                    "providerId": "bound",
+                    "upstreamModel": "deepseek-v4-flash"
+                }]
+            }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        let bound = Provider::with_id(
+            "bound".to_string(),
+            "Bound Provider".to_string(),
+            json!({ "config": "model = \"deepseek-v4-flash\"" }),
+            None,
+        );
+        let unrelated = Provider::with_id(
+            "unrelated".to_string(),
+            "Failover P1".to_string(),
+            json!({ "config": "model = \"other-model\"" }),
+            None,
+        );
+        db.save_provider("codex", &official).expect("save official");
+        db.save_provider("codex", &bound).expect("save bound");
+        db.save_provider("codex", &unrelated)
+            .expect("save unrelated");
+        db.set_current_provider("codex", crate::database::CODEX_OFFICIAL_PROVIDER_ID)
+            .expect("set official current");
+        crate::settings::set_current_provider(
+            &AppType::Codex,
+            Some(crate::database::CODEX_OFFICIAL_PROVIDER_ID),
+        )
+        .expect("set local official current");
+        db.add_to_failover_queue("codex", "unrelated")
+            .expect("queue unrelated provider");
+        let mut config = db
+            .get_proxy_config_for_app("codex")
+            .await
+            .expect("get codex proxy config");
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config)
+            .await
+            .expect("enable auto failover");
+
+        let context = RequestContext::new(
+            &build_state(db.clone()),
+            &json!({ "model": "gpt-5.2", "input": "hi" }),
+            &HeaderMap::new(),
+            AppType::Codex,
+            "Codex",
+            "codex",
+        )
+        .await
+        .expect("build Codex request context");
+
+        assert_eq!(
+            context.provider.id, "bound",
+            "an aggregated slot must use its bound provider even when failover selects another P1"
+        );
+        assert_eq!(context.get_providers()[0].id, "bound");
+
+        let unknown = RequestContext::new(
+            &build_state(db),
+            &json!({ "model": "gpt-5.5", "input": "hi" }),
+            &HeaderMap::new(),
+            AppType::Codex,
+            "Codex",
+            "codex",
+        )
+        .await;
+        assert!(
+            matches!(unknown, Err(crate::proxy::ProxyError::InvalidRequest(_))),
+            "aggregate mode must reject an unmapped slot before failover can send it elsewhere"
+        );
+    }
 
     #[test]
     fn extract_model_with_action() {
