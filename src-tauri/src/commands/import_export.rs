@@ -53,8 +53,8 @@ pub async fn import_config_from_file(
     #[allow(non_snake_case)] filePath: String,
     state: State<'_, AppState>,
 ) -> Result<Value, String> {
-    let db = state.db.clone();
-    let db_for_sync = db.clone();
+    let app_state_for_sync = state.inner().clone();
+    let db = app_state_for_sync.db.clone();
     run_with_database_restore_lock(tauri::async_runtime::spawn_blocking(move || {
         let path_buf = PathBuf::from(&filePath);
         let backup_id = {
@@ -63,7 +63,7 @@ pub async fn import_config_from_file(
             let _skill_state_guard = skill_state_write_guard();
             db.import_sql(&path_buf)?
         };
-        let warning = post_sync_warning_from_result(Ok(run_post_import_sync(db_for_sync)));
+        let warning = post_sync_warning_from_result(Ok(run_post_import_sync(&app_state_for_sync)));
         if let Some(msg) = warning.as_ref() {
             log::warn!("[Import] post-import sync warning: {msg}");
         }
@@ -168,10 +168,20 @@ pub async fn restore_db_backup(
     state: State<'_, AppState>,
     filename: String,
 ) -> Result<String, String> {
-    let db = state.db.clone();
+    let app_state_for_sync = state.inner().clone();
+    let db = app_state_for_sync.db.clone();
     run_with_database_restore_lock(tauri::async_runtime::spawn_blocking(move || {
-        let _skill_state_guard = skill_state_write_guard();
-        db.restore_from_backup(&filename)
+        let restored = {
+            let _skill_state_guard = skill_state_write_guard();
+            db.restore_from_backup(&filename)?
+        };
+        let warning = post_sync_warning_from_result(Ok(run_post_import_sync(&app_state_for_sync)));
+        if let Some(message) = warning {
+            // This legacy command returns only the restored filename, so keep
+            // restore success and surface incomplete projection in the log.
+            log::warn!("[Restore] post-import sync warning: {message}");
+        }
+        Ok::<_, AppError>(restored)
     }))
     .await
     .map_err(|e| format!("Restore failed: {e}"))?

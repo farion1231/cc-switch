@@ -115,7 +115,7 @@ pub async fn webdav_sync_upload(state: State<'_, AppState>) -> Result<Value, Str
 #[tauri::command]
 pub async fn webdav_sync_download(state: State<'_, AppState>) -> Result<Value, String> {
     let db = state.db.clone();
-    let db_for_sync = db.clone();
+    let app_state_for_sync = state.inner().clone();
     let mut settings = require_enabled_webdav_settings()?;
     let _auto_sync_suppression = crate::services::webdav_auto_sync::AutoSyncSuppressionGuard::new();
 
@@ -125,7 +125,7 @@ pub async fn webdav_sync_download(state: State<'_, AppState>) -> Result<Value, S
     let sync_result = run_with_webdav_lock(async {
         let result = webdav_sync_service::download(&db, &mut settings).await?;
         let post_sync_result =
-            tauri::async_runtime::spawn_blocking(move || run_post_import_sync(db_for_sync))
+            tauri::async_runtime::spawn_blocking(move || run_post_import_sync(&app_state_for_sync))
                 .await
                 .map_err(|e| e.to_string());
         Ok((result, post_sync_result))

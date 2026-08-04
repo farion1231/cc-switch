@@ -1276,33 +1276,48 @@ fn sync_current_provider_for_app_respecting_takeover(
 ///
 /// For additive mode apps (OpenCode), all providers are synced instead of just the current one.
 pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
+    let mut failures = Vec::new();
+
     // Sync providers based on mode
     for app_type in AppType::all() {
-        if app_type.is_additive_mode() {
+        let result = if app_type.is_additive_mode() {
             // Additive mode: sync ALL providers
-            sync_all_providers_to_live(state, &app_type)?;
+            sync_all_providers_to_live(state, &app_type)
         } else {
             // Switch mode: sync only current provider. During proxy takeover,
             // update the restore backup instead of rewriting the taken-over
             // live file.
-            sync_current_provider_for_app_respecting_takeover(state, &app_type)?;
+            sync_current_provider_for_app_respecting_takeover(state, &app_type)
+        };
+
+        if let Err(error) = result {
+            log::warn!("同步 Provider 到 {app_type:?} 失败: {error}");
+            failures.push(format!("provider/{}: {error}", app_type.as_str()));
         }
     }
 
-    // MCP sync（best-effort 逐应用投影，内部已聚合失败）。错误暂存到
-    // Skill 同步之后再返回：MCP 的失败不该跳过 Skill 同步，但调用方
-    //（配置导入 / 云同步恢复）需要知道结果不完整。
-    let mcp_result = McpService::sync_all_enabled(state);
+    // MCP sync is already best-effort per application. Preserve its aggregate
+    // error while continuing with Skills.
+    if let Err(error) = McpService::sync_all_enabled(state) {
+        failures.push(format!("mcp: {error}"));
+    }
 
     // Skill sync
     for app_type in AppType::all() {
         if let Err(e) = crate::services::skill::SkillService::sync_to_app(&state.db, &app_type) {
             log::warn!("同步 Skill 到 {app_type:?} 失败: {e}");
-            // Continue syncing other apps, don't abort
+            failures.push(format!("skill/{}: {e}", app_type.as_str()));
         }
     }
 
-    mcp_result
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::Message(format!(
+            "部分 live 配置同步失败: {}",
+            failures.join("; ")
+        )))
+    }
 }
 
 /// Read current live settings for an app type
