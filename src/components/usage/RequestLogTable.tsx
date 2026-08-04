@@ -217,7 +217,7 @@ export function RequestLogTable({
                             {log.providerType === "cc_switch_route" && (
                               <span
                                 className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary"
-                                title="来自统一供应商路由"
+                                title="来自聚合路由"
                               >
                                 {t("usage.routeBadge")}
                               </span>

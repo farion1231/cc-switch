@@ -214,7 +214,7 @@ requires_openai_auth = true`;
     const effectiveBaseUrl = isCcSwitch
       ? "http://127.0.0.1:15721"
       : baseUrl.trim();
-    const effectiveApiKey = isCcSwitch ? "" : apiKey.trim();
+    const effectiveApiKey = isCcSwitch ? "localhost" : apiKey.trim();
 
     const provider: UniversalProvider = editingProvider
       ? {
@@ -282,7 +282,7 @@ requires_openai_auth = true`;
     const effectiveBaseUrl = isCcSwitch
       ? "http://127.0.0.1:15721"
       : baseUrl.trim();
-    const effectiveApiKey = isCcSwitch ? "" : apiKey.trim();
+    const effectiveApiKey = isCcSwitch ? "localhost" : apiKey.trim();
 
     const provider: UniversalProvider = editingProvider
       ? {

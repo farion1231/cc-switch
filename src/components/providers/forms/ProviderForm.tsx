@@ -271,6 +271,7 @@ function ProviderFormFull({
 
   const { t } = useTranslation();
   const isEditMode = Boolean(initialData);
+  const isCcSwitch = initialData?.meta?.providerType === "cc_switch";
   const queryClient = useQueryClient();
   const { data: settingsData } = useSettingsQuery();
   const showCommonConfigNotice =
@@ -2190,7 +2191,8 @@ function ProviderFormFull({
               shouldShowApiKey={
                 (category !== "cloud_provider" ||
                   hasApiKeyField(form.getValues("settingsConfig"), "claude")) &&
-                shouldShowApiKey(form.getValues("settingsConfig"), isEditMode)
+                shouldShowApiKey(form.getValues("settingsConfig"), isEditMode) &&
+                !isCcSwitch
               }
               apiKey={apiKey}
               onApiKeyChange={handleApiKeyChange}
@@ -2283,6 +2285,7 @@ function ProviderFormFull({
                 presetProviderType === "xai_oauth" ||
                 initialData?.meta?.providerType === "xai_oauth"
               }
+              isCcSwitch={isCcSwitch}
               isXaiOauthAuthenticated={isXaiOauthAuthenticated}
               selectedXaiAccountId={selectedXaiAccountId}
               onXaiAccountSelect={setSelectedXaiAccountId}
@@ -2337,7 +2340,7 @@ function ProviderFormFull({
               shouldShowApiKey={shouldShowApiKey(
                 form.getValues("settingsConfig"),
                 isEditMode,
-              )}
+              ) && !isCcSwitch}
               apiKey={geminiApiKey}
               onApiKeyChange={handleGeminiApiKeyChange}
               category={category}

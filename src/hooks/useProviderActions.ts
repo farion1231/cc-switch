@@ -195,7 +195,11 @@ export function useProviderActions(
       // Determine why this provider requires the proxy.
       let proxyRequiredReason: string | null = null;
       if (!routingReady && providerNeedsRouting(activeApp, provider)) {
-        if (isCopilotProvider) {
+        if (provider.meta?.providerType === "cc_switch") {
+          proxyRequiredReason = t("notifications.proxyReasonAggregatedRoute", {
+            defaultValue: "使用聚合路由（本地代理按模型分发到上游）",
+          });
+        } else if (isCopilotProvider) {
           proxyRequiredReason = t("notifications.proxyReasonCopilot", {
             defaultValue: "使用 GitHub Copilot 作为 Claude 供应商",
           });

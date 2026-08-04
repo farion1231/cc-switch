@@ -217,12 +217,16 @@ impl RequestContext {
             // 会依次尝试下一条，避免只打同一条限流上游造成无限重试风暴。
             let primary = universal_selected[0].clone();
             let mut chain = universal_selected;
-            chain.extend(
-                per_app_providers
-                    .iter()
-                    .filter(|p| p.id != primary.id)
-                    .cloned(),
-            );
+            // 有路由的 UP 不追加 per-app provider，避免所有路由失败后
+            // 落到 127.0.0.1:15721（per-app provider 的 base_url）造成自环
+            if !current_up_has_routes {
+                chain.extend(
+                    per_app_providers
+                        .iter()
+                        .filter(|p| p.id != primary.id)
+                        .cloned(),
+                );
+            }
             (primary, chain)
         } else if current_up_has_routes {
             // 首页选中的是有 routes 的 UP，但请求模型没有命中任何一条 route。

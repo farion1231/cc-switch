@@ -43,6 +43,9 @@ export function providerNeedsRouting(
 
   const isManagedOAuth = isOAuthProviderType(provider.meta?.providerType);
 
+  // CC Switch 本地代理：请求必须经过本地代理路由到上游，恒需接管
+  if (provider.meta?.providerType === "cc_switch") return true;
+
   // Desktop 普通供应商由表单模式决定；托管 OAuth 的 token 只能由代理注入。
   if (appId === "claude-desktop") {
     return isManagedOAuth || provider.meta?.claudeDesktopMode === "proxy";

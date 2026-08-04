@@ -772,6 +772,18 @@ impl UniversalProvider {
         }
     }
 
+    /// 生成派生 provider 的 meta：cc_switch 类型强制标记 providerType，
+    /// 供前端识别"本地代理 + 路由"供应商（必须接管才能工作）。
+    fn derived_meta(&self) -> Option<ProviderMeta> {
+        if self.provider_type == "cc_switch" {
+            let mut meta = self.meta.clone().unwrap_or_default();
+            meta.provider_type = Some("cc_switch".to_string());
+            Some(meta)
+        } else {
+            self.meta.clone()
+        }
+    }
+
     /// 生成 Claude 供应商配置
     pub fn to_claude_provider(&self) -> Option<Provider> {
         if !self.apps.claude {
@@ -812,7 +824,7 @@ impl UniversalProvider {
             created_at: self.created_at,
             sort_index: self.sort_index,
             notes: self.notes.clone(),
-            meta: self.meta.clone(),
+            meta: self.derived_meta(),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
@@ -877,7 +889,7 @@ requires_openai_auth = true"#
             created_at: self.created_at,
             sort_index: self.sort_index,
             notes: self.notes.clone(),
-            meta: self.meta.clone(),
+            meta: self.derived_meta(),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
@@ -912,7 +924,7 @@ requires_openai_auth = true"#
             created_at: self.created_at,
             sort_index: self.sort_index,
             notes: self.notes.clone(),
-            meta: self.meta.clone(),
+            meta: self.derived_meta(),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
