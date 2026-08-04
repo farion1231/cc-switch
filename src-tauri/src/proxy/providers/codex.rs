@@ -510,6 +510,24 @@ fn infer_aggregator_platform_config(
         });
     }
 
+    // OpenCode Zen（opencode.ai 网关）：其自家客户端 opencode 对 openai-compatible
+    // 传输统一发**顶层** `reasoning_effort`（见 anomalyco/opencode 的
+    // provider/transform.ts：`{ reasoningEffort: <tier> }`），档位并集为
+    // low|medium|high|max（glm-5.2 仅 high/max、deepseek-v4 全档，由网关按模型归一）。
+    // 绝不能落到下方的模型厂商启发式——否则 glm-5.2 会被套上智谱官方接口的
+    // `thinking:{type}` 发给一个不认该字段的网关，思考等级静默失效（issue #6112）。
+    // 只匹配域名（不含裸 "opencode"），避免误伤名字里带 opencode 的无关供应商。
+    if platform.contains("opencode.ai") {
+        return Some(CodexChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("zen".to_string()),
+            output_format: Some("reasoning_content".to_string()),
+        });
+    }
+
     None
 }
 
@@ -1541,6 +1559,32 @@ wire_api = "chat"
         assert_eq!(config.thinking_param.as_deref(), Some("enable_thinking"));
         assert_eq!(config.supports_effort, Some(false));
         assert_eq!(config.output_format.as_deref(), Some("reasoning_content"));
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_opencode_zen_platform_overrides_model_vendor() {
+        // issue #6112：OpenCode Go 预设走 zen 网关。模型 glm-5.2 会命中下方的
+        // glm 厂商启发式（thinking:{type} + 无 effort）——但那是智谱官方接口的形状，
+        // zen 网关不认；平台规则必须覆盖它，改发顶层 reasoning_effort。
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "opencode_go"
+model = "glm-5.2"
+
+[model_providers.opencode_go]
+name = "OpenCode Go"
+base_url = "https://opencode.ai/zen/go/v1"
+wire_api = "chat"
+"#
+        }));
+
+        let config =
+            resolve_codex_chat_reasoning_config(&provider, &json!({ "model": "glm-5.2" })).unwrap();
+
+        assert_eq!(config.thinking_param.as_deref(), Some("none"));
+        assert_eq!(config.effort_param.as_deref(), Some("reasoning_effort"));
+        assert_eq!(config.effort_value_mode.as_deref(), Some("zen"));
+        assert_eq!(config.supports_effort, Some(true));
     }
 
     #[test]

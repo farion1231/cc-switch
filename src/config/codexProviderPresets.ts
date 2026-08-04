@@ -1519,6 +1519,16 @@ requires_openai_auth = true`,
     ),
     endpointCandidates: ["https://opencode.ai/zen/go/v1"],
     apiFormat: "openai_chat",
+    // OpenCode Zen 网关：统一接受顶层 reasoning_effort（其自家客户端同款参数），
+    // 档位 low|medium|high|max 由网关按模型归一；不发厂商原生 thinking 字段。
+    codexChatReasoning: {
+      supportsThinking: true,
+      supportsEffort: true,
+      thinkingParam: "none",
+      effortParam: "reasoning_effort",
+      effortValueMode: "zen",
+      outputFormat: "reasoning_content",
+    },
     modelCatalog: modelCatalog([
       { model: "glm-5.2", displayName: "GLM 5.2", contextWindow: 204800 },
       { model: "glm-5.1", displayName: "GLM 5.1", contextWindow: 204800 },

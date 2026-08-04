@@ -142,7 +142,9 @@ export type CodexChatEffortValueMode =
   | "low_high"
   | "deepseek"
   // OpenRouter effort 枚举 xhigh|high|medium|low|minimal（无 max，max 钳到 xhigh）
-  | "openrouter";
+  | "openrouter"
+  // OpenCode Zen 网关枚举 low|medium|high|max（minimal 并入 low，xhigh 钳到 max）
+  | "zen";
 
 export type CodexChatReasoningOutputFormat =
   | "auto"

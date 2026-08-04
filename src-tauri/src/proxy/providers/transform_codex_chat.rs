@@ -482,6 +482,16 @@ fn map_reasoning_effort(effort: &str, mode: Option<&str>) -> Option<&'static str
             "minimal" => Some("minimal"),
             _ => None,
         },
+        // OpenCode Zen 网关档位并集为 low|medium|high|max（opencode 客户端按模型
+        // 能力取子集，如 glm-5.2 仅 high/max）：Codex 的 minimal 并入最低档 low，
+        // xhigh 钳到 max；未知值丢弃以免被上游拒绝。
+        "zen" => match effort.as_str() {
+            "minimal" | "low" => Some("low"),
+            "medium" => Some("medium"),
+            "high" => Some("high"),
+            "max" | "xhigh" => Some("max"),
+            _ => None,
+        },
         _ => match effort.as_str() {
             "minimal" => Some("minimal"),
             "low" => Some("low"),
@@ -2541,6 +2551,43 @@ mod tests {
             responses_to_chat_completions_with_reasoning(input_high, Some(&config)).unwrap();
         assert_eq!(result_high["reasoning"]["effort"], "high");
         assert!(result_high.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn responses_request_to_chat_maps_zen_effort_to_gateway_enum() {
+        // OpenCode Zen 平台形态：顶层 reasoning_effort + "zen" 值映射
+        // （与 infer_aggregator_platform_config 对 opencode.ai 的推断保持一致）。
+        let config = CodexChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("zen".to_string()),
+            output_format: Some("reasoning_content".to_string()),
+        };
+
+        // xhigh 不在 zen 枚举内，钳到 max；写成顶层 reasoning_effort，
+        // 不发任何 thinking 字段（网关只认平台归一参数，不认厂商 thinking 形状）。
+        let input = json!({
+            "model": "glm-5.2",
+            "input": "hello",
+            "reasoning": {"effort": "xhigh"}
+        });
+        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        assert_eq!(result["reasoning_effort"], "max");
+        assert!(result.get("thinking").is_none());
+
+        // minimal 并入 zen 最低档 low；medium 原样透传。
+        for (input_effort, expected) in [("minimal", "low"), ("medium", "medium")] {
+            let input = json!({
+                "model": "deepseek-v4-pro",
+                "input": "hello",
+                "reasoning": {"effort": input_effort}
+            });
+            let result =
+                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+            assert_eq!(result["reasoning_effort"], expected);
+        }
     }
 
     #[test]
