@@ -188,10 +188,13 @@ impl Database {
         );
         batch_result.map_err(|e| AppError::Database(format!("执行 SQL 导入失败: {e}")))?;
 
-        // 补齐缺失表/索引并进行基础校验
+        // Validate the schema produced by the input itself before migrations
+        // can create missing tables and accidentally make a truncated file look valid.
+        Self::validate_imported_schema(&temp_conn)?;
+
+        // 补齐缺失表/索引并执行迁移
         Self::create_tables_on_conn(&temp_conn)?;
         Self::apply_schema_migrations_on_conn(&temp_conn)?;
-        Self::validate_basic_state(&temp_conn)?;
         if let Some(local_snapshot) = local_snapshot.as_ref() {
             Self::restore_tables(local_snapshot, &temp_conn, preserve_tables)?;
         }
@@ -495,18 +498,35 @@ impl Database {
         Ok(())
     }
 
-    /// 基础状态校验
-    fn validate_basic_state(conn: &Connection) -> Result<(), AppError> {
-        let provider_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM providers", [], |row| row.get(0))
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        let mcp_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM mcp_servers", [], |row| row.get(0))
-            .map_err(|e| AppError::Database(e.to_string()))?;
+    /// Validate that the external SQL created a recognizable CC Switch schema.
+    ///
+    /// These tables all existed in the oldest supported SQL-export schema
+    /// (v3.8.x). Checking before migrations keeps header-only/truncated files
+    /// from being completed by `create_tables_on_conn`, while allowing a valid
+    /// backup whose user-owned configuration tables happen to contain no rows.
+    fn validate_imported_schema(conn: &Connection) -> Result<(), AppError> {
+        const REQUIRED_TABLES: &[&str] = &[
+            "providers",
+            "provider_endpoints",
+            "mcp_servers",
+            "prompts",
+            "skills",
+            "skill_repos",
+            "settings",
+        ];
 
-        if provider_count == 0 && mcp_count == 0 {
-            return Err(AppError::Config(
-                "导入的 SQL 未包含有效的供应商或 MCP 数据".to_string(),
+        let mut missing = Vec::new();
+        for table in REQUIRED_TABLES {
+            if !Self::table_exists(conn, table)? {
+                missing.push(*table);
+            }
+        }
+        if !missing.is_empty() {
+            let names = missing.join(", ");
+            return Err(AppError::localized(
+                "backup.sql.invalid_schema",
+                format!("导入的 SQL 缺少 CC Switch 必需表：{names}"),
+                format!("The imported SQL is missing required CC Switch tables: {names}"),
             ));
         }
         Ok(())
@@ -1067,6 +1087,94 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(name, "Provider One");
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn import_accepts_genuine_export_without_provider_or_mcp_rows() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let source = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(source.conn);
+            let counts: (i64, i64) = conn.query_row(
+                "SELECT
+                    (SELECT COUNT(*) FROM providers),
+                    (SELECT COUNT(*) FROM mcp_servers)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            assert_eq!(counts, (0, 0));
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('empty-export-marker', 'kept')",
+                [],
+            )?;
+        }
+        let sql = source.export_sql_string()?;
+
+        let target = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(target.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('target-sentinel', 'claude', 'Must Be Cleared', '{}', '{}')",
+                [],
+            )?;
+        }
+        target.import_sql_string(&sql)?;
+
+        let conn = crate::database::lock_conn!(target.conn);
+        let counts: (i64, i64) = conn.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM providers),
+                (SELECT COUNT(*) FROM mcp_servers)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(counts, (0, 0));
+        let marker: String = conn.query_row(
+            "SELECT value FROM settings WHERE key = 'empty-export-marker'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(marker, "kept");
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn import_rejects_header_only_sql_and_keeps_existing_database() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let target = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(target.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('sentinel', 'claude', 'Existing Provider', '{}', '{}')",
+                [],
+            )?;
+        }
+
+        let header_only = format!(
+            "{}\nPRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\nCOMMIT;\n",
+            super::CC_SWITCH_SQL_EXPORT_HEADER
+        );
+        let error = target
+            .import_sql_string(&header_only)
+            .expect_err("缺少原始 schema 的文件必须被拒绝");
+        assert!(
+            error.to_string().contains("required CC Switch tables")
+                || error.to_string().contains("CC Switch 必需表"),
+            "应由原始 schema 校验拒绝，实际错误: {error}"
+        );
+
+        let conn = crate::database::lock_conn!(target.conn);
+        let provider: (i64, String) = conn.query_row(
+            "SELECT COUNT(*), MIN(name) FROM providers WHERE id = 'sentinel'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(provider, (1, "Existing Provider".into()));
         Ok(())
     }
 
