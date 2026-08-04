@@ -176,6 +176,50 @@ name = "Example"
   });
 });
 
+describe("common config array merging", () => {
+  const providerConfig = JSON.stringify({
+    permissions: { deny: ["WebSearch"] },
+  });
+  const commonSnippet = JSON.stringify({
+    permissions: { deny: ["Read(~/.ssh/**)"] },
+  });
+
+  it("keeps provider entries and does not duplicate common entries", () => {
+    const merged = updateCommonConfigSnippet(
+      providerConfig,
+      commonSnippet,
+      true,
+    ).updatedConfig;
+    const mergedAgain = updateCommonConfigSnippet(
+      merged,
+      commonSnippet,
+      true,
+    ).updatedConfig;
+
+    expect(JSON.parse(mergedAgain).permissions.deny).toEqual([
+      "WebSearch",
+      "Read(~/.ssh/**)",
+    ]);
+    expect(hasCommonConfigSnippet(mergedAgain, commonSnippet)).toBe(true);
+  });
+
+  it("removes only the common entries when disabled", () => {
+    const merged = updateCommonConfigSnippet(
+      providerConfig,
+      commonSnippet,
+      true,
+    ).updatedConfig;
+    const removed = updateCommonConfigSnippet(
+      merged,
+      commonSnippet,
+      false,
+    ).updatedConfig;
+
+    expect(JSON.parse(removed).permissions.deny).toEqual(["WebSearch"]);
+    expect(hasCommonConfigSnippet(removed, commonSnippet)).toBe(false);
+  });
+});
+
 describe("common config snippet prototype-pollution guards", () => {
   // 污染是全局的：一旦漏进 Object.prototype，同文件后续用例会读到幽灵属性，
   // 失败点会飘到无关的断言上。每条用例后强制清干净。

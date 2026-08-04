@@ -57,13 +57,24 @@ const deepMerge = (
   Object.entries(source).forEach(([key, value]) => {
     if (FORBIDDEN_MERGE_KEYS.has(key)) return;
 
-    if (isPlainObject(value)) {
+    if (Array.isArray(value)) {
+      if (!Array.isArray(target[key])) {
+        target[key] = [];
+      }
+      value.forEach((item) => {
+        const exists = target[key].some(
+          (existing: any) =>
+            isSubset(existing, item) && isSubset(item, existing),
+        );
+        if (!exists) target[key].push(item);
+      });
+    } else if (isPlainObject(value)) {
       if (!isPlainObject(target[key])) {
         target[key] = {};
       }
       deepMerge(target[key], value);
     } else {
-      // 直接覆盖非对象字段（数组/基础类型）
+      // 直接覆盖基础类型字段
       target[key] = value;
     }
   });
@@ -80,7 +91,18 @@ const deepRemove = (
     if (FORBIDDEN_MERGE_KEYS.has(key)) return;
     if (!(key in target)) return;
 
-    if (isPlainObject(value) && isPlainObject(target[key])) {
+    if (Array.isArray(value) && Array.isArray(target[key])) {
+      target[key] = target[key].filter(
+        (item: any) =>
+          !value.some(
+            (sourceItem) =>
+              isSubset(item, sourceItem) && isSubset(sourceItem, item),
+          ),
+      );
+      if (target[key].length === 0) {
+        delete target[key];
+      }
+    } else if (isPlainObject(value) && isPlainObject(target[key])) {
       // 只移除完全匹配的嵌套属性
       deepRemove(target[key], value);
       if (Object.keys(target[key]).length === 0) {
@@ -110,8 +132,10 @@ const isSubset = (target: any, source: any): boolean => {
   }
 
   if (Array.isArray(source)) {
-    if (!Array.isArray(target) || target.length !== source.length) return false;
-    return source.every((item, index) => isSubset(target[index], item));
+    if (!Array.isArray(target)) return false;
+    return source.every((sourceItem) =>
+      target.some((targetItem) => isSubset(targetItem, sourceItem)),
+    );
   }
 
   return target === source;
