@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
@@ -58,55 +59,121 @@ export function DeepLinkImportDialog() {
   };
 
   useEffect(() => {
+    let disposed = false;
+    const handledStartupUrls = new Set<string>();
+    const handledRequestKeys = new Set<string>();
+
+    const requestKey = (value: DeepLinkImportRequest) =>
+      [
+        value.version,
+        value.resource,
+        value.app,
+        value.name,
+        value.endpoint,
+        value.apiKey,
+        value.model,
+        value.usageUserId,
+        value.usageBaseUrl,
+        value.config,
+        value.configUrl,
+      ]
+        .map((item) => item ?? "")
+        .join("\u001f");
+
+    const showImportRequest = async (nextRequest: DeepLinkImportRequest) => {
+      if (disposed) return;
+      const key = requestKey(nextRequest);
+      if (handledRequestKeys.has(key)) return;
+      handledRequestKeys.add(key);
+
+      // If config is present, merge it to get the complete configuration
+      if (nextRequest.config || nextRequest.configUrl) {
+        try {
+          const mergedRequest =
+            await deeplinkApi.mergeDeeplinkConfig(nextRequest);
+          if (disposed) return;
+          setRequest(mergedRequest);
+        } catch (error) {
+          console.error("Failed to merge config:", error);
+          toast.error(t("deeplink.configMergeError"), {
+            description: error instanceof Error ? error.message : String(error),
+          });
+          if (disposed) return;
+          // Fall back to original request
+          setRequest(nextRequest);
+        }
+      } else {
+        setRequest(nextRequest);
+      }
+
+      setIsOpen(true);
+    };
+
     // Listen for deep link import events
     const unlistenImport = listen<DeepLinkImportRequest>(
       "deeplink-import",
       async (event) => {
-        // If config is present, merge it to get the complete configuration
-        if (event.payload.config || event.payload.configUrl) {
-          try {
-            const mergedRequest = await deeplinkApi.mergeDeeplinkConfig(
-              event.payload,
-            );
-            setRequest(mergedRequest);
-          } catch (error) {
-            console.error("Failed to merge config:", error);
-            toast.error(t("deeplink.configMergeError"), {
-              description:
-                error instanceof Error ? error.message : String(error),
-            });
-            // Fall back to original request
-            setRequest(event.payload);
-          }
-        } else {
-          setRequest(event.payload);
-        }
-
-        setIsOpen(true);
+        await showImportRequest(event.payload);
       },
     );
 
     // Listen for deep link error events
     const unlistenError = listen<DeeplinkError>("deeplink-error", (event) => {
-      console.error("Deep link error:", event.payload);
+      console.error("Deep link parse failed");
       toast.error(t("deeplink.parseError"), {
         description: event.payload.error,
       });
     });
 
+    // macOS may deliver the launch URL before React has registered its event
+    // listener. Read the plugin's startup value after both listeners exist.
+    const consumeStartupUrl = Promise.all([unlistenImport, unlistenError])
+      .then(async () => {
+        const urls = await deeplinkApi.getCurrentUrls();
+        const startupUrl = urls?.find((url) => url.startsWith("ccswitch://"));
+        if (!startupUrl || disposed || handledStartupUrls.has(startupUrl))
+          return;
+
+        handledStartupUrls.add(startupUrl);
+        const startupRequest = await deeplinkApi.parseDeeplink(startupUrl);
+        await showImportRequest(startupRequest);
+      })
+      .catch((error) => {
+        if (!disposed)
+          console.error("Failed to read startup deep link:", error);
+      });
+
     return () => {
+      disposed = true;
       unlistenImport.then((fn) => fn());
       unlistenError.then((fn) => fn());
+      void consumeStartupUrl;
     };
   }, [t]);
 
   const handleImport = async () => {
     if (!request) return;
 
+    const isProviderRequest =
+      request.resource === "provider" || !request.resource;
+    const providerName = request.name?.trim() ?? "";
+    if (isProviderRequest && !providerName) {
+      toast.error(t("deeplink.providerNameRequired"));
+      return;
+    }
+
+    const importRequest = isProviderRequest
+      ? {
+          ...request,
+          name: providerName,
+          model: request.model?.trim() || undefined,
+        }
+      : request;
+
     setIsImporting(true);
 
     try {
-      const result = await deeplinkApi.importFromDeeplink(request);
+      const result = await deeplinkApi.importFromDeeplink(importRequest);
       const refreshMcp = async (summary: {
         importedCount: number;
         importedIds: string[];
@@ -146,9 +213,12 @@ export function DeepLinkImportDialog() {
             queryKey: ["providers", request.app],
           });
           toast.success(t("deeplink.importSuccess"), {
-            description: t("deeplink.importSuccessDescription", {
-              name: request.name,
-            }),
+            description:
+              importRequest.app === "codex" && importRequest.enabled === true
+                ? t("notifications.codexRestartRequired")
+                : t("deeplink.importSuccessDescription", {
+                    name: importRequest.name,
+                  }),
             closeButton: true,
           });
         } else if (result.type === "prompt") {
@@ -192,9 +262,12 @@ export function DeepLinkImportDialog() {
           queryKey: ["providers", request.app],
         });
         toast.success(t("deeplink.importSuccess"), {
-          description: t("deeplink.importSuccessDescription", {
-            name: request.name,
-          }),
+          description:
+            importRequest.app === "codex" && importRequest.enabled === true
+              ? t("notifications.codexRestartRequired")
+              : t("deeplink.importSuccessDescription", {
+                  name: importRequest.name,
+                }),
           closeButton: true,
         });
       }
@@ -339,20 +412,42 @@ export function DeepLinkImportDialog() {
                     <div className="font-medium text-sm text-muted-foreground">
                       {t("deeplink.providerName")}
                     </div>
-                    <div className="col-span-2 text-sm font-medium">
-                      {request.name}
+                    <div className="col-span-2 space-y-1">
+                      <Input
+                        value={request.name ?? ""}
+                        onChange={(event) =>
+                          setRequest((current) =>
+                            current
+                              ? { ...current, name: event.target.value }
+                              : current,
+                          )
+                        }
+                        placeholder={t("deeplink.providerNamePlaceholder")}
+                        maxLength={100}
+                        autoComplete="off"
+                        aria-label={t("deeplink.providerName")}
+                        aria-invalid={!request.name?.trim()}
+                        disabled={isImporting}
+                      />
+                      {!request.name?.trim() && (
+                        <div className="text-xs text-red-500">
+                          {t("deeplink.providerNameRequired")}
+                        </div>
+                      )}
                     </div>
                   </div>
 
                   {/* Homepage */}
-                  <div className="grid grid-cols-3 items-center gap-4">
-                    <div className="font-medium text-sm text-muted-foreground">
-                      {t("deeplink.homepage")}
+                  {request.homepage && (
+                    <div className="grid grid-cols-3 items-center gap-4">
+                      <div className="font-medium text-sm text-muted-foreground">
+                        {t("deeplink.homepage")}
+                      </div>
+                      <div className="col-span-2 text-sm break-all text-blue-600 dark:text-blue-400">
+                        {request.homepage}
+                      </div>
                     </div>
-                    <div className="col-span-2 text-sm break-all text-blue-600 dark:text-blue-400">
-                      {request.homepage}
-                    </div>
-                  </div>
+                  )}
 
                   {/* API Endpoint */}
                   <div className="grid grid-cols-3 items-start gap-4">
@@ -438,30 +533,54 @@ export function DeepLinkImportDialog() {
                           </div>
                         </div>
                       )}
-                      {request.model && (
-                        <div className="grid grid-cols-3 items-center gap-4">
-                          <div className="font-medium text-sm text-muted-foreground">
-                            {t("deeplink.multiModel")}
-                          </div>
-                          <div className="col-span-2 text-sm font-mono">
-                            {request.model}
-                          </div>
+                      <div className="grid grid-cols-3 items-center gap-4">
+                        <div className="font-medium text-sm text-muted-foreground">
+                          {t("deeplink.multiModel")}
                         </div>
-                      )}
+                        <Input
+                          className="col-span-2 font-mono"
+                          value={request.model ?? ""}
+                          onChange={(event) =>
+                            setRequest((current) =>
+                              current
+                                ? { ...current, model: event.target.value }
+                                : current,
+                            )
+                          }
+                          placeholder={t("deeplink.modelPlaceholder")}
+                          maxLength={200}
+                          autoComplete="off"
+                          spellCheck={false}
+                          aria-label={t("deeplink.multiModel")}
+                          disabled={isImporting}
+                        />
+                      </div>
                     </>
                   ) : (
                     <>
                       {/* Codex 和 Gemini 使用通用 model 字段 */}
-                      {request.model && (
-                        <div className="grid grid-cols-3 items-center gap-4">
-                          <div className="font-medium text-sm text-muted-foreground">
-                            {t("deeplink.model")}
-                          </div>
-                          <div className="col-span-2 text-sm font-mono">
-                            {request.model}
-                          </div>
+                      <div className="grid grid-cols-3 items-center gap-4">
+                        <div className="font-medium text-sm text-muted-foreground">
+                          {t("deeplink.model")}
                         </div>
-                      )}
+                        <Input
+                          className="col-span-2 font-mono"
+                          value={request.model ?? ""}
+                          onChange={(event) =>
+                            setRequest((current) =>
+                              current
+                                ? { ...current, model: event.target.value }
+                                : current,
+                            )
+                          }
+                          placeholder={t("deeplink.modelPlaceholder")}
+                          maxLength={200}
+                          autoComplete="off"
+                          spellCheck={false}
+                          aria-label={t("deeplink.model")}
+                          disabled={isImporting}
+                        />
+                      </div>
                     </>
                   )}
 
@@ -718,7 +837,14 @@ export function DeepLinkImportDialog() {
               >
                 {t("common.cancel")}
               </Button>
-              <Button onClick={handleImport} disabled={isImporting}>
+              <Button
+                onClick={handleImport}
+                disabled={
+                  isImporting ||
+                  ((request.resource === "provider" || !request.resource) &&
+                    !request.name?.trim())
+                }
+              >
                 {isImporting ? t("deeplink.importing") : t("deeplink.import")}
               </Button>
             </DialogFooter>

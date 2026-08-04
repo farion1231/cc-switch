@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use cc_switch_lib::{import_provider_from_deeplink, parse_deeplink_url, AppState, Database};
+use cc_switch_lib::{
+    get_codex_auth_path, get_codex_config_path, import_provider_from_deeplink, parse_deeplink_url,
+    AppState, AppType, Database,
+};
 
 #[path = "support.rs"]
 mod support;
@@ -48,7 +51,7 @@ fn deeplink_import_codex_provider_builds_auth_and_config() {
     reset_test_fs();
     let _home = ensure_test_home();
 
-    let url = "ccswitch://v1/import?resource=provider&app=codex&name=DeepLink%20Codex&homepage=https%3A%2F%2Fopenai.example&endpoint=https%3A%2F%2Fapi.openai.example%2Fv1&apiKey=sk-test-codex-key&model=gpt-4o&icon=openai";
+    let url = "ccswitch://v1/import?resource=provider&app=codex&name=DeepLink%20Codex&homepage=https%3A%2F%2Fopenai.example&endpoint=https%3A%2F%2Fapi.openai.example%2Fv1&apiKey=sk-test-codex-key&model=gpt-4o&icon=openai&enabled=true";
     let request = parse_deeplink_url(url).expect("parse deeplink url");
 
     let db = Arc::new(Database::memory().expect("create memory db"));
@@ -83,4 +86,45 @@ fn deeplink_import_codex_provider_builds_auth_and_config() {
         config_text.contains("model = \"gpt-4o\""),
         "config.toml content should contain model setting"
     );
+
+    let current_provider = db
+        .get_current_provider(AppType::Codex.as_str())
+        .expect("get current Codex provider");
+    assert_eq!(current_provider.as_deref(), Some(provider_id.as_str()));
+
+    let live_config = std::fs::read_to_string(get_codex_config_path())
+        .expect("enabled deep-link import should write Codex config.toml");
+    assert!(live_config.contains("https://api.openai.example/v1"));
+    assert!(live_config.contains("model = \"gpt-4o\""));
+
+    let live_auth: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(get_codex_auth_path())
+            .expect("enabled deep-link import should write Codex auth.json"),
+    )
+    .expect("parse Codex auth.json");
+    assert_eq!(
+        live_auth
+            .get("OPENAI_API_KEY")
+            .and_then(|value| value.as_str()),
+        Some("sk-test-codex-key")
+    );
+}
+
+#[test]
+fn deeplink_import_codex_provider_does_not_invent_homepage() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let url = "ccswitch://v1/import?resource=provider&app=codex&name=Codex%20No%20Homepage&endpoint=https%3A%2F%2Fapi.tu-zi.com%2Fcoding&apiKey=sk-test-codex-key&model=gpt-5.6-sol";
+    let request = parse_deeplink_url(url).expect("parse deeplink url");
+    let db = Arc::new(Database::memory().expect("create memory db"));
+    let state = AppState::new(db.clone());
+
+    let provider_id = import_provider_from_deeplink(&state, request)
+        .expect("import Codex provider without homepage");
+    let providers = db.get_all_providers("codex").expect("get providers");
+    let provider = providers.get(&provider_id).expect("provider created");
+
+    assert!(provider.website_url.is_none());
 }

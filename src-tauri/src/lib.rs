@@ -269,11 +269,12 @@ fn handle_deeplink_url(
         }
         Err(e) => {
             log::error!("✗ Failed to parse deep link URL: {e}");
+            let redacted_url = redact_url_for_log(url_str);
 
             if let Err(emit_err) = app.emit(
                 "deeplink-error",
                 serde_json::json!({
-                    "url": url_str,
+                    "url": redacted_url,
                     "error": e.to_string()
                 }),
             ) {
@@ -975,23 +976,12 @@ pub fn run() {
             {
                 #[cfg(target_os = "linux")]
                 {
-                    // Use Tauri's path API to get correct path (includes app identifier)
-                    // tauri-plugin-deep-link writes to: ~/.local/share/com.ccswitch.desktop/applications/cc-switch-handler.desktop
-                    // Only register if .desktop file doesn't exist to avoid overwriting user customizations
-                    let should_register = app
-                        .path()
-                        .data_dir()
-                        .map(|d| !d.join("applications/cc-switch-handler.desktop").exists())
-                        .unwrap_or(true);
-
-                    if should_register {
-                        if let Err(e) = app.deep_link().register_all() {
-                            log::error!("✗ Failed to register deep link schemes: {}", e);
-                        } else {
-                            log::info!("✓ Deep link schemes registered (Linux)");
-                        }
+                    // AppImage 可能在首次启动后被移动。插件会仅在 Exec/MimeType 变化时
+                    // 更新 handler，并保留其他 desktop 字段，因此每次启动校正路径是安全的。
+                    if let Err(e) = app.deep_link().register_all() {
+                        log::error!("✗ Failed to register deep link schemes: {}", e);
                     } else {
-                        log::info!("⊘ Deep link handler already exists, skipping registration");
+                        log::info!("✓ Deep link schemes registered (Linux)");
                     }
                 }
 
@@ -1770,11 +1760,12 @@ pub fn run() {
                                     log::error!(
                                         "Failed to parse deep link URL from RunEvent::Opened: {e}"
                                     );
+                                    let redacted_url = redact_url_for_log(&url_str);
 
                                     if let Err(emit_err) = app_handle.emit(
                                         "deeplink-error",
                                         serde_json::json!({
-                                            "url": url_str,
+                                            "url": redacted_url,
                                             "error": e.to_string()
                                         }),
                                     ) {
