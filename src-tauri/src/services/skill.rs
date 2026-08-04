@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 
@@ -453,80 +453,6 @@ fn parse_agents_lock() -> HashMap<String, LockRepoInfo> {
 
 // ========== SkillService ==========
 
-/// Skill 的数据库记录、SSOT 目录和各应用目录必须作为一个整体提交。
-///
-/// 网络下载不持锁；安装/更新完成下载后，仅在最终重新校验与文件/数据库提交阶段
-/// 持有该锁。这样不会让慢网络阻塞其它操作，同时消除 install/update/uninstall/
-/// toggle 之间“检查通过后目录被另一操作替换”的 TOCTOU 窗口。
-fn skill_mutation_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-fn lock_skill_mutations() -> MutexGuard<'static, ()> {
-    skill_mutation_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-/// 已经切换到新目录、但尚未提交数据库元数据的可回滚替换。
-///
-/// 未显式 `commit` 时 Drop 会尽力恢复旧目录。更新在 DB 条件更新失败（例如下载
-/// 期间被卸载/重装）时因此不会留下无主的新内容；普通同步则通过包装函数立即提交。
-struct PendingDirectoryReplacement {
-    dest: PathBuf,
-    previous: Option<PathBuf>,
-    finished: bool,
-}
-
-impl PendingDirectoryReplacement {
-    fn commit(mut self) {
-        self.finished = true;
-        if let Some(previous) = self.previous.take() {
-            if let Err(err) = SkillService::remove_path(&previous) {
-                log::warn!("清理 Skill 目录替换备份失败 {}: {err}", previous.display());
-            }
-        }
-    }
-
-    fn rollback_inner(&mut self) -> Result<()> {
-        if self.dest.exists() || SkillService::is_symlink(&self.dest) {
-            SkillService::remove_path(&self.dest)?;
-        }
-        if let Some(previous) = self.previous.as_ref() {
-            fs::rename(previous, &self.dest).with_context(|| {
-                format!(
-                    "恢复 Skill 目录失败: {} -> {}",
-                    previous.display(),
-                    self.dest.display()
-                )
-            })?;
-            self.previous = None;
-        }
-        Ok(())
-    }
-
-    fn rollback(mut self) -> Result<()> {
-        let result = self.rollback_inner();
-        self.finished = true;
-        result
-    }
-}
-
-impl Drop for PendingDirectoryReplacement {
-    fn drop(&mut self) {
-        if !self.finished {
-            if let Err(err) = self.rollback_inner() {
-                log::error!(
-                    "回滚未提交的 Skill 目录替换失败 {}: {err}",
-                    self.dest.display()
-                );
-            }
-            self.finished = true;
-        }
-    }
-}
-
 pub struct SkillService;
 
 impl Default for SkillService {
@@ -540,60 +466,10 @@ impl SkillService {
         Self
     }
 
-    /// 空分支是存量数据中的“默认分支”哨兵；任何展示 URL 都统一使用可移动的 HEAD。
-    fn branch_for_github_url(branch: &str) -> &str {
-        if branch.is_empty() || branch.eq_ignore_ascii_case("HEAD") {
-            "HEAD"
-        } else {
-            branch
-        }
-    }
-
-    /// 构建 GitHub blob/tree 引用的路径前缀。
+    /// 构建 Skill 文档 URL（指向仓库中的 SKILL.md 文件）
     ///
-    /// 分支名允许包含 `/`，因此不能用“跳过 blob 后的一个 segment”来反解析路径；
-    /// 这里与 URL 构造共用同一套编码规则，得到可精确匹配的前缀。
-    fn github_ref_path_prefix(owner: &str, repo: &str, branch: &str, kind: &str) -> Option<String> {
-        if Self::validate_repo_ref(owner, repo, branch).is_err() || !matches!(kind, "blob" | "tree")
-        {
-            return None;
-        }
-        let branch = Self::branch_for_github_url(branch);
-
-        let mut url = url::Url::parse("https://github.com/").ok()?;
-        {
-            let mut segments = url.path_segments_mut().ok()?;
-            segments.pop_if_empty();
-            segments.push(owner).push(repo).push(kind);
-            for segment in branch.split('/') {
-                segments.push(segment);
-            }
-        }
-
-        Some(format!("{}/", url.path().trim_end_matches('/')))
-    }
-
-    /// 校验仓库内相对路径并拆成 URL path segments。
-    fn repo_relative_path_segments(path: &str) -> Option<Vec<&str>> {
-        if path.is_empty() || path.starts_with('/') || path.starts_with('\\') || path.contains('\\')
-        {
-            return None;
-        }
-
-        let segments: Vec<_> = path.split('/').collect();
-        if segments
-            .iter()
-            .any(|segment| segment.is_empty() || *segment == "." || *segment == "..")
-        {
-            return None;
-        }
-        Some(segments)
-    }
-
-    /// 构建 Skill 文档 URL（指向仓库中的 SKILL.md 文件）。
-    ///
-    /// 坐标或仓库内路径不合法时返回 None：这个值会存进 `readme_url`，前端
-    /// `openExternal` 直接打开，所以 branch 与 doc_path 都必须避免改写 URL 落点。
+    /// 坐标不合法时返回 None：这个值会存进 `readme_url`，前端「查看文档」用
+    /// `openExternal` 直接打开，恶意 branch 能把它指到 github.com 上的任意路径。
     fn build_skill_doc_url(
         owner: &str,
         repo: &str,
@@ -604,59 +480,27 @@ impl SkillService {
             log::warn!("跳过非法仓库坐标的文档链接: {owner}/{repo}@{branch}");
             return None;
         }
-        let branch = Self::branch_for_github_url(branch);
-        let doc_segments = Self::repo_relative_path_segments(doc_path)?;
-
-        let mut url = url::Url::parse("https://github.com/").ok()?;
-        {
-            let mut segments = url.path_segments_mut().ok()?;
-            segments.pop_if_empty();
-            segments.push(owner).push(repo).push("blob");
-            for segment in branch.split('/') {
-                segments.push(segment);
-            }
-            for segment in doc_segments {
-                segments.push(segment);
-            }
-        }
-        Some(url.into())
+        Some(format!(
+            "https://github.com/{owner}/{repo}/blob/{branch}/{doc_path}"
+        ))
     }
 
-    /// 从已有 GitHub 文档 URL 中提取编码后的仓库内文档路径。
-    ///
-    /// `branch` 参与精确前缀匹配，避免把 `feature/x` 中的 `x` 误当成文档目录。
-    /// 该结果只用于和重新扫描出的 URL 做身份匹配，不会再反向参与 URL 构造。
-    fn extract_doc_path_from_url(
-        raw_url: &str,
-        owner: &str,
-        repo: &str,
-        branch: &str,
-    ) -> Option<String> {
-        let parsed = url::Url::parse(raw_url).ok()?;
-        if parsed.scheme() != "https"
-            || parsed.host_str() != Some("github.com")
-            || !parsed.username().is_empty()
-            || parsed.password().is_some()
-            || parsed.port().is_some()
-        {
+    /// 从旧 readme_url 中提取仓库内文档路径，兼容 `blob`/`tree` 两种格式
+    fn extract_doc_path_from_url(url: &str) -> Option<String> {
+        let marker = if url.contains("/blob/") {
+            "/blob/"
+        } else if url.contains("/tree/") {
+            "/tree/"
+        } else {
+            return None;
+        };
+
+        let (_, tail) = url.split_once(marker)?;
+        let (_, path) = tail.split_once('/')?;
+        if path.is_empty() {
             return None;
         }
-
-        for kind in ["blob", "tree"] {
-            let prefix = Self::github_ref_path_prefix(owner, repo, branch, kind)?;
-            let Some(path) = parsed.path().strip_prefix(&prefix) else {
-                continue;
-            };
-            let path = path.trim_end_matches('/');
-            Self::repo_relative_path_segments(path)?;
-            return Some(if path == "SKILL.md" || path.ends_with("/SKILL.md") {
-                path.to_string()
-            } else {
-                format!("{path}/SKILL.md")
-            });
-        }
-
-        None
+        Some(path.to_string())
     }
 
     // ========== 路径管理 ==========
@@ -782,179 +626,137 @@ impl SkillService {
                 ))
             })?;
 
-        let repo = SkillRepo {
-            owner: skill.repo_owner.clone(),
-            name: skill.repo_name.clone(),
-            branch: skill.repo_branch.clone(),
-            enabled: true,
-        };
-
-        // 下载仓库并以最终响应落到的真实分支为准。
-        let (temp_guard, repo_branch) = timeout(
-            std::time::Duration::from_secs(60),
-            self.download_repo(&repo),
-        )
-        .await
-        .map_err(|_| {
-            anyhow!(format_skill_error(
-                "DOWNLOAD_TIMEOUT",
-                &[
-                    ("owner", &repo.owner),
-                    ("name", &repo.name),
-                    ("timeout", "60")
-                ],
-                Some("checkNetwork"),
-            ))
-        })??;
-        let temp_dir = temp_guard.path();
-
-        let (canonical_source, doc_path) = Self::resolve_discoverable_skill_source(temp_dir, skill)
-            .ok_or_else(|| {
-                let missing = temp_dir.join(&source_rel).display().to_string();
-                anyhow!(format_skill_error(
-                    "SKILL_DIR_NOT_FOUND",
-                    &[("path", &missing)],
-                    Some("checkRepoUrl"),
-                ))
-            })?;
-
-        // 下载不持锁；真实源路径解析完成后再进入最终提交临界区，并重新读取 DB。
-        // 这既避免慢网络阻塞其它 Skill，也确保两个并发安装不能同时通过冲突检查。
-        let _mutation_guard = lock_skill_mutations();
-
+        // 检查数据库中是否已有同名 directory 的 skill（来自其他仓库）
         let existing_skills = db.get_all_installed_skills()?;
-        if let Some(existing) = existing_skills.get(&skill.key) {
-            if !existing.directory.eq_ignore_ascii_case(&install_name) {
-                // save_skill 使用 INSERT OR REPLACE；若同 ID 的来源改了安装名，直接保存
-                // 会覆盖 DB 行却把旧 SSOT/app 目录留成 orphan。迁移语义不明确时拒绝。
-                return Err(anyhow!(format_skill_error(
-                    "SKILL_DIRECTORY_CONFLICT",
-                    &[
-                        ("directory", &install_name),
-                        (
-                            "existing_repo",
-                            &format!(
-                                "{}/{} ({})",
-                                existing.repo_owner.as_deref().unwrap_or("unknown"),
-                                existing.repo_name.as_deref().unwrap_or("unknown"),
-                                existing.directory
-                            )
-                        ),
-                        (
-                            "new_repo",
-                            &format!("{}/{}", skill.repo_owner, skill.repo_name)
-                        ),
-                    ],
-                    Some("uninstallFirst"),
-                )));
-            }
-        }
         for existing in existing_skills.values() {
-            if !existing.directory.eq_ignore_ascii_case(&install_name) {
-                continue;
-            }
-
-            let same_repo = existing
-                .repo_owner
-                .as_deref()
-                .is_some_and(|owner| owner.eq_ignore_ascii_case(&skill.repo_owner))
-                && existing
-                    .repo_name
-                    .as_deref()
-                    .is_some_and(|name| name.eq_ignore_ascii_case(&skill.repo_name));
-            if same_repo && Self::installed_source_matches(existing, skill, &doc_path) {
-                // 只有完整文档路径能证明这是同一个来源。同仓库若有两个嵌套路径
-                // 末级同名，不能再把它们误当成同一个 Skill。
-                let repaired_url = Self::build_skill_doc_url(
-                    &skill.repo_owner,
-                    &skill.repo_name,
-                    &repo_branch,
-                    &doc_path,
-                );
-                if existing.repo_branch.as_deref() != Some(repo_branch.as_str())
-                    || existing.readme_url != repaired_url
-                {
-                    let repaired = db.update_skill_source_metadata(
-                        &existing.id,
-                        existing.installed_at,
-                        &repo_branch,
-                        repaired_url.as_deref(),
-                    )?;
-                    if !repaired {
-                        return Err(anyhow!("Skill no longer installed: {}", existing.id));
-                    }
+            if existing.directory.eq_ignore_ascii_case(&install_name) {
+                // 检查是否来自同一仓库
+                let same_repo = existing.repo_owner.as_deref() == Some(&skill.repo_owner)
+                    && existing.repo_name.as_deref() == Some(&skill.repo_name);
+                if same_repo {
+                    // 同一仓库的同名 skill，返回现有记录（可能需要更新启用状态）
+                    let mut updated = existing.clone();
+                    updated.apps.set_enabled_for(current_app, true);
+                    db.save_skill(&updated)?;
+                    Self::sync_to_app_dir(&updated.directory, current_app)?;
+                    log::info!(
+                        "Skill {} 已存在，更新 {:?} 启用状态",
+                        updated.name,
+                        current_app
+                    );
+                    return Ok(updated);
+                } else {
+                    // 不同仓库的同名 skill，报错
+                    return Err(anyhow!(format_skill_error(
+                        "SKILL_DIRECTORY_CONFLICT",
+                        &[
+                            ("directory", &install_name),
+                            (
+                                "existing_repo",
+                                &format!(
+                                    "{}/{}",
+                                    existing.repo_owner.as_deref().unwrap_or("unknown"),
+                                    existing.repo_name.as_deref().unwrap_or("unknown")
+                                )
+                            ),
+                            (
+                                "new_repo",
+                                &format!("{}/{}", skill.repo_owner, skill.repo_name)
+                            ),
+                        ],
+                        Some("uninstallFirst"),
+                    )));
                 }
-
-                let mut apps = existing.apps.clone();
-                apps.set_enabled_for(current_app, true);
-                if !db.update_skill_apps(&existing.id, &apps)? {
-                    return Err(anyhow!("Skill no longer installed: {}", existing.id));
-                }
-                let updated = db
-                    .get_installed_skill(&existing.id)?
-                    .ok_or_else(|| anyhow!("Skill no longer installed: {}", existing.id))?;
-                Self::sync_to_app_dir(&updated.directory, current_app)?;
-                log::info!(
-                    "Skill {} 已存在，更新 {:?} 启用状态",
-                    updated.name,
-                    current_app
-                );
-                return Ok(updated);
             }
-
-            return Err(anyhow!(format_skill_error(
-                "SKILL_DIRECTORY_CONFLICT",
-                &[
-                    ("directory", &install_name),
-                    (
-                        "existing_repo",
-                        &format!(
-                            "{}/{}",
-                            existing.repo_owner.as_deref().unwrap_or("unknown"),
-                            existing.repo_name.as_deref().unwrap_or("unknown")
-                        )
-                    ),
-                    (
-                        "new_repo",
-                        &format!("{}/{}", skill.repo_owner, skill.repo_name)
-                    ),
-                ],
-                Some("uninstallFirst"),
-            )));
         }
 
         let dest = ssot_dir.join(&install_name);
-        // DB 中没有记录但 SSOT 已有同名目录时，它属于未管理/残留内容。旧逻辑会
-        // 跳过下载，随后把这份未知本地内容登记成远程 Skill，并继续猜测分支和路径。
-        if dest.exists() || Self::is_symlink(&dest) {
-            return Err(anyhow!(format_skill_error(
-                "SKILL_DIRECTORY_CONFLICT",
-                &[
-                    ("directory", &install_name),
-                    ("existing_repo", "local/unmanaged"),
-                    (
-                        "new_repo",
-                        &format!("{}/{}", skill.repo_owner, skill.repo_name)
-                    ),
-                ],
-                None,
-            )));
+
+        let mut repo_branch = skill.repo_branch.clone();
+        // 真实解析出的源目录推导的文档路径（仅本次真正下载解析时可得）
+        let mut resolved_doc_path: Option<String> = None;
+
+        // 如果已存在则跳过下载
+        if !dest.exists() {
+            let repo = SkillRepo {
+                owner: skill.repo_owner.clone(),
+                name: skill.repo_name.clone(),
+                branch: skill.repo_branch.clone(),
+                enabled: true,
+            };
+
+            // 下载仓库
+            let (temp_guard, used_branch) = timeout(
+                std::time::Duration::from_secs(60),
+                self.download_repo(&repo),
+            )
+            .await
+            .map_err(|_| {
+                anyhow!(format_skill_error(
+                    "DOWNLOAD_TIMEOUT",
+                    &[
+                        ("owner", &repo.owner),
+                        ("name", &repo.name),
+                        ("timeout", "60")
+                    ],
+                    Some("checkNetwork"),
+                ))
+            })??;
+            let temp_dir = temp_guard.path();
+            repo_branch = used_branch;
+
+            // 复制到 SSOT
+            let source =
+                Self::resolve_skill_source_dir(temp_dir, &skill.directory).ok_or_else(|| {
+                    let missing = temp_dir.join(&source_rel).display().to_string();
+                    anyhow!(format_skill_error(
+                        "SKILL_DIR_NOT_FOUND",
+                        &[("path", &missing)],
+                        Some("checkRepoUrl"),
+                    ))
+                })?;
+
+            let canonical_temp = temp_dir
+                .canonicalize()
+                .unwrap_or_else(|_| temp_dir.to_path_buf());
+            let canonical_source = source.canonicalize().map_err(|_| {
+                anyhow!(format_skill_error(
+                    "SKILL_DIR_NOT_FOUND",
+                    &[("path", &source.display().to_string())],
+                    Some("checkRepoUrl"),
+                ))
+            })?;
+            if !canonical_source.starts_with(&canonical_temp) || !canonical_source.is_dir() {
+                return Err(anyhow!(format_skill_error(
+                    "INVALID_SKILL_DIRECTORY",
+                    &[("directory", &skill.directory)],
+                    Some("checkZipContent"),
+                )));
+            }
+
+            // 用真实解析出的源目录推导文档路径——skills.sh 的 directory 只是
+            // skillId（末级目录名），嵌套目录场景直接拼接会丢路径、链接 404（#6111）
+            resolved_doc_path = Self::doc_path_for_source(&canonical_temp, &canonical_source);
+
+            Self::copy_dir_recursive(&canonical_source, &dest)?;
+
+            // 使用实际下载成功的分支，避免 readme_url / repo_branch 与真实分支不一致。
+            if repo_branch != skill.repo_branch {
+                log::info!(
+                    "Skill {}/{} 分支自动回退: {} -> {}",
+                    skill.repo_owner,
+                    skill.repo_name,
+                    skill.repo_branch,
+                    repo_branch
+                );
+            }
         }
 
-        // 先复制到同目录 staging，再原子 rename 到最终目录；复制失败不会留下会阻塞
-        // 重试的 orphan SSOT 目录。
-        Self::replace_dest_with_copy(&canonical_source, &dest, &install_name)?;
-
-        // 使用实际下载成功的分支和实际源路径，避免 skills.sh 的 basename 丢路径。
-        if repo_branch != skill.repo_branch {
-            log::info!(
-                "Skill {}/{} 分支自动解析: {} -> {}",
-                skill.repo_owner,
-                skill.repo_name,
-                skill.repo_branch,
-                repo_branch
-            );
-        }
+        let doc_path = Self::choose_doc_path(
+            resolved_doc_path,
+            skill.readme_url.as_deref(),
+            &skill.directory,
+        );
 
         let readme_url =
             Self::build_skill_doc_url(&skill.repo_owner, &skill.repo_name, &repo_branch, &doc_path);
@@ -986,15 +788,7 @@ impl SkillService {
         };
 
         // 保存到数据库
-        if let Err(err) = db.save_skill(&installed_skill) {
-            if let Err(cleanup_err) = Self::remove_path(&dest) {
-                log::warn!(
-                    "Skill {} 入库失败后清理 SSOT 目录失败: {cleanup_err}",
-                    installed_skill.id
-                );
-            }
-            return Err(err.into());
-        }
+        db.save_skill(&installed_skill)?;
 
         // 同步到当前应用目录
         Self::sync_to_app_dir(&install_name, current_app)?;
@@ -1015,8 +809,6 @@ impl SkillService {
     /// 2. 从 SSOT 删除
     /// 3. 从数据库删除
     pub fn uninstall(db: &Arc<Database>, id: &str) -> Result<SkillUninstallResult> {
-        let _mutation_guard = lock_skill_mutations();
-
         // 获取 skill 信息
         let skill = db
             .get_installed_skill(id)?
@@ -1137,7 +929,7 @@ impl SkillService {
             let (owner, name, branch) =
                 match (&skill.repo_owner, &skill.repo_name, &skill.repo_branch) {
                     (Some(o), Some(n), Some(b)) => (o.clone(), n.clone(), b.clone()),
-                    (Some(o), Some(n), None) => (o.clone(), n.clone(), "HEAD".to_string()),
+                    (Some(o), Some(n), None) => (o.clone(), n.clone(), "main".to_string()),
                     _ => continue,
                 };
             repo_groups
@@ -1157,7 +949,7 @@ impl SkillService {
             };
 
             // 下载仓库 ZIP
-            let (temp_guard, used_branch) = match timeout(
+            let (temp_guard, _used_branch) = match timeout(
                 std::time::Duration::from_secs(60),
                 self.download_repo(&repo),
             )
@@ -1177,23 +969,23 @@ impl SkillService {
 
             // 扫描仓库中的所有 Skill 目录
             let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
-            let mut resolved_repo = repo.clone();
-            resolved_repo.branch = used_branch.clone();
-            if let Err(err) =
-                self.scan_dir_recursive(temp_dir, temp_dir, &resolved_repo, &mut remote_skills)
-            {
-                log::warn!("扫描远程 Skill {owner}/{name} 失败，跳过本仓库更新检查: {err}");
-                continue;
-            }
+            let _ = self.scan_dir_recursive(temp_dir, temp_dir, &repo, &mut remote_skills);
 
             for skill in group_skills {
-                let Some(remote_match) = Self::select_remote_skill(&remote_skills, skill) else {
-                    continue;
-                };
-                let Some((remote_skill_dir, doc_path)) =
-                    Self::resolve_discoverable_skill_source(temp_dir, remote_match)
-                else {
-                    continue;
+                // 在远程仓库中找到匹配的 Skill 目录
+                let remote_match = remote_skills.iter().find(|rs| {
+                    // 匹配方式：安装名称的最后一段
+                    let remote_install_name =
+                        rs.directory.rsplit('/').next().unwrap_or(&rs.directory);
+                    remote_install_name.eq_ignore_ascii_case(&skill.directory)
+                });
+
+                let remote_skill_dir = match remote_match {
+                    Some(rs) => match Self::resolve_skill_source_dir(temp_dir, &rs.directory) {
+                        Some(path) => path,
+                        None => continue,
+                    },
+                    None => continue,
                 };
 
                 let remote_hash = match Self::compute_dir_hash(&remote_skill_dir) {
@@ -1203,46 +995,6 @@ impl SkillService {
                         continue;
                     }
                 };
-
-                // 远端下载/扫描不持锁；写来源元数据及读取本地 SSOT 时短暂进入与
-                // install/update/uninstall 相同的临界区，并确认下载起点仍是当前代次。
-                let _mutation_guard = lock_skill_mutations();
-                let Some(current_skill) = db.get_installed_skill(&skill.id)? else {
-                    continue;
-                };
-                if current_skill.directory != skill.directory
-                    || current_skill.repo_owner != skill.repo_owner
-                    || current_skill.repo_name != skill.repo_name
-                    || current_skill.repo_branch != skill.repo_branch
-                    || current_skill.readme_url != skill.readme_url
-                    || current_skill.content_hash != skill.content_hash
-                    || current_skill.installed_at != skill.installed_at
-                {
-                    continue;
-                }
-                let skill = current_skill;
-
-                // 即使内容哈希没有变化，也要修复旧版保存的错误 branch/readme_url。
-                // 使用窄字段 UPDATE，避免覆盖并发切换的 apps、哈希或其他元数据。
-                let repaired_url = Self::build_skill_doc_url(owner, name, &used_branch, &doc_path);
-                if skill.repo_branch.as_deref() != Some(used_branch.as_str())
-                    || skill.readme_url != repaired_url
-                {
-                    match db.update_skill_source_metadata(
-                        &skill.id,
-                        skill.installed_at,
-                        &used_branch,
-                        repaired_url.as_deref(),
-                    ) {
-                        Ok(true) => {
-                            log::info!("已修复 Skill {} 的仓库分支/文档路径元数据", skill.id)
-                        }
-                        Ok(false) => continue,
-                        Err(err) => {
-                            log::warn!("修复 Skill {} 元数据失败: {err}", skill.id);
-                        }
-                    }
-                }
 
                 // 本地哈希：优先数据库，否则实时计算
                 let local_hash = match &skill.content_hash {
@@ -1294,7 +1046,11 @@ impl SkillService {
         db: &Arc<Database>,
         updated_skill: &InstalledSkill,
     ) -> Result<InstalledSkill> {
-        db.update_skill_metadata_and_get(updated_skill)?
+        if !db.update_skill_metadata(updated_skill)? {
+            return Err(anyhow!("Skill no longer installed: {}", updated_skill.id));
+        }
+
+        db.get_installed_skill(&updated_skill.id)?
             .ok_or_else(|| anyhow!("Skill no longer installed: {}", updated_skill.id))
     }
 
@@ -1316,7 +1072,7 @@ impl SkillService {
                 skill
                     .repo_branch
                     .clone()
-                    .unwrap_or_else(|| "HEAD".to_string()),
+                    .unwrap_or_else(|| "main".to_string()),
             ),
             _ => return Err(anyhow!("Cannot update local skill: {skill_id}")),
         };
@@ -1347,21 +1103,24 @@ impl SkillService {
 
         // 在解压的仓库中查找 Skill 源目录
         let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
-        let mut resolved_repo = repo.clone();
-        resolved_repo.branch = used_branch.clone();
-        self.scan_dir_recursive(temp_dir, temp_dir, &resolved_repo, &mut remote_skills)
-            .with_context(|| format!("扫描远程 Skill {owner}/{name} 失败"))?;
+        let _ = self.scan_dir_recursive(temp_dir, temp_dir, &repo, &mut remote_skills);
 
-        let remote_match = Self::select_remote_skill(&remote_skills, &skill).ok_or_else(|| {
-            anyhow!(format_skill_error(
-                "SKILL_DIR_NOT_FOUND",
-                &[("path", &skill.directory)],
-                Some("checkRepoUrl"),
-            ))
-        })?;
-
-        let (source, doc_path) = Self::resolve_discoverable_skill_source(temp_dir, remote_match)
+        let remote_match = remote_skills
+            .iter()
+            .find(|rs| {
+                let remote_install_name = rs.directory.rsplit('/').next().unwrap_or(&rs.directory);
+                remote_install_name.eq_ignore_ascii_case(&skill.directory)
+            })
             .ok_or_else(|| {
+                anyhow!(format_skill_error(
+                    "SKILL_DIR_NOT_FOUND",
+                    &[("path", &skill.directory)],
+                    Some("checkRepoUrl"),
+                ))
+            })?;
+
+        let source =
+            Self::resolve_skill_source_dir(temp_dir, &remote_match.directory).ok_or_else(|| {
                 let missing = temp_dir.join(&remote_match.directory).display().to_string();
                 anyhow!(format_skill_error(
                     "SKILL_DIR_NOT_FOUND",
@@ -1369,8 +1128,6 @@ impl SkillService {
                     Some("checkRepoUrl"),
                 ))
             })?;
-
-        let _mutation_guard = lock_skill_mutations();
 
         // 下载和扫描期间用户可能已经卸载了该 Skill。必须在任何备份、删除或
         // 复制之前重新确认记录仍存在；否则即使最终的 metadata UPDATE 能发现
@@ -1382,8 +1139,6 @@ impl SkillService {
             || current_skill.repo_owner != skill.repo_owner
             || current_skill.repo_name != skill.repo_name
             || current_skill.repo_branch != skill.repo_branch
-            || current_skill.readme_url != skill.readme_url
-            || current_skill.content_hash != skill.content_hash
             || current_skill.installed_at != skill.installed_at
         {
             return Err(anyhow!("Skill changed during update: {}", skill.id));
@@ -1394,17 +1149,24 @@ impl SkillService {
         // 备份旧文件
         let _ = Self::create_uninstall_backup(&skill);
 
-        // 先完整复制到 staging，再替换旧 SSOT。直到 DB 条件更新成功才提交目录
-        // 替换；若记录被外部同步删除/换代，会自动恢复旧内容而不留下无主目录。
+        // 删除旧 SSOT 目录并复制新文件
         let dest = ssot_dir.join(&skill.directory);
-        let replacement = Self::begin_dest_replacement(&source, &dest, &skill.directory)?;
+        if dest.exists() {
+            fs::remove_dir_all(&dest)?;
+        }
+        Self::copy_dir_recursive(&source, &dest)?;
 
         // 计算新哈希 + 解析新元数据
         let new_hash = Self::compute_dir_hash(&dest).ok();
         let skill_md = dest.join("SKILL.md");
         let (new_name, new_description) = Self::read_skill_name_desc(&skill_md, &skill.directory);
 
-        // 始终从本次实际解析出的源目录生成 URL，旧版错误链接会在更新时自愈。
+        // 更新 readme_url
+        let doc_path = skill
+            .readme_url
+            .as_deref()
+            .and_then(Self::extract_doc_path_from_url)
+            .unwrap_or_else(|| format!("{}/SKILL.md", skill.directory.trim_end_matches('/')));
         let readme_url = Self::build_skill_doc_url(&owner, &name, &used_branch, &doc_path);
 
         let updated_metadata = InstalledSkill {
@@ -1422,20 +1184,7 @@ impl SkillService {
             updated_at: chrono::Utc::now().timestamp(),
         };
 
-        let updated_skill = match Self::persist_updated_skill_metadata(db, &updated_metadata) {
-            Ok(updated) => {
-                replacement.commit();
-                updated
-            }
-            Err(err) => {
-                if let Err(rollback_err) = replacement.rollback() {
-                    return Err(anyhow!(
-                        "{err}; rollback of replaced Skill directory failed: {rollback_err}"
-                    ));
-                }
-                return Err(err);
-            }
-        };
+        let updated_skill = Self::persist_updated_skill_metadata(db, &updated_metadata)?;
 
         // 同步到所有已启用的应用目录
         for app in updated_skill.apps.enabled_apps() {
@@ -1490,8 +1239,6 @@ impl SkillService {
         db: &Arc<Database>,
         target: SkillStorageLocation,
     ) -> Result<MigrationResult> {
-        let _mutation_guard = lock_skill_mutations();
-
         let current = crate::settings::get_skill_storage_location();
         if current == target {
             return Ok(MigrationResult {
@@ -1635,8 +1382,6 @@ impl SkillService {
         backup_id: &str,
         current_app: &AppType,
     ) -> Result<InstalledSkill> {
-        let _mutation_guard = lock_skill_mutations();
-
         let backup_path = Self::backup_path_for_id(backup_id)?;
         let metadata = Self::read_backup_metadata(&backup_path)?;
         let backup_skill_dir = backup_path.join("skill");
@@ -1712,8 +1457,6 @@ impl SkillService {
     /// 启用：复制到应用目录
     /// 禁用：从应用目录删除
     pub fn toggle_app(db: &Arc<Database>, id: &str, app: &AppType, enabled: bool) -> Result<()> {
-        let _mutation_guard = lock_skill_mutations();
-
         // 获取当前 skill
         let mut skill = db
             .get_installed_skill(id)?
@@ -1807,8 +1550,6 @@ impl SkillService {
         db: &Arc<Database>,
         imports: Vec<ImportSkillSelection>,
     ) -> Result<Vec<InstalledSkill>> {
-        let _mutation_guard = lock_skill_mutations();
-
         let ssot_dir = Self::get_ssot_dir()?;
         let agents_lock = parse_agents_lock();
         let mut imported = Vec::new();
@@ -2059,11 +1800,7 @@ impl SkillService {
         Ok(())
     }
 
-    fn begin_dest_replacement(
-        source: &Path,
-        dest: &Path,
-        directory: &str,
-    ) -> Result<PendingDirectoryReplacement> {
+    fn replace_dest_with_copy(source: &Path, dest: &Path, directory: &str) -> Result<()> {
         Self::validate_sync_source_dir(source, directory)?;
 
         let parent = dest
@@ -2077,16 +1814,9 @@ impl SkillService {
             .as_nanos();
         let tmp_name = Self::sanitize_backup_segment(directory);
         let tmp = parent.join(format!(".{tmp_name}.tmp-{}-{nonce}", std::process::id()));
-        let previous = parent.join(format!(
-            ".{tmp_name}.previous-{}-{nonce}",
-            std::process::id()
-        ));
 
         if tmp.exists() || Self::is_symlink(&tmp) {
             Self::remove_path(&tmp)?;
-        }
-        if previous.exists() || Self::is_symlink(&previous) {
-            Self::remove_path(&previous)?;
         }
 
         let copy_result = Self::copy_dir_recursive(source, &tmp);
@@ -2095,49 +1825,19 @@ impl SkillService {
             return Err(err);
         }
 
-        let had_previous = dest.exists() || Self::is_symlink(dest);
-        if had_previous {
-            if let Err(err) = fs::rename(dest, &previous) {
-                let _ = Self::remove_path(&tmp);
-                return Err(err).with_context(|| {
-                    format!(
-                        "暂存旧 Skill 目录失败: {} -> {}",
-                        dest.display(),
-                        previous.display()
-                    )
-                });
-            }
+        if dest.exists() || Self::is_symlink(dest) {
+            Self::remove_path(dest)?;
         }
 
-        if let Err(err) = fs::rename(&tmp, dest) {
+        fs::rename(&tmp, dest).with_context(|| {
             let _ = Self::remove_path(&tmp);
-            if had_previous {
-                if let Err(restore_err) = fs::rename(&previous, dest) {
-                    return Err(anyhow!(
-                        "替换 Skill 目录失败: {err}; 恢复旧目录也失败: {restore_err} ({} -> {})",
-                        previous.display(),
-                        dest.display()
-                    ));
-                }
-            }
-            return Err(err).with_context(|| {
-                format!(
-                    "替换 Skill 目录失败: {} -> {}",
-                    tmp.display(),
-                    dest.display()
-                )
-            });
-        }
+            format!(
+                "替换 Skill 目录失败: {} -> {}",
+                tmp.display(),
+                dest.display()
+            )
+        })?;
 
-        Ok(PendingDirectoryReplacement {
-            dest: dest.to_path_buf(),
-            previous: had_previous.then_some(previous),
-            finished: false,
-        })
-    }
-
-    fn replace_dest_with_copy(source: &Path, dest: &Path, directory: &str) -> Result<()> {
-        Self::begin_dest_replacement(source, dest, directory)?.commit();
         Ok(())
     }
 
@@ -2402,6 +2102,8 @@ impl SkillService {
             {
                 skills.push(skill);
             }
+
+            return Ok(());
         }
 
         for entry in fs::read_dir(current_dir)? {
@@ -2593,8 +2295,8 @@ impl SkillService {
     /// 前者会把 URL 后半截变成 fragment，后者可用百分号编码绕过字符检查。
     fn is_valid_git_branch(branch: &str) -> bool {
         // 空串和 "HEAD" 都是 `download_repo` 的哨兵，语义都是「用仓库默认分支」：
-        // 下载器会用固定的 `/archive/HEAD.zip`，不会把空串或外部提供的 HEAD 文本
-        // 当成任意 URL 路径。空串必须放行——`skill_repos` 的
+        // 分支候选表对两者一视同仁地跳过，改试 main / master，所以它们**永远不会
+        // 被拼进 URL**，也就没有可校验的攻击面。空串必须放行——`skill_repos` 的
         // 存量行可以是空 branch（建表默认值是 'main'，但不禁止空串），前端两处
         // `repo.branch || "main"` 就是照着这个前提写的。把它当非法会让那些仓库
         // 在 download_repo 第一行就报 INVALID_REPO_REF，技能面板直接列不出来。
@@ -2657,12 +2359,10 @@ impl SkillService {
     /// 分隔符语义等），这里也能拦住落点被改写的请求。
     fn assert_github_archive_url(url: &str, owner: &str, name: &str) -> Result<()> {
         let parsed = url::Url::parse(url).map_err(|e| anyhow!("Invalid archive URL: {e}"))?;
-        let expected_branch_prefix = format!("/{owner}/{name}/archive/refs/heads/");
-        let expected_head_path = format!("/{owner}/{name}/archive/HEAD.zip");
+        let expected_prefix = format!("/{owner}/{name}/archive/refs/heads/");
         if parsed.scheme() != "https"
             || parsed.host_str() != Some("github.com")
-            || (!parsed.path().starts_with(&expected_branch_prefix)
-                && parsed.path() != expected_head_path)
+            || !parsed.path().starts_with(&expected_prefix)
         {
             return Err(anyhow!(format_skill_error(
                 "INVALID_REPO_REF",
@@ -2673,93 +2373,16 @@ impl SkillService {
         Ok(())
     }
 
-    /// 严格解码 URL path 中的百分号编码；非法转义或非 UTF-8 一律拒绝。
-    fn percent_decode_path(value: &str) -> Option<String> {
-        fn hex(value: u8) -> Option<u8> {
-            match value {
-                b'0'..=b'9' => Some(value - b'0'),
-                b'a'..=b'f' => Some(value - b'a' + 10),
-                b'A'..=b'F' => Some(value - b'A' + 10),
-                _ => None,
-            }
-        }
-
-        let bytes = value.as_bytes();
-        let mut decoded = Vec::with_capacity(bytes.len());
-        let mut index = 0;
-        while index < bytes.len() {
-            if bytes[index] == b'%' {
-                let high = hex(*bytes.get(index + 1)?)?;
-                let low = hex(*bytes.get(index + 2)?)?;
-                decoded.push((high << 4) | low);
-                index += 3;
-            } else {
-                decoded.push(bytes[index]);
-                index += 1;
-            }
-        }
-        String::from_utf8(decoded).ok()
-    }
-
-    /// 从 GitHub/codeload 的最终响应 URL 提取实际归档引用。
-    ///
-    /// GitHub 会把已重命名的默认分支（例如请求 main、实际为 master）重定向到
-    /// `codeload.github.com/{owner}/{repo}/zip/master`。只返回请求候选会把错误分支
-    /// 持久化到数据库，因此必须校验最终 host/repo 后读取真实 ref。
-    fn effective_branch_from_archive_url(
-        archive_url: &url::Url,
-        owner: &str,
-        repo: &str,
-    ) -> Option<String> {
-        if archive_url.scheme() != "https"
-            || !archive_url.username().is_empty()
-            || archive_url.password().is_some()
-            || archive_url.port().is_some()
-        {
-            return None;
-        }
-
-        let segments: Vec<_> = archive_url.path_segments()?.collect();
-        if segments.len() < 3
-            || !segments[0].eq_ignore_ascii_case(owner)
-            || !segments[1].eq_ignore_ascii_case(repo)
-        {
-            return None;
-        }
-
-        let raw_branch = match archive_url.host_str()? {
-            "github.com" => match &segments[2..] {
-                ["archive", "HEAD.zip"] => "HEAD".to_string(),
-                ["archive", "refs", "heads", branch @ ..] if !branch.is_empty() => {
-                    branch.join("/").strip_suffix(".zip")?.to_string()
-                }
-                _ => return None,
-            },
-            "codeload.github.com" => match &segments[2..] {
-                ["zip", "refs", "heads", branch @ ..] if !branch.is_empty() => branch.join("/"),
-                ["zip", "refs", ..] => return None,
-                ["zip", branch @ ..] if !branch.is_empty() => branch.join("/"),
-                _ => return None,
-            },
-            _ => return None,
-        };
-        let branch = Self::percent_decode_path(&raw_branch)?;
-        Self::is_valid_git_branch(&branch).then_some(branch)
-    }
-
-    /// 在目录树中查找名称匹配且包含 SKILL.md 的唯一子目录。
+    /// 在目录树中查找名称匹配且包含 SKILL.md 的子目录
     ///
     /// 用于 skills.sh 安装回退：API 只返回 skillId（如 "find-skills"），
-    /// 但实际文件可能在仓库子目录中（如 "skills/find-skills"）。同一仓库若存在
-    /// 多个同名末级目录，API 没有足够信息判定目标，必须拒绝而不能依赖遍历顺序。
+    /// 但实际文件可能在仓库子目录中（如 "skills/find-skills"）。
     fn find_skill_dir_by_name(root: &Path, target_name: &str) -> Option<PathBuf> {
-        let mut pending = vec![root.to_path_buf()];
-        let mut found: Option<PathBuf> = None;
-
-        while let Some(dir) = pending.pop() {
-            let Ok(entries) = fs::read_dir(&dir) else {
-                continue;
-            };
+        fn walk(dir: &Path, target: &str, depth: usize) -> Option<PathBuf> {
+            if depth > 3 {
+                return None;
+            }
+            let entries = fs::read_dir(dir).ok()?;
             for entry in entries.flatten() {
                 let path = entry.path();
                 if !path.is_dir() {
@@ -2770,276 +2393,16 @@ impl SkillService {
                 if name_str.starts_with('.') {
                     continue;
                 }
-                if name_str.eq_ignore_ascii_case(target_name) && path.join("SKILL.md").is_file() {
-                    if found.is_some() {
-                        log::warn!(
-                            "仓库中存在多个末级目录名为 '{}' 的 Skill，无法安全选择",
-                            target_name
-                        );
-                        return None;
-                    }
-                    found = Some(path.clone());
+                if name_str.eq_ignore_ascii_case(target) && path.join("SKILL.md").exists() {
+                    return Some(path);
                 }
-                pending.push(path);
-            }
-        }
-
-        found
-    }
-
-    /// 规范化已解析出的 Skill 源目录，并生成其真实仓库相对文档路径。
-    ///
-    /// canonicalize 后同时约束目录和 SKILL.md 都留在解压根内，返回值可安全用于
-    /// 复制与 GitHub 文档 URL。仓库根 Skill 的文档路径自然为 `SKILL.md`。
-    fn canonical_skill_source(root: &Path, source: &Path) -> Option<(PathBuf, String)> {
-        let canonical_root = root.canonicalize().ok()?;
-        let canonical_source = source.canonicalize().ok()?;
-        if !canonical_source.is_dir() || !canonical_source.starts_with(&canonical_root) {
-            return None;
-        }
-
-        let canonical_skill_md = canonical_source.join("SKILL.md").canonicalize().ok()?;
-        if !canonical_skill_md.is_file()
-            || canonical_skill_md.parent() != Some(canonical_source.as_path())
-            || !canonical_skill_md.starts_with(&canonical_root)
-        {
-            return None;
-        }
-
-        let relative_doc = canonical_skill_md.strip_prefix(&canonical_root).ok()?;
-        let mut segments = Vec::new();
-        for component in relative_doc.components() {
-            match component {
-                Component::Normal(segment) => segments.push(segment.to_str()?.to_string()),
-                _ => return None,
-            }
-        }
-        if segments.is_empty() {
-            return None;
-        }
-
-        Some((canonical_source, segments.join("/")))
-    }
-
-    /// 判断已安装记录是否明确指向本次解析出的同一个仓库内 Skill。
-    ///
-    /// `directory` 只有末级安装名，不能区分 `a/foo` 与 `b/foo`；只有保存的完整
-    /// SKILL.md 路径可作为同源证据。解析失败或旧版 basename 猜测均按不确定处理。
-    fn installed_source_matches(
-        installed: &InstalledSkill,
-        incoming: &DiscoverableSkill,
-        incoming_doc_path: &str,
-    ) -> bool {
-        let (Some(url), Some(owner), Some(repo)) = (
-            installed.readme_url.as_deref(),
-            installed.repo_owner.as_deref(),
-            installed.repo_name.as_deref(),
-        ) else {
-            return false;
-        };
-        let branch = installed.repo_branch.as_deref().unwrap_or("HEAD");
-        let Some(installed_doc_path) = Self::extract_doc_path_from_url(url, owner, repo, branch)
-        else {
-            return false;
-        };
-
-        // 旧实现正是把未知嵌套来源猜成 `<leaf>/SKILL.md`；这种两段路径通常不能
-        // 证明真实顶层 Skill 与已安装内容同源。唯一可安全恢复的场景是：两次都
-        // 来自仓库扫描的同一精确 key，且本次卡片自身的 URL 也明确指向该路径。
-        if installed_doc_path.split('/').count() == 2 {
-            let incoming_card_doc_path = incoming.readme_url.as_deref().and_then(|url| {
-                Self::extract_doc_path_from_url(
-                    url,
-                    &incoming.repo_owner,
-                    &incoming.repo_name,
-                    &incoming.repo_branch,
-                )
-            });
-            let exact_repo_card = installed.id == incoming.key
-                && incoming.key.contains(':')
-                && incoming_card_doc_path.as_deref() == Some(installed_doc_path.as_str());
-            if !exact_repo_card {
-                return false;
-            }
-        }
-
-        // extract 返回 URL 编码后的 path，而 canonical source 生成的是文件系统原始
-        // 文本。将 incoming 走同一 build/extract 管线，避免空格和 Unicode 被误判。
-        let normalized_incoming = Self::build_skill_doc_url(owner, repo, branch, incoming_doc_path)
-            .and_then(|incoming_url| {
-                Self::extract_doc_path_from_url(&incoming_url, owner, repo, branch)
-            });
-
-        normalized_incoming.as_deref() == Some(installed_doc_path.as_str())
-    }
-
-    /// 从远程扫描结果中为已安装 Skill 选择唯一来源。
-    ///
-    /// 优先级为：已保存的完整文档路径、完整 key、唯一末级目录名。
-    /// 只有末级名而出现多个候选时返回 None，避免更新成遍历顺序碰巧遇到的另一个 Skill。
-    fn select_remote_skill<'a>(
-        remote_skills: &'a [DiscoverableSkill],
-        installed: &InstalledSkill,
-    ) -> Option<&'a DiscoverableSkill> {
-        let installed_doc_path = match (
-            installed.readme_url.as_deref(),
-            installed.repo_owner.as_deref(),
-            installed.repo_name.as_deref(),
-        ) {
-            (Some(url), Some(owner), Some(repo)) => Self::extract_doc_path_from_url(
-                url,
-                owner,
-                repo,
-                installed.repo_branch.as_deref().unwrap_or("HEAD"),
-            ),
-            _ => None,
-        };
-
-        if let Some(expected_path) = installed_doc_path.as_deref() {
-            // 旧版会把未知嵌套路径猜成 `<install-name>/SKILL.md`。这个一层路径
-            // 不是可靠的“精确路径”：仓库若恰好另有真实顶层同名 Skill，就会误中。
-            // 根 SKILL.md 与多级路径才足以在 leaf 重名时直接消歧。
-            let is_legacy_single_directory_path = expected_path.split('/').count() == 2;
-            if !is_legacy_single_directory_path {
-                let exact: Vec<_> = remote_skills
-                    .iter()
-                    .filter(|remote| {
-                        let remote_path = remote.readme_url.as_deref().and_then(|url| {
-                            Self::extract_doc_path_from_url(
-                                url,
-                                &remote.repo_owner,
-                                &remote.repo_name,
-                                &remote.repo_branch,
-                            )
-                        });
-                        let leaf_matches = expected_path == "SKILL.md"
-                            || remote
-                                .directory
-                                .rsplit('/')
-                                .next()
-                                .unwrap_or(&remote.directory)
-                                .eq_ignore_ascii_case(&installed.directory);
-                        remote_path.as_deref() == Some(expected_path) && leaf_matches
-                    })
-                    .collect();
-                match exact.as_slice() {
-                    [single] => return Some(*single),
-                    [_, _, ..] => return None,
-                    _ => {}
+                if let Some(found) = walk(&path, target, depth + 1) {
+                    return Some(found);
                 }
             }
+            None
         }
-
-        // 只有 key 的目录部分明确包含多级路径时才可作为路径证据。skills.sh 的
-        // legacy ID 可能只是 basename；若仓库恰好有同名顶层 Skill，直接 key 命中
-        // 会抢在下面的同名歧义检查之前，把嵌套 Skill 更新成错误对象。
-        let key_has_explicit_path = installed
-            .id
-            .split_once(':')
-            .is_some_and(|(_, directory)| directory.contains('/'));
-        if key_has_explicit_path {
-            let key_matches: Vec<_> = remote_skills
-                .iter()
-                .filter(|remote| {
-                    remote.key.eq_ignore_ascii_case(&installed.id)
-                        && remote
-                            .directory
-                            .rsplit('/')
-                            .next()
-                            .unwrap_or(&remote.directory)
-                            .eq_ignore_ascii_case(&installed.directory)
-                })
-                .collect();
-            match key_matches.as_slice() {
-                [single] => return Some(*single),
-                [_, _, ..] => return None,
-                _ => {}
-            }
-        }
-
-        let leaf_matches: Vec<_> = remote_skills
-            .iter()
-            .filter(|remote| {
-                remote
-                    .directory
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(&remote.directory)
-                    .eq_ignore_ascii_case(&installed.directory)
-            })
-            .collect();
-        match leaf_matches.as_slice() {
-            [single] => return Some(*single),
-            [_, _, ..] => {
-                log::warn!(
-                    "仓库中有多个 Skill 与安装目录 '{}' 同名，跳过不确定的更新",
-                    installed.directory
-                );
-                return None;
-            }
-            _ => {}
-        }
-
-        None
-    }
-
-    /// 解析一个已发现 Skill 的真实源目录。
-    ///
-    /// 仓库根 Skill 在扫描结果中为了展示会把 `directory` 写成 repo 名；仅靠这个
-    /// 字段重新解析时，可能误中仓库内另一个同名目录。readme_url 明确指向
-    /// `SKILL.md` 时应优先保留“仓库根”语义，其余情况再走普通路径/末级名回退。
-    fn resolve_discoverable_skill_source_dir(
-        root: &Path,
-        skill: &DiscoverableSkill,
-    ) -> Option<PathBuf> {
-        let doc_path = skill.readme_url.as_deref().and_then(|url| {
-            Self::extract_doc_path_from_url(
-                url,
-                &skill.repo_owner,
-                &skill.repo_name,
-                &skill.repo_branch,
-            )
-        });
-        if doc_path.as_deref() == Some("SKILL.md") && root.join("SKILL.md").is_file() {
-            return Some(root.to_path_buf());
-        }
-        // 来自仓库扫描的 blob/tree 路径证明 directory 是真实仓库相对路径；即使
-        // 只有一段，也可以精确命中顶层 Skill。skills.sh 的仓库首页无法提取路径，
-        // 会落到下面的 basename 全局唯一检查。
-        let expected_directory_doc = Self::build_skill_doc_url(
-            &skill.repo_owner,
-            &skill.repo_name,
-            &skill.repo_branch,
-            &format!("{}/SKILL.md", skill.directory.trim_end_matches('/')),
-        )
-        .and_then(|url| {
-            Self::extract_doc_path_from_url(
-                &url,
-                &skill.repo_owner,
-                &skill.repo_name,
-                &skill.repo_branch,
-            )
-        });
-        if doc_path.is_some() && doc_path == expected_directory_doc {
-            if let Some(source_rel) = Self::sanitize_skill_source_path(&skill.directory) {
-                let direct = root.join(source_rel);
-                if direct.is_dir() && direct.join("SKILL.md").is_file() {
-                    return Some(direct);
-                }
-            }
-        }
-
-        Self::resolve_skill_source_dir(root, &skill.directory)
-    }
-
-    /// 解析并规范化已发现 Skill 的源目录，同时返回真实仓库相对 SKILL.md 路径。
-    /// install/check/update 三条链路共用，避免其中某条再次从旧 URL 或 basename 猜路径。
-    fn resolve_discoverable_skill_source(
-        root: &Path,
-        skill: &DiscoverableSkill,
-    ) -> Option<(PathBuf, String)> {
-        let source = Self::resolve_discoverable_skill_source_dir(root, skill)?;
-        Self::canonical_skill_source(root, &source)
+        walk(root, target_name, 0)
     }
 
     /// 将 discoverable skill 的目录信息重新解析为解压目录中的真实源目录。
@@ -3056,11 +2419,9 @@ impl SkillService {
 
         // 1. 直接相对路径命中（明确路径优先）——必须校验 SKILL.md，否则同名空壳目录
         //    （如 ast-grep/agent-skill 根下的 plugin 包目录 ast-grep/）会被误判为源目录。
-        if source_rel.components().count() > 1 {
-            let direct = root.join(&source_rel);
-            if direct.is_dir() && direct.join("SKILL.md").is_file() {
-                return Some(direct);
-            }
+        let direct = root.join(&source_rel);
+        if direct.is_dir() && direct.join("SKILL.md").is_file() {
+            return Some(direct);
         }
 
         // 2. 按名字递归查找（find_skill_dir_by_name 已校验 SKILL.md）
@@ -3083,6 +2444,42 @@ impl SkillService {
         }
 
         None
+    }
+
+    /// 由真实解析出的源目录推导 SKILL.md 在仓库内的相对文档路径（正斜杠）。
+    /// 两个参数都应是已 canonicalize 的路径（安装流程已做包含性校验）。
+    fn doc_path_for_source(repo_root: &Path, source: &Path) -> Option<String> {
+        let rel = source.strip_prefix(repo_root).ok()?;
+        let mut parts: Vec<String> = rel
+            .components()
+            .filter_map(|component| match component {
+                std::path::Component::Normal(part) => Some(part.to_string_lossy().to_string()),
+                _ => None,
+            })
+            .collect();
+        parts.push("SKILL.md".to_string());
+        Some(parts.join("/"))
+    }
+
+    /// 选择 readme_url 使用的仓库内文档路径：真实解析出的源目录优先，其次是
+    /// 旧 readme_url 中保存的路径，最后才按 directory 拼接。skills.sh 的
+    /// `directory` 只是 skillId（末级目录名），嵌套目录场景直接拼接会丢路径、
+    /// 文档链接 404（#6111），所以真实源目录必须排第一优先级。
+    fn choose_doc_path(
+        resolved_source_doc_path: Option<String>,
+        readme_url: Option<&str>,
+        directory: &str,
+    ) -> String {
+        if let Some(path) = resolved_source_doc_path {
+            return path;
+        }
+        if let Some(path) = readme_url.and_then(Self::extract_doc_path_from_url) {
+            if path.ends_with("/SKILL.md") || path == "SKILL.md" {
+                return path;
+            }
+            return format!("{}/SKILL.md", path.trim_end_matches('/'));
+        }
+        format!("{}/SKILL.md", directory.trim_end_matches('/'))
     }
 
     /// 去重技能列表（基于完整 key，不同仓库的同名 skill 分开显示）
@@ -3116,52 +2513,26 @@ impl SkillService {
         let temp_path = temp_dir.path().to_path_buf();
 
         let mut branches = Vec::new();
-        let default_branch_requested =
-            repo.branch.is_empty() || repo.branch.eq_ignore_ascii_case("HEAD");
-        if default_branch_requested {
-            branches.push("HEAD");
-        } else {
+        if !repo.branch.is_empty() && !repo.branch.eq_ignore_ascii_case("HEAD") {
             branches.push(repo.branch.as_str());
-            // main/master 常是“默认分支猜测”，保留彼此及 HEAD 回退；真正的自定义
-            // ref 则必须精确失败，不能在分支删除后静默切到默认分支并替换 Skill。
-            if repo.branch == "main" {
-                branches.push("master");
-                branches.push("HEAD");
-            } else if repo.branch == "master" {
-                branches.push("main");
-                branches.push("HEAD");
-            }
+        }
+        if !branches.contains(&"main") {
+            branches.push("main");
+        }
+        if !branches.contains(&"master") {
+            branches.push("master");
         }
 
         let mut last_error = None;
         for branch in branches {
-            let url = if branch == "HEAD" {
-                format!(
-                    "https://github.com/{}/{}/archive/HEAD.zip",
-                    repo.owner, repo.name
-                )
-            } else {
-                format!(
-                    "https://github.com/{}/{}/archive/refs/heads/{}.zip",
-                    repo.owner, repo.name, branch
-                )
-            };
+            let url = format!(
+                "https://github.com/{}/{}/archive/refs/heads/{}.zip",
+                repo.owner, repo.name, branch
+            );
             Self::assert_github_archive_url(&url, &repo.owner, &repo.name)?;
 
-            match self
-                .download_and_extract(&url, &temp_path, &repo.owner, &repo.name)
-                .await
-            {
-                Ok(effective_branch) => {
-                    // HEAD 的最终 codeload URL 常是 commit SHA；保存 SHA 会把后续更新
-                    // 永久钉死，因此默认分支语义继续持久化为可移动的 HEAD。
-                    let stored_branch = if branch == "HEAD" {
-                        "HEAD".to_string()
-                    } else {
-                        effective_branch
-                    };
-                    return Ok((temp_dir, stored_branch));
-                }
+            match self.download_and_extract(&url, &temp_path).await {
+                Ok(_) => return Ok((temp_dir, branch.to_string())),
                 Err(e) => {
                     // 每个分支各自重算预算，所以失败后必须把上一轮的残留清掉——
                     // 否则 N 个候选分支等于 N 倍的落盘量堆在同一个目录里。
@@ -3177,13 +2548,7 @@ impl SkillService {
     }
 
     /// 下载并解压 ZIP
-    async fn download_and_extract(
-        &self,
-        url: &str,
-        dest: &Path,
-        owner: &str,
-        repo: &str,
-    ) -> Result<String> {
+    async fn download_and_extract(&self, url: &str, dest: &Path) -> Result<()> {
         let client = crate::proxy::http_client::get();
         let response = client.get(url).send().await?;
         if !response.status().is_success() {
@@ -3199,15 +2564,6 @@ impl SkillService {
                 },
             )));
         }
-
-        let effective_branch = Self::effective_branch_from_archive_url(response.url(), owner, repo)
-            .ok_or_else(|| {
-                anyhow!(format_skill_error(
-                    "INVALID_REPO_REF",
-                    &[("owner", owner), ("name", repo)],
-                    Some("checkRepoUrl"),
-                ))
-            })?;
 
         // 逐块读并卡住压缩体大小：`response.bytes()` 会先把攻击者控制的整个归档
         // 收进内存，之后才轮到 ZipArchive 和解压预算——那时候堆已经被吃光了。
@@ -3228,8 +2584,7 @@ impl SkillService {
 
         let cursor = std::io::Cursor::new(body);
         let archive = zip::ZipArchive::new(cursor)?;
-        Self::extract_repo_archive(archive, dest)?;
-        Ok(effective_branch)
+        Self::extract_repo_archive(archive, dest)
     }
 
     /// 按预算把单个归档条目写出，累计超限即中止。
@@ -3714,11 +3069,9 @@ impl SkillService {
             )));
         }
 
-        let _mutation_guard = lock_skill_mutations();
         let ssot_dir = Self::get_ssot_dir()?;
         let mut installed = Vec::new();
         let existing_skills = db.get_all_installed_skills()?;
-        let mut batch_install_names = HashSet::new();
         let zip_stem = zip_path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -3782,14 +3135,6 @@ impl SkillService {
                     "Skill directory '{}' already exists (from {}), skipping",
                     install_name,
                     existing.id
-                );
-                continue;
-            }
-
-            if !batch_install_names.insert(install_name.to_ascii_lowercase()) {
-                log::warn!(
-                    "ZIP contains multiple Skills with install directory '{}', skipping duplicate",
-                    install_name
                 );
                 continue;
             }
@@ -4056,7 +3401,6 @@ impl SkillService {
                     directory: s.skill_id.clone(),
                     repo_owner: owner.clone(),
                     repo_name: repo.clone(),
-                    // skills.sh 不提供 branch；main 作为提示，下载器会记录最终重定向分支。
                     repo_branch: "main".to_string(),
                     installs: s.installs,
                     readme_url: Some(format!("https://github.com/{}/{}", owner, repo)),
@@ -4129,7 +3473,7 @@ fn save_repos_from_lock(
                 let skill_repo = SkillRepo {
                     owner: info.owner.clone(),
                     name: info.repo.clone(),
-                    // 未知分支时使用 HEAD 语义，后续直接解析仓库默认分支。
+                    // 未知分支时使用 HEAD 语义，后续下载会回退到 main/master。
                     branch: info.branch.clone().unwrap_or_else(|| "HEAD".to_string()),
                     enabled: true,
                 };
@@ -4351,8 +3695,8 @@ mod tests {
 
     #[test]
     fn validate_repo_ref_accepts_the_empty_branch_sentinel() {
-        // 空 branch 与 "HEAD" 在 download_repo 里是同一个默认分支哨兵：下载器
-        // 会请求固定的 `/archive/HEAD.zip`。校验若把空串当非法，
+        // 空 branch 与 "HEAD" 在 download_repo 里是同一个哨兵：分支候选表跳过
+        // 两者，改试 main / master，所以它们从不进 URL。校验若把空串当非法，
         // 存量 skill_repos 行（建表默认 'main'，但空串没被禁）会在 download_repo
         // 第一行就 INVALID_REPO_REF，整个技能面板列不出东西——前端两处
         // `repo.branch || "main"` 正是照着"空串可用"写的。
@@ -4408,8 +3752,6 @@ mod tests {
     fn assert_github_archive_url_pins_host_and_path() {
         let ok = "https://github.com/owner/repo/archive/refs/heads/main.zip";
         assert!(SkillService::assert_github_archive_url(ok, "owner", "repo").is_ok());
-        let head = "https://github.com/owner/repo/archive/HEAD.zip";
-        assert!(SkillService::assert_github_archive_url(head, "owner", "repo").is_ok());
 
         // 出口断言必须挡住落点被改写到 release asset 的情况
         for bad in [
@@ -4431,122 +3773,10 @@ mod tests {
             SkillService::build_skill_doc_url("owner", "repo", "main", "a/SKILL.md").as_deref(),
             Some("https://github.com/owner/repo/blob/main/a/SKILL.md")
         );
-        assert_eq!(
-            SkillService::build_skill_doc_url("owner", "repo", "", "a/SKILL.md").as_deref(),
-            Some("https://github.com/owner/repo/blob/HEAD/a/SKILL.md")
-        );
-        assert_eq!(
-            SkillService::build_skill_doc_url(
-                "owner",
-                "repo",
-                "feature/x",
-                "skills/a #1/SKILL.md",
-            )
-            .as_deref(),
-            Some("https://github.com/owner/repo/blob/feature/x/skills/a%20%231/SKILL.md")
-        );
         // readme_url 会被前端 openExternal 直接打开，非法坐标不得产出链接
         assert!(
             SkillService::build_skill_doc_url("owner", "repo", "../../../issues", "x").is_none()
         );
-        for bad_path in ["../issues", "/issues", "a//SKILL.md", "a\\SKILL.md"] {
-            assert!(
-                SkillService::build_skill_doc_url("owner", "repo", "main", bad_path).is_none(),
-                "must reject doc path: {bad_path}"
-            );
-        }
-    }
-
-    #[test]
-    fn extract_doc_path_uses_the_complete_slash_branch() {
-        let blob =
-            SkillService::build_skill_doc_url("owner", "repo", "feature/x", "skills/foo/SKILL.md")
-                .expect("valid blob URL");
-        assert_eq!(
-            SkillService::extract_doc_path_from_url(&blob, "owner", "repo", "feature/x").as_deref(),
-            Some("skills/foo/SKILL.md")
-        );
-        assert_eq!(
-            SkillService::extract_doc_path_from_url(
-                "https://github.com/owner/repo/tree/feature/x/skills/foo",
-                "owner",
-                "repo",
-                "feature/x",
-            )
-            .as_deref(),
-            Some("skills/foo/SKILL.md")
-        );
-    }
-
-    #[test]
-    fn effective_branch_comes_from_the_final_archive_url() {
-        let redirected = url::Url::parse(
-            "https://codeload.github.com/aliyun/alibabacloud-aiops-skills/zip/master",
-        )
-        .unwrap();
-        assert_eq!(
-            SkillService::effective_branch_from_archive_url(
-                &redirected,
-                "aliyun",
-                "alibabacloud-aiops-skills",
-            )
-            .as_deref(),
-            Some("master")
-        );
-
-        let slash_branch =
-            url::Url::parse("https://codeload.github.com/owner/repo/zip/refs/heads/feature/x")
-                .unwrap();
-        assert_eq!(
-            SkillService::effective_branch_from_archive_url(&slash_branch, "owner", "repo")
-                .as_deref(),
-            Some("feature/x")
-        );
-
-        let direct =
-            url::Url::parse("https://github.com/owner/repo/archive/refs/heads/main.zip").unwrap();
-        assert_eq!(
-            SkillService::effective_branch_from_archive_url(&direct, "owner", "repo").as_deref(),
-            Some("main")
-        );
-
-        let zip_named_direct =
-            url::Url::parse("https://github.com/owner/repo/archive/refs/heads/release.zip.zip")
-                .unwrap();
-        assert_eq!(
-            SkillService::effective_branch_from_archive_url(&zip_named_direct, "owner", "repo",)
-                .as_deref(),
-            Some("release.zip")
-        );
-        let zip_named_codeload =
-            url::Url::parse("https://codeload.github.com/owner/repo/zip/release.zip").unwrap();
-        assert_eq!(
-            SkillService::effective_branch_from_archive_url(&zip_named_codeload, "owner", "repo",)
-                .as_deref(),
-            Some("release.zip")
-        );
-        let unicode_branch = url::Url::parse(
-            "https://codeload.github.com/owner/repo/zip/refs/heads/%E5%88%86%E6%94%AF",
-        )
-        .unwrap();
-        assert_eq!(
-            SkillService::effective_branch_from_archive_url(&unicode_branch, "owner", "repo")
-                .as_deref(),
-            Some("分支")
-        );
-
-        for invalid in [
-            "https://evil.example/owner/repo/zip/main",
-            "https://codeload.github.com/other/repo/zip/main",
-            "https://codeload.github.com/owner/repo/zip/refs/tags/v1.0.0",
-            "http://codeload.github.com/owner/repo/zip/main",
-        ] {
-            let url = url::Url::parse(invalid).unwrap();
-            assert!(
-                SkillService::effective_branch_from_archive_url(&url, "owner", "repo").is_none(),
-                "must reject final archive URL: {invalid}"
-            );
-        }
     }
 
     #[test]
@@ -4818,58 +4048,6 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
-    fn install_from_zip_skips_duplicate_leaf_names_within_the_same_archive() {
-        use std::io::Write;
-        use zip::write::SimpleFileOptions;
-
-        struct StorageLocationGuard(SkillStorageLocation);
-        impl Drop for StorageLocationGuard {
-            fn drop(&mut self) {
-                let _ = crate::settings::set_skill_storage_location(self.0);
-            }
-        }
-
-        let home = tempdir().expect("temp home");
-        let _home_guard = TestHomeGuard::set(home.path());
-        let _storage_guard = StorageLocationGuard(crate::settings::get_skill_storage_location());
-        crate::settings::set_skill_storage_location(SkillStorageLocation::Unified)
-            .expect("use isolated SSOT");
-
-        let mut buf = Vec::new();
-        {
-            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
-            let opts = SimpleFileOptions::default();
-            zip.start_file("a/foo/SKILL.md", opts).unwrap();
-            zip.write_all(b"---\nname: Foo A\n---\n").unwrap();
-            zip.start_file("b/foo/SKILL.md", opts).unwrap();
-            zip.write_all(b"---\nname: Foo B\n---\n").unwrap();
-            zip.finish().unwrap();
-        }
-        let zip_path = home.path().join("duplicate-foo.zip");
-        fs::write(&zip_path, buf).expect("write zip");
-
-        let db = Arc::new(Database::memory().expect("memory db"));
-        let installed = SkillService::install_from_zip(&db, &zip_path, &AppType::Claude)
-            .expect("install archive");
-
-        assert_eq!(installed.len(), 1, "only one flat install name may win");
-        assert_eq!(
-            db.get_all_installed_skills()
-                .expect("query installed")
-                .len(),
-            1
-        );
-        assert!(home
-            .path()
-            .join(".agents")
-            .join("skills")
-            .join("foo")
-            .join("SKILL.md")
-            .is_file());
-    }
-
-    #[test]
     fn extract_local_zip_leaves_no_partial_directory_when_it_fails() {
         use std::io::Write;
         use zip::write::SimpleFileOptions;
@@ -5019,20 +4197,6 @@ mod tests {
             format!("---\nname: {name}\ndescription: Test skill\n---\n"),
         )
         .expect("write SKILL.md");
-    }
-
-    fn discoverable_skill(directory: &str, branch: &str) -> DiscoverableSkill {
-        let doc_path = format!("{directory}/SKILL.md");
-        DiscoverableSkill {
-            key: format!("owner/repo:{directory}"),
-            name: directory.to_string(),
-            description: String::new(),
-            directory: directory.to_string(),
-            readme_url: SkillService::build_skill_doc_url("owner", "repo", branch, &doc_path),
-            repo_owner: "owner".to_string(),
-            repo_name: "repo".to_string(),
-            repo_branch: branch.to_string(),
-        }
     }
 
     /// CC_SWITCH_TEST_HOME 隔离守卫（serial 测试间互斥由 #[serial] 保证，
@@ -5425,53 +4589,6 @@ mod tests {
     }
 
     #[test]
-    fn uncommitted_directory_replacement_restores_the_previous_skill() {
-        let temp = tempdir().expect("tempdir");
-        let source = temp.path().join("new-skill");
-        let dest = temp.path().join("installed-skill");
-        write_skill(&source, "New Skill");
-        write_skill(&dest, "Old Skill");
-        fs::write(dest.join("generation.txt"), "old").expect("write old marker");
-        fs::write(source.join("generation.txt"), "new").expect("write new marker");
-
-        {
-            let _replacement =
-                SkillService::begin_dest_replacement(&source, &dest, "installed-skill")
-                    .expect("begin replacement");
-            assert_eq!(
-                fs::read_to_string(dest.join("generation.txt")).expect("read staged marker"),
-                "new"
-            );
-        }
-
-        assert_eq!(
-            fs::read_to_string(dest.join("generation.txt")).expect("read restored marker"),
-            "old",
-            "dropping an uncommitted replacement must restore the previous directory"
-        );
-    }
-
-    #[test]
-    fn committed_directory_replacement_keeps_the_new_skill() {
-        let temp = tempdir().expect("tempdir");
-        let source = temp.path().join("new-skill");
-        let dest = temp.path().join("installed-skill");
-        write_skill(&source, "New Skill");
-        write_skill(&dest, "Old Skill");
-        fs::write(dest.join("generation.txt"), "old").expect("write old marker");
-        fs::write(source.join("generation.txt"), "new").expect("write new marker");
-
-        SkillService::begin_dest_replacement(&source, &dest, "installed-skill")
-            .expect("begin replacement")
-            .commit();
-
-        assert_eq!(
-            fs::read_to_string(dest.join("generation.txt")).expect("read committed marker"),
-            "new"
-        );
-    }
-
-    #[test]
     fn resolve_skill_source_dir_rejects_same_name_wrapper_without_skill_md() {
         // 复刻 issue #4141：ast-grep/agent-skill 结构。仓库根下有同名目录 ast-grep/
         // （plugin 包，无 SKILL.md），真正的 skill 在 ast-grep/skills/ast-grep/SKILL.md。
@@ -5542,317 +4659,70 @@ mod tests {
     }
 
     #[test]
-    fn issue_6111_uses_the_resolved_nested_source_for_the_doc_url() {
+    fn choose_doc_path_prefers_resolved_source_over_stale_readme_url() {
+        // #6111 现场还原：skills.sh 安装嵌套目录 skill——directory 是 skillId
+        // （末级目录名），readme_url 是仓库根 URL，真实嵌套路径只能来自
+        // 解析出的源目录。若退回"readme_url 提取优先、directory 拼接兜底"，
+        // 本断言即失败（旧逻辑产出 alibabacloud-cli-guidance/SKILL.md → 404）。
+        let doc_path = SkillService::choose_doc_path(
+            Some("skills/developertools/solutions/alibabacloud-cli-guidance/SKILL.md".to_string()),
+            Some("https://github.com/aliyun/alibabacloud-aiops-skills"),
+            "alibabacloud-cli-guidance",
+        );
+        assert_eq!(
+            doc_path,
+            "skills/developertools/solutions/alibabacloud-cli-guidance/SKILL.md"
+        );
+    }
+
+    #[test]
+    fn choose_doc_path_falls_back_to_readme_url_path_then_directory() {
+        // 无解析结果（SSOT 目录已存在、未重新下载）时沿用旧 readme_url 的仓库内
+        // 路径，兼容 blob/tree 两种格式并补 SKILL.md 后缀
+        let doc_path = SkillService::choose_doc_path(
+            None,
+            Some("https://github.com/o/r/tree/main/skills/foo"),
+            "foo",
+        );
+        assert_eq!(doc_path, "skills/foo/SKILL.md");
+
+        // 旧 readme_url 已是完整文档路径时原样保留
+        let doc_path = SkillService::choose_doc_path(
+            None,
+            Some("https://github.com/o/r/blob/main/skills/foo/SKILL.md"),
+            "foo",
+        );
+        assert_eq!(doc_path, "skills/foo/SKILL.md");
+
+        // 两者都没有时按 directory 拼接
+        let doc_path = SkillService::choose_doc_path(None, None, "skills/foo");
+        assert_eq!(doc_path, "skills/foo/SKILL.md");
+    }
+
+    #[test]
+    fn doc_path_for_source_returns_repo_relative_skill_md_path() {
         let temp = tempdir().expect("tempdir");
         let nested = temp
             .path()
             .join("skills")
             .join("developertools")
             .join("solutions")
-            .join("alibabacloud-cli-guidance");
-        write_skill(&nested, "Alibaba Cloud CLI Guidance");
+            .join("foo");
+        fs::create_dir_all(&nested).expect("create nested dirs");
 
-        let skills_sh_result = DiscoverableSkill {
-            // skills.sh 的真实 `id` 是 owner/repo/skillId（全斜杠），而不是
-            // 仓库扫描使用的 owner/repo:directory 形式。
-            key: "aliyun/alibabacloud-aiops-skills/alibabacloud-cli-guidance".to_string(),
-            name: "Alibaba Cloud CLI Guidance".to_string(),
-            description: String::new(),
-            directory: "alibabacloud-cli-guidance".to_string(),
-            readme_url: Some("https://github.com/aliyun/alibabacloud-aiops-skills".to_string()),
-            repo_owner: "aliyun".to_string(),
-            repo_name: "alibabacloud-aiops-skills".to_string(),
-            repo_branch: "main".to_string(),
-        };
-        let (_, doc_path) =
-            SkillService::resolve_discoverable_skill_source(temp.path(), &skills_sh_result)
-                .expect("skills.sh basename should resolve to the real nested source");
         assert_eq!(
-            doc_path,
-            "skills/developertools/solutions/alibabacloud-cli-guidance/SKILL.md"
+            SkillService::doc_path_for_source(temp.path(), &nested),
+            Some("skills/developertools/solutions/foo/SKILL.md".to_string())
         );
+        // 源目录即仓库根：文档路径就是根下的 SKILL.md
         assert_eq!(
-            SkillService::build_skill_doc_url(
-                "aliyun",
-                "alibabacloud-aiops-skills",
-                "master",
-                &doc_path,
-            )
-            .as_deref(),
-            Some(
-                "https://github.com/aliyun/alibabacloud-aiops-skills/blob/master/skills/developertools/solutions/alibabacloud-cli-guidance/SKILL.md"
-            )
+            SkillService::doc_path_for_source(temp.path(), temp.path()),
+            Some("SKILL.md".to_string())
         );
-    }
-
-    #[test]
-    fn issue_6111_legacy_skills_sh_record_selects_the_unique_nested_remote_skill() {
-        let remote = vec![discoverable_skill(
-            "skills/developertools/solutions/alibabacloud-cli-guidance",
-            "master",
-        )];
-        let mut installed = poisoned_skill(
-            "aliyun/alibabacloud-aiops-skills/alibabacloud-cli-guidance",
-            "alibabacloud-cli-guidance",
-        );
-        installed.repo_owner = Some("owner".to_string());
-        installed.repo_name = Some("repo".to_string());
-        installed.repo_branch = Some("main".to_string());
-        installed.readme_url = SkillService::build_skill_doc_url(
-            "owner",
-            "repo",
-            "main",
-            "alibabacloud-cli-guidance/SKILL.md",
-        );
-
-        let selected = SkillService::select_remote_skill(&remote, &installed)
-            .expect("the unique leaf fallback should recover the real nested path");
+        // 仓库根之外：None（调用方已做包含性校验，防御性兜底）
         assert_eq!(
-            selected.directory,
-            "skills/developertools/solutions/alibabacloud-cli-guidance"
-        );
-    }
-
-    #[test]
-    fn canonical_skill_source_handles_root_and_rejects_outside_paths() {
-        let repo = tempdir().expect("repo tempdir");
-        write_skill(repo.path(), "Root Skill");
-        let (_, root_doc) = SkillService::canonical_skill_source(repo.path(), repo.path())
-            .expect("root skill should be valid");
-        assert_eq!(root_doc, "SKILL.md");
-
-        let outside = tempdir().expect("outside tempdir");
-        write_skill(outside.path(), "Outside Skill");
-        assert!(
-            SkillService::canonical_skill_source(repo.path(), outside.path()).is_none(),
-            "source outside the extracted repository must be rejected"
-        );
-    }
-
-    #[test]
-    fn discovered_root_skill_does_not_resolve_to_a_same_name_nested_directory() {
-        let temp = tempdir().expect("tempdir");
-        write_skill(temp.path(), "Root Skill");
-        write_skill(&temp.path().join("repo"), "Nested Same-name Skill");
-        let root_skill = DiscoverableSkill {
-            key: "owner/repo:repo".to_string(),
-            name: "Root Skill".to_string(),
-            description: String::new(),
-            directory: "repo".to_string(),
-            readme_url: SkillService::build_skill_doc_url("owner", "repo", "main", "SKILL.md"),
-            repo_owner: "owner".to_string(),
-            repo_name: "repo".to_string(),
-            repo_branch: "main".to_string(),
-        };
-
-        let resolved =
-            SkillService::resolve_discoverable_skill_source_dir(temp.path(), &root_skill)
-                .expect("root discovery metadata should preserve the root source");
-        assert_eq!(resolved, temp.path());
-    }
-
-    #[test]
-    fn basename_fallback_rejects_ambiguous_skill_directories() {
-        let temp = tempdir().expect("tempdir");
-        write_skill(
-            &temp.path().join("skills").join("category-a").join("same"),
-            "Same A",
-        );
-        write_skill(
-            &temp.path().join("skills").join("category-b").join("same"),
-            "Same B",
-        );
-
-        assert!(
-            SkillService::resolve_skill_source_dir(temp.path(), "same").is_none(),
-            "a basename-only source must not select one of multiple same-name skills"
-        );
-    }
-
-    #[test]
-    fn basename_fallback_does_not_treat_a_top_level_match_as_implicitly_exact() {
-        let temp = tempdir().expect("tempdir");
-        let top_level = temp.path().join("same");
-        write_skill(&top_level, "Top-level Same");
-        write_skill(
-            &temp.path().join("skills").join("category").join("same"),
-            "Nested Same",
-        );
-
-        assert!(
-            SkillService::resolve_skill_source_dir(temp.path(), "same").is_none(),
-            "a basename-only skills.sh result remains ambiguous even with a top-level match"
-        );
-
-        let discovered = discoverable_skill("same", "main");
-        assert_eq!(
-            SkillService::resolve_discoverable_skill_source_dir(temp.path(), &discovered),
-            Some(top_level),
-            "repository scan metadata makes the same top-level path explicit"
-        );
-
-        let mut mismatched = discovered;
-        mismatched.readme_url =
-            SkillService::build_skill_doc_url("owner", "repo", "main", "somewhere-else/SKILL.md");
-        assert!(
-            SkillService::resolve_discoverable_skill_source_dir(temp.path(), &mismatched).is_none(),
-            "an unrelated stale readme URL must not turn a basename into an exact path"
-        );
-    }
-
-    #[test]
-    fn remote_selection_prefers_full_path_and_rejects_ambiguous_legacy_basename() {
-        let remote = vec![
-            discoverable_skill("skills/category-a/same", "master"),
-            discoverable_skill("skills/category-b/same", "master"),
-        ];
-        let mut installed = poisoned_skill("legacy-id", "same");
-        installed.repo_owner = Some("owner".to_string());
-        installed.repo_name = Some("repo".to_string());
-        installed.repo_branch = Some("master".to_string());
-        installed.readme_url = SkillService::build_skill_doc_url(
-            "owner",
-            "repo",
-            "master",
-            "skills/category-b/same/SKILL.md",
-        );
-
-        let selected = SkillService::select_remote_skill(&remote, &installed)
-            .expect("the saved full path should disambiguate same-name skills");
-        assert_eq!(selected.directory, "skills/category-b/same");
-
-        installed.repo_branch = Some("main".to_string());
-        installed.readme_url =
-            SkillService::build_skill_doc_url("owner", "repo", "main", "same/SKILL.md");
-        assert!(
-            SkillService::select_remote_skill(&remote, &installed).is_none(),
-            "legacy basename metadata must not silently pick the first duplicate"
-        );
-
-        let remote_with_top_level = vec![
-            discoverable_skill("same", "main"),
-            discoverable_skill("skills/category-b/same", "main"),
-        ];
-        installed.id = "owner/repo:same".to_string();
-        assert!(
-            SkillService::select_remote_skill(&remote_with_top_level, &installed).is_none(),
-            "a guessed top-level URL must not beat duplicate-leaf detection"
-        );
-    }
-
-    #[test]
-    fn remote_selection_keeps_the_exact_path_across_main_to_master_redirect() {
-        let remote = vec![
-            discoverable_skill("skills/category-a/same", "master"),
-            discoverable_skill("skills/category-b/same", "master"),
-        ];
-        let mut installed = poisoned_skill("legacy-id", "same");
-        installed.repo_owner = Some("owner".to_string());
-        installed.repo_name = Some("repo".to_string());
-        installed.repo_branch = Some("main".to_string());
-        installed.readme_url = SkillService::build_skill_doc_url(
-            "owner",
-            "repo",
-            "main",
-            "skills/category-b/same/SKILL.md",
-        );
-
-        let selected = SkillService::select_remote_skill(&remote, &installed)
-            .expect("the repository-relative path is independent of the redirected branch");
-        assert_eq!(selected.directory, "skills/category-b/same");
-    }
-
-    #[test]
-    fn installed_source_identity_requires_the_full_repository_path() {
-        let mut installed = poisoned_skill("owner/repo:skills/a/same", "same");
-        installed.repo_owner = Some("owner".to_string());
-        installed.repo_name = Some("repo".to_string());
-        installed.repo_branch = Some("main".to_string());
-        installed.readme_url =
-            SkillService::build_skill_doc_url("owner", "repo", "main", "skills/a/same/SKILL.md");
-        let mut incoming = discoverable_skill("skills/a/same", "main");
-
-        assert!(SkillService::installed_source_matches(
-            &installed,
-            &incoming,
-            "skills/a/same/SKILL.md"
-        ));
-        assert!(!SkillService::installed_source_matches(
-            &installed,
-            &incoming,
-            "skills/b/same/SKILL.md"
-        ));
-
-        installed.readme_url =
-            SkillService::build_skill_doc_url("owner", "repo", "main", "same/SKILL.md");
-        incoming = discoverable_skill("same", "main");
-        assert!(
-            !SkillService::installed_source_matches(&installed, &incoming, "same/SKILL.md"),
-            "a one-directory URL may be a legacy basename guess and is not exact evidence"
-        );
-
-        installed.id = incoming.key.clone();
-        assert!(
-            SkillService::installed_source_matches(&installed, &incoming, "same/SKILL.md"),
-            "the same exact repository card must be reusable to enable another app"
-        );
-
-        incoming = discoverable_skill("skills/工具 name", "main");
-        installed.id = incoming.key.clone();
-        installed.readme_url =
-            SkillService::build_skill_doc_url("owner", "repo", "main", "skills/工具 name/SKILL.md");
-        assert!(SkillService::installed_source_matches(
-            &installed,
-            &incoming,
-            "skills/工具 name/SKILL.md"
-        ));
-    }
-
-    #[test]
-    fn remote_selection_does_not_replace_a_removed_skill_with_an_unrelated_single_candidate() {
-        let remote = vec![discoverable_skill("skills/bar", "main")];
-        let mut installed = poisoned_skill("owner/repo:skills/foo", "foo");
-        installed.repo_owner = Some("owner".to_string());
-        installed.repo_name = Some("repo".to_string());
-        installed.repo_branch = Some("main".to_string());
-        installed.readme_url =
-            SkillService::build_skill_doc_url("owner", "repo", "main", "skills/foo/SKILL.md");
-
-        assert!(
-            SkillService::select_remote_skill(&remote, &installed).is_none(),
-            "an unrelated remaining Skill must never replace one removed upstream"
-        );
-
-        installed.id = "owner/repo:skills/bar".to_string();
-        installed.readme_url =
-            SkillService::build_skill_doc_url("owner", "repo", "main", "skills/bar/SKILL.md");
-        assert!(
-            SkillService::select_remote_skill(&remote, &installed).is_none(),
-            "path/key evidence whose leaf disagrees with the local directory must be rejected"
-        );
-    }
-
-    #[test]
-    fn scanning_continues_below_a_parent_skill() {
-        let temp = tempdir().expect("tempdir");
-        write_skill(temp.path(), "Root Skill");
-        write_skill(&temp.path().join("skills").join("child"), "Child Skill");
-        let repo = SkillRepo {
-            owner: "owner".to_string(),
-            name: "repo".to_string(),
-            branch: "main".to_string(),
-            enabled: true,
-        };
-        let mut skills = Vec::new();
-
-        SkillService::new()
-            .scan_dir_recursive(temp.path(), temp.path(), &repo, &mut skills)
-            .expect("scan repository");
-
-        assert!(skills.iter().any(|skill| skill.directory == "repo"));
-        assert!(
-            skills.iter().any(|skill| skill.directory == "skills/child"),
-            "a parent SKILL.md must not hide nested skills from update scanning"
+            SkillService::doc_path_for_source(temp.path(), std::path::Path::new("/elsewhere")),
+            None
         );
     }
 }

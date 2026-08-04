@@ -317,20 +317,9 @@ export function useInstallSkillsFromZip() {
  * 检查 Skills 更新（手动触发）
  */
 export function useCheckSkillUpdates() {
-  const queryClient = useQueryClient();
   return useQuery({
     queryKey: ["skills", "updates"],
-    queryFn: async () => {
-      try {
-        return await skillsApi.checkUpdates();
-      } finally {
-        // 后端检查时会顺带自愈旧版错误的 repoBranch/readmeUrl；installed 查询
-        // 永久 fresh，必须显式刷新，否则详情链接会一直使用旧缓存直到重启。
-        await queryClient.invalidateQueries({
-          queryKey: ["skills", "installed"],
-        });
-      }
-    },
+    queryFn: () => skillsApi.checkUpdates(),
     enabled: false,
     staleTime: 5 * 60 * 1000,
   });
