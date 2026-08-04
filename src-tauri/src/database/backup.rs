@@ -28,7 +28,7 @@ const IMPORT_ALLOWED_PRAGMAS: &[&str] = &["foreign_keys", "user_version"];
 ///
 /// 头部校验（`validate_cc_switch_sql_export`）只比较一个注释前缀，任何人都能在
 /// 合法前缀后面接着写别的语句。`ATTACH DATABASE '/path/x.db'` 的副作用发生在
-/// `validate_basic_state` 之前，导入即使最终失败，文件也已经被创建；而 `settings`
+/// 暂存库的 schema 校验之前，导入即使最终失败，文件也已经被创建；而 `settings`
 /// 表不在 `SYNC_SKIP_TABLES` / `SYNC_PRESERVE_TABLES` 之列，WebDAV/S3 同步会走
 /// 同一条 `import_sql_string_inner`，所以这条路径的输入不可信。
 ///
@@ -79,7 +79,7 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "usage_daily_rollups",
 ];
 
-/// Tables whose local data is preserved (restored from local snapshot) during WebDAV import.
+/// Tables whose local data is preserved from the live database during WebDAV import.
 /// Excludes ephemeral tables like provider_health that can safely rebuild at runtime.
 const SYNC_PRESERVE_TABLES: &[&str] = &[
     "proxy_request_logs",
@@ -141,7 +141,7 @@ impl Database {
     }
 
     /// Import SQL generated for sync, then restore local-only tables from the
-    /// current device snapshot before replacing the main database.
+    /// current live database before replacing it.
     pub(crate) fn import_sql_string_for_sync(&self, sql_raw: &str) -> Result<String, AppError> {
         self.import_sql_string_inner(sql_raw, SYNC_PRESERVE_TABLES)
     }
@@ -456,6 +456,17 @@ impl Database {
         source_conn: &Connection,
         protected_paths: &[&Path],
     ) -> Result<Option<PathBuf>, AppError> {
+        Self::backup_database_file_from_conn_with_hook(source_conn, protected_paths, |_| Ok(()))
+    }
+
+    fn backup_database_file_from_conn_with_hook<F>(
+        source_conn: &Connection,
+        protected_paths: &[&Path],
+        before_publish: F,
+    ) -> Result<Option<PathBuf>, AppError>
+    where
+        F: FnOnce(&Path) -> Result<(), AppError>,
+    {
         let db_path = get_app_config_dir().join("cc-switch.db");
         if !db_path.exists() {
             return Ok(None);
@@ -478,13 +489,25 @@ impl Database {
             counter += 1;
         }
 
+        // Build and validate the backup under a non-.db temporary name. Backup
+        // discovery and retention only see the final path after the complete
+        // SQLite image has been atomically published.
+        let temp_path = NamedTempFile::new_in(&backup_dir)
+            .map_err(|e| AppError::io(&backup_dir, e))?
+            .into_temp_path();
+        let temp_db_path: &Path = temp_path.as_ref();
         let mut dest_conn =
-            Connection::open(&backup_path).map_err(|e| AppError::Database(e.to_string()))?;
+            Connection::open(temp_db_path).map_err(|e| AppError::Database(e.to_string()))?;
         let backup = Backup::new(source_conn, &mut dest_conn)
             .map_err(|e| AppError::Database(e.to_string()))?;
         Self::complete_backup(&backup, "创建数据库安全备份")?;
         drop(backup);
+        Self::validate_sqlite_integrity(&dest_conn)?;
         drop(dest_conn);
+        before_publish(temp_db_path)?;
+        temp_path
+            .persist_noclobber(&backup_path)
+            .map_err(|e| AppError::io(&backup_path, e.error))?;
 
         // The newly created safety backup must never be the cleanup victim.
         // During restore, the selected source is protected as well. If the
@@ -1164,7 +1187,7 @@ mod tests {
                 error.to_string().to_ascii_lowercase().contains("authoriz"),
                 "{label} 必须由 authorizer 拒绝，实际错误: {error}"
             );
-            // 光报错不够：文件创建发生在 prepare 之后、`validate_basic_state` 之前，
+            // 光报错不够：文件创建发生在 prepare 之后、暂存库 schema 校验之前，
             // 守卫若失效，即便导入整体失败，文件也已经躺在磁盘上了。
             assert!(
                 !target.exists(),
@@ -2159,6 +2182,61 @@ mod tests {
 
     #[test]
     #[serial]
+    fn failed_backup_publish_leaves_no_visible_or_temporary_file() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let db = Database::init()?;
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        std::fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        let mut files_before = std::fs::read_dir(&backup_dir)
+            .map_err(|e| AppError::io(&backup_dir, e))?
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name())
+            .collect::<Vec<_>>();
+        files_before.sort();
+        let mut visible_before = Database::list_backups()?
+            .into_iter()
+            .map(|entry| entry.filename)
+            .collect::<Vec<_>>();
+        visible_before.sort();
+
+        let error = {
+            let conn = crate::database::lock_conn!(db.conn);
+            Database::backup_database_file_from_conn_with_hook(&conn, &[], |temp_path| {
+                assert!(
+                    temp_path.exists(),
+                    "completed backup should exist before publish"
+                );
+                assert_ne!(
+                    temp_path.extension().and_then(|ext| ext.to_str()),
+                    Some("db"),
+                    "staging files must stay invisible to backup discovery"
+                );
+                Err(AppError::Config("simulated publish failure".to_string()))
+            })
+        }
+        .expect_err("publish failure must be returned");
+        assert!(error.to_string().contains("simulated publish failure"));
+        let mut visible_after = Database::list_backups()?
+            .into_iter()
+            .map(|entry| entry.filename)
+            .collect::<Vec<_>>();
+        visible_after.sort();
+        assert_eq!(visible_after, visible_before);
+        let mut files_after = std::fs::read_dir(&backup_dir)
+            .map_err(|e| AppError::io(&backup_dir, e))?
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name())
+            .collect::<Vec<_>>();
+        files_after.sort();
+        assert_eq!(
+            files_after, files_before,
+            "failed publish must not leave either a visible backup or a temporary file"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
     fn restore_with_retain_one_keeps_source_and_exact_safety_snapshot() -> Result<(), AppError> {
         let _test_home = TestHomeGuard::new();
         let _settings = SettingsGuard::with_backup_retain_count(1);
@@ -2181,6 +2259,9 @@ mod tests {
             .expect("backup should have a filename")
             .to_string_lossy()
             .into_owned();
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        let stale_path = backup_dir.join("stale-unprotected.db");
+        std::fs::write(&stale_path, b"stale").map_err(|e| AppError::io(&stale_path, e))?;
 
         {
             let conn = crate::database::lock_conn!(db.conn);
@@ -2193,7 +2274,6 @@ mod tests {
         }
 
         let safety_id = db.restore_from_backup(&source_filename)?;
-        let backup_dir = crate::config::get_app_config_dir().join("backups");
         let safety_path = backup_dir.join(format!("{safety_id}.db"));
         assert!(
             source_path.exists(),
@@ -2202,6 +2282,10 @@ mod tests {
         assert!(
             safety_path.exists(),
             "pre-restore safety backup must be retained"
+        );
+        assert!(
+            !stale_path.exists(),
+            "retention should still remove an unprotected stale backup"
         );
 
         let backup_count = std::fs::read_dir(&backup_dir)
@@ -2227,6 +2311,52 @@ mod tests {
         assert_eq!(
             safety_provider, "live-before-restore",
             "safety backup must exactly represent the live state being replaced"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn restore_rejects_corrupt_db_before_touching_live_database() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let db = Database::init()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute("DELETE FROM providers", [])?;
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('live-provider', 'claude', 'Live Provider', '{}', '{}')",
+                [],
+            )?;
+        }
+
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        std::fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        let corrupt_path = backup_dir.join("corrupt.db");
+        std::fs::write(&corrupt_path, b"not a sqlite database")
+            .map_err(|e| AppError::io(&corrupt_path, e))?;
+        let mut backups_before = Database::list_backups()?
+            .into_iter()
+            .map(|entry| entry.filename)
+            .collect::<Vec<_>>();
+        backups_before.sort();
+
+        db.restore_from_backup("corrupt.db")
+            .expect_err("corrupt backup must be rejected");
+
+        let live_provider: String = {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.query_row("SELECT id FROM providers", [], |row| row.get(0))?
+        };
+        assert_eq!(live_provider, "live-provider");
+        let mut backups_after = Database::list_backups()?
+            .into_iter()
+            .map(|entry| entry.filename)
+            .collect::<Vec<_>>();
+        backups_after.sort();
+        assert_eq!(
+            backups_after, backups_before,
+            "failed staging must not create a safety backup"
         );
         Ok(())
     }
