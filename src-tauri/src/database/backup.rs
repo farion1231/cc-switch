@@ -11,7 +11,8 @@ use rusqlite::types::ValueRef;
 use rusqlite::Connection;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tempfile::NamedTempFile;
+use std::sync::{Mutex, MutexGuard};
+use tempfile::{Builder, NamedTempFile};
 
 const CC_SWITCH_SQL_EXPORT_HEADER: &str = "-- CC Switch SQLite 导出";
 
@@ -19,6 +20,17 @@ const CC_SWITCH_SQL_EXPORT_HEADER: &str = "-- CC Switch SQLite 导出";
 /// A row larger than this cap is emitted alone because it cannot be split.
 const INSERT_BATCH_MAX_ROWS: usize = 200;
 const INSERT_BATCH_MAX_BYTES: usize = 1024 * 1024;
+
+/// Serialize every operation that observes or mutates the database-backup
+/// directory. Always acquire this guard before `Database.conn`.
+static BACKUP_FILE_OPERATION_LOCK: Mutex<()> = Mutex::new(());
+type BackupFileOperationGuard = MutexGuard<'static, ()>;
+
+fn lock_backup_file_operations() -> Result<BackupFileOperationGuard, AppError> {
+    BACKUP_FILE_OPERATION_LOCK
+        .lock()
+        .map_err(|e| AppError::Database(format!("Backup file operation lock failed: {e}")))
+}
 
 /// `dump_sql` 会写出的 PRAGMA。其余 PRAGMA 一律拒绝——`temp_store_directory`
 /// 能把临时文件重定向到任意目录，`writable_schema` 能绕过 schema 完整性检查。
@@ -79,7 +91,7 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "usage_daily_rollups",
 ];
 
-/// Tables whose local data is preserved from the live database during WebDAV import.
+/// Tables whose local data is preserved (restored from a local snapshot) during WebDAV import.
 /// Excludes ephemeral tables like provider_health that can safely rebuild at runtime.
 const SYNC_PRESERVE_TABLES: &[&str] = &[
     "proxy_request_logs",
@@ -141,7 +153,7 @@ impl Database {
     }
 
     /// Import SQL generated for sync, then restore local-only tables from the
-    /// current live database before replacing it.
+    /// current device snapshot before replacing the main database.
     pub(crate) fn import_sql_string_for_sync(&self, sql_raw: &str) -> Result<String, AppError> {
         self.import_sql_string_inner(sql_raw, SYNC_PRESERVE_TABLES)
     }
@@ -204,9 +216,11 @@ impl Database {
             Self::restore_tables(local_snapshot, &temp_conn, preserve_tables)?;
         }
 
+        let backup_file_guard = lock_backup_file_operations()?;
         let backup_path = {
             let mut main_conn = lock_conn!(self.conn);
-            let backup_path = Self::backup_database_file_from_conn(&main_conn, &[])?;
+            let backup_path =
+                Self::backup_database_file_from_conn(&backup_file_guard, &main_conn, &[])?;
             let backup = Backup::new(&temp_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
             Self::complete_backup(&backup, "替换主数据库")?;
@@ -385,9 +399,10 @@ impl Database {
     pub(crate) fn periodic_backup_if_needed(&self) -> Result<(), AppError> {
         let interval_hours = crate::settings::effective_backup_interval_hours();
         if interval_hours > 0 {
+            let backup_file_guard = lock_backup_file_operations()?;
             let backup_dir = get_app_config_dir().join("backups");
             if !backup_dir.exists() {
-                self.backup_database_file()?;
+                self.backup_database_file_locked(&backup_file_guard)?;
             } else {
                 let latest = fs::read_dir(&backup_dir).ok().and_then(|entries| {
                     entries
@@ -410,7 +425,7 @@ impl Database {
                     log::info!(
                         "Periodic backup: latest backup is older than {interval_hours} hours, creating new backup"
                     );
-                    self.backup_database_file()?;
+                    self.backup_database_file_locked(&backup_file_guard)?;
                 }
             }
         }
@@ -445,27 +460,41 @@ impl Database {
 
     /// 生成一致性快照备份，返回备份文件路径（不存在主库时返回 None）
     pub(crate) fn backup_database_file(&self) -> Result<Option<PathBuf>, AppError> {
-        let conn = lock_conn!(self.conn);
-        Self::backup_database_file_from_conn(&conn, &[])
+        let backup_file_guard = lock_backup_file_operations()?;
+        self.backup_database_file_locked(&backup_file_guard)
     }
 
-    /// Create a safety backup from a connection whose caller already owns the
-    /// appropriate database guard. This lets restore keep one guard across the
-    /// safety snapshot and the final live replacement.
+    fn backup_database_file_locked(
+        &self,
+        backup_file_guard: &BackupFileOperationGuard,
+    ) -> Result<Option<PathBuf>, AppError> {
+        let conn = lock_conn!(self.conn);
+        Self::backup_database_file_from_conn(backup_file_guard, &conn, &[])
+    }
+
+    /// Create a safety backup from a connection whose caller already owns both
+    /// the backup-file operation guard and the appropriate database guard.
     fn backup_database_file_from_conn(
+        backup_file_guard: &BackupFileOperationGuard,
         source_conn: &Connection,
         protected_paths: &[&Path],
     ) -> Result<Option<PathBuf>, AppError> {
-        Self::backup_database_file_from_conn_with_hook(source_conn, protected_paths, |_| Ok(()))
+        Self::backup_database_file_from_conn_with_hook(
+            backup_file_guard,
+            source_conn,
+            protected_paths,
+            |_, _| Ok(()),
+        )
     }
 
     fn backup_database_file_from_conn_with_hook<F>(
+        _backup_file_guard: &BackupFileOperationGuard,
         source_conn: &Connection,
         protected_paths: &[&Path],
         before_publish: F,
     ) -> Result<Option<PathBuf>, AppError>
     where
-        F: FnOnce(&Path) -> Result<(), AppError>,
+        F: FnOnce(&Path, &Path) -> Result<(), AppError>,
     {
         let db_path = get_app_config_dir().join("cc-switch.db");
         if !db_path.exists() {
@@ -480,19 +509,17 @@ impl Database {
         fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
 
         let base_id = format!("db_backup_{}", Local::now().format("%Y%m%d_%H%M%S"));
-        let mut backup_id = base_id.clone();
-        let mut backup_path = backup_dir.join(format!("{backup_id}.db"));
-        let mut counter = 1;
-        while backup_path.exists() {
-            backup_id = format!("{base_id}_{counter}");
-            backup_path = backup_dir.join(format!("{backup_id}.db"));
-            counter += 1;
-        }
+        let mut next_suffix = 0;
+        let mut backup_path =
+            Self::next_available_backup_path(&backup_dir, &base_id, &mut next_suffix);
 
         // Build and validate the backup under a non-.db temporary name. Backup
         // discovery and retention only see the final path after the complete
         // SQLite image has been atomically published.
-        let temp_path = NamedTempFile::new_in(&backup_dir)
+        let mut temp_path = Builder::new()
+            .prefix(".cc-switch-backup-")
+            .suffix(".tmp")
+            .tempfile_in(&backup_dir)
             .map_err(|e| AppError::io(&backup_dir, e))?
             .into_temp_path();
         let temp_db_path: &Path = temp_path.as_ref();
@@ -503,11 +530,22 @@ impl Database {
         Self::complete_backup(&backup, "创建数据库安全备份")?;
         drop(backup);
         Self::validate_sqlite_integrity(&dest_conn)?;
-        drop(dest_conn);
-        before_publish(temp_db_path)?;
-        temp_path
-            .persist_noclobber(&backup_path)
-            .map_err(|e| AppError::io(&backup_path, e.error))?;
+        dest_conn
+            .close()
+            .map_err(|(_, e)| AppError::Database(format!("关闭数据库安全备份失败: {e}")))?;
+        before_publish(temp_db_path, &backup_path)?;
+
+        loop {
+            match temp_path.persist_noclobber(&backup_path) {
+                Ok(()) => break,
+                Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    temp_path = error.path;
+                    backup_path =
+                        Self::next_available_backup_path(&backup_dir, &base_id, &mut next_suffix);
+                }
+                Err(error) => return Err(AppError::io(&backup_path, error.error)),
+            }
+        }
 
         // The newly created safety backup must never be the cleanup victim.
         // During restore, the selected source is protected as well. If the
@@ -518,6 +556,32 @@ impl Database {
         cleanup_protected.extend_from_slice(protected_paths);
         Self::cleanup_db_backups(&backup_dir, &cleanup_protected)?;
         Ok(Some(backup_path))
+    }
+
+    fn next_available_backup_path(
+        backup_dir: &Path,
+        base_id: &str,
+        next_suffix: &mut usize,
+    ) -> PathBuf {
+        loop {
+            let backup_id = if *next_suffix == 0 {
+                base_id.to_string()
+            } else {
+                format!("{base_id}_{}", *next_suffix)
+            };
+            *next_suffix += 1;
+            let backup_path = backup_dir.join(format!("{backup_id}.db"));
+            if !backup_path.exists() {
+                return backup_path;
+            }
+        }
+    }
+
+    fn same_existing_backup_path(left: &Path, right: &Path) -> bool {
+        match (fs::canonicalize(left), fs::canonicalize(right)) {
+            (Ok(left), Ok(right)) => left == right,
+            _ => left == right,
+        }
     }
 
     /// 清理旧的数据库备份，保留最新的 N 个
@@ -545,21 +609,19 @@ impl Database {
         let mut sorted = entries;
         sorted.sort_by_key(|entry| entry.metadata().and_then(|m| m.modified()).ok());
 
-        let protected_names = protected_paths
-            .iter()
-            .filter_map(|path| path.file_name())
-            .collect::<Vec<_>>();
         let mut removed = 0;
         for entry in sorted {
             if removed >= remove_count {
                 break;
             }
-            let file_name = entry.file_name();
-            if protected_names.contains(&file_name.as_os_str()) {
+            let path = entry.path();
+            if protected_paths
+                .iter()
+                .any(|protected| Self::same_existing_backup_path(&path, protected))
+            {
                 continue;
             }
 
-            let path = entry.path();
             if let Err(err) = fs::remove_file(&path) {
                 log::warn!("删除旧数据库备份失败 {}: {}", path.display(), err);
             } else {
@@ -887,6 +949,7 @@ impl Database {
 
     /// List all database backup files, sorted by creation time (newest first)
     pub fn list_backups() -> Result<Vec<BackupEntry>, AppError> {
+        let _backup_file_guard = lock_backup_file_operations()?;
         let backup_dir = get_app_config_dir().join("backups");
         if !backup_dir.exists() {
             return Ok(vec![]);
@@ -923,6 +986,17 @@ impl Database {
 
     /// Restore database from a backup file. Returns the safety backup ID.
     pub fn restore_from_backup(&self, filename: &str) -> Result<String, AppError> {
+        self.restore_from_backup_with_hook(filename, |_| Ok(()))
+    }
+
+    fn restore_from_backup_with_hook<F>(
+        &self,
+        filename: &str,
+        before_replace: F,
+    ) -> Result<String, AppError>
+    where
+        F: FnOnce(Option<&Path>) -> Result<(), AppError>,
+    {
         // Security: validate filename to prevent path traversal
         if filename.contains("..")
             || filename.contains('/')
@@ -934,6 +1008,7 @@ impl Database {
             ));
         }
 
+        let backup_file_guard = lock_backup_file_operations()?;
         let backup_dir = get_app_config_dir().join("backups");
         let backup_path = backup_dir.join(filename);
 
@@ -979,8 +1054,12 @@ impl Database {
         // the safety file exactly represents the state being replaced.
         let safety_backup = {
             let mut main_conn = lock_conn!(self.conn);
-            let safety_backup =
-                Self::backup_database_file_from_conn(&main_conn, &[backup_path.as_path()])?;
+            let safety_backup = Self::backup_database_file_from_conn(
+                &backup_file_guard,
+                &main_conn,
+                &[backup_path.as_path()],
+            )?;
+            before_replace(safety_backup.as_deref())?;
             let backup = Backup::new(&staging_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
             Self::complete_backup(&backup, "恢复主数据库")?;
@@ -1036,6 +1115,7 @@ impl Database {
 
         let new_filename = format!("{name_part}.db");
 
+        let _backup_file_guard = lock_backup_file_operations()?;
         let backup_dir = get_app_config_dir().join("backups");
         let old_path = backup_dir.join(old_filename);
         let new_path = backup_dir.join(&new_filename);
@@ -1070,6 +1150,7 @@ impl Database {
             ));
         }
 
+        let _backup_file_guard = lock_backup_file_operations()?;
         let backup_path = get_app_config_dir().join("backups").join(filename);
         if !backup_path.exists() {
             return Err(AppError::InvalidInput(format!(
@@ -1085,7 +1166,7 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use super::Database;
+    use super::{lock_backup_file_operations, Database};
     use crate::error::AppError;
     use crate::settings::{get_settings, update_settings, AppSettings};
     use rusqlite::Connection;
@@ -2200,19 +2281,26 @@ mod tests {
         visible_before.sort();
 
         let error = {
+            let backup_file_guard = lock_backup_file_operations()?;
             let conn = crate::database::lock_conn!(db.conn);
-            Database::backup_database_file_from_conn_with_hook(&conn, &[], |temp_path| {
-                assert!(
-                    temp_path.exists(),
-                    "completed backup should exist before publish"
-                );
-                assert_ne!(
-                    temp_path.extension().and_then(|ext| ext.to_str()),
-                    Some("db"),
-                    "staging files must stay invisible to backup discovery"
-                );
-                Err(AppError::Config("simulated publish failure".to_string()))
-            })
+            Database::backup_database_file_from_conn_with_hook(
+                &backup_file_guard,
+                &conn,
+                &[],
+                |temp_path, target_path| {
+                    assert!(
+                        temp_path.exists(),
+                        "completed backup should exist before publish"
+                    );
+                    assert_ne!(
+                        temp_path.extension().and_then(|ext| ext.to_str()),
+                        Some("db"),
+                        "staging files must stay invisible to backup discovery"
+                    );
+                    assert!(!target_path.exists());
+                    Err(AppError::Config("simulated publish failure".to_string()))
+                },
+            )
         }
         .expect_err("publish failure must be returned");
         assert!(error.to_string().contains("simulated publish failure"));
@@ -2232,6 +2320,136 @@ mod tests {
             files_after, files_before,
             "failed publish must not leave either a visible backup or a temporary file"
         );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn backup_publish_retries_a_noclobber_name_collision() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let _settings = SettingsGuard::with_backup_retain_count(10);
+        let db = Database::init()?;
+        let mut claimed_path = None;
+
+        let published_path = {
+            let backup_file_guard = lock_backup_file_operations()?;
+            let conn = crate::database::lock_conn!(db.conn);
+            Database::backup_database_file_from_conn_with_hook(
+                &backup_file_guard,
+                &conn,
+                &[],
+                |_, target_path| {
+                    claimed_path = Some(target_path.to_path_buf());
+                    std::fs::write(target_path, b"claimed by another process")
+                        .map_err(|e| AppError::io(target_path, e))?;
+                    Ok(())
+                },
+            )?
+            .expect("file-backed database should create a backup")
+        };
+
+        let claimed_path = claimed_path.expect("publish hook should receive the first target");
+        assert_ne!(published_path, claimed_path);
+        assert_eq!(
+            std::fs::read(&claimed_path).map_err(|e| AppError::io(&claimed_path, e))?,
+            b"claimed by another process"
+        );
+        let published_conn = Connection::open_with_flags(
+            &published_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        Database::validate_sqlite_integrity(&published_conn)?;
+
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        let temporary_files = std::fs::read_dir(&backup_dir)
+            .map_err(|e| AppError::io(&backup_dir, e))?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".cc-switch-backup-")
+            })
+            .count();
+        assert_eq!(
+            temporary_files, 0,
+            "publish retry must consume the temp file"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn concurrent_backup_renames_never_overwrite_the_shared_target() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let _settings = SettingsGuard::with_backup_retain_count(10);
+        let db = Database::init()?;
+        let mut source_filenames = Vec::new();
+        for provider_id in ["first-source", "second-source"] {
+            {
+                let conn = crate::database::lock_conn!(db.conn);
+                conn.execute("DELETE FROM providers", [])?;
+                conn.execute(
+                    "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                     VALUES (?1, 'claude', ?1, '{}', '{}')",
+                    [provider_id],
+                )?;
+            }
+            let source_path = db
+                .backup_database_file()?
+                .expect("file-backed database should create a backup");
+            source_filenames.push(
+                source_path
+                    .file_name()
+                    .expect("backup should have a filename")
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let handles = source_filenames
+            .iter()
+            .cloned()
+            .map(|source_filename| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    Database::rename_backup(&source_filename, "shared-target")
+                        .map_err(|e| e.to_string())
+                })
+            })
+            .collect::<Vec<_>>();
+        barrier.wait();
+        let results = handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .map_err(|_| AppError::Config("rename thread panicked".to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(results.iter().filter(|result| result.is_err()).count(), 1);
+
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        let target_path = backup_dir.join("shared-target.db");
+        let remaining_source = source_filenames
+            .iter()
+            .map(|filename| backup_dir.join(filename))
+            .find(|path| path.exists())
+            .expect("the losing source must remain after the target collision");
+        let mut provider_ids = [&target_path, &remaining_source]
+            .into_iter()
+            .map(|path| -> Result<String, AppError> {
+                let conn =
+                    Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+                conn.query_row("SELECT id FROM providers", [], |row| row.get(0))
+                    .map_err(AppError::from)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        provider_ids.sort();
+        assert_eq!(provider_ids, vec!["first-source", "second-source"]);
         Ok(())
     }
 
@@ -2312,6 +2530,125 @@ mod tests {
             safety_provider, "live-before-restore",
             "safety backup must exactly represent the live state being replaced"
         );
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[serial]
+    fn restore_protects_case_variant_source_path_from_retention() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let _settings = SettingsGuard::with_backup_retain_count(1);
+        let db = Database::init()?;
+        let source_path = db
+            .backup_database_file()?
+            .expect("file-backed database should create a backup");
+        let source_filename = source_path
+            .file_name()
+            .expect("backup should have a filename")
+            .to_string_lossy()
+            .into_owned();
+        let case_variant = format!(
+            "{}.db",
+            source_filename
+                .strip_suffix(".db")
+                .expect("generated backup should use a .db suffix")
+                .to_ascii_uppercase()
+        );
+
+        db.restore_from_backup(&case_variant)?;
+        assert!(
+            source_path.exists(),
+            "retention must recognize a case-variant path as the selected source"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn restore_blocks_backup_deletion_until_live_replacement_finishes() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let db = Database::init()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute("DELETE FROM providers", [])?;
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('restore-source', 'claude', 'Restore Source', '{}', '{}')",
+                [],
+            )?;
+        }
+        let source_path = db
+            .backup_database_file()?
+            .expect("file-backed database should create a backup");
+        let source_filename = source_path
+            .file_name()
+            .expect("backup should have a filename")
+            .to_string_lossy()
+            .into_owned();
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute("DELETE FROM providers", [])?;
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('live-before-restore', 'claude', 'Live Before Restore', '{}', '{}')",
+                [],
+            )?;
+        }
+
+        let (attempt_tx, attempt_rx) = std::sync::mpsc::channel();
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let mut delete_handle = None;
+        let mut observed_safety_filename = None;
+        let safety_id = db.restore_from_backup_with_hook(&source_filename, |safety_path| {
+            let safety_path = safety_path.ok_or_else(|| {
+                AppError::Config("restore should create a safety backup".to_string())
+            })?;
+            let safety_filename = safety_path
+                .file_name()
+                .ok_or_else(|| AppError::Config("safety backup has no filename".to_string()))?
+                .to_string_lossy()
+                .into_owned();
+            observed_safety_filename = Some(safety_filename.clone());
+            delete_handle = Some(std::thread::spawn(move || {
+                let _ = attempt_tx.send(());
+                let result = Database::delete_backup(&safety_filename).map_err(|e| e.to_string());
+                let _ = result_tx.send(result);
+            }));
+
+            attempt_rx
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .map_err(|e| AppError::Config(format!("delete thread did not start: {e}")))?;
+            match result_rx.recv_timeout(std::time::Duration::from_millis(150)) {
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(()),
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(AppError::Config(
+                    "delete thread disconnected before restore completed".to_string(),
+                )),
+                Ok(result) => Err(AppError::Config(format!(
+                    "backup deletion completed before live replacement: {result:?}"
+                ))),
+            }
+        })?;
+
+        let delete_result = result_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .map_err(|e| AppError::Config(format!("delete did not resume after restore: {e}")))?;
+        delete_result.map_err(AppError::Config)?;
+        delete_handle
+            .expect("delete thread should be created")
+            .join()
+            .map_err(|_| AppError::Config("delete thread panicked".to_string()))?;
+
+        let expected_safety_filename = format!("{safety_id}.db");
+        assert_eq!(
+            observed_safety_filename.as_deref(),
+            Some(expected_safety_filename.as_str())
+        );
+        let live_provider: String = {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.query_row("SELECT id FROM providers", [], |row| row.get(0))?
+        };
+        assert_eq!(live_provider, "restore-source");
         Ok(())
     }
 
