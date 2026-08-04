@@ -89,6 +89,7 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "provider_health",
     "proxy_live_backup",
     "usage_daily_rollups",
+    "session_log_sync",
 ];
 
 /// Tables whose local data is preserved (restored from a local snapshot) during WebDAV import.
@@ -98,6 +99,7 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "stream_check_logs",
     "proxy_live_backup",
     "usage_daily_rollups",
+    "session_log_sync",
 ];
 
 /// A database backup entry for the UI
@@ -2104,6 +2106,50 @@ mod tests {
 
     #[test]
     #[serial]
+    fn full_sql_backup_still_round_trips_session_cursors() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let source = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(source.conn);
+            conn.execute_batch(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('cursor-provider', 'claude', 'Cursor Provider', '{}', '{}');
+                 INSERT INTO session_log_sync (
+                     file_path, last_modified, last_line_offset, last_synced_at
+                 ) VALUES ('/local/sessions/manual-backup.jsonl', 11, 22, 33);",
+            )?;
+        }
+
+        let sql = source.export_sql_string()?;
+        let target = Database::memory()?;
+        target.import_sql_string(&sql)?;
+
+        let conn = crate::database::lock_conn!(target.conn);
+        let cursor: (String, i64, i64, i64) = conn.query_row(
+            "SELECT file_path, last_modified, last_line_offset, last_synced_at
+             FROM session_log_sync",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(
+            cursor,
+            ("/local/sessions/manual-backup.jsonl".into(), 11, 22, 33,)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn every_sync_preserved_table_is_skipped_from_remote_payloads() {
+        for table in super::SYNC_PRESERVE_TABLES {
+            assert!(
+                super::SYNC_SKIP_TABLES.contains(table),
+                "本地保留表 {table} 也必须从远端 payload 中排除"
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
     fn sync_import_preserves_local_only_tables() -> Result<(), AppError> {
         let _test_home = TestHomeGuard::new();
         let remote_db = Database::memory()?;
@@ -2130,19 +2176,23 @@ mod tests {
                  VALUES ('claude', 'remote-live', '2099-01-01');
                  INSERT INTO provider_health (
                      provider_id, app_type, is_healthy, consecutive_failures, updated_at
-                 ) VALUES ('remote-provider', 'claude', 0, 9, '2099-01-01');",
+                 ) VALUES ('remote-provider', 'claude', 0, 9, '2099-01-01');
+                 INSERT INTO session_log_sync (
+                     file_path, last_modified, last_line_offset, last_synced_at
+                 ) VALUES ('/remote/sessions/one.jsonl', 9, 99, 999);",
             )?;
         }
         let remote_sql = remote_db.export_sql_string_for_sync()?;
         let exported = Connection::open_in_memory()?;
         exported.execute_batch(&remote_sql)?;
-        let skipped_counts: (i64, i64, i64, i64, i64) = exported.query_row(
+        let skipped_counts: (i64, i64, i64, i64, i64, i64) = exported.query_row(
             "SELECT
                 (SELECT COUNT(*) FROM proxy_request_logs),
                 (SELECT COUNT(*) FROM stream_check_logs),
                 (SELECT COUNT(*) FROM provider_health),
                 (SELECT COUNT(*) FROM proxy_live_backup),
-                (SELECT COUNT(*) FROM usage_daily_rollups)",
+                (SELECT COUNT(*) FROM usage_daily_rollups),
+                (SELECT COUNT(*) FROM session_log_sync)",
             [],
             |row| {
                 Ok((
@@ -2151,10 +2201,11 @@ mod tests {
                     row.get(2)?,
                     row.get(3)?,
                     row.get(4)?,
+                    row.get(5)?,
                 ))
             },
         )?;
-        assert_eq!(skipped_counts, (0, 0, 0, 0, 0));
+        assert_eq!(skipped_counts, (0, 0, 0, 0, 0, 0));
 
         let local_db = Database::memory()?;
         {
@@ -2180,7 +2231,10 @@ mod tests {
                  VALUES ('claude', '{\"local\":true}', '2026-03-01');
                  INSERT INTO provider_health (
                      provider_id, app_type, is_healthy, consecutive_failures, updated_at
-                 ) VALUES ('local-provider', 'claude', 1, 0, '2026-03-01');",
+                 ) VALUES ('local-provider', 'claude', 1, 0, '2026-03-01');
+                 INSERT INTO session_log_sync (
+                     file_path, last_modified, last_line_offset, last_synced_at
+                 ) VALUES ('/local/sessions/one.jsonl', 10, 123, 456);",
             )?;
         }
 
@@ -2193,19 +2247,28 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()?;
         assert_eq!(providers, vec!["remote-provider"]);
 
-        let preserved_counts: (i64, i64, i64, i64) = conn.query_row(
+        let preserved_counts: (i64, i64, i64, i64, i64) = conn.query_row(
             "SELECT
                 (SELECT COUNT(*) FROM proxy_request_logs),
                 (SELECT COUNT(*) FROM stream_check_logs),
                 (SELECT COUNT(*) FROM proxy_live_backup),
-                (SELECT COUNT(*) FROM usage_daily_rollups)",
+                (SELECT COUNT(*) FROM usage_daily_rollups),
+                (SELECT COUNT(*) FROM session_log_sync)",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )?;
         assert_eq!(
             preserved_counts,
-            (1, 1, 1, 1),
-            "同步导入必须替换配置，同时保留本机日志与 Live 备份"
+            (1, 1, 1, 1, 1),
+            "同步导入必须替换配置，同时保留本机日志、Live 备份与会话游标"
         );
 
         let preserved_values: (String, String, i64, String, i64, String, i64) = conn.query_row(
@@ -2251,6 +2314,16 @@ mod tests {
         assert_eq!(
             live_backup,
             ("{\"local\":true}".into(), "2026-03-01".into())
+        );
+        let session_cursor: (String, i64, i64, i64) = conn.query_row(
+            "SELECT file_path, last_modified, last_line_offset, last_synced_at
+             FROM session_log_sync",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(
+            session_cursor,
+            ("/local/sessions/one.jsonl".into(), 10, 123, 456)
         );
         let provider_health_count: i64 =
             conn.query_row("SELECT COUNT(*) FROM provider_health", [], |row| row.get(0))?;
