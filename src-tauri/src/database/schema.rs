@@ -308,7 +308,23 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 19. Profiles 表（全应用共享的项目实体，payload 按 app 分槽快照
+        // 19. Codex Pending Sync 表
+        //
+        // deferred 文件不能只保存在进程内存中，否则每次重启都会重新完整读取。
+        // reason_json 同时保存父 rollout 依赖快照，用于只在依赖变化时重试。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_pending_sync (
+                file_path TEXT PRIMARY KEY,
+                child_modified INTEGER NOT NULL,
+                child_size INTEGER NOT NULL,
+                reason_json TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 20. Profiles 表（全应用共享的项目实体，payload 按 app 分槽快照
         //     供应商/MCP/Skills/Prompt；各应用分组的 current 标记在 settings 表）
         conn.execute(
             "CREATE TABLE IF NOT EXISTS profiles (
@@ -510,6 +526,11 @@ impl Database {
                         log::info!("迁移数据库从 v15 到 v16（重建 Codex 会话用量）");
                         Self::migrate_v15_to_v16(conn)?;
                         Self::set_user_version(conn, 16)?;
+                    }
+                    16 => {
+                        log::info!("迁移数据库从 v16 到 v17（持久化 Codex deferred 状态）");
+                        Self::migrate_v16_to_v17(conn)?;
+                        Self::set_user_version(conn, 17)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1521,6 +1542,23 @@ impl Database {
     fn migrate_v15_to_v16(conn: &Connection) -> Result<(), AppError> {
         let codex_dir = crate::codex_config::get_codex_config_dir();
         crate::services::session_usage_codex::reset_codex_usage_on_conn(conn, &codex_dir)
+    }
+
+    /// v16 -> v17: persist deferred Codex sync dependencies so unchanged
+    /// historical rollouts are not re-read on every timer tick or restart.
+    fn migrate_v16_to_v17(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS codex_pending_sync (
+                file_path TEXT PRIMARY KEY,
+                child_modified INTEGER NOT NULL,
+                child_size INTEGER NOT NULL,
+                reason_json TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 codex_pending_sync 表失败: {e}")))?;
+        Ok(())
     }
 
     /// 插入默认模型定价数据
@@ -3223,7 +3261,7 @@ mod tests {
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
-        assert_eq!(Database::get_user_version(&conn)?, 16);
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         let counts: (i64, i64, i64, i64) = conn.query_row(
             "SELECT
                 (SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'),
@@ -3234,6 +3272,42 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
         assert_eq!(counts, (0, 1, 0, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v16_to_v17_preserves_codex_usage_and_cursors() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute("DROP TABLE codex_pending_sync", [])?;
+        conn.execute_batch(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, input_tokens,
+                output_tokens, cache_read_tokens, latency_ms, status_code,
+                created_at, data_source
+             ) VALUES
+                ('codex-row', '_codex_session', 'codex', 'gpt', 11, 3, 5, 0, 200, 1, 'codex_session');
+             INSERT INTO session_log_sync
+                (file_path, last_modified, last_line_offset, last_synced_at)
+             VALUES
+                ('/codex/sessions/rollout-old-00000000-0000-4000-8000-000000000001.jsonl', 9, 7, 1);",
+        )?;
+        Database::set_user_version(&conn, 16)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::table_exists(&conn, "codex_pending_sync")?);
+        let values: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = 'codex-row'),
+                (SELECT input_tokens FROM proxy_request_logs WHERE request_id = 'codex-row'),
+                (SELECT COUNT(*) FROM session_log_sync),
+                (SELECT last_line_offset FROM session_log_sync LIMIT 1)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(values, (1, 11, 1, 7));
         Ok(())
     }
 }
