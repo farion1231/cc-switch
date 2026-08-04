@@ -627,23 +627,54 @@ impl Database {
         match value {
             ValueRef::Null => Ok("NULL".to_string()),
             ValueRef::Integer(i) => Ok(i.to_string()),
-            ValueRef::Real(f) => Ok(f.to_string()),
-            ValueRef::Text(t) => {
-                let text = std::str::from_utf8(t)
-                    .map_err(|e| AppError::Database(format!("文本字段不是有效的 UTF-8: {e}")))?;
-                let escaped = text.replace('\'', "''");
-                Ok(format!("'{escaped}'"))
-            }
-            ValueRef::Blob(bytes) => {
-                let mut s = String::from("X'");
-                for b in bytes {
-                    use std::fmt::Write;
-                    let _ = write!(&mut s, "{b:02X}");
+            ValueRef::Real(f) => Ok(Self::format_sql_real(f)),
+            ValueRef::Text(t) => match std::str::from_utf8(t) {
+                // SQLite's SQL parser treats NUL as the end of the statement.
+                // Keep readable literals for normal UTF-8, and use a hex cast
+                // whenever a TEXT value cannot safely appear in SQL source.
+                Ok(text) if !text.contains('\0') => {
+                    let escaped = text.replace('\'', "''");
+                    Ok(format!("'{escaped}'"))
                 }
-                s.push('\'');
-                Ok(s)
-            }
+                _ => Ok(format!("CAST({} AS TEXT)", Self::format_sql_blob(t))),
+            },
+            ValueRef::Blob(bytes) => Ok(Self::format_sql_blob(bytes)),
         }
+    }
+
+    fn format_sql_real(value: f64) -> String {
+        if value.is_nan() {
+            // SQLite normalizes bound NaN values to NULL as well.
+            return "NULL".to_string();
+        }
+        if value.is_infinite() {
+            return if value.is_sign_negative() {
+                "-9.0e999".to_string()
+            } else {
+                "9.0e999".to_string()
+            };
+        }
+        if value == 0.0 && value.is_sign_negative() {
+            return "-0.0".to_string();
+        }
+
+        let mut literal = value.to_string();
+        if !literal.contains(['.', 'e', 'E']) {
+            // Without a decimal point/exponent SQLite stores integer-valued
+            // REALs as INTEGER in columns without REAL affinity (e.g. STRICT ANY).
+            literal.push_str(".0");
+        }
+        literal
+    }
+
+    fn format_sql_blob(bytes: &[u8]) -> String {
+        let mut s = String::from("X'");
+        for b in bytes {
+            use std::fmt::Write;
+            let _ = write!(&mut s, "{b:02X}");
+        }
+        s.push('\'');
+        s
     }
 
     /// List all database backup files, sorted by creation time (newest first)
@@ -1237,6 +1268,74 @@ mod tests {
                 "ordinary-tail".to_string()
             )
         );
+        Ok(())
+    }
+
+    #[test]
+    fn dump_sql_preserves_text_bytes_and_real_storage_class() -> Result<(), AppError> {
+        let source = Connection::open_in_memory()?;
+        source.execute_batch(
+            "CREATE TABLE scalar_values (
+                 label TEXT PRIMARY KEY,
+                 value ANY
+             ) STRICT;
+             INSERT INTO scalar_values VALUES ('nul-text', CAST(X'610062' AS TEXT));
+             INSERT INTO scalar_values VALUES ('invalid-text', CAST(X'80FF' AS TEXT));",
+        )?;
+        for (label, value) in [
+            ("real-one", 1.0),
+            ("negative-zero", -0.0),
+            ("positive-infinity", f64::INFINITY),
+            ("negative-infinity", f64::NEG_INFINITY),
+        ] {
+            source.execute(
+                "INSERT INTO scalar_values (label, value) VALUES (?1, ?2)",
+                rusqlite::params![label, value],
+            )?;
+        }
+
+        let sql = Database::dump_sql(&source, &[])?;
+        assert!(
+            sql.contains("CAST(X'610062' AS TEXT)") && sql.contains("CAST(X'80FF' AS TEXT)"),
+            "含 NUL 或非法 UTF-8 的 TEXT 必须使用十六进制表达式"
+        );
+
+        let target = Connection::open_in_memory()?;
+        target.execute_batch(&sql)?;
+
+        for (label, expected_hex) in [("nul-text", "610062"), ("invalid-text", "80FF")] {
+            let (storage_class, bytes): (String, String) = target.query_row(
+                "SELECT typeof(value), hex(value) FROM scalar_values WHERE label = ?1",
+                [label],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            assert_eq!(storage_class, "text");
+            assert_eq!(bytes, expected_hex);
+        }
+
+        let real_value = |label: &str| -> Result<(String, f64), rusqlite::Error> {
+            target.query_row(
+                "SELECT typeof(value), value FROM scalar_values WHERE label = ?1",
+                [label],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+        };
+        let (storage_class, one) = real_value("real-one")?;
+        assert_eq!(storage_class, "real");
+        assert_eq!(one, 1.0);
+
+        let (storage_class, negative_zero) = real_value("negative-zero")?;
+        assert_eq!(storage_class, "real");
+        assert_eq!(negative_zero, 0.0);
+        assert!(negative_zero.is_sign_negative());
+
+        let (storage_class, positive_infinity) = real_value("positive-infinity")?;
+        assert_eq!(storage_class, "real");
+        assert_eq!(positive_infinity, f64::INFINITY);
+
+        let (storage_class, negative_infinity) = real_value("negative-infinity")?;
+        assert_eq!(storage_class, "real");
+        assert_eq!(negative_infinity, f64::NEG_INFINITY);
         Ok(())
     }
 
