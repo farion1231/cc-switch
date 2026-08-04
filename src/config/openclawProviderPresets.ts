@@ -125,6 +125,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "cn_official",
+    partnerPromotionKey: "kimi",
     icon: "kimi",
     iconColor: "#6366F1",
     templateValues: {
@@ -954,42 +955,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       model: { primary: "siliconflow-en/MiniMaxAI/MiniMax-M2.7" },
       modelCatalog: {
         "siliconflow-en/MiniMaxAI/MiniMax-M2.7": { alias: "MiniMax" },
-      },
-    },
-  },
-  {
-    name: "NekoCode",
-    websiteUrl: "https://nekocode.ai",
-    apiKeyUrl: "https://nekocode.ai?aff=CCSWITCH",
-    settingsConfig: {
-      baseUrl: "https://nekocode.ai/v1",
-      apiKey: "",
-      api: "openai-completions",
-      models: [
-        {
-          id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          contextWindow: 400000,
-        },
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "nekocode",
-    icon: "nekocode",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "nekocode/gpt-5.6-sol",
-      },
-      modelCatalog: {
-        "nekocode/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
       },
     },
   },

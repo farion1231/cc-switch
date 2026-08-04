@@ -145,6 +145,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "cn_official",
+    partnerPromotionKey: "kimi",
     icon: "kimi",
     iconColor: "#6366F1",
     suggestedDefaults: {
@@ -645,25 +646,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
         default: "MiniMaxAI/MiniMax-M2.7",
         provider: "siliconflow_en",
       },
-    },
-  },
-  {
-    name: "NekoCode",
-    websiteUrl: "https://nekocode.ai",
-    apiKeyUrl: "https://nekocode.ai?aff=CCSWITCH",
-    settingsConfig: {
-      name: "nekocode",
-      base_url: "https://nekocode.ai/v1",
-      api_key: "",
-      api_mode: "chat_completions",
-      models: [{ id: "gpt-5.6-sol", name: "GPT-5.6 Sol" }],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "nekocode",
-    icon: "nekocode",
-    suggestedDefaults: {
-      model: { default: "gpt-5.6-sol", provider: "nekocode" },
     },
   },
   {

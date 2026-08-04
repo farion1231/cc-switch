@@ -306,6 +306,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
     category: "cn_official",
+    partnerPromotionKey: "kimi",
     icon: "kimi",
     iconColor: "#6366F1",
     templateValues: {
@@ -857,34 +858,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     partnerPromotionKey: "doubaoseed",
     icon: "doubao",
     iconColor: "#3370FF",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-  {
-    name: "NekoCode",
-    websiteUrl: "https://nekocode.ai",
-    apiKeyUrl: "https://nekocode.ai?aff=CCSWITCH",
-    settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
-      name: "NekoCode",
-      options: {
-        baseURL: "https://nekocode.ai/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
-      },
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "nekocode",
-    icon: "nekocode",
     templateValues: {
       apiKey: {
         label: "API Key",
