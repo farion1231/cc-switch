@@ -65,7 +65,8 @@ impl Database {
             id TEXT PRIMARY KEY, name TEXT NOT NULL, server_config TEXT NOT NULL,
             description TEXT, homepage TEXT, docs TEXT, tags TEXT NOT NULL DEFAULT '[]',
             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
-            enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
+            enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
@@ -93,6 +94,7 @@ impl Database {
             enabled_claude BOOLEAN NOT NULL DEFAULT 0,
             enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+            enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
@@ -122,7 +124,7 @@ impl Database {
 
         // 8. Proxy Config 表（三行结构，app_type 主键）
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_config (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -169,6 +171,15 @@ impl Database {
                 [],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
+            conn.execute(
+                "INSERT OR IGNORE INTO proxy_config (app_type, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests)
+                VALUES ('grokbuild', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
+                [],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
         }
 
         // 9. Provider Health 表
@@ -189,6 +200,7 @@ impl Database {
             pricing_model TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            input_token_semantics INTEGER NOT NULL DEFAULT 0,
             input_cost_usd TEXT NOT NULL DEFAULT '0', output_cost_usd TEXT NOT NULL DEFAULT '0',
             cache_read_cost_usd TEXT NOT NULL DEFAULT '0', cache_creation_cost_usd TEXT NOT NULL DEFAULT '0',
             total_cost_usd TEXT NOT NULL DEFAULT '0', latency_ms INTEGER NOT NULL, first_token_ms INTEGER,
@@ -275,6 +287,7 @@ impl Database {
                 output_tokens INTEGER NOT NULL DEFAULT 0,
                 cache_read_tokens INTEGER NOT NULL DEFAULT 0,
                 cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                input_token_semantics INTEGER NOT NULL DEFAULT 0,
                 total_cost_usd TEXT NOT NULL DEFAULT '0',
                 avg_latency_ms INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model)
@@ -294,6 +307,35 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 19. Profiles 表（全应用共享的项目实体，payload 按 app 分槽快照
+        //     供应商/MCP/Skills/Prompt；各应用分组的 current 标记在 settings 表）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS profiles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                sort_order INTEGER,
+                created_at INTEGER,
+                updated_at INTEGER
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 修复跑过未发布开发版的库：current 标记曾是全局 key，现按应用分组
+        // （随 v12 定稿为 current_profile_id_<scope>，不单独 bump 版本）
+        if conn
+            .execute(
+                "INSERT OR REPLACE INTO settings (key, value)
+                 SELECT 'current_profile_id_claude', value FROM settings
+                 WHERE key = 'current_profile_id'",
+                [],
+            )
+            .is_ok()
+        {
+            let _ = conn.execute("DELETE FROM settings WHERE key = 'current_profile_id'", []);
+        }
 
         // 尝试添加 live_takeover_active 列到 proxy_config 表
         let _ = conn.execute(
@@ -443,6 +485,31 @@ impl Database {
                         log::info!("迁移数据库从 v10 到 v11（usage_daily_rollups 保留 request_model 维度）");
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
+                    }
+                    11 => {
+                        log::info!("迁移数据库从 v11 到 v12（添加项目 Profiles 表）");
+                        Self::migrate_v11_to_v12(conn)?;
+                        Self::set_user_version(conn, 12)?;
+                    }
+                    12 => {
+                        log::info!("迁移数据库从 v12 到 v13（记录输入 token 缓存语义）");
+                        Self::migrate_v12_to_v13(conn)?;
+                        Self::set_user_version(conn, 13)?;
+                    }
+                    13 => {
+                        log::info!("迁移数据库从 v13 到 v14（添加 Grok Build 代理配置）");
+                        Self::migrate_v13_to_v14(conn)?;
+                        Self::set_user_version(conn, 14)?;
+                    }
+                    14 => {
+                        log::info!("迁移数据库从 v14 到 v15（Skills/MCP 添加 Grok Build 支持）");
+                        Self::migrate_v14_to_v15(conn)?;
+                        Self::set_user_version(conn, 15)?;
+                    }
+                    15 => {
+                        log::info!("迁移数据库从 v15 到 v16（重建 Codex 会话用量）");
+                        Self::migrate_v15_to_v16(conn)?;
+                        Self::set_user_version(conn, 16)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -616,6 +683,7 @@ impl Database {
             request_model TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            input_token_semantics INTEGER NOT NULL DEFAULT 0,
             input_cost_usd TEXT NOT NULL DEFAULT '0', output_cost_usd TEXT NOT NULL DEFAULT '0',
             cache_read_cost_usd TEXT NOT NULL DEFAULT '0', cache_creation_cost_usd TEXT NOT NULL DEFAULT '0',
             total_cost_usd TEXT NOT NULL DEFAULT '0', latency_ms INTEGER NOT NULL, first_token_ms INTEGER,
@@ -756,12 +824,25 @@ impl Database {
                 old_cb.3,
                 old_cb.4,
             ),
+            (
+                "grokbuild",
+                false,
+                false,
+                3,
+                old_config.4,
+                old_config.5,
+                old_cb.0,
+                old_cb.1,
+                old_cb.2,
+                old_cb.3,
+                old_cb.4,
+            ),
         ];
 
         // 创建新表
         conn.execute("DROP TABLE IF EXISTS proxy_config_new", [])?;
         conn.execute("CREATE TABLE proxy_config_new (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -772,6 +853,7 @@ impl Database {
             circuit_min_requests INTEGER NOT NULL DEFAULT 10,
             default_cost_multiplier TEXT NOT NULL DEFAULT '1',
             pricing_model_source TEXT NOT NULL DEFAULT 'response',
+            live_takeover_active INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )", [])?;
 
@@ -1270,6 +1352,177 @@ impl Database {
         Ok(())
     }
 
+    /// v11 -> v12 迁移：添加项目 Profiles 表
+    /// 与 create_tables_on_conn 中的建表语句保持一致（IF NOT EXISTS 保证幂等）
+    fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS profiles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                sort_order INTEGER,
+                created_at INTEGER,
+                updated_at INTEGER
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("v11 -> v12 创建 profiles 表失败: {e}")))?;
+        Ok(())
+    }
+
+    /// v12 -> v13：记录 input_tokens 是否包含缓存写入。
+    ///
+    /// 默认 0 表示旧版/未知语义；旧 Codex 行只包含 cache read，不包含
+    /// cache creation。新代理行会显式写入 1(total-inclusive) 或 2(fresh)。
+    fn migrate_v12_to_v13(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "proxy_request_logs")? {
+            Self::add_column_if_missing(
+                conn,
+                "proxy_request_logs",
+                "input_token_semantics",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
+        if Self::table_exists(conn, "usage_daily_rollups")? {
+            Self::add_column_if_missing(
+                conn,
+                "usage_daily_rollups",
+                "input_token_semantics",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
+        Ok(())
+    }
+
+    /// v13 -> v14: allow Grok Build to own an independent proxy configuration row.
+    fn migrate_v13_to_v14(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "proxy_config")? {
+            return Ok(());
+        }
+
+        conn.execute("DROP TABLE IF EXISTS proxy_config_v14", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE TABLE proxy_config_v14 (
+                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+                proxy_enabled INTEGER NOT NULL DEFAULT 0,
+                listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                listen_port INTEGER NOT NULL DEFAULT 15721,
+                enable_logging INTEGER NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+                max_retries INTEGER NOT NULL DEFAULT 3,
+                streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+                streaming_idle_timeout INTEGER NOT NULL DEFAULT 120,
+                non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+                circuit_failure_threshold INTEGER NOT NULL DEFAULT 4,
+                circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+                circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60,
+                circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+                circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                live_takeover_active INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let copied_columns = [
+            ("app_type", "'claude'"),
+            ("proxy_enabled", "0"),
+            ("listen_address", "'127.0.0.1'"),
+            ("listen_port", "15721"),
+            ("enable_logging", "1"),
+            ("enabled", "0"),
+            ("auto_failover_enabled", "0"),
+            ("max_retries", "3"),
+            ("streaming_first_byte_timeout", "60"),
+            ("streaming_idle_timeout", "120"),
+            ("non_streaming_timeout", "600"),
+            ("circuit_failure_threshold", "4"),
+            ("circuit_success_threshold", "2"),
+            ("circuit_timeout_seconds", "60"),
+            ("circuit_error_rate_threshold", "0.6"),
+            ("circuit_min_requests", "10"),
+            ("default_cost_multiplier", "'1'"),
+            ("pricing_model_source", "'response'"),
+            ("live_takeover_active", "0"),
+            ("created_at", "datetime('now')"),
+            ("updated_at", "datetime('now')"),
+        ]
+        .into_iter()
+        .map(|(column, fallback)| {
+            Self::has_column(conn, "proxy_config", column).map(|exists| {
+                if exists {
+                    format!("\"{column}\"")
+                } else {
+                    fallback.into()
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, AppError>>()?
+        .join(", ");
+
+        let copy_sql = format!(
+            "INSERT INTO proxy_config_v14 (
+                app_type, proxy_enabled, listen_address, listen_port, enable_logging,
+                enabled, auto_failover_enabled, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests,
+                default_cost_multiplier, pricing_model_source, live_takeover_active,
+                created_at, updated_at
+            )
+            SELECT {copied_columns} FROM proxy_config"
+        );
+        conn.execute(&copy_sql, [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        conn.execute("DROP TABLE proxy_config", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute("ALTER TABLE proxy_config_v14 RENAME TO proxy_config", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "INSERT OR IGNORE INTO proxy_config (app_type) VALUES ('grokbuild')",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// v14 -> v15: persist Grok Build enablement for unified Skills and MCP.
+    fn migrate_v14_to_v15(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "mcp_servers")? {
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_grokbuild",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "enabled_grokbuild",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+        Ok(())
+    }
+
+    /// v15 -> v16: remove Codex session rows and cursors so startup sync can
+    /// rebuild them with fork-history alignment. Must stay connection-level:
+    /// schema migration already owns the Database connection mutex.
+    fn migrate_v15_to_v16(conn: &Connection) -> Result<(), AppError> {
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        crate::services::session_usage_codex::reset_codex_usage_on_conn(conn, &codex_dir)
+    }
+
     /// 插入默认模型定价数据
     /// 格式: (model_id, display_name, input, output, cache_read, cache_creation)
     /// 注意: model_id 使用短横线格式（如 claude-haiku-4-5），与 API 返回的模型名称标准化后一致
@@ -1292,6 +1545,8 @@ impl Database {
                 "1.00",
                 "12.50",
             ),
+            // Claude Opus 5（与 Opus 4.8 同价位；fast mode $10/$50 不入表）
+            ("claude-opus-5", "Claude Opus 5", "5", "25", "0.50", "6.25"),
             // Claude 4.8 系列
             (
                 "claude-opus-4-8",
@@ -1319,7 +1574,23 @@ impl Database {
                 "0.50",
                 "6.25",
             ),
-            // Claude 4.6 系列
+            // Claude 4.6 系列（裸 id 行覆盖无日期后缀的日志变体，与 dated 行同价）
+            (
+                "claude-opus-4-6",
+                "Claude Opus 4.6",
+                "5",
+                "25",
+                "0.50",
+                "6.25",
+            ),
+            (
+                "claude-sonnet-4-6",
+                "Claude Sonnet 4.6",
+                "3",
+                "15",
+                "0.30",
+                "3.75",
+            ),
             (
                 "claude-opus-4-6-20260206",
                 "Claude Opus 4.6",
@@ -1403,6 +1674,26 @@ impl Database {
                 "0.30",
                 "3.75",
             ),
+            // GPT-5.6 系列（Sol / Terra / Luna，2026-06 发布）
+            // 5.6 家族起 cache write 收 1.25× 输入价（此前 GPT 模型写缓存免费，勿回填旧系列）
+            ("gpt-5.6-sol", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
+            // 2026-07-30 OpenAI 降价：luna -80%、terra -20%，sol 不变（Fast mode 2× 价不入表）
+            ("gpt-5.6-terra", "GPT-5.6 Terra", "2", "12", "0.20", "2.50"),
+            (
+                "gpt-5.6-luna",
+                "GPT-5.6 Luna",
+                "0.20",
+                "1.20",
+                "0.02",
+                "0.25",
+            ),
+            // 裸名 gpt-5.6 是 sol 的官方别名；effort 后缀对齐 gpt-5.5 系列的记账形态
+            ("gpt-5.6", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
+            ("gpt-5.6-low", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
+            ("gpt-5.6-medium", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
+            ("gpt-5.6-high", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
+            ("gpt-5.6-xhigh", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
+            ("gpt-5.6-minimal", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
             // GPT-5.5 系列
             ("gpt-5.5", "GPT-5.5", "5", "30", "0.50", "0"),
             ("gpt-5.5-low", "GPT-5.5", "5", "30", "0.50", "0"),
@@ -1455,6 +1746,14 @@ impl Database {
             ),
             // GPT-5.3 Codex 系列
             ("gpt-5.3-codex", "GPT-5.3 Codex", "1.75", "14", "0.175", "0"),
+            (
+                "gpt-5.3-codex-spark",
+                "GPT-5.3 Codex Spark",
+                "1.75",
+                "14",
+                "0.175",
+                "0",
+            ),
             (
                 "gpt-5.3-codex-low",
                 "GPT-5.3 Codex",
@@ -1581,6 +1880,15 @@ impl Database {
             ("gpt-4.1", "GPT-4.1", "2", "8", "0.50", "0"),
             ("gpt-4.1-mini", "GPT-4.1 Mini", "0.40", "1.60", "0.10", "0"),
             ("gpt-4.1-nano", "GPT-4.1 Nano", "0.10", "0.40", "0.025", "0"),
+            // Gemini 3.6 系列
+            (
+                "gemini-3.6-flash",
+                "Gemini 3.6 Flash",
+                "1.50",
+                "7.50",
+                "0.15",
+                "0",
+            ),
             // Gemini 3.5 系列
             (
                 "gemini-3.5-flash",
@@ -1588,6 +1896,14 @@ impl Database {
                 "1.50",
                 "9.00",
                 "0.15",
+                "0",
+            ),
+            (
+                "gemini-3.5-flash-lite",
+                "Gemini 3.5 Flash Lite",
+                "0.30",
+                "2.50",
+                "0.03",
                 "0",
             ),
             // Gemini 3.1 系列
@@ -1779,20 +2095,21 @@ impl Database {
                 "0",
             ),
             ("deepseek-v3", "DeepSeek V3", "0.28", "1.11", "0.028", "0"),
+            // deepseek-chat / deepseek-reasoner 自 2026-07 起为 V4 Flash 的 legacy 别名（同价）
             (
                 "deepseek-chat",
                 "DeepSeek Chat",
-                "0.27",
-                "1.10",
-                "0.07",
+                "0.14",
+                "0.28",
+                "0.0028",
                 "0",
             ),
             (
                 "deepseek-reasoner",
                 "DeepSeek Reasoner",
-                "0.55",
-                "2.19",
                 "0.14",
+                "0.28",
+                "0.0028",
                 "0",
             ),
             // DeepSeek V4 系列（官方 CNY 按 1 USD ≈ 7.14 折算）
@@ -1840,6 +2157,21 @@ impl Database {
                 "0.19",
                 "0",
             ),
+            // HighSpeed 加速档=本体 2 倍价（Kimi 官方一贯模式，同 K2 Turbo）
+            (
+                "kimi-k2.7-code-highspeed",
+                "Kimi K2.7 Code HighSpeed",
+                "1.90",
+                "8.00",
+                "0.38",
+                "0",
+            ),
+            ("kimi-k3", "Kimi K3", "3.00", "15.00", "0.30", "0"),
+            // Kimi For Coding 套餐里 K3 的裸名（无 kimi- 前缀），同标准 list 价
+            ("k3", "Kimi K3", "3.00", "15.00", "0.30", "0"),
+            // 腾讯混元 (Tencent Hunyuan)（官方 CNY 1/4/0.25 按 1 USD ≈ 7.14 折算；Hy3 阶梯计价取最低档）
+            ("hunyuan-hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),
+            ("hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),
             // MiniMax 系列
             ("minimax-m2.1", "MiniMax M2.1", "0.27", "0.95", "0.03", "0"),
             (
@@ -1876,13 +2208,15 @@ impl Database {
                 "0.06",
                 "0.375",
             ),
-            ("minimax-m3", "MiniMax M3", "0.60", "2.40", "0.12", "0"),
+            ("minimax-m3", "MiniMax M3", "0.30", "1.20", "0.06", "0"),
             // GLM (智谱)
             ("glm-4.7", "GLM-4.7", "0.6", "2.2", "0.11", "0"),
             ("glm-4.6", "GLM-4.6", "0.6", "2.2", "0.11", "0"),
             ("glm-5", "GLM-5", "1", "3.2", "0.2", "0"),
             ("glm-5.1", "GLM-5.1", "1.4", "4.4", "0.26", "0"),
             ("glm-5.2", "GLM-5.2", "1.4", "4.4", "0.26", "0"),
+            ("glm-5-turbo", "GLM-5-Turbo", "1.2", "4", "0.24", "0"),
+            ("glm-5v-turbo", "GLM-5V-Turbo", "1.2", "4", "0.24", "0"),
             // MiMo (小米)
             (
                 "mimo-v2-flash",
@@ -1903,6 +2237,7 @@ impl Database {
                 "0",
             ),
             // Qwen 系列 (阿里巴巴)
+            ("qwen3.8-max", "Qwen3.8 Max", "2", "6", "0.25", "2.50"),
             ("qwen3.7-max", "Qwen3.7 Max", "2.50", "7.50", "0.25", "0"),
             ("qwen3.7-plus", "Qwen3.7 Plus", "0.40", "1.60", "0.08", "0"),
             (
@@ -1911,6 +2246,14 @@ impl Database {
                 "0.325",
                 "1.95",
                 "0.065",
+                "0",
+            ),
+            (
+                "qwen3.6-flash",
+                "Qwen3.6 Flash",
+                "0.1875",
+                "1.125",
+                "0.0375",
                 "0",
             ),
             ("qwen3.5-plus", "Qwen3.5 Plus", "0.26", "1.56", "0.052", "0"),
@@ -1967,6 +2310,11 @@ impl Database {
             ("qwq-32b", "QwQ 32B", "0.20", "0.60", "0", "0"),
             ("qwen3-32b", "Qwen3 32B", "0.16", "0.64", "0", "0"),
             // Grok 系列 (xAI)
+            ("grok-4.5", "Grok 4.5", "2", "6", "0.50", "0"),
+            // Grok CLI 官方 OAuth 态 modelUsage 上报的内部别名。定价由
+            // costUsdTicks（1 tick = 1e-10 USD）双轮实测反推：input/output 与
+            // grok-4.5 同为 2/6，cache read 实际按 0.30 计（非 API 挂牌的 0.50）
+            ("grok-4.5-build", "Grok 4.5 Build", "2", "6", "0.30", "0"),
             ("grok-4.3", "Grok 4.3", "1.25", "2.50", "0.20", "0"),
             (
                 "grok-4.20-0309-reasoning",
@@ -2135,6 +2483,133 @@ impl Database {
 
     fn repair_current_model_pricing(conn: &Connection) -> Result<(), AppError> {
         let pricing_fixes = [
+            // 2026-07-30 OpenAI GPT-5.6 降价：luna -80%、terra -20%（sol 不变）。
+            // 每档两条守卫：主守卫匹配 ≥v3.19（已跑过 07-12 cache_write 修正），
+            // 0 态守卫匹配 <v3.19 直升用户（cache_write 仍为旧 seed 的 0）
+            (
+                "gpt-5.6-luna",
+                "GPT-5.6 Luna",
+                "0.20",
+                "1.20",
+                "0.02",
+                "0.25",
+                "1",
+                "6",
+                "0.10",
+                "1.25",
+            ),
+            (
+                "gpt-5.6-luna",
+                "GPT-5.6 Luna",
+                "0.20",
+                "1.20",
+                "0.02",
+                "0.25",
+                "1",
+                "6",
+                "0.10",
+                "0",
+            ),
+            (
+                "gpt-5.6-terra",
+                "GPT-5.6 Terra",
+                "2",
+                "12",
+                "0.20",
+                "2.50",
+                "2.50",
+                "15",
+                "0.25",
+                "3.125",
+            ),
+            (
+                "gpt-5.6-terra",
+                "GPT-5.6 Terra",
+                "2",
+                "12",
+                "0.20",
+                "2.50",
+                "2.50",
+                "15",
+                "0.25",
+                "0",
+            ),
+            // 2026-07-31 models.dev 审计核价：DeepSeek V4 发布后 chat/reasoner 降为 V4 Flash
+            // 别名价；MiniMax M3 官方 standard 档 0.3/1.2（旧值疑似录了加速档）
+            (
+                "deepseek-chat",
+                "DeepSeek Chat",
+                "0.14",
+                "0.28",
+                "0.0028",
+                "0",
+                "0.27",
+                "1.10",
+                "0.07",
+                "0",
+            ),
+            (
+                "deepseek-reasoner",
+                "DeepSeek Reasoner",
+                "0.14",
+                "0.28",
+                "0.0028",
+                "0",
+                "0.55",
+                "2.19",
+                "0.14",
+                "0",
+            ),
+            (
+                "minimax-m3",
+                "MiniMax M3",
+                "0.30",
+                "1.20",
+                "0.06",
+                "0",
+                "0.60",
+                "2.40",
+                "0.12",
+                "0",
+            ),
+            // 2026-07-12 GPT-5.6 家族 cache write=1.25× 输入价（OpenAI 5.6 起的新规），
+            // 修正早期 seed 的 0 值；只匹配未被用户改过的行
+            (
+                "gpt-5.6-sol",
+                "GPT-5.6 Sol",
+                "5",
+                "30",
+                "0.50",
+                "6.25",
+                "5",
+                "30",
+                "0.50",
+                "0",
+            ),
+            (
+                "gpt-5.6-terra",
+                "GPT-5.6 Terra",
+                "2.50",
+                "15",
+                "0.25",
+                "3.125",
+                "2.50",
+                "15",
+                "0.25",
+                "0",
+            ),
+            (
+                "gpt-5.6-luna",
+                "GPT-5.6 Luna",
+                "1",
+                "6",
+                "0.10",
+                "1.25",
+                "1",
+                "6",
+                "0.10",
+                "0",
+            ),
             // 2026-06-10 全量核价（厂商官方 list 价；CNY 按 ~7.14 折算）
             // GLM 4.6/4.7：旧值是中转/OpenRouter 折扣价，统一到 Z.ai 官方（与 glm-5/5.1 一致）
             (
@@ -2600,5 +3075,165 @@ impl Database {
             .map_err(|e| AppError::Database(format!("为表 {table} 添加列 {column} 失败: {e}")))?;
         log::info!("已为表 {table} 添加缺失列 {column}");
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrate_v12_to_v13_adds_input_token_semantics_columns() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute(
+            "CREATE TABLE proxy_request_logs (request_id TEXT PRIMARY KEY)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE usage_daily_rollups (date TEXT PRIMARY KEY)",
+            [],
+        )?;
+        Database::set_user_version(&conn, 12)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::has_column(
+            &conn,
+            "proxy_request_logs",
+            "input_token_semantics"
+        )?);
+        assert!(Database::has_column(
+            &conn,
+            "usage_daily_rollups",
+            "input_token_semantics"
+        )?);
+        let log_default: i64 = conn.query_row(
+            "SELECT dflt_value = '0' FROM pragma_table_info('proxy_request_logs')
+             WHERE name = 'input_token_semantics'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(log_default, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v13_to_v14_adds_grokbuild_proxy_row_and_preserves_values() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute("DELETE FROM proxy_config WHERE app_type = 'grokbuild'", [])?;
+        conn.execute(
+            "UPDATE proxy_config SET enabled = 1, max_retries = 9 WHERE app_type = 'codex'",
+            [],
+        )?;
+        Database::set_user_version(&conn, 13)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let grok_rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_config WHERE app_type = 'grokbuild'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(grok_rows, 1);
+        let codex_values: (i64, i64) = conn.query_row(
+            "SELECT enabled, max_retries FROM proxy_config WHERE app_type = 'codex'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(codex_values, (1, 9));
+
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v14_to_v15_adds_grokbuild_skill_and_mcp_flags() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (
+                id TEXT PRIMARY KEY,
+                enabled_codex BOOLEAN NOT NULL DEFAULT 0
+            );
+            CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                enabled_codex BOOLEAN NOT NULL DEFAULT 0
+            );",
+        )?;
+        conn.execute(
+            "INSERT INTO mcp_servers (id, enabled_codex) VALUES ('mcp-1', 1)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO skills (id, enabled_codex) VALUES ('skill-1', 1)",
+            [],
+        )?;
+        Database::set_user_version(&conn, 14)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::has_column(
+            &conn,
+            "mcp_servers",
+            "enabled_grokbuild"
+        )?);
+        assert!(Database::has_column(&conn, "skills", "enabled_grokbuild")?);
+        let mcp_values: (i64, i64) = conn.query_row(
+            "SELECT enabled_codex, enabled_grokbuild FROM mcp_servers WHERE id = 'mcp-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let skill_values: (i64, i64) = conn.query_row(
+            "SELECT enabled_codex, enabled_grokbuild FROM skills WHERE id = 'skill-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(mcp_values, (1, 0));
+        assert_eq!(skill_values, (1, 0));
+
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v15_to_v16_resets_only_codex_session_usage() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        conn.execute_batch(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, input_tokens,
+                output_tokens, cache_read_tokens, latency_ms, status_code,
+                created_at, data_source
+             ) VALUES
+                ('codex-row', '_codex_session', 'codex', 'gpt', 1, 1, 0, 0, 200, 1, 'codex_session'),
+                ('gemini-row', '_gemini_session', 'gemini', 'gemini', 1, 1, 0, 0, 200, 1, 'gemini_session');
+             INSERT INTO usage_daily_rollups (date, app_type, provider_id, model)
+             VALUES
+                ('2026-07-10', 'codex', '_codex_session', 'gpt'),
+                ('2026-07-10', 'gemini', '_gemini_session', 'gemini');
+             INSERT INTO session_log_sync
+                (file_path, last_modified, last_line_offset, last_synced_at)
+             VALUES
+                ('/old/sessions/rollout-old-00000000-0000-4000-8000-000000000001.jsonl', 1, 1, 1),
+                ('/gemini/tmp/session-123.json', 1, 1, 1);",
+        )?;
+        Database::set_user_version(&conn, 15)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, 16);
+        let counts: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'),
+                (SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'gemini_session'),
+                (SELECT COUNT(*) FROM usage_daily_rollups WHERE provider_id = '_codex_session'),
+                (SELECT COUNT(*) FROM session_log_sync)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(counts, (0, 1, 0, 1));
+        Ok(())
     }
 }

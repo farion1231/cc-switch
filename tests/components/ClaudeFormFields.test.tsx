@@ -85,6 +85,7 @@ const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
     defaultOpusModelName: "",
     defaultFableModel: "",
     defaultFableModelName: "",
+    subagentModel: "",
     onModelChange: vi.fn(),
     speedTestEndpoints: [],
     apiFormat: "anthropic",
@@ -172,5 +173,26 @@ describe("ClaudeFormFields", () => {
         "chatgpt-1",
       );
     });
+  });
+
+  it("一键设置会同时写入 Subagent 模型", () => {
+    const onModelChange = vi.fn();
+    renderCopilotForm({
+      claudeModel: "shared-model[1M]",
+      defaultSonnetModel: "",
+      defaultSonnetModelName: "",
+      onModelChange,
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "一键设置",
+      }),
+    );
+
+    expect(onModelChange).toHaveBeenCalledWith(
+      "CLAUDE_CODE_SUBAGENT_MODEL",
+      "shared-model[1M]",
+    );
   });
 });

@@ -2,6 +2,13 @@
 import { IconMetadata } from "@/types/icon";
 
 export const iconMetadata: Record<string, IconMetadata> = {
+  a6api: {
+    name: "a6api",
+    displayName: "A6API",
+    category: "ai-provider",
+    keywords: ["a6api", "a6", "aggregator", "relay", "gateway", "claude"],
+    defaultColor: "#3B82F6",
+  },
   aigocode: {
     name: "aigocode",
     displayName: "AIGoCode",
@@ -56,11 +63,29 @@ export const iconMetadata: Record<string, IconMetadata> = {
   },
   sudocode: {
     name: "sudocode",
-    displayName: "SudoCode",
+    displayName: "SudoCode.chat",
     category: "ai-provider",
     keywords: [
       "sudocode",
       "sudo code",
+      "chat",
+      "gateway",
+      "relay",
+      "claude",
+      "codex",
+      "gemini",
+      "openclaw",
+    ],
+    defaultColor: "#111111",
+  },
+  "sudocode-us": {
+    name: "sudocode-us",
+    displayName: "SudoCode.us",
+    category: "ai-provider",
+    keywords: [
+      "sudocode",
+      "sudo code",
+      "us",
       "gateway",
       "relay",
       "claude",

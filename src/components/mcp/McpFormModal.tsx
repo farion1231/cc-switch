@@ -42,7 +42,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   onClose,
   existingIds = [],
   defaultFormat = "json",
-  defaultEnabledApps = ["claude", "codex", "gemini"],
+  defaultEnabledApps = ["claude", "codex", "gemini", "grokbuild"],
 }) => {
   const { t } = useTranslation();
   const { formatTomlError, validateTomlConfig, validateJsonConfig } =
@@ -65,17 +65,22 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     claude: boolean;
     codex: boolean;
     gemini: boolean;
+    grokbuild: boolean;
     opencode: boolean;
     openclaw: boolean;
     hermes: boolean;
   }>(() => {
     if (initialData?.apps) {
-      return { ...initialData.apps };
+      return {
+        ...initialData.apps,
+        grokbuild: initialData.apps.grokbuild ?? false,
+      };
     }
     return {
       claude: defaultEnabledApps.includes("claude"),
       codex: defaultEnabledApps.includes("codex"),
       gemini: defaultEnabledApps.includes("gemini"),
+      grokbuild: defaultEnabledApps.includes("grokbuild"),
       opencode: defaultEnabledApps.includes("opencode"),
       openclaw: defaultEnabledApps.includes("openclaw"),
       hermes: defaultEnabledApps.includes("hermes"),
@@ -113,6 +118,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
 
   const [configError, setConfigError] = useState("");
   const [saving, setSaving] = useState(false);
+  const savingRef = React.useRef(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [idError, setIdError] = useState("");
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -283,6 +289,8 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   };
 
   const handleSubmit = async () => {
+    if (savingRef.current) return;
+
     const trimmedId = formId.trim();
     if (!trimmedId) {
       toast.error(t("mcp.error.idRequired"), { duration: 3000 });
@@ -352,6 +360,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       return;
     }
 
+    savingRef.current = true;
     setSaving(true);
     try {
       const nameTrimmed = (formName || trimmedId).trim();
@@ -405,6 +414,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       const msg = mapped || detail || t("mcp.error.saveFailed");
       toast.error(msg, { duration: mapped || detail ? 6000 : 4000 });
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -418,7 +428,9 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       <FullScreenPanel
         isOpen={true}
         title={getFormTitle()}
-        onClose={onClose}
+        onClose={() => {
+          if (!savingRef.current) onClose();
+        }}
         footer={
           <Button
             type="button"
@@ -563,6 +575,22 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     className="text-sm text-foreground cursor-pointer select-none"
                   >
                     {t("mcp.unifiedPanel.apps.gemini")}
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="enable-grokbuild"
+                    checked={enabledApps.grokbuild}
+                    onCheckedChange={(checked: boolean) =>
+                      setEnabledApps({ ...enabledApps, grokbuild: checked })
+                    }
+                  />
+                  <label
+                    htmlFor="enable-grokbuild"
+                    className="text-sm text-foreground cursor-pointer select-none"
+                  >
+                    {t("mcp.unifiedPanel.apps.grokbuild")}
                   </label>
                 </div>
 

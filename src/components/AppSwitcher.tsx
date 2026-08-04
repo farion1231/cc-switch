@@ -15,7 +15,6 @@ interface AppSwitcherProps {
   activeApp: AppId;
   onSwitch: (app: AppId) => void;
   visibleApps?: VisibleApps;
-  compact?: boolean;
 }
 
 const ALL_APPS: AppId[] = [
@@ -23,6 +22,7 @@ const ALL_APPS: AppId[] = [
   "claude-desktop",
   "codex",
   "gemini",
+  "grokbuild",
   "opencode",
   "openclaw",
   "hermes",
@@ -33,7 +33,6 @@ export function AppSwitcher({
   activeApp,
   onSwitch,
   visibleApps,
-  compact,
 }: AppSwitcherProps) {
   const handleSwitch = (app: AppId) => {
     if (app === activeApp) return;
@@ -46,6 +45,7 @@ export function AppSwitcher({
     "claude-desktop": "claude",
     codex: "openai",
     gemini: "gemini",
+    grokbuild: "grok",
     opencode: "opencode",
     openclaw: "openclaw",
     hermes: "hermes",
@@ -55,6 +55,7 @@ export function AppSwitcher({
     "claude-desktop": "Claude Desktop",
     codex: "Codex",
     gemini: "Gemini",
+    grokbuild: "Grok Build",
     opencode: "OpenCode",
     openclaw: "OpenClaw",
     hermes: "Hermes",
@@ -77,6 +78,8 @@ export function AppSwitcher({
             key={app}
             type="button"
             onClick={() => handleSwitch(app)}
+            title={appDisplayName[app]}
+            aria-label={appDisplayName[app]}
             className={cn(
               "group inline-flex items-center px-3 h-8 rounded-md text-sm font-medium transition-all duration-200",
               isActive
@@ -111,16 +114,6 @@ export function AppSwitcher({
                   />
                 </span>
               )}
-            </span>
-            <span
-              className={cn(
-                "transition-all duration-200 whitespace-nowrap overflow-hidden",
-                compact
-                  ? "max-w-0 opacity-0 ml-0"
-                  : "max-w-[120px] opacity-100 ml-2",
-              )}
-            >
-              {appDisplayName[app]}
             </span>
           </button>
         );

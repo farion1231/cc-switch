@@ -152,6 +152,38 @@ fn normalize_default(default: &Option<String>) -> Option<String> {
 }
 
 #[test]
+fn deleted_default_skill_repo_is_not_restored() {
+    let db = Database::memory().expect("create memory db");
+
+    assert_eq!(db.init_default_skill_repos().expect("initialize repos"), 4);
+    for repo in db.get_skill_repos().expect("get initialized repos") {
+        db.delete_skill_repo(&repo.owner, &repo.name)
+            .expect("delete repo");
+    }
+    assert!(db.get_skill_repos().expect("get deleted repos").is_empty());
+
+    assert_eq!(
+        db.init_default_skill_repos().expect("reinitialize repos"),
+        0
+    );
+    assert!(db.get_skill_repos().expect("get repos").is_empty());
+}
+
+#[test]
+fn existing_skill_repo_selection_is_not_supplemented() {
+    let db = Database::memory().expect("create memory db");
+    let default_store = crate::services::skill::SkillStore::default();
+    db.save_skill_repo(&default_store.repos[0])
+        .expect("save existing repo");
+
+    assert_eq!(db.init_default_skill_repos().expect("initialize repos"), 0);
+    assert_eq!(db.get_skill_repos().expect("get repos").len(), 1);
+    assert!(db
+        .get_bool_flag("default_skill_repos_initialized")
+        .expect("get initialized flag"));
+}
+
+#[test]
 fn schema_migration_sets_user_version_when_missing() {
     let conn = Connection::open_in_memory().expect("open memory db");
 
@@ -427,6 +459,62 @@ fn migration_v10_to_v11_rebuilds_rollups_with_request_model_dimension() {
 }
 
 #[test]
+fn schema_create_tables_repairs_dev_global_profile_marker() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+
+    // 模拟跑过未发布开发版的库：user_version 已是 12（迁移不会再跑），
+    // 但 current 标记还是全局 key（现按应用分组）
+    conn.execute_batch(
+        r#"
+        CREATE TABLE profiles (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            sort_order INTEGER,
+            created_at INTEGER,
+            updated_at INTEGER
+        );
+        INSERT INTO profiles (id, name, payload) VALUES ('p1', 'Project A', '{}');
+        CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+        INSERT INTO settings (key, value) VALUES ('current_profile_id', 'p1');
+        "#,
+    )
+    .expect("seed dev v12 shape");
+    Database::set_user_version(&conn, 12).expect("set user_version=12");
+
+    Database::create_tables_on_conn(&conn).expect("create tables should repair marker");
+
+    // 全局 current 标记改名为 claude 组标记，旧 key 删除
+    let claude_marker: String = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'current_profile_id_claude'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("scoped current marker");
+    assert_eq!(claude_marker, "p1");
+    let old_marker: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM settings WHERE key = 'current_profile_id'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count old marker");
+    assert_eq!(old_marker, 0);
+
+    // 修复必须幂等：再跑一遍不应破坏已迁移的标记
+    Database::create_tables_on_conn(&conn).expect("repair is idempotent");
+    let claude_marker: String = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'current_profile_id_claude'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("scoped current marker survives");
+    assert_eq!(claude_marker, "p1");
+}
+
+#[test]
 fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
     let conn = Connection::open_in_memory().expect("open memory db");
 
@@ -461,7 +549,7 @@ fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
     let count: i32 = conn
         .query_row("SELECT COUNT(*) FROM proxy_config", [], |r| r.get(0))
         .expect("count rows");
-    assert_eq!(count, 3, "per-app proxy_config should have 3 rows");
+    assert_eq!(count, 4, "per-app proxy_config should have 4 rows");
 
     // 新结构下应能按 app_type 查询
     let _: i32 = conn
@@ -601,7 +689,7 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
     let proxy_rows: i64 = conn
         .query_row("SELECT COUNT(*) FROM proxy_config", [], |r| r.get(0))
         .expect("count proxy_config rows");
-    assert_eq!(proxy_rows, 3);
+    assert_eq!(proxy_rows, 4);
 
     // model_pricing 应具备默认数据（迁移时会 seed）
     let pricing_rows: i64 = conn

@@ -3,11 +3,11 @@
 //! 统一处理流式和非流式 API 响应
 
 use super::{
-    content_encoding::{decompress_body, get_content_encoding},
+    content_encoding::{decompress_body_with_limit, get_content_encoding, DecompressError},
     forwarder::ActiveConnectionGuard,
     handler_config::{StreamUsageEventFilter, UsageParserConfig},
     handler_context::{RequestContext, StreamingTimeoutConfig},
-    hyper_client::ProxyResponse,
+    hyper_client::{ProxyResponse, MAX_RESPONSE_BODY_BYTES},
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
     usage::parser::TokenUsage,
@@ -86,10 +86,11 @@ pub(crate) async fn read_decoded_body(
 ) -> Result<(HeaderMap, http::StatusCode, Bytes), ProxyError> {
     let mut headers = response.headers().clone();
     let status = response.status();
+    let bytes_future = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES);
     let raw_bytes = if body_timeout.is_zero() {
-        response.bytes().await?
+        bytes_future.await?
     } else {
-        tokio::time::timeout(body_timeout, response.bytes())
+        tokio::time::timeout(body_timeout, bytes_future)
             .await
             .map_err(|_| {
                 ProxyError::Timeout(format!(
@@ -111,15 +112,19 @@ pub(crate) async fn read_decoded_body(
 
     if let Some(encoding) = get_content_encoding(&headers) {
         log::debug!("[{tag}] 解压非流式响应: content-encoding={encoding}");
-        match decompress_body(&encoding, &raw_bytes) {
+        match decompress_body_with_limit(&encoding, &raw_bytes, MAX_RESPONSE_BODY_BYTES) {
             Ok(Some(decompressed)) => {
+                // 解码器在预算耗尽处即截停，此处必然 ≤ MAX_RESPONSE_BODY_BYTES
                 body_bytes = Bytes::from(decompressed);
                 decoded = true;
             }
             // 不支持的编码：原样透传且保留 content-encoding 头，
             // 让下游诊断/客户端知道这仍是压缩字节
             Ok(None) => {}
-            Err(e) => {
+            Err(DecompressError::TooLarge { .. }) => {
+                return Err(ProxyError::ResponseBodyTooLarge(MAX_RESPONSE_BODY_BYTES));
+            }
+            Err(DecompressError::Io(e)) => {
                 log::warn!("[{tag}] 解压失败 ({encoding}): {e}，使用原始数据");
             }
         }
@@ -225,9 +230,9 @@ pub async fn handle_non_streaming(
     strip_hop_by_hop_response_headers(&mut response_headers);
 
     log::debug!(
-        "[{}] 上游响应体内容: {}",
+        "[{}] 上游响应体已接收: bytes={} (content omitted)",
         ctx.tag,
-        String::from_utf8_lossy(&body_bytes)
+        body_bytes.len()
     );
 
     // 解析并记录使用量。关闭 usage logging 时直接跳过，避免非流式响应整包 JSON parse。
@@ -456,7 +461,7 @@ impl Drop for SseUsageFinishGuard {
 // ============================================================================
 
 /// 创建使用量收集器
-fn create_usage_collector(
+pub(crate) fn create_usage_collector(
     ctx: &RequestContext,
     state: &ProxyState,
     status_code: u16,
@@ -642,7 +647,8 @@ async fn log_usage_internal(
         model
     };
 
-    let request_id = usage.dedup_request_id();
+    let dedup_scope = super::usage::parser::dedup_scope_for_app(app_type, provider_id);
+    let request_id = usage.dedup_request_id(dedup_scope);
 
     log::debug!(
         "[{app_type}] 记录请求日志: id={request_id}, provider={provider_id}, model={model}, streaming={is_streaming}, status={status_code}, latency_ms={latency_ms}, first_token_ms={first_token_ms:?}, session={}, input={}, output={}, cache_read={}, cache_creation={}",
@@ -829,7 +835,7 @@ pub fn create_logged_passthrough_stream(
                                                     c.push(json_value).await;
                                                     true
                                                 }
-                                                Err(_) => false,
+Err(_) => false,
                                             }
                                         }
                                         _ => false,
@@ -874,15 +880,53 @@ pub fn create_logged_passthrough_stream(
     }
 }
 
+fn is_safe_diagnostic_header(name: &str) -> bool {
+    matches!(
+        name,
+        "content-type"
+            | "content-encoding"
+            | "content-length"
+            | "retry-after"
+            | "cf-ray"
+            | "x-request-id"
+            | "request-id"
+            | "x-correlation-id"
+    ) || name.starts_with("x-ratelimit-")
+        || name.starts_with("ratelimit-")
+}
+
+fn bounded_header_value(value: &axum::http::HeaderValue) -> Option<String> {
+    let value = value.to_str().ok()?;
+    let mut bounded = value.chars().take(160).collect::<String>();
+    if value.chars().count() > 160 {
+        bounded.push('…');
+    }
+    Some(bounded)
+}
+
 fn format_headers(headers: &HeaderMap) -> String {
-    headers
-        .iter()
-        .map(|(key, value)| {
-            let value_str = value.to_str().unwrap_or("<non-utf8>");
-            format!("{key}={value_str}")
+    let mut entries = headers
+        .keys()
+        .map(|key| {
+            let name = key.as_str();
+            if !is_safe_diagnostic_header(name) {
+                return name.to_string();
+            }
+
+            let values = headers
+                .get_all(key)
+                .iter()
+                .filter_map(bounded_header_value)
+                .collect::<Vec<_>>();
+            if values.is_empty() {
+                name.to_string()
+            } else {
+                format!("{name}={}", values.join("|"))
+            }
         })
-        .collect::<Vec<_>>()
-        .join(", ")
+        .collect::<Vec<_>>();
+    entries.sort();
+    format!("[{}]", entries.join(", "))
 }
 
 #[cfg(test)]
@@ -902,6 +946,49 @@ mod tests {
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::RwLock;
+
+    #[test]
+    fn format_headers_keeps_only_allowlisted_diagnostic_values() {
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer super-secret".parse().unwrap());
+        headers.insert("set-cookie", "session=cookie-secret".parse().unwrap());
+        headers.insert("retry-after", "30".parse().unwrap());
+        headers.insert("x-ratelimit-remaining", "2".parse().unwrap());
+        headers.insert("cf-ray", "abc123-SJC".parse().unwrap());
+
+        let formatted = format_headers(&headers);
+        assert!(formatted.contains("authorization"), "{formatted}");
+        assert!(formatted.contains("set-cookie"), "{formatted}");
+        assert!(formatted.contains("retry-after=30"), "{formatted}");
+        assert!(formatted.contains("x-ratelimit-remaining=2"), "{formatted}");
+        assert!(formatted.contains("cf-ray=abc123-SJC"), "{formatted}");
+        assert!(!formatted.contains("super-secret"), "{formatted}");
+        assert!(!formatted.contains("cookie-secret"), "{formatted}");
+    }
+
+    #[tokio::test]
+    async fn read_decoded_body_rejects_compressed_bomb_without_full_expansion() {
+        // 128 MiB+1 全零 payload 的 gzip 只有 ~130 KiB：原始读取上限拦不住它，
+        // 只有解压侧的有界解码能拒绝。若解码退化为"先完整展开再比较"，
+        // 展开后长度 > MAX_RESPONSE_BODY_BYTES 的 payload 会成功返回（测试失败）。
+        let payload = vec![0u8; MAX_RESPONSE_BODY_BYTES + 1];
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut encoder, &payload).unwrap();
+        let compressed = encoder.finish().unwrap();
+        assert!(compressed.len() < MAX_RESPONSE_BODY_BYTES);
+
+        let mut headers = HeaderMap::new();
+        headers.insert("content-encoding", "gzip".parse().unwrap());
+        let response =
+            ProxyResponse::buffered(http::StatusCode::OK, headers, Bytes::from(compressed));
+
+        let result = read_decoded_body(response, "test", Duration::ZERO).await;
+        assert!(
+            matches!(result, Err(ProxyError::ResponseBodyTooLarge(_))),
+            "压缩炸弹应被拒绝而不是完整展开: {:?}",
+            result.map(|(_, _, body)| body.len())
+        );
+    }
 
     #[test]
     fn test_strip_sse_field_accepts_optional_space() {

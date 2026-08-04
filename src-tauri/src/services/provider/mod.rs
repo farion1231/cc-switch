@@ -25,6 +25,7 @@ pub use live::{
     import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
     import_opencode_providers_from_live, read_live_settings,
     should_import_default_config_on_startup, sync_current_to_live,
+    update_toml_common_config_snippet,
 };
 
 // Internal re-exports (pub(crate))
@@ -41,6 +42,14 @@ use live::{
     remove_opencode_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
+
+/// The built-in Codex official provider is safe to select during takeover:
+/// Codex keeps ownership of its ChatGPT login and the proxy only forwards the
+/// authenticated request. Other official providers retain the existing block.
+pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &Provider) -> bool {
+    matches!(app_type, AppType::Codex)
+        && crate::proxy::providers::is_codex_official_provider(provider)
+}
 
 /// 统一会话开关变更后，立即按新开关状态重写当前官方 Codex 供应商的
 /// live 配置，使开关即时生效（无需等下一次切换）。
@@ -81,6 +90,18 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     }
 
     live::write_live_with_common_config(&state.db, &AppType::Codex, provider)?;
+    // 重写 live 会整体替换 config.toml（有意设计），[mcp_servers] 随之丢失，
+    // 写完必须立刻从 DB 重新投影启用的 MCP。只投影 Codex 而非
+    // sync_all_enabled：后者按 AppType::all() 顺序逐应用短路，排在 Codex
+    // 前面的无关应用 live 损坏（如 ~/.claude.json 坏 JSON）会阻断 Codex
+    // 的重投影，让刚被清掉的 [mcp_servers] 无人补回。
+    // 投影失败降级为警告：走到这里 live 已按新开关状态落盘，开关事实上
+    // 已生效；若把错误上抛，save_settings 会回滚开关设置，制造"设置=旧值、
+    // live=新桶"的会话分裂——正是该回滚要防止的状态。MCP 投影可自愈
+    // （下次切换 / 任一 MCP 启停操作都会重新投影）。
+    if let Err(err) = McpService::sync_enabled_for_app(state, &AppType::Codex) {
+        log::warn!("统一会话开关重写 live 后重投影 Codex MCP 失败（将在下次同步时自愈）: {err}");
+    }
     Ok(true)
 }
 
@@ -260,6 +281,8 @@ mod tests {
             coding_plan_provider: None,
             access_key_id: Some("ak-test".to_string()),
             secret_access_key: Some("sk-test".to_string()),
+            team_organization_id: None,
+            team_project_id: None,
         }
     }
 
@@ -297,6 +320,32 @@ mod tests {
                 "apiKey": "test-key",
                 "api": "openai-completions",
                 "models": [],
+            }),
+            website_url: None,
+            category: Some("custom".to_string()),
+            created_at: Some(1),
+            sort_index: Some(0),
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
+    fn hermes_provider(id: &str) -> Provider {
+        Provider {
+            id: id.to_string(),
+            name: format!("Provider {id}"),
+            settings_config: json!({
+                "api": "openai-chat",
+                "base_url": "https://api.example.com/v1",
+                "api_key": "test-key",
+                "models": {
+                    "gpt-4o": {
+                        "name": "GPT-4o"
+                    }
+                }
             }),
             website_url: None,
             category: Some("custom".to_string()),
@@ -654,6 +703,469 @@ mod tests {
     }
 
     #[test]
+    fn extract_gemini_common_config_strips_credentials_keeps_shareable() {
+        // Gemini 的共享片段会被 deep-merge 回**其它** Gemini 供应商的 env
+        // (live.rs::apply_common_config_to_settings)，因此任何凭据都不得进入片段。
+        // 之前这里只硬编码跳过 GEMINI_API_KEY/GOOGLE_GEMINI_BASE_URL，而
+        // GOOGLE_API_KEY 是 provider.rs 认可的一等 Gemini 凭据 → 会泄露到别的供应商。
+        let settings = json!({
+            "env": {
+                "GEMINI_API_KEY": "g-gem",
+                "GOOGLE_API_KEY": "g-legacy-real-key",
+                "GOOGLE_GEMINI_BASE_URL": "https://gemini.example",
+                "GOOGLE_APPLICATION_CREDENTIALS": "/path/creds.json",
+                "SOME_PROXY_AUTH_TOKEN": "tok-proxy",
+                // 可共享的非机密配置必须保留
+                "GEMINI_TIMEOUT_MS": "30000"
+            }
+        });
+
+        let snippet =
+            ProviderService::extract_gemini_common_config(&settings).expect("extract should work");
+        let value: Value = serde_json::from_str(&snippet).expect("snippet is valid JSON");
+
+        for leaked in [
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "SOME_PROXY_AUTH_TOKEN",
+        ] {
+            assert!(
+                value.get(leaked).is_none(),
+                "credential {leaked} must not leak into the shared Gemini snippet"
+            );
+        }
+        assert_eq!(
+            value.get("GEMINI_TIMEOUT_MS").and_then(|v| v.as_str()),
+            Some("30000"),
+            "shareable non-secret config must be preserved"
+        );
+    }
+
+    /// 造一个「已被污染」的现场：片段里带 A 账号的凭据 + 一个合法可共享键。
+    #[test]
+    fn sensitive_key_matcher_covers_common_credential_namings() {
+        for key in [
+            // 裸 `_KEY`：最常见的写法，却曾被"只枚举 `_API_KEY` 这些子类"漏在外面
+            "OPENAI_KEY",
+            "GROQ_KEY",
+            "XAI_KEY",
+            // 不带分隔符的复合写法
+            "VOLC_ACCESSKEY",
+            "ALIYUN_SECRETKEY",
+            "SOME_APITOKEN",
+            // personal access token：既不含 TOKEN 也不含 KEY
+            "GITHUB_PAT",
+            "gitlab_pat",
+            // 口令类缩写
+            "MYSQL_PWD",
+            "DB_PASS",
+            "GPG_PASSPHRASE",
+            "AWS_CREDS",
+        ] {
+            assert!(
+                ProviderService::is_sensitive_config_key(key),
+                "{key} must be treated as a credential"
+            );
+        }
+
+        // 后缀必须带下划线，不能把正常配置一起卷进来
+        for key in [
+            "PATH",
+            "OLDPWD",
+            "GEMINI_COMPAT",
+            "SSL_BYPASS",
+            "GEMINI_TIMEOUT_MS",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+        ] {
+            assert!(
+                !ProviderService::is_sensitive_config_key(key),
+                "{key} is ordinary shareable config and must not be stripped"
+            );
+        }
+    }
+
+    fn seed_leaked_gemini_state(db: &Arc<Database>) {
+        db.set_config_snippet(
+            "gemini",
+            Some(
+                json!({
+                    "GOOGLE_API_KEY": "key-A-leaked",
+                    "SOME_PROXY_AUTH_TOKEN": "tok-A-leaked",
+                    "GEMINI_TIMEOUT_MS": "30000"
+                })
+                .to_string(),
+            ),
+        )
+        .expect("seed snippet");
+
+        // 受害者 B：泄漏的密钥已经被合并进它的 env
+        let victim = Provider::with_id(
+            "b".into(),
+            "Relay B".into(),
+            json!({ "env": {
+                "GOOGLE_GEMINI_BASE_URL": "https://relay-b.example",
+                "GOOGLE_API_KEY": "key-A-leaked",
+                "GEMINI_TIMEOUT_MS": "30000"
+            }}),
+            None,
+        );
+        db.save_provider("gemini", &victim).expect("save victim");
+
+        // 供应商 C：自己写了同名键但值不同，不能被误删
+        let unrelated = Provider::with_id(
+            "c".into(),
+            "Own Key C".into(),
+            json!({ "env": {
+                "GOOGLE_GEMINI_BASE_URL": "https://c.example",
+                "GOOGLE_API_KEY": "key-C-owned"
+            }}),
+            None,
+        );
+        db.save_provider("gemini", &unrelated).expect("save c");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scrub_gemini_removes_leaked_credentials_from_snippet_and_providers() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        seed_leaked_gemini_state(&db);
+
+        ProviderService::scrub_leaked_gemini_common_config(&state)
+            .await
+            .expect("scrub must succeed");
+
+        // 片段：凭据清掉，可共享配置保留
+        let snippet = db
+            .get_config_snippet("gemini")
+            .expect("read snippet")
+            .expect("snippet must still exist");
+        let snippet: Value = serde_json::from_str(&snippet).expect("valid json");
+        assert!(snippet.get("GOOGLE_API_KEY").is_none());
+        assert!(snippet.get("SOME_PROXY_AUTH_TOKEN").is_none());
+        assert_eq!(
+            snippet.get("GEMINI_TIMEOUT_MS").and_then(Value::as_str),
+            Some("30000"),
+            "shareable config must survive the scrub"
+        );
+
+        // 受害者 B：扩散过去的那一份被清掉
+        let providers = db.get_all_providers("gemini").expect("providers");
+        let victim_env = &providers["b"].settings_config["env"];
+        assert!(
+            victim_env.get("GOOGLE_API_KEY").is_none(),
+            "leaked key must be removed from the victim provider"
+        );
+        assert_eq!(
+            victim_env.get("GEMINI_TIMEOUT_MS").and_then(Value::as_str),
+            Some("30000"),
+            "non-credential config must not be touched"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scrub_gemini_keeps_a_providers_own_differently_valued_key() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        seed_leaked_gemini_state(&db);
+
+        ProviderService::scrub_leaked_gemini_common_config(&state)
+            .await
+            .expect("scrub must succeed");
+
+        // 这条最容易写错成「按键名一刀切」：C 自己的密钥值与片段不同，是它自己的凭据
+        let providers = db.get_all_providers("gemini").expect("providers");
+        assert_eq!(
+            providers["c"].settings_config["env"]
+                .get("GOOGLE_API_KEY")
+                .and_then(Value::as_str),
+            Some("key-C-owned"),
+            "a provider's own key must not be deleted by name matching"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scrub_gemini_audit_records_key_names_but_never_values() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        seed_leaked_gemini_state(&db);
+
+        ProviderService::scrub_leaked_gemini_common_config(&state)
+            .await
+            .expect("scrub must succeed");
+
+        let audit_text = db
+            .get_setting("gemini_common_config_scrub_audit_v1")
+            .expect("read audit")
+            .expect("an audit record must exist so the deletion is not silent");
+
+        // 值绝不能进这条记录：`settings` 会随 WebDAV/S3 同步上传，留值等于把一次
+        // 清除换成一份跨设备扩散、没有界面入口、永不过期的明文副本。
+        assert!(
+            !audit_text.contains("key-A-leaked") && !audit_text.contains("tok-A-leaked"),
+            "the audit record must never carry credential values: {audit_text}"
+        );
+
+        // 但必须说清楚删了什么、从哪删的，否则用户只能靠翻日志
+        let audit: Value = serde_json::from_str(&audit_text).expect("audit is JSON");
+        let removed: Vec<&str> = audit["removedFromSnippet"]
+            .as_array()
+            .expect("removedFromSnippet array")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(
+            removed.contains(&"GOOGLE_API_KEY") && removed.contains(&"SOME_PROXY_AUTH_TOKEN"),
+            "every key removed from the snippet must be named: {audit}"
+        );
+        let victim = audit["providers"]
+            .as_array()
+            .expect("providers array")
+            .iter()
+            .find(|entry| entry["id"] == json!("b"))
+            .expect("every provider whose config gets rewritten must be recorded");
+        assert_eq!(
+            victim["removedKeys"],
+            json!(["GOOGLE_API_KEY"]),
+            "the record must name what was taken from each provider: {audit}"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scrub_gemini_never_overwrites_an_existing_audit_record() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        seed_leaked_gemini_state(&db);
+
+        // 上一轮改到一半就中止的情形：完成标记没置位，下次启动会重跑，但那时
+        // 读到的"原始状态"已经残缺。无条件覆盖会拿残缺记录盖掉第一轮那份完整的。
+        db.set_setting(
+            "gemini_common_config_scrub_audit_v1",
+            "{\"from\":\"an earlier, complete run\"}",
+        )
+        .expect("seed an existing audit record");
+
+        ProviderService::scrub_leaked_gemini_common_config(&state)
+            .await
+            .expect("scrub must succeed");
+
+        assert_eq!(
+            db.get_setting("gemini_common_config_scrub_audit_v1")
+                .expect("read audit")
+                .as_deref(),
+            Some("{\"from\":\"an earlier, complete run\"}"),
+            "an audit record from an earlier run must survive a retry"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scrub_gemini_cleans_the_live_env_without_a_current_provider() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        seed_leaked_gemini_state(&db);
+
+        // 没有当前供应商——这正是 sync_current_provider_for_app 直接返回 Ok 而
+        // 根本不写文件的分支。此时 live 若清不掉，片段又已被清空，下次切换的
+        // backfill 就会把残留永久写进受害供应商的配置。
+        crate::gemini_config::write_gemini_env_atomic(&HashMap::from([
+            ("GOOGLE_API_KEY".to_string(), "key-A-leaked".to_string()),
+            ("GEMINI_TIMEOUT_MS".to_string(), "30000".to_string()),
+            // 只存在于 live 的手工修改：定向删除必须保住它，全量重投影会抹掉
+            (
+                "HTTPS_PROXY".to_string(),
+                "http://127.0.0.1:7890".to_string(),
+            ),
+        ]))
+        .expect("seed live env");
+
+        ProviderService::scrub_leaked_gemini_common_config(&state)
+            .await
+            .expect("scrub must succeed");
+
+        let live = crate::gemini_config::read_gemini_env().expect("read live env");
+        assert!(
+            !live.contains_key("GOOGLE_API_KEY"),
+            "the leaked credential must be gone from ~/.gemini/.env: {live:?}"
+        );
+        assert_eq!(
+            live.get("HTTPS_PROXY").map(String::as_str),
+            Some("http://127.0.0.1:7890"),
+            "a hand-added live-only var must survive targeted removal: {live:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scrub_gemini_live_cleanup_preserves_the_rest_of_the_env_file() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        seed_leaked_gemini_state(&db);
+
+        // 这是一次用户没主动触发的启动期清理，不该顺手重写与泄漏无关的内容。
+        // read→HashMap→write 的往返会把注释、空行、无法识别的行全丢掉并按键名重排。
+        let original = "\
+# my own notes
+GOOGLE_API_KEY=key-C-owned
+
+GOOGLE_API_KEY=key-A-leaked
+this line is not KEY=VALUE at all
+GEMINI_TIMEOUT_MS=30000
+";
+        crate::gemini_config::write_gemini_env_text_atomic(original).expect("seed live env");
+
+        ProviderService::scrub_leaked_gemini_common_config(&state)
+            .await
+            .expect("scrub must succeed");
+
+        let raw = std::fs::read_to_string(crate::gemini_config::get_gemini_env_path())
+            .expect("read live env");
+        assert!(
+            !raw.contains("key-A-leaked"),
+            "the leaked line must be gone: {raw:?}"
+        );
+        assert!(
+            raw.contains("# my own notes"),
+            "comments must survive a targeted removal: {raw:?}"
+        );
+        assert!(
+            raw.contains("this line is not KEY=VALUE at all"),
+            "unparseable lines must survive a targeted removal: {raw:?}"
+        );
+        // 被泄漏值遮住的那条重新生效——正是想要的结果，遮住它的恰恰是泄漏值
+        assert_eq!(
+            crate::gemini_config::read_gemini_env()
+                .expect("read live env")
+                .get("GOOGLE_API_KEY")
+                .map(String::as_str),
+            Some("key-C-owned"),
+            "only the matching line may be dropped: {raw:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scrub_gemini_aborts_before_clearing_the_snippet_when_the_live_backup_fails() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        seed_leaked_gemini_state(&db);
+
+        // 关代理时这份快照会被原样写回 live。若清不动它却照样清了片段、置了完成标记，
+        // 代理一停凭据就复活，而一次性标记保证不会再清第二次。
+        db.save_live_backup("gemini", "}not json{")
+            .await
+            .expect("seed backup");
+
+        let result = ProviderService::scrub_leaked_gemini_common_config(&state).await;
+        assert!(
+            result.is_err(),
+            "a backup that cannot be cleaned must abort the scrub"
+        );
+
+        // 片段是「该剥哪些键」的唯一知识来源，中止后必须原样留着，否则下次重试
+        // 会因为 poison 为空而直接短路，反倒把标记置上
+        let snippet = db
+            .get_config_snippet("gemini")
+            .expect("read snippet")
+            .expect("snippet must still exist");
+        assert!(
+            snippet.contains("key-A-leaked"),
+            "the snippet must be left intact so the next boot can retry: {snippet}"
+        );
+        assert!(
+            db.get_setting("gemini_common_config_credentials_scrubbed_v1")
+                .expect("read flag")
+                .is_none(),
+            "the one-shot flag must not be set when the scrub aborted"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scrub_gemini_leaves_no_residue_for_backfill_to_persist() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        seed_leaked_gemini_state(&db);
+
+        ProviderService::scrub_leaked_gemini_common_config(&state)
+            .await
+            .expect("scrub must succeed");
+
+        // 顺序陷阱回归：如果只清了片段，切走供应商时 remove_common_config_from_settings
+        // 就不再认识这个键，live 里的残留会被 backfill 永久写进供应商配置。
+        // 清理必须是原子的——清完之后，任何地方都不该再有那个值。
+        let snippet = db
+            .get_config_snippet("gemini")
+            .expect("read snippet")
+            .unwrap_or_default();
+        assert!(!snippet.contains("key-A-leaked"));
+
+        for (id, provider) in db.get_all_providers("gemini").expect("providers") {
+            assert!(
+                !provider
+                    .settings_config
+                    .to_string()
+                    .contains("key-A-leaked"),
+                "provider '{id}' still carries the leaked value"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scrub_gemini_is_idempotent_and_skips_on_second_run() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+        seed_leaked_gemini_state(&db);
+
+        ProviderService::scrub_leaked_gemini_common_config(&state)
+            .await
+            .expect("first run");
+
+        // 第二次必须是 no-op：用户清理后重新填的凭据不能被再抹一遍
+        db.set_config_snippet(
+            "gemini",
+            Some(json!({"GOOGLE_API_KEY": "restored"}).to_string()),
+        )
+        .expect("user re-adds a value");
+
+        ProviderService::scrub_leaked_gemini_common_config(&state)
+            .await
+            .expect("second run");
+
+        let snippet = db
+            .get_config_snippet("gemini")
+            .expect("read snippet")
+            .expect("snippet exists");
+        assert!(
+            snippet.contains("restored"),
+            "the one-shot flag must prevent a second scrub: {snippet}"
+        );
+    }
+
+    #[test]
     fn extract_claude_common_config_strips_all_credentials_keeps_shareable() {
         // env 混入多种凭据（Anthropic/OpenRouter/Google/OpenAI/Gemini + AWS/Vertex）
         // 与可共享配置；顶层混入非标准的 apiKey/api_key 凭据与正常设置。
@@ -672,6 +1184,9 @@ mod tests {
                 "AWS_BEARER_TOKEN_BEDROCK": "bedrock-tok",
                 "ANTHROPIC_BASE_URL": "https://example.com",
                 "ANTHROPIC_MODEL": "claude-x",
+                "CLAUDE_CODE_SUBAGENT_MODEL": "gpt-5.4-mini",
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "400000",
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000",
                 // 可共享、非机密配置（复数 _TOKENS 不应被误剥）
                 "ENABLE_TOOL_SEARCH": "true",
                 "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8192"
@@ -714,6 +1229,15 @@ mod tests {
         // 端点/模型（provider-specific 非机密）也应剥掉
         assert!(env.and_then(|e| e.get("ANTHROPIC_BASE_URL")).is_none());
         assert!(env.and_then(|e| e.get("ANTHROPIC_MODEL")).is_none());
+        assert!(env
+            .and_then(|e| e.get("CLAUDE_CODE_SUBAGENT_MODEL"))
+            .is_none());
+        assert!(env
+            .and_then(|e| e.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"))
+            .is_none());
+        assert!(env
+            .and_then(|e| e.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW"))
+            .is_none());
 
         // 可共享的非机密配置必须保留（含复数 _TOKENS 不被误剥）
         assert_eq!(
@@ -728,6 +1252,56 @@ mod tests {
         );
         assert_eq!(value.get("theme").and_then(|v| v.as_str()), Some("dark"));
         assert_eq!(value.get("includeCoAuthoredBy"), Some(&json!(false)));
+    }
+
+    /// Regression for issue #4272: Fable tier env keys must not enter the shared
+    /// Claude common-config snippet (same class as haiku/sonnet/opus model pins).
+    #[test]
+    fn extract_claude_common_config_strips_fable_model_env_keys() {
+        let settings = json!({
+            "env": {
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "haiku-mapped",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "Haiku Mapped",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-mapped[1M]",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Sonnet Mapped",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "opus-mapped[1M]",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Opus Mapped",
+                "ANTHROPIC_DEFAULT_FABLE_MODEL": "deepseek-v4-flash[1M]",
+                "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "deepseek-v4-flash",
+                "ANTHROPIC_MODEL": "default-mapped",
+                "ENABLE_TOOL_SEARCH": "true"
+            },
+            "theme": "dark"
+        });
+
+        let snippet = ProviderService::extract_claude_common_config(&settings)
+            .expect("extract should succeed");
+        let value: Value = serde_json::from_str(&snippet).expect("snippet is valid JSON");
+        let env = value.get("env");
+
+        for stripped in [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+            "ANTHROPIC_MODEL",
+        ] {
+            assert!(
+                env.and_then(|e| e.get(stripped)).is_none(),
+                "provider-specific model key {stripped} must not enter common config"
+            );
+        }
+
+        assert_eq!(
+            env.and_then(|e| e.get("ENABLE_TOOL_SEARCH"))
+                .and_then(|v| v.as_str()),
+            Some("true")
+        );
+        assert_eq!(value.get("theme").and_then(|v| v.as_str()), Some("dark"));
     }
 
     #[test]
@@ -779,10 +1353,18 @@ mod tests {
     }
 
     #[test]
-    fn extract_codex_common_config_preserves_mcp_servers_base_url() {
+    fn extract_codex_common_config_strips_provider_fields_and_injected_artifacts() {
+        // 顶层 experimental_bearer_token 模拟无活跃路由时的 fallback 注入；
+        // web_search = "disabled" 是 cc-switch 对黑名单网关注入的哨兵；
+        // 顶层 wire_api 模拟无 model_provider 时的 fallback 写法；
+        // [mcp.servers] 是历史错误格式，sync_all_enabled 清不掉它。
         let config_toml = r#"model_provider = "azure"
 model = "gpt-4"
+wire_api = "chat"
 disable_response_storage = true
+experimental_bearer_token = "sk-live-secret"
+model_catalog_json = "cc-switch-model-catalog.json"
+web_search = "disabled"
 
 [model_providers.azure]
 name = "Azure OpenAI"
@@ -791,6 +1373,9 @@ wire_api = "responses"
 
 [mcp_servers.my_server]
 base_url = "http://localhost:8080"
+
+[mcp.servers.legacy_server]
+command = "legacy-cmd"
 "#;
 
         let settings = json!({ "config": config_toml });
@@ -813,9 +1398,51 @@ base_url = "http://localhost:8080"
             !extracted.contains("[model_providers"),
             "should remove entire model_providers table"
         );
+        // MCP 归 DB mcp_servers 表所有，不得进共享片段（含历史错误格式 [mcp.servers]）
         assert!(
-            extracted.contains("http://localhost:8080"),
-            "should keep mcp_servers.* base_url"
+            !extracted.contains("mcp_servers") && !extracted.contains("http://localhost:8080"),
+            "should strip mcp_servers from the shared snippet, got: {extracted}"
+        );
+        assert!(
+            !extracted.contains("[mcp") && !extracted.contains("legacy-cmd"),
+            "should strip the legacy [mcp.servers] form from the shared snippet, got: {extracted}"
+        );
+        // 顶层 wire_api 是供应商路由语义（model_providers 整表已剥，
+        // 剩余任何 wire_api 都意味着泄漏）
+        assert!(
+            !extracted.contains("wire_api"),
+            "should strip top-level wire_api from the shared snippet, got: {extracted}"
+        );
+        // 注入产物不得进共享片段（bearer token 泄漏为密钥级问题）
+        assert!(
+            !extracted.contains("experimental_bearer_token")
+                && !extracted.contains("sk-live-secret"),
+            "should strip top-level fallback bearer token, got: {extracted}"
+        );
+        assert!(
+            !extracted.contains("model_catalog_json"),
+            "should strip catalog projection pointer, got: {extracted}"
+        );
+        assert!(
+            !extracted.contains("web_search"),
+            "should strip the cc-switch web_search disabled sentinel, got: {extracted}"
+        );
+        // 真正可共享的键保留
+        assert!(
+            extracted.contains("disable_response_storage = true"),
+            "shareable keys must survive extraction, got: {extracted}"
+        );
+    }
+
+    #[test]
+    fn extract_codex_common_config_keeps_user_set_web_search() {
+        let config_toml = "web_search = \"enabled\"\ndisable_response_storage = true\n";
+        let settings = json!({ "config": config_toml });
+        let extracted = ProviderService::extract_codex_common_config(&settings)
+            .expect("extract should succeed");
+        assert!(
+            extracted.contains("web_search = \"enabled\""),
+            "a user-set web_search value is a shareable preference, got: {extracted}"
         );
     }
 
@@ -942,6 +1569,135 @@ base_url = "http://localhost:8080"
                 .is_none(),
             "model override should be removed in takeover live config"
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn update_current_codex_provider_refreshes_and_clears_catalog_during_takeover() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        let mut original = Provider::with_id(
+            "p1".into(),
+            "Codex A".into(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "token-a" },
+                "config": r#"model_provider = "custom"
+model = "old-model"
+
+[model_providers.custom]
+name = "Codex A"
+base_url = "https://api.a.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#,
+                "modelCatalog": {
+                    "models": [{ "model": "old-model" }]
+                }
+            }),
+            None,
+        );
+        original.meta = Some(ProviderMeta {
+            api_format: Some("openai_responses".into()),
+            ..Default::default()
+        });
+        db.save_provider("codex", &original).expect("save provider");
+        db.set_current_provider("codex", "p1")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some("p1"))
+            .expect("set local current provider");
+
+        db.update_proxy_config(ProxyConfig {
+            live_takeover_active: true,
+            listen_port: 0,
+            ..Default::default()
+        })
+        .await
+        .expect("update proxy config");
+        {
+            let mut config = db
+                .get_proxy_config_for_app("codex")
+                .await
+                .expect("get app proxy config");
+            config.enabled = true;
+            db.update_proxy_config_for_app(config)
+                .await
+                .expect("enable Codex proxy config");
+        }
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&original.settings_config).expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy service");
+        state
+            .proxy_service
+            .sync_codex_live_from_provider_while_proxy_active(&original)
+            .await
+            .expect("seed taken-over Codex live config");
+        assert!(
+            state
+                .proxy_service
+                .detect_takeover_in_live_config_for_app(&AppType::Codex),
+            "seeded Codex live config should be recognized as takeover-owned"
+        );
+
+        let mut updated = original.clone();
+        updated.settings_config["config"] = json!(
+            r#"model_provider = "custom"
+model = "gpt-5.4"
+
+[model_providers.custom]
+name = "Codex A"
+base_url = "https://api.updated.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+        );
+        updated.settings_config["modelCatalog"] = json!({
+            "models": [{ "model": "gpt-5.4", "displayName": "GPT 5.4" }]
+        });
+
+        ProviderService::update(&state, AppType::Codex, None, updated.clone())
+            .expect("update current Codex provider mapping");
+
+        let catalog_path = crate::codex_config::get_codex_model_catalog_path();
+        let catalog: Value = read_json_file(&catalog_path).expect("read generated catalog");
+        assert_eq!(catalog["models"][0]["slug"], "gpt-5.4");
+        assert_eq!(
+            catalog["models"][0]["input_modalities"],
+            json!(["text", "image"]),
+            "unknown/GPT models must fail open to image input"
+        );
+        let live_config = fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read Codex config.toml");
+        assert!(live_config.contains("model_catalog_json"));
+
+        updated.settings_config["modelCatalog"] = json!({ "models": [] });
+        ProviderService::update(&state, AppType::Codex, None, updated)
+            .expect("remove current Codex provider mapping");
+
+        let live_config = fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read Codex config.toml after mapping removal");
+        assert!(
+            !live_config.contains("model_catalog_json"),
+            "removing mappings during takeover must clear the stale catalog pointer"
+        );
+
+        state
+            .proxy_service
+            .stop()
+            .await
+            .expect("stop proxy service");
     }
 
     #[cfg(any(target_os = "macos", windows))]
@@ -1292,6 +2048,40 @@ base_url = "http://localhost:8080"
 
     #[test]
     #[serial]
+    fn import_opencode_providers_from_live_updates_existing_provider_from_live() {
+        with_test_home(|state, _| {
+            let provider = opencode_provider("existing-opencode");
+            state
+                .db
+                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .expect("seed existing opencode provider");
+
+            let mut live_settings = provider.settings_config.clone();
+            live_settings.as_object_mut().unwrap().remove("name");
+            live_settings["npm"] = Value::String("@ai-sdk/anthropic".to_string());
+            live_settings["models"]["gpt-4o"]["name"] = Value::String("Claude Sonnet".to_string());
+            crate::opencode_config::set_provider(&provider.id, live_settings)
+                .expect("seed edited live opencode provider");
+
+            let updated = import_opencode_providers_from_live(state)
+                .expect("import opencode providers from live");
+            assert_eq!(updated, 1);
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::OpenCode.as_str())
+                .expect("query updated opencode provider")
+                .expect("opencode provider should exist");
+            assert_eq!(saved.name, provider.name);
+            assert_eq!(saved.settings_config["npm"], json!("@ai-sdk/anthropic"));
+            assert_eq!(
+                saved.settings_config["models"]["gpt-4o"]["name"],
+                json!("Claude Sonnet")
+            );
+        });
+    }
+    #[test]
+    #[serial]
     fn import_openclaw_providers_from_live_marks_provider_as_live_managed() {
         with_test_home(|state, _| {
             let mut provider = openclaw_provider("imported-openclaw");
@@ -1321,6 +2111,89 @@ base_url = "http://localhost:8080"
                 Some(true),
                 "providers imported from live should be treated as live-managed"
             );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn import_openclaw_providers_from_live_updates_existing_provider_from_live() {
+        with_test_home(|state, _| {
+            let mut provider = openclaw_provider("existing-openclaw");
+            provider.settings_config["models"] = json!([
+                {
+                    "id": "claude-sonnet-4",
+                    "name": "Claude Sonnet 4"
+                }
+            ]);
+            state
+                .db
+                .save_provider(AppType::OpenClaw.as_str(), &provider)
+                .expect("seed existing openclaw provider");
+
+            let mut live_settings = provider.settings_config.clone();
+            live_settings["baseUrl"] = Value::String("https://api.example.com/v1".to_string());
+            live_settings["models"][0]["name"] = Value::String("Claude Sonnet 4.1".to_string());
+            crate::openclaw_config::set_provider(&provider.id, live_settings)
+                .expect("seed edited live openclaw provider");
+
+            let updated = import_openclaw_providers_from_live(state)
+                .expect("import openclaw providers from live");
+            assert_eq!(updated, 1);
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::OpenClaw.as_str())
+                .expect("query updated openclaw provider")
+                .expect("openclaw provider should exist");
+            assert_eq!(saved.name, provider.name);
+            assert_eq!(
+                saved.settings_config["baseUrl"],
+                json!("https://api.example.com/v1")
+            );
+            assert_eq!(
+                saved.settings_config["models"][0]["name"],
+                json!("Claude Sonnet 4.1")
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn import_hermes_providers_from_live_updates_existing_provider_from_live() {
+        with_test_home(|state, _| {
+            let provider = hermes_provider("existing-hermes");
+            state
+                .db
+                .save_provider(AppType::Hermes.as_str(), &provider)
+                .expect("seed existing hermes provider");
+
+            let mut live_settings = provider.settings_config.clone();
+            live_settings["base_url"] = Value::String("https://api.hermes.example/v1".to_string());
+            live_settings["models"]["gpt-4o"]["name"] = Value::String("GPT-4o Updated".to_string());
+            crate::hermes_config::set_provider(&provider.id, live_settings)
+                .expect("seed edited live hermes provider");
+
+            let updated = import_hermes_providers_from_live(state)
+                .expect("import hermes providers from live");
+            assert_eq!(updated, 1);
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::Hermes.as_str())
+                .expect("query updated hermes provider")
+                .expect("hermes provider should exist");
+            assert_eq!(saved.name, provider.name);
+            assert_eq!(
+                saved.settings_config["base_url"],
+                json!("https://api.hermes.example/v1")
+            );
+            // models are denormalized from YAML dict to UI-friendly array by
+            // get_providers(), so access by index rather than dict key
+            assert_eq!(
+                saved.settings_config["models"][0]["name"],
+                json!("GPT-4o Updated")
+            );
+            assert_eq!(saved.settings_config["models"][0]["id"], json!("gpt-4o"));
         });
     }
 
@@ -1910,20 +2783,41 @@ impl ProviderService {
                     .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
                 }
 
-                if matches!(app_type, AppType::Claude)
-                    && futures::executor::block_on(state.proxy_service.is_running())
-                {
-                    futures::executor::block_on(
-                        state
-                            .proxy_service
-                            .sync_claude_live_from_provider_while_proxy_active(&provider),
-                    )
-                    .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?;
+                if futures::executor::block_on(state.proxy_service.is_running()) {
+                    if matches!(app_type, AppType::Claude) {
+                        futures::executor::block_on(
+                            state
+                                .proxy_service
+                                .sync_claude_live_from_provider_while_proxy_active(&provider),
+                        )
+                        .map_err(|e| {
+                            AppError::Message(format!("同步 Claude Live 配置失败: {e}"))
+                        })?;
+                    } else if live_taken_over && matches!(app_type, AppType::Codex) {
+                        // Codex model mappings are projected into a generated
+                        // model_catalog_json file. Refresh takeover-owned Live
+                        // immediately so adding/removing mappings cannot leave
+                        // the previous catalog pointer and capabilities active.
+                        futures::executor::block_on(
+                            state
+                                .proxy_service
+                                .sync_codex_live_from_provider_while_proxy_active(&provider),
+                        )
+                        .map_err(|e| AppError::Message(format!("同步 Codex Live 配置失败: {e}")))?;
+                    }
                 }
             } else {
                 write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
-                // Sync MCP
-                McpService::sync_all_enabled(state)?;
+                // 重写 live 后只重投影本应用的 MCP：全量 sync_all_enabled 会把
+                // 无关应用的 live 损坏（如 ~/.claude.json 坏 JSON）牵连进保存
+                // 流程。走到这里 DB 与 live 都已按新配置落盘，保存事实上已
+                // 成功；投影失败降级为警告，避免制造"保存失败"假象（MCP
+                // 投影可自愈：下次切换 / 任一 MCP 启停都会重新投影）。
+                if let Err(err) = McpService::sync_enabled_for_app(state, &app_type) {
+                    log::warn!(
+                        "保存供应商后重投影 {app_type:?} MCP 失败（将在下次同步时自愈）: {err}"
+                    );
+                }
             }
         }
 
@@ -2096,14 +2990,16 @@ impl ProviderService {
         // restore backup. Serialize them per app, then decide from the locked
         // current state so a just-started takeover cannot be overwritten by a
         // normal live write.
-        let _switch_guard =
-            if matches!(app_type, AppType::Claude | AppType::Codex | AppType::Gemini) {
-                Some(futures::executor::block_on(
-                    state.proxy_service.lock_switch_for_app(app_type.as_str()),
-                ))
-            } else {
-                None
-            };
+        let _switch_guard = if matches!(
+            app_type,
+            AppType::Claude | AppType::Codex | AppType::Gemini | AppType::GrokBuild
+        ) {
+            Some(futures::executor::block_on(
+                state.proxy_service.lock_switch_for_app(app_type.as_str()),
+            ))
+        } else {
+            None
+        };
 
         // Backup or live placeholders mean the live file is owned by proxy
         // takeover, even if the proxy server is temporarily stopped or is in the
@@ -2121,7 +3017,10 @@ impl ProviderService {
 
         // Block switching to official providers when proxy takeover is active.
         // Using a proxy with official APIs (Anthropic/OpenAI/Google) may cause account bans.
-        if should_hot_switch && _provider.category.as_deref() == Some("official") {
+        if should_hot_switch
+            && _provider.category.as_deref() == Some("official")
+            && !official_provider_supports_proxy_takeover(&app_type, _provider)
+        {
             return Err(AppError::localized(
                 "switch.official_blocked_by_proxy",
                 "代理接管模式下不能切换到官方供应商，使用代理访问官方 API 可能导致账号被封禁。请先关闭代理接管，或选择第三方供应商。",
@@ -2191,6 +3090,7 @@ impl ProviderService {
         // Use effective current provider (validated existence) to ensure backfill targets valid provider
         let current_id = crate::settings::get_effective_current_provider(&state.db, &app_type)?;
 
+        let mut backfill_completed = false;
         if let Some(current_id) = current_id {
             if current_id != id {
                 // Additive mode apps - all providers coexist in the same file,
@@ -2224,6 +3124,8 @@ impl ProviderService {
                                 result
                                     .warnings
                                     .push(format!("backfill_failed:{current_id}"));
+                            } else {
+                                backfill_completed = true;
                             }
                         }
                     }
@@ -2242,6 +3144,30 @@ impl ProviderService {
 
         // Sync to live (write_gemini_live handles security flag internally for Gemini)
         write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+
+        // A material-less official Codex provider gets a config-only live
+        // write, which can leave the previous third-party key in
+        // ~/.codex/auth.json and strand the user on a 401 with no login
+        // screen. Only clean up after a successful backfill — the DB copy
+        // made above is what keeps that key recoverable. Failures degrade to
+        // a log entry: config.toml and is_current are already committed, so
+        // failing the switch here would report a switch that in fact happened.
+        if matches!(app_type, AppType::Codex)
+            && backfill_completed
+            && provider.category.as_deref() == Some("official")
+        {
+            let db_auth = provider.settings_config.get("auth");
+            match crate::codex_config::clear_stale_codex_live_auth_after_official_switch(
+                db_auth.unwrap_or(&serde_json::Value::Null),
+            ) {
+                Ok(true) => log::info!(
+                    "Removed stale third-party auth.json after switching to official Codex provider '{}'",
+                    provider.id
+                ),
+                Ok(false) => {}
+                Err(e) => log::warn!("Failed to clean stale Codex auth.json: {e}"),
+            }
+        }
 
         // Hermes is additive, so "switching" doesn't overwrite a live config file
         // — we instead update the top-level `model:` section to point at this
@@ -2297,8 +3223,16 @@ impl ProviderService {
             }
         }
 
-        // Sync MCP
-        McpService::sync_all_enabled(state)?;
+        // 切换重写了目标应用的 live，只重投影该应用的 MCP（Codex 的
+        // [mcp_servers] 与 live 同文件，整体替换后必须补回；其余应用的
+        // MCP 文件独立于 live，投影是幂等维护）。不用全量 sync_all_enabled：
+        // 无关应用的 live 损坏（如 ~/.claude.json 坏 JSON）不该阻断切换。
+        // 走到这里 DB is_current 与 live 都已落盘，切换事实上已成功；
+        // 投影失败上抛会让前端报"切换失败"制造分裂假象，故降级为警告
+        // （MCP 投影可自愈：下次切换 / 任一 MCP 启停都会重新投影）。
+        if let Err(err) = McpService::sync_enabled_for_app(state, &app_type) {
+            log::warn!("切换供应商后重投影 {app_type:?} MCP 失败（将在下次同步时自愈）: {err}");
+        }
 
         Ok(result)
     }
@@ -2444,9 +3378,12 @@ impl ProviderService {
     /// 读到的 live 一定是"片段 + 本地改动"的超集，重提取只会丢掉用户真正删掉的键，
     /// 不会误删其它供应商共享的内容。
     ///
-    /// **作用域**：仅 Claude。Codex 的 live 是 TOML 且端点藏在 `[model_providers]`
-    /// 表里（现有提取器不剥），自动同步会泄漏端点并与 modelCatalog / 统一会话桶 /
-    /// auth 还原逻辑冲突；Gemini 暂未纳入。两者如需支持应各自单独验证后再加。
+    /// **作用域**：Claude + Codex。Codex 提取器（`extract_codex_common_config`）
+    /// 已剥离全部供应商专属与 cc-switch 注入内容：`model` / `model_provider` /
+    /// 顶层 `base_url` / 整张 `model_providers` 表（含端点与统一会话桶）、
+    /// `mcp_servers`（SSOT 在 DB 表）、顶层 `experimental_bearer_token`
+    /// fallback、`model_catalog_json`、`web_search = "disabled"` 哨兵——密钥与
+    /// 注入产物不会进共享片段。Gemini 暂未纳入，如需支持应单独验证后再加。
     ///
     /// 仅对**显式勾选"写入通用配置"**（`meta.common_config_enabled == Some(true)`）的
     /// 供应商生效；用户**显式清空**过片段（`_cleared`）时跳过，避免把用户主动清掉的
@@ -2458,8 +3395,8 @@ impl ProviderService {
         live_config: &Value,
         result: &mut SwitchResult,
     ) {
-        // 作用域限定 Claude（见函数文档）。
-        if !matches!(app_type, AppType::Claude) {
+        // 作用域限定 Claude + Codex（见函数文档）。
+        if !matches!(app_type, AppType::Claude | AppType::Codex) {
             return;
         }
 
@@ -2548,6 +3485,7 @@ impl ProviderService {
             AppType::ClaudeDesktop => Ok(String::new()),
             AppType::Codex => Self::extract_codex_common_config(&provider.settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
+            AppType::GrokBuild => Ok(String::new()),
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
@@ -2564,6 +3502,7 @@ impl ProviderService {
             AppType::ClaudeDesktop => Ok(String::new()),
             AppType::Codex => Self::extract_codex_common_config(settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
+            AppType::GrokBuild => Ok(String::new()),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
@@ -2580,20 +3519,39 @@ impl ProviderService {
     /// `OPENROUTER_API_KEY` / `GOOGLE_API_KEY` 等回退）、各类 `*_AUTH_TOKEN` /
     /// 单数 `*_TOKEN`、AWS Bedrock / Vertex 凭据、以及通用 secret / password /
     /// 私钥命名。
-    fn is_sensitive_config_key(name: &str) -> bool {
+    pub(crate) fn is_sensitive_config_key(name: &str) -> bool {
         let upper = name.to_ascii_uppercase();
 
         // 单数 `_TOKEN` 命中 AWS_SESSION_TOKEN 等，但**不**误伤复数 `_TOKENS`
         // （CLAUDE_CODE_MAX_OUTPUT_TOKENS / MAX_THINKING_TOKENS 是正常可共享配置）。
         const SENSITIVE_SUFFIXES: &[&str] = &[
+            // 裸 `_KEY` 是最常见的凭据写法（OPENAI_KEY / GROQ_KEY / XAI_KEY…），
+            // 必须单列：只枚举 `_API_KEY` / `_ACCESS_KEY` 这些子类，等于把最普通
+            // 的那一种漏在外面。下面几条 `_*_KEY` 被它蕴含，保留是为了说明覆盖面。
+            "_KEY",
             "_API_KEY",
-            "_APIKEY",
-            "_AUTH_TOKEN",
-            "_TOKEN",
             "_ACCESS_KEY",
             "_ACCESS_KEY_ID",
             "_KEY_ID",
             "_PRIVATE_KEY",
+            // 不带分隔符的复合写法各走各的后缀：`_KEY` 够不着 `..._APIKEY`
+            // （倒数第四个字符是 I 不是下划线）。VOLC_ACCESSKEY 是火山引擎文档
+            // 里的正式变量名，本仓库就实现了火山 AK/SK 用量查询。
+            "_APIKEY",
+            "_ACCESSKEY",
+            "_SECRETKEY",
+            "_APITOKEN",
+            "_AUTH_TOKEN",
+            "_TOKEN",
+            // GITHUB_PAT / GITLAB_PAT 等 personal access token 的惯用写法，
+            // 既不含 TOKEN 也不含 KEY，前面每一条规则都够不着。
+            "_PAT",
+            // 口令类的常见缩写。`_PASS` 不会误伤 `*_BYPASS`（那个以 `_BYPASS`
+            // 结尾），`_PWD` 也不会误伤 shell 的 PWD / OLDPWD。
+            "_PWD",
+            "_PASS",
+            "_PASSPHRASE",
+            "_CREDS",
         ];
         const SENSITIVE_EXACT: &[&str] = &[
             "APIKEY",
@@ -2635,6 +3593,16 @@ impl ProviderService {
             "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
             "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+            // Fable 是 v3.16.3 新增的第四档模型映射，与 haiku/sonnet/opus 同属供应商专属，
+            // 不得进入通用配置片段，否则会污染其它供应商（issue #4272）。
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+            // Context limits follow the actual upstream model. Sharing these
+            // across providers can cap GPT/Kimi to the wrong window and make
+            // Claude Code compact too early or miss the upstream limit.
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
             "ANTHROPIC_BASE_URL",
         ];
 
@@ -2711,9 +3679,47 @@ impl ProviderService {
         root.remove("model_provider");
         // Legacy/alt formats might use a top-level base_url.
         root.remove("base_url");
+        // wire_api 与 base_url 同属供应商路由语义：无 model_provider 时
+        // update_codex_toml_field / 前端 setCodexWireApi 都会把它落在顶层，
+        // 进了片段会改写其它供应商的协议选择（chat vs responses）。
+        root.remove("wire_api");
 
         // Remove entire model_providers table (provider-specific configuration)
         root.remove("model_providers");
+
+        // MCP 服务器归 DB mcp_servers 表所有：进了共享片段会绕过按应用的
+        // 启用状态被合并进所有勾选通用配置的供应商，且在通用配置编辑框里
+        // 显示为一份"重复"的 MCP 配置。
+        root.remove("mcp_servers");
+        // 历史错误格式 [mcp.servers] 一并剥离（与 strip_codex_mcp_servers_from_settings
+        // 一致）：sync_all_enabled 只管理 [mcp_servers.*]，legacy 形态一旦进了
+        // 片段就会被合并进所有供应商，且没有任何同步路径能清掉这个孤儿。
+        if let Some(mcp_tbl) = root
+            .get_mut("mcp")
+            .and_then(|item| item.as_table_like_mut())
+        {
+            mcp_tbl.remove("servers");
+            if mcp_tbl.is_empty() {
+                root.remove("mcp");
+            }
+        }
+
+        // cc-switch 写 live 时注入的产物一律不进共享片段：
+        // - experimental_bearer_token 正常写在 [model_providers.<id>] 内（上面
+        //   整表已剥），但无活跃路由 / 内建保留 id / 路由表缺失三种 fallback
+        //   会落在顶层——不剥等于把 API 密钥写进共享片段。
+        root.remove("experimental_bearer_token");
+        // - model_catalog_json 指向按供应商生成的 catalog 投影文件（DB 为 SSOT）。
+        root.remove("model_catalog_json");
+        // - web_search 只剥 cc-switch 注入的 "disabled" 哨兵；用户手设的其它值
+        //   属于可共享偏好，保留。
+        if root
+            .get(crate::codex_config::CODEX_WEB_SEARCH_FIELD)
+            .and_then(|item| item.as_str())
+            == Some(crate::codex_config::CODEX_WEB_SEARCH_DISABLED)
+        {
+            root.remove(crate::codex_config::CODEX_WEB_SEARCH_FIELD);
+        }
 
         // Clean up multiple empty lines (keep at most one blank line).
         let mut cleaned = String::new();
@@ -2745,7 +3751,13 @@ impl ProviderService {
         let mut snippet = serde_json::Map::new();
         if let Some(env) = env {
             for (key, value) in env {
-                if key == "GOOGLE_GEMINI_BASE_URL" || key == "GEMINI_API_KEY" {
+                // 端点按名剥离（它不是凭据，模式匹配够不着）；凭据全部交给
+                // `is_sensitive_config_key` 统一模式匹配（与 Claude 提取器一致）。
+                // 只列固定名单会漏掉下一个 `*_API_KEY` —— 例如 `GOOGLE_API_KEY`
+                // （provider.rs 认可的一等 Gemini 凭据），而共享片段会被 deep-merge
+                // 回其它 Gemini 供应商，漏剥即等于把 A 账号的密钥写进 B 供应商并
+                // 发往 B 的 base_url。`GEMINI_API_KEY` 不必单列：`_KEY` 后缀已覆盖。
+                if key == "GOOGLE_GEMINI_BASE_URL" || Self::is_sensitive_config_key(key) {
                     continue;
                 }
                 let Value::String(v) = value else {
@@ -2764,6 +3776,221 @@ impl ProviderService {
 
         serde_json::to_string_pretty(&Value::Object(snippet))
             .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))
+    }
+
+    /// 一次性清理：把历史泄漏进 Gemini 共享片段的凭据从所有存储位置抹掉。
+    ///
+    /// 背景：`extract_gemini_common_config` 曾只剥离两个固定键名，`GOOGLE_API_KEY`
+    /// 等一等凭据会进入共享片段，再被 `apply_common_config_to_settings` 深合并进
+    /// **其它** Gemini 供应商的 env，随请求发往对方的 base_url。
+    ///
+    /// 光修提取器不够：Gemini 的片段一旦生成就**永不自动重提取**（启动期
+    /// auto-extract 与导入后补提取都要求 `snippet.is_none()`，切换时的回写又只对
+    /// Claude / Codex 生效），所以存量片段会一直带着密钥继续注入。
+    ///
+    /// 两个关键约束：
+    ///
+    /// 1. **不能只清片段**。合并与剥离是一对靠「值相等」严格抵消的操作：切走供应商时
+    ///    `remove_common_config_from_settings` 依据片段内容把注入的键删掉。片段里一旦
+    ///    没了这个键，backfill 就会把 live 中残留的密钥原样写进受害供应商的
+    ///    `settings_config`——泄漏从瞬时污染变成永久污染。所以片段、各供应商配置、
+    ///    live 文件必须一起清。
+    /// 2. **按值相等定向删除，不按键名一刀切**。复用 `remove_common_config_from_settings`
+    ///    可以只清掉扩散出去的那一份，保留某个供应商自己写的、值不同的同名键。
+    ///
+    /// 步骤顺序本身是安全属性的一部分：**清片段必须排在最后**。片段是
+    /// `remove_common_config_from_settings` 唯一的"该剥哪些键"来源，一旦清空，任何
+    /// 残留（live 文件里的、下一轮重试要处理的）都再也无法被识别和剥离。所以所有
+    /// 可能失败的步骤都排在它前面，失败即带错返回，让下次启动能原样重来。
+    ///
+    /// 清理后部分供应商会显示缺少 API Key，需用户重填——这是正确行为：那把密钥本就
+    /// 不属于它们。（受害者原有的同名键在合并时已被覆盖，无法恢复。）动手前会往
+    /// settings 的 `gemini_common_config_scrub_audit_v1` 写一条审计记录，内容是
+    /// **键名与受影响的供应商 id，不含值**：`settings` 会随 WebDAV/S3 同步上传，
+    /// 而这里处理的正是必须销毁的凭据，留值等于把一次清除换成一份跨设备扩散、
+    /// 没有界面入口、永不过期的明文副本。
+    pub async fn scrub_leaked_gemini_common_config(state: &AppState) -> Result<(), AppError> {
+        const FLAG: &str = "gemini_common_config_credentials_scrubbed_v1";
+        const AUDIT_KEY: &str = "gemini_common_config_scrub_audit_v1";
+        let app = AppType::Gemini;
+
+        if state.db.get_bool_flag(FLAG).unwrap_or(false) {
+            return Ok(());
+        }
+
+        let Some(snippet_text) = state.db.get_config_snippet(app.as_str())? else {
+            state.db.set_setting(FLAG, "true")?;
+            return Ok(());
+        };
+
+        // 片段解析不了就不动它，只标记完成——乱改用户数据比留着更糟
+        let Ok(Value::Object(entries)) = serde_json::from_str::<Value>(&snippet_text) else {
+            state.db.set_setting(FLAG, "true")?;
+            return Ok(());
+        };
+
+        let mut poison = serde_json::Map::new();
+        let mut clean = serde_json::Map::new();
+        for (key, value) in entries {
+            if Self::is_sensitive_config_key(&key) {
+                poison.insert(key, value);
+            } else {
+                clean.insert(key, value);
+            }
+        }
+
+        if poison.is_empty() {
+            state.db.set_setting(FLAG, "true")?;
+            return Ok(());
+        }
+
+        log::warn!(
+            "检测到 {} 个凭据键残留在 Gemini 通用配置片段中，开始一次性清理",
+            poison.len()
+        );
+
+        let poison_keys: Vec<String> = poison.keys().cloned().collect();
+        let poison_value = Value::Object(poison);
+        let poison_text = serde_json::to_string(&poison_value)
+            .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))?;
+
+        // 1) 先算出各供应商清理后的配置，但**先不落库**
+        let providers = state.db.get_all_providers(app.as_str())?;
+        let mut pending: Vec<(String, Provider, Value)> = Vec::new();
+        for (id, provider) in providers {
+            let cleaned = match live::remove_common_config_from_settings(
+                &app,
+                &provider.settings_config,
+                &poison_text,
+            ) {
+                Ok(cleaned) => cleaned,
+                Err(err) => {
+                    log::warn!("清理供应商 '{id}' 的泄漏凭据失败: {err}");
+                    continue;
+                }
+            };
+            if cleaned != provider.settings_config {
+                pending.push((id, provider, cleaned));
+            }
+        }
+
+        // 2) 落库前留一份审计记录：**只记键名与受影响的供应商，不记值**。
+        //
+        //    「按值相等定向删除」在一种合法场景下也会命中：用户有意在多个供应商里
+        //    复用同一把 key。所以必须留下"删了什么、从哪删的"，否则用户只能靠翻
+        //    日志。但不能留值——`settings` 表不在 `SYNC_SKIP_TABLES` 里，会随
+        //    WebDAV/S3 同步上传，而这里处理的恰恰是必须销毁的泄漏凭据：留值等于
+        //    把一次清除换成一份没有界面入口、永不过期、还会跨设备扩散的明文副本。
+        //    密钥本来就该轮换，可恢复性不值这个代价。
+        let removed_env_keys = |before: &Value, after: &Value| -> Vec<String> {
+            let before_env = before.get("env").and_then(Value::as_object);
+            let after_env = after.get("env").and_then(Value::as_object);
+            match (before_env, after_env) {
+                (Some(before_env), Some(after_env)) => before_env
+                    .keys()
+                    .filter(|key| !after_env.contains_key(*key))
+                    .cloned()
+                    .collect(),
+                (Some(before_env), None) => before_env.keys().cloned().collect(),
+                _ => Vec::new(),
+            }
+        };
+        let audit = serde_json::json!({
+            "removedFromSnippet": poison_keys,
+            "providers": pending
+                .iter()
+                .map(|(id, provider, cleaned)| serde_json::json!({
+                    "id": id,
+                    "removedKeys": removed_env_keys(&provider.settings_config, cleaned),
+                }))
+                .collect::<Vec<_>>(),
+        });
+        let audit_text = serde_json::to_string(&audit)
+            .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))?;
+        // 只在没有记录时写。provider 的写入不是一个事务（每次 save_provider 各自
+        // 提交），上一轮可能改到一半就中止；此时完成标记没置位，下次启动会重跑，
+        // 而重跑看到的"原始状态"已经残缺。无条件 INSERT OR REPLACE 会拿这份残缺
+        // 记录盖掉第一轮那份完整的。
+        if state.db.get_setting(AUDIT_KEY)?.is_none() {
+            state.db.set_setting(AUDIT_KEY, &audit_text)?;
+        }
+
+        // 3) 各供应商 settings_config：按值相等定向删除扩散出去的副本
+        for (id, provider, cleaned) in pending {
+            let mut updated = provider;
+            updated.settings_config = cleaned;
+            state.db.save_provider(app.as_str(), &updated)?;
+            log::info!("已从 Gemini 供应商 '{id}' 中清除泄漏的共享凭据");
+        }
+
+        // 4) 代理接管中的 live 快照里也可能有一份副本。这一步的失败**必须传播**：
+        //
+        //    关代理时 `restore_live_config_for_app_with_fallback_inner`（proxy.rs:869）
+        //    会把这份快照原样写回 `~/.gemini/.env`。若它仍带毒而我们照样清了片段、置了
+        //    完成标记，那么代理一停凭据就当场复活，而一次性标记又保证不会再清第二次；
+        //    此后片段里已没有这个键，下一次切换的 backfill 就把它永久写进受害供应商的
+        //    配置——还是本函数开头那个顺序陷阱，只是换了扇门进来。
+        //
+        //    带错返回是安全的失败方式：调用方（lib.rs:1189）只记 warn 不中断启动，
+        //    片段和标记都原样留着，下次启动照原样重来。
+        if let Some(backup) = state.db.get_live_backup(app.as_str()).await? {
+            let original: Value = serde_json::from_str(&backup.original_config)
+                .map_err(|e| AppError::Message(format!("解析 Gemini 代理接管备份失败: {e}")))?;
+            let cleaned = live::remove_common_config_from_settings(&app, &original, &poison_text)?;
+            if cleaned != original {
+                let text = serde_json::to_string(&cleaned)
+                    .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))?;
+                state.db.save_live_backup(app.as_str(), &text).await?;
+                log::info!("已从 Gemini 代理接管备份中清除泄漏的共享凭据");
+            }
+        }
+
+        // 5) `~/.gemini/.env`：**定向**删除，且必须在清片段之前做，失败即中止。
+        //
+        //    为什么不用 `sync_current_provider_for_app` 重投影：它在没有当前供应商
+        //    时直接返回 Ok 而根本不写文件，泄漏值会原样留在 live 里；等片段被清空
+        //    之后，下次切换时 `remove_common_config_from_settings` 再也认不出这个
+        //    键，backfill 就把它永久写进受害供应商的配置——正是本函数开头说的那个
+        //    顺序陷阱，只是由"没修"变成"修了一半更糟"。定向删除还顺带保住了只存在
+        //    于 live、与供应商无关的手工 env（重投影会把它们抹掉）。
+        //
+        //    删除走 `remove_gemini_env_entries` 的**保序**实现而不是 read→HashMap→
+        //    write 往返：后者会顺手抹掉注释、空行和无法识别的行，并按键名重排整个
+        //    文件。全量投影时那无所谓，但这里是一次用户没主动触发的启动期清理，不该
+        //    连带改写与泄漏无关的内容。
+        //
+        //    失败就带着错误返回：片段此刻还留着毒键，完成标记也没置位，下次启动能
+        //    照原样重来。清片段是不可逆的一步，必须排在所有会失败的步骤之后。
+        let poison_env: HashMap<String, String> = poison_value
+            .as_object()
+            .map(|map| {
+                map.iter()
+                    .filter_map(|(key, value)| {
+                        value.as_str().map(|text| (key.clone(), text.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if crate::gemini_config::remove_gemini_env_entries(&poison_env)? {
+            log::info!("已从 ~/.gemini/.env 中清除泄漏的共享凭据");
+        }
+
+        // 6) 片段本身：保留可共享的部分。全部清空时删行而不是写 "{}"——留着空行会让
+        //    should_auto_extract_config_snippet 永远为 false，用户的合法共享配置再也
+        //    重建不回来。同理绝不置 cleared 标记。
+        if clean.is_empty() {
+            state.db.set_config_snippet(app.as_str(), None)?;
+        } else {
+            let cleaned_snippet = serde_json::to_string_pretty(&Value::Object(clean))
+                .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))?;
+            state
+                .db
+                .set_config_snippet(app.as_str(), Some(cleaned_snippet))?;
+        }
+
+        state.db.set_setting(FLAG, "true")?;
+        log::info!("Gemini 通用配置凭据清理完成");
+        Ok(())
     }
 
     /// Extract common config for OpenCode (JSON format)
@@ -2986,6 +4213,32 @@ impl ProviderService {
                 use crate::gemini_config::validate_gemini_settings;
                 validate_gemini_settings(&provider.settings_config)?
             }
+            AppType::GrokBuild => {
+                let settings = provider.settings_config.as_object().ok_or_else(|| {
+                    AppError::localized(
+                        "provider.grokbuild.settings.not_object",
+                        "Grok Build 配置必须是 JSON 对象",
+                        "Grok Build configuration must be a JSON object",
+                    )
+                })?;
+                let config = settings
+                    .get("config")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.grokbuild.config.missing",
+                            "Grok Build 配置缺少 config 字段",
+                            "Grok Build configuration is missing the config field",
+                        )
+                    })?;
+                if provider.category.as_deref() == Some("official") {
+                    // 官方条目走 Grok CLI 自带 OAuth：空 config 合法，
+                    // 回填快照只要求 TOML 语法合法。
+                    crate::grok_config::validate_config_toml_syntax(config)?;
+                } else {
+                    crate::grok_config::validate_config_toml(config)?;
+                }
+            }
             AppType::OpenCode => {
                 // OpenCode uses a different config structure: { npm, options, models }
                 // Basic validation - must be an object
@@ -3080,6 +4333,28 @@ impl ProviderService {
                     })?
                     .to_string();
 
+                Ok((api_key, base_url))
+            }
+            AppType::GrokBuild => {
+                let config_toml = provider
+                    .settings_config
+                    .get("config")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.grokbuild.config.missing",
+                            "Grok Build 配置缺少 config 字段",
+                            "Grok Build configuration is missing the config field",
+                        )
+                    })?;
+                let (base_url, api_key) = crate::grok_config::extract_credentials(config_toml)
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.grokbuild.credentials.missing",
+                            "Grok Build 配置缺少 Base URL 或 API Key",
+                            "Grok Build configuration is missing the base URL or API key",
+                        )
+                    })?;
                 Ok((api_key, base_url))
             }
             AppType::ClaudeDesktop => {

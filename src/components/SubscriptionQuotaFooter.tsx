@@ -37,6 +37,8 @@ export const TIER_I18N_KEYS: Record<string, string> = {
   weekly_limit: "subscription.sevenDay",
   // 火山方舟 Agent Plan / Coding Plan 的月窗口
   monthly: "subscription.monthly",
+  // Grok credit 额度的兜底窗口（重置距离可识别时归入 weekly_limit/monthly）
+  credits: "subscription.credits",
   // GitHub Copilot
   premium: "subscription.copilotPremium",
 };
@@ -422,7 +424,8 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
       quota={quota}
       loading={loading}
       refetch={refetch}
-      appIdForExpiredHint={appId}
+      // expiredHint 里的 {tool} 是 CLI 命令名：Grok 的命令是 `grok` 而非 appId
+      appIdForExpiredHint={appId === "grokbuild" ? "grok" : appId}
       inline={inline}
     />
   );

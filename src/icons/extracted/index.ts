@@ -1,6 +1,7 @@
-// Auto-generated icon index
-// Do not edit manually
+// Hand-curated icon index with optimized SVG content and custom name mappings.
+// Update entries deliberately; automatic regeneration is intentionally unsupported.
 
+import _a6api from "./a6-icon.png";
 import _apikeyfun from "./apikeyfun.png";
 import _apinebula from "./apinebula_icon.png";
 import _atlascloud from "./atlascloud_icon.png";
@@ -24,6 +25,7 @@ import _runapi from "./runapi.jpg";
 import _shengsuanyun from "./shengsuanyun.svg?url";
 import _subrouter from "./subrouter.svg?url";
 import _sudocode from "./sudocode.png";
+import _sudocodeUs from "./sudocode-us.png";
 import _teamorouter from "./TeamoRouter-icon-dark.png";
 import _unity2 from "./unity2.png";
 import _zetaapi from "./zetaapi-icon.png";
@@ -102,6 +104,7 @@ export const icons: Record<string, string> = {
 };
 
 export const iconUrls: Record<string, string> = {
+  a6api: _a6api,
   apikeyfun: _apikeyfun,
   apinebula: _apinebula,
   atlascloud: _atlascloud,
@@ -125,6 +128,7 @@ export const iconUrls: Record<string, string> = {
   shengsuanyun: _shengsuanyun,
   subrouter: _subrouter,
   sudocode: _sudocode,
+  "sudocode-us": _sudocodeUs,
   teamorouter: _teamorouter,
   unity2: _unity2,
   zetaapi: _zetaapi,

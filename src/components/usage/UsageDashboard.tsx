@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { UsageHero } from "./UsageHero";
 import { UsageTrendChart } from "./UsageTrendChart";
@@ -19,6 +19,8 @@ import {
   RefreshCw,
   Coins,
   LayoutGrid,
+  DatabaseBackup,
+  Loader2,
 } from "lucide-react";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import {
@@ -43,17 +45,31 @@ import { getLocaleFromLanguage } from "./format";
 import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { usageApi } from "@/lib/api/usage";
+import { toast } from "sonner";
 
 const APP_FILTER_OPTIONS: AppTypeFilter[] = ["all", ...KNOWN_APP_TYPES];
 
-// 0 表示关闭自动刷新（refetchInterval=false）
+const DEFAULT_REFRESH_INTERVAL_MS = 30000;
 const REFRESH_INTERVAL_OPTIONS_MS = [0, 5000, 10000, 30000, 60000] as const;
+type RefreshIntervalOption = (typeof REFRESH_INTERVAL_OPTIONS_MS)[number];
+
+const isRefreshIntervalOption = (
+  value: number | undefined,
+): value is RefreshIntervalOption =>
+  REFRESH_INTERVAL_OPTIONS_MS.includes(value as RefreshIntervalOption);
+
+const normalizeRefreshInterval = (value: number | undefined) =>
+  isRefreshIntervalOption(value) ? value : DEFAULT_REFRESH_INTERVAL_MS;
 
 // 与 AppSwitcher 的 appIconName 保持一致（codex 复用 openai 图标）
 const APP_FILTER_ICON: Record<AppType, string> = {
   claude: "claude",
   codex: "openai",
   gemini: "gemini",
+  grokbuild: "grok",
   opencode: "opencode",
 };
 
@@ -64,7 +80,15 @@ const encodeOptionValue = (name: string) => `${DYNAMIC_OPTION_PREFIX}${name}`;
 const decodeOptionValue = (value: string) =>
   value === "all" ? undefined : value.slice(DYNAMIC_OPTION_PREFIX.length);
 
-export function UsageDashboard() {
+interface UsageDashboardProps {
+  refreshIntervalMs?: number;
+  onRefreshIntervalChange?: (next: number) => Promise<boolean> | boolean | void;
+}
+
+export function UsageDashboard({
+  refreshIntervalMs: savedRefreshIntervalMs,
+  onRefreshIntervalChange,
+}: UsageDashboardProps = {}) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const [range, setRange] = useState<UsageRangeSelection>({ preset: "today" });
@@ -73,7 +97,15 @@ export function UsageDashboard() {
     undefined,
   );
   const [model, setModel] = useState<string | undefined>(undefined);
-  const [refreshIntervalMs, setRefreshIntervalMs] = useState(30000);
+  const [refreshIntervalMs, setRefreshIntervalMs] = useState(() =>
+    normalizeRefreshInterval(savedRefreshIntervalMs),
+  );
+  const [showRebuildConfirm, setShowRebuildConfirm] = useState(false);
+  const [rebuildingCodex, setRebuildingCodex] = useState(false);
+
+  useEffect(() => {
+    setRefreshIntervalMs(normalizeRefreshInterval(savedRefreshIntervalMs));
+  }, [savedRefreshIntervalMs]);
 
   // 切应用时清掉下游筛选，避免留下一个在新范围内查无数据的"幽灵"组合；
   // 切 Provider 同理清掉模型（模型选项随 Provider 级联）。
@@ -95,9 +127,51 @@ export function UsageDashboard() {
   // usage 查询，实现实时刷新（仅在 Dashboard 挂载时生效，离开页面自动取消监听）
   useUsageEventBridge();
 
-  const changeRefreshInterval = (next: number) => {
-    setRefreshIntervalMs(next);
+  const changeRefreshInterval = async (next: number) => {
+    const normalized = normalizeRefreshInterval(next);
+    const previous = refreshIntervalMs;
+    setRefreshIntervalMs(normalized);
     queryClient.invalidateQueries({ queryKey: usageKeys.all });
+    try {
+      const saved = await onRefreshIntervalChange?.(normalized);
+      if (saved === false) {
+        setRefreshIntervalMs(previous);
+      }
+    } catch (error) {
+      console.error(
+        "[UsageDashboard] Failed to persist refresh interval",
+        error,
+      );
+      setRefreshIntervalMs(previous);
+    }
+  };
+
+  const rebuildCodexUsage = async () => {
+    setShowRebuildConfirm(false);
+    setRebuildingCodex(true);
+    try {
+      const result = await usageApi.rebuildCodexUsage();
+      await queryClient.invalidateQueries({ queryKey: usageKeys.all });
+      const message = t("usage.rebuildCodex.completed", {
+        imported: result.imported,
+        errors: result.errors.length,
+        suspected: result.suspectedDuplicates,
+        deferred: result.deferredFiles,
+      });
+      if (result.errors.length > 0 || result.deferredFiles > 0) {
+        toast.warning(message);
+      } else {
+        toast.success(message);
+      }
+    } catch (error) {
+      toast.error(
+        t("usage.rebuildCodex.failed", {
+          error: String(error),
+        }),
+      );
+    } finally {
+      setRebuildingCodex(false);
+    }
   };
 
   const language = i18n.resolvedLanguage || i18n.language || "en";
@@ -391,7 +465,55 @@ export function UsageDashboard() {
             <PricingConfigPanel />
           </AccordionContent>
         </AccordionItem>
+        <AccordionItem
+          value="maintenance"
+          className="rounded-xl glass-card overflow-hidden"
+        >
+          <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+            <div className="flex items-center gap-3">
+              <DatabaseBackup className="h-5 w-5 text-orange-500" />
+              <div className="text-left">
+                <h3 className="text-base font-semibold">
+                  {t("usage.rebuildCodex.title")}
+                </h3>
+                <p className="text-sm text-muted-foreground font-normal">
+                  {t("usage.rebuildCodex.description")}
+                </p>
+              </div>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+            <div className="flex items-center justify-between gap-4 rounded-lg border border-destructive/20 bg-destructive/5 p-4">
+              <p className="text-sm text-muted-foreground">
+                {t("usage.rebuildCodex.warning")}
+              </p>
+              <Button
+                variant="destructive"
+                disabled={rebuildingCodex}
+                onClick={() => setShowRebuildConfirm(true)}
+                className="shrink-0"
+              >
+                {rebuildingCodex ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <DatabaseBackup className="mr-2 h-4 w-4" />
+                )}
+                {t("usage.rebuildCodex.action")}
+              </Button>
+            </div>
+          </AccordionContent>
+        </AccordionItem>
       </Accordion>
+
+      <ConfirmDialog
+        isOpen={showRebuildConfirm}
+        title={t("usage.rebuildCodex.confirmTitle")}
+        message={t("usage.rebuildCodex.confirmMessage")}
+        confirmText={t("usage.rebuildCodex.confirmAction")}
+        variant="destructive"
+        onConfirm={() => void rebuildCodexUsage()}
+        onCancel={() => setShowRebuildConfirm(false)}
+      />
     </motion.div>
   );
 }
