@@ -6,7 +6,7 @@ use super::{lock_conn, Database};
 use crate::config::get_app_config_dir;
 use crate::error::AppError;
 use chrono::{Local, Utc};
-use rusqlite::backup::Backup;
+use rusqlite::backup::{Backup, StepResult};
 use rusqlite::types::ValueRef;
 use rusqlite::Connection;
 use std::fs;
@@ -154,9 +154,6 @@ impl Database {
         let sql_content = sql_raw.trim_start_matches('\u{feff}');
         Self::validate_cc_switch_sql_export(sql_content)?;
 
-        // 导入前备份现有数据库
-        let backup_path = self.backup_database_file()?;
-
         let local_snapshot = if preserve_tables.is_empty() {
             None
         } else {
@@ -187,6 +184,14 @@ impl Database {
             None::<fn(rusqlite::hooks::AuthContext<'_>) -> rusqlite::hooks::Authorization>,
         );
         batch_result.map_err(|e| AppError::Database(format!("执行 SQL 导入失败: {e}")))?;
+        if !temp_conn.is_autocommit() {
+            let _ = temp_conn.execute_batch("ROLLBACK;");
+            return Err(AppError::localized(
+                "backup.sql.incomplete_transaction",
+                "SQL 备份事务未完成，文件可能已截断。",
+                "The SQL backup transaction is incomplete; the file may be truncated.",
+            ));
+        }
 
         // Validate the schema produced by the input itself before migrations
         // can create missing tables and accidentally make a truncated file look valid.
@@ -199,15 +204,14 @@ impl Database {
             Self::restore_tables(local_snapshot, &temp_conn, preserve_tables)?;
         }
 
-        // 使用 Backup 将临时库原子写回主库
-        {
+        let backup_path = {
             let mut main_conn = lock_conn!(self.conn);
+            let backup_path = Self::backup_database_file_from_conn(&main_conn, &[])?;
             let backup = Backup::new(&temp_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
-            backup
-                .step(-1)
-                .map_err(|e| AppError::Database(e.to_string()))?;
-        }
+            Self::complete_backup(&backup, "替换主数据库")?;
+            backup_path
+        };
 
         let backup_id = backup_path
             .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
@@ -225,12 +229,25 @@ impl Database {
         {
             let backup =
                 Backup::new(&conn, &mut snapshot).map_err(|e| AppError::Database(e.to_string()))?;
-            backup
-                .step(-1)
-                .map_err(|e| AppError::Database(e.to_string()))?;
+            Self::complete_backup(&backup, "创建内存数据库快照")?;
         }
 
         Ok(snapshot)
+    }
+
+    fn complete_backup(backup: &Backup<'_, '_>, context: &str) -> Result<(), AppError> {
+        let result = backup
+            .step(-1)
+            .map_err(|e| AppError::Database(format!("{context}失败: {e}")))?;
+        match result {
+            StepResult::Done => Ok(()),
+            StepResult::More | StepResult::Busy | StepResult::Locked => Err(AppError::Database(
+                format!("{context}未完成: SQLite Backup 返回 {result:?}"),
+            )),
+            _ => Err(AppError::Database(format!(
+                "{context}未完成: SQLite Backup 返回未知状态"
+            ))),
+        }
     }
 
     fn validate_cc_switch_sql_export(sql: &str) -> Result<(), AppError> {
@@ -428,6 +445,17 @@ impl Database {
 
     /// 生成一致性快照备份，返回备份文件路径（不存在主库时返回 None）
     pub(crate) fn backup_database_file(&self) -> Result<Option<PathBuf>, AppError> {
+        let conn = lock_conn!(self.conn);
+        Self::backup_database_file_from_conn(&conn, &[])
+    }
+
+    /// Create a safety backup from a connection whose caller already owns the
+    /// appropriate database guard. This lets restore keep one guard across the
+    /// safety snapshot and the final live replacement.
+    fn backup_database_file_from_conn(
+        source_conn: &Connection,
+        protected_paths: &[&Path],
+    ) -> Result<Option<PathBuf>, AppError> {
         let db_path = get_app_config_dir().join("cc-switch.db");
         if !db_path.exists() {
             return Ok(None);
@@ -450,23 +478,27 @@ impl Database {
             counter += 1;
         }
 
-        {
-            let conn = lock_conn!(self.conn);
-            let mut dest_conn =
-                Connection::open(&backup_path).map_err(|e| AppError::Database(e.to_string()))?;
-            let backup = Backup::new(&conn, &mut dest_conn)
-                .map_err(|e| AppError::Database(e.to_string()))?;
-            backup
-                .step(-1)
-                .map_err(|e| AppError::Database(e.to_string()))?;
-        }
+        let mut dest_conn =
+            Connection::open(&backup_path).map_err(|e| AppError::Database(e.to_string()))?;
+        let backup = Backup::new(source_conn, &mut dest_conn)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Self::complete_backup(&backup, "创建数据库安全备份")?;
+        drop(backup);
+        drop(dest_conn);
 
-        Self::cleanup_db_backups(&backup_dir)?;
+        // The newly created safety backup must never be the cleanup victim.
+        // During restore, the selected source is protected as well. If the
+        // configured retention is too small to keep both, temporarily exceed
+        // it instead of deleting either side of the recovery operation.
+        let mut cleanup_protected = Vec::with_capacity(protected_paths.len() + 1);
+        cleanup_protected.push(backup_path.as_path());
+        cleanup_protected.extend_from_slice(protected_paths);
+        Self::cleanup_db_backups(&backup_dir, &cleanup_protected)?;
         Ok(Some(backup_path))
     }
 
     /// 清理旧的数据库备份，保留最新的 N 个
-    fn cleanup_db_backups(dir: &Path) -> Result<(), AppError> {
+    fn cleanup_db_backups(dir: &Path, protected_paths: &[&Path]) -> Result<(), AppError> {
         let retain = crate::settings::effective_backup_retain_count();
         let entries = match fs::read_dir(dir) {
             Ok(iter) => iter
@@ -490,12 +522,52 @@ impl Database {
         let mut sorted = entries;
         sorted.sort_by_key(|entry| entry.metadata().and_then(|m| m.modified()).ok());
 
-        for entry in sorted.into_iter().take(remove_count) {
-            if let Err(err) = fs::remove_file(entry.path()) {
-                log::warn!("删除旧数据库备份失败 {}: {}", entry.path().display(), err);
+        let protected_names = protected_paths
+            .iter()
+            .filter_map(|path| path.file_name())
+            .collect::<Vec<_>>();
+        let mut removed = 0;
+        for entry in sorted {
+            if removed >= remove_count {
+                break;
+            }
+            let file_name = entry.file_name();
+            if protected_names.contains(&file_name.as_os_str()) {
+                continue;
+            }
+
+            let path = entry.path();
+            if let Err(err) = fs::remove_file(&path) {
+                log::warn!("删除旧数据库备份失败 {}: {}", path.display(), err);
+            } else {
+                removed += 1;
             }
         }
         Ok(())
+    }
+
+    fn validate_sqlite_integrity(conn: &Connection) -> Result<(), AppError> {
+        let mut stmt = conn
+            .prepare("PRAGMA quick_check;")
+            .map_err(|e| AppError::Database(format!("检查数据库完整性失败: {e}")))?;
+        let results = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| AppError::Database(format!("检查数据库完整性失败: {e}")))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(format!("检查数据库完整性失败: {e}")))?;
+
+        if results.len() == 1 && results[0].eq_ignore_ascii_case("ok") {
+            return Ok(());
+        }
+
+        Err(AppError::localized(
+            "backup.db.integrity_failed",
+            format!("数据库备份完整性检查失败: {}", results.join("; ")),
+            format!(
+                "Database backup integrity check failed: {}",
+                results.join("; ")
+            ),
+        ))
     }
 
     /// Validate that the external SQL created a recognizable CC Switch schema.
@@ -848,29 +920,52 @@ impl Database {
             )));
         }
 
-        // Step 1: Create safety backup of current database
-        let safety_backup = self.backup_database_file()?;
+        // Open read-only before creating the safety backup. `Connection::open`
+        // would recreate a source removed by retention cleanup as an empty DB.
+        let source_conn = Connection::open_with_flags(
+            &backup_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // Stage and fully validate the selected file before touching the live
+        // connection. A corrupt/future-schema backup or failed migration must
+        // leave the current database unchanged.
+        let temp_file = NamedTempFile::new().map_err(|e| AppError::IoContext {
+            context: "创建数据库恢复暂存文件失败".to_string(),
+            source: e,
+        })?;
+        let mut staging_conn =
+            Connection::open(temp_file.path()).map_err(|e| AppError::Database(e.to_string()))?;
+        {
+            let backup = Backup::new(&source_conn, &mut staging_conn)
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            Self::complete_backup(&backup, "读取数据库备份")?;
+        }
+        drop(source_conn);
+
+        Self::validate_sqlite_integrity(&staging_conn)?;
+        Self::validate_imported_schema(&staging_conn)?;
+        Self::ensure_incremental_auto_vacuum_on_conn(&staging_conn)?;
+        Self::create_tables_on_conn(&staging_conn)?;
+        Self::apply_schema_migrations_on_conn(&staging_conn)?;
+        Self::ensure_model_pricing_seeded_on_conn(&staging_conn)?;
+        Self::validate_sqlite_integrity(&staging_conn)?;
+
+        // Keep one main-DB guard across the safety snapshot and final apply so
+        // the safety file exactly represents the state being replaced.
+        let safety_backup = {
+            let mut main_conn = lock_conn!(self.conn);
+            let safety_backup =
+                Self::backup_database_file_from_conn(&main_conn, &[backup_path.as_path()])?;
+            let backup = Backup::new(&staging_conn, &mut main_conn)
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            Self::complete_backup(&backup, "恢复主数据库")?;
+            safety_backup
+        };
         let safety_id = safety_backup
             .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
             .unwrap_or_default();
-
-        // Step 2: Open the backup file and restore it to the main database
-        let source_conn =
-            Connection::open(&backup_path).map_err(|e| AppError::Database(e.to_string()))?;
-
-        {
-            let mut main_conn = lock_conn!(self.conn);
-            let backup = Backup::new(&source_conn, &mut main_conn)
-                .map_err(|e| AppError::Database(e.to_string()))?;
-            backup
-                .step(-1)
-                .map_err(|e| AppError::Database(e.to_string()))?;
-        }
-
-        // Step 3: Run schema migrations (backup may be from an older version)
-        self.create_tables()?;
-        self.apply_schema_migrations()?;
-        self.ensure_model_pricing_seeded()?;
 
         log::info!("Database restored from backup: {filename}, safety backup: {safety_id}");
         Ok(safety_id)
@@ -969,7 +1064,7 @@ impl Database {
 mod tests {
     use super::Database;
     use crate::error::AppError;
-    use crate::settings::{update_settings, AppSettings};
+    use crate::settings::{get_settings, update_settings, AppSettings};
     use rusqlite::Connection;
     use serial_test::serial;
 
@@ -1014,6 +1109,26 @@ mod tests {
                 Some(previous) => std::env::set_var("CC_SWITCH_TEST_HOME", previous),
                 None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
             }
+        }
+    }
+
+    struct SettingsGuard {
+        previous: AppSettings,
+    }
+
+    impl SettingsGuard {
+        fn with_backup_retain_count(retain: u32) -> Self {
+            let previous = get_settings();
+            let mut next = previous.clone();
+            next.backup_retain_count = Some(retain);
+            update_settings(next).expect("set backup retention for test");
+            Self { previous }
+        }
+    }
+
+    impl Drop for SettingsGuard {
+        fn drop(&mut self) {
+            let _ = update_settings(self.previous.clone());
         }
     }
 
@@ -1290,6 +1405,53 @@ mod tests {
             |row| row.get(0),
         )?;
         assert!(!partial_exists, "失败导入的临时对象不得进入主库");
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn import_rejects_truncated_open_transaction_and_keeps_live_database() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let source = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(source.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('remote-provider', 'claude', 'Remote Provider', '{}', '{}')",
+                [],
+            )?;
+        }
+        let exported = source.export_sql_string()?;
+        let truncated = exported
+            .strip_suffix("COMMIT;\nPRAGMA foreign_keys=ON;\n")
+            .expect("CC Switch export should end with a committed transaction");
+
+        let target = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(target.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('live-provider', 'claude', 'Live Provider', '{}', '{}')",
+                [],
+            )?;
+        }
+
+        let error = target
+            .import_sql_string(truncated)
+            .expect_err("an export truncated before COMMIT must be rejected");
+        assert!(
+            error.to_string().contains("incomplete")
+                || error.to_string().contains("未完成")
+                || error.to_string().contains("截断"),
+            "unexpected error: {error}"
+        );
+
+        let conn = crate::database::lock_conn!(target.conn);
+        let providers = conn
+            .prepare("SELECT id FROM providers ORDER BY id")?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(providers, vec!["live-provider"]);
         Ok(())
     }
 
@@ -1991,6 +2153,159 @@ mod tests {
         assert_eq!(
             provider_health_count, 0,
             "同步导入应清除可重建的本地 provider_health 状态"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn restore_with_retain_one_keeps_source_and_exact_safety_snapshot() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let _settings = SettingsGuard::with_backup_retain_count(1);
+        let db = Database::init()?;
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute("DELETE FROM providers", [])?;
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('restore-source', 'claude', 'Restore Source', '{}', '{}')",
+                [],
+            )?;
+        }
+        let source_path = db
+            .backup_database_file()?
+            .expect("file-backed database should create a backup");
+        let source_filename = source_path
+            .file_name()
+            .expect("backup should have a filename")
+            .to_string_lossy()
+            .into_owned();
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute("DELETE FROM providers", [])?;
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('live-before-restore', 'claude', 'Live Before Restore', '{}', '{}')",
+                [],
+            )?;
+        }
+
+        let safety_id = db.restore_from_backup(&source_filename)?;
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        let safety_path = backup_dir.join(format!("{safety_id}.db"));
+        assert!(
+            source_path.exists(),
+            "selected restore source must be retained"
+        );
+        assert!(
+            safety_path.exists(),
+            "pre-restore safety backup must be retained"
+        );
+
+        let backup_count = std::fs::read_dir(&backup_dir)
+            .map_err(|e| AppError::io(&backup_dir, e))?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "db"))
+            .count();
+        assert_eq!(
+            backup_count, 2,
+            "retain=1 may be exceeded temporarily to protect both recovery endpoints"
+        );
+
+        let live_provider: String = {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.query_row("SELECT id FROM providers", [], |row| row.get(0))?
+        };
+        assert_eq!(live_provider, "restore-source");
+
+        let safety_conn =
+            Connection::open_with_flags(&safety_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let safety_provider: String =
+            safety_conn.query_row("SELECT id FROM providers", [], |row| row.get(0))?;
+        assert_eq!(
+            safety_provider, "live-before-restore",
+            "safety backup must exactly represent the live state being replaced"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn restore_rejects_future_schema_before_touching_live_database() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let db = Database::init()?;
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute("DELETE FROM providers", [])?;
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('future-source', 'claude', 'Future Source', '{}', '{}')",
+                [],
+            )?;
+        }
+        let source_path = db
+            .backup_database_file()?
+            .expect("file-backed database should create a backup");
+        let source_filename = source_path
+            .file_name()
+            .expect("backup should have a filename")
+            .to_string_lossy()
+            .into_owned();
+        {
+            let source_conn = Connection::open(&source_path)?;
+            source_conn.execute_batch(&format!(
+                "PRAGMA user_version = {};",
+                crate::database::SCHEMA_VERSION + 1
+            ))?;
+        }
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute("DELETE FROM providers", [])?;
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('live-provider', 'claude', 'Live Provider', '{}', '{}')",
+                [],
+            )?;
+        }
+
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        let backup_count_before = std::fs::read_dir(&backup_dir)
+            .map_err(|e| AppError::io(&backup_dir, e))?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "db"))
+            .count();
+
+        let error = db
+            .restore_from_backup(&source_filename)
+            .expect_err("future-schema backup must be rejected");
+        assert!(
+            error.to_string().contains("newer")
+                || error.to_string().contains("过新")
+                || error.to_string().contains("版本"),
+            "unexpected error: {error}"
+        );
+
+        let live_provider: String = {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.query_row("SELECT id FROM providers", [], |row| row.get(0))?
+        };
+        assert_eq!(
+            live_provider, "live-provider",
+            "failed staging validation must not replace the live database"
+        );
+
+        let backup_count_after = std::fs::read_dir(&backup_dir)
+            .map_err(|e| AppError::io(&backup_dir, e))?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "db"))
+            .count();
+        assert_eq!(
+            backup_count_after, backup_count_before,
+            "staging failure should occur before creating a redundant safety backup"
         );
         Ok(())
     }
