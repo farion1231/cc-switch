@@ -243,6 +243,62 @@ pub(crate) fn strip_leading_think_open_tag(text: &str) -> Option<String> {
     })
 }
 
+/// 最早出现的开标签位置。用于在正文中间发现新的 think 段（上游会在一次响应里
+/// 交替输出「推理 → 正文 → 推理 → 正文」）。
+pub(crate) fn find_think_open_tag(text: &str) -> Option<(usize, &'static str)> {
+    THINK_TAG_PAIRS
+        .iter()
+        .filter_map(|(open_tag, _)| text.find(open_tag).map(|index| (index, *open_tag)))
+        .min_by_key(|(index, _)| *index)
+}
+
+/// 末尾可能是半截开标签（如流式切到 `...正文<thin`）时，需要扣住不下发的字节数。
+/// 否则先当正文发出去，等标签补全就晚了。
+pub(crate) fn pending_think_open_prefix_len(text: &str) -> usize {
+    let longest = THINK_TAG_PAIRS
+        .iter()
+        .map(|(open_tag, _)| open_tag.len())
+        .max()
+        .unwrap_or(0);
+
+    (1..longest.saturating_sub(1).min(text.len()) + 1)
+        .rev()
+        .filter(|len| text.is_char_boundary(text.len() - len))
+        .find(|len| {
+            let suffix = &text[text.len() - len..];
+            THINK_TAG_PAIRS
+                .iter()
+                .any(|(open_tag, _)| open_tag.len() > suffix.len() && open_tag.starts_with(suffix))
+        })
+        .unwrap_or(0)
+}
+
+/// 剥离正文里的全部 think 段，返回（合并后的推理, 剩余正文）。非流式路径用。
+pub(crate) fn split_all_think_blocks(text: &str) -> Option<(String, String)> {
+    let mut reasoning_parts: Vec<String> = Vec::new();
+    let mut answer = String::new();
+    let mut rest = text.to_string();
+
+    while let Some((open_at, _)) = find_think_open_tag(&rest) {
+        let Some((reasoning, tail)) = split_leading_think_block(&rest[open_at..]) else {
+            // 开标签没有闭合，剩下的整段留给正文，交由调用方兜底。
+            break;
+        };
+        answer.push_str(&rest[..open_at]);
+        if !reasoning.is_empty() {
+            reasoning_parts.push(reasoning);
+        }
+        rest = tail;
+    }
+
+    if reasoning_parts.is_empty() {
+        return None;
+    }
+
+    answer.push_str(&rest);
+    Some((reasoning_parts.join("\n\n"), answer))
+}
+
 fn strip_think_answer_separator(text: &str) -> &str {
     text.trim_start_matches(['\r', '\n', '\t', ' '])
 }

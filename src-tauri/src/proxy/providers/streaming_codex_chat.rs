@@ -3,7 +3,8 @@
 use super::codex_responses_sse as sse;
 use super::{
     codex_chat_common::{
-        extract_reasoning_field_text, split_leading_think_block, strip_leading_think_open_tag,
+        extract_reasoning_field_text, find_think_open_tag, pending_think_open_prefix_len,
+        split_all_think_blocks, split_leading_think_block, strip_leading_think_open_tag,
     },
     transform_codex_chat::{
         chat_usage_to_responses_usage, custom_tool_input_from_chat_arguments,
@@ -74,6 +75,8 @@ struct ChatToResponsesState {
     text: TextItemState,
     reasoning: ReasoningItemState,
     inline_think: InlineThinkState,
+    reasoning_seq: u32,
+    text_seq: u32,
     tools: BTreeMap<usize, ToolCallState>,
     next_tool_index_to_add: usize,
     output_items: Vec<(u32, Value)>,
@@ -96,6 +99,8 @@ impl Default for ChatToResponsesState {
             text: TextItemState::default(),
             reasoning: ReasoningItemState::default(),
             inline_think: InlineThinkState::default(),
+            reasoning_seq: 0,
+            text_seq: 0,
             tools: BTreeMap::new(),
             next_tool_index_to_add: 0,
             output_items: Vec::new(),
@@ -177,10 +182,9 @@ impl ChatToResponsesState {
 
     fn push_content_delta(&mut self, delta: &str) -> Vec<Bytes> {
         match self.inline_think.mode {
-            InlineThinkMode::Text => {
-                let mut events = self.finalize_reasoning();
-                events.extend(self.push_text_delta(delta));
-                events
+            InlineThinkMode::Text | InlineThinkMode::Reasoning => {
+                self.inline_think.buffer.push_str(delta);
+                self.pump_inline_think()
             }
             InlineThinkMode::Detecting => {
                 self.inline_think.buffer.push_str(delta);
@@ -188,22 +192,41 @@ impl ChatToResponsesState {
                     ThinkPrefixDecision::NeedMore => Vec::new(),
                     ThinkPrefixDecision::Reasoning => {
                         self.inline_think.mode = InlineThinkMode::Reasoning;
-                        self.drain_complete_inline_think()
+                        self.pump_inline_think()
                     }
                     ThinkPrefixDecision::Text => {
                         self.inline_think.mode = InlineThinkMode::Text;
-                        let text = std::mem::take(&mut self.inline_think.buffer);
-                        let mut events = self.finalize_reasoning();
-                        events.extend(self.push_text_delta(&text));
-                        events
+                        self.pump_inline_think()
                     }
                 }
             }
-            InlineThinkMode::Reasoning => {
-                self.inline_think.buffer.push_str(delta);
-                self.drain_complete_inline_think()
+        }
+    }
+
+    /// 反复推进缓冲：Reasoning 模式吃掉闭合的 think 段，Text 模式把正文放行到
+    /// 下一个开标签为止，直到没有新进展为止。上游可以在一次响应里交替输出多段。
+    fn pump_inline_think(&mut self) -> Vec<Bytes> {
+        let mut events = Vec::new();
+        loop {
+            match self.inline_think.mode {
+                InlineThinkMode::Detecting => break,
+                InlineThinkMode::Reasoning => {
+                    events.extend(self.drain_complete_inline_think());
+                    if self.inline_think.mode == InlineThinkMode::Reasoning {
+                        // 还没等到闭合标签，继续等后续分片。
+                        break;
+                    }
+                }
+                InlineThinkMode::Text => {
+                    let (text_events, stalled) = self.drain_text_until_think_open();
+                    events.extend(text_events);
+                    if stalled {
+                        break;
+                    }
+                }
             }
         }
+        events
     }
 
     fn drain_complete_inline_think(&mut self) -> Vec<Bytes> {
@@ -212,23 +235,59 @@ impl ChatToResponsesState {
         };
 
         self.inline_think.mode = InlineThinkMode::Text;
-        self.inline_think.buffer.clear();
+        // 余下内容回到缓冲而不是直接当正文下发，后面可能还藏着 think 段。
+        self.inline_think.buffer = answer;
 
         let mut events = Vec::new();
         if !reasoning.is_empty() {
             events.extend(self.push_reasoning_delta(&reasoning));
             events.extend(self.finalize_reasoning());
         }
-        if !answer.is_empty() {
-            events.extend(self.push_text_delta(&answer));
-        }
 
         events
     }
 
+    /// 返回 (事件, 是否已停滞)。停滞表示缓冲里暂时找不到开标签，只能等更多分片。
+    fn drain_text_until_think_open(&mut self) -> (Vec<Bytes>, bool) {
+        let mut events = Vec::new();
+
+        if let Some((open_at, _)) = find_think_open_tag(&self.inline_think.buffer) {
+            let leading = self.inline_think.buffer[..open_at].to_string();
+            self.inline_think.buffer.drain(..open_at);
+            if !leading.is_empty() {
+                events.extend(self.finalize_reasoning());
+                events.extend(self.push_text_delta(&leading));
+            }
+            // 新的一段推理要另起 item，先给当前正文条目收尾。
+            events.extend(self.finalize_text());
+            self.inline_think.mode = InlineThinkMode::Reasoning;
+            return (events, false);
+        }
+
+        let hold = pending_think_open_prefix_len(&self.inline_think.buffer);
+        let emit_len = self.inline_think.buffer.len() - hold;
+        if emit_len > 0 {
+            let text: String = self.inline_think.buffer.drain(..emit_len).collect();
+            events.extend(self.finalize_reasoning());
+            events.extend(self.push_text_delta(&text));
+        }
+
+        (events, true)
+    }
+
     fn flush_inline_think_at_boundary(&mut self) -> Vec<Bytes> {
         match self.inline_think.mode {
-            InlineThinkMode::Text => Vec::new(),
+            InlineThinkMode::Text => {
+                // 末尾可能扣着半截开标签，到边界就当普通正文放出去。
+                let text = std::mem::take(&mut self.inline_think.buffer);
+                if text.is_empty() {
+                    Vec::new()
+                } else {
+                    let mut events = self.finalize_reasoning();
+                    events.extend(self.push_text_delta(&text));
+                    events
+                }
+            }
             InlineThinkMode::Detecting => {
                 self.inline_think.mode = InlineThinkMode::Text;
                 let text = std::mem::take(&mut self.inline_think.buffer);
@@ -243,7 +302,7 @@ impl ChatToResponsesState {
             InlineThinkMode::Reasoning => {
                 let buffered = std::mem::take(&mut self.inline_think.buffer);
                 self.inline_think.mode = InlineThinkMode::Text;
-                if let Some((reasoning, answer)) = split_leading_think_block(&buffered) {
+                if let Some((reasoning, answer)) = split_all_think_blocks(&buffered) {
                     let mut events = Vec::new();
                     if !reasoning.is_empty() {
                         events.extend(self.push_reasoning_delta(&reasoning));
@@ -284,9 +343,19 @@ impl ChatToResponsesState {
     fn push_reasoning_delta(&mut self, delta: &str) -> Vec<Bytes> {
         let mut events = Vec::new();
 
+        if self.reasoning.done {
+            // 上一段已收尾，交替输出时要另起一个 reasoning item。
+            self.reasoning = ReasoningItemState::default();
+            self.reasoning_seq += 1;
+        }
+
         if !self.reasoning.added {
             let output_index = self.next_output_index();
-            let item_id = format!("rs_{}", self.response_id);
+            let item_id = if self.reasoning_seq == 0 {
+                format!("rs_{}", self.response_id)
+            } else {
+                format!("rs_{}_{}", self.response_id, self.reasoning_seq + 1)
+            };
             self.reasoning.output_index = Some(output_index);
             self.reasoning.item_id = item_id.clone();
             self.reasoning.added = true;
@@ -309,9 +378,18 @@ impl ChatToResponsesState {
     fn push_text_delta(&mut self, delta: &str) -> Vec<Bytes> {
         let mut events = Vec::new();
 
+        if self.text.done {
+            self.text = TextItemState::default();
+            self.text_seq += 1;
+        }
+
         if !self.text.added {
             let output_index = self.next_output_index();
-            let item_id = format!("{}_msg", self.response_id);
+            let item_id = if self.text_seq == 0 {
+                format!("{}_msg", self.response_id)
+            } else {
+                format!("{}_msg_{}", self.response_id, self.text_seq + 1)
+            };
             self.text.output_index = Some(output_index);
             self.text.item_id = item_id.clone();
             self.text.added = true;
@@ -1033,6 +1111,24 @@ mod tests {
         assert!(output.contains("event: response.reasoning_summary_text.delta"));
         assert!(output.contains("Checking final status"));
         assert!(output.contains("\"text\":\"Done\""));
+        assert!(!output.contains("<thinking>"));
+        assert!(!output.contains("</thinking>"));
+        assert!(output.contains("event: response.completed"));
+    }
+
+    #[tokio::test]
+    async fn converts_alternating_thinking_segments_without_leaking_tags() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_codex\",\"created\":123,\"model\":\"gpt-5-codex\",\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"<thinking>first pass</thinking>partial answer<thin\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_codex\",\"created\":123,\"model\":\"gpt-5-codex\",\"choices\":[{\"delta\":{\"content\":\"king>second pass</thinking>final answer\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("first pass"));
+        assert!(output.contains("second pass"));
+        assert!(output.contains("partial answer"));
+        assert!(output.contains("final answer"));
         assert!(!output.contains("<thinking>"));
         assert!(!output.contains("</thinking>"));
         assert!(output.contains("event: response.completed"));

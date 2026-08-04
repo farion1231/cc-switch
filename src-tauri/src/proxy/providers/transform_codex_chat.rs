@@ -7,7 +7,7 @@
 use super::codex_chat_common::{
     append_reasoning_content, extract_reasoning_field_text, extract_reasoning_summary_text,
     response_function_call_item, response_function_call_item_with_namespace,
-    split_leading_think_block,
+    split_all_think_blocks,
 };
 use crate::provider::CodexChatReasoningConfig;
 use crate::proxy::{
@@ -1474,7 +1474,7 @@ fn chat_reasoning_text(message: &Value) -> Option<String> {
     }
 
     if let Some(content) = message.get("content").and_then(|v| v.as_str()) {
-        if let Some((reasoning, _answer)) = split_leading_think_block(content) {
+        if let Some((reasoning, _answer)) = split_all_think_blocks(content) {
             if !reasoning.is_empty() {
                 return Some(reasoning);
             }
@@ -1488,7 +1488,7 @@ fn chat_message_to_response_output_item(message: &Value, response_id: &str) -> O
     let mut content = Vec::new();
 
     if let Some(text) = message.get("content").and_then(|v| v.as_str()) {
-        let text = split_leading_think_block(text)
+        let text = split_all_think_blocks(text)
             .map(|(_reasoning, answer)| answer)
             .unwrap_or_else(|| text.to_string());
         if !text.is_empty() {
