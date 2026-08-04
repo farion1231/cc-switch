@@ -213,6 +213,12 @@ pub fn get_app_config_dir() -> PathBuf {
     // 同时也避免新安装因为 `HOME` 被设置而写入非预期路径。
     #[cfg(windows)]
     {
+        let test_home_override_active =
+            std::env::var("CC_SWITCH_TEST_HOME").is_ok_and(|home| !home.trim().is_empty());
+        if test_home_override_active {
+            return default_dir;
+        }
+
         let default_db = default_dir.join("cc-switch.db");
         if !default_db.exists() {
             if let Ok(home_env) = std::env::var("HOME") {
@@ -374,6 +380,50 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    use serial_test::serial;
+
+    #[cfg(windows)]
+    struct EnvRestore {
+        name: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    #[cfg(windows)]
+    impl EnvRestore {
+        fn set(name: &'static str, value: &Path) -> Self {
+            let previous = std::env::var_os(name);
+            std::env::set_var(name, value);
+            Self { name, previous }
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var(self.name, value),
+                None => std::env::remove_var(self.name),
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[serial]
+    fn explicit_test_home_does_not_fall_back_to_a_legacy_home_database() {
+        let test_home = tempfile::tempdir().expect("test home");
+        let legacy_home = tempfile::tempdir().expect("legacy home");
+        let legacy_config = legacy_home.path().join(".cc-switch");
+        fs::create_dir_all(&legacy_config).expect("legacy config root");
+        fs::write(legacy_config.join("cc-switch.db"), b"legacy marker")
+            .expect("legacy database marker");
+        let _home = EnvRestore::set("HOME", legacy_home.path());
+        let _test_home = EnvRestore::set("CC_SWITCH_TEST_HOME", test_home.path());
+
+        assert_eq!(get_app_config_dir(), test_home.path().join(".cc-switch"));
+    }
 
     #[test]
     fn derive_mcp_path_from_override_uses_config_dir_for_custom_path() {

@@ -2282,6 +2282,7 @@
     "loading": "読み込み中...",
     "installed": "インストール済み",
     "install": "インストール",
+    "enableAfterInstall": "インストール後に現在のアプリで有効化",
     "installing": "インストール中...",
     "uninstall": "アンインストール",
     "uninstalling": "アンインストール中...",

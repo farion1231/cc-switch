@@ -318,6 +318,10 @@ pub(crate) fn apply_snapshot(
             format!("SQL is not valid UTF-8: {e}"),
         )
     })?;
+    let _skill_write_guard = crate::services::skill::SkillService::lock_skill_writes()
+        .map_err(|error| AppError::Message(error.to_string()))?;
+    crate::services::skill::SkillService::recover_before_skill_write(db)
+        .map_err(|error| AppError::Message(error.to_string()))?;
     let skills_backup = backup_current_skills()?;
 
     // Replace skills first, then import database; roll back skills on DB failure.

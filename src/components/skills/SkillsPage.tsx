@@ -8,6 +8,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -99,6 +100,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const [filterStatus, setFilterStatus] = useState<
       "all" | "installed" | "uninstalled"
     >("all");
+    const [enableForCurrentApp, setEnableForCurrentApp] = useState(true);
 
     // skills.sh 搜索状态
     const [searchSource, setSearchSource] = useState<SkillsPageSource>("repos");
@@ -254,6 +256,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
         await installMutation.mutateAsync({
           skill,
           currentApp,
+          enableForCurrentApp,
         });
         toast.success(t("skills.installSuccess", { name: skill.name }), {
           closeButton: true,
@@ -524,6 +527,16 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                   </Button>
                 </>
               )}
+              <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                <Checkbox
+                  checked={enableForCurrentApp}
+                  onCheckedChange={(checked) =>
+                    setEnableForCurrentApp(checked === true)
+                  }
+                  aria-label={t("skills.enableAfterInstall")}
+                />
+                <span>{t("skills.enableAfterInstall")}</span>
+              </label>
             </div>
 
             {/* 内容区域 */}

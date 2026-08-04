@@ -63,6 +63,34 @@ export interface DiscoverableSkill {
   repoBranch: string;
 }
 
+export interface InactiveSkillCohortItem {
+  skill: DiscoverableSkill;
+  /** Immutable lowercase 40-character Git commit SHA. */
+  revision: string;
+  admission: InactiveSkillCohortAdmission;
+}
+
+export interface InactiveSkillCohortAdmission {
+  /** Complete candidate-root tree hash computed over all entry types. */
+  sourceTreeHash: string;
+  /** Digest of the separately governed dependency-closure review. */
+  dependencyClosureDigest: string;
+  /** Explicit admission decision; false is a hard execution stop. */
+  dependencyComplete: boolean;
+}
+
+export interface InactiveSkillCohortResult {
+  transactionId: string;
+  skills: InstalledSkill[];
+  /** Commit succeeded, but startup recovery still needs to remove journal/staging residue. */
+  cleanupPending: boolean;
+}
+
+export interface InactiveSkillCohortRecoveryResult {
+  rolledBack: number;
+  finalized: number;
+}
+
 /** 未管理的 Skill（用于导入） */
 export interface UnmanagedSkill {
   directory: string;
@@ -157,8 +185,25 @@ export const skillsApi = {
   async installUnified(
     skill: DiscoverableSkill,
     currentApp: AppId,
+    enableForCurrentApp = true,
   ): Promise<InstalledSkill> {
-    return await invoke("install_skill_unified", { skill, currentApp });
+    return await invoke("install_skill_unified", {
+      skill,
+      currentApp,
+      enableForCurrentApp,
+    });
+  },
+
+  /** 原子安装精确 revision 的 Skill 队列；全部消费者保持禁用。 */
+  async installCohortInactive(
+    items: InactiveSkillCohortItem[],
+  ): Promise<InactiveSkillCohortResult> {
+    return await invoke("install_skill_cohort_inactive", { items });
+  },
+
+  /** 恢复进程中断后遗留的 Skill 队列事务。 */
+  async recoverInactiveCohortTransactions(): Promise<InactiveSkillCohortRecoveryResult> {
+    return await invoke("recover_inactive_skill_cohort_transactions");
   },
 
   /** 卸载 Skill（统一卸载） */

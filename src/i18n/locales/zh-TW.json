@@ -2283,6 +2283,7 @@
     "loading": "載入中...",
     "installed": "已安裝",
     "install": "安裝",
+    "enableAfterInstall": "安裝後為目前應用啟用",
     "installing": "安裝中...",
     "uninstall": "解除安裝",
     "uninstalling": "解除安裝中...",

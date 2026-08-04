@@ -80,10 +80,12 @@ export function useInstallSkill() {
     mutationFn: ({
       skill,
       currentApp,
+      enableForCurrentApp = true,
     }: {
       skill: DiscoverableSkill;
       currentApp: AppId;
-    }) => skillsApi.installUnified(skill, currentApp),
+      enableForCurrentApp?: boolean;
+    }) => skillsApi.installUnified(skill, currentApp, enableForCurrentApp),
     onSuccess: (installedSkill) => {
       queryClient.setQueryData<InstalledSkill[]>(
         ["skills", "installed"],

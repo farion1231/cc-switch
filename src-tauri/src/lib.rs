@@ -616,6 +616,17 @@ pub fn run() {
 
             let app_state = AppState::new(db);
 
+            // Resolve or safely block on interrupted inactive Skill cohorts
+            // before any startup migration or command can write the Skill SSOT.
+            if let Err(error) =
+                crate::services::skill::SkillService::recover_inactive_cohort_transactions(
+                    &app_state.db,
+                )
+            {
+                log::error!("Inactive Skill cohort recovery blocked startup: {error}");
+                return Err(error.into());
+            }
+
             // 设置 AppHandle 用于代理故障转移时的 UI 更新
             app_state.proxy_service.set_app_handle(app.handle().clone());
 
@@ -1466,6 +1477,8 @@ pub fn run() {
             commands::get_skill_backups,
             commands::delete_skill_backup,
             commands::install_skill_unified,
+            commands::install_skill_cohort_inactive,
+            commands::recover_inactive_skill_cohort_transactions,
             commands::uninstall_skill_unified,
             commands::restore_skill_backup,
             commands::toggle_skill_app,

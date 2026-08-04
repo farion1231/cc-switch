@@ -138,6 +138,133 @@ impl Database {
         Ok(())
     }
 
+    /// Save a cohort in one SQLite transaction.
+    ///
+    /// Filesystem preparation is owned by the Skill service. This method only
+    /// guarantees that observers see either every cohort row or none of them.
+    pub fn save_skills_atomically(&self, skills: &[InstalledSkill]) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let transaction = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        {
+            let mut statement = transaction
+                .prepare(
+                    "INSERT INTO skills
+                     (id, name, description, directory, repo_owner, repo_name, repo_branch,
+                      readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
+                      installed_at, content_hash, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            for skill in skills {
+                statement
+                    .execute(params![
+                        skill.id,
+                        skill.name,
+                        skill.description,
+                        skill.directory,
+                        skill.repo_owner,
+                        skill.repo_name,
+                        skill.repo_branch,
+                        skill.readme_url,
+                        skill.apps.claude,
+                        skill.apps.codex,
+                        skill.apps.gemini,
+                        skill.apps.grokbuild,
+                        skill.apps.opencode,
+                        skill.apps.hermes,
+                        skill.installed_at,
+                        skill.content_hash,
+                        skill.updated_at,
+                    ])
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+            }
+        }
+        transaction
+            .commit()
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    /// Delete a set of Skill rows in one SQLite transaction.
+    pub fn delete_skills_atomically(&self, ids: &[String]) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let transaction = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        {
+            let mut statement = transaction
+                .prepare("DELETE FROM skills WHERE id = ?1")
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            for id in ids {
+                statement
+                    .execute(params![id])
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+            }
+        }
+        transaction
+            .commit()
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    /// Delete cohort rows only if every persisted field still matches the
+    /// transaction journal. A concurrent writer must turn rollback into a
+    /// conflict instead of having its replacement row deleted by id alone.
+    pub fn delete_skills_if_unchanged_atomically(
+        &self,
+        expected: &[InstalledSkill],
+    ) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let transaction = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        {
+            let mut statement = transaction
+                .prepare(
+                    "DELETE FROM skills
+                     WHERE id = ?1 AND name = ?2 AND description IS ?3 AND directory = ?4
+                       AND repo_owner IS ?5 AND repo_name IS ?6 AND repo_branch IS ?7
+                       AND readme_url IS ?8 AND enabled_claude = ?9 AND enabled_codex = ?10
+                       AND enabled_gemini = ?11 AND enabled_grokbuild = ?12
+                       AND enabled_opencode = ?13 AND enabled_hermes = ?14
+                       AND installed_at = ?15 AND content_hash IS ?16 AND updated_at = ?17",
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            for skill in expected {
+                let affected = statement
+                    .execute(params![
+                        skill.id,
+                        skill.name,
+                        skill.description,
+                        skill.directory,
+                        skill.repo_owner,
+                        skill.repo_name,
+                        skill.repo_branch,
+                        skill.readme_url,
+                        skill.apps.claude,
+                        skill.apps.codex,
+                        skill.apps.gemini,
+                        skill.apps.grokbuild,
+                        skill.apps.opencode,
+                        skill.apps.hermes,
+                        skill.installed_at,
+                        skill.content_hash,
+                        skill.updated_at,
+                    ])
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+                if affected != 1 {
+                    return Err(AppError::Database(format!(
+                        "Skill row changed during cohort rollback: {}",
+                        skill.id
+                    )));
+                }
+            }
+        }
+        transaction
+            .commit()
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
     /// 仅更新已安装 Skill 的元数据，不修改各应用的启用状态。
     ///
     /// 与 [`Self::save_skill`] 不同，本方法不会插入缺失记录。更新操作可能在网络

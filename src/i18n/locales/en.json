@@ -2282,6 +2282,7 @@
     "loading": "Loading...",
     "installed": "Installed",
     "install": "Install",
+    "enableAfterInstall": "Enable for current app after install",
     "installing": "Installing...",
     "uninstall": "Uninstall",
     "uninstalling": "Uninstalling...",
