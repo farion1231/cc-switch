@@ -97,6 +97,17 @@ pub fn toggle_skill_app(
     Ok(true)
 }
 
+/// 切换 Skill 的全局启用状态（CcSwitch 模式）
+#[tauri::command]
+pub fn toggle_skill_global(
+    id: String,
+    enabled: bool,
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    SkillService::toggle_global(&app_state.db, &id, enabled).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 /// 扫描未管理的 Skills
 #[tauri::command]
 pub fn scan_unmanaged_skills(

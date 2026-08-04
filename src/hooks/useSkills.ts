@@ -185,6 +185,17 @@ export function useToggleSkillApp() {
   });
 }
 
+export function useToggleSkillGlobal() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      skillsApi.toggleGlobal(id, enabled),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
+    },
+  });
+}
+
 /**
  * 扫描未管理的 Skills
  *
