@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+      - 'fix-*'
   workflow_dispatch:
 
 permissions:
