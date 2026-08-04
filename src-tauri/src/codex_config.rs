@@ -2819,31 +2819,34 @@ base_url = "https://production.api/v1"
 
     #[test]
     fn proxied_anthropic_catalog_advertises_tool_search_without_enabling_direct_profile() {
-        let template = json!({"slug": "gpt-5.5", "supports_search_tool": false});
-        let spec = CodexCatalogModelSpec {
-            model: "claude-sonnet".to_string(),
-            display_name: "Claude Sonnet".to_string(),
-            context_window: 200_000,
-            supports_parallel_tool_calls: None,
-            input_modalities: None,
-            base_instructions: None,
+        let settings = json!({
+            "modelCatalog": {
+                "models": [{
+                    "model": "claude-sonnet",
+                    "displayName": "Claude Sonnet",
+                    "contextWindow": 200_000
+                }]
+            }
+        });
+        let catalog_for = |profile| {
+            codex_model_catalog_from_settings(&settings, "", profile)
+                .expect("catalog generation should not error")
+                .expect("non-empty modelCatalog must yield a catalog")
         };
 
-        let direct =
-            codex_catalog_model_entry(&template, &spec, 0, CodexCatalogToolProfile::Anthropic);
-        let proxied = codex_catalog_model_entry(
-            &template,
-            &spec,
-            0,
-            CodexCatalogToolProfile::ProxiedAnthropic,
-        );
+        let direct = catalog_for(CodexCatalogToolProfile::Anthropic);
+        let proxied = catalog_for(CodexCatalogToolProfile::ProxiedAnthropic);
 
         assert_eq!(
-            direct.get("supports_search_tool").and_then(Value::as_bool),
+            direct["models"][0]
+                .get("supports_search_tool")
+                .and_then(Value::as_bool),
             Some(false)
         );
         assert_eq!(
-            proxied.get("supports_search_tool").and_then(Value::as_bool),
+            proxied["models"][0]
+                .get("supports_search_tool")
+                .and_then(Value::as_bool),
             Some(true)
         );
     }
