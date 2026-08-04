@@ -107,9 +107,31 @@ impl HealthChecker {
                     if let Some(breaker) = self.router.get_breaker(&circuit_key).await {
                         // Open → HalfOpen（已是 HalfOpen 时为 no-op，不重置累计成功数）
                         breaker.force_half_open().await;
-                        // 把 probe 成功反馈为一次 HalfOpen 探测成功，达 success_threshold
-                        // 后自动转 Closed，使无真实流量场景也能完全自动恢复。
+                        // 累计 HalfOpen 探测成功，达 success_threshold 后自动转 Closed。
                         breaker.record_success(false).await;
+
+                        // 把恢复同步到 DB provider_health（前端徽章的数据源）。
+                        // 徽章三态：is_healthy=false → 熔断；is_healthy=true 且 failures>0 → 降级；
+                        // failures=0 → 正常。据此实现 熔断→降级→正常 的渐进恢复：
+                        // - 已完全恢复 (Closed)：清零 failures → 正常（也覆盖 success_threshold=1
+                        //   时"熔断直跳正常"的合法路径）
+                        // - 仍在 HalfOpen 留观：仅翻 is_healthy、保留 failures → 降级
+                        let fully_recovered = breaker.get_state().await == CircuitState::Closed;
+                        let db_result = if fully_recovered {
+                            self.db
+                                .update_provider_health(&provider.id, app_type_str, true, None)
+                                .await
+                        } else {
+                            self.db
+                                .mark_provider_recovering(&provider.id, app_type_str)
+                                .await
+                        };
+                        if let Err(e) = db_result {
+                            log::warn!(
+                                "[Health] {app_type_str}/{} 恢复回写 DB 失败: {e}",
+                                provider.id
+                            );
+                        }
                     }
                 }
             }
@@ -256,6 +278,29 @@ mod tests {
                     .as_bytes(),
                 );
                 let _ = stream.flush();
+            }
+        });
+        (format!("http://127.0.0.1:{port}"), handle)
+    }
+
+    /// 起服务 `max_conns` 次连接的本地 HTTP server，每次返回固定状态码 + 空 body。
+    /// 用于需要多次 probe（如 熔断→降级→正常 渐进恢复）的测试。
+    fn spawn_server(status_code: u16, max_conns: usize) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind local listener");
+        let port = listener.local_addr().expect("local addr").port();
+        let handle = std::thread::spawn(move || {
+            for _ in 0..max_conns {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    let _ = stream.write_all(
+                        format!(
+                            "HTTP/1.1 {status_code} OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    );
+                    let _ = stream.flush();
+                }
             }
         });
         (format!("http://127.0.0.1:{port}"), handle)
@@ -532,6 +577,150 @@ mod tests {
 
         // probe 成功后应自动恢复到 Closed（而非卡在 HalfOpen 等真实流量）
         assert_eq!(breaker.get_state().await, CircuitState::Closed);
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scan_once_writes_recovery_back_to_db_health() {
+        // 回归：主动探测成功后，不仅内存熔断器要转 Closed，
+        // 还必须把 DB 的 provider_health 行同步为健康——前端徽章读的是 DB
+        // （get_provider_health），否则徽章会永远停在"熔断"，表现为自动恢复无效。
+        let _home = TempHome::new();
+        let (base_url, handle) = spawn_once_server(200);
+
+        let db = Arc::new(Database::memory().unwrap());
+        db.update_circuit_breaker_config(&CircuitBreakerConfig {
+            failure_threshold: 1,
+            success_threshold: 1,
+            timeout_seconds: 3600,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        let provider = claude_provider_with(&base_url);
+        db.save_provider("claude", &provider).unwrap();
+        db.add_to_failover_queue("claude", &provider.id).unwrap();
+
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = Arc::new(ProviderRouter::new(db.clone()));
+        router
+            .record_result(
+                &provider.id,
+                "claude",
+                false,
+                false,
+                Some("boom".to_string()),
+            )
+            .await
+            .unwrap();
+
+        // 熔断后 DB 必须标记为不健康
+        let before = db
+            .get_provider_health(&provider.id, "claude")
+            .await
+            .unwrap();
+        assert!(!before.is_healthy, "熔断后应不健康");
+        assert_eq!(before.consecutive_failures, 1);
+
+        let checker = HealthChecker::new(router.clone(), db.clone(), test_client());
+        checker.scan_once().await;
+
+        // 恢复后 DB 必须同步为健康——这是前端徽章的数据源
+        let after = db
+            .get_provider_health(&provider.id, "claude")
+            .await
+            .unwrap();
+        assert!(
+            after.is_healthy,
+            "恢复后 DB 必须翻健康，否则前端徽章不会更新"
+        );
+        assert_eq!(after.consecutive_failures, 0);
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn scan_once_recovers_degraded_then_normal() {
+        // 熔断→降级→正常 渐进恢复（success_threshold=2）：
+        // 第一次 probe 成功 → HalfOpen，DB 翻降级（is_healthy=true 但 failures 保留 >0）；
+        // 第二次 probe 成功 → Closed，DB 翻正常（failures 清零）。
+        let _home = TempHome::new();
+        let (base_url, handle) = spawn_server(200, 2);
+
+        let db = Arc::new(Database::memory().unwrap());
+        db.update_circuit_breaker_config(&CircuitBreakerConfig {
+            failure_threshold: 1,
+            success_threshold: 2,
+            timeout_seconds: 3600,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        let provider = claude_provider_with(&base_url);
+        db.save_provider("claude", &provider).unwrap();
+        db.add_to_failover_queue("claude", &provider.id).unwrap();
+
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = Arc::new(ProviderRouter::new(db.clone()));
+        router
+            .record_result(
+                &provider.id,
+                "claude",
+                false,
+                false,
+                Some("boom".to_string()),
+            )
+            .await
+            .unwrap();
+
+        let circuit_key = format!("claude:{}", provider.id);
+        let breaker = router
+            .get_breaker(&circuit_key)
+            .await
+            .expect("breaker exists");
+
+        // 起点：熔断
+        assert_eq!(breaker.get_state().await, CircuitState::Open);
+        let h0 = db
+            .get_provider_health(&provider.id, "claude")
+            .await
+            .unwrap();
+        assert!(!h0.is_healthy);
+
+        let checker = HealthChecker::new(router.clone(), db.clone(), test_client());
+
+        // 第一次 probe：Open → HalfOpen；DB 应翻到"降级"（健康但 failures 未清零）
+        checker.scan_once().await;
+        assert_eq!(breaker.get_state().await, CircuitState::HalfOpen);
+        let h1 = db
+            .get_provider_health(&provider.id, "claude")
+            .await
+            .unwrap();
+        assert!(h1.is_healthy, "降级态 is_healthy 必须为 true");
+        assert!(
+            h1.consecutive_failures > 0,
+            "降级态必须保留 failures > 0，不能直接跳正常"
+        );
+
+        // 第二次 probe：HalfOpen → Closed；DB 翻到"正常"（failures 清零）
+        checker.scan_once().await;
+        assert_eq!(breaker.get_state().await, CircuitState::Closed);
+        let h2 = db
+            .get_provider_health(&provider.id, "claude")
+            .await
+            .unwrap();
+        assert!(h2.is_healthy);
+        assert_eq!(h2.consecutive_failures, 0);
+
         handle.join().expect("server thread");
     }
 

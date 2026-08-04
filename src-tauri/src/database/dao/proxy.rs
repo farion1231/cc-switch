@@ -656,6 +656,39 @@ impl Database {
         Ok(())
     }
 
+    /// 标记 provider 为“恢复中（降级）”——脱离熔断，但尚未完全恢复
+    ///
+    /// 与 [`update_provider_health_with_threshold`] 的成功分支不同，此方法把 `is_healthy`
+    /// 置 1 但**保留** `consecutive_failures`（不清零），使前端徽章显示“降级”而非直接跳到
+    /// “正常”，对应主动健康检查在 HalfOpen 探测成功、但尚未累计到 `success_threshold`
+    /// 时的中间态。完全恢复（Closed）由调用方另走 `update_provider_health(success=true)` 清零。
+    pub async fn mark_provider_recovering(
+        &self,
+        provider_id: &str,
+        app_type: &str,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT OR REPLACE INTO provider_health
+             (provider_id, app_type, is_healthy, consecutive_failures,
+              last_success_at, last_failure_at, last_error, updated_at)
+             VALUES (?1, ?2, 1,
+                     COALESCE((SELECT consecutive_failures FROM provider_health
+                               WHERE provider_id = ?1 AND app_type = ?2), 1),
+                     ?3,
+                     (SELECT last_failure_at FROM provider_health
+                      WHERE provider_id = ?1 AND app_type = ?2),
+                     (SELECT last_error FROM provider_health
+                      WHERE provider_id = ?1 AND app_type = ?2),
+                     ?3)",
+            rusqlite::params![provider_id, app_type, &now],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
     /// 重置Provider健康状态
     pub async fn reset_provider_health(
         &self,
