@@ -191,14 +191,99 @@ pub const TRAY_SECTIONS: [TrayAppSection; 4] = [
 const UTIL_WARN_PCT: f64 = 70.0;
 const UTIL_DANGER_PCT: f64 = 90.0;
 
+const EMOJI_DANGER: &str = "\u{1F534}"; // 🔴
+const EMOJI_WARN: &str = "\u{1F7E0}"; // 🟠
+const EMOJI_OK: &str = "\u{1F7E2}"; // 🟢
+
 fn emoji_for_utilization(pct: f64) -> &'static str {
     if pct >= UTIL_DANGER_PCT {
-        "\u{1F534}" // 🔴
+        EMOJI_DANGER
     } else if pct >= UTIL_WARN_PCT {
-        "\u{1F7E0}" // 🟠
+        EMOJI_WARN
     } else {
-        "\u{1F7E2}" // 🟢
+        EMOJI_OK
     }
+}
+
+/// 余额型用量（只有 `remaining`、拿不到利用率）的色标。逐字镜像前端
+/// `UsageFooter` 的余额配色（`UsagePlanItem` 与 inline 两处同构）：
+///   isValid === false                        → 红
+///   remaining < (total || remaining) * 0.1   → 橙
+///   否则                                      → 绿
+/// `total || remaining` 的 JS falsy 语义（undefined / 0 / NaN 都回落到
+/// remaining）在这里显式复刻，避免除零和"0 额度算成 100% 耗尽"。
+///
+/// 两个跟随前端的结果：余额恰好为 0 且供应商没给 `is_valid` 时是绿色
+/// （`0 < 0` 为假）——内置余额供应商都会填 `is_valid`，所以真正耗尽的账号
+/// 仍是红色；负余额是橙色（`-1 < -0.1` 成立）。若要调整阈值，请与
+/// `src/components/UsageFooter.tsx` 一并修改，避免托盘与主页脱钩。
+fn emoji_for_balance(remaining: f64, total: Option<f64>, is_valid: Option<bool>) -> &'static str {
+    if is_valid == Some(false) {
+        return EMOJI_DANGER;
+    }
+    let denom = total
+        .filter(|t| t.is_finite() && *t != 0.0)
+        .unwrap_or(remaining);
+    if remaining < denom * 0.1 {
+        EMOJI_WARN
+    } else {
+        EMOJI_OK
+    }
+}
+
+/// 托盘余额后缀里最多渲染的条目数（DeepSeek 可返回多币种）。
+const MAX_BALANCE_ENTRIES: usize = 2;
+
+fn emoji_severity(emoji: &str) -> u8 {
+    match emoji {
+        EMOJI_DANGER => 2,
+        EMOJI_WARN => 1,
+        _ => 0,
+    }
+}
+
+/// 余额兜底：拿不到利用率（无 `total`）时按"金额 + 币种"渲染，与主页
+/// footer 的「剩余」一致（同样保留 2 位小数）。
+fn format_balance_summary(data: &[crate::provider::UsageData]) -> Option<String> {
+    let mut emoji = EMOJI_OK;
+    let mut parts = Vec::new();
+
+    for (item, remaining) in data
+        .iter()
+        .filter_map(|d| d.remaining.filter(|r| r.is_finite()).map(|r| (d, r)))
+        .take(MAX_BALANCE_ENTRIES)
+    {
+        let entry_emoji = emoji_for_balance(remaining, item.total, item.is_valid);
+        if emoji_severity(entry_emoji) > emoji_severity(emoji) {
+            emoji = entry_emoji;
+        }
+
+        let unit = item.unit.as_deref().unwrap_or("").trim();
+        // DeepSeek 的 plan_name 就是币种，带上会渲染成 "CNY 12.34 CNY"。
+        let plan = item
+            .plan_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty() && !p.eq_ignore_ascii_case(unit))
+            .unwrap_or("");
+
+        let mut part = String::new();
+        if !plan.is_empty() {
+            part.push_str(plan);
+            part.push(' ');
+        }
+        part.push_str(&format!("{remaining:.2}"));
+        if !unit.is_empty() {
+            part.push(' ');
+            part.push_str(unit);
+        }
+        parts.push(part);
+    }
+
+    if parts.is_empty() {
+        return None;
+    }
+    Some(format!("{emoji} {}", parts.join(" ")))
 }
 
 fn format_subscription_summary(
@@ -292,16 +377,23 @@ fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String
         return Some(format!("{emoji} {body}"));
     }
 
-    let first = data.first()?;
-    let pct = tier_pct(first)?;
-    let emoji = emoji_for_utilization(pct);
-    let plan = first.plan_name.as_deref().unwrap_or("");
-    let rounded = pct.round() as i64;
-    if plan.is_empty() {
-        Some(format!("{} {}%", emoji, rounded))
-    } else {
-        Some(format!("{} {} {}%", emoji, plan, rounded))
+    if let Some(first) = data.first() {
+        if let Some(pct) = tier_pct(first) {
+            let emoji = emoji_for_utilization(pct);
+            let plan = first.plan_name.as_deref().unwrap_or("");
+            let rounded = pct.round() as i64;
+            return Some(if plan.is_empty() {
+                format!("{} {}%", emoji, rounded)
+            } else {
+                format!("{} {} {}%", emoji, plan, rounded)
+            });
+        }
     }
+
+    // 余额型结果（DeepSeek / StepFun / SiliconFlow / Novita 的 balance 模板、
+    // general JS 模板等）只填 remaining，拿不到百分比——放在利用率路径之后
+    // 兜底，保证 newapi 那类同时有 total/used 的脚本标签不变。
+    format_balance_summary(data)
 }
 
 fn provider_uses_official_subscription(provider: &crate::provider::Provider) -> bool {
@@ -1375,6 +1467,26 @@ mod tests {
         }
     }
 
+    /// 余额型结果的形状：只有 `remaining` + `unit`，没有 `total` / `used`
+    /// （见 services::balance 的 DeepSeek / StepFun / SiliconFlow / Novita）。
+    fn balance_data(
+        plan_name: Option<&str>,
+        remaining: f64,
+        unit: Option<&str>,
+        is_valid: Option<bool>,
+    ) -> UsageData {
+        UsageData {
+            plan_name: plan_name.map(String::from),
+            extra: None,
+            is_valid,
+            invalid_message: None,
+            total: None,
+            used: None,
+            remaining: Some(remaining),
+            unit: unit.map(String::from),
+        }
+    }
+
     #[test]
     fn script_summary_token_plan_two_tiers() {
         let r = usage_result(
@@ -1532,6 +1644,118 @@ mod tests {
     #[test]
     fn script_summary_empty_data_returns_none() {
         let r = usage_result(true, vec![]);
+        assert!(format_script_summary(&r).is_none());
+    }
+
+    // ── 余额兜底（无 total 的 balance / general 模板）─────────────────
+
+    #[test]
+    fn script_summary_balance_renders_amount_and_unit() {
+        // DeepSeek：plan_name 就是币种，不能渲染成 "CNY 12.34 CNY"。
+        let r = usage_result(
+            true,
+            vec![balance_data(Some("CNY"), 12.34, Some("CNY"), Some(true))],
+        );
+        let s = format_script_summary(&r).expect("should format");
+        assert_eq!(s, "\u{1F7E2} 12.34 CNY", "unexpected balance label: {s}");
+        assert!(!s.contains('%'), "balance label must not fake a pct: {s}");
+    }
+
+    #[test]
+    fn script_summary_balance_keeps_plan_name_when_it_differs_from_unit() {
+        let r = usage_result(
+            true,
+            vec![balance_data(
+                Some("SiliconFlow"),
+                88.0,
+                Some("CNY"),
+                Some(true),
+            )],
+        );
+        let s = format_script_summary(&r).expect("should format");
+        assert_eq!(s, "\u{1F7E2} SiliconFlow 88.00 CNY", "got {s}");
+    }
+
+    #[test]
+    fn script_summary_balance_without_unit_renders_amount_only() {
+        let r = usage_result(true, vec![balance_data(None, 5.0, None, None)]);
+        let s = format_script_summary(&r).expect("should format");
+        assert_eq!(s, "\u{1F7E2} 5.00", "got {s}");
+    }
+
+    #[test]
+    fn script_summary_balance_invalid_is_red() {
+        // Novita / OpenRouter 余额耗尽时 is_valid=false，与主页 isExpired 一致。
+        let r = usage_result(
+            true,
+            vec![balance_data(
+                Some("Novita AI"),
+                0.0,
+                Some("USD"),
+                Some(false),
+            )],
+        );
+        let s = format_script_summary(&r).expect("should format");
+        assert!(s.starts_with("\u{1F534}"), "expected red emoji in {s}");
+    }
+
+    #[test]
+    fn script_summary_balance_negative_is_orange() {
+        // 负余额（upstream #3160 的 SiliconFlow 场景）：主页走 remaining <
+        // remaining * 0.1 判定为橙色，托盘必须一致。
+        let r = usage_result(
+            true,
+            vec![balance_data(Some("SiliconFlow"), -1.2, Some("CNY"), None)],
+        );
+        let s = format_script_summary(&r).expect("should format");
+        assert!(s.starts_with("\u{1F7E0}"), "expected orange emoji in {s}");
+    }
+
+    #[test]
+    fn script_summary_balance_zero_without_is_valid_stays_green() {
+        // 与主页保持一致的直接推论：`0 < 0 * 0.1` 为假 → 绿色。锁进测试，
+        // 防止后来者按直觉改成红色而与 UsageFooter 脱钩（要改就前后端一起改）。
+        let r = usage_result(true, vec![balance_data(None, 0.0, Some("USD"), None)]);
+        let s = format_script_summary(&r).expect("should format");
+        assert!(s.starts_with("\u{1F7E2}"), "expected green emoji in {s}");
+    }
+
+    #[test]
+    fn script_summary_balance_multi_currency_caps_entries_and_takes_worst_emoji() {
+        // DeepSeek 可返回多币种（upstream #2591）：渲染前两条，色标取最差。
+        let r = usage_result(
+            true,
+            vec![
+                balance_data(Some("CNY"), 12.34, Some("CNY"), Some(true)),
+                balance_data(Some("USD"), -5.0, Some("USD"), None),
+                balance_data(Some("HKD"), 7.0, Some("HKD"), Some(true)),
+            ],
+        );
+        let s = format_script_summary(&r).expect("should format");
+        assert!(s.contains("12.34 CNY"), "expected first currency in {s}");
+        assert!(s.contains("-5.00 USD"), "expected second currency in {s}");
+        assert!(!s.contains("HKD"), "third entry should be truncated: {s}");
+        assert!(
+            s.starts_with("\u{1F7E0}"),
+            "worst entry must drive the emoji: {s}"
+        );
+    }
+
+    #[test]
+    fn script_summary_prefers_utilization_over_balance_when_total_present() {
+        // 回归：newapi 形状（total + used + remaining）继续走百分比路径，
+        // 已有用户看到的标签不变。
+        let r = usage_result(true, vec![usage_data(Some("default"), 12.0)]);
+        let s = format_script_summary(&r).expect("should format");
+        assert!(s.contains("12%"), "expected pct label in {s}");
+        assert!(!s.contains("88.00"), "must not fall back to balance: {s}");
+    }
+
+    #[test]
+    fn script_summary_without_remaining_or_pct_returns_none() {
+        let mut d = balance_data(Some("Unknown"), 0.0, Some("USD"), None);
+        d.remaining = None;
+        let r = usage_result(true, vec![d]);
         assert!(format_script_summary(&r).is_none());
     }
 }
