@@ -230,7 +230,12 @@ impl ChatToResponsesState {
     }
 
     fn drain_complete_inline_think(&mut self) -> Vec<Bytes> {
-        let Some((reasoning, answer)) = split_leading_think_block(&self.inline_think.buffer) else {
+        // 还没发过任何正文时，这就是整段内容开头的块，闭合标签后的换行是分隔噪音；
+        // 已经发过正文的话那些空白属于正文，抹掉会把前后两截粘在一起。
+        let strip_separator = !self.text.added && self.text_seq == 0;
+        let Some((reasoning, answer)) =
+            split_leading_think_block(&self.inline_think.buffer, strip_separator)
+        else {
             return Vec::new();
         };
 
@@ -1132,6 +1137,21 @@ mod tests {
         assert!(!output.contains("<thinking>"));
         assert!(!output.contains("</thinking>"));
         assert!(output.contains("event: response.completed"));
+    }
+
+    #[tokio::test]
+    async fn keeps_spacing_around_mid_text_thinking_block() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_codex\",\"created\":123,\"model\":\"gpt-5-codex\",\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"foo<thinking>aside</thinking> bar\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        // 中间块后面的空格属于正文，不能当成推理/正文的分隔噪音抹掉。
+        assert!(output.contains("\"text\":\"foo\""));
+        assert!(output.contains("\"text\":\" bar\""));
+        assert!(!output.contains("\"text\":\"bar\""));
+        assert!(!output.contains("<thinking>"));
     }
 
     #[tokio::test]

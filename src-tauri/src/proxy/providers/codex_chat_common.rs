@@ -207,7 +207,13 @@ pub(crate) fn is_empty_value(value: &Value) -> bool {
     }
 }
 
-pub(crate) fn split_leading_think_block(text: &str) -> Option<(String, String)> {
+/// `strip_separator` 只对整段内容开头的 think 块成立：那里的换行是推理与正文之间的
+/// 分隔噪音。正文中间的 think 块后面紧跟的空白属于正文本身，抹掉会把
+/// `foo<thinking>x</thinking> bar` 粘成 `foobar`。
+pub(crate) fn split_leading_think_block(
+    text: &str,
+    strip_separator: bool,
+) -> Option<(String, String)> {
     let leading_ws_len = text.len() - text.trim_start().len();
     let after_ws = &text[leading_ws_len..];
     let open_tag = THINK_TAG_PAIRS
@@ -227,9 +233,16 @@ pub(crate) fn split_leading_think_block(text: &str) -> Option<(String, String)> 
         .min_by_key(|(close_start, _)| *close_start)?;
     let answer_start = close_start + close_tag.len();
 
+    let answer = &text[answer_start..];
+    let answer = if strip_separator {
+        strip_think_answer_separator(answer)
+    } else {
+        answer
+    };
+
     Some((
         text[body_start..close_start].trim().to_string(),
-        strip_think_answer_separator(&text[answer_start..]).to_string(),
+        answer.to_string(),
     ))
 }
 
@@ -280,7 +293,10 @@ pub(crate) fn split_all_think_blocks(text: &str) -> Option<(String, String)> {
     let mut rest = text.to_string();
 
     while let Some((open_at, _)) = find_think_open_tag(&rest) {
-        let Some((reasoning, tail)) = split_leading_think_block(&rest[open_at..]) else {
+        // 只有整段内容开头的那个块才吃掉后面的分隔空白。
+        let is_leading = answer.is_empty() && open_at == 0;
+        let Some((reasoning, tail)) = split_leading_think_block(&rest[open_at..], is_leading)
+        else {
             // 开标签没有闭合，剩下的整段留给正文，交由调用方兜底。
             break;
         };
