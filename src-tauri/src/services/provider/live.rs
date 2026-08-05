@@ -1246,24 +1246,33 @@ pub(crate) enum LiveSyncOutcome {
 /// （崩溃退出、或关闭接管时恢复失败），一旦残留，此后每次保存供应商都只写备份
 /// 不写文件，用户改了请求地址却永远看不到生效，且没有任何提示。
 ///
-/// 因此三条信号取并集，但都要求"接管此刻确实在生效"：
+/// 因此三条信号取并集，但每条都必须是**按应用**的、且表示"接管此刻确实在生效"：
 /// - live 文件里有代理占位符：已接管；
-/// - 数据库标志已提交：已接管；
-/// - 有恢复备份且代理进程在跑：正处于接管激活窗口（`set_takeover_for_app`
-///   先启动代理再备份、再改写 live），此时不能覆盖 live。
+/// - 该应用的数据库标志已提交：已接管；
+/// - 有恢复备份，且该应用正有切换/接管操作在进行中：处于接管激活窗口
+///   （`set_takeover_for_app` 全程持锁，写好备份后才提交标志、才改写 live），
+///   此时不能覆盖 live。
 ///
-/// 反之——有备份行但代理没在跑、标志也没开——就是残留，live 仍归供应商，必须写。
-fn proxy_owns_live_config(state: &AppState, app_type: &AppType, has_live_backup: bool) -> bool {
-    if state
-        .proxy_service
-        .detect_takeover_in_live_config_for_app(app_type)
-    {
+/// 第三条**不能**用全局的"代理进程在跑"来代替：那样 A 应用开着接管时，B 应用
+/// 残留的一行备份会被误算成 B 也在接管，B 的保存又变成只写备份不写文件 —— 本
+/// 修复要消灭的故障会在别的应用上原样复现。
+///
+/// 反之——有备份行、没有占位符、标志没开、也没有操作在进行中——就是残留，
+/// live 仍归供应商，必须写。
+fn proxy_owns_live_config(
+    state: &AppState,
+    app_type: &AppType,
+    has_live_backup: bool,
+    live_taken_over: bool,
+) -> bool {
+    if live_taken_over {
         return true;
     }
 
     // 读不到接管标志时按"未接管"处理：保证保存供应商这件事能真正生效，代价是
-    // 极端情况下（接管开着、live 里又没有占位符、代理也没在跑）可能覆盖接管的
-    // live 配置。这种组合本身已经是坏状态，但必须留下痕迹，否则排查时无从下手。
+    // 极端情况下（接管开着、live 里又没有占位符、也没有操作在进行中）可能覆盖
+    // 接管的 live 配置。这种组合本身已经是坏状态，但必须留下痕迹，否则排查时
+    // 无从下手。
     let takeover_enabled =
         match futures::executor::block_on(state.db.get_proxy_config_for_app(app_type.as_str())) {
             Ok(config) => config.enabled,
@@ -1280,7 +1289,12 @@ fn proxy_owns_live_config(state: &AppState, app_type: &AppType, has_live_backup:
         return true;
     }
 
-    has_live_backup && futures::executor::block_on(state.proxy_service.is_running())
+    has_live_backup
+        && futures::executor::block_on(
+            state
+                .proxy_service
+                .is_switch_in_progress_for_app(app_type.as_str()),
+        )
 }
 
 /// 把某个供应商同步到它所属应用的 live 配置，同时尊重代理接管对 live 的所有权。
@@ -1298,15 +1312,24 @@ pub(crate) fn sync_live_for_provider_respecting_takeover(
         return Ok(LiveSyncOutcome::WroteLive);
     }
 
-    let has_live_backup = futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
-        .ok()
-        .flatten()
-        .is_some();
+    // 读不到备份行时按"没有备份"处理，也就是倾向于真正写 live —— 与下面读接管
+    // 标志失败时的取向一致。同样必须留痕。
+    let has_live_backup =
+        match futures::executor::block_on(state.db.get_live_backup(app_type.as_str())) {
+            Ok(backup) => backup.is_some(),
+            Err(err) => {
+                log::warn!(
+                    "读取 {} Live 备份失败，按无备份处理并继续写入 live 配置: {err}",
+                    app_type.as_str()
+                );
+                false
+            }
+        };
     let live_taken_over = state
         .proxy_service
         .detect_takeover_in_live_config_for_app(app_type);
 
-    if !proxy_owns_live_config(state, app_type, has_live_backup) {
+    if !proxy_owns_live_config(state, app_type, has_live_backup, live_taken_over) {
         // 备份行残留时顺手刷新它：否则日后一旦走到"关闭接管 → 还原备份"，
         // 旧地址会被写回 live，把这次保存的结果吃掉。刷新失败只告警——本次
         // 写入才是用户要的结果，不能因为清理残留失败而报保存失败。

@@ -4713,6 +4713,11 @@ impl ProviderService {
             .get_universal_provider(id)?
             .ok_or_else(|| AppError::Message(format!("统一供应商 {id} 不存在")))?;
 
+        // 某个应用的 live 写不动不该让另外两个应用的同步一起中断，所以逐个收集，
+        // 最后一并上报。绝不能只 warn 后照旧返回成功：那样数据库是新地址、文件
+        // 是旧地址、界面显示成功，正是本次要修的那个故障在这条路径上重现。
+        let mut live_failures: Vec<String> = Vec::new();
+
         // 同步到 Claude
         if let Some(mut claude_provider) = provider.to_claude_provider() {
             // 合并已有配置
@@ -4722,7 +4727,12 @@ impl ProviderService {
                 claude_provider.settings_config = merged;
             }
             state.db.save_provider("claude", &claude_provider)?;
-            Self::project_universal_child_to_live(state, AppType::Claude, &claude_provider.id);
+            Self::project_universal_child_to_live(
+                state,
+                AppType::Claude,
+                &claude_provider.id,
+                &mut live_failures,
+            );
         } else {
             // 如果禁用了 Claude，删除对应的子供应商
             let claude_id = format!("universal-claude-{id}");
@@ -4738,7 +4748,12 @@ impl ProviderService {
                 codex_provider.settings_config = merged;
             }
             state.db.save_provider("codex", &codex_provider)?;
-            Self::project_universal_child_to_live(state, AppType::Codex, &codex_provider.id);
+            Self::project_universal_child_to_live(
+                state,
+                AppType::Codex,
+                &codex_provider.id,
+                &mut live_failures,
+            );
         } else {
             let codex_id = format!("universal-codex-{id}");
             let _ = state.db.delete_provider("codex", &codex_id);
@@ -4753,10 +4768,23 @@ impl ProviderService {
                 gemini_provider.settings_config = merged;
             }
             state.db.save_provider("gemini", &gemini_provider)?;
-            Self::project_universal_child_to_live(state, AppType::Gemini, &gemini_provider.id);
+            Self::project_universal_child_to_live(
+                state,
+                AppType::Gemini,
+                &gemini_provider.id,
+                &mut live_failures,
+            );
         } else {
             let gemini_id = format!("universal-gemini-{id}");
             let _ = state.db.delete_provider("gemini", &gemini_id);
+        }
+
+        if !live_failures.is_empty() {
+            return Err(AppError::Message(format!(
+                "统一供应商已保存到数据库，但以下应用的配置文件未能写入，仍是旧内容：{}。\
+                 请重试同步，或切换一次该应用的供应商。",
+                live_failures.join("、")
+            )));
         }
 
         Ok(true)
@@ -4765,10 +4793,14 @@ impl ProviderService {
     /// 统一供应商同步只写 DB 会让用户"改了请求地址但文件里还是旧的"：生成的子
     /// 供应商如果正是该应用当前启用的那个，必须同时把 live 文件重投影一遍。
     ///
-    /// 失败降级为告警而不上抛：DB 已按新配置写好，同步的主要成果已经落地；
-    /// 某个应用的 live 写不动（文件被占用 / 权限问题）不该让另外两个应用的同步
-    /// 一起失败，也不该报成"同步失败"。下次切换或保存会自愈。
-    fn project_universal_child_to_live(state: &AppState, app_type: AppType, child_id: &str) {
+    /// 失败不当场上抛，而是记入 `failures` 由调用方汇总上报：一个应用写不动不该
+    /// 中断另外两个应用的同步，但也绝不能被静默吞掉 —— 那就等于报了假的成功。
+    fn project_universal_child_to_live(
+        state: &AppState,
+        app_type: AppType,
+        child_id: &str,
+        failures: &mut Vec<String>,
+    ) {
         let is_current = match crate::settings::get_effective_current_provider(&state.db, &app_type)
         {
             Ok(current) => current.as_deref() == Some(child_id),
@@ -4786,9 +4818,10 @@ impl ProviderService {
 
         if let Err(err) = Self::sync_current_provider_for_app(state, app_type.clone()) {
             log::warn!(
-                "统一供应商同步后重写 {} live 配置失败（将在下次切换/保存时自愈）: {err}",
+                "统一供应商同步后重写 {} live 配置失败: {err}",
                 app_type.as_str()
             );
+            failures.push(app_type.as_str().to_string());
         }
     }
 
