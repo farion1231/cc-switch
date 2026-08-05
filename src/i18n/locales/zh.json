@@ -229,6 +229,17 @@
       "stopBlockedByTakeover": "其它应用正在使用代理接管。请先在设置中关闭对应应用接管，再停止本地路由。"
     }
   },
+  "claudeOffice": {
+    "title": "Claude for Office",
+    "description": "在 Office 加载项的「Connect another way → Gateway」中填入以下信息",
+    "proxyNotRunning": "本地代理服务未运行，请先启动代理服务",
+    "loadFailed": "连接信息暂不可用，请先启动代理服务",
+    "gatewayUrl": "Gateway URL",
+    "token": "Token",
+    "copied": "{{label}} 已复制",
+    "copyFailed": "复制失败",
+    "hint": "与 Claude Desktop 共用供应商配置与故障转移队列，切换供应商对两者同时生效"
+  },
   "notifications": {
     "providerAdded": "供应商已添加",
     "providerSaved": "供应商配置已保存",

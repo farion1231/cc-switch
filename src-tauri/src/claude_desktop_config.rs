@@ -704,6 +704,15 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
         .iter()
         .find(|r| r.route_id == requested)
         .or_else(|| {
+            // Claude for Office 的模型列表把 labelOverride 作为 id 暴露，
+            // 请求回传时按 labelOverride 反查 route
+            routes.iter().find(|r| {
+                r.label_override
+                    .as_deref()
+                    .is_some_and(|label| label == requested)
+            })
+        })
+        .or_else(|| {
             routes
                 .iter()
                 .find(|r| is_compatible_opus_route_alias(&r.route_id, requested))
@@ -931,6 +940,44 @@ pub fn proxy_gateway_base_url_from_db(db: &Database) -> Result<String, AppError>
         proxy_origin_from_parts(&config.listen_address, config.listen_port),
         CLAUDE_DESKTOP_PROXY_PREFIX
     ))
+}
+
+/// Claude for Office 连接界面所需的 Gateway URL 与 token
+///
+/// URL 使用 /claude-office 前缀（该前缀带 CORS + Private Network Access 支持，
+/// 且接受 x-api-key 鉴权），token 与 Claude Desktop gateway 共用。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeOfficeGatewayInfo {
+    pub gateway_url: String,
+    pub token: String,
+    pub proxy_running: bool,
+}
+
+pub const CLAUDE_OFFICE_PROXY_PREFIX: &str = "/claude-office";
+
+pub fn claude_office_gateway_info(
+    db: &Database,
+    proxy_running: bool,
+) -> Result<ClaudeOfficeGatewayInfo, AppError> {
+    let config = futures::executor::block_on(db.get_proxy_config())?;
+    if config.listen_port == 0 {
+        return Err(AppError::Config(
+            "Claude for Office 代理地址需要真实监听端口；请先启动本地代理或使用固定端口"
+                .to_string(),
+        ));
+    }
+    let gateway_url = format!(
+        "{}{}",
+        proxy_origin_from_parts(&config.listen_address, config.listen_port),
+        CLAUDE_OFFICE_PROXY_PREFIX
+    );
+    let token = get_or_create_gateway_token(db)?;
+    Ok(ClaudeOfficeGatewayInfo {
+        gateway_url,
+        token,
+        proxy_running,
+    })
 }
 
 fn apply_provider_to_paths(

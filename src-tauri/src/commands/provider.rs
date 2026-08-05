@@ -215,6 +215,15 @@ pub fn get_claude_desktop_default_routes(
 }
 
 #[tauri::command]
+pub async fn get_claude_office_gateway_info(
+    state: State<'_, AppState>,
+) -> Result<crate::claude_desktop_config::ClaudeOfficeGatewayInfo, String> {
+    let proxy_running = state.proxy_service.is_running().await;
+    crate::claude_desktop_config::claude_office_gateway_info(state.db.as_ref(), proxy_running)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn import_claude_desktop_providers_from_claude(
     state: State<'_, AppState>,
 ) -> Result<usize, String> {
