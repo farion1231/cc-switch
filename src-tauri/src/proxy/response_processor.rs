@@ -270,8 +270,8 @@ pub async fn handle_non_streaming(
                     .or_else(|| ctx.outbound_model.clone())
                     .unwrap_or_else(|| ctx.request_model.clone());
 
-                let dedup_scope = (ctx.app_type_str != "claude")
-                    .then_some((ctx.app_type_str, ctx.provider.id.as_str()));
+                let dedup_scope =
+                    super::usage::parser::dedup_scope_for_app(ctx.app_type_str, &ctx.provider.id);
                 request_id_for_detail = Some(usage.dedup_request_id(dedup_scope));
 
                 spawn_log_usage(
@@ -553,7 +553,7 @@ pub(crate) fn create_usage_collector(
 
                 // Extract request_id synchronously for streaming capture
                 let dedup_scope =
-                    (app_type_str != "claude").then_some((app_type_str, provider_id.as_str()));
+                    super::usage::parser::dedup_scope_for_app(app_type_str, provider_id.as_str());
                 let rid = usage.dedup_request_id(dedup_scope);
                 if let Ok(mut guard) = request_id_for_detail.lock() {
                     *guard = Some(rid.clone());
@@ -564,6 +564,7 @@ pub(crate) fn create_usage_collector(
                 let session_id = session_id.clone();
                 let request_model = request_model.clone();
                 let outbound_model = fallback_model.clone();
+                let rid_for_log = rid.clone();
 
                 tokio::spawn(async move {
                     log_usage_internal(
@@ -579,7 +580,7 @@ pub(crate) fn create_usage_collector(
                         true, // is_streaming
                         status_code,
                         Some(session_id),
-                        None, // streaming request_id resolved inside dedup_request_id
+                        Some(rid_for_log),
                     )
                     .await;
                 });
@@ -1211,6 +1212,7 @@ mod tests {
             false,
             200,
             None,
+            None,
         )
         .await;
 
@@ -1280,6 +1282,7 @@ mod tests {
             None,
             false,
             200,
+            None,
             None,
         )
         .await;
@@ -1360,6 +1363,7 @@ mod tests {
             None,
             false,
             200,
+            None,
             None,
         )
         .await;

@@ -427,10 +427,14 @@ async fn handle_claude_transform(
         };
 
         // 创建使用量收集器；关闭 usage logging 时不要再解析转换后的 SSE。
+        // 流式 capture 的 request_id 通道：与 usage collector 共享，collector 解析出
+        // usage 时同步写入，供流结束落详情取用（与 usage 行关联）。
+        let request_id_for_detail = Arc::new(std::sync::Mutex::new(None::<String>));
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
             let request_model = ctx.request_model.clone();
+            let request_id_sink = request_id_for_detail.clone();
             // 上游/转换层未回显模型时，优先用映射后的出站模型兜底（路由接管真值），
             // 其次才是客户端请求别名。空字符串视为缺失（转换器对无回显上游会合成 ""）。
             let fallback_model = ctx
@@ -460,6 +464,12 @@ async fn handle_claude_transform(
                         let session_id = session_id.clone();
                         let request_model = request_model.clone();
                         let outbound_model = fallback_model.clone();
+                        let dedup_scope =
+                            super::usage::parser::dedup_scope_for_app(app_type_str, &provider_id);
+                        let rid = usage.dedup_request_id(dedup_scope);
+                        if let Ok(mut guard) = request_id_sink.lock() {
+                            *guard = Some(rid.clone());
+                        }
 
                         tokio::spawn(async move {
                             log_usage(
@@ -489,9 +499,6 @@ async fn handle_claude_transform(
 
         // 获取流式超时配置
         let timeout_config = ctx.streaming_timeout_config();
-
-        // Streaming capture request_id channel (shared with usage collector for ID retrieval on save)
-        let request_id_for_detail = Arc::new(std::sync::Mutex::new(None::<String>));
 
         let logged_stream = create_logged_passthrough_stream(
             sse_stream,
@@ -1250,10 +1257,14 @@ async fn handle_codex_chat_to_responses_transform(
         let sse_stream = create_responses_sse_stream_from_chat_with_context(stream, tool_context);
         let sse_stream = record_responses_sse_stream(sse_stream, state.codex_chat_history.clone());
 
+        // 流式 capture 的 request_id 通道：与 usage collector 共享，collector 解析出
+        // usage 时同步写入，供流结束落详情取用（与 usage 行关联）。
+        let request_id_for_detail = Arc::new(std::sync::Mutex::new(None::<String>));
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
             let request_model = ctx.request_model.clone();
+            let request_id_sink = request_id_for_detail.clone();
             // 接管/模型覆写场景的归因兜底：出站真值优先于客户端请求别名
             let fallback_model = ctx
                 .outbound_model
@@ -1290,6 +1301,12 @@ async fn handle_codex_chat_to_responses_transform(
                     let request_model = request_model.clone();
                     let outbound_model = fallback_model.clone();
                     let session_id = session_id.clone();
+                    let dedup_scope =
+                        super::usage::parser::dedup_scope_for_app(app_type_str, &provider_id);
+                    let rid = usage.dedup_request_id(dedup_scope);
+                    if let Ok(mut guard) = request_id_sink.lock() {
+                        *guard = Some(rid.clone());
+                    }
 
                     tokio::spawn(async move {
                         log_usage(
@@ -1313,9 +1330,6 @@ async fn handle_codex_chat_to_responses_transform(
         } else {
             None
         };
-
-        // Streaming capture request_id channel (shared with usage collector for ID retrieval on save)
-        let request_id_for_detail = Arc::new(std::sync::Mutex::new(None::<String>));
 
         let logged_stream = create_logged_passthrough_stream(
             sse_stream,
@@ -1520,6 +1534,7 @@ async fn handle_codex_anthropic_to_responses_transform(
     // explicit JSON media type. Explicit JSON is buffered below so 2xx error
     // envelopes and gateways that ignore stream:true can be converted faithfully.
     if response.is_sse() || (is_stream && !response.is_json()) {
+        let capture_headers = response.headers().clone();
         let stream = response.bytes_stream();
         let sse_stream =
             create_responses_sse_stream_from_anthropic_with_context(stream, codex_tool_context);
@@ -1529,6 +1544,7 @@ async fn handle_codex_anthropic_to_responses_transform(
             state,
             status,
             connection_guard,
+            capture_headers,
         );
     }
 
@@ -1577,6 +1593,7 @@ async fn handle_codex_anthropic_to_responses_transform(
             state,
             status,
             connection_guard,
+            response_headers.clone(),
         );
     }
 
@@ -1664,11 +1681,16 @@ fn build_codex_anthropic_sse_response(
     state: &ProxyState,
     status: StatusCode,
     connection_guard: Option<ActiveConnectionGuard>,
+    response_headers: axum::http::HeaderMap,
 ) -> Result<axum::response::Response, ProxyError> {
+    // 流式 capture 的 request_id 通道：与 usage collector 共享，collector 解析出
+    // usage 时同步写入，供流结束落详情取用（与 usage 行关联）。
+    let request_id_for_detail = Arc::new(std::sync::Mutex::new(None::<String>));
     let usage_collector = if usage_logging_enabled(state) {
         let state = state.clone();
         let provider_id = ctx.provider.id.clone();
         let request_model = ctx.request_model.clone();
+        let request_id_sink = request_id_for_detail.clone();
         let fallback_model = ctx
             .outbound_model
             .clone()
@@ -1698,6 +1720,12 @@ fn build_codex_anthropic_sse_response(
                 let request_model = request_model.clone();
                 let outbound_model = fallback_model.clone();
                 let session_id = session_id.clone();
+                let dedup_scope =
+                    super::usage::parser::dedup_scope_for_app(app_type_str, &provider_id);
+                let rid = usage.dedup_request_id(dedup_scope);
+                if let Ok(mut guard) = request_id_sink.lock() {
+                    *guard = Some(rid.clone());
+                }
 
                 tokio::spawn(async move {
                     log_usage(
@@ -1729,9 +1757,9 @@ fn build_codex_anthropic_sse_response(
         ctx.streaming_timeout_config(),
         connection_guard,
         state.clone(),
-        String::new(),
-        axum::http::HeaderMap::new(),
-        Arc::new(std::sync::Mutex::new(None)),
+        ctx.request_body.clone(),
+        response_headers,
+        request_id_for_detail,
     );
 
     let mut headers = axum::http::HeaderMap::new();
