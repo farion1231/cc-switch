@@ -1382,13 +1382,7 @@ export function PiProviderForm({
                 id="pi-config-preview"
                 value={settingsConfigPreview}
                 onChange={() => {}}
-                height={Math.min(
-                  360,
-                  Math.max(
-                    112,
-                    settingsConfigPreview.split("\n").length * 20 + 20,
-                  ),
-                )}
+                height={settingsConfigPreview.split("\n").length * 20 + 20}
                 showValidation={false}
                 language="json"
                 darkMode={isDarkMode}
