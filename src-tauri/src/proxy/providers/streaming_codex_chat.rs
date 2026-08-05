@@ -245,7 +245,7 @@ impl ChatToResponsesState {
 
         let mut events = Vec::new();
         if !reasoning.is_empty() {
-            events.extend(self.push_reasoning_delta(&reasoning));
+            events.extend(self.push_inline_reasoning_delta(&reasoning));
             events.extend(self.finalize_reasoning());
         }
 
@@ -310,7 +310,7 @@ impl ChatToResponsesState {
                 if let Some((reasoning, answer)) = split_all_think_blocks(&buffered) {
                     let mut events = Vec::new();
                     if !reasoning.is_empty() {
-                        events.extend(self.push_reasoning_delta(&reasoning));
+                        events.extend(self.push_inline_reasoning_delta(&reasoning));
                         events.extend(self.finalize_reasoning());
                     }
                     if !answer.is_empty() {
@@ -323,7 +323,7 @@ impl ChatToResponsesState {
                 if reasoning.is_empty() {
                     Vec::new()
                 } else {
-                    let mut events = self.push_reasoning_delta(&reasoning);
+                    let mut events = self.push_inline_reasoning_delta(&reasoning);
                     events.extend(self.finalize_reasoning());
                     events
                 }
@@ -377,6 +377,12 @@ impl ChatToResponsesState {
             delta,
         ));
 
+        events
+    }
+
+    fn push_inline_reasoning_delta(&mut self, delta: &str) -> Vec<Bytes> {
+        let events = self.push_reasoning_delta(delta);
+        self.append_reasoning_to_active_tools(delta);
         events
     }
 
@@ -1498,6 +1504,23 @@ mod tests {
         assert!(output.contains("event: response.output_item.done"));
         assert!(output.contains("\"type\":\"function_call\""));
         assert!(output.contains("\"reasoning_content\":\"Need file.\""));
+    }
+
+    #[tokio::test]
+    async fn preserves_late_inline_thinking_on_streamed_tool_call_items() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_tool_late_inline\",\"model\":\"gpt-5-codex\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tool_late_inline\",\"model\":\"gpt-5-codex\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\\\"README.md\\\"}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tool_late_inline\",\"model\":\"gpt-5-codex\",\"choices\":[{\"delta\":{\"content\":\"<thinking>Need file.</thinking>\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tool_late_inline\",\"model\":\"gpt-5-codex\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.output_item.done"));
+        assert!(output.contains("\"type\":\"function_call\""));
+        assert!(output.contains("\"reasoning_content\":\"Need file.\""));
+        assert!(!output.contains("<thinking>"));
     }
 
     #[tokio::test]
