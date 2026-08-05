@@ -806,6 +806,60 @@ mod tests {
 
     #[test]
     #[serial]
+    fn successful_codex_switch_does_not_surface_history_migration_failure() {
+        with_test_home(|state, home| {
+            crate::settings::reload_settings().expect("reload settings");
+            let api = Provider::with_id(
+                "api-provider".to_string(),
+                "API Provider".to_string(),
+                codex_settings("https://api.example/v1", "sk-api"),
+                None,
+            );
+            let official = codex_official_oauth_provider();
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api)
+                .expect("save API provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official)
+                .expect("save official provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), &api.id)
+                .expect("set database current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some(&api.id))
+                .expect("set local current provider");
+            crate::codex_config::write_codex_live_atomic(
+                &api.settings_config["auth"],
+                api.settings_config["config"].as_str(),
+            )
+            .expect("seed API live config");
+
+            let session_path =
+                seed_codex_session_history("openai", "post-switch-migration-failure.jsonl");
+            let app_config_dir = home.join(".cc-switch");
+            fs::create_dir_all(&app_config_dir).expect("create app config dir");
+            fs::write(app_config_dir.join("backups"), "block backup directory")
+                .expect("block migration backup root");
+
+            ProviderService::switch(state, AppType::Codex, &official.id)
+                .expect("successful provider switch must not report maintenance migration failure");
+
+            assert_eq!(
+                crate::settings::get_effective_current_provider(&state.db, &AppType::Codex)
+                    .expect("read effective provider")
+                    .as_deref(),
+                Some(official.id.as_str())
+            );
+            assert!(crate::settings::unify_codex_session_history());
+            assert!(crate::settings::unify_codex_migrate_existing_requested());
+            assert_codex_session_provider(&session_path, "openai");
+        });
+    }
+
+    #[test]
+    #[serial]
     fn switch_codex_api_to_official_repairs_tool_search_history_in_normal_mode() {
         assert_codex_api_to_official_switch_repairs_tool_search_history(false);
     }
@@ -2974,24 +3028,28 @@ impl ProviderService {
             false
         };
 
-        let migrate_codex_history_after_switch = || -> Result<(), AppError> {
+        let migrate_codex_history_after_switch = || {
             if !codex_crosses_oauth_boundary {
-                return Ok(());
+                return;
             }
-            let outcome =
-                crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket()?;
-            if let Some(reason) = outcome.skipped_reason {
-                log::debug!(
-                    "Codex OAuth/API history bucket migration skipped after provider switch: {reason}"
-                );
-            } else {
-                log::info!(
-                    "Migrated Codex OAuth history into the shared provider bucket after switch: jsonl_files={}, state_rows={}",
-                    outcome.migrated_jsonl_files,
-                    outcome.migrated_state_rows
-                );
+            match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
+                Ok(outcome) => {
+                    if let Some(reason) = outcome.skipped_reason {
+                        log::debug!(
+                            "Codex OAuth/API history bucket migration skipped after provider switch: {reason}"
+                        );
+                    } else {
+                        log::info!(
+                            "Migrated Codex OAuth history into the shared provider bucket after switch: jsonl_files={}, state_rows={}",
+                            outcome.migrated_jsonl_files,
+                            outcome.migrated_state_rows
+                        );
+                    }
+                }
+                Err(error) => log::warn!(
+                    "Codex OAuth/API history bucket migration failed after a successful provider switch; retry remains scheduled: {error}"
+                ),
             }
-            Ok(())
         };
 
         // Backup or live placeholders mean the live file is owned by proxy
@@ -3059,14 +3117,14 @@ impl ProviderService {
 
             // The proxy server will route requests to the new provider via is_current.
             // MCP sync is intentionally skipped while Live config is owned by takeover.
-            migrate_codex_history_after_switch()?;
+            migrate_codex_history_after_switch();
             return Ok(SwitchResult::default());
         }
 
         // Normal mode: full switch with Live config write
         let result = Self::switch_normal(state, app_type, id, &providers)
             .map_err(rollback_codex_history_settings)?;
-        migrate_codex_history_after_switch()?;
+        migrate_codex_history_after_switch();
         Ok(result)
     }
 
