@@ -364,6 +364,9 @@ function ProviderFormFull({
     });
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
+    setCodexNativeModelFallback(
+      initialData?.meta?.codexNativeModelFallback ?? true,
+    );
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
     setLocalProxyHeadersOverride(
       formatRequestOverrideObject(
@@ -552,6 +555,10 @@ function ProviderFormFull({
     useState<PromptCacheRoutingMode>(
       () => initialData?.meta?.promptCacheRouting ?? "auto",
     );
+  const [codexNativeModelFallback, setCodexNativeModelFallback] =
+    useState<boolean>(
+      () => initialData?.meta?.codexNativeModelFallback ?? true,
+    );
   const [customUserAgent, setCustomUserAgent] = useState<string>(
     () => initialData?.meta?.customUserAgent ?? "",
   );
@@ -656,6 +663,7 @@ function ProviderFormFull({
       resetCodexConfig(template.auth, template.config);
       setCodexChatReasoning({});
       setPromptCacheRouting("auto");
+      setCodexNativeModelFallback(true);
     }
   }, [appId, initialData, selectedPresetId, resetCodexConfig]);
 
@@ -1595,6 +1603,13 @@ function ProviderFormFull({
         promptCacheRouting !== "auto"
           ? promptCacheRouting
           : undefined,
+      codexNativeModelFallback:
+        appId === "codex" &&
+        category !== "official" &&
+        localCodexApiFormat === "openai_responses" &&
+        !codexNativeModelFallback
+          ? false
+          : undefined,
       customUserAgent:
         (appId === "claude" || appId === "codex") && category !== "official"
           ? customUserAgent.trim() || undefined
@@ -1769,6 +1784,7 @@ function ProviderFormFull({
         resetCodexConfig(template.auth, template.config);
         setCodexChatReasoning({});
         setPromptCacheRouting("auto");
+        setCodexNativeModelFallback(true);
         setLocalCodexApiFormat(
           codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
             "openai_responses",
@@ -1811,6 +1827,7 @@ function ProviderFormFull({
       resetCodexConfig(auth, config, preset.modelCatalog ?? []);
       setCodexChatReasoning(preset.codexChatReasoning ?? {});
       setPromptCacheRouting(preset.promptCacheRouting ?? "auto");
+      setCodexNativeModelFallback(true);
       setLocalCodexApiFormat(
         preset.apiFormat ??
           codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
@@ -2319,6 +2336,8 @@ function ProviderFormFull({
               onCodexChatReasoningChange={setCodexChatReasoning}
               promptCacheRouting={promptCacheRouting}
               onPromptCacheRoutingChange={setPromptCacheRouting}
+              nativeModelFallback={codexNativeModelFallback}
+              onNativeModelFallbackChange={setCodexNativeModelFallback}
               catalogModels={codexCatalogModels}
               onCatalogModelsChange={setCodexCatalogModels}
               speedTestEndpoints={speedTestEndpoints}

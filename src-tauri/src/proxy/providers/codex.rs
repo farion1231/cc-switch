@@ -73,7 +73,7 @@ pub fn codex_provider_uses_chat_completions(provider: &Provider) -> bool {
         .unwrap_or(false)
 }
 
-pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &str) -> bool {
+fn is_codex_responses_endpoint(endpoint: &str) -> bool {
     let path = endpoint
         .split_once('?')
         .map_or(endpoint, |(path, _query)| path);
@@ -81,7 +81,11 @@ pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &st
     matches!(
         path,
         "/responses" | "/v1/responses" | "/responses/compact" | "/v1/responses/compact"
-    ) && codex_provider_uses_chat_completions(provider)
+    )
+}
+
+pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &str) -> bool {
+    is_codex_responses_endpoint(endpoint) && codex_provider_uses_chat_completions(provider)
 }
 
 /// Whether a converted Codex Responses request may send `prompt_cache_key` to
@@ -196,14 +200,7 @@ pub fn codex_provider_uses_anthropic(provider: &Provider) -> bool {
 }
 
 pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint: &str) -> bool {
-    let path = endpoint
-        .split_once('?')
-        .map_or(endpoint, |(path, _query)| path);
-
-    matches!(
-        path,
-        "/responses" | "/v1/responses" | "/responses/compact" | "/v1/responses/compact"
-    ) && codex_provider_uses_anthropic(provider)
+    is_codex_responses_endpoint(endpoint) && codex_provider_uses_anthropic(provider)
 }
 
 /// Whether a native-Responses Codex upstream needs Codex `namespace`/plugin
@@ -325,6 +322,29 @@ pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> 
     let upstream_model = codex_provider_upstream_model(provider)?;
     body["model"] = JsonValue::String(upstream_model.clone());
     Some(upstream_model)
+}
+
+/// Keep resumed Codex threads aligned with the active native Responses provider.
+/// Codex persists a thread's model, so changing config.toml alone cannot refresh it.
+pub fn apply_codex_native_model_fallback(
+    provider: &Provider,
+    endpoint: &str,
+    body: &mut JsonValue,
+) -> Option<String> {
+    if !is_codex_responses_endpoint(endpoint)
+        || is_codex_official_provider(provider)
+        || provider
+            .meta
+            .as_ref()
+            .is_some_and(|meta| !meta.codex_native_model_fallback_enabled())
+    {
+        return body
+            .get("model")
+            .and_then(JsonValue::as_str)
+            .map(ToString::to_string);
+    }
+
+    apply_codex_upstream_model(provider, body)
 }
 
 pub fn resolve_codex_chat_reasoning_config(
@@ -1196,6 +1216,89 @@ wire_api = "anthropic"
             body.get("model").and_then(|v| v.as_str()),
             Some("claude-opus-4-1[1m]")
         );
+    }
+
+    #[test]
+    fn native_responses_falls_back_from_stale_provider_model() {
+        let mut provider = create_provider(json!({
+            "config": r#"model_provider = "happy"
+model = "gpt-5.6-sol-medium"
+
+[model_providers.happy]
+base_url = "https://happy.example/v1"
+wire_api = "responses"
+"#,
+            "modelCatalog": {
+                "models": [
+                    { "model": "gpt-5.6-sol-medium", "displayName": "GPT 5.6 Sol Medium" }
+                ]
+            }
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("openai_responses".to_string()),
+            ..Default::default()
+        });
+        let mut body = json!({ "model": "deepseek-v4-flash" });
+
+        let resolved = apply_codex_native_model_fallback(&provider, "/responses", &mut body);
+
+        assert_eq!(resolved.as_deref(), Some("gpt-5.6-sol-medium"));
+        assert_eq!(body["model"], "gpt-5.6-sol-medium");
+    }
+
+    #[test]
+    fn native_responses_can_preserve_uncatalogued_direct_model() {
+        let mut provider = create_provider(json!({
+            "config": "model = \"gpt-5.6-sol-medium\"",
+            "modelCatalog": {
+                "models": [{ "model": "gpt-5.6-sol-medium" }]
+            }
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("openai_responses".to_string()),
+            codex_native_model_fallback: Some(false),
+            ..Default::default()
+        });
+        let mut body = json!({ "model": "experimental-direct-model" });
+
+        let resolved = apply_codex_native_model_fallback(&provider, "/responses", &mut body);
+
+        assert_eq!(resolved.as_deref(), Some("experimental-direct-model"));
+        assert_eq!(body["model"], "experimental-direct-model");
+    }
+
+    #[test]
+    fn native_responses_preserves_official_model() {
+        let mut provider = create_provider(json!({
+            "config": "model = \"gpt-5.6-sol-medium\"",
+            "modelCatalog": {
+                "models": [{ "model": "gpt-5.6-sol-medium" }]
+            }
+        }));
+        provider.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+        provider.category = Some("official".to_string());
+        let mut body = json!({ "model": "gpt-5.6-sol" });
+
+        let resolved = apply_codex_native_model_fallback(&provider, "/responses", &mut body);
+
+        assert_eq!(resolved.as_deref(), Some("gpt-5.6-sol"));
+        assert_eq!(body["model"], "gpt-5.6-sol");
+    }
+
+    #[test]
+    fn native_responses_fallback_ignores_non_responses_endpoints() {
+        let provider = create_provider(json!({
+            "config": "model = \"gpt-5.6-sol-medium\"",
+            "modelCatalog": {
+                "models": [{ "model": "gpt-5.6-sol-medium" }]
+            }
+        }));
+        let mut body = json!({ "model": "direct-chat-model" });
+
+        let resolved = apply_codex_native_model_fallback(&provider, "/chat/completions", &mut body);
+
+        assert_eq!(resolved.as_deref(), Some("direct-chat-model"));
+        assert_eq!(body["model"], "direct-chat-model");
     }
 
     #[test]

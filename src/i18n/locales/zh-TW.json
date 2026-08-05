@@ -1348,6 +1348,8 @@
     "promptCacheRoutingEnabled": "開啟",
     "promptCacheRoutingDisabled": "關閉",
     "promptCacheRoutingHint": "自動模式僅對已確認相容的上游傳送 prompt_cache_key；開啟可用於其他相容閘道，關閉可避免嚴格閘道因未知欄位回傳 400。只使用客戶端提供的穩定工作階段 ID。",
+    "nativeModelFallbackLabel": "切換後跟隨預設模型",
+    "nativeModelFallbackHint": "舊工作階段傳送的模型不在目前映射中時，改用目前供應商的預設模型。如需直接請求映射外模型，請關閉。",
     "defaultModelLabel": "預設模型",
     "defaultModelPlaceholder": "例如: gpt-5.6-sol",
     "defaultModelHint": "Codex 預設請求的模型，隨時可改，無需等待軟體更新供應商範本。留空且設定了模型映射時，預設使用映射第一行。",

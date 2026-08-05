@@ -1342,6 +1342,8 @@
     "promptCacheRoutingEnabled": "开启",
     "promptCacheRoutingDisabled": "关闭",
     "promptCacheRoutingHint": "自动模式仅对已确认兼容的上游发送 prompt_cache_key；开启可用于其他兼容网关，关闭可避免严格网关因未知字段返回 400。只使用客户端提供的稳定会话 ID。",
+    "nativeModelFallbackLabel": "切换后跟随默认模型",
+    "nativeModelFallbackHint": "旧会话发送的模型不在当前映射中时，改用当前供应商默认模型。若需直接请求映射外模型，请关闭。",
     "upstreamModelName": "上游模型名称",
     "upstreamModelNameHint": "Chat 格式下这里填写真实上游模型；路由会把 Codex 的 Responses 请求转换为 Chat Completions 并保持该模型。",
     "modelNamePlaceholder": "例如: gpt-5-codex",
