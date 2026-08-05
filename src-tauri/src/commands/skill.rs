@@ -9,7 +9,7 @@ use crate::error::format_skill_error;
 use crate::services::skill::{
     DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillBackupEntry, SkillRepo,
     SkillService, SkillStorageLocation, SkillUninstallResult, SkillUpdateInfo,
-    SkillsShSearchResult,
+    SkillsShSearchResult, ZipSkillInstallResult,
 };
 use crate::store::AppState;
 use std::str::FromStr;
@@ -332,7 +332,7 @@ pub fn install_skills_from_zip(
     file_path: String,
     current_app: String,
     app_state: State<'_, AppState>,
-) -> Result<Vec<InstalledSkill>, String> {
+) -> Result<ZipSkillInstallResult, String> {
     let app_type = parse_app_type(&current_app)?;
     let path = std::path::Path::new(&file_path);
 

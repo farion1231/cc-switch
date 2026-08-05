@@ -2435,7 +2435,16 @@
       "installing": "インストール中...",
       "successSingle": "スキル {{name}} をインストールしました",
       "successMultiple": "{{count}} 件のスキルをインストールしました",
-      "noSkillsFound": "ZIP ファイルにスキルが見つかりません（SKILL.md が必要です）"
+      "noSkillsFound": "ZIP ファイルにスキルが見つかりません（SKILL.md が必要です）",
+      "skipped": "競合する {{count}} 件のスキルをスキップしました",
+      "skippedItem": "{{name}}：{{reason}}",
+      "skippedRemaining": "他 {{count}} 件の競合",
+      "skipReasons": {
+        "managed_conflict": "同名のスキルはすでに CC Switch で管理されています",
+        "storage_conflict": "プライマリストレージに同名のパスが存在します",
+        "app_directory_conflict": "現在のアプリディレクトリに同名のパスが存在します",
+        "duplicate_in_archive": "ZIP 内に重複するスキルディレクトリ名があります"
+      }
     }
   },
   "deeplink": {

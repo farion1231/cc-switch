@@ -40,6 +40,24 @@ export interface InstalledSkill {
   updatedAt: number;
 }
 
+export type ZipSkillSkipReason =
+  | "managed_conflict"
+  | "storage_conflict"
+  | "app_directory_conflict"
+  | "duplicate_in_archive";
+
+export interface ZipSkillSkippedItem {
+  directory: string;
+  name: string;
+  reason: ZipSkillSkipReason;
+  existingSkillId?: string;
+}
+
+export interface ZipSkillInstallResult {
+  installed: InstalledSkill[];
+  skipped: ZipSkillSkippedItem[];
+}
+
 export interface SkillUninstallResult {
   backupPath?: string;
 }
@@ -279,7 +297,7 @@ export const skillsApi = {
   async installFromZip(
     filePath: string,
     currentApp: AppId,
-  ): Promise<InstalledSkill[]> {
+  ): Promise<ZipSkillInstallResult> {
     return await invoke("install_skills_from_zip", { filePath, currentApp });
   },
 };

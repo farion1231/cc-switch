@@ -2435,7 +2435,16 @@
       "installing": "安装中...",
       "successSingle": "技能 {{name}} 已安装",
       "successMultiple": "成功安装 {{count}} 个技能",
-      "noSkillsFound": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）"
+      "noSkillsFound": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）",
+      "skipped": "跳过 {{count}} 个冲突技能",
+      "skippedItem": "{{name}}：{{reason}}",
+      "skippedRemaining": "另有 {{count}} 个冲突项",
+      "skipReasons": {
+        "managed_conflict": "同名技能已由 CC Switch 管理",
+        "storage_conflict": "主存储目录中已存在同名路径",
+        "app_directory_conflict": "当前应用目录中已存在同名路径",
+        "duplicate_in_archive": "ZIP 内包含重复的技能目录名"
+      }
     }
   },
   "deeplink": {

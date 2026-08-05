@@ -2435,7 +2435,16 @@
       "installing": "Installing...",
       "successSingle": "Skill {{name}} installed",
       "successMultiple": "Successfully installed {{count}} skills",
-      "noSkillsFound": "No skills found in ZIP file (requires SKILL.md file)"
+      "noSkillsFound": "No skills found in ZIP file (requires SKILL.md file)",
+      "skipped": "Skipped {{count}} conflicting skill(s)",
+      "skippedItem": "{{name}}: {{reason}}",
+      "skippedRemaining": "{{count}} more conflict(s)",
+      "skipReasons": {
+        "managed_conflict": "a skill with this directory is already managed by CC Switch",
+        "storage_conflict": "the primary storage already contains this path",
+        "app_directory_conflict": "the current app directory already contains this path",
+        "duplicate_in_archive": "the ZIP contains duplicate skill directory names"
+      }
     }
   },
   "deeplink": {
