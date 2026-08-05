@@ -953,6 +953,16 @@ pub fn unify_codex_session_history() -> bool {
         .unify_codex_session_history
 }
 
+/// OAuth/API provider switches must share one Codex history bucket without a
+/// separate UI authorization step. Enabling the existing unified-session
+/// mechanism also requests the one-time migration of legacy `openai` sessions.
+pub fn ensure_codex_session_history_unified_for_provider_switch() -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        settings.unify_codex_session_history = true;
+        settings.unify_codex_migrate_existing = Some(true);
+    })
+}
+
 // ===== 当前供应商管理函数 =====
 
 /// 获取指定应用类型的当前供应商 ID（从本地 settings 读取）

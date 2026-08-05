@@ -2674,12 +2674,16 @@ impl ProxyService {
         existing_backup: &Value,
         preserve_api_key: bool,
     ) -> Result<(), String> {
+        let target_has_oauth = target_settings
+            .get("auth")
+            .is_some_and(crate::codex_config::codex_auth_has_oauth_login_material);
         let Some(existing_auth) = existing_backup
             .get("auth")
             .filter(|auth| {
                 !Self::codex_auth_has_proxy_placeholder(auth)
                     && (crate::codex_config::codex_auth_has_oauth_login_material(auth)
                         || (preserve_api_key
+                            && !target_has_oauth
                             && crate::codex_config::codex_auth_has_login_material(auth)))
             })
             .cloned()
@@ -4257,6 +4261,107 @@ wire_api = "responses"
             .await
             .expect("disable takeover");
         assert_eq!(read_auth(), oauth_auth);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_third_party_takeover_switch_to_official_restores_target_oauth() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        crate::settings::update_settings(crate::settings::AppSettings {
+            unify_codex_session_history: true,
+            unify_codex_migrate_existing: Some(true),
+            ..Default::default()
+        })
+        .expect("enable unified Codex history");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        use_ephemeral_proxy_port(&db).await;
+        let service = ProxyService::new(db.clone());
+        let oauth_auth = json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "id_token": "oauth-id",
+                "access_token": "oauth-access"
+            }
+        });
+        let api_auth = json!({
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "third-party-key"
+        });
+
+        let mut official = Provider::with_id(
+            "codex-official".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": oauth_auth.clone(),
+                "config": "model = \"gpt-5.4\"\n"
+            }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        db.save_provider("codex", &official)
+            .expect("save official provider");
+
+        let mut third_party = Provider::with_id(
+            "rightcode".to_string(),
+            "RightCode".to_string(),
+            json!({
+                "auth": api_auth.clone(),
+                "config": r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+"#
+            }),
+            None,
+        );
+        third_party.category = Some("custom".to_string());
+        db.save_provider("codex", &third_party)
+            .expect("save third-party provider");
+        db.set_current_provider("codex", "rightcode")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some("rightcode"))
+            .expect("set local current provider");
+        crate::codex_config::write_codex_live_atomic(
+            &api_auth,
+            third_party
+                .settings_config
+                .get("config")
+                .and_then(Value::as_str),
+        )
+        .expect("seed third-party live config");
+
+        service
+            .set_takeover_for_app("codex", true)
+            .await
+            .expect("enable third-party takeover");
+        service
+            .hot_switch_provider("codex", "codex-official")
+            .await
+            .expect("switch takeover target to official");
+
+        let backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("read backup")
+            .expect("backup exists");
+        let backup: Value = serde_json::from_str(&backup.original_config).expect("parse backup");
+        assert_eq!(
+            backup["auth"], oauth_auth,
+            "switching from an API provider takeover to Official must not preserve the API key over the target OAuth snapshot"
+        );
+
+        service
+            .set_takeover_for_app("codex", false)
+            .await
+            .expect("disable takeover");
+        let restored_auth: Value =
+            crate::config::read_json_file(&crate::codex_config::get_codex_auth_path())
+                .expect("read restored auth");
+        assert_eq!(restored_auth, oauth_auth);
     }
 
     #[test]

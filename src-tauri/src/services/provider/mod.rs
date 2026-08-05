@@ -290,6 +290,32 @@ mod tests {
         path
     }
 
+    fn seed_codex_session_history(model_provider: &str, file_name: &str) -> PathBuf {
+        let path = crate::codex_config::get_codex_config_dir()
+            .join("sessions/2026/08/03")
+            .join(file_name);
+        fs::create_dir_all(path.parent().expect("session parent"))
+            .expect("create session directory");
+        fs::write(
+            &path,
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"session-switch\",\"model_provider\":\"{model_provider}\"}}}}\n"
+            ),
+        )
+        .expect("seed Codex session history");
+        path
+    }
+
+    fn assert_codex_session_provider(path: &Path, expected: &str) {
+        let value: Value = serde_json::from_str(
+            fs::read_to_string(path)
+                .expect("read Codex session history")
+                .trim(),
+        )
+        .expect("parse Codex session history");
+        assert_eq!(value["payload"]["model_provider"], expected);
+    }
+
     fn assert_tool_search_history_repaired(path: &Path) {
         let values = fs::read_to_string(path)
             .expect("read repaired history")
@@ -523,6 +549,10 @@ mod tests {
             }
             let mode = if takeover { "takeover" } else { "normal" };
             let history_path = seed_legacy_tool_search_history(&format!("{mode}-switch.jsonl"));
+            let session_path = seed_codex_session_history(
+                "custom",
+                &format!("{mode}-api-session-to-official-switch.jsonl"),
+            );
 
             ProviderService::switch(
                 state,
@@ -532,6 +562,28 @@ mod tests {
             .expect("switch to official provider");
 
             assert_tool_search_history_repaired(&history_path);
+            assert_codex_session_provider(&session_path, "custom");
+            assert!(crate::settings::unify_codex_session_history());
+            let effective_config = if takeover {
+                let backup =
+                    futures::executor::block_on(state.db.get_live_backup(AppType::Codex.as_str()))
+                        .expect("read takeover backup")
+                        .expect("takeover backup should exist");
+                serde_json::from_str::<Value>(&backup.original_config)
+                    .expect("parse takeover backup")["config"]
+                    .as_str()
+                    .expect("backup config should be a string")
+                    .to_string()
+            } else {
+                crate::codex_config::read_codex_config_text().expect("read official live config")
+            };
+            let doc = effective_config
+                .parse::<toml_edit::DocumentMut>()
+                .expect("parse effective official config");
+            assert_eq!(
+                doc.get("model_provider").and_then(|item| item.as_str()),
+                Some("custom")
+            );
         });
     }
 
@@ -577,11 +629,16 @@ mod tests {
             let mode = if takeover { "takeover" } else { "normal" };
             let history_path =
                 seed_legacy_tool_search_history(&format!("{mode}-official-to-api-switch.jsonl"));
+            let session_path = seed_codex_session_history(
+                "openai",
+                &format!("{mode}-official-session-to-api-switch.jsonl"),
+            );
 
             ProviderService::switch(state, AppType::Codex, &api.id)
                 .expect("switch to API provider");
 
             assert_tool_search_history_repaired(&history_path);
+            assert_codex_session_provider(&session_path, "custom");
         });
     }
 
@@ -637,6 +694,66 @@ mod tests {
                 .expect("switch between API providers");
 
             assert_tool_search_history_not_repaired(&history_path);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_codex_official_to_api_preserves_stored_oauth_when_live_auth_is_api_key() {
+        with_test_home(|state, _| {
+            crate::settings::reload_settings().expect("reload settings");
+            let oauth_auth = json!({
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "id_token": "oauth-id",
+                    "access_token": "oauth-access"
+                }
+            });
+            let mut official = codex_official_oauth_provider();
+            official.settings_config["auth"] = oauth_auth.clone();
+            let api = Provider::with_id(
+                "api-provider".to_string(),
+                "API Provider".to_string(),
+                codex_settings("https://api.example/v1", "sk-api"),
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official)
+                .expect("save official provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api)
+                .expect("save API provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), &official.id)
+                .expect("set database current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some(&official.id))
+                .expect("set local current provider");
+
+            crate::codex_config::write_codex_live_atomic(
+                &json!({
+                    "auth_mode": "apikey",
+                    "OPENAI_API_KEY": "stale-api-key"
+                }),
+                official.settings_config["config"].as_str(),
+            )
+            .expect("seed stale API-key live auth");
+
+            ProviderService::switch(state, AppType::Codex, &api.id)
+                .expect("switch to API provider");
+
+            let stored_official = state
+                .db
+                .get_provider_by_id(&official.id, AppType::Codex.as_str())
+                .expect("read official provider")
+                .expect("official provider exists");
+            assert_eq!(
+                stored_official.settings_config["auth"],
+                oauth_auth,
+                "switch-away backfill must not replace stored Official OAuth with stale live API-key auth"
+            );
         });
     }
 
@@ -2777,7 +2894,7 @@ impl ProviderService {
             None
         };
 
-        if matches!(app_type, AppType::Codex) {
+        let codex_crosses_oauth_boundary = if matches!(app_type, AppType::Codex) {
             let current_id = crate::settings::get_effective_current_provider(&state.db, &app_type)?;
             let current_is_official_oauth = current_id
                 .as_deref()
@@ -2785,10 +2902,10 @@ impl ProviderService {
                 .is_some_and(crate::proxy::providers::is_codex_official_provider);
             let target_is_official_oauth =
                 crate::proxy::providers::is_codex_official_provider(_provider);
+            let crosses_boundary = current_id.as_deref() != Some(id)
+                && current_is_official_oauth != target_is_official_oauth;
 
-            if current_id.as_deref() != Some(id)
-                && current_is_official_oauth != target_is_official_oauth
-            {
+            if crosses_boundary {
                 let outcome =
                     crate::codex_history_migration::repair_codex_tool_search_history_item_ids()?;
                 if outcome.repaired_items > 0 {
@@ -2797,8 +2914,32 @@ impl ProviderService {
                         outcome.repaired_items
                     );
                 }
+                crate::settings::ensure_codex_session_history_unified_for_provider_switch()?;
             }
-        }
+            crosses_boundary
+        } else {
+            false
+        };
+
+        let migrate_codex_history_after_switch = || -> Result<(), AppError> {
+            if !codex_crosses_oauth_boundary {
+                return Ok(());
+            }
+            let outcome =
+                crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket()?;
+            if let Some(reason) = outcome.skipped_reason {
+                log::debug!(
+                    "Codex OAuth/API history bucket migration skipped after provider switch: {reason}"
+                );
+            } else {
+                log::info!(
+                    "Migrated Codex OAuth history into the shared provider bucket after switch: jsonl_files={}, state_rows={}",
+                    outcome.migrated_jsonl_files,
+                    outcome.migrated_state_rows
+                );
+            }
+            Ok(())
+        };
 
         // Backup or live placeholders mean the live file is owned by proxy
         // takeover, even if the proxy server is temporarily stopped or is in the
@@ -2846,11 +2987,14 @@ impl ProviderService {
 
             // The proxy server will route requests to the new provider via is_current.
             // MCP sync is intentionally skipped while Live config is owned by takeover.
+            migrate_codex_history_after_switch()?;
             return Ok(SwitchResult::default());
         }
 
         // Normal mode: full switch with Live config write
-        Self::switch_normal(state, app_type, id, &providers)
+        let result = Self::switch_normal(state, app_type, id, &providers)?;
+        migrate_codex_history_after_switch()?;
+        Ok(result)
     }
 
     /// Normal switch flow (non-proxy mode)
