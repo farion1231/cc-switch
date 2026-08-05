@@ -1,6 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type ManagedAuthProvider = "github_copilot" | "codex_oauth";
+export type ManagedAuthProvider =
+  | "github_copilot"
+  | "codex_oauth"
+  | "xai_oauth";
 
 export interface ManagedAuthAccount {
   id: string;
@@ -10,8 +13,10 @@ export interface ManagedAuthAccount {
   authenticated_at: number;
   is_default: boolean;
   github_domain: string;
-  /** 是否需要重新登录以补全缺失的凭据（Codex 旧账号缺少 id_token） */
+  /** Codex-only: the account predates persisted id_token support. */
   reauth_required?: boolean;
+  /** xAI-only: the refresh credential is invalid and the account is unusable. */
+  requires_reauth: boolean;
 }
 
 export interface ManagedAuthStatus {

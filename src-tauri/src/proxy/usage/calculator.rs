@@ -59,7 +59,8 @@ impl CostCalculator {
         pricing: &ModelPricing,
         cost_multiplier: Decimal,
     ) -> CostBreakdown {
-        let input_includes_cache_read = matches!(app_type, "codex" | "gemini" | "grokbuild");
+        let input_includes_cache_read =
+            crate::services::sql_helpers::is_cache_inclusive_app(app_type);
         Self::calculate_with_cache_semantics(
             usage,
             pricing,
@@ -109,16 +110,6 @@ impl CostCalculator {
             cache_creation_cost,
             total_cost,
         }
-    }
-
-    /// 尝试计算成本，如果模型未知则返回 None
-    #[allow(dead_code)]
-    pub fn try_calculate(
-        usage: &TokenUsage,
-        pricing: Option<&ModelPricing>,
-        cost_multiplier: Decimal,
-    ) -> Option<CostBreakdown> {
-        pricing.map(|p| Self::calculate(usage, p, cost_multiplier))
     }
 
     pub fn try_calculate_for_app(
@@ -250,23 +241,6 @@ mod tests {
         assert_eq!(cost.input_cost, Decimal::from_str("0.003").unwrap());
         // total_cost: 基础价格 × 倍率 = 0.003 * 1.5 = 0.0045
         assert_eq!(cost.total_cost, Decimal::from_str("0.0045").unwrap());
-    }
-
-    #[test]
-    fn test_unknown_model_handling() {
-        let usage = TokenUsage {
-            input_tokens: 1000,
-            output_tokens: 500,
-            cache_read_tokens: 0,
-            cache_creation_tokens: 0,
-            model: None,
-            message_id: None,
-        };
-
-        let multiplier = Decimal::from_str("1.0").unwrap();
-        let cost = CostCalculator::try_calculate(&usage, None, multiplier);
-
-        assert!(cost.is_none());
     }
 
     #[test]

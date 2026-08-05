@@ -1,4 +1,4 @@
-# Using Claude in Codex: CC Switch Local Routing Guide
+# Using Claude Models in Codex with CC Switch
 
 > Applies to CC Switch 3.17.0 and later (the Anthropic Messages upstream was introduced in 3.17.0). This guide is based on the repository documentation and code, and uses a Claude-family relay gateway as the example. Screenshots are generated from the current frontend UI with de-identified sample data to avoid exposing a real API key.
 

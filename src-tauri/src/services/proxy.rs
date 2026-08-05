@@ -110,9 +110,16 @@ impl ProxyService {
         let auth_policy = if provider.uses_managed_account_auth() {
             // Codex 系（含仅凭 base_url 识别、无 provider_type meta 的）必须保留
             // ANTHROPIC_AUTH_TOKEN 占位符：Claude Code 缺该键会弹登录提示（#3784）。
-            // Copilot 维持仅 API_KEY 占位，避免与 /login 管理的 key 冲突（#1049）。
+            // Copilot 默认同样注入 AUTH_TOKEN 占位符：Claude Code（实测 2.1.220）
+            // 对 ANTHROPIC_API_KEY 会弹"是否使用该自定义 key"确认框且默认
+            // "No (recommended)"，按默认走后占位符被忽略、落入 Not logged in
+            // （并非 sk-ant-* 格式校验——headless 下占位符原样出站）；AUTH_TOKEN
+            // 作为网关 Bearer 被直接信任，零弹窗。仅当供应商表单显式选择了
+            // ANTHROPIC_API_KEY（meta.apiKeyField）时才保留 API_KEY 占位，以规避
+            // 与 /login 管理的 key 冲突（#1049）。
             ClaudeTakeoverAuthPolicy::ManagedAccount {
-                keep_auth_token: !provider.is_github_copilot(),
+                keep_auth_token: !provider.is_github_copilot()
+                    || !provider.claude_uses_api_key_field(),
             }
         } else {
             ClaudeTakeoverAuthPolicy::PreserveExistingOrAuthToken
@@ -212,7 +219,10 @@ impl ProxyService {
                 // - Codex 系保留 AUTH_TOKEN：缺该键 Claude Code 会弹登录提示（#3784）。
                 //   无条件注入而非"已存在才保留"：热切换路径传入的是 provider
                 //   settings（预设不含该键），且旧版接管已把存量用户 live 中的键删光。
-                // - Copilot 仅 API_KEY：避免与 /login 管理的 key 冲突（#1049）。
+                // - Copilot 默认 AUTH_TOKEN：API_KEY 占位符会触发 Claude Code 的
+                //   自定义 key 确认框（默认 "No (recommended)"），按默认走即
+                //   Not logged in；仅当表单显式选择了 ANTHROPIC_API_KEY 时才用
+                //   API_KEY 占位以规避 /login key 冲突（#1049）。
                 if keep_auth_token {
                     env.insert(
                         "ANTHROPIC_AUTH_TOKEN".to_string(),
@@ -1611,6 +1621,22 @@ impl ProxyService {
         Ok((proxy_url, proxy_codex_base_url))
     }
 
+    /// Grok Build live 是否具备可接管的自定义模型表。
+    ///
+    /// 官方态 live（Grok CLI 自带 OAuth 登录、无 `[model.*]` 表）没有注入
+    /// 占位符的落点：Grok CLI 以「config 是否为空」区分官方 OAuth / 自定义
+    /// 供应商两种模式，表达不出「官方 OAuth + 自定义 base_url」。官方供应商
+    /// 的接管能力门见 `official_provider_supports_proxy_takeover`（按应用逐个
+    /// 开，目前仅 Codex），调用方应跳过接管或直接报错。官方态的用量统计由
+    /// `session_usage_grokbuild` 从会话日志导入，不依赖代理。
+    fn grok_live_config_supports_takeover(config: &Value) -> bool {
+        config
+            .get("config")
+            .and_then(Value::as_str)
+            .and_then(crate::grok_config::extract_model_config)
+            .is_some()
+    }
+
     fn apply_grok_takeover_fields(config: &mut Value, proxy_base_url: &str) -> Result<(), String> {
         let config_toml = config
             .get("config")
@@ -1677,9 +1703,13 @@ impl ProxyService {
 
         // Grok Build: keep its own provider namespace while reusing Responses forwarding.
         if let Ok(mut live_config) = self.read_grok_live() {
-            Self::apply_grok_takeover_fields(&mut live_config, &proxy_grok_base_url)?;
-            self.write_grok_live(&live_config)?;
-            log::info!("Grok Build Live 配置已接管，代理地址: {proxy_grok_base_url}");
+            if Self::grok_live_config_supports_takeover(&live_config) {
+                Self::apply_grok_takeover_fields(&mut live_config, &proxy_grok_base_url)?;
+                self.write_grok_live(&live_config)?;
+                log::info!("Grok Build Live 配置已接管，代理地址: {proxy_grok_base_url}");
+            } else {
+                log::info!("Grok Build Live 处于官方登录态（无自定义模型表），跳过代理接管");
+            }
         }
 
         Ok(())
@@ -1729,6 +1759,14 @@ impl ProxyService {
             }
             AppType::GrokBuild => {
                 let mut live_config = self.read_grok_live()?;
+                if !Self::grok_live_config_supports_takeover(&live_config) {
+                    return Err(
+                        "Grok Build 当前为官方登录态（无自定义模型表），官方供应商不支持代理接管 \
+                         (Grok Build is using the official login without a custom model table; \
+                         official providers cannot be taken over by the proxy)"
+                            .to_string(),
+                    );
+                }
                 Self::apply_grok_takeover_fields(&mut live_config, &proxy_grok_base_url)?;
                 self.write_grok_live(&live_config)?;
                 log::info!("Grok Build Live 配置已接管，代理地址: {proxy_grok_base_url}");
@@ -1790,8 +1828,14 @@ impl ProxyService {
             }
             AppType::GrokBuild => {
                 if let Ok(mut live_config) = self.read_grok_live() {
-                    Self::apply_grok_takeover_fields(&mut live_config, &proxy_grok_base_url)?;
-                    let _ = self.write_grok_live(&live_config);
+                    if Self::grok_live_config_supports_takeover(&live_config) {
+                        Self::apply_grok_takeover_fields(&mut live_config, &proxy_grok_base_url)?;
+                        let _ = self.write_grok_live(&live_config);
+                    } else {
+                        log::info!(
+                            "Grok Build Live 处于官方登录态（无自定义模型表），跳过代理接管"
+                        );
+                    }
                 }
             }
             _ => {}
@@ -3458,7 +3502,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_account_claude_takeover_uses_api_key_placeholder() {
+    fn managed_account_claude_takeover_uses_auth_token_placeholder() {
         let mut provider = Provider::with_id(
             "copilot".to_string(),
             "GitHub Copilot".to_string(),
@@ -3487,13 +3531,13 @@ mod tests {
             .and_then(|value| value.as_object())
             .expect("env should exist");
         assert_eq!(
-            env.get("ANTHROPIC_API_KEY")
+            env.get("ANTHROPIC_AUTH_TOKEN")
                 .and_then(|value| value.as_str()),
             Some(PROXY_TOKEN_PLACEHOLDER)
         );
         assert!(
-            env.get("ANTHROPIC_AUTH_TOKEN").is_none(),
-            "managed OAuth providers should avoid Claude Auth Token login semantics"
+            env.get("ANTHROPIC_API_KEY").is_none(),
+            "API_KEY placeholders trigger Claude Code's custom-key approval prompt (defaults to No), landing users in Not logged in"
         );
     }
 
@@ -3575,8 +3619,8 @@ mod tests {
             "CLAUDE_CODE_SUBAGENT_MODEL",
             Some("claude-sonnet-4.6[1M]"),
         );
-        assert_env_str(env, "ANTHROPIC_API_KEY", Some(PROXY_TOKEN_PLACEHOLDER));
-        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", None);
+        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
+        assert_env_str(env, "ANTHROPIC_API_KEY", None);
     }
 
     #[test]
@@ -3719,6 +3763,45 @@ mod tests {
     }
 
     #[test]
+    fn managed_account_claude_takeover_xai_keeps_one_auth_key() {
+        let mut provider = Provider::with_id(
+            "xai".to_string(),
+            "xAI".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.x.ai/v1"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("xai_oauth".to_string()),
+            ..Default::default()
+        });
+
+        let mut live_config = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "old-token",
+                "ANTHROPIC_API_KEY": "old-key",
+                "OPENAI_API_KEY": "old-openai-key"
+            }
+        });
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(Value::as_object)
+            .expect("env should exist");
+        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
+        assert_env_str(env, "ANTHROPIC_API_KEY", None);
+        assert_env_str(env, "OPENAI_API_KEY", None);
+    }
+
+    #[test]
     fn managed_account_claude_takeover_codex_by_base_url_keeps_auth_token() {
         // 无 provider_type meta、仅凭 base_url 识别为受管 codex 的供应商，
         // 也必须保留 AUTH_TOKEN 占位符（与策略选择共用同一判定族）。
@@ -3790,7 +3873,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_account_claude_takeover_copilot_removes_stale_auth_token() {
+    fn managed_account_claude_takeover_copilot_defaults_to_auth_token() {
         let mut provider = Provider::with_id(
             "copilot".to_string(),
             "GitHub Copilot".to_string(),
@@ -3803,6 +3886,48 @@ mod tests {
         );
         provider.meta = Some(ProviderMeta {
             provider_type: Some("github_copilot".to_string()),
+            ..Default::default()
+        });
+
+        let mut live_config = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://stale.example.com",
+                "ANTHROPIC_AUTH_TOKEN": "stale-token",
+                "ANTHROPIC_API_KEY": "stale-key"
+            }
+        });
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(|value| value.as_object())
+            .expect("env should exist");
+        // Default Copilot takeover injects AUTH_TOKEN: the API_KEY placeholder
+        // triggers Claude Code's custom-key approval prompt (defaults to
+        // "No (recommended)"), which lands users in "Not logged in".
+        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
+        assert_env_str(env, "ANTHROPIC_API_KEY", None);
+    }
+
+    #[test]
+    fn managed_account_claude_takeover_copilot_honors_api_key_field_choice() {
+        let mut provider = Provider::with_id(
+            "copilot".to_string(),
+            "GitHub Copilot".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("github_copilot".to_string()),
+            api_key_field: Some("ANTHROPIC_API_KEY".to_string()),
             ..Default::default()
         });
 
@@ -3822,6 +3947,8 @@ mod tests {
             .get("env")
             .and_then(|value| value.as_object())
             .expect("env should exist");
+        // Explicit API-key-field choice keeps the API_KEY placeholder to avoid
+        // conflicting with the /login-managed key (#1049).
         assert_env_str(env, "ANTHROPIC_API_KEY", Some(PROXY_TOKEN_PLACEHOLDER));
         assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", None);
     }

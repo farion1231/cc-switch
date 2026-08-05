@@ -27,11 +27,14 @@ import {
 } from "lucide-react";
 import { useCodexOauth } from "./hooks/useCodexOauth";
 import { copyText } from "@/lib/clipboard";
+import CodexOauthAccountQuota from "@/components/CodexOauthAccountQuota";
 
 interface CodexOAuthSectionProps {
   className?: string;
   /** select 模式只展示账号选择和管理入口；manage 模式展示完整账号管理 */
   mode?: "manage" | "select";
+  /** 是否展示每个账号的订阅额度 */
+  showAccountQuota?: boolean;
   /** 当前选中的 ChatGPT 账号 ID */
   selectedAccountId?: string | null;
   /** 账号选择回调 */
@@ -55,6 +58,7 @@ interface CodexOAuthSectionProps {
 export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   className,
   mode = "manage",
+  showAccountQuota = false,
   selectedAccountId,
   onAccountSelect,
   onManageAccounts,
@@ -338,75 +342,80 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
             {accounts.map((account) => (
               <div
                 key={account.id}
-                className={`flex items-center justify-between gap-2 p-2 rounded-md border ${
+                className={`space-y-2 rounded-md border p-2 ${
                   account.reauth_required
                     ? "border-amber-300/70 bg-amber-50/70 dark:border-amber-500/40 dark:bg-amber-950/30"
                     : "bg-muted/30"
                 }`}
               >
-                <div className="flex min-w-0 items-center gap-2">
-                  <User className="h-5 w-5 shrink-0 text-muted-foreground" />
-                  <span className="truncate text-sm font-medium">
-                    {account.login}
-                  </span>
-                  {defaultAccountId === account.id && (
-                    <Badge variant="secondary" className="shrink-0 text-xs">
-                      {t("codexOauth.defaultAccount", "默认")}
-                    </Badge>
-                  )}
-                  {selectedAccountId === account.id && (
-                    <Badge variant="outline" className="shrink-0 text-xs">
-                      {t("codexOauth.selected", "已选中")}
-                    </Badge>
-                  )}
-                  {account.reauth_required && (
-                    <Badge
-                      variant="outline"
-                      className="shrink-0 gap-1 border-amber-400/70 text-xs text-amber-700 dark:border-amber-500/50 dark:text-amber-300"
-                    >
-                      <AlertTriangle className="h-3 w-3" />
-                      {t("codexOauth.reauthBadge", "需要重新登录")}
-                    </Badge>
-                  )}
-                </div>
-                <div className="flex shrink-0 items-center gap-1">
-                  {account.reauth_required && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 gap-1 border-amber-400/70 px-2 text-xs text-amber-700 hover:bg-amber-100 dark:border-amber-500/50 dark:text-amber-300 dark:hover:bg-amber-900/40"
-                      onClick={addAccount}
-                      disabled={isAddingAccount}
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" />
-                      {t("codexOauth.reauthLogin", "重新登录")}
-                    </Button>
-                  )}
-                  {defaultAccountId !== account.id && (
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <User className="h-5 w-5 text-muted-foreground" />
+                    <span className="truncate text-sm font-medium">
+                      {account.login}
+                    </span>
+                    {defaultAccountId === account.id && (
+                      <Badge variant="secondary" className="shrink-0 text-xs">
+                        {t("codexOauth.defaultAccount", "默认")}
+                      </Badge>
+                    )}
+                    {selectedAccountId === account.id && (
+                      <Badge variant="outline" className="shrink-0 text-xs">
+                        {t("codexOauth.selected", "已选中")}
+                      </Badge>
+                    )}
+                    {account.reauth_required && (
+                      <Badge
+                        variant="outline"
+                        className="shrink-0 gap-1 border-amber-400/70 text-xs text-amber-700 dark:border-amber-500/50 dark:text-amber-300"
+                      >
+                        <AlertTriangle className="h-3 w-3" />
+                        {t("codexOauth.reauthBadge", "需要重新登录")}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {account.reauth_required && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 gap-1 border-amber-400/70 px-2 text-xs text-amber-700 hover:bg-amber-100 dark:border-amber-500/50 dark:text-amber-300 dark:hover:bg-amber-900/40"
+                        onClick={addAccount}
+                        disabled={isAddingAccount}
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                        {t("codexOauth.reauthLogin", "重新登录")}
+                      </Button>
+                    )}
+                    {defaultAccountId !== account.id && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs text-muted-foreground"
+                        onClick={() => setDefaultAccount(account.id)}
+                        disabled={isSettingDefaultAccount}
+                      >
+                        {t("codexOauth.setAsDefault", "设为默认")}
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs text-muted-foreground"
-                      onClick={() => setDefaultAccount(account.id)}
-                      disabled={isSettingDefaultAccount}
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-red-500"
+                      onClick={(e) => handleRemoveAccount(account.id, e)}
+                      disabled={isRemovingAccount}
+                      title={t("codexOauth.removeAccount", "移除账号")}
                     >
-                      {t("codexOauth.setAsDefault", "设为默认")}
+                      <X className="h-4 w-4" />
                     </Button>
-                  )}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 shrink-0 text-muted-foreground hover:text-red-500"
-                    onClick={(e) => handleRemoveAccount(account.id, e)}
-                    disabled={isRemovingAccount}
-                    title={t("codexOauth.removeAccount", "移除账号")}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
+                  </div>
                 </div>
+                {showAccountQuota && (
+                  <CodexOauthAccountQuota accountId={account.id} />
+                )}
               </div>
             ))}
           </div>

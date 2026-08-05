@@ -41,11 +41,23 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
       isAuthenticated: false,
       isStatusSuccess: true,
       isStatusError: false,
+      accounts: [],
     }),
     useCodexOauth: () => ({
       isAuthenticated: true,
       isStatusSuccess: true,
       isStatusError: false,
+      accounts: [
+        {
+          id: "acct-managed",
+          reauth_required: false,
+          requires_reauth: false,
+        },
+      ],
+    }),
+    useXaiOauth: () => ({
+      isAuthenticated: false,
+      accounts: [],
     }),
     useCodexCommonConfig: () => ({
       useCommonConfig: false,

@@ -46,6 +46,8 @@ pub fn sync_gemini_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         imported: 0,
         skipped: 0,
         files_scanned: files.len() as u32,
+        suspected_duplicates: 0,
+        deferred_files: 0,
         errors: vec![],
     };
 
@@ -351,9 +353,6 @@ fn insert_gemini_session_entry(
 
     // changes() > 0 表示新插入或已更新，== 0 表示值完全相同（无实际变更）
     let changed = conn.changes() > 0;
-    if changed {
-        crate::usage_events::notify_log_recorded();
-    }
     Ok(changed)
 }
 

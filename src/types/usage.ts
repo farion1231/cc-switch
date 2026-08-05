@@ -40,6 +40,8 @@ export interface SessionSyncResult {
   imported: number;
   skipped: number;
   filesScanned: number;
+  suspectedDuplicates: number;
+  deferredFiles: number;
   errors: string[];
 }
 
@@ -63,6 +65,20 @@ export interface ModelPricing {
   outputCostPerMillion: string;
   cacheReadCostPerMillion: string;
   cacheCreationCostPerMillion: string;
+}
+
+export interface ModelsDevSyncConfig {
+  autoSyncEnabled: boolean;
+  includeCommonModels: boolean;
+  selectedModelKeys: string[];
+  excludedCommonModelKeys: string[];
+  lastSyncAt: number | null;
+  lastSyncError: string | null;
+}
+
+export interface ModelsDevSyncState {
+  config: ModelsDevSyncConfig;
+  configPath: string;
 }
 
 export interface UsageSummary {
