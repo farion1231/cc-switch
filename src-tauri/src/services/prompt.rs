@@ -34,7 +34,15 @@ impl PromptService {
     ///
     /// live 为空（文件不存在、被外部删除或内容全为空白）时一律不动 DB：空文件不
     /// 表达"用户想清空提示词"这个意图，若据此回填会把已启用项的内容抹成空串。
-    fn backfill_live_if_dirty(state: &AppState, app: AppType) -> Result<bool, AppError> {
+    ///
+    /// `exclude_id`：若不一致的合并目标恰好是这个 id（即将被调用方自己的写入覆盖
+    /// 的那一条），跳过合并、强制走备份分支——否则合并进去的内容会在紧随其后的
+    /// 保存里被覆盖，等于没保护。
+    fn backfill_live_if_dirty(
+        state: &AppState,
+        app: AppType,
+        exclude_id: Option<&str>,
+    ) -> Result<bool, AppError> {
         let target_path = prompt_file_path(&app)?;
         let live = if target_path.exists() {
             std::fs::read_to_string(&target_path).unwrap_or_default()
@@ -59,10 +67,10 @@ impl PromptService {
             return Ok(false);
         }
 
-        // 不一致：有 enabled 项 → 回填；无 → 创建一次备份（去重）
+        // 不一致：有 enabled 项（且不是被排除的 id）→ 回填；否则 → 创建一次备份（去重）
         if let Some((enabled_id, enabled_prompt)) = prompts
             .iter()
-            .find(|(_, p)| p.enabled)
+            .find(|(id, p)| p.enabled && exclude_id != Some(id.as_str()))
             .map(|(id, p)| (id.clone(), p.clone()))
         {
             let mut updated = enabled_prompt;
@@ -104,6 +112,11 @@ impl PromptService {
         // 检查是否为已启用的提示词
         let is_enabled = prompt.enabled;
 
+        if is_enabled {
+            // 覆盖 live 文件前先保护外部修改；这条即将被本次编辑覆盖，不能合并回它自己
+            Self::backfill_live_if_dirty(state, app.clone(), Some(&prompt.id))?;
+        }
+
         state.db.save_prompt(app.as_str(), &prompt)?;
 
         if is_enabled {
@@ -117,7 +130,7 @@ impl PromptService {
 
             if !any_enabled {
                 // 所有提示词都已禁用，清空前先保留 live 文件的外部修改
-                Self::backfill_live_if_dirty(state, app.clone())?;
+                Self::backfill_live_if_dirty(state, app.clone(), None)?;
                 let target_path = prompt_file_path(&app)?;
                 if target_path.exists() {
                     write_text_file(&target_path, "")?;
@@ -143,7 +156,7 @@ impl PromptService {
 
     pub fn enable_prompt(state: &AppState, app: AppType, id: &str) -> Result<(), AppError> {
         // 写入前先保留 live 文件的外部修改（若与 DB 期望内容不一致）
-        Self::backfill_live_if_dirty(state, app.clone())?;
+        Self::backfill_live_if_dirty(state, app.clone(), None)?;
 
         // 启用目标提示词并写入文件
         let target_path = prompt_file_path(&app)?;
@@ -324,7 +337,7 @@ mod tests {
             std::fs::create_dir_all(target_path.parent().unwrap()).unwrap();
             write_text_file(&target_path, "hello").unwrap();
 
-            let dirty = PromptService::backfill_live_if_dirty(state, app.clone()).unwrap();
+            let dirty = PromptService::backfill_live_if_dirty(state, app.clone(), None).unwrap();
             assert!(!dirty);
 
             let prompts = state.db.get_prompts(app.as_str()).unwrap();
@@ -342,7 +355,7 @@ mod tests {
             state.db.save_prompt(app.as_str(), &prompt).unwrap();
 
             // live 文件不存在：不能把空内容当作"用户清空了文件"回填进 DB
-            let dirty = PromptService::backfill_live_if_dirty(state, app.clone()).unwrap();
+            let dirty = PromptService::backfill_live_if_dirty(state, app.clone(), None).unwrap();
             assert!(!dirty);
             let prompts = state.db.get_prompts(app.as_str()).unwrap();
             assert_eq!(prompts.get("p1").unwrap().content, "db content");
@@ -352,7 +365,7 @@ mod tests {
             std::fs::create_dir_all(target_path.parent().unwrap()).unwrap();
             write_text_file(&target_path, "   \n").unwrap();
 
-            let dirty = PromptService::backfill_live_if_dirty(state, app.clone()).unwrap();
+            let dirty = PromptService::backfill_live_if_dirty(state, app.clone(), None).unwrap();
             assert!(!dirty);
             let prompts = state.db.get_prompts(app.as_str()).unwrap();
             assert_eq!(prompts.len(), 1);
@@ -372,7 +385,7 @@ mod tests {
             std::fs::create_dir_all(target_path.parent().unwrap()).unwrap();
             write_text_file(&target_path, "manually edited content").unwrap();
 
-            let dirty = PromptService::backfill_live_if_dirty(state, app.clone()).unwrap();
+            let dirty = PromptService::backfill_live_if_dirty(state, app.clone(), None).unwrap();
             assert!(dirty);
 
             let prompts = state.db.get_prompts(app.as_str()).unwrap();
@@ -396,7 +409,7 @@ mod tests {
             std::fs::create_dir_all(target_path.parent().unwrap()).unwrap();
             write_text_file(&target_path, "manually edited content").unwrap();
 
-            let dirty = PromptService::backfill_live_if_dirty(state, app.clone()).unwrap();
+            let dirty = PromptService::backfill_live_if_dirty(state, app.clone(), None).unwrap();
             assert!(dirty);
 
             let prompts = state.db.get_prompts(app.as_str()).unwrap();
@@ -419,7 +432,7 @@ mod tests {
             std::fs::create_dir_all(target_path.parent().unwrap()).unwrap();
             write_text_file(&target_path, "manually edited content").unwrap();
 
-            let dirty = PromptService::backfill_live_if_dirty(state, app.clone()).unwrap();
+            let dirty = PromptService::backfill_live_if_dirty(state, app.clone(), None).unwrap();
             assert!(dirty);
 
             let prompts = state.db.get_prompts(app.as_str()).unwrap();
@@ -449,6 +462,54 @@ mod tests {
 
             let live = std::fs::read_to_string(&target_path).unwrap();
             assert_eq!(live, "");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn upsert_prompt_backs_up_external_edit_when_editing_enabled_prompt() {
+        with_test_home(|state| {
+            let app = AppType::Claude;
+            let prompt = make_prompt("p1", "A", true);
+            state.db.save_prompt(app.as_str(), &prompt).unwrap();
+
+            let target_path = prompt_file_path(&app).unwrap();
+            std::fs::create_dir_all(target_path.parent().unwrap()).unwrap();
+            write_text_file(&target_path, "C").unwrap(); // 手动改过 live 文件
+
+            let edited = make_prompt("p1", "B", true); // 表单编辑与外部修改 "C" 无关
+            PromptService::upsert_prompt(state, app.clone(), "p1", edited).unwrap();
+
+            let prompts = state.db.get_prompts(app.as_str()).unwrap();
+            assert_eq!(prompts.get("p1").unwrap().content, "B");
+            assert!(prompts
+                .values()
+                .any(|p| p.id.starts_with("backup-") && p.content == "C"));
+
+            let live = std::fs::read_to_string(&target_path).unwrap();
+            assert_eq!(live, "B");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn upsert_prompt_is_noop_when_editing_enabled_prompt_without_external_change() {
+        with_test_home(|state| {
+            let app = AppType::Claude;
+            let prompt = make_prompt("p1", "A", true);
+            state.db.save_prompt(app.as_str(), &prompt).unwrap();
+
+            let target_path = prompt_file_path(&app).unwrap();
+            std::fs::create_dir_all(target_path.parent().unwrap()).unwrap();
+            write_text_file(&target_path, "A").unwrap(); // live 与编辑前的 DB 内容一致，没有外部修改
+
+            // 用户主动把内容从 "A" 改成 "B" 并保存，这是正常编辑，不是外部修改
+            let edited = make_prompt("p1", "B", true);
+            PromptService::upsert_prompt(state, app.clone(), "p1", edited).unwrap();
+
+            let prompts = state.db.get_prompts(app.as_str()).unwrap();
+            assert_eq!(prompts.len(), 1); // 不应该产生多余的 backup-*
+            assert_eq!(prompts.get("p1").unwrap().content, "B");
         });
     }
 }
