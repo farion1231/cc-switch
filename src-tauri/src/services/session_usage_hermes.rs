@@ -930,7 +930,32 @@ fn source_file_incarnation(path: &Path) -> Result<String, AppError> {
         #[cfg(windows)]
         {
             use std::os::windows::fs::MetadataExt;
-            format!("windows:{}", metadata.creation_time())
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::Storage::FileSystem::{
+                GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+            };
+
+            // Windows 上单独依赖 creation_time 不可靠：NTFS 在快速“删除后重建”
+            // 同一路径文件时可能复用同一 100ns 创建时刻（MFT 记录被立即重用），
+            // 导致被替换的数据库被误判为同一文件而无法开启新 baseline。
+            // 改用文件系统文件 ID（卷序列号 + 文件索引）作为主信号，
+            // 叠加 creation_time 作为双保险；两者同时碰撞的概率可忽略。
+            let file = std::fs::File::open(path).map_err(|error| {
+                AppError::Database(format!("读取 Hermes SQLite 元数据失败: {error}"))
+            })?;
+            let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+            let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) };
+            if ok == 0 {
+                format!("windows-fallback:{}", metadata.creation_time())
+            } else {
+                format!(
+                    "windows:{}:{:016x}{:016x}:{}",
+                    info.dwVolumeSerialNumber,
+                    info.nFileIndexHigh,
+                    info.nFileIndexLow,
+                    metadata.creation_time()
+                )
+            }
         }
         #[cfg(not(any(unix, windows)))]
         {
@@ -1253,6 +1278,9 @@ mod tests {
             drop(writer);
 
             fs::remove_file(&path).unwrap();
+            // 模拟真实替换间隔，避免 Windows 上“删除后立即重建”撞上
+            // 文件系统元数据复用窗口（见 source_file_incarnation 的说明）。
+            std::thread::sleep(std::time::Duration::from_millis(20));
             let replacement = source_db(&path, "task-a");
             let result = run_sync(&db, root.path(), 200);
             assert_eq!(result.imported, 0);
