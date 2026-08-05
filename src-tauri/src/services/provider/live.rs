@@ -1226,6 +1226,142 @@ pub(crate) fn sync_current_provider_for_app_to_live(
     Ok(())
 }
 
+/// `sync_live_for_provider_respecting_takeover` 做了什么。
+///
+/// `WroteLive` 表示 live 文件本身已按新配置落盘，调用方若有"重写 live 后要
+/// 重投影"的附带工作（MCP 等）应当在这个分支执行；`BackupOnly` 表示 live 文件
+/// 归代理接管所有，只更新了恢复备份。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LiveSyncOutcome {
+    WroteLive,
+    BackupOnly,
+}
+
+/// live 文件当前是否归代理接管所有。
+///
+/// 判据不能只看 `proxy_config.enabled`：该标志在接管写入全部完成后才提交，
+/// 中间那段窗口里 live 还没打上占位符，标志也还是 false。
+///
+/// 也不能像早期实现那样只要"存在恢复备份"就认定接管拥有 live —— 备份行会残留
+/// （崩溃退出、或关闭接管时恢复失败），一旦残留，此后每次保存供应商都只写备份
+/// 不写文件，用户改了请求地址却永远看不到生效，且没有任何提示。
+///
+/// 因此三条信号取并集，但都要求"接管此刻确实在生效"：
+/// - live 文件里有代理占位符：已接管；
+/// - 数据库标志已提交：已接管；
+/// - 有恢复备份且代理进程在跑：正处于接管激活窗口（`set_takeover_for_app`
+///   先启动代理再备份、再改写 live），此时不能覆盖 live。
+///
+/// 反之——有备份行但代理没在跑、标志也没开——就是残留，live 仍归供应商，必须写。
+fn proxy_owns_live_config(state: &AppState, app_type: &AppType, has_live_backup: bool) -> bool {
+    if state
+        .proxy_service
+        .detect_takeover_in_live_config_for_app(app_type)
+    {
+        return true;
+    }
+
+    let takeover_enabled =
+        futures::executor::block_on(state.db.get_proxy_config_for_app(app_type.as_str()))
+            .map(|config| config.enabled)
+            .unwrap_or(false);
+    if takeover_enabled {
+        return true;
+    }
+
+    has_live_backup && futures::executor::block_on(state.proxy_service.is_running())
+}
+
+/// 把某个供应商同步到它所属应用的 live 配置，同时尊重代理接管对 live 的所有权。
+///
+/// 这是"保存供应商 / 重新同步当前供应商"共用的唯一落盘决策点。
+pub(crate) fn sync_live_for_provider_respecting_takeover(
+    state: &AppState,
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<LiveSyncOutcome, AppError> {
+    // Claude Desktop 的 live 是独立的 3P profile 文件，接管与否都由
+    // apply_provider 负责，不走恢复备份那套。
+    if matches!(app_type, AppType::ClaudeDesktop) {
+        write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+        return Ok(LiveSyncOutcome::WroteLive);
+    }
+
+    let has_live_backup = futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
+        .ok()
+        .flatten()
+        .is_some();
+    let live_taken_over = state
+        .proxy_service
+        .detect_takeover_in_live_config_for_app(app_type);
+
+    if !proxy_owns_live_config(state, app_type, has_live_backup) {
+        // 备份行残留时顺手刷新它：否则日后一旦走到"关闭接管 → 还原备份"，
+        // 旧地址会被写回 live，把这次保存的结果吃掉。刷新失败只告警——本次
+        // 写入才是用户要的结果，不能因为清理残留失败而报保存失败。
+        if has_live_backup {
+            if let Err(err) = futures::executor::block_on(
+                state
+                    .proxy_service
+                    .update_live_backup_from_provider(app_type.as_str(), provider),
+            ) {
+                log::warn!(
+                    "刷新 {} 残留 Live 备份失败（不影响本次 live 写入）: {err}",
+                    app_type.as_str()
+                );
+            }
+        }
+
+        write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+        return Ok(LiveSyncOutcome::WroteLive);
+    }
+
+    // 接管拥有 live：先更新恢复备份，关闭接管时才能还原成新配置。
+    futures::executor::block_on(
+        state
+            .proxy_service
+            .update_live_backup_from_provider(app_type.as_str(), provider),
+    )
+    .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+
+    if !futures::executor::block_on(state.proxy_service.is_running()) {
+        return Ok(LiveSyncOutcome::BackupOnly);
+    }
+
+    // 代理在跑时，接管拥有的 live 里仍有随供应商变化的字段（客户端看到的
+    // 标签、模型表、生成的 catalog 指针），必须按新配置重刷，否则要等到关闭
+    // 接管才收敛。三个 app 各有专用的 proxy-safe 写入口。
+    //
+    // Codex / Grok Build 额外要求 live 里确实有占位符（与切换路径的判据一致）：
+    // 它们的写入口会重建整个 config.toml，激活窗口里 live 还没被接管改写时
+    // 动它没有意义。Claude 的写入口是逐字段合并，无此顾虑。
+    match app_type {
+        AppType::Claude => futures::executor::block_on(
+            state
+                .proxy_service
+                .sync_claude_live_from_provider_while_proxy_active(provider),
+        )
+        .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?,
+        AppType::Codex if live_taken_over => futures::executor::block_on(
+            state
+                .proxy_service
+                .sync_codex_live_from_provider_while_proxy_active(provider),
+        )
+        .map_err(|e| AppError::Message(format!("同步 Codex Live 配置失败: {e}")))?,
+        AppType::GrokBuild if live_taken_over => futures::executor::block_on(
+            state
+                .proxy_service
+                .sync_grok_live_from_provider_while_proxy_active(provider),
+        )
+        .map_err(|e| AppError::Message(format!("同步 Grok Build Live 配置失败: {e}")))?,
+        // Gemini 的接管只改写 .env 里的端点指向，没有随供应商变化的
+        // proxy-safe 写入口；关闭接管时由恢复备份收敛。
+        _ => {}
+    }
+
+    Ok(LiveSyncOutcome::BackupOnly)
+}
+
 fn sync_current_provider_for_app_respecting_takeover(
     state: &AppState,
     app_type: &AppType,
@@ -1240,32 +1376,7 @@ fn sync_current_provider_for_app_respecting_takeover(
         return Ok(());
     };
 
-    let has_live_backup = futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
-        .ok()
-        .flatten()
-        .is_some();
-    let live_taken_over = state
-        .proxy_service
-        .detect_takeover_in_live_config_for_app(app_type);
-
-    // `enabled` is set only after takeover writes complete. During that
-    // activation window, backup/live placeholders are the authoritative signal
-    // that normal provider sync must not rewrite the managed live file.
-    if has_live_backup || live_taken_over {
-        if matches!(app_type, AppType::ClaudeDesktop) {
-            write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
-        } else {
-            futures::executor::block_on(
-                state
-                    .proxy_service
-                    .update_live_backup_from_provider(app_type.as_str(), provider),
-            )
-            .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
-        }
-        return Ok(());
-    }
-
-    write_live_with_common_config(state.db.as_ref(), app_type, provider)
+    sync_live_for_provider_respecting_takeover(state, app_type, provider).map(|_| ())
 }
 
 /// Sync current provider to live configuration

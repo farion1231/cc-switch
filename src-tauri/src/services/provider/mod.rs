@@ -33,7 +33,8 @@ pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
     build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
     provider_exists_in_live_config, strip_common_config_from_live_settings,
-    sync_current_provider_for_app_to_live, write_live_with_common_config,
+    sync_current_provider_for_app_to_live, sync_live_for_provider_respecting_takeover,
+    write_live_with_common_config, LiveSyncOutcome,
 };
 
 // Internal re-exports
@@ -1446,6 +1447,131 @@ command = "legacy-cmd"
         );
     }
 
+    /// 代理全程关闭时保存当前供应商：live 文件必须立刻按新配置落盘。
+    ///
+    /// 这是最普通的一条路径，却长期没有测试覆盖 —— 此前三个"编辑写 live"的
+    /// 测试全都强制开着接管并启动代理，把 `should_sync_via_proxy` 判据整个
+    /// 改坏也测不出来。
+    #[tokio::test]
+    #[serial]
+    async fn update_current_claude_provider_writes_live_when_proxy_never_enabled() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        let original = Provider::with_id(
+            "p1".into(),
+            "Claude A".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-a",
+                    "ANTHROPIC_BASE_URL": "https://api.old.example"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &original)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
+            .expect("set local current provider");
+        write_live_with_common_config(db.as_ref(), &AppType::Claude, &original)
+            .expect("seed live file");
+
+        let mut updated = original.clone();
+        updated.settings_config["env"]["ANTHROPIC_BASE_URL"] =
+            Value::String("https://api.new.example".into());
+
+        ProviderService::update(&state, AppType::Claude, None, updated)
+            .expect("update current provider");
+
+        let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+        assert_eq!(
+            live.get("env")
+                .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+                .and_then(Value::as_str),
+            Some("https://api.new.example"),
+            "editing the current provider must rewrite the live file immediately"
+        );
+    }
+
+    /// 残留的恢复备份行不得再把 live 写入吞掉。
+    ///
+    /// 复现用户报告的故障：崩溃退出或关闭接管时清理未完成，`proxy_live_backup`
+    /// 留下一行，但接管标志已关、代理进程没在跑。此时 live 文件仍归供应商，
+    /// 早期实现只更新备份不写文件，用户改了请求地址却永远看不到生效。
+    #[tokio::test]
+    #[serial]
+    async fn update_current_claude_provider_writes_live_when_backup_row_is_stale() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        let original = Provider::with_id(
+            "p1".into(),
+            "Claude A".into(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-a",
+                    "ANTHROPIC_BASE_URL": "https://api.old.example"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &original)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
+            .expect("set local current provider");
+        write_live_with_common_config(db.as_ref(), &AppType::Claude, &original)
+            .expect("seed live file");
+
+        // 备份行残留，但接管标志未开、代理未启动。
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&original.settings_config).expect("serialize"),
+        )
+        .await
+        .expect("seed stale live backup");
+        assert!(
+            !state.proxy_service.is_running().await,
+            "precondition: proxy must not be running"
+        );
+
+        let mut updated = original.clone();
+        updated.settings_config["env"]["ANTHROPIC_BASE_URL"] =
+            Value::String("https://api.new.example".into());
+
+        ProviderService::update(&state, AppType::Claude, None, updated)
+            .expect("update current provider");
+
+        let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+        assert_eq!(
+            live.get("env")
+                .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+                .and_then(Value::as_str),
+            Some("https://api.new.example"),
+            "a stale backup row must not divert the live write"
+        );
+
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("get live backup")
+            .expect("backup row still exists");
+        assert!(
+            backup.original_config.contains("https://api.new.example"),
+            "the stale backup must be refreshed too, or a later restore would resurrect the old URL: {}",
+            backup.original_config
+        );
+    }
+
     #[tokio::test]
     #[serial]
     async fn update_current_claude_provider_syncs_live_when_proxy_takeover_detected_without_backup()
@@ -2755,59 +2881,12 @@ impl ProviderService {
         let is_current = effective_current.as_deref() == Some(provider.id.as_str());
 
         if is_current {
-            // 如果 Claude 代理接管处于激活状态，并且代理服务正在运行：
-            // - 不直接走普通 Live 写入逻辑
-            // - 改为更新 Live 备份，并在 Claude 下同步代理安全的 Live 配置
-            let has_live_backup =
-                futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
-                    .ok()
-                    .flatten()
-                    .is_some();
-            let live_taken_over = state
-                .proxy_service
-                .detect_takeover_in_live_config_for_app(&app_type);
-            // Backup or live placeholders mean the live file is currently owned
-            // by proxy takeover, including the short activation window before
-            // proxy_config.enabled is committed.
-            let should_sync_via_proxy = has_live_backup || live_taken_over;
+            // live 文件的归属判定与"接管中如何回写"全部收敛在
+            // sync_live_for_provider_respecting_takeover 里，切换路径与这里共用，
+            // 避免两边各写一份判据后再次跑偏。
+            let outcome = sync_live_for_provider_respecting_takeover(state, &app_type, &provider)?;
 
-            if should_sync_via_proxy {
-                if matches!(app_type, AppType::ClaudeDesktop) {
-                    write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
-                } else {
-                    futures::executor::block_on(
-                        state
-                            .proxy_service
-                            .update_live_backup_from_provider(app_type.as_str(), &provider),
-                    )
-                    .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
-                }
-
-                if futures::executor::block_on(state.proxy_service.is_running()) {
-                    if matches!(app_type, AppType::Claude) {
-                        futures::executor::block_on(
-                            state
-                                .proxy_service
-                                .sync_claude_live_from_provider_while_proxy_active(&provider),
-                        )
-                        .map_err(|e| {
-                            AppError::Message(format!("同步 Claude Live 配置失败: {e}"))
-                        })?;
-                    } else if live_taken_over && matches!(app_type, AppType::Codex) {
-                        // Codex model mappings are projected into a generated
-                        // model_catalog_json file. Refresh takeover-owned Live
-                        // immediately so adding/removing mappings cannot leave
-                        // the previous catalog pointer and capabilities active.
-                        futures::executor::block_on(
-                            state
-                                .proxy_service
-                                .sync_codex_live_from_provider_while_proxy_active(&provider),
-                        )
-                        .map_err(|e| AppError::Message(format!("同步 Codex Live 配置失败: {e}")))?;
-                    }
-                }
-            } else {
-                write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+            if outcome == LiveSyncOutcome::WroteLive {
                 // 重写 live 后只重投影本应用的 MCP：全量 sync_all_enabled 会把
                 // 无关应用的 live 损坏（如 ~/.claude.json 坏 JSON）牵连进保存
                 // 流程。走到这里 DB 与 live 都已按新配置落盘，保存事实上已
@@ -3261,34 +3340,16 @@ impl ProviderService {
             return Ok(());
         };
 
-        let has_live_backup =
-            futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
-                .ok()
-                .flatten()
-                .is_some();
-
-        let live_taken_over = state
-            .proxy_service
-            .detect_takeover_in_live_config_for_app(&app_type);
-
-        // See the save path above: backup/placeholders are the ownership signal
-        // here, not just proxy_config.enabled.
-        if has_live_backup || live_taken_over {
-            if matches!(app_type, AppType::ClaudeDesktop) {
-                write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
-                return Ok(());
-            }
-
-            futures::executor::block_on(
-                state
-                    .proxy_service
-                    .update_live_backup_from_provider(app_type.as_str(), provider),
-            )
-            .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+        // 与保存路径共用同一套 live 归属判定，见
+        // sync_live_for_provider_respecting_takeover 的文档。
+        if sync_live_for_provider_respecting_takeover(state, &app_type, provider)?
+            == LiveSyncOutcome::BackupOnly
+        {
             return Ok(());
         }
 
-        sync_current_provider_for_app_to_live(state, &app_type)
+        // live 已按当前供应商落盘，只需补上本应用的 MCP 重投影。
+        McpService::sync_enabled_for_app(state, &app_type)
     }
 
     pub fn migrate_legacy_common_config_usage(
@@ -4661,6 +4722,7 @@ impl ProviderService {
                 claude_provider.settings_config = merged;
             }
             state.db.save_provider("claude", &claude_provider)?;
+            Self::project_universal_child_to_live(state, AppType::Claude, &claude_provider.id);
         } else {
             // 如果禁用了 Claude，删除对应的子供应商
             let claude_id = format!("universal-claude-{id}");
@@ -4676,6 +4738,7 @@ impl ProviderService {
                 codex_provider.settings_config = merged;
             }
             state.db.save_provider("codex", &codex_provider)?;
+            Self::project_universal_child_to_live(state, AppType::Codex, &codex_provider.id);
         } else {
             let codex_id = format!("universal-codex-{id}");
             let _ = state.db.delete_provider("codex", &codex_id);
@@ -4690,12 +4753,43 @@ impl ProviderService {
                 gemini_provider.settings_config = merged;
             }
             state.db.save_provider("gemini", &gemini_provider)?;
+            Self::project_universal_child_to_live(state, AppType::Gemini, &gemini_provider.id);
         } else {
             let gemini_id = format!("universal-gemini-{id}");
             let _ = state.db.delete_provider("gemini", &gemini_id);
         }
 
         Ok(true)
+    }
+
+    /// 统一供应商同步只写 DB 会让用户"改了请求地址但文件里还是旧的"：生成的子
+    /// 供应商如果正是该应用当前启用的那个，必须同时把 live 文件重投影一遍。
+    ///
+    /// 失败降级为告警而不上抛：DB 已按新配置写好，同步的主要成果已经落地；
+    /// 某个应用的 live 写不动（文件被占用 / 权限问题）不该让另外两个应用的同步
+    /// 一起失败，也不该报成"同步失败"。下次切换或保存会自愈。
+    fn project_universal_child_to_live(state: &AppState, app_type: AppType, child_id: &str) {
+        let is_current =
+            match crate::settings::get_effective_current_provider(&state.db, &app_type) {
+                Ok(current) => current.as_deref() == Some(child_id),
+                Err(err) => {
+                    log::warn!(
+                        "读取 {} 当前供应商失败，跳过统一供应商的 live 重投影: {err}",
+                        app_type.as_str()
+                    );
+                    return;
+                }
+            };
+        if !is_current {
+            return;
+        }
+
+        if let Err(err) = Self::sync_current_provider_for_app(state, app_type.clone()) {
+            log::warn!(
+                "统一供应商同步后重写 {} live 配置失败（将在下次切换/保存时自愈）: {err}",
+                app_type.as_str()
+            );
+        }
     }
 
     /// 递归合并 JSON：base 为底，patch 覆盖同名字段

@@ -408,9 +408,22 @@ function ProviderFormFull({
   });
   const { isSubmitting } = form.formState;
 
+  // settingsConfig 没有通过 register/Controller 订阅，form.setValue 不会触发
+  // 重渲染。而本组件里所有派生状态（Base URL / API Key / 模型 / 各应用子表单）
+  // 都是在渲染期用 form.getValues("settingsConfig") 取快照的：少了这次重渲染，
+  // 那些快照就停在改动之前，下一个结构化字段一改动就把 JSON 编辑器里刚输入的
+  // 内容按旧快照覆盖回去 —— 表现为"改了请求地址，保存成功，文件里还是旧值"。
+  // 因此每次写 settingsConfig 都必须顺带强制一次重渲染。
+  const [, bumpSettingsConfigRevision] = useState(0);
   const handleSettingsConfigChange = useCallback(
     (config: string) => {
+      // 值没变就不写、不重渲染：结构化字段每次按键都会重建整份 JSON，
+      // 没有这道短路会平白多一次大组件重渲染。
+      if (form.getValues("settingsConfig") === config) {
+        return;
+      }
       form.setValue("settingsConfig", config);
+      bumpSettingsConfigRevision((revision) => revision + 1);
     },
     [form],
   );
@@ -504,7 +517,6 @@ function ProviderFormFull({
           delete config.env[prev];
           config.env[field] = value;
           const updated = JSON.stringify(config, null, 2);
-          form.setValue("settingsConfig", updated);
           handleSettingsConfigChange(updated);
         }
       } catch {
@@ -810,10 +822,10 @@ function ProviderFormFull({
           config.env = {};
         }
         config.env[key] = value;
-        form.setValue("settingsConfig", JSON.stringify(config, null, 2));
+        handleSettingsConfigChange(JSON.stringify(config, null, 2));
       } catch {}
     },
-    [form],
+    [form, handleSettingsConfigChange],
   );
 
   const handleGeminiApiKeyChange = useCallback(
@@ -885,7 +897,7 @@ function ProviderFormFull({
     initialData,
     appId,
     providerId,
-    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
+    onSettingsConfigChange: handleSettingsConfigChange,
     getSettingsConfig: () => form.getValues("settingsConfig"),
   });
 
@@ -906,7 +918,7 @@ function ProviderFormFull({
     initialData,
     appId,
     providerId,
-    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
+    onSettingsConfigChange: handleSettingsConfigChange,
     getSettingsConfig: () => form.getValues("settingsConfig"),
   });
   const {
@@ -918,7 +930,7 @@ function ProviderFormFull({
     initialData,
     appId,
     providerId,
-    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
+    onSettingsConfigChange: handleSettingsConfigChange,
     getSettingsConfig: () => form.getValues("settingsConfig"),
   });
   const {
@@ -2519,7 +2531,7 @@ function ProviderFormFull({
                 </Label>
                 <JsonEditor
                   value={form.getValues("settingsConfig")}
-                  onChange={(config) => form.setValue("settingsConfig", config)}
+                  onChange={handleSettingsConfigChange}
                   placeholder={`{
   "npm": "@ai-sdk/openai-compatible",
   "options": {
@@ -2544,7 +2556,7 @@ function ProviderFormFull({
                 </Label>
                 <JsonEditor
                   value={form.getValues("settingsConfig")}
-                  onChange={(config) => form.setValue("settingsConfig", config)}
+                  onChange={handleSettingsConfigChange}
                   placeholder={
                     appId === "hermes"
                       ? `{
@@ -2579,7 +2591,7 @@ function ProviderFormFull({
             <>
               <CommonConfigEditor
                 value={form.getValues("settingsConfig")}
-                onChange={(value) => form.setValue("settingsConfig", value)}
+                onChange={handleSettingsConfigChange}
                 useCommonConfig={useCommonConfig}
                 onCommonConfigToggle={handleCommonConfigToggle}
                 commonConfigSnippet={commonConfigSnippet}
