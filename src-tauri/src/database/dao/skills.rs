@@ -138,6 +138,46 @@ impl Database {
         Ok(())
     }
 
+    /// 仅更新已安装 Skill 的元数据，不修改各应用的启用状态。
+    ///
+    /// 与 [`Self::save_skill`] 不同，本方法不会插入缺失记录。更新操作可能在网络
+    /// 下载期间与启用状态切换或卸载并发发生，因此调用方必须保留数据库中的
+    /// `enabled_*` 字段，并在记录已被删除时停止后续处理。
+    pub fn update_skill_metadata(&self, skill: &InstalledSkill) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        let affected = conn
+            .execute(
+                "UPDATE skills
+                 SET name = ?1,
+                     description = ?2,
+                     directory = ?3,
+                     repo_owner = ?4,
+                     repo_name = ?5,
+                     repo_branch = ?6,
+                     readme_url = ?7,
+                     installed_at = ?8,
+                     content_hash = ?9,
+                     updated_at = ?10
+                 WHERE id = ?11 AND installed_at = ?12",
+                params![
+                    skill.name,
+                    skill.description,
+                    skill.directory,
+                    skill.repo_owner,
+                    skill.repo_name,
+                    skill.repo_branch,
+                    skill.readme_url,
+                    skill.installed_at,
+                    skill.content_hash,
+                    skill.updated_at,
+                    skill.id,
+                    skill.installed_at,
+                ],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(affected > 0)
+    }
+
     /// 删除 Skill
     pub fn delete_skill(&self, id: &str) -> Result<bool, AppError> {
         let conn = lock_conn!(self.conn);
@@ -260,5 +300,105 @@ impl Database {
 
         self.set_setting(INITIALIZED_KEY, "true")?;
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app_config::AppType;
+
+    fn skill(id: &str, name: &str, apps: SkillApps) -> InstalledSkill {
+        InstalledSkill {
+            id: id.to_string(),
+            name: name.to_string(),
+            description: Some(format!("{name} description")),
+            directory: format!("{name}-directory"),
+            repo_owner: Some("owner".to_string()),
+            repo_name: Some("repo".to_string()),
+            repo_branch: Some("main".to_string()),
+            readme_url: Some(format!("https://example.com/{name}")),
+            apps,
+            installed_at: 1,
+            content_hash: Some(format!("{name}-hash")),
+            updated_at: 2,
+        }
+    }
+
+    #[test]
+    fn update_skill_metadata_preserves_enabled_apps() {
+        let db = Database::memory().expect("memory db");
+        let installed_apps = SkillApps::only(&AppType::Codex);
+        let original = skill("owner/repo:skill", "original", installed_apps.clone());
+        db.save_skill(&original).expect("seed skill");
+
+        let mut candidate = skill(&original.id, "updated", SkillApps::only(&AppType::Claude));
+        candidate.repo_branch = Some("next".to_string());
+        candidate.updated_at = 42;
+
+        assert!(db
+            .update_skill_metadata(&candidate)
+            .expect("update metadata"));
+
+        let stored = db
+            .get_installed_skill(&original.id)
+            .expect("query skill")
+            .expect("skill remains installed");
+        assert_eq!(stored.name, candidate.name);
+        assert_eq!(stored.description, candidate.description);
+        assert_eq!(stored.directory, candidate.directory);
+        assert_eq!(stored.repo_branch, candidate.repo_branch);
+        assert_eq!(stored.readme_url, candidate.readme_url);
+        assert_eq!(stored.content_hash, candidate.content_hash);
+        assert_eq!(stored.updated_at, candidate.updated_at);
+        assert_eq!(stored.apps, installed_apps);
+    }
+
+    #[test]
+    fn update_skill_metadata_does_not_insert_missing_skill() {
+        let db = Database::memory().expect("memory db");
+        let candidate = skill(
+            "owner/repo:missing",
+            "missing",
+            SkillApps::only(&AppType::Claude),
+        );
+
+        assert!(!db
+            .update_skill_metadata(&candidate)
+            .expect("missing update is not an error"));
+        assert!(db
+            .get_installed_skill(&candidate.id)
+            .expect("query skill")
+            .is_none());
+    }
+
+    #[test]
+    fn update_skill_metadata_does_not_touch_reinstalled_generation() {
+        let db = Database::memory().expect("memory db");
+        let stale_update = skill(
+            "owner/repo:skill",
+            "stale-update",
+            SkillApps::only(&AppType::Claude),
+        );
+
+        let mut reinstalled = skill(
+            &stale_update.id,
+            "reinstalled",
+            SkillApps::only(&AppType::Gemini),
+        );
+        reinstalled.installed_at = stale_update.installed_at + 1;
+        db.save_skill(&reinstalled).expect("seed reinstalled skill");
+
+        assert!(!db
+            .update_skill_metadata(&stale_update)
+            .expect("stale generation update is not an error"));
+
+        let stored = db
+            .get_installed_skill(&reinstalled.id)
+            .expect("query skill")
+            .expect("reinstalled generation remains");
+        assert_eq!(stored.name, reinstalled.name);
+        assert_eq!(stored.installed_at, reinstalled.installed_at);
+        assert_eq!(stored.apps, reinstalled.apps);
     }
 }

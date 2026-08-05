@@ -1,5 +1,5 @@
-// Auto-generated icon index
-// Do not edit manually
+// Hand-curated icon index with optimized SVG content and custom name mappings.
+// Update entries deliberately; automatic regeneration is intentionally unsupported.
 
 import _a6api from "./a6-icon.png";
 import _apikeyfun from "./apikeyfun.png";
