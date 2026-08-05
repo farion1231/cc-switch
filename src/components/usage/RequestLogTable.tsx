@@ -60,7 +60,9 @@ export function RequestLogTable({
   const [statusCode, setStatusCode] = useState<number | undefined>(undefined);
   const [page, setPage] = useState(0);
   const [pageInput, setPageInput] = useState("");
-  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(
+    null,
+  );
   const pageSize = 20;
 
   const effectiveFilters: LogFilters = {
@@ -73,7 +75,12 @@ export function RequestLogTable({
     statusCode,
   };
 
-  const { data: result, isLoading, refetch, isRefetching } = useRequestLogs({
+  const {
+    data: result,
+    isLoading,
+    refetch,
+    isRefetching,
+  } = useRequestLogs({
     filters: effectiveFilters,
     range,
     page,
@@ -336,7 +343,9 @@ export function RequestLogTable({
                 onClick={() => refetch()}
                 disabled={isRefetching}
               >
-                <RefreshCw className={`h-3.5 w-3.5 ${isRefetching ? "animate-spin" : ""}`} />
+                <RefreshCw
+                  className={`h-3.5 w-3.5 ${isRefetching ? "animate-spin" : ""}`}
+                />
               </Button>
             </div>
             <div className="flex items-center gap-1">

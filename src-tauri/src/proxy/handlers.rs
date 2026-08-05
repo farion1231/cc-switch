@@ -38,10 +38,10 @@ use super::{
         process_response, read_decoded_body, strip_entity_headers_for_rebuilt_body,
         strip_hop_by_hop_response_headers, usage_logging_enabled, SseUsageCollector,
     },
-    usage::logger::UsageLogger,
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
     types::*,
+    usage::logger::UsageLogger,
     usage::parser::TokenUsage,
     ProxyError,
 };
@@ -652,7 +652,13 @@ async fn handle_claude_transform(
         .map(|c| c.capture_details)
         .unwrap_or(false)
     {
-        let request_id = uuid::Uuid::new_v4().to_string();
+        let usage = TokenUsage::from_claude_response(&anthropic_response);
+        let dedup_scope =
+            super::usage::parser::dedup_scope_for_app(ctx.app_type_str, &ctx.provider.id);
+        let request_id = usage
+            .as_ref()
+            .map(|u| u.dedup_request_id(dedup_scope))
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let response_headers_json =
             serde_json::to_string(&header_map_to_json(&response_headers)).unwrap_or_default();
         if let Err(e) = UsageLogger::new(&state.db).save_detail_capture(
@@ -1104,7 +1110,10 @@ async fn handle_codex_responses_namespace_restore(
         let capture_response_headers = response_headers.clone();
 
         let usage_collector = create_usage_collector(
-            ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG,
+            ctx,
+            state,
+            status.as_u16(),
+            &CODEX_PARSER_CONFIG,
             request_id_for_detail.clone(),
         );
         let logged_stream = create_logged_passthrough_stream(
@@ -1452,7 +1461,13 @@ async fn handle_codex_chat_to_responses_transform(
         .map(|c| c.capture_details)
         .unwrap_or(false)
     {
-        let request_id = uuid::Uuid::new_v4().to_string();
+        let usage = TokenUsage::from_codex_response_auto(&responses_response);
+        let dedup_scope =
+            super::usage::parser::dedup_scope_for_app(ctx.app_type_str, &ctx.provider.id);
+        let request_id = usage
+            .as_ref()
+            .map(|u| u.dedup_request_id(dedup_scope))
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let response_headers_json =
             serde_json::to_string(&header_map_to_json(&response_headers)).unwrap_or_default();
         if let Err(e) = UsageLogger::new(&state.db).save_detail_capture(

@@ -110,7 +110,10 @@ export function RequestDetailPanel({
           </TabsList>
 
           {/* 概览 Tab */}
-          <TabsContent value="overview" className="flex-1 overflow-y-auto min-h-0">
+          <TabsContent
+            value="overview"
+            className="flex-1 overflow-y-auto min-h-0"
+          >
             <div className="space-y-4">
               {/* 基本信息 */}
               <div className="rounded-lg border p-4">
@@ -140,7 +143,8 @@ export function RequestDetailPanel({
                     </dt>
                     <dd className="text-sm">
                       <span className="font-medium">
-                        {request.providerName || t("usage.unknownProvider", "未知")}
+                        {request.providerName ||
+                          t("usage.unknownProvider", "未知")}
                       </span>
                       <span className="ml-2 font-mono text-xs text-muted-foreground">
                         {request.providerId}
@@ -367,7 +371,10 @@ export function RequestDetailPanel({
           </TabsContent>
 
           {/* 请求详情 Tab */}
-          <TabsContent value="request" className="flex-1 overflow-y-auto min-h-0">
+          <TabsContent
+            value="request"
+            className="flex-1 overflow-y-auto min-h-0"
+          >
             <div className="space-y-4">
               {payload?.requestHeaders && (
                 <div className="rounded-lg border p-4">
@@ -393,7 +400,10 @@ export function RequestDetailPanel({
           </TabsContent>
 
           {/* 响应详情 Tab */}
-          <TabsContent value="response" className="flex-1 overflow-y-auto min-h-0">
+          <TabsContent
+            value="response"
+            className="flex-1 overflow-y-auto min-h-0"
+          >
             <div className="space-y-4">
               {payload?.responseHeaders && (
                 <div className="rounded-lg border p-4">

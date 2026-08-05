@@ -1366,7 +1366,9 @@ impl Database {
             )",
             [],
         )
-        .map_err(|e| AppError::Database(format!("v11 -> v12: create profiles table failed: {e}")))?;
+        .map_err(|e| {
+            AppError::Database(format!("v11 -> v12: create profiles table failed: {e}"))
+        })?;
 
         // Align with my-ccs-dev / production DB full detail table schema.
         // IF NOT EXISTS: leaves existing full tables untouched; creates full columns for new DBs.
@@ -1387,43 +1389,73 @@ impl Database {
             )",
             [],
         )
-        .map_err(|e| AppError::Database(format!("Failed to create proxy_request_log_details table: {e}")))?;
+        .map_err(|e| {
+            AppError::Database(format!(
+                "Failed to create proxy_request_log_details table: {e}"
+            ))
+        })?;
 
         // Upgrade old 5-column tables to full 12-column schema (add missing columns)
         if Self::table_exists(conn, "proxy_request_log_details")? {
             Self::add_column_if_missing(
-                conn, "proxy_request_log_details", "log_level",
+                conn,
+                "proxy_request_log_details",
+                "log_level",
                 "TEXT NOT NULL DEFAULT 'full'",
             )?;
             Self::add_column_if_missing(
-                conn, "proxy_request_log_details", "route_trace_json", "TEXT",
+                conn,
+                "proxy_request_log_details",
+                "route_trace_json",
+                "TEXT",
+            )?;
+            Self::add_column_if_missing(conn, "proxy_request_log_details", "mapping_json", "TEXT")?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_request_log_details",
+                "request_headers_json",
+                "TEXT",
             )?;
             Self::add_column_if_missing(
-                conn, "proxy_request_log_details", "mapping_json", "TEXT",
+                conn,
+                "proxy_request_log_details",
+                "request_body_preview",
+                "TEXT",
             )?;
             Self::add_column_if_missing(
-                conn, "proxy_request_log_details", "request_headers_json", "TEXT",
+                conn,
+                "proxy_request_log_details",
+                "request_body_full",
+                "TEXT",
             )?;
             Self::add_column_if_missing(
-                conn, "proxy_request_log_details", "request_body_preview", "TEXT",
+                conn,
+                "proxy_request_log_details",
+                "response_headers_json",
+                "TEXT",
             )?;
             Self::add_column_if_missing(
-                conn, "proxy_request_log_details", "request_body_full", "TEXT",
+                conn,
+                "proxy_request_log_details",
+                "response_body_preview",
+                "TEXT",
             )?;
             Self::add_column_if_missing(
-                conn, "proxy_request_log_details", "response_headers_json", "TEXT",
+                conn,
+                "proxy_request_log_details",
+                "response_body_full",
+                "TEXT",
             )?;
             Self::add_column_if_missing(
-                conn, "proxy_request_log_details", "response_body_preview", "TEXT",
+                conn,
+                "proxy_request_log_details",
+                "upstream_error_json",
+                "TEXT",
             )?;
             Self::add_column_if_missing(
-                conn, "proxy_request_log_details", "response_body_full", "TEXT",
-            )?;
-            Self::add_column_if_missing(
-                conn, "proxy_request_log_details", "upstream_error_json", "TEXT",
-            )?;
-            Self::add_column_if_missing(
-                conn, "proxy_request_log_details", "created_at",
+                conn,
+                "proxy_request_log_details",
+                "created_at",
                 "INTEGER NOT NULL DEFAULT 0",
             )?;
         }

@@ -187,7 +187,10 @@ pub async fn handle_streaming(
 
     // 创建使用量收集器；关闭 usage logging 时不要在流式热路径上解析每个 SSE event。
     let usage_collector = create_usage_collector(
-        ctx, state, status.as_u16(), parser_config,
+        ctx,
+        state,
+        status.as_u16(),
+        parser_config,
         request_id_for_detail.clone(),
     );
 
@@ -267,8 +270,8 @@ pub async fn handle_non_streaming(
                     .or_else(|| ctx.outbound_model.clone())
                     .unwrap_or_else(|| ctx.request_model.clone());
 
-                let dedup_scope =
-                    (ctx.app_type_str != "claude").then_some((ctx.app_type_str, ctx.provider.id.as_str()));
+                let dedup_scope = (ctx.app_type_str != "claude")
+                    .then_some((ctx.app_type_str, ctx.provider.id.as_str()));
                 request_id_for_detail = Some(usage.dedup_request_id(dedup_scope));
 
                 spawn_log_usage(
@@ -326,7 +329,9 @@ pub async fn handle_non_streaming(
     }
 
     // Record request/response detail (only when capture_details is enabled)
-    let capture_details = state.db.get_log_config()
+    let capture_details = state
+        .db
+        .get_log_config()
         .map(|c| c.capture_details)
         .unwrap_or(false);
     if capture_details {
@@ -336,8 +341,8 @@ pub async fn handle_non_streaming(
         use super::usage::logger::UsageLogger;
         let logger = UsageLogger::new(&state.db);
         let response_body_str = String::from_utf8_lossy(&body_bytes);
-        let response_headers_json = serde_json::to_string(&header_map_to_json(&response_headers))
-            .unwrap_or_default();
+        let response_headers_json =
+            serde_json::to_string(&header_map_to_json(&response_headers)).unwrap_or_default();
         if let Err(e) = logger.save_detail_capture(
             &request_id,
             None,
@@ -612,6 +617,7 @@ pub(crate) fn create_usage_collector(
 }
 
 /// 异步记录使用量
+#[allow(clippy::too_many_arguments)]
 fn spawn_log_usage(
     state: &ProxyState,
     ctx: &RequestContext,
@@ -736,6 +742,7 @@ async fn log_usage_internal(
 }
 
 /// 创建带日志记录和超时控制的透传流
+#[allow(clippy::too_many_arguments)]
 pub fn create_logged_passthrough_stream(
     stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
     tag: &'static str,
