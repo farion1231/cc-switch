@@ -1,7 +1,9 @@
-//! Read-only Pi provider membership for the provider list.
+//! Read-only Pi provider membership and global default reference.
 
 use crate::error::AppError;
-use crate::pi_config::{read_pi_native_providers, validate_managed_provider};
+use crate::pi_config::{
+    read_pi_native_defaults, read_pi_native_providers, validate_managed_provider,
+};
 use crate::store::AppState;
 use serde::Serialize;
 
@@ -11,6 +13,7 @@ const PI_APP: &str = "pi";
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PiCurrentState {
     pub enabled_provider_ids: Vec<String>,
+    pub default_provider_id: Option<String>,
 }
 
 pub(crate) struct PiStateService;
@@ -24,8 +27,16 @@ impl PiStateService {
             .filter(|(id, config)| validate_managed_provider(id, config).is_ok())
             .map(|(id, _)| id.clone())
             .collect::<Vec<_>>();
+        let default_provider_id = match read_pi_native_defaults() {
+            Ok(defaults) => defaults.default_provider,
+            Err(error) => {
+                log::warn!("Failed to read Pi global default provider for advisory UI: {error}");
+                None
+            }
+        };
         Ok(PiCurrentState {
             enabled_provider_ids,
+            default_provider_id,
         })
     }
 }
@@ -73,11 +84,56 @@ mod tests {
             }"#,
         )
         .expect("write models");
+        let settings_path = crate::pi_config::get_pi_settings_path().expect("settings path");
+        fs::write(
+            settings_path,
+            r#"{"defaultProvider":"cc-switch-managed","defaultModel":"model-a"}"#,
+        )
+        .expect("write settings");
 
         let current = PiStateService::current(&state).expect("read state");
         assert_eq!(
             current.enabled_provider_ids,
             vec!["cc-switch-managed".to_string()]
         );
+        assert_eq!(
+            current.default_provider_id.as_deref(),
+            Some("cc-switch-managed")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn invalid_global_settings_do_not_hide_provider_membership() {
+        let _agent = TestAgentDir::new();
+        let state = AppState::new(Arc::new(
+            Database::memory().expect("create in-memory database"),
+        ));
+        let models_path = crate::pi_config::get_pi_models_path().expect("models path");
+        fs::create_dir_all(models_path.parent().expect("models directory"))
+            .expect("create models directory");
+        fs::write(
+            models_path,
+            r#"{
+                "providers": {
+                    "cc-switch-managed": {
+                        "name": "Managed",
+                        "baseUrl": "https://api.example.com/v1",
+                        "api": "openai-completions",
+                        "models": [{ "id": "model-a" }]
+                    }
+                }
+            }"#,
+        )
+        .expect("write models");
+        let settings_path = crate::pi_config::get_pi_settings_path().expect("settings path");
+        fs::write(settings_path, "[]").expect("write invalid settings");
+
+        let current = PiStateService::current(&state).expect("read membership");
+        assert_eq!(
+            current.enabled_provider_ids,
+            vec!["cc-switch-managed".to_string()]
+        );
+        assert_eq!(current.default_provider_id, None);
     }
 }

@@ -99,7 +99,7 @@ import {
   useDisableCurrentOmo,
   useDisableCurrentOmoSlim,
 } from "@/lib/query/omo";
-import { invalidatePiProviderCaches } from "@/lib/query/pi";
+import { invalidatePiProviderCaches, usePiCurrentState } from "@/lib/query/pi";
 import WorkspaceFilesPanel from "@/components/workspace/WorkspaceFilesPanel";
 import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
@@ -293,6 +293,7 @@ function App() {
   const { data, isLoading, refetch } = useProvidersQuery(activeApp, {
     isProxyRunning: currentAppUsesProxy && isProxyRunning,
   });
+  const { data: piCurrentState } = usePiCurrentState(activeApp === "pi");
   const providers = useMemo(() => data?.providers ?? {}, [data]);
   const currentProviderId = data?.currentProviderId ?? "";
   const isOpenClawView =
@@ -897,6 +898,26 @@ function App() {
 
     await addProvider(duplicatedProvider);
   };
+
+  const confirmActionMessage = useMemo(() => {
+    if (!confirmAction) return "";
+
+    const message =
+      confirmAction.action === "remove"
+        ? t("confirm.removeProviderMessage", {
+            name: confirmAction.provider.name,
+          })
+        : t("confirm.deleteProviderMessage", {
+            name: confirmAction.provider.name,
+          });
+    const isPiGlobalDefault =
+      activeApp === "pi" &&
+      piCurrentState?.defaultProviderId === confirmAction.provider.id;
+
+    return isPiGlobalDefault
+      ? `${message}\n\n${t("confirm.piDefaultProviderWarning")}`
+      : message;
+  }, [activeApp, confirmAction, piCurrentState?.defaultProviderId, t]);
 
   const handleOpenTerminal = async (provider: Provider) => {
     try {
@@ -1785,17 +1806,7 @@ function App() {
             ? t("confirm.removeProvider")
             : t("confirm.deleteProvider")
         }
-        message={
-          confirmAction
-            ? confirmAction.action === "remove"
-              ? t("confirm.removeProviderMessage", {
-                  name: confirmAction.provider.name,
-                })
-              : t("confirm.deleteProviderMessage", {
-                  name: confirmAction.provider.name,
-                })
-            : ""
-        }
+        message={confirmActionMessage}
         onConfirm={() => void handleConfirmAction()}
         onCancel={() => setConfirmAction(null)}
       />

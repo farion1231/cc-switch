@@ -43,9 +43,6 @@ export const translatePiProviderMutationError = (
 ): string => {
   if (!message) return "";
 
-  if (message.includes("currently selected in Pi")) {
-    return t("pi.provider.removeCurrent");
-  }
   if (message.includes("managed by Pi")) {
     return t("pi.provider.managedByPi");
   }

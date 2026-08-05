@@ -10,7 +10,6 @@ describe("error utilities", () => {
   });
 
   it.each([
-    ["This provider is currently selected in Pi", "pi.provider.removeCurrent"],
     ["Pi provider 'anthropic' is managed by Pi", "pi.provider.managedByPi"],
     [
       "无效输入: Pi is currently using model 'model-a'; choose another model in Pi before removing it",

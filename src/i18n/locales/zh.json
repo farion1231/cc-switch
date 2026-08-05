@@ -286,6 +286,7 @@
     "deleteProviderMessage": "确定要删除供应商 \"{{name}}\" 吗？此操作无法撤销。",
     "removeProvider": "移除供应商",
     "removeProviderMessage": "确定要从配置中移除供应商 \"{{name}}\" 吗？\n\n移除后该供应商将不再生效，但配置数据会保留在 CC Switch 中，您可以随时重新添加。",
+    "piDefaultProviderWarning": "Pi 的全局默认项当前指向此供应商。继续后，Pi 会尝试其他可用模型；你可以在 Pi 中使用 /model 重新选择，或使用 /login 登录其他供应商。",
     "proxy": {
       "title": "启用本地路由服务",
       "message": "本地路由是一项高级功能，启用前请确保您已了解其工作原理。\n\n建议先查阅相关文档或咨询您的供应商，以获取正确的配置方式。",
@@ -908,7 +909,6 @@
       "enabled": "已在 Pi 中启用",
       "enableFailed": "无法在 Pi 中启用此供应商",
       "removed": "已从 Pi 移除",
-      "removeCurrent": "此供应商正在被 Pi 使用。请先在 Pi 中运行 /model 切换后再移除。",
       "configChanged": "Pi 中的配置刚发生变化，已保留 Pi 的修改。请基于最新配置重试。",
       "managedByPi": "此供应商由 Pi 管理，无法在 CC Switch 中操作。"
     },

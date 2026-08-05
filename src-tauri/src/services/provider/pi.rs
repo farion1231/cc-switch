@@ -192,7 +192,6 @@ pub(super) fn delete(state: &AppState, id: &str) -> Result<(), AppError> {
     let app_type = AppType::Pi;
     let _guard =
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
-    ensure_not_current(id)?;
     let Some(_) = state.db.get_provider_by_id(id, app_type.as_str())? else {
         return Ok(());
     };
@@ -218,7 +217,6 @@ pub(super) fn remove(state: &AppState, id: &str) -> Result<(), AppError> {
     let app_type = AppType::Pi;
     let _guard =
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
-    ensure_not_current(id)?;
     let provider = state
         .db
         .get_provider_by_id(id, app_type.as_str())?
@@ -269,20 +267,6 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
     ProviderService::validate_provider_settings(&app_type, &provider)?;
     crate::pi_config::insert_pi_provider(id, &provider.settings_config)?;
     Ok(SwitchResult::default())
-}
-
-fn ensure_not_current(provider_id: &str) -> Result<(), AppError> {
-    if crate::pi_config::read_pi_native_defaults()?
-        .default_provider
-        .as_deref()
-        == Some(provider_id)
-    {
-        return Err(AppError::InvalidInput(
-            "This provider is currently selected in Pi; switch with Pi /model before removing it"
-                .to_string(),
-        ));
-    }
-    Ok(())
 }
 
 fn ensure_current_model_remains(
@@ -564,7 +548,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn current_provider_and_model_are_pi_owned() {
+    fn default_selection_does_not_block_membership_changes() {
         let _agent = TestAgentDir::new();
         let state = state();
         let original = input("model-a");
@@ -572,18 +556,11 @@ mod tests {
         let settings_path = crate::pi_config::get_pi_settings_path().unwrap();
         fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
         fs::write(
-            settings_path,
+            &settings_path,
             r#"{"defaultProvider":"cc-switch-test","defaultModel":"model-a"}"#,
         )
         .unwrap();
 
-        let remove_error =
-            ProviderService::remove_from_live_config(&state, AppType::Pi, "cc-switch-test")
-                .expect_err("current provider must block removal");
-        assert!(remove_error
-            .to_string()
-            .contains("currently selected in Pi"));
-        assert!(ProviderService::delete(&state, AppType::Pi, "cc-switch-test").is_err());
         assert!(update(
             &state,
             Some("cc-switch-test"),
@@ -591,7 +568,23 @@ mod tests {
             Some(&original.settings_config),
         )
         .is_err());
-        assert!(crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
+        ProviderService::remove_from_live_config(&state, AppType::Pi, "cc-switch-test")
+            .expect("global default must not block removal");
+        assert!(!crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
+
+        ProviderService::switch(&state, AppType::Pi, "cc-switch-test").expect("re-enable provider");
+        ProviderService::delete(&state, AppType::Pi, "cc-switch-test")
+            .expect("global default must not block deletion");
+        assert!(state
+            .db
+            .get_provider_by_id("cc-switch-test", "pi")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            fs::read_to_string(settings_path).unwrap(),
+            r#"{"defaultProvider":"cc-switch-test","defaultModel":"model-a"}"#
+        );
+        assert!(!crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
     }
 
     #[test]
@@ -1002,7 +995,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn unreadable_selection_only_blocks_destructive_mutations() {
+    fn unreadable_selection_does_not_block_membership_changes() {
         let _agent = TestAgentDir::new();
         let state = state();
         let settings_path = crate::pi_config::get_pi_settings_path().unwrap();
@@ -1027,11 +1020,11 @@ mod tests {
         )
         .expect("an edit that keeps every model does not need the default selection");
 
-        assert!(
-            ProviderService::remove_from_live_config(&state, AppType::Pi, "cc-switch-test")
-                .is_err()
-        );
-        assert!(ProviderService::delete(&state, AppType::Pi, "cc-switch-test").is_err());
-        assert!(crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
+        ProviderService::remove_from_live_config(&state, AppType::Pi, "cc-switch-test")
+            .expect("global selection is advisory for removal");
+        ProviderService::switch(&state, AppType::Pi, "cc-switch-test").expect("re-enable provider");
+        ProviderService::delete(&state, AppType::Pi, "cc-switch-test")
+            .expect("global selection is advisory for deletion");
+        assert!(!crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
     }
 }

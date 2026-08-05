@@ -286,6 +286,7 @@
     "deleteProviderMessage": "Are you sure you want to delete provider \"{{name}}\"? This action cannot be undone.",
     "removeProvider": "Remove Provider",
     "removeProviderMessage": "Are you sure you want to remove provider \"{{name}}\" from the configuration?\n\nAfter removal, this provider will no longer be active, but the configuration data will be retained in CC Switch. You can re-add it at any time.",
+    "piDefaultProviderWarning": "Pi's global default currently points to this provider. If you continue, Pi will try another available model; use /model to choose one or /login to sign in to another provider.",
     "proxy": {
       "title": "Enable Local Routing",
       "message": "Local routing is an advanced feature. Please make sure you understand how it works before enabling.\n\nWe recommend consulting the relevant documentation or your provider for proper configuration.",
@@ -908,7 +909,6 @@
       "enabled": "Enabled in Pi",
       "enableFailed": "Could not enable this provider in Pi",
       "removed": "Removed from Pi",
-      "removeCurrent": "Pi is currently using this provider. Switch with Pi /model before removing it.",
       "configChanged": "This configuration just changed in Pi. Pi's changes were preserved; retry with the latest configuration.",
       "managedByPi": "This provider is managed by Pi and cannot be changed in CC Switch."
     },

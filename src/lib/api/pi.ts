@@ -3,6 +3,7 @@ import type { UsageScript } from "@/types";
 
 export interface PiCurrentState {
   enabledProviderIds: string[];
+  defaultProviderId: string | null;
 }
 
 export type PiSessionDiscovery =

@@ -121,6 +121,10 @@ export const handlers = [
     return success(true);
   }),
 
+  http.post(`${TAURI_ENDPOINT}/remove_provider_from_live_config`, () =>
+    success(true),
+  ),
+
   http.post(`${TAURI_ENDPOINT}/import_default_config`, async () => {
     resetProviderState();
     return success(true);
@@ -317,6 +321,7 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
     success({
       enabledProviderIds: [],
+      defaultProviderId: null,
     }),
   ),
 
