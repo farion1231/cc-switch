@@ -225,7 +225,11 @@ describe("common config array merging", () => {
 
     expect(hasCommonConfigSnippet(config, snippet)).toBe(false);
 
-    const merged = updateCommonConfigSnippet(config, snippet, true).updatedConfig;
+    const merged = updateCommonConfigSnippet(
+      config,
+      snippet,
+      true,
+    ).updatedConfig;
     expect(JSON.parse(merged).hooks).toEqual([{ a: 1, b: 2 }, { a: 1 }]);
     expect(hasCommonConfigSnippet(merged, snippet)).toBe(true);
   });

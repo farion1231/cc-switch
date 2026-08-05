@@ -221,9 +221,7 @@ fn json_array_contains_subset(target_arr: &[Value], source_arr: &[Value]) -> boo
         matched_source_by_target: &mut [Option<usize>],
     ) -> bool {
         for (target_index, target_item) in target_arr.iter().enumerate() {
-            if seen[target_index]
-                || !json_is_subset(target_item, &source_arr[source_index])
-            {
+            if seen[target_index] || !json_is_subset(target_item, &source_arr[source_index]) {
                 continue;
             }
 
@@ -259,13 +257,9 @@ fn json_array_contains_subset(target_arr: &[Value], source_arr: &[Value]) -> boo
 
 fn json_remove_array_items(target_arr: &mut Vec<Value>, source_arr: &[Value]) {
     for source_item in source_arr {
-        if let Some(index) = target_arr
-            .iter()
-            .position(|target_item| {
-                json_is_subset(target_item, source_item)
-                    && json_is_subset(source_item, target_item)
-            })
-        {
+        if let Some(index) = target_arr.iter().position(|target_item| {
+            json_is_subset(target_item, source_item) && json_is_subset(source_item, target_item)
+        }) {
             target_arr.remove(index);
         }
     }
