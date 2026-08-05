@@ -4769,17 +4769,17 @@ impl ProviderService {
     /// 某个应用的 live 写不动（文件被占用 / 权限问题）不该让另外两个应用的同步
     /// 一起失败，也不该报成"同步失败"。下次切换或保存会自愈。
     fn project_universal_child_to_live(state: &AppState, app_type: AppType, child_id: &str) {
-        let is_current =
-            match crate::settings::get_effective_current_provider(&state.db, &app_type) {
-                Ok(current) => current.as_deref() == Some(child_id),
-                Err(err) => {
-                    log::warn!(
-                        "读取 {} 当前供应商失败，跳过统一供应商的 live 重投影: {err}",
-                        app_type.as_str()
-                    );
-                    return;
-                }
-            };
+        let is_current = match crate::settings::get_effective_current_provider(&state.db, &app_type)
+        {
+            Ok(current) => current.as_deref() == Some(child_id),
+            Err(err) => {
+                log::warn!(
+                    "读取 {} 当前供应商失败，跳过统一供应商的 live 重投影: {err}",
+                    app_type.as_str()
+                );
+                return;
+            }
+        };
         if !is_current {
             return;
         }
