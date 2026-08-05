@@ -759,6 +759,53 @@ mod tests {
 
     #[test]
     #[serial]
+    fn failed_codex_oauth_api_switch_does_not_enable_unified_history_migration() {
+        with_test_home(|state, home| {
+            crate::settings::reload_settings().expect("reload settings");
+            let official = codex_official_oauth_provider();
+            let api = Provider::with_id(
+                "api-provider".to_string(),
+                "API Provider".to_string(),
+                codex_settings("https://api.example/v1", "sk-api"),
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &official)
+                .expect("save official provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &api)
+                .expect("save API provider");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), &official.id)
+                .expect("set database current provider");
+            crate::settings::set_current_provider(&AppType::Codex, Some(&official.id))
+                .expect("set local current provider");
+
+            let codex_dir = home.join(".codex");
+            fs::create_dir_all(&codex_dir).expect("create Codex config dir");
+            fs::create_dir(codex_dir.join("config.toml"))
+                .expect("make config.toml unwritable as a file");
+
+            ProviderService::switch(state, AppType::Codex, &api.id)
+                .expect_err("switch should fail when config.toml is a directory");
+
+            crate::settings::reload_settings().expect("reload persisted settings after failure");
+            assert!(
+                !crate::settings::unify_codex_session_history(),
+                "failed provider switches must not enable unified history"
+            );
+            assert!(
+                !crate::settings::unify_codex_migrate_existing_requested(),
+                "failed provider switches must not schedule existing-history migration"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn switch_codex_api_to_official_repairs_tool_search_history_in_normal_mode() {
         assert_codex_api_to_official_switch_repairs_tool_search_history(false);
     }
@@ -2894,6 +2941,7 @@ impl ProviderService {
             None
         };
 
+        let mut codex_history_settings_before_switch = None;
         let codex_crosses_oauth_boundary = if matches!(app_type, AppType::Codex) {
             let current_id = crate::settings::get_effective_current_provider(&state.db, &app_type)?;
             let current_is_official_oauth = current_id
@@ -2914,6 +2962,11 @@ impl ProviderService {
                         outcome.repaired_items
                     );
                 }
+                let settings = crate::settings::get_settings();
+                codex_history_settings_before_switch = Some((
+                    settings.unify_codex_session_history,
+                    settings.unify_codex_migrate_existing,
+                ));
                 crate::settings::ensure_codex_session_history_unified_for_provider_switch()?;
             }
             crosses_boundary
@@ -2955,17 +3008,35 @@ impl ProviderService {
 
         let should_hot_switch = is_app_taken_over || live_taken_over;
 
+        let rollback_codex_history_settings = |switch_error: AppError| -> AppError {
+            let Some((unify_history, migrate_existing)) = codex_history_settings_before_switch
+            else {
+                return switch_error;
+            };
+            if let Err(rollback_error) =
+                crate::settings::restore_codex_session_history_after_failed_provider_switch(
+                    unify_history,
+                    migrate_existing,
+                )
+            {
+                return AppError::Message(format!(
+                    "{switch_error}; failed to restore Codex history settings after switch failure: {rollback_error}"
+                ));
+            }
+            switch_error
+        };
+
         // Block switching to official providers when proxy takeover is active.
         // Using a proxy with official APIs (Anthropic/OpenAI/Google) may cause account bans.
         if should_hot_switch
             && _provider.category.as_deref() == Some("official")
             && !official_provider_supports_proxy_takeover(&app_type, _provider)
         {
-            return Err(AppError::localized(
+            return Err(rollback_codex_history_settings(AppError::localized(
                 "switch.official_blocked_by_proxy",
                 "代理接管模式下不能切换到官方供应商，使用代理访问官方 API 可能导致账号被封禁。请先关闭代理接管，或选择第三方供应商。",
                 "Cannot switch to official provider while proxy takeover is active. Using proxy with official APIs may cause account bans.",
-            ));
+            )));
         }
 
         if should_hot_switch {
@@ -2983,7 +3054,8 @@ impl ProviderService {
                     .proxy_service
                     .hot_switch_provider_inner(app_type.as_str(), id),
             )
-            .map_err(|e| AppError::Message(format!("热切换失败: {e}")))?;
+            .map_err(|e| AppError::Message(format!("热切换失败: {e}")))
+            .map_err(&rollback_codex_history_settings)?;
 
             // The proxy server will route requests to the new provider via is_current.
             // MCP sync is intentionally skipped while Live config is owned by takeover.
@@ -2992,7 +3064,8 @@ impl ProviderService {
         }
 
         // Normal mode: full switch with Live config write
-        let result = Self::switch_normal(state, app_type, id, &providers)?;
+        let result = Self::switch_normal(state, app_type, id, &providers)
+            .map_err(rollback_codex_history_settings)?;
         migrate_codex_history_after_switch()?;
         Ok(result)
     }

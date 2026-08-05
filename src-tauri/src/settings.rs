@@ -963,6 +963,18 @@ pub fn ensure_codex_session_history_unified_for_provider_switch() -> Result<(), 
     })
 }
 
+/// Restore only the unified-history fields when an OAuth/API provider switch
+/// fails after preparing the live config. Other concurrent settings remain intact.
+pub fn restore_codex_session_history_after_failed_provider_switch(
+    unify_codex_session_history: bool,
+    unify_codex_migrate_existing: Option<bool>,
+) -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        settings.unify_codex_session_history = unify_codex_session_history;
+        settings.unify_codex_migrate_existing = unify_codex_migrate_existing;
+    })
+}
+
 // ===== 当前供应商管理函数 =====
 
 /// 获取指定应用类型的当前供应商 ID（从本地 settings 读取）
