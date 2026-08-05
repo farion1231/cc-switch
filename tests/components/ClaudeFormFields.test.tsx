@@ -195,4 +195,180 @@ describe("ClaudeFormFields", () => {
       "shared-model[1M]",
     );
   });
+
+  it("角色模型上下文长度输入框能正确写入后缀", () => {
+    const onModelChange = vi.fn();
+    renderCopilotForm({
+      defaultSonnetModel: "claude-sonnet",
+      defaultSonnetModelName: "Claude Sonnet",
+      onModelChange,
+    });
+
+    // getAllByLabelText 返回所有 context window 输入框，顺序为：
+    // [0] Sonnet, [1] Opus, [2] Fable, [3] Haiku, [4] Subagent, [5] 兜底模型
+    const contextInputs = screen.getAllByLabelText("Context Window");
+    const sonnetContextInput = contextInputs[0];
+
+    fireEvent.change(sonnetContextInput, { target: { value: "1M" } });
+
+    expect(onModelChange).toHaveBeenCalledWith(
+      "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "claude-sonnet[1m]",
+    );
+  });
+
+  it("关闭自动同步开关时走独立回调，避免被整包 settingsConfig 更新覆盖", () => {
+    const onAutoSyncContextWindowChange = vi.fn();
+    const onSettingsConfigChange = vi.fn();
+    renderCopilotForm({
+      settingsConfig: JSON.stringify({ env: {}, autoSyncContextWindow: true }),
+      onSettingsConfigChange,
+      onAutoSyncContextWindowChange,
+    });
+
+    fireEvent.click(
+      screen.getByRole("switch", {
+        name: "自动同步模型上下文长度",
+      }),
+    );
+
+    expect(onAutoSyncContextWindowChange).toHaveBeenCalledWith(false);
+    expect(onSettingsConfigChange).not.toHaveBeenCalled();
+  });
+
+  it("没有独立回调时，关闭开关会清理 settingsConfig 中的 ACW/MAX", () => {
+    const onSettingsConfigChange = vi.fn();
+    renderCopilotForm({
+      settingsConfig: JSON.stringify({
+        env: {
+          ANTHROPIC_MODEL: "model[1M]",
+          CLAUDE_CODE_AUTO_COMPACT_WINDOW: "800000",
+          CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1000000",
+        },
+        autoSyncContextWindow: true,
+      }),
+      onSettingsConfigChange,
+    });
+
+    fireEvent.click(
+      screen.getByRole("switch", {
+        name: "自动同步模型上下文长度",
+      }),
+    );
+
+    const updated = JSON.parse(onSettingsConfigChange.mock.calls[0][0]);
+    expect(updated.autoSyncContextWindow).toBe(false);
+    expect(updated.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+    expect(updated.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeUndefined();
+    expect(updated.env.ANTHROPIC_MODEL).toBe("model[1M]");
+  });
+
+  it("开关打开和关闭时显示对应的上下文同步提示", () => {
+    renderCopilotForm({
+      settingsConfig: JSON.stringify({ env: {}, autoSyncContextWindow: true }),
+    });
+
+    expect(
+      screen.getByText(
+        "上下文长度和压缩阈值按切换的模型更新配置 json。切换后需重启 Claude Code（退出后用 claude --resume 恢复会话）才生效。多CC终端使用不同模型，以最后切换模型时的上下文长度作为全局变量。",
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("switch", {
+        name: "自动同步模型上下文长度",
+      }),
+    );
+
+    expect(
+      screen.getByText(
+        "对于[1M]后缀的模型Claude Code原生支持1M上下文，其他输入形式或不输入默认为200k，切换模型后终端内生效。",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("settingsConfig 缺少 autoSyncContextWindow 时开关默认关闭", () => {
+    renderCopilotForm({
+      settingsConfig: JSON.stringify({ env: {} }),
+    });
+
+    expect(
+      screen.getByRole("switch", {
+        name: "自动同步模型上下文长度",
+      }),
+    ).not.toBeChecked();
+  });
+
+  it("自动同步开启时显示已保存的压缩比例", () => {
+    renderCopilotForm({
+      settingsConfig: JSON.stringify({
+        env: {},
+        autoSyncContextWindow: true,
+        autoSyncCompactRatio: 0.8,
+      }),
+    });
+
+    expect(screen.getByLabelText("压缩比例")).toHaveValue(0.8);
+  });
+
+  it("修改压缩比例时走独立回调", () => {
+    const onAutoSyncCompactRatioChange = vi.fn();
+    renderCopilotForm({
+      settingsConfig: JSON.stringify({ env: {}, autoSyncContextWindow: true }),
+      onAutoSyncCompactRatioChange,
+    });
+
+    fireEvent.change(screen.getByLabelText("压缩比例"), {
+      target: { value: "0.5" },
+    });
+
+    expect(onAutoSyncCompactRatioChange).toHaveBeenCalledWith(0.5);
+  });
+
+  it("清空压缩比例时删除字段", () => {
+    const onAutoSyncCompactRatioChange = vi.fn();
+    renderCopilotForm({
+      settingsConfig: JSON.stringify({
+        env: {},
+        autoSyncContextWindow: true,
+        autoSyncCompactRatio: 0.8,
+      }),
+      onAutoSyncCompactRatioChange,
+    });
+
+    fireEvent.change(screen.getByLabelText("压缩比例"), {
+      target: { value: "" },
+    });
+
+    expect(onAutoSyncCompactRatioChange).toHaveBeenCalledWith(null);
+  });
+
+  it("压缩比例超出范围时显示错误且不写入", () => {
+    const onAutoSyncCompactRatioChange = vi.fn();
+    renderCopilotForm({
+      settingsConfig: JSON.stringify({ env: {}, autoSyncContextWindow: true }),
+      onAutoSyncCompactRatioChange,
+    });
+
+    fireEvent.change(screen.getByLabelText("压缩比例"), {
+      target: { value: "1.5" },
+    });
+
+    expect(onAutoSyncCompactRatioChange).not.toHaveBeenCalled();
+    expect(
+      screen.getByText("压缩比例必须是 0.2~1 之间的数字"),
+    ).toBeInTheDocument();
+  });
+
+  it("自动同步关闭时压缩比例输入框禁用", () => {
+    renderCopilotForm({
+      settingsConfig: JSON.stringify({
+        env: {},
+        autoSyncContextWindow: false,
+        autoSyncCompactRatio: 0.8,
+      }),
+    });
+
+    expect(screen.getByLabelText("压缩比例")).toBeDisabled();
+  });
 });

@@ -36,6 +36,8 @@ pub(crate) use live::{
     sync_current_provider_for_app_to_live, write_live_with_common_config,
 };
 
+pub(crate) use live::{is_kimi_for_coding_provider, provider_env_targets_gpt56};
+
 // Internal re-exports
 use live::{
     remove_hermes_provider_from_live, remove_openclaw_provider_from_live,

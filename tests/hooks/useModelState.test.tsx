@@ -1,9 +1,13 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
+  parseModelSuffix,
   hasClaudeOneMMarker,
   setClaudeOneMMarker,
   stripClaudeOneMMarker,
+  setModelSuffix,
+  reapplySuffix,
+  stripModelSuffix,
   useModelState,
 } from "@/components/providers/forms/hooks/useModelState";
 
@@ -143,6 +147,182 @@ describe("useModelState", () => {
     );
     expect(setClaudeOneMMarker("deepseek-v4-pro", true)).toBe(
       "deepseek-v4-pro[1M]",
+    );
+  });
+});
+
+describe("parseModelSuffix", () => {
+  it("parses [1m] suffix", () => {
+    expect(parseModelSuffix("deepseek-v4-pro[1m]")).toEqual({
+      slug: "deepseek-v4-pro",
+      window: 1000000,
+    });
+  });
+
+  it("parses [200k] suffix", () => {
+    expect(parseModelSuffix("glm-5.2[200k]")).toEqual({
+      slug: "glm-5.2",
+      window: 200000,
+    });
+  });
+
+  it("parses uppercase [500K]", () => {
+    expect(parseModelSuffix("model[500K]")).toEqual({
+      slug: "model",
+      window: 500000,
+    });
+  });
+
+  it("parses pure number [1000000]", () => {
+    expect(parseModelSuffix("model[1000000]")).toEqual({
+      slug: "model",
+      window: 1000000,
+    });
+  });
+
+  it("returns undefined window for no suffix", () => {
+    expect(parseModelSuffix("model")).toEqual({
+      slug: "model",
+      window: undefined,
+    });
+  });
+
+  it("does not strip invalid suffix", () => {
+    expect(parseModelSuffix("model[invalid]")).toEqual({
+      slug: "model[invalid]",
+      window: undefined,
+    });
+  });
+
+  it("parses lowercase [1m]", () => {
+    expect(parseModelSuffix("model[1m]")).toEqual({
+      slug: "model",
+      window: 1000000,
+    });
+  });
+
+  it("parses [128k] suffix", () => {
+    expect(parseModelSuffix("model[128k]")).toEqual({
+      slug: "model",
+      window: 128000,
+    });
+  });
+
+  it("rejects [0] as invalid window", () => {
+    expect(parseModelSuffix("model[0]")).toEqual({
+      slug: "model[0]",
+      window: undefined,
+    });
+  });
+
+  it("parses [1.5m] decimal as 1500000", () => {
+    expect(parseModelSuffix("model[1.5m]")).toEqual({
+      slug: "model",
+      window: 1500000,
+    });
+  });
+});
+
+describe("setModelSuffix", () => {
+  it("appends lowercase suffix", () => {
+    expect(setModelSuffix("model", "1M")).toBe("model[1m]");
+  });
+
+  it("clears suffix when empty", () => {
+    expect(setModelSuffix("model[1m]", "")).toBe("model");
+  });
+
+  it("replaces existing suffix", () => {
+    expect(setModelSuffix("model[1m]", "200K")).toBe("model[200k]");
+  });
+
+  it("writes lowercase [200k] from 200K", () => {
+    expect(setModelSuffix("model", "200K")).toBe("model[200k]");
+  });
+
+  it("writes lowercase [128k] from 128K", () => {
+    expect(setModelSuffix("model", "128K")).toBe("model[128k]");
+  });
+
+  it("writes pure number [1000000]", () => {
+    expect(setModelSuffix("model", "1000000")).toBe("model[1000000]");
+  });
+
+  it("returns empty string for empty base", () => {
+    expect(setModelSuffix("", "1M")).toBe("");
+  });
+
+  it("returns base unchanged for invalid input abc", () => {
+    expect(setModelSuffix("model", "abc")).toBe("model");
+  });
+
+  it("returns base unchanged for unsupported unit 1G", () => {
+    expect(setModelSuffix("model", "1G")).toBe("model");
+  });
+});
+
+describe("setModelSuffix - 多元化输入", () => {
+  it("accepts input with brackets [30k]", () => {
+    expect(setModelSuffix("model", "[30k]")).toBe("model[30k]");
+  });
+
+  it("accepts input with trailing bracket [30", () => {
+    expect(setModelSuffix("model", "[30")).toBe("model[30]");
+  });
+
+  it("accepts input with leading bracket 30k]", () => {
+    expect(setModelSuffix("model", "30k]")).toBe("model[30k]");
+  });
+
+  it("accepts comma-separated number 1,000,000", () => {
+    expect(setModelSuffix("model", "1,000,000")).toBe("model[1000000]");
+  });
+
+  it("accepts underscore-separated number 1_000_000", () => {
+    expect(setModelSuffix("model", "1_000_000")).toBe("model[1000000]");
+  });
+
+  it('accepts space-separated "1 000 000"', () => {
+    expect(setModelSuffix("model", "1 000 000")).toBe("model[1000000]");
+  });
+
+  it("accepts decimal 1.5M as 1500000", () => {
+    expect(setModelSuffix("model", "1.5M")).toBe("model[1500000]");
+  });
+
+  it("accepts decimal 0.5M as 500000", () => {
+    expect(setModelSuffix("model", "0.5M")).toBe("model[500000]");
+  });
+
+  it("accepts mixed input [1,000k]", () => {
+    expect(setModelSuffix("model", "[1,000k]")).toBe("model[1000k]");
+  });
+});
+
+describe("stripModelSuffix", () => {
+  it("strips [200k]", () => {
+    expect(stripModelSuffix("model[200k]")).toBe("model");
+  });
+});
+
+describe("reapplySuffix", () => {
+  it("preserves suffix when changing model name", () => {
+    expect(reapplySuffix("deepseek-v4-pro[200k]", "glm-5.2")).toBe(
+      "glm-5.2[200k]",
+    );
+  });
+
+  it("returns base unchanged when old model has no suffix", () => {
+    expect(reapplySuffix("deepseek-v4-pro", "glm-5.2")).toBe("glm-5.2");
+  });
+
+  it("returns empty string when new input is empty", () => {
+    expect(reapplySuffix("deepseek-v4-pro[200k]", "")).toBe("");
+  });
+
+  it("old suffix wins when new input also has a suffix", () => {
+    expect(reapplySuffix("deepseek-v4-pro[200k]", "glm-5.2[100k]")).toBe(
+      "glm-5.2[200k]",
     );
   });
 });

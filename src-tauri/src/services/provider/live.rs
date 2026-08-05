@@ -44,7 +44,9 @@ const CODEX_OAUTH_MODEL_ENV_KEYS: [&str; 6] = [
     "CLAUDE_CODE_SUBAGENT_MODEL",
 ];
 
-fn provider_env_targets_gpt56(provider_env: Option<&serde_json::Map<String, Value>>) -> bool {
+pub(crate) fn provider_env_targets_gpt56(
+    provider_env: Option<&serde_json::Map<String, Value>>,
+) -> bool {
     let Some(env) = provider_env else {
         return false;
     };
@@ -68,7 +70,7 @@ fn provider_env_targets_gpt56(provider_env: Option<&serde_json::Map<String, Valu
     saw_model
 }
 
-fn is_kimi_for_coding_provider(provider: &Provider) -> bool {
+pub(crate) fn is_kimi_for_coding_provider(provider: &Provider) -> bool {
     provider
         .settings_config
         .pointer("/env/ANTHROPIC_BASE_URL")
@@ -77,6 +79,11 @@ fn is_kimi_for_coding_provider(provider: &Provider) -> bool {
         .map(|url| url.trim_end_matches('/'))
         == Some("https://api.kimi.com/coding")
 }
+
+const CLAUDE_CONTEXT_WINDOW_ENV_KEYS: [&str; 2] = [
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+];
 
 /// Claude Code assigns unknown non-Claude model ids a 200K context window.
 /// Codex OAuth deliberately exposes GPT ids through Claude Code, so enrich the
@@ -88,47 +95,18 @@ fn apply_codex_oauth_claude_context_defaults(settings: &mut Value, provider: &Pr
         return;
     }
 
-    // Read provider-owned values before mutably borrowing the effective
-    // settings. This also deliberately prevents a legacy common-config
-    // snippet from overriding model-specific context limits.
+    // 开启时只保留用户显式写入的值，不再自动注入固定默认。无后缀兜底
+    // 由 watcher 在终端切换模型时按 Codex OAuth 固定窗口写入。
     let provider_env = provider
         .settings_config
         .get("env")
         .and_then(Value::as_object);
-    let Some(root) = settings.as_object_mut() else {
+    let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) else {
         return;
     };
-    let env = root.entry("env".to_string()).or_insert_with(|| json!({}));
-    let Some(env) = env.as_object_mut() else {
-        log::warn!(
-            "Cannot apply Codex OAuth Claude context defaults for '{}': env is not an object",
-            provider.id
-        );
-        return;
-    };
-
-    let inject_defaults = provider_env_targets_gpt56(provider_env);
-    for (key, default_value) in [
-        (
-            "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
-            CODEX_OAUTH_CLAUDE_MAX_CONTEXT_TOKENS,
-        ),
-        (
-            "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
-            CODEX_OAUTH_CLAUDE_AUTO_COMPACT_WINDOW,
-        ),
-    ] {
-        match provider_env.and_then(|provider_env| provider_env.get(key)) {
-            Some(value) => {
-                env.insert(key.to_string(), value.clone());
-            }
-            None if inject_defaults => {
-                env.insert(key.to_string(), Value::String(default_value.to_string()));
-            }
-            // 老模型不注入默认值，同时剥掉遗留共享片段可能带进来的值
-            None => {
-                env.remove(key);
-            }
+    for key in CLAUDE_CONTEXT_WINDOW_ENV_KEYS {
+        if let Some(value) = provider_env.and_then(|provider_env| provider_env.get(key)) {
+            env.insert(key.to_string(), value.clone());
         }
     }
 }
@@ -143,6 +121,8 @@ fn apply_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provi
         return;
     }
 
+    // 开启时只保留用户显式写入的值，不再自动注入固定默认。无后缀兜底
+    // 由 watcher 在终端切换模型时按 Kimi 固定窗口写入。
     let provider_env = provider
         .settings_config
         .get("env")
@@ -150,16 +130,73 @@ fn apply_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provi
     let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) else {
         return;
     };
+    for key in CLAUDE_CONTEXT_WINDOW_ENV_KEYS {
+        if let Some(value) = provider_env.and_then(|provider_env| provider_env.get(key)) {
+            env.insert(key.to_string(), value.clone());
+        }
+    }
+}
 
-    for key in [
-        "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
-        "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
-    ] {
-        let value = provider_env
-            .and_then(|provider_env| provider_env.get(key))
-            .cloned()
-            .unwrap_or_else(|| Value::String(KIMI_FOR_CODING_CONTEXT_TOKENS.to_string()));
-        env.insert(key.to_string(), value);
+/// 扫描 ANTHROPIC_MODEL / ANTHROPIC_DEFAULT_*_MODEL 后缀，
+/// 注入 CLAUDE_CODE_MAX_CONTEXT_TOKENS + CLAUDE_CODE_AUTO_COMPACT_WINDOW。
+///
+/// 选值策略：优先用 ANTHROPIC_MODEL 的后缀窗口；无后缀时取所有模型最大窗口。
+/// ACW = 窗口 × provider 的压缩比例，MAX = 窗口（复用 watcher 的 build_env_writes 保持一致）。
+/// 用户在 provider config 中显式设过的值不覆盖。
+fn claude_context_window_target(provider: &Provider) -> Option<u64> {
+    const MODEL_ENV_KEYS: [&str; 6] = [
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "ANTHROPIC_DEFAULT_FABLE_MODEL",
+        "CLAUDE_CODE_SUBAGENT_MODEL",
+    ];
+
+    let provider_env = provider
+        .settings_config
+        .get("env")
+        .and_then(Value::as_object);
+
+    // 1. 优先：ANTHROPIC_MODEL 带后缀就用它的窗口
+    let target_window = provider_env
+        .and_then(|e| e.get("ANTHROPIC_MODEL"))
+        .and_then(Value::as_str)
+        .and_then(|m| crate::claude_desktop_config::parse_context_window_suffix(m).1);
+
+    // 2. 回退：取所有模型的最大窗口
+    target_window.or_else(|| {
+        let mut max_window: Option<u64> = None;
+        if let Some(env) = provider_env {
+            for key in MODEL_ENV_KEYS {
+                if let Some(model) = env.get(key).and_then(Value::as_str) {
+                    let (_, window) =
+                        crate::claude_desktop_config::parse_context_window_suffix(model);
+                    if let Some(w) = window {
+                        max_window = Some(max_window.map_or(w, |m| m.max(w)));
+                    }
+                }
+            }
+        }
+        max_window
+    })
+}
+
+fn apply_context_window_defaults(settings: &mut Value, provider: &Provider) {
+    let provider_env = provider
+        .settings_config
+        .get("env")
+        .and_then(Value::as_object);
+
+    // 关闭时清理 ACW/MAX；开启时也不自动注入，只保留用户显式写入的值。
+
+    let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for key in CLAUDE_CONTEXT_WINDOW_ENV_KEYS {
+        if let Some(value) = provider_env.and_then(|provider_env| provider_env.get(key)) {
+            env.insert(key.to_string(), value.clone());
+        }
     }
 }
 
@@ -171,6 +208,10 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
         obj.remove("apiFormat");
         obj.remove("openrouter_compat_mode");
         obj.remove("openrouterCompatMode");
+        // cc-switch 专用字段：watcher 从 provider.settings_config 读取，
+        // 不应泄露到 Claude Code 的 settings.json
+        obj.remove("autoSyncContextWindow");
+        obj.remove("autoSyncCompactRatio");
     }
     v
 }
@@ -690,8 +731,37 @@ pub(crate) fn build_effective_settings_with_common_config(
     if matches!(app_type, AppType::Claude) {
         apply_codex_oauth_claude_context_defaults(&mut effective_settings, provider);
         apply_kimi_for_coding_context_defaults(&mut effective_settings, provider);
+        apply_context_window_defaults(&mut effective_settings, provider);
     }
 
+    // 启动 settings.json 监听器，在后台自动同步 ACW/MAX 当用户 /model 切换时
+    if matches!(app_type, AppType::Claude) {
+        let settings_path = get_claude_settings_path();
+        // 确保父目录存在：fresh 安装时 ~/.claude 可能尚未创建，
+        // 而 write_live_snapshot（atomic_write -> create_dir_all）在本函数
+        // 之后才执行。提前创建父目录，保证 watcher 能启动监听。
+        if let Some(parent) = settings_path.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                log::warn!(
+                    "[ClaudeSettingsWatcher] failed to create {}: {e}",
+                    parent.display()
+                );
+            }
+        }
+        if settings_path.parent().map(|p| p.exists()).unwrap_or(false) {
+            let provider_arc = std::sync::Arc::new(provider.clone());
+            match crate::claude_settings_watcher::spawn_claude_settings_watcher(
+                settings_path,
+                provider_arc,
+            ) {
+                // Ok(watcher) 必须交给 replace_watcher 存进进程单例，
+                // 否则返回值在 match 表达式结束时被 Drop，notify 监听线程退出，
+                // /model 切换将无法同步 ACW/MAX（dev 测试暴露的根因）。
+                Ok(watcher) => crate::claude_settings_watcher::replace_watcher(watcher),
+                Err(e) => log::warn!("[ClaudeSettingsWatcher] spawn failed: {e}"),
+            }
+        }
+    }
     Ok(effective_settings)
 }
 
@@ -822,6 +892,46 @@ fn strip_injected_kimi_for_coding_context_defaults(settings: &mut Value, provide
     }
 }
 
+/// 与 `apply_context_window_defaults` 对称：模型后缀自动注入的 ACW/MAX 只应活在
+/// live，切走回填时必须剥掉；用户显式存储或手改过的 live 值保留。
+fn strip_injected_model_suffix_context_defaults(settings: &mut Value, provider: &Provider) {
+    let Some(target_window) = claude_context_window_target(provider) else {
+        return;
+    };
+    let provider_env = provider
+        .settings_config
+        .get("env")
+        .and_then(Value::as_object);
+    let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let writes = crate::claude_settings_watcher::build_env_writes(
+        target_window,
+        crate::claude_settings_watcher::provider_compact_ratio(provider),
+    );
+    for (key, value) in writes {
+        let stored_explicit = provider_env.is_some_and(|e| e.contains_key(key));
+        if stored_explicit {
+            continue;
+        }
+        if env.get(key).and_then(Value::as_str) == Some(value.as_str()) {
+            env.remove(key);
+        }
+    }
+}
+
+fn restore_claude_internal_fields_for_backfill(settings: &mut Value, provider: &Provider) {
+    let Some(obj) = settings.as_object_mut() else {
+        return;
+    };
+    if let Some(value) = provider.settings_config.get("autoSyncContextWindow") {
+        obj.insert("autoSyncContextWindow".to_string(), value.clone());
+    }
+    if let Some(value) = provider.settings_config.get("autoSyncCompactRatio") {
+        obj.insert("autoSyncCompactRatio".to_string(), value.clone());
+    }
+}
+
 fn restore_live_settings_for_provider_backfill(
     app_type: &AppType,
     provider: &Provider,
@@ -831,6 +941,8 @@ fn restore_live_settings_for_provider_backfill(
         let mut settings = live_settings;
         strip_injected_codex_oauth_context_defaults(&mut settings, provider);
         strip_injected_kimi_for_coding_context_defaults(&mut settings, provider);
+        restore_claude_internal_fields_for_backfill(&mut settings, provider);
+        strip_injected_model_suffix_context_defaults(&mut settings, provider);
         return settings;
     }
     if matches!(app_type, AppType::GrokBuild) {
@@ -1997,10 +2109,10 @@ mod tests {
         let effective =
             build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
                 .expect("build effective settings");
-        assert_eq!(
-            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
-            json!("262144")
-        );
+        // 不再自动补齐 MAX，只保留用户显式 ACW；MAX 由 watcher 在模型切换时写入
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
         assert_eq!(
             effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
             json!("262144")
@@ -2085,14 +2197,13 @@ mod tests {
         let effective =
             build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
                 .expect("build effective settings");
-        assert_eq!(
-            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
-            json!("372000")
-        );
-        assert_eq!(
-            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
-            json!("372000")
-        );
+        // 切换 provider 不自动注入固定默认，由 watcher 在终端模型切换时写入
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            .is_none());
     }
 
     #[test]
@@ -2128,7 +2239,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_oauth_context_defaults_ignore_legacy_common_config_values() {
+    fn codex_oauth_context_defaults_preserve_legacy_common_config_values() {
         let db = Database::memory().expect("create memory db");
         db.set_config_snippet(
             AppType::Claude.as_str(),
@@ -2160,16 +2271,16 @@ mod tests {
                 .expect("build effective settings");
         assert_eq!(
             effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
-            json!("372000")
+            json!("262144")
         );
         assert_eq!(
             effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
-            json!("372000")
+            json!("262144")
         );
     }
 
     #[test]
-    fn codex_oauth_context_defaults_skip_non_gpt56_models() {
+    fn codex_oauth_context_defaults_preserve_non_gpt56_models_and_common_values() {
         let db = Database::memory().expect("create memory db");
         db.set_config_snippet(
             AppType::Claude.as_str(),
@@ -2204,11 +2315,10 @@ mod tests {
         let effective =
             build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
                 .expect("build effective settings");
-        // 旧模型不注入 372K 默认值，遗留共享片段带进来的值也要剥掉
-        assert!(effective["env"]
-            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
-            .is_none());
-        // 用户显式写在供应商配置里的值仍然生效
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("262144")
+        );
         assert_eq!(
             effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
             json!("300000")
@@ -2234,10 +2344,8 @@ mod tests {
         // 模拟写 live：注入了两个上下文默认值
         let live = build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
             .expect("build effective settings");
-        assert_eq!(
-            live["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
-            json!("372000")
-        );
+        // 当前版本不再注入，live 本身不应包含这两个字段
+        assert!(live["env"].get("CLAUDE_CODE_MAX_CONTEXT_TOKENS").is_none());
 
         // 模拟切走回灌：注入产物被剥掉，其余字段原样保留
         let backfilled =
@@ -2614,5 +2722,579 @@ base_url = "https://a.example/v1"
 
         assert!(!config_text.contains("mcp_servers"));
         assert!(config_text.contains("model = \"grok-4.5\""));
+    }
+
+    #[test]
+    fn context_window_suffix_injects_acw_from_max() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test-suffix".to_string(),
+            "Test".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://example.com",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro[1m]",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.2[200k]"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        // 开启自动同步时不自动注入，等待 watcher 在模型切换时写入
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            .is_none());
+    }
+
+    #[test]
+    fn context_window_suffix_no_inject_without_suffix() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test-no-suffix".to_string(),
+            "Test".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://example.com",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            .is_none());
+    }
+
+    #[test]
+    fn context_window_suffix_respects_user_explicit_acw() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test-explicit".to_string(),
+            "Test".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://example.com",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro[1m]",
+                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "500000"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("500000")
+        );
+    }
+
+    #[test]
+    fn sanitize_strips_auto_sync_context_window() {
+        // autoSyncContextWindow 是 cc-switch 专用字段，watcher 从 provider.settings_config
+        // 读取，不应泄露到 Claude Code 的 settings.json
+        let settings = json!({
+            "env": { "ANTHROPIC_MODEL": "test" },
+            "autoSyncContextWindow": true,
+            "autoSyncCompactRatio": 0.8
+        });
+        let sanitized = sanitize_claude_settings_for_live(&settings);
+        assert!(sanitized.get("autoSyncContextWindow").is_none());
+        assert!(sanitized.get("autoSyncCompactRatio").is_none());
+        // 其他字段保留
+        assert_eq!(sanitized["env"]["ANTHROPIC_MODEL"], json!("test"));
+    }
+
+    #[test]
+    fn context_window_defaults_prioritize_anthropic_model_suffix() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "fallback-model[1M]",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-model[200k]"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        // ANTHROPIC_MODEL 的 1M 优先于 sonnet 的 200k
+        // 保存/切换 provider 不自动注入，模型切换时由 watcher 写入
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            .is_none());
+    }
+
+    #[test]
+    fn context_window_defaults_fallback_to_max_when_anthropic_model_no_suffix() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "fallback-model",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-model[1M]",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "haiku-model[30k]"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        // ANTHROPIC_MODEL 无后缀，回退到 max(1M, 30k) = 1M
+        // 保存/切换 provider 不自动注入，模型切换时由 watcher 写入
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            .is_none());
+    }
+
+    #[test]
+    fn context_window_defaults_anthropic_model_smaller_than_others() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "fallback-model[200k]",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-model[1M]"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        // ANTHROPIC_MODEL 的 200k 优先，即使 sonnet 有更大的 1M
+        // 保存/切换 provider 不自动注入，模型切换时由 watcher 写入
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            .is_none());
+    }
+
+    #[test]
+    fn context_window_defaults_preserve_user_explicit_values() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "fallback-model[1M]",
+                    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "999999",
+                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "888888"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        // 用户显式设的值不被覆盖
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("999999")
+        );
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("888888")
+        );
+    }
+
+    #[test]
+    fn context_window_defaults_skip_when_no_suffix_anywhere() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "fallback-model",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-model"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        // 无任何后缀 -> 不写 ACW/MAX
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            .is_none());
+    }
+
+    #[test]
+    fn context_window_defaults_skip_when_auto_sync_disabled() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            json!({
+                "env": { "ANTHROPIC_MODEL": "fallback-model[1M]" },
+                "autoSyncContextWindow": false
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        // 开关关闭：即使模型带后缀也不注入 ACW/MAX
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            .is_none());
+    }
+
+    #[test]
+    fn auto_sync_enabled_does_not_inject_model_suffix_context_window_fields() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test-on".to_string(),
+            "Test On".to_string(),
+            json!({
+                "env": { "ANTHROPIC_MODEL": "fallback-model[1M]" },
+                "autoSyncContextWindow": true
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        // 开启开关本身不写回 ACW/MAX，只等 watcher 在终端切换模型时写入
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            .is_none());
+    }
+
+    #[test]
+    fn auto_sync_disabled_preserves_user_explicit_context_window_fields() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test-off-explicit".to_string(),
+            "Test Off Explicit".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "fallback-model[1M]",
+                    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "999999",
+                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "888888"
+                },
+                "autoSyncContextWindow": false
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("999999")
+        );
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("888888")
+        );
+        assert_eq!(
+            effective["env"]["ANTHROPIC_MODEL"],
+            json!("fallback-model[1M]")
+        );
+    }
+
+    #[test]
+    fn auto_sync_disabled_preserves_common_config_context_window_fields() {
+        let db = Database::memory().expect("create memory db");
+        db.set_config_snippet(
+            AppType::Claude.as_str(),
+            Some(
+                json!({
+                    "env": {
+                        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "500000",
+                        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000"
+                    }
+                })
+                .to_string(),
+            ),
+        )
+        .expect("save common config");
+        let mut provider = Provider::with_id(
+            "test-off-common".to_string(),
+            "Test Off Common".to_string(),
+            json!({
+                "env": { "ANTHROPIC_MODEL": "fallback-model[1M]" },
+                "autoSyncContextWindow": false
+            }),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("500000")
+        );
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("400000")
+        );
+    }
+
+    #[test]
+
+    fn claude_backfill_preserves_auto_sync_context_window_flag() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            json!({
+                "env": { "ANTHROPIC_MODEL": "fallback-model[1M]" },
+                "autoSyncContextWindow": false,
+                "autoSyncCompactRatio": 0.8
+            }),
+            None,
+        );
+
+        // 写 live 时内部字段会被 sanitize 移除，模拟 settings.json 里没有该键
+        let live = sanitize_claude_settings_for_live(
+            &build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings"),
+        );
+        assert!(live.get("autoSyncContextWindow").is_none());
+
+        let backfilled =
+            strip_common_config_from_live_settings(&db, &AppType::Claude, &provider, live);
+        // 切走回填后开关状态必须保留，否则再切回来会回到默认开
+        assert_eq!(backfilled["autoSyncContextWindow"], json!(false));
+        assert_eq!(backfilled["autoSyncCompactRatio"], json!(0.8));
+    }
+
+    #[test]
+    fn claude_backfill_strips_model_suffix_injected_context_defaults() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            json!({ "env": { "ANTHROPIC_MODEL": "fallback-model[1M]" } }),
+            None,
+        );
+
+        let live = build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+            .expect("build effective settings");
+        // 当前版本不再注入，live 本身不应包含这两个字段
+        assert!(live["env"].get("CLAUDE_CODE_MAX_CONTEXT_TOKENS").is_none());
+        assert!(live["env"].get("CLAUDE_CODE_AUTO_COMPACT_WINDOW").is_none());
+
+        // 注入产物只应活在 live，切走回填后必须剥掉
+        let backfilled =
+            strip_common_config_from_live_settings(&db, &AppType::Claude, &provider, live);
+        assert!(backfilled["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        assert!(backfilled["env"]
+            .get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            .is_none());
+    }
+
+    #[test]
+    fn claude_backfill_strips_defaults_using_provider_compact_ratio() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            json!({
+                "env": { "ANTHROPIC_MODEL": "fallback-model[200k]" },
+                "autoSyncContextWindow": true,
+                "autoSyncCompactRatio": 0.5
+            }),
+            None,
+        );
+
+        let live = json!({
+            "env": {
+                "ANTHROPIC_MODEL": "fallback-model[200k]",
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "200000",
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "100000"
+            }
+        });
+        let backfilled =
+            strip_common_config_from_live_settings(&db, &AppType::Claude, &provider, live);
+        assert!(backfilled["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        assert!(backfilled["env"]
+            .get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            .is_none());
+        assert_eq!(backfilled["autoSyncCompactRatio"], json!(0.5));
+    }
+    #[test]
+    fn claude_backfill_keeps_user_explicit_context_window_values() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "fallback-model[1M]",
+                    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "999999",
+                    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "888888"
+                }
+            }),
+            None,
+        );
+
+        let live = json!({
+            "env": {
+                "ANTHROPIC_MODEL": "fallback-model[1M]",
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "999999",
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "888888"
+            }
+        });
+        let backfilled =
+            strip_common_config_from_live_settings(&db, &AppType::Claude, &provider, live);
+        // 用户显式写的 ACW/MAX 保留
+        assert_eq!(
+            backfilled["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("999999")
+        );
+        assert_eq!(
+            backfilled["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("888888")
+        );
+    }
+
+    #[test]
+    fn claude_backfill_keeps_user_edited_live_context_window_values() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "test".to_string(),
+            "Test".to_string(),
+            json!({ "env": { "ANTHROPIC_MODEL": "fallback-model[1M]" } }),
+            None,
+        );
+
+        // 手改过 live 的值不等于按模型后缀算出的注入值，必须保留
+        let live = json!({
+            "env": {
+                "ANTHROPIC_MODEL": "fallback-model[1M]",
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1234567",
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "765432"
+            }
+        });
+        let backfilled =
+            strip_common_config_from_live_settings(&db, &AppType::Claude, &provider, live);
+        assert_eq!(
+            backfilled["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("1234567")
+        );
+        assert_eq!(
+            backfilled["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("765432")
+        );
+    }
+
+    #[test]
+    fn codex_oauth_context_defaults_skip_when_auto_sync_disabled() {
+        let db = Database::memory().expect("create memory db");
+        let mut provider = Provider::with_id(
+            "codex-oauth".to_string(),
+            "Codex".to_string(),
+            json!({
+                "env": { "ANTHROPIC_MODEL": "gpt-5.6" },
+                "autoSyncContextWindow": false
+            }),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..Default::default()
+        });
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        // 开关关闭：Codex OAuth 固定 372K 兜底也不注入
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            .is_none());
+    }
+
+    #[test]
+    fn kimi_for_coding_context_defaults_skip_when_auto_sync_disabled() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "kimi-for-coding".to_string(),
+            "Kimi For Coding".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
+                    "ANTHROPIC_MODEL": "kimi-for-coding"
+                },
+                "autoSyncContextWindow": false
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        // 开关关闭：Kimi 固定 256K 兜底也不注入
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            .is_none());
     }
 }

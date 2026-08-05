@@ -155,6 +155,25 @@ export function EditProviderDialog({
       }
     }
 
+    // autoSyncContextWindow / autoSyncCompactRatio 是 cc-switch 内部字段，写 live 时
+    // 会被 sanitize 剥离；编辑当前 provider 时必须从数据库 SSOT 合并回来。
+    if (
+      appId === "claude" &&
+      liveSettings &&
+      provider?.settingsConfig &&
+      typeof provider.settingsConfig === "object"
+    ) {
+      const dbSettings = provider.settingsConfig as Record<string, unknown>;
+      const merged = { ...base };
+      if (dbSettings.autoSyncContextWindow !== undefined) {
+        merged.autoSyncContextWindow = dbSettings.autoSyncContextWindow;
+      }
+      if (dbSettings.autoSyncCompactRatio !== undefined) {
+        merged.autoSyncCompactRatio = dbSettings.autoSyncCompactRatio;
+      }
+      return merged;
+    }
+
     return base;
   }, [liveSettings, provider?.settingsConfig, appId]); // 只依赖 settingsConfig，不依赖整个 provider
 

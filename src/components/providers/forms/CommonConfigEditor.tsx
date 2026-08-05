@@ -19,6 +19,7 @@ interface CommonConfigEditorProps {
   onModalClose: () => void;
   onExtract?: () => void;
   isExtracting?: boolean;
+  isLoading?: boolean;
 }
 
 export function CommonConfigEditor({
@@ -34,6 +35,7 @@ export function CommonConfigEditor({
   onModalClose,
   onExtract,
   isExtracting,
+  isLoading = false,
 }: CommonConfigEditorProps) {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -168,6 +170,7 @@ export function CommonConfigEditor({
                 id="useCommonConfig"
                 checked={useCommonConfig}
                 onChange={(e) => onCommonConfigToggle(e.target.checked)}
+                disabled={isLoading}
                 className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
               />
               <span>
