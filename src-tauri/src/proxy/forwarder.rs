@@ -1410,14 +1410,26 @@ impl RequestForwarder {
             adapter.build_url(&base_url, &effective_endpoint)
         };
 
+        // Native Responses providers do not pass through either compatibility
+        // transform, so apply the provider's upstream model here as well. A
+        // Codex client can keep sending the model selected for the old provider
+        // after a provider switch; forwarding that stale name makes the new
+        // provider reject an otherwise valid request. Catalog entries remain
+        // selectable through apply_codex_upstream_model, while an unknown stale
+        // client model falls back to the target provider's configured model.
+        let native_responses_model =
+            apply_codex_native_responses_model(app_type, provider, &mut mapped_body);
+
         // 记录映射后的出站模型名（此时 mapped_body 已完成接管映射 / [1m] 剥离 /
         // Copilot 归一化）。格式转换后若 body 仍带 model 字段会在下方刷新覆盖；
         // gemini_native 等模型在 URL 中的格式则保留此处的转换前真值。
-        let mut outbound_model = mapped_body
-            .get("model")
-            .and_then(|m| m.as_str())
-            .filter(|m| !m.is_empty())
-            .map(str::to_string);
+        let mut outbound_model = native_responses_model.or_else(|| {
+            mapped_body
+                .get("model")
+                .and_then(|m| m.as_str())
+                .filter(|m| !m.is_empty())
+                .map(str::to_string)
+        });
 
         // Codex→Anthropic: when the model name carries the [1m] marker, strip the
         // suffix and add the context-1m beta header.
@@ -2711,6 +2723,22 @@ impl RequestForwarder {
     }
 }
 
+fn apply_codex_native_responses_model(
+    app_type: &AppType,
+    provider: &Provider,
+    body: &mut Value,
+) -> Option<String> {
+    if !matches!(app_type, AppType::Codex)
+        || super::providers::is_codex_official_provider(provider)
+        || super::providers::should_convert_codex_responses_to_chat(provider, "/responses")
+        || super::providers::should_convert_codex_responses_to_anthropic(provider, "/responses")
+    {
+        return None;
+    }
+
+    super::providers::apply_codex_upstream_model(provider, body)
+}
+
 /// 从 ProxyError 中提取错误消息
 fn extract_error_message(error: &ProxyError) -> Option<String> {
     match error {
@@ -3686,6 +3714,61 @@ mod tests {
         assert_eq!(code, log_fwd::ALL_PROVIDERS_FAILED);
         assert!(message.contains("已尝试 2/2 个 Provider，均失败"));
         assert!(message.contains("connection reset by peer"));
+    }
+
+    #[test]
+    fn native_codex_responses_refreshes_stale_client_model_after_provider_switch() {
+        let mut provider = test_provider_with_type(None);
+        provider.settings_config = json!({
+            "config": r#"
+model_provider = "happy"
+model = "gpt-5.6-sol-medium"
+
+[model_providers.happy]
+base_url = "https://provider.example/v1"
+wire_api = "responses"
+"#
+        });
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "input": "hello"
+        });
+
+        let upstream_model =
+            apply_codex_native_responses_model(&AppType::Codex, &provider, &mut body);
+
+        assert_eq!(upstream_model.as_deref(), Some("gpt-5.6-sol-medium"));
+        assert_eq!(body["model"], "gpt-5.6-sol-medium");
+
+        provider.settings_config["modelCatalog"] = json!({
+            "models": [{ "model": "gpt-5.5" }]
+        });
+        let mut catalog_body = json!({
+            "model": "gpt-5.5",
+            "input": "hello"
+        });
+        let catalog_model =
+            apply_codex_native_responses_model(&AppType::Codex, &provider, &mut catalog_body);
+        assert_eq!(catalog_model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(catalog_body["model"], "gpt-5.5");
+    }
+
+    #[test]
+    fn native_codex_responses_does_not_rewrite_official_provider_model() {
+        let mut provider = test_provider_with_type(None);
+        provider.id = "codex-official".to_string();
+        provider.category = Some("official".to_string());
+        provider.settings_config = json!({"model": "configured-model"});
+        let mut body = json!({
+            "model": "client-model",
+            "input": "hello"
+        });
+
+        let upstream_model =
+            apply_codex_native_responses_model(&AppType::Codex, &provider, &mut body);
+
+        assert!(upstream_model.is_none());
+        assert_eq!(body["model"], "client-model");
     }
 
     #[test]
