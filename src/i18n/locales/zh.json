@@ -242,6 +242,7 @@
     "claudeDesktopProxyRestartRequired": "切换成功，请保持 CC Switch 运行，并重启 Claude Desktop 后生效",
     "addToConfigSuccess": "已添加到配置",
     "removeFromConfigSuccess": "已从配置移除",
+    "removeFromConfigFailed": "无法移除供应商",
     "switchFailedTitle": "切换失败",
     "switchFailed": "切换失败：{{error}}",
     "autoImported": "已从现有配置创建默认供应商",
@@ -906,7 +907,10 @@
     "provider": {
       "enabled": "已在 Pi 中启用",
       "enableFailed": "无法在 Pi 中启用此供应商",
-      "removed": "已从 Pi 移除"
+      "removed": "已从 Pi 移除",
+      "removeCurrent": "此供应商正在被 Pi 使用。请先在 Pi 中运行 /model 切换后再移除。",
+      "configChanged": "Pi 中的配置刚发生变化，已保留 Pi 的修改。请基于最新配置重试。",
+      "managedByPi": "此供应商由 Pi 管理，无法在 CC Switch 中操作。"
     },
     "form": {
       "providerKey": "供应商标识",
@@ -951,17 +955,8 @@
       "configSecretsHidden": "此处隐藏敏感值，保存时仍会保留原值。"
     },
     "current": {
-      "default": "当前默认",
-      "removeProtectedHint": "这是 Pi 当前的默认供应商。请先在 Pi 中使用 /model 切换，再移除或删除。",
-      "readFailed": "无法读取 Pi 当前配置",
-      "stateUnavailableHint": "CC Switch 读取到 Pi 当前配置前，供应商变更已暂时禁用。",
-      "configConflictHint": "Pi 中同名供应商的配置已发生变化，请先处理外部修改。",
-      "ownership": {
-        "managed": "CC Switch 托管",
-        "pi_native": "Pi 原生配置",
-        "external": "外部 Pi 配置",
-        "unconfigured": "未配置"
-      }
+      "readFailed": "无法读取 Pi 供应商配置",
+      "stateUnavailableHint": "CC Switch 读取到 Pi 供应商配置前，供应商变更已暂时禁用。"
     },
     "prompts": {
       "globalTab": "全局提示",

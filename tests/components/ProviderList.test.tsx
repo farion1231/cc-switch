@@ -70,19 +70,6 @@ vi.mock("@/components/providers/ProviderCard", () => ({
       </div>
     );
   },
-  ProviderSummaryCard: (props: any) => {
-    const summaryProps = {
-      ...props,
-      isCurrent: true,
-      variant: "summary",
-    };
-    providerCardRenderSpy(summaryProps);
-    return (
-      <div data-testid={`provider-summary-${props.provider.id}`}>
-        {props.provider.name}
-      </div>
-    );
-  },
 }));
 
 vi.mock("@/components/UsageFooter", () => ({
@@ -324,13 +311,10 @@ describe("ProviderList Component", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders a Pi-native current selection through the shared summary card", async () => {
+  it("does not manufacture a Pi selection summary card", async () => {
     server.use(
       http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
         HttpResponse.json({
-          providerKey: "anthropic",
-          modelId: "claude-opus",
-          ownership: "pi_native",
           enabledProviderIds: [],
         }),
       ),
@@ -350,79 +334,11 @@ describe("ProviderList Component", () => {
       />,
     );
 
-    await waitFor(() =>
-      expect(providerCardRenderSpy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          variant: "summary",
-          provider: expect.objectContaining({
-            name: "anthropic",
-            icon: "pi",
-          }),
-          statusBadges: expect.arrayContaining([
-            expect.objectContaining({
-              label: "当前默认",
-            }),
-            expect.objectContaining({
-              label: "Pi 原生配置",
-            }),
-            expect.objectContaining({
-              label: "claude-opus",
-            }),
-          ]),
-        }),
-      ),
-    );
+    expect(await screen.findByText("pi.empty.title")).toBeInTheDocument();
+    expect(providerCardRenderSpy).not.toHaveBeenCalled();
     expect(
       screen.queryByRole("button", { name: "provider.addProvider" }),
     ).not.toBeInTheDocument();
-  });
-
-  it("shows Pi's external default without route state", async () => {
-    server.use(
-      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
-        HttpResponse.json({
-          providerKey: "external-provider",
-          modelId: "external-model",
-          ownership: "external",
-          enabledProviderIds: [],
-        }),
-      ),
-    );
-
-    renderWithQueryClient(
-      <ProviderList
-        providers={{}}
-        currentProviderId=""
-        appId="pi"
-        onSwitch={vi.fn()}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-        onDuplicate={vi.fn()}
-        onOpenWebsite={vi.fn()}
-      />,
-    );
-
-    await waitFor(() => {
-      const summaries = providerCardRenderSpy.mock.calls
-        .map(([props]) => props)
-        .filter((props) => props.variant === "summary");
-      expect(summaries).not.toHaveLength(0);
-      const summary = summaries.at(-1);
-      expect(summary.statusBadges).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ label: "当前默认" }),
-          expect.objectContaining({ label: "外部 Pi 配置" }),
-          expect.objectContaining({ label: "external-model" }),
-        ]),
-      );
-      expect(summary.statusBadges).not.toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            label: expect.stringMatching(/不可用|直接|路由/),
-          }),
-        ]),
-      );
-    });
   });
 
   it("does not expose proxy or failover actions on Pi provider cards", async () => {
@@ -442,10 +358,6 @@ describe("ProviderList Component", () => {
     server.use(
       http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
         HttpResponse.json({
-          providerKey: "current-pi",
-          modelId: "current-model",
-          managedProviderId: "current-pi",
-          ownership: "managed",
           enabledProviderIds: ["current-pi", "inactive-pi"],
         }),
       ),
@@ -471,9 +383,6 @@ describe("ProviderList Component", () => {
     );
 
     await waitFor(() => {
-      const summaries = providerCardRenderSpy.mock.calls
-        .map(([props]) => props)
-        .filter((props) => props.variant === "summary");
       const currentCards = providerCardRenderSpy.mock.calls
         .map(([props]) => props)
         .filter((props) => props.provider.id === "current-pi");
@@ -482,20 +391,9 @@ describe("ProviderList Component", () => {
         .filter((props) => props.provider.id === "inactive-pi");
       expect(currentCards).not.toHaveLength(0);
       expect(inactiveCards).not.toHaveLength(0);
-      expect(summaries.at(-1)).toMatchObject({
-        provider: expect.objectContaining({
-          name: "Current Pi",
-          icon: "pi",
-        }),
-        statusBadges: expect.arrayContaining([
-          expect.objectContaining({ label: "当前默认" }),
-          expect.objectContaining({ label: "CC Switch 托管" }),
-          expect.objectContaining({ label: "current-model" }),
-        ]),
-      });
       expect(currentCards.at(-1)).toMatchObject({
-        isCurrent: true,
-        statusBadges: undefined,
+        isCurrent: false,
+        isRemovalProtected: false,
         isProxyRunning: false,
         isProxyTakeover: false,
         isAutoFailoverEnabled: false,
@@ -504,7 +402,6 @@ describe("ProviderList Component", () => {
       });
       expect(inactiveCards.at(-1)).toMatchObject({
         isCurrent: false,
-        statusBadges: undefined,
         isProxyRunning: false,
         isProxyTakeover: false,
       });
@@ -512,7 +409,7 @@ describe("ProviderList Component", () => {
     });
   });
 
-  it("protects a saved Pi provider when the current native config has drifted", async () => {
+  it("derives Pi membership only from the native provider ID list", async () => {
     const provider = createProvider({
       id: "drifted-pi",
       name: "Saved Pi",
@@ -526,60 +423,7 @@ describe("ProviderList Component", () => {
     server.use(
       http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
         HttpResponse.json({
-          providerKey: "drifted-pi",
-          modelId: "external-model",
-          ownership: "external",
           enabledProviderIds: ["drifted-pi"],
-          driftedProviderIds: ["drifted-pi"],
-        }),
-      ),
-    );
-
-    renderWithQueryClient(
-      <ProviderList
-        providers={{ [provider.id]: provider }}
-        currentProviderId=""
-        appId="pi"
-        onSwitch={vi.fn()}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-        onDuplicate={vi.fn()}
-        onOpenWebsite={vi.fn()}
-      />,
-    );
-
-    await waitFor(() => {
-      const latestCardProps = providerCardRenderSpy.mock.calls
-        .map(([props]) => props)
-        .filter((props) => props.provider.id === provider.id)
-        .at(-1);
-      expect(latestCardProps).toMatchObject({
-        isCurrent: true,
-        isInConfig: true,
-        isRemovalProtected: true,
-        isStateChangeProtected: true,
-      });
-    });
-  });
-
-  it("shows a non-current drifted Pi provider as active and write-protected", async () => {
-    const provider = createProvider({
-      id: "drifted-pi",
-      name: "Saved Pi",
-    });
-    useDragSortMock.mockReturnValue({
-      sortedProviders: [provider],
-      sensors: [],
-      handleDragEnd: vi.fn(),
-    });
-    server.use(
-      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
-        HttpResponse.json({
-          providerKey: "native-pi",
-          modelId: "native-model",
-          ownership: "pi_native",
-          enabledProviderIds: ["drifted-pi"],
-          driftedProviderIds: ["drifted-pi"],
         }),
       ),
     );
@@ -606,7 +450,7 @@ describe("ProviderList Component", () => {
         isCurrent: false,
         isInConfig: true,
         isRemovalProtected: false,
-        isStateChangeProtected: true,
+        isStateChangeProtected: false,
       });
     });
   });
@@ -631,10 +475,6 @@ describe("ProviderList Component", () => {
     server.use(
       http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
         HttpResponse.json({
-          providerKey: "other-pi",
-          modelId: "other-model",
-          managedProviderId: "other-pi",
-          ownership: "managed",
           enabledProviderIds: ["other-pi"],
         }),
       ),
@@ -710,9 +550,6 @@ describe("ProviderList Component", () => {
     server.use(
       http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
         HttpResponse.json({
-          providerKey: "external-provider",
-          modelId: "external-model",
-          ownership: "external",
           enabledProviderIds: [],
         }),
       ),

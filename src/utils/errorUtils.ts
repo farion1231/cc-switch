@@ -37,6 +37,35 @@ export const extractErrorMessage = (error: unknown): string => {
   return "";
 };
 
+export const translatePiProviderMutationError = (
+  message: string,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string => {
+  if (!message) return "";
+
+  if (message.includes("currently selected in Pi")) {
+    return t("pi.provider.removeCurrent");
+  }
+  if (message.includes("managed by Pi")) {
+    return t("pi.provider.managedByPi");
+  }
+  const currentModel = message.match(
+    /Pi is currently using model '(.*)'; choose another model in Pi before removing it$/,
+  );
+  if (currentModel) {
+    return t("pi.form.currentModelMustRemain", { model: currentModel[1] });
+  }
+  if (
+    message.includes("changed outside CC Switch") ||
+    message.includes("models.json changed") ||
+    message.includes("no longer present in models.json")
+  ) {
+    return t("pi.provider.configChanged");
+  }
+
+  return "";
+};
+
 /**
  * 将已知的 MCP 相关后端错误（通常为中文硬编码）映射为 i18n 文案
  * 采用包含式匹配，尽量稳健地覆盖不同上下文的相似消息。

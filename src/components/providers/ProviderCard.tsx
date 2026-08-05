@@ -30,11 +30,8 @@ import {
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
-import {
-  ProviderStatusBadge,
-  type ProviderStatusBadgeData,
-} from "@/components/providers/ProviderStatusBadge";
-import { isProxyAppId } from "@/config/appConfig";
+import { ProviderStatusBadge } from "@/components/providers/ProviderStatusBadge";
+import { isAdditiveAppId, isProxyAppId } from "@/config/appConfig";
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -74,14 +71,6 @@ interface ProviderCardProps {
   isRemovalProtected?: boolean;
   isStateChangeProtected?: boolean;
   onSetAsDefault?: () => void;
-  variant?: "interactive" | "summary";
-  statusBadges?: ProviderStatusBadgeData[];
-}
-
-interface ProviderSummaryCardProps {
-  provider: Provider;
-  appId: AppId;
-  statusBadges?: ProviderStatusBadgeData[];
 }
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
@@ -199,21 +188,18 @@ export function ProviderCard({
   isRemovalProtected,
   isStateChangeProtected,
   onSetAsDefault,
-  variant = "interactive",
-  statusBadges = [],
 }: ProviderCardProps) {
   const { t } = useTranslation();
-  const isSummary = variant === "summary";
 
   // OMO and OMO Slim share the same card behavior
   const isAnyOmo = isOmo || isOmoSlim;
   const handleDisableAnyOmo = isOmoSlim ? onDisableOmoSlim : onDisableOmo;
-  const isAdditiveMode = appId === "opencode" && !isAnyOmo;
+  const isAdditiveMode = (appId === "opencode" && !isAnyOmo) || appId === "pi";
 
   const { data: health } = useProviderHealth(
     provider.id,
     appId,
-    !isSummary && isProxyAppId(appId),
+    isProxyAppId(appId),
   );
 
   const fallbackUrlText = t("provider.notConfigured", {
@@ -275,11 +261,8 @@ export function ProviderCard({
   const codexNeedsRouting =
     appId === "codex" && providerNeedsRouting(appId, provider);
   // 获取用量数据以判断是否有多套餐
-  // 累加模式应用（OpenCode/OpenClaw/Hermes）：使用 isInConfig 代替 isCurrent
-  const shouldAutoQuery =
-    appId === "opencode" || appId === "openclaw" || appId === "hermes"
-      ? isInConfig
-      : isCurrent;
+  // 累加模式应用：使用 isInConfig 代替 isCurrent
+  const shouldAutoQuery = isAdditiveAppId(appId) ? isInConfig : isCurrent;
   const autoQueryInterval = shouldAutoQuery
     ? provider.meta?.usage_script?.autoQueryInterval || 0
     : 0;
@@ -319,18 +302,15 @@ export function ProviderCard({
     ? isCurrent
     : appId === "openclaw"
       ? Boolean(isDefaultModel)
-      : appId === "opencode"
+      : appId === "opencode" || appId === "pi"
         ? false
         : isAutoFailoverEnabled
           ? activeProviderId === provider.id
           : isCurrent;
 
-  const isPiCurrent = appId === "pi" && isCurrent;
-  const shouldUseGreen =
-    !isPiCurrent && !isAnyOmo && isProxyTakeover && isActiveProvider;
+  const shouldUseGreen = !isAnyOmo && isProxyTakeover && isActiveProvider;
   const hasPersistentConfigHighlight = isAdditiveMode && isInConfig;
   const shouldUseBlue =
-    isPiCurrent ||
     (isAnyOmo && isActiveProvider) ||
     (!isAnyOmo &&
       !isProxyTakeover &&
@@ -398,13 +378,6 @@ export function ProviderCard({
               <h3 className="text-base font-semibold leading-none">
                 {provider.name}
               </h3>
-
-              {statusBadges.map((badge, index) => (
-                <ProviderStatusBadge
-                  key={`${badge.label}-${index}`}
-                  {...badge}
-                />
-              ))}
 
               {isOmo && (
                 <span className="inline-flex items-center rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
@@ -515,7 +488,7 @@ export function ProviderCard({
               )}
             </div>
 
-            {!isSummary && displayUrl && (
+            {displayUrl && (
               <button
                 type="button"
                 onClick={handleOpenWebsite}
@@ -534,138 +507,136 @@ export function ProviderCard({
           </div>
         </div>
 
-        {!isSummary && (
-          <div className="flex items-center ml-auto min-w-0 gap-3">
-            <div className="ml-auto">
-              <div className="flex items-center gap-1">
-                {isCopilot ? (
-                  <CopilotQuotaFooter
-                    meta={provider.meta}
-                    inline={true}
-                    isCurrent={isCurrent}
-                  />
-                ) : isCodexOauth ? (
-                  <CodexOauthQuotaFooter
-                    meta={provider.meta}
-                    inline={true}
-                    isCurrent={isCurrent}
-                  />
-                ) : isXaiOauth ? (
-                  <XaiOauthQuotaFooter
-                    meta={provider.meta}
-                    inline={true}
-                    isCurrent={isCurrent}
-                  />
-                ) : isOfficial ? (
-                  officialSubscriptionEnabled ? (
-                    <SubscriptionQuotaFooter
-                      appId={appId}
-                      inline={true}
-                      isCurrent={isCurrent}
-                      autoQueryInterval={
-                        provider.meta?.usage_script?.autoQueryInterval ?? 0
-                      }
-                    />
-                  ) : null
-                ) : hasMultiplePlans ? (
-                  <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                    <span className="font-medium">
-                      {t("usage.multiplePlans", {
-                        count: usage?.data?.length || 0,
-                        defaultValue: `${usage?.data?.length || 0} 个套餐`,
-                      })}
-                    </span>
-                  </div>
-                ) : (
-                  <UsageFooter
-                    provider={provider}
-                    providerId={provider.id}
+        <div className="flex items-center ml-auto min-w-0 gap-3">
+          <div className="ml-auto">
+            <div className="flex items-center gap-1">
+              {isCopilot ? (
+                <CopilotQuotaFooter
+                  meta={provider.meta}
+                  inline={true}
+                  isCurrent={isCurrent}
+                />
+              ) : isCodexOauth ? (
+                <CodexOauthQuotaFooter
+                  meta={provider.meta}
+                  inline={true}
+                  isCurrent={isCurrent}
+                />
+              ) : isXaiOauth ? (
+                <XaiOauthQuotaFooter
+                  meta={provider.meta}
+                  inline={true}
+                  isCurrent={isCurrent}
+                />
+              ) : isOfficial ? (
+                officialSubscriptionEnabled ? (
+                  <SubscriptionQuotaFooter
                     appId={appId}
-                    usageEnabled={usageEnabled}
-                    isCurrent={isCurrent}
-                    isInConfig={isInConfig}
                     inline={true}
-                  />
-                )}
-                {hasMultiplePlans && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsExpanded(!isExpanded);
-                    }}
-                    className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400 flex-shrink-0"
-                    title={
-                      isExpanded
-                        ? t("usage.collapse", { defaultValue: "收起" })
-                        : t("usage.expand", { defaultValue: "展开" })
+                    isCurrent={isCurrent}
+                    autoQueryInterval={
+                      provider.meta?.usage_script?.autoQueryInterval ?? 0
                     }
-                  >
-                    {isExpanded ? (
-                      <ChevronUp size={14} />
-                    ) : (
-                      <ChevronDown size={14} />
-                    )}
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-opacity duration-200">
-              <ProviderActions
-                appId={appId}
-                isCurrent={isCurrent}
-                isInConfig={isInConfig}
-                isTesting={isTesting}
-                isProxyTakeover={isProxyTakeover}
-                isOfficialBlockedByProxy={isOfficialBlockedByProxy}
-                isReadOnly={isHermesReadOnly}
-                isOmo={isAnyOmo}
-                onSwitch={() => onSwitch(provider)}
-                onEdit={() => onEdit(provider)}
-                onDuplicate={() => onDuplicate(provider)}
-                onTest={
-                  // 连通检测对第三方/自定义/Copilot/Codex-OAuth 供应商开放（这些正是旧的
-                  // 真实请求探测会误报、而可达性探测能正确处理的对象）。官方供应商
-                  // (category === "official") 一律隐藏：它们 base_url 故意留空、走客户端
-                  // 默认/OAuth 端点，cc-switch 没有可靠的探测目标（尤其 Claude Desktop
-                  // 官方是原生 1P 模式，根本不在请求路径上）。
-                  onTest && provider.category !== "official"
-                    ? () => onTest(provider)
-                    : undefined
-                }
-                onConfigureUsage={
-                  (isOfficial && !supportsOfficialSubscription) ||
-                  isCopilot ||
-                  isCodexOauth ||
-                  isXaiOauth
-                    ? undefined
-                    : () => onConfigureUsage(provider)
-                }
-                onDelete={() => onDelete(provider)}
-                onRemoveFromConfig={
-                  onRemoveFromConfig
-                    ? () => onRemoveFromConfig(provider)
-                    : undefined
-                }
-                onDisableOmo={handleDisableAnyOmo}
-                onOpenTerminal={
-                  onOpenTerminal ? () => onOpenTerminal(provider) : undefined
-                }
-                isAutoFailoverEnabled={isAutoFailoverEnabled}
-                isInFailoverQueue={isInFailoverQueue}
-                onToggleFailover={onToggleFailover}
-                // OpenClaw: default model
-                isDefaultModel={isDefaultModel}
-                isRemovalProtected={isRemovalProtected}
-                isStateChangeProtected={isStateChangeProtected}
-                onSetAsDefault={onSetAsDefault}
-              />
+                  />
+                ) : null
+              ) : hasMultiplePlans ? (
+                <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                  <span className="font-medium">
+                    {t("usage.multiplePlans", {
+                      count: usage?.data?.length || 0,
+                      defaultValue: `${usage?.data?.length || 0} 个套餐`,
+                    })}
+                  </span>
+                </div>
+              ) : (
+                <UsageFooter
+                  provider={provider}
+                  providerId={provider.id}
+                  appId={appId}
+                  usageEnabled={usageEnabled}
+                  isCurrent={isCurrent}
+                  isInConfig={isInConfig}
+                  inline={true}
+                />
+              )}
+              {hasMultiplePlans && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsExpanded(!isExpanded);
+                  }}
+                  className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400 flex-shrink-0"
+                  title={
+                    isExpanded
+                      ? t("usage.collapse", { defaultValue: "收起" })
+                      : t("usage.expand", { defaultValue: "展开" })
+                  }
+                >
+                  {isExpanded ? (
+                    <ChevronUp size={14} />
+                  ) : (
+                    <ChevronDown size={14} />
+                  )}
+                </button>
+              )}
             </div>
           </div>
-        )}
+
+          <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-opacity duration-200">
+            <ProviderActions
+              appId={appId}
+              isCurrent={isCurrent}
+              isInConfig={isInConfig}
+              isTesting={isTesting}
+              isProxyTakeover={isProxyTakeover}
+              isOfficialBlockedByProxy={isOfficialBlockedByProxy}
+              isReadOnly={isHermesReadOnly}
+              isOmo={isAnyOmo}
+              onSwitch={() => onSwitch(provider)}
+              onEdit={() => onEdit(provider)}
+              onDuplicate={() => onDuplicate(provider)}
+              onTest={
+                // 连通检测对第三方/自定义/Copilot/Codex-OAuth 供应商开放（这些正是旧的
+                // 真实请求探测会误报、而可达性探测能正确处理的对象）。官方供应商
+                // (category === "official") 一律隐藏：它们 base_url 故意留空、走客户端
+                // 默认/OAuth 端点，cc-switch 没有可靠的探测目标（尤其 Claude Desktop
+                // 官方是原生 1P 模式，根本不在请求路径上）。
+                onTest && provider.category !== "official"
+                  ? () => onTest(provider)
+                  : undefined
+              }
+              onConfigureUsage={
+                (isOfficial && !supportsOfficialSubscription) ||
+                isCopilot ||
+                isCodexOauth ||
+                isXaiOauth
+                  ? undefined
+                  : () => onConfigureUsage(provider)
+              }
+              onDelete={() => onDelete(provider)}
+              onRemoveFromConfig={
+                onRemoveFromConfig
+                  ? () => onRemoveFromConfig(provider)
+                  : undefined
+              }
+              onDisableOmo={handleDisableAnyOmo}
+              onOpenTerminal={
+                onOpenTerminal ? () => onOpenTerminal(provider) : undefined
+              }
+              isAutoFailoverEnabled={isAutoFailoverEnabled}
+              isInFailoverQueue={isInFailoverQueue}
+              onToggleFailover={onToggleFailover}
+              // OpenClaw: default model
+              isDefaultModel={isDefaultModel}
+              isRemovalProtected={isRemovalProtected}
+              isStateChangeProtected={isStateChangeProtected}
+              onSetAsDefault={onSetAsDefault}
+            />
+          </div>
+        </div>
       </div>
 
-      {!isSummary && isExpanded && hasMultiplePlans && (
+      {isExpanded && hasMultiplePlans && (
         <div className="mt-4 pt-4 border-t border-border-default">
           <UsageFooter
             provider={provider}
@@ -679,30 +650,5 @@ export function ProviderCard({
         </div>
       )}
     </div>
-  );
-}
-
-const ignoreProviderAction = () => undefined;
-
-export function ProviderSummaryCard({
-  provider,
-  appId,
-  statusBadges,
-}: ProviderSummaryCardProps) {
-  return (
-    <ProviderCard
-      provider={provider}
-      isCurrent
-      appId={appId}
-      onSwitch={ignoreProviderAction}
-      onEdit={ignoreProviderAction}
-      onDelete={ignoreProviderAction}
-      onConfigureUsage={ignoreProviderAction}
-      onOpenWebsite={ignoreProviderAction}
-      onDuplicate={ignoreProviderAction}
-      isProxyRunning={false}
-      variant="summary"
-      statusBadges={statusBadges}
-    />
   );
 }

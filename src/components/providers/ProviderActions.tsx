@@ -16,6 +16,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { AppId } from "@/lib/api";
+import { isAdditiveAppId } from "@/config/appConfig";
 
 interface ProviderActionsProps {
   appId?: AppId;
@@ -90,19 +91,14 @@ export function ProviderActions({
 
   // Additive provider membership: providers can coexist in the native config.
   const isAdditiveMode =
-    (appId === "opencode" && !isOmo) ||
-    appId === "openclaw" ||
-    appId === "hermes" ||
-    appId === "pi";
+    Boolean(appId && isAdditiveAppId(appId)) &&
+    !(appId === "opencode" && isOmo);
 
   // 故障转移模式下的按钮逻辑（累加模式和 OMO 应用不支持故障转移）
   const isFailoverMode =
     !isAdditiveMode && !isOmo && isAutoFailoverEnabled && onToggleFailover;
   const isMembershipMode = isAdditiveMode;
-  const piStateChangeHint =
-    appId === "pi" && isInConfig
-      ? t("pi.current.configConflictHint")
-      : t("pi.current.stateUnavailableHint");
+  const piStateChangeHint = t("pi.current.stateUnavailableHint");
 
   const handleMainButtonClick = () => {
     if (isOmo) {
@@ -178,17 +174,15 @@ export function ProviderActions({
           ),
           icon: <Minus className="h-4 w-4" />,
           text: t("provider.removeFromConfig", { defaultValue: "移除" }),
-          title:
-            appId === "pi" && isRemovalProtected
-              ? t("pi.current.removeProtectedHint")
-              : undefined,
         };
       }
       return {
         disabled: false,
         variant: "default" as const,
         className:
-          "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
+          appId === "pi"
+            ? "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700"
+            : "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
         icon: <Plus className="h-4 w-4" />,
         text:
           appId === "pi"
@@ -255,7 +249,7 @@ export function ProviderActions({
   const canDelete =
     !isReadOnly &&
     (appId === "pi"
-      ? !isCurrent && !isStateChangeProtected
+      ? !isStateChangeProtected
       : isOmo || isAdditiveMode
         ? true
         : !isCurrent);
@@ -265,11 +259,9 @@ export function ProviderActions({
   const deleteHint =
     appId === "pi" && isStateChangeProtected
       ? piStateChangeHint
-      : appId === "pi" && isCurrent
-        ? t("pi.current.removeProtectedHint")
-        : isReadOnly
-          ? readOnlyHint
-          : t("common.delete");
+      : isReadOnly
+        ? readOnlyHint
+        : t("common.delete");
 
   return (
     <div className="flex items-center gap-1.5">

@@ -19,7 +19,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
-import type { PiCurrentState } from "@/lib/api/pi";
 import { providersApi } from "@/lib/api/providers";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { useDragSort } from "@/hooks/useDragSort";
@@ -32,12 +31,8 @@ import {
   useHermesModelConfig,
 } from "@/hooks/useHermes";
 import { useStreamCheck } from "@/hooks/useStreamCheck";
-import {
-  ProviderCard,
-  ProviderSummaryCard,
-} from "@/components/providers/ProviderCard";
+import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
-import type { ProviderStatusBadgeData } from "@/components/providers/ProviderStatusBadge";
 import {
   useAutoFailoverEnabled,
   useFailoverQueue,
@@ -54,27 +49,6 @@ import { Button } from "@/components/ui/button";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
 import { isProxyAppId } from "@/config/appConfig";
-
-function createPiCurrentSummaryProvider(
-  current: PiCurrentState | undefined,
-  providers: Record<string, Provider>,
-): Provider | undefined {
-  if (!current?.providerKey || current.ownership === "unconfigured") {
-    return undefined;
-  }
-
-  const savedProvider = providers[current.providerKey];
-  return {
-    ...savedProvider,
-    id: `__pi-current__:${current.providerKey}`,
-    name: savedProvider?.name ?? current.providerKey,
-    settingsConfig: {},
-    icon: savedProvider?.icon ?? "pi",
-    category:
-      savedProvider?.category ??
-      (current.ownership === "pi_native" ? "official" : "custom"),
-  };
-}
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -247,10 +221,6 @@ export function ProviderList({
     },
     [isPiAuthoritativeStateReady, piCurrentState],
   );
-  const piSummaryProvider = useMemo(
-    () => createPiCurrentSummaryProvider(piCurrentState, providers),
-    [piCurrentState, providers],
-  );
 
   // 连通性检查不发真实请求、无封号/计费风险，直接执行（无需确认弹窗）。
   const handleTest = useCallback(
@@ -404,47 +374,6 @@ export function ProviderList({
     return messages;
   }, [appId, claudeDesktopStatus, t]);
 
-  const piSummaryBadges = useMemo<ProviderStatusBadgeData[]>(() => {
-    if (!piCurrentState || !piSummaryProvider) return [];
-
-    const badges: ProviderStatusBadgeData[] = [
-      {
-        label: t("pi.current.default", { defaultValue: "当前默认" }),
-        tone: "info",
-      },
-    ];
-
-    badges.push({
-      label: t(`pi.current.ownership.${piCurrentState.ownership}`, {
-        defaultValue:
-          piCurrentState.ownership === "pi_native"
-            ? "Pi 原生配置"
-            : piCurrentState.ownership === "external"
-              ? "外部 Pi 配置"
-              : piCurrentState.ownership === "managed"
-                ? "CC Switch 托管"
-                : "未配置",
-      }),
-      tone: "muted",
-    });
-
-    if (piCurrentState.modelId) {
-      badges.push({
-        label: piCurrentState.modelId,
-        tone: "muted",
-      });
-    }
-
-    return badges;
-  }, [piCurrentState, piSummaryProvider, t]);
-
-  const piCurrentSummary = piSummaryProvider ? (
-    <ProviderSummaryCard
-      provider={piSummaryProvider}
-      appId="pi"
-      statusBadges={piSummaryBadges}
-    />
-  ) : null;
   const piStateErrorMessages = [
     isPiCurrentStateError ? extractErrorMessage(piCurrentStateError) : "",
   ].filter(Boolean);
@@ -486,7 +415,6 @@ export function ProviderList({
     return (
       <div className="mt-4 space-y-4">
         {piStateErrorNotice}
-        {piCurrentSummary}
         <ProviderEmptyState
           appId={appId}
           onCreate={appId === "pi" ? undefined : onCreate}
@@ -515,16 +443,9 @@ export function ProviderList({
               isOmoSlim && provider.id === (currentOmoSlimId || "");
             const isHermesCurrent =
               appId === "hermes" && hermesCurrentProviderId === provider.id;
-            const isPiCurrent =
-              appId === "pi" && piCurrentState?.providerKey === provider.id;
-            const isPiCurrentConfigDrifted =
-              isPiCurrent && piCurrentState?.ownership !== "managed";
-            const isPiSavedConfigDrifted =
-              piCurrentState?.driftedProviderIds?.includes(provider.id) ??
-              false;
             const isCurrent =
               appId === "pi"
-                ? isPiCurrent
+                ? false
                 : isOmo
                   ? isOmoCurrent
                   : isOmoSlim
@@ -570,8 +491,6 @@ export function ProviderList({
                 activeProviderId={
                   supportsFailover ? activeProviderId : undefined
                 }
-                // OpenClaw/Hermes expose a write action. Pi only uses its
-                // current marker to protect the native default from removal.
                 isDefaultModel={
                   appId === "hermes"
                     ? isHermesCurrent
@@ -579,7 +498,7 @@ export function ProviderList({
                 }
                 isRemovalProtected={
                   appId === "pi"
-                    ? isPiCurrent
+                    ? false
                     : appId === "hermes"
                       ? isHermesCurrent
                       : appId === "openclaw"
@@ -587,10 +506,7 @@ export function ProviderList({
                         : false
                 }
                 isStateChangeProtected={
-                  appId === "pi" &&
-                  (!isPiAuthoritativeStateReady ||
-                    isPiCurrentConfigDrifted ||
-                    isPiSavedConfigDrifted)
+                  appId === "pi" && !isPiAuthoritativeStateReady
                 }
                 onSetAsDefault={
                   onSetAsDefault ? () => onSetAsDefault(provider) : undefined
@@ -606,7 +522,6 @@ export function ProviderList({
   return (
     <div className="mt-4 space-y-4">
       {piStateErrorNotice}
-      {piCurrentSummary}
       {claudeDesktopStatusMessages.length > 0 && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
           <div className="flex items-center gap-2 font-medium">
@@ -730,7 +645,6 @@ interface SortableProviderCardProps {
   isRemovalProtected?: boolean;
   isStateChangeProtected?: boolean;
   onSetAsDefault?: () => void;
-  statusBadges?: ProviderStatusBadgeData[];
 }
 
 function SortableProviderCard({
@@ -763,7 +677,6 @@ function SortableProviderCard({
   isRemovalProtected,
   isStateChangeProtected,
   onSetAsDefault,
-  statusBadges,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -819,7 +732,6 @@ function SortableProviderCard({
         isRemovalProtected={isRemovalProtected}
         isStateChangeProtected={isStateChangeProtected}
         onSetAsDefault={onSetAsDefault}
-        statusBadges={statusBadges}
       />
     </div>
   );

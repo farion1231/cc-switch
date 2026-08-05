@@ -18,18 +18,6 @@ import { http, HttpResponse } from "msw";
 import { server } from "../msw/server";
 
 const TAURI_ENDPOINT = "http://tauri.local";
-const piQueryMocks = vi.hoisted(() => ({
-  currentState: {
-    data: undefined as unknown,
-    isSuccess: true,
-    isError: false,
-    error: null as unknown,
-  },
-}));
-
-vi.mock("@/lib/query/pi", () => ({
-  usePiCurrentState: () => piQueryMocks.currentState,
-}));
 
 vi.mock("@/components/JsonEditor", () => ({
   default: ({
@@ -55,12 +43,6 @@ vi.mock("@/components/JsonEditor", () => ({
 describe("PiProviderForm", () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
-    piQueryMocks.currentState = {
-      data: undefined,
-      isSuccess: true,
-      isError: false,
-      error: null,
-    };
     queryClient.removeQueries({ queryKey: MODELS_DEV_QUERY_KEY });
   });
 
@@ -1154,187 +1136,43 @@ describe("PiProviderForm", () => {
     expect(JSON.parse(onSubmit.mock.calls[0][0].settingsConfig)).toEqual(input);
   });
 
-  it("does not let an edit remove Pi's current default model", async () => {
-    const onSubmit = vi.fn();
-    piQueryMocks.currentState = {
-      data: {
-        providerKey: "managed",
-        modelId: "model-a",
-        managedProviderId: "managed",
-        ownership: "managed",
-        enabledProviderIds: ["managed"],
-      },
-      isSuccess: true,
-      isError: false,
-      error: null,
+  it("submits the edit-open config as the optimistic concurrency baseline", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const initialConfig = {
+      name: "Managed",
+      api: "openai-completions",
+      baseUrl: "https://api.example.com/v1",
+      models: [{ id: "model-a" }, { id: "model-b" }],
+      futureField: { preserve: true },
     };
 
     render(
       <PiProviderForm
         appId="pi"
         providerId="managed"
-        submitLabel="Save current provider"
+        submitLabel="Save managed provider"
         onSubmit={onSubmit}
         onCancel={() => {}}
-        initialData={{
-          name: "Managed",
-          settingsConfig: {
-            name: "Managed",
-            api: "openai-completions",
-            baseUrl: "https://api.example.com/v1",
-            models: [{ id: "model-a" }, { id: "model-b" }],
-          },
-        }}
+        initialData={{ name: "Managed", settingsConfig: initialConfig }}
       />,
     );
 
-    expect(
-      screen.getAllByRole("button", { name: "pi.form.removeModel" })[0],
-    ).toBeDisabled();
+    for (const button of screen.getAllByRole("button", {
+      name: "pi.form.removeModel",
+    })) {
+      expect(button).toBeEnabled();
+    }
     fireEvent.change(screen.getAllByLabelText("pi.form.modelId")[0], {
       target: { value: "model-a-renamed" },
     });
     fireEvent.click(
-      screen.getByRole("button", { name: "Save current provider" }),
+      screen.getByRole("button", { name: "Save managed provider" }),
     );
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "pi.form.currentModelMustRemain",
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].expectedSettingsConfig).toEqual(
+      initialConfig,
     );
-    expect(onSubmit).not.toHaveBeenCalled();
-    await waitFor(() =>
-      expect(document.querySelector("#pi-models-section")).toHaveFocus(),
-    );
-  });
-
-  it("blocks edit submission when Pi's current state cannot be read", async () => {
-    const onSubmit = vi.fn();
-    const onSubmitReadyChange = vi.fn();
-    piQueryMocks.currentState = {
-      data: undefined,
-      isSuccess: false,
-      isError: true,
-      error: new Error("snapshot offline"),
-    };
-
-    const { container } = render(
-      <PiProviderForm
-        appId="pi"
-        providerId="blocked-edit"
-        submitLabel="Save blocked edit"
-        onSubmit={onSubmit}
-        onCancel={() => {}}
-        onSubmitReadyChange={onSubmitReadyChange}
-        initialData={{
-          name: "Blocked edit",
-          settingsConfig: {
-            name: "Blocked edit",
-            baseUrl: "https://api.example.com/v1",
-            models: [{ id: "model", api: "openai-completions" }],
-          },
-        }}
-      />,
-    );
-
-    expect(
-      screen.getByRole("button", { name: "Save blocked edit" }),
-    ).toBeDisabled();
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "pi.current.stateUnavailableHint",
-    );
-    await waitFor(() =>
-      expect(onSubmitReadyChange).toHaveBeenLastCalledWith(false),
-    );
-
-    fireEvent.submit(container.querySelector("#provider-form")!);
-    await waitFor(() => expect(onSubmit).not.toHaveBeenCalled());
-  });
-
-  it("keeps a drifted provider viewable but blocks saving", async () => {
-    const onSubmit = vi.fn();
-    const onSubmitReadyChange = vi.fn();
-    piQueryMocks.currentState = {
-      data: {
-        providerKey: "drifted-edit",
-        modelId: "model",
-        managedProviderId: "drifted-edit",
-        ownership: "external",
-        enabledProviderIds: ["drifted-edit"],
-        driftedProviderIds: ["drifted-edit"],
-      },
-      isSuccess: true,
-      isError: false,
-      error: null,
-    };
-
-    const { container } = render(
-      <PiProviderForm
-        appId="pi"
-        providerId="drifted-edit"
-        submitLabel="Save drifted edit"
-        onSubmit={onSubmit}
-        onCancel={() => {}}
-        onSubmitReadyChange={onSubmitReadyChange}
-        initialData={{
-          name: "Drifted edit",
-          settingsConfig: {
-            name: "Drifted edit",
-            baseUrl: "https://api.example.com/v1",
-            models: [{ id: "model", api: "openai-completions" }],
-          },
-        }}
-      />,
-    );
-
-    expect(screen.getByLabelText("provider.name")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Save drifted edit" }),
-    ).toBeDisabled();
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "pi.current.configConflictHint",
-    );
-    await waitFor(() =>
-      expect(onSubmitReadyChange).toHaveBeenLastCalledWith(false),
-    );
-
-    fireEvent.submit(container.querySelector("#provider-form")!);
-    await waitFor(() => expect(onSubmit).not.toHaveBeenCalled());
-  });
-
-  it("blocks create submission when Pi's current state cannot be read", async () => {
-    const user = userEvent.setup();
-    const onSubmit = vi.fn();
-    const onSubmitReadyChange = vi.fn();
-    piQueryMocks.currentState = {
-      data: undefined,
-      isSuccess: false,
-      isError: true,
-      error: new Error("snapshot offline"),
-    };
-
-    render(
-      <PiProviderForm
-        appId="pi"
-        submitLabel="Save blocked create"
-        onSubmit={onSubmit}
-        onCancel={() => {}}
-        onSubmitReadyChange={onSubmitReadyChange}
-      />,
-    );
-
-    await user.click(
-      screen.getByRole("button", { name: "providerPreset.custom" }),
-    );
-    expect(
-      screen.getByRole("button", { name: "Save blocked create" }),
-    ).toBeDisabled();
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "pi.current.stateUnavailableHint",
-    );
-    await waitFor(() =>
-      expect(onSubmitReadyChange).toHaveBeenLastCalledWith(false),
-    );
-    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("does not expose failover endpoint controls", async () => {

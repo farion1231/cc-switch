@@ -49,7 +49,10 @@ import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { useScanUnmanagedSkills } from "@/hooks/useSkills";
-import { extractErrorMessage } from "@/utils/errorUtils";
+import {
+  extractErrorMessage,
+  translatePiProviderMutationError,
+} from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { deepClone } from "@/utils/deepClone";
 import { cn } from "@/lib/utils";
@@ -343,12 +346,14 @@ function App() {
         { closeButton: true },
       );
     } catch (error) {
+      const detail = extractErrorMessage(error);
       toast.error(
         t("pi.provider.enableFailed", {
           defaultValue: "无法在 Pi 中启用此供应商",
         }),
         {
-          description: extractErrorMessage(error),
+          description:
+            translatePiProviderMutationError(detail, t) || detail || undefined,
           closeButton: true,
         },
       );
@@ -700,11 +705,17 @@ function App() {
   const handleEditProvider = async ({
     provider,
     originalId,
+    expectedSettingsConfig,
   }: {
     provider: Provider;
     originalId?: string;
+    expectedSettingsConfig?: Provider["settingsConfig"];
   }) => {
-    await updateProvider(provider, originalId);
+    if (expectedSettingsConfig) {
+      await updateProvider(provider, originalId, expectedSettingsConfig);
+    } else {
+      await updateProvider(provider, originalId);
+    }
     setEditingProvider(null);
   };
 
@@ -715,7 +726,23 @@ function App() {
     if (action === "remove") {
       // Remove from live config only (for additive mode apps like OpenCode/OpenClaw)
       // Does NOT delete from database - provider remains in the list
-      await providersApi.removeFromLiveConfig(provider.id, activeApp);
+      try {
+        await providersApi.removeFromLiveConfig(provider.id, activeApp);
+      } catch (error) {
+        const detail = extractErrorMessage(error);
+        const description =
+          activeApp === "pi"
+            ? translatePiProviderMutationError(detail, t) || detail
+            : detail;
+        if (activeApp === "pi") {
+          void invalidatePiProviderCaches(queryClient).catch(() => undefined);
+        }
+        toast.error(t("notifications.removeFromConfigFailed"), {
+          description: description || t("common.unknown"),
+          closeButton: true,
+        });
+        return;
+      }
       if (activeApp === "pi") {
         await invalidatePiProviderCaches(queryClient);
       }

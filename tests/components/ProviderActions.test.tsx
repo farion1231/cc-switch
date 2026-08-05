@@ -80,20 +80,17 @@ describe("ProviderActions Pi provider switching", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("protects the current default from removal", () => {
+  it("does not turn Pi's current selection into a UI state", () => {
     renderPiActions({
       isCurrent: true,
       isInConfig: true,
-      isRemovalProtected: true,
     });
 
-    expect(screen.getByRole("button", { name: "移除" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "移除" })).toBeEnabled();
     expect(
       screen.queryByRole("button", { name: "当前默认" }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "common.delete" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "common.delete" })).toBeEnabled();
   });
 
   it("fails closed while Pi's authoritative state is unavailable", async () => {

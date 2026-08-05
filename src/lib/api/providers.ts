@@ -67,11 +67,13 @@ export const providersApi = {
     provider: Provider,
     appId: AppId,
     originalId?: string,
+    expectedSettingsConfig?: Provider["settingsConfig"],
   ): Promise<boolean> {
     return await invoke("update_provider", {
       provider,
       app: appId,
       originalId,
+      expectedSettingsConfig,
     });
   },
 

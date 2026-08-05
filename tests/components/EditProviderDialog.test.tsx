@@ -44,6 +44,7 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
     onSubmit,
     onSubmitReadyChange,
     isProxyTakeover,
+    appId,
   }: {
     initialData: {
       name?: string;
@@ -62,9 +63,11 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
       meta?: Record<string, unknown>;
       icon?: string;
       iconColor?: string;
+      expectedSettingsConfig?: Record<string, unknown>;
     }) => void;
     onSubmitReadyChange?: (isReady: boolean) => void;
     isProxyTakeover?: boolean;
+    appId?: string;
   }) => (
     <form
       ref={(node) => {
@@ -81,6 +84,9 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
           meta: initialData.meta,
           icon: initialData.icon,
           iconColor: initialData.iconColor,
+          ...(appId === "pi"
+            ? { expectedSettingsConfig: initialData.settingsConfig }
+            : {}),
         });
       }}
     >
@@ -245,5 +251,8 @@ describe("EditProviderDialog", () => {
     expect(handleSubmit.mock.calls[0][0].provider.meta).toMatchObject({
       isPartner: true,
     });
+    expect(handleSubmit.mock.calls[0][0].expectedSettingsConfig).toEqual(
+      provider.settingsConfig,
+    );
   });
 });

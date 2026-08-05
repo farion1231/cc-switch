@@ -242,6 +242,7 @@
     "claudeDesktopProxyRestartRequired": "切換成功，請保持 CC Switch 執行，並重新啟動 Claude Desktop 後生效",
     "addToConfigSuccess": "已新增至設定",
     "removeFromConfigSuccess": "已從設定移除",
+    "removeFromConfigFailed": "無法移除供應商",
     "switchFailedTitle": "切換失敗",
     "switchFailed": "切換失敗：{{error}}",
     "autoImported": "已從現有設定建立預設供應商",
@@ -907,7 +908,10 @@
     "provider": {
       "enabled": "已在 Pi 中啟用",
       "enableFailed": "無法在 Pi 中啟用此供應商",
-      "removed": "已從 Pi 移除"
+      "removed": "已從 Pi 移除",
+      "removeCurrent": "此供應商正在被 Pi 使用。請先在 Pi 中執行 /model 切換後再移除。",
+      "configChanged": "Pi 中的設定剛發生變化，已保留 Pi 的修改。請依最新設定重試。",
+      "managedByPi": "此供應商由 Pi 管理，無法在 CC Switch 中操作。"
     },
     "form": {
       "providerKey": "供應商識別碼",
@@ -952,17 +956,8 @@
       "configSecretsHidden": "此處會隱藏敏感值，儲存時仍會保留原值。"
     },
     "current": {
-      "default": "目前預設",
-      "removeProtectedHint": "這是 Pi 目前的預設供應商。請先在 Pi 中使用 /model 切換，再移除或刪除。",
-      "readFailed": "無法讀取 Pi 目前的設定",
-      "stateUnavailableHint": "CC Switch 讀取到 Pi 目前的設定前，供應商變更會暫時停用。",
-      "configConflictHint": "Pi 中同名供應商的設定已變更，請先處理外部修改。",
-      "ownership": {
-        "managed": "CC Switch 受管",
-        "pi_native": "Pi 原生設定",
-        "external": "外部 Pi 設定",
-        "unconfigured": "未設定"
-      }
+      "readFailed": "無法讀取 Pi 供應商設定",
+      "stateUnavailableHint": "CC Switch 讀取到 Pi 供應商設定前，供應商變更會暫時停用。"
     },
     "prompts": {
       "globalTab": "全域提示",

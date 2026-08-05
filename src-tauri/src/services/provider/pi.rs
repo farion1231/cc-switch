@@ -1,8 +1,43 @@
 use super::{ProviderService, SwitchResult};
 use crate::app_config::AppType;
 use crate::error::AppError;
-use crate::provider::{Provider, ProviderMeta};
+use crate::provider::{Provider, ProviderMeta, UsageScript};
 use crate::store::AppState;
+use indexmap::IndexMap;
+use serde_json::Value;
+
+const PI_APP: &str = "pi";
+
+pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppError> {
+    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(PI_APP));
+    let native = match crate::pi_config::read_pi_native_providers() {
+        Ok(native) => {
+            if let Err(error) = sync_native_locked(state, &native) {
+                log::warn!("Failed to sync Pi providers from native config: {error}");
+            }
+            Some(native)
+        }
+        Err(error) => {
+            log::warn!("Failed to read Pi providers; showing saved catalog: {error}");
+            None
+        }
+    };
+    let mut saved = state.db.get_all_providers(PI_APP)?;
+    if let Some(native) = native {
+        saved.retain(|id, _| {
+            native.get(id).is_none_or(|config| {
+                crate::pi_config::validate_managed_provider(id, config).is_ok()
+            })
+        });
+    }
+    Ok(saved)
+}
+
+pub(super) fn import_from_live(state: &AppState) -> Result<usize, AppError> {
+    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(PI_APP));
+    let native = crate::pi_config::read_pi_native_providers()?;
+    sync_native_locked(state, &native)
+}
 
 pub(super) fn add(
     state: &AppState,
@@ -14,6 +49,7 @@ pub(super) fn add(
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
     strip_unsupported_pi_metadata(&mut provider);
     ProviderService::validate_provider_settings(&app_type, &provider)?;
+    align_native_display_name(&mut provider);
     ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
     if state
@@ -27,11 +63,14 @@ pub(super) fn add(
         )));
     }
 
+    if !add_to_live && crate::pi_config::pi_provider_exists(&provider.id)? {
+        return Err(AppError::Conflict(format!(
+            "Pi provider key '{}' already exists in models.json",
+            provider.id
+        )));
+    }
+
     let native_inserted = if add_to_live {
-        // Membership changes fail closed when Pi's selection file is
-        // unreadable. Database-only copies remain available because they do
-        // not touch Pi-owned state.
-        crate::pi_config::read_pi_native_defaults()?;
         crate::pi_config::insert_pi_provider(&provider.id, &provider.settings_config)?
     } else {
         false
@@ -39,9 +78,10 @@ pub(super) fn add(
 
     if let Err(error) = state.db.save_provider(app_type.as_str(), &provider) {
         if native_inserted {
-            if let Err(rollback) =
-                crate::pi_config::remove_pi_provider(&provider.id, &provider.settings_config)
-            {
+            if let Err(rollback) = crate::pi_config::remove_pi_provider_if_matches(
+                &provider.id,
+                &provider.settings_config,
+            ) {
                 return Err(AppError::Config(format!(
                     "failed to save Pi provider: {error}; native rollback failed: {rollback}"
                 )));
@@ -52,10 +92,35 @@ pub(super) fn add(
     Ok(true)
 }
 
+pub(super) fn update_usage_script(
+    state: &AppState,
+    id: &str,
+    script: UsageScript,
+) -> Result<bool, AppError> {
+    let app_type = AppType::Pi;
+    let _guard =
+        futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
+    super::validate_usage_script(&script)?;
+
+    let mut provider = state
+        .db
+        .get_provider_by_id(id, app_type.as_str())?
+        .ok_or_else(|| AppError::InvalidInput(format!("Pi provider '{id}' not found")))?;
+    provider
+        .meta
+        .get_or_insert_with(ProviderMeta::default)
+        .usage_script = Some(script);
+    strip_unsupported_pi_metadata(&mut provider);
+    ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
+    state.db.save_provider(app_type.as_str(), &provider)?;
+    Ok(true)
+}
+
 pub(super) fn update(
     state: &AppState,
     original_id: Option<&str>,
     mut provider: Provider,
+    expected_settings_config: Option<&Value>,
 ) -> Result<bool, AppError> {
     let app_type = AppType::Pi;
     let _guard =
@@ -76,41 +141,42 @@ pub(super) fn update(
     ProviderService::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
     let native = crate::pi_config::read_pi_native_provider(&original_id)?;
-    let live_enabled = match native {
-        None => false,
-        Some(config) if config == existing.settings_config => true,
-        Some(_) => {
-            return Err(AppError::Conflict(format!(
-                "Pi provider '{original_id}' changed outside CC Switch"
-            )))
-        }
-    };
-    let defaults = crate::pi_config::read_pi_native_defaults()?;
-    if defaults.default_provider.as_deref() == Some(original_id.as_str()) {
-        if let Some(model_id) = defaults.default_model.as_deref() {
-            if crate::pi_config::provider_contains_model(&existing.settings_config, model_id)
-                && !crate::pi_config::provider_contains_model(&provider.settings_config, model_id)
-            {
-                return Err(AppError::InvalidInput(format!(
-                    "Pi is currently using model '{model_id}'; choose another model in Pi before removing it"
-                )));
-            }
-        }
+    if native
+        .as_ref()
+        .is_some_and(|config| crate::pi_config::is_pi_owned_provider(&original_id, config))
+    {
+        return Err(AppError::Conflict(format!(
+            "Pi provider '{original_id}' is managed by Pi and cannot be edited by CC Switch"
+        )));
     }
-
-    if live_enabled {
-        crate::pi_config::replace_pi_provider(
-            &original_id,
-            &existing.settings_config,
-            &provider.settings_config,
-        )?;
+    let expected_settings_config = match (native.as_ref(), expected_settings_config) {
+        (Some(_), Some(expected)) => expected,
+        (Some(_), None) => {
+            return Err(AppError::InvalidInput(
+                "Pi provider edit requires the original settings snapshot".to_string(),
+            ))
+        }
+        (None, Some(expected)) => expected,
+        (None, None) => &existing.settings_config,
+    };
+    if native
+        .as_ref()
+        .is_some_and(|config| !json_values_equivalent(config, expected_settings_config))
+    {
+        return Err(AppError::Conflict(format!(
+            "Pi provider '{original_id}' changed outside CC Switch"
+        )));
+    }
+    if let Some(native) = native.as_ref() {
+        ensure_current_model_remains(&original_id, native, &provider.settings_config)?;
+        crate::pi_config::replace_pi_provider(&original_id, native, &provider.settings_config)?;
     }
     if let Err(error) = state.db.save_provider(app_type.as_str(), &provider) {
-        if live_enabled {
+        if let Some(native) = native.as_ref() {
             if let Err(rollback) = crate::pi_config::replace_pi_provider(
                 &original_id,
                 &provider.settings_config,
-                &existing.settings_config,
+                native,
             ) {
                 return Err(AppError::Config(format!(
                     "failed to save Pi provider: {error}; native rollback failed: {rollback}"
@@ -127,16 +193,17 @@ pub(super) fn delete(state: &AppState, id: &str) -> Result<(), AppError> {
     let _guard =
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
     ensure_not_current(id)?;
-    let Some(provider) = state.db.get_provider_by_id(id, app_type.as_str())? else {
+    let Some(_) = state.db.get_provider_by_id(id, app_type.as_str())? else {
         return Ok(());
     };
-    let removed = crate::pi_config::remove_pi_provider(id, &provider.settings_config)?;
+    // Delete is intentionally keyed by provider ID. Once the user confirms
+    // deleting the provider itself, supported field edits do not change that
+    // intent; the latest native value is retained only for rollback.
+    let removed = crate::pi_config::remove_pi_provider(id)?;
 
     if let Err(error) = state.db.delete_provider(app_type.as_str(), id) {
-        if removed {
-            if let Err(rollback) =
-                crate::pi_config::restore_pi_provider_if_missing(id, &provider.settings_config)
-            {
+        if let Some(removed) = removed.as_ref() {
+            if let Err(rollback) = crate::pi_config::restore_pi_provider_if_missing(id, removed) {
                 return Err(AppError::Config(format!(
                     "failed to delete Pi provider: {error}; native rollback failed: {rollback}"
                 )));
@@ -156,7 +223,24 @@ pub(super) fn remove(state: &AppState, id: &str) -> Result<(), AppError> {
         .db
         .get_provider_by_id(id, app_type.as_str())?
         .ok_or_else(|| AppError::InvalidInput(format!("Pi provider '{id}' not found")))?;
-    crate::pi_config::remove_pi_provider(id, &provider.settings_config)?;
+    let Some(native) = crate::pi_config::read_pi_native_provider(id)? else {
+        return Ok(());
+    };
+    if crate::pi_config::is_pi_owned_provider(id, &native) {
+        return Err(AppError::Conflict(format!(
+            "Pi provider '{id}' is managed by Pi and cannot be removed by CC Switch"
+        )));
+    }
+    if let Err(error) = crate::pi_config::validate_managed_provider(id, &native) {
+        return Err(AppError::Conflict(format!(
+            "Pi provider '{id}' changed outside CC Switch and is no longer supported: {error}"
+        )));
+    }
+
+    let mut synced = provider;
+    merge_native_config(&mut synced, native.clone());
+    state.db.save_provider(app_type.as_str(), &synced)?;
+    crate::pi_config::remove_pi_provider_if_matches(id, &native)?;
     Ok(())
 }
 
@@ -168,9 +252,21 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
         .db
         .get_provider_by_id(id, app_type.as_str())?
         .ok_or_else(|| AppError::InvalidInput(format!("Pi provider '{id}' not found")))?;
-    ProviderService::validate_provider_settings(&app_type, &provider)?;
 
-    crate::pi_config::read_pi_native_defaults()?;
+    if let Some(native) = crate::pi_config::read_pi_native_provider(id)? {
+        if crate::pi_config::is_pi_owned_provider(id, &native) {
+            return Err(AppError::Conflict(format!(
+                "Pi provider '{id}' is managed by Pi and cannot be enabled by CC Switch"
+            )));
+        }
+        crate::pi_config::validate_managed_provider(id, &native)?;
+        let mut synced = provider;
+        merge_native_config(&mut synced, native);
+        state.db.save_provider(app_type.as_str(), &synced)?;
+        return Ok(SwitchResult::default());
+    }
+
+    ProviderService::validate_provider_settings(&app_type, &provider)?;
     crate::pi_config::insert_pi_provider(id, &provider.settings_config)?;
     Ok(SwitchResult::default())
 }
@@ -187,6 +283,162 @@ fn ensure_not_current(provider_id: &str) -> Result<(), AppError> {
         ));
     }
     Ok(())
+}
+
+fn ensure_current_model_remains(
+    provider_id: &str,
+    current: &Value,
+    replacement: &Value,
+) -> Result<(), AppError> {
+    let removes_a_model = current
+        .get("models")
+        .and_then(Value::as_array)
+        .is_some_and(|models| {
+            models.iter().any(|model| {
+                model
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|model_id| {
+                        !crate::pi_config::provider_contains_model(replacement, model_id)
+                    })
+            })
+        });
+    if !removes_a_model {
+        return Ok(());
+    }
+
+    let defaults = crate::pi_config::read_pi_native_defaults()?;
+    if defaults.default_provider.as_deref() != Some(provider_id) {
+        return Ok(());
+    }
+    let Some(model_id) = defaults.default_model.as_deref() else {
+        return Ok(());
+    };
+    if crate::pi_config::provider_contains_model(current, model_id)
+        && !crate::pi_config::provider_contains_model(replacement, model_id)
+    {
+        return Err(AppError::InvalidInput(format!(
+            "Pi is currently using model '{model_id}'; choose another model in Pi before removing it"
+        )));
+    }
+    Ok(())
+}
+
+fn sync_native_locked(
+    state: &AppState,
+    native: &IndexMap<String, Value>,
+) -> Result<usize, AppError> {
+    let saved = state.db.get_all_providers(PI_APP)?;
+    let mut changed = 0;
+
+    for (id, config) in native {
+        if crate::pi_config::is_pi_owned_provider(id, config) {
+            continue;
+        }
+        if let Err(error) = crate::pi_config::validate_managed_provider(id, config) {
+            log::warn!("Skipping unsupported Pi provider '{id}' during native sync: {error}");
+            continue;
+        }
+
+        let mut provider = saved.get(id).cloned().unwrap_or_else(|| {
+            let name = native_provider_name(config).unwrap_or(id).to_string();
+            let mut imported = Provider::with_id(id.clone(), name, config.clone(), None);
+            imported.category = Some("custom".to_string());
+            imported.icon = Some("pi".to_string());
+            imported
+        });
+        let is_new = !saved.contains_key(id);
+        let previous_name = provider.name.clone();
+        let previous_config = provider.settings_config.clone();
+        merge_native_config(&mut provider, config.clone());
+        if !is_new && provider.name == previous_name && provider.settings_config == previous_config
+        {
+            continue;
+        }
+
+        state.db.save_provider(PI_APP, &provider)?;
+        changed += 1;
+    }
+
+    Ok(changed)
+}
+
+fn json_values_equivalent(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Number(left), Value::Number(right)) => {
+            left == right
+                || matches!(
+                    (
+                        number_as_js_safe_integer(left),
+                        number_as_js_safe_integer(right),
+                    ),
+                    (Some(left), Some(right)) if left == right
+                )
+        }
+        (Value::Array(left), Value::Array(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| json_values_equivalent(left, right))
+        }
+        (Value::Object(left), Value::Object(right)) => {
+            left.len() == right.len()
+                && left.iter().all(|(key, left)| {
+                    right
+                        .get(key)
+                        .is_some_and(|right| json_values_equivalent(left, right))
+                })
+        }
+        _ => left == right,
+    }
+}
+
+fn number_as_js_safe_integer(number: &serde_json::Number) -> Option<i128> {
+    // The edit snapshot crosses the JS boundary. Only forgive integer/float
+    // representation changes when JavaScript can round-trip the value exactly.
+    const MAX_SAFE_INTEGER: i128 = 9_007_199_254_740_991;
+
+    if let Some(value) = number.as_i64() {
+        let value = i128::from(value);
+        return (-MAX_SAFE_INTEGER..=MAX_SAFE_INTEGER)
+            .contains(&value)
+            .then_some(value);
+    }
+    if let Some(value) = number.as_u64() {
+        let value = i128::from(value);
+        return (value <= MAX_SAFE_INTEGER).then_some(value);
+    }
+
+    let value = number.as_f64()?;
+    (value.is_finite()
+        && value.fract() == 0.0
+        && value >= -(MAX_SAFE_INTEGER as f64)
+        && value <= MAX_SAFE_INTEGER as f64)
+        .then_some(value as i128)
+}
+
+fn merge_native_config(provider: &mut Provider, config: Value) {
+    if let Some(name) = native_provider_name(&config) {
+        provider.name = name.to_string();
+    }
+    provider.settings_config = config;
+}
+
+fn native_provider_name(config: &Value) -> Option<&str> {
+    config
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|name| !name.trim().is_empty())
+}
+
+fn align_native_display_name(provider: &mut Provider) {
+    let Some(config) = provider.settings_config.as_object_mut() else {
+        return;
+    };
+    if config.contains_key("name") {
+        config.insert("name".to_string(), Value::String(provider.name.clone()));
+    }
 }
 
 fn strip_unsupported_pi_metadata(provider: &mut Provider) {
@@ -254,6 +506,26 @@ mod tests {
         }
     }
 
+    fn usage_script(code: &str) -> UsageScript {
+        UsageScript {
+            enabled: true,
+            language: "javascript".to_string(),
+            code: code.to_string(),
+            timeout: Some(5),
+            api_key: None,
+            base_url: None,
+            access_token: None,
+            user_id: None,
+            template_type: None,
+            auto_query_interval: Some(10),
+            coding_plan_provider: None,
+            access_key_id: None,
+            secret_access_key: None,
+            team_organization_id: None,
+            team_project_id: None,
+        }
+    }
+
     #[test]
     #[serial]
     fn membership_is_derived_only_from_models_json() {
@@ -295,7 +567,8 @@ mod tests {
     fn current_provider_and_model_are_pi_owned() {
         let _agent = TestAgentDir::new();
         let state = state();
-        ProviderService::add(&state, AppType::Pi, input("model-a"), true).expect("add provider");
+        let original = input("model-a");
+        ProviderService::add(&state, AppType::Pi, original.clone(), true).expect("add provider");
         let settings_path = crate::pi_config::get_pi_settings_path().unwrap();
         fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
         fs::write(
@@ -304,16 +577,18 @@ mod tests {
         )
         .unwrap();
 
-        assert!(
+        let remove_error =
             ProviderService::remove_from_live_config(&state, AppType::Pi, "cc-switch-test")
-                .is_err()
-        );
+                .expect_err("current provider must block removal");
+        assert!(remove_error
+            .to_string()
+            .contains("currently selected in Pi"));
         assert!(ProviderService::delete(&state, AppType::Pi, "cc-switch-test").is_err());
-        assert!(ProviderService::update(
+        assert!(update(
             &state,
-            AppType::Pi,
             Some("cc-switch-test"),
             input("model-b"),
+            Some(&original.settings_config),
         )
         .is_err());
         assert!(crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
@@ -333,7 +608,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn external_native_edit_blocks_managed_mutations() {
+    fn native_edits_sync_to_the_saved_provider_and_survive_removal() {
         let _agent = TestAgentDir::new();
         let state = state();
         ProviderService::add(&state, AppType::Pi, input("model-a"), true).expect("add provider");
@@ -344,52 +619,419 @@ mod tests {
             .unwrap();
         let mut external = saved.settings_config.clone();
         external["name"] = json!("External edit");
+        external["models"][0]["contextWindow"] = json!(1_000_000.0);
         crate::pi_config::replace_pi_provider("cc-switch-test", &saved.settings_config, &external)
             .expect("edit native provider");
 
-        assert!(ProviderService::update(
+        let listed = ProviderService::list(&state, AppType::Pi).expect("sync native providers");
+        assert_eq!(listed["cc-switch-test"].name, "External edit");
+        assert_eq!(listed["cc-switch-test"].settings_config, external);
+
+        ProviderService::remove_from_live_config(&state, AppType::Pi, "cc-switch-test")
+            .expect("remove externally edited provider");
+        assert!(!crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
+        let preserved = state
+            .db
+            .get_provider_by_id("cc-switch-test", "pi")
+            .unwrap()
+            .unwrap();
+        assert_eq!(preserved.name, "External edit");
+        assert_eq!(preserved.settings_config, external);
+    }
+
+    #[test]
+    #[serial]
+    fn edit_rejects_a_native_change_made_after_the_form_snapshot() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        let baseline = input("model-a");
+        ProviderService::add(&state, AppType::Pi, baseline.clone(), true).expect("add provider");
+
+        let mut external = baseline.settings_config.clone();
+        external["apiKey"] = json!("rotated-outside");
+        external["futureField"] = json!({ "preserve": true });
+        crate::pi_config::replace_pi_provider(
+            "cc-switch-test",
+            &baseline.settings_config,
+            &external,
+        )
+        .expect("edit native provider");
+
+        let mut local = baseline.clone();
+        local.name = "Local edit".to_string();
+        local.settings_config["name"] = json!("Local edit");
+        let error = update(
+            &state,
+            Some("cc-switch-test"),
+            local,
+            Some(&baseline.settings_config),
+        )
+        .expect_err("stale form must not overwrite native changes");
+        assert!(error.to_string().contains("changed outside CC Switch"));
+        assert_eq!(
+            crate::pi_config::read_pi_native_provider("cc-switch-test")
+                .expect("read native provider")
+                .expect("native provider"),
+            external
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn enabled_provider_edit_requires_the_form_snapshot() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        ProviderService::add(&state, AppType::Pi, input("model-a"), true).expect("add provider");
+
+        let error = ProviderService::update(
             &state,
             AppType::Pi,
             Some("cc-switch-test"),
-            input("model-b"),
+            input("model-a"),
         )
-        .is_err());
-        assert!(
-            ProviderService::remove_from_live_config(&state, AppType::Pi, "cc-switch-test")
-                .is_err()
+        .expect_err("enabled provider edits must carry their opening snapshot");
+
+        assert!(error
+            .to_string()
+            .contains("requires the original settings snapshot"));
+        assert!(crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
+    }
+
+    #[test]
+    #[serial]
+    fn edit_rejects_unsafe_integer_rounding_in_an_unknown_field() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        let mut baseline = input("model-a");
+        baseline.settings_config["futureInteger"] = json!(9_007_199_254_740_992_u64);
+        ProviderService::add(&state, AppType::Pi, baseline.clone(), true).expect("add provider");
+
+        let mut external = baseline.settings_config.clone();
+        external["futureInteger"] = json!(9_007_199_254_740_993_u64);
+        crate::pi_config::replace_pi_provider(
+            "cc-switch-test",
+            &baseline.settings_config,
+            &external,
+        )
+        .expect("edit unknown native field");
+
+        let error = update(
+            &state,
+            Some("cc-switch-test"),
+            baseline.clone(),
+            Some(&baseline.settings_config),
+        )
+        .expect_err("unsafe integer rounding must not be treated as equivalent");
+        assert!(error.to_string().contains("changed outside CC Switch"));
+        assert_eq!(
+            crate::pi_config::read_pi_native_provider("cc-switch-test")
+                .expect("read native provider")
+                .expect("native provider"),
+            external
         );
+    }
+
+    #[test]
+    #[serial]
+    fn equivalent_numeric_json_does_not_trigger_an_edit_conflict() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        let mut baseline = input("model-a");
+        baseline.settings_config["models"][0]["contextWindow"] = json!(1_000_000);
+        ProviderService::add(&state, AppType::Pi, baseline.clone(), true).expect("add provider");
+
+        let mut native = baseline.settings_config.clone();
+        native["models"][0]["contextWindow"] = json!(1_000_000.0);
+        crate::pi_config::replace_pi_provider("cc-switch-test", &baseline.settings_config, &native)
+            .expect("rewrite numeric representation");
+
+        let mut local = baseline.clone();
+        local.name = "Edited".to_string();
+        local.settings_config["name"] = json!("Edited");
+        update(
+            &state,
+            Some("cc-switch-test"),
+            local,
+            Some(&baseline.settings_config),
+        )
+        .expect("equivalent numeric representation must be accepted");
+    }
+
+    #[test]
+    #[serial]
+    fn native_sync_imports_custom_providers_but_not_pi_owned_entries() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        let mut stale_oauth = input("stale-model");
+        stale_oauth.id = "native-oauth".to_string();
+        ProviderService::add(&state, AppType::Pi, stale_oauth, false).expect("save stale provider");
+        let path = crate::pi_config::get_pi_models_path().unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            path,
+            r#"{
+                "providers": {
+                    "native-custom": {
+                        "name": "Native custom",
+                        "baseUrl": "https://api.example.com/v1",
+                        "apiKey": "secret",
+                        "api": "openai-completions",
+                        "models": [{ "id": "model-a" }]
+                    },
+                    "anthropic": {
+                        "name": "Built in",
+                        "baseUrl": "https://api.anthropic.com",
+                        "api": "anthropic-messages",
+                        "models": [{ "id": "claude" }]
+                    },
+                    "native-oauth": {
+                        "name": "OAuth",
+                        "oauth": "example",
+                        "baseUrl": "https://api.example.com/v1",
+                        "api": "openai-completions",
+                        "models": [{ "id": "model-b" }]
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let providers = ProviderService::list(&state, AppType::Pi).expect("sync providers");
+        assert_eq!(providers.len(), 1);
+        let imported = &providers["native-custom"];
+        assert_eq!(imported.name, "Native custom");
+        assert_eq!(imported.category.as_deref(), Some("custom"));
+        assert_eq!(imported.icon.as_deref(), Some("pi"));
+    }
+
+    #[test]
+    #[serial]
+    fn removal_and_deletion_skip_an_entry_that_became_unsupported() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        ProviderService::add(&state, AppType::Pi, input("model-a"), true).expect("add provider");
+        let unsupported = json!({
+            "name": "Extension-owned provider",
+            "extension": { "type": "custom" }
+        });
+        let path = crate::pi_config::get_pi_models_path().expect("models path");
+        fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "providers": {
+                    "cc-switch-test": unsupported.clone()
+                }
+            }))
+            .expect("serialize models"),
+        )
+        .expect("replace native provider");
+
+        let remove_error =
+            ProviderService::remove_from_live_config(&state, AppType::Pi, "cc-switch-test")
+                .expect_err("unsupported native entry must not be removed");
+        assert!(remove_error.to_string().contains("no longer supported"));
         assert!(ProviderService::delete(&state, AppType::Pi, "cc-switch-test").is_err());
+        assert_eq!(
+            crate::pi_config::read_pi_native_provider("cc-switch-test")
+                .expect("read native provider"),
+            Some(unsupported)
+        );
+        assert!(state
+            .db
+            .get_provider_by_id("cc-switch-test", PI_APP)
+            .expect("read saved provider")
+            .is_some());
+    }
+
+    #[test]
+    #[serial]
+    fn usage_metadata_update_does_not_rewrite_native_provider_settings() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        let baseline = input("model-a");
+        ProviderService::add(&state, AppType::Pi, baseline.clone(), true).expect("add provider");
+
+        let mut external = baseline.settings_config.clone();
+        external["apiKey"] = json!("rotated-outside");
+        external["futureField"] = json!({ "preserve": true });
+        crate::pi_config::replace_pi_provider(
+            "cc-switch-test",
+            &baseline.settings_config,
+            &external,
+        )
+        .expect("edit native provider");
+
+        update_usage_script(&state, "cc-switch-test", usage_script("return {}"))
+            .expect("save usage metadata");
+        assert_eq!(
+            crate::pi_config::read_pi_native_provider("cc-switch-test")
+                .expect("read native provider")
+                .expect("native provider"),
+            external
+        );
+
+        let providers = ProviderService::list(&state, AppType::Pi).expect("sync provider");
+        let saved = &providers["cc-switch-test"];
+        assert_eq!(saved.settings_config, external);
+        assert_eq!(
+            saved
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .map(|script| script.code.as_str()),
+            Some("return {}")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn copied_provider_keeps_its_display_name_after_enable_and_sync() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        let mut copy = input("model-a");
+        copy.id = "cc-switch-test-copy".to_string();
+        copy.name = "Test provider copy".to_string();
+
+        ProviderService::add(&state, AppType::Pi, copy, false).expect("save copied provider");
+        ProviderService::switch(&state, AppType::Pi, "cc-switch-test-copy")
+            .expect("enable copied provider");
+        let providers = ProviderService::list(&state, AppType::Pi).expect("sync providers");
+
+        assert_eq!(providers["cc-switch-test-copy"].name, "Test provider copy");
+        assert_eq!(
+            providers["cc-switch-test-copy"].settings_config["name"],
+            json!("Test provider copy")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn database_only_copy_rejects_a_key_owned_by_hidden_native_provider() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        let path = crate::pi_config::get_pi_models_path().expect("models path");
+        fs::create_dir_all(path.parent().expect("models directory"))
+            .expect("create models directory");
+        fs::write(
+            &path,
+            r#"{
+                "providers": {
+                    "cc-switch-test-copy": {
+                        "name": "Native OAuth",
+                        "oauth": "example",
+                        "baseUrl": "https://api.example.com/v1",
+                        "api": "openai-completions",
+                        "models": [{ "id": "model-a" }]
+                    }
+                }
+            }"#,
+        )
+        .expect("write native provider");
+
+        let mut copy = input("model-a");
+        copy.id = "cc-switch-test-copy".to_string();
+        let error = ProviderService::add(&state, AppType::Pi, copy, false)
+            .expect_err("hidden native provider key must stay reserved");
+
+        assert!(error.to_string().contains("already exists in models.json"));
+        assert!(state
+            .db
+            .get_provider_by_id("cc-switch-test-copy", PI_APP)
+            .expect("read saved provider")
+            .is_none());
+        assert!(crate::pi_config::pi_provider_exists("cc-switch-test-copy")
+            .expect("read native provider"));
+    }
+
+    #[test]
+    #[serial]
+    fn malformed_native_file_keeps_the_saved_catalog_visible() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        ProviderService::add(&state, AppType::Pi, input("model-a"), false).expect("save provider");
+        let path = crate::pi_config::get_pi_models_path().expect("models path");
+        fs::create_dir_all(path.parent().expect("models directory"))
+            .expect("create models directory");
+        fs::write(path, "{not-json").expect("write malformed models");
+
+        let providers = ProviderService::list(&state, AppType::Pi).expect("read saved catalog");
+        assert!(providers.contains_key("cc-switch-test"));
+    }
+
+    #[test]
+    #[serial]
+    fn numeric_json_representation_does_not_block_removal() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        let mut saved = input("model-a");
+        saved.settings_config["models"][0]["contextWindow"] = json!(1_000_000);
+        ProviderService::add(&state, AppType::Pi, saved, false).expect("save provider");
+
+        let path = crate::pi_config::get_pi_models_path().unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            path,
+            r#"{
+                "providers": {
+                    "cc-switch-test": {
+                        "name": "Test provider",
+                        "baseUrl": "https://api.example.com/v1",
+                        "apiKey": "secret",
+                        "api": "openai-completions",
+                        "models": [{ "id": "model-a", "contextWindow": 1000000.0 }]
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        ProviderService::remove_from_live_config(&state, AppType::Pi, "cc-switch-test")
+            .expect("remove provider with equivalent numeric representation");
+        assert!(!crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
         assert_eq!(
             state
                 .db
                 .get_provider_by_id("cc-switch-test", "pi")
                 .unwrap()
                 .unwrap()
-                .settings_config,
-            saved.settings_config
+                .settings_config["models"][0]["contextWindow"]
+                .as_f64(),
+            Some(1_000_000.0)
         );
     }
 
     #[test]
     #[serial]
-    fn unreadable_settings_block_membership_writes_but_not_database_copies() {
+    fn unreadable_selection_only_blocks_destructive_mutations() {
         let _agent = TestAgentDir::new();
         let state = state();
         let settings_path = crate::pi_config::get_pi_settings_path().unwrap();
         fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
         fs::write(&settings_path, "{not-json").unwrap();
 
-        assert!(ProviderService::add(&state, AppType::Pi, input("model-a"), true).is_err());
+        ProviderService::add(&state, AppType::Pi, input("model-a"), true)
+            .expect("selection is unrelated to adding a provider");
         assert!(state
             .db
             .get_provider_by_id("cc-switch-test", "pi")
             .unwrap()
-            .is_none());
-        assert!(!crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
+            .is_some());
+        assert!(crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
 
-        ProviderService::add(&state, AppType::Pi, input("model-a"), false)
-            .expect("save a database-only copy");
-        assert!(ProviderService::switch(&state, AppType::Pi, "cc-switch-test").is_err());
-        assert!(!crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
+        let original = input("model-a");
+        update(
+            &state,
+            Some("cc-switch-test"),
+            original.clone(),
+            Some(&original.settings_config),
+        )
+        .expect("an edit that keeps every model does not need the default selection");
+
+        assert!(
+            ProviderService::remove_from_live_config(&state, AppType::Pi, "cc-switch-test")
+                .is_err()
+        );
+        assert!(ProviderService::delete(&state, AppType::Pi, "cc-switch-test").is_err());
+        assert!(crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
     }
 }

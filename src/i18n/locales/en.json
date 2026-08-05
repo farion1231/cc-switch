@@ -242,6 +242,7 @@
     "claudeDesktopProxyRestartRequired": "Switched successfully. Keep CC Switch running and restart Claude Desktop to apply changes.",
     "addToConfigSuccess": "Added to config",
     "removeFromConfigSuccess": "Removed from config",
+    "removeFromConfigFailed": "Could not remove provider",
     "switchFailedTitle": "Switch failed",
     "switchFailed": "Switch failed: {{error}}",
     "autoImported": "Default provider created from existing configuration",
@@ -906,7 +907,10 @@
     "provider": {
       "enabled": "Enabled in Pi",
       "enableFailed": "Could not enable this provider in Pi",
-      "removed": "Removed from Pi"
+      "removed": "Removed from Pi",
+      "removeCurrent": "Pi is currently using this provider. Switch with Pi /model before removing it.",
+      "configChanged": "This configuration just changed in Pi. Pi's changes were preserved; retry with the latest configuration.",
+      "managedByPi": "This provider is managed by Pi and cannot be changed in CC Switch."
     },
     "form": {
       "providerKey": "Provider key",
@@ -951,17 +955,8 @@
       "configSecretsHidden": "Sensitive values are hidden in this view and remain unchanged when saved."
     },
     "current": {
-      "default": "Current default",
-      "removeProtectedHint": "This is Pi's current default provider. Switch with /model in Pi before removing or deleting it.",
-      "readFailed": "Could not read Pi's current configuration",
-      "stateUnavailableHint": "Provider changes are disabled until CC Switch can read Pi's current configuration.",
-      "configConflictHint": "Pi's provider with this name has changed. Resolve the external edit first.",
-      "ownership": {
-        "managed": "Managed by CC Switch",
-        "pi_native": "Pi native configuration",
-        "external": "External Pi config",
-        "unconfigured": "Not configured"
-      }
+      "readFailed": "Could not read Pi's provider configuration",
+      "stateUnavailableHint": "Provider changes are disabled until CC Switch can read Pi's provider configuration."
     },
     "prompts": {
       "globalTab": "Global prompts",

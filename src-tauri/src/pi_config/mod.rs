@@ -189,22 +189,46 @@ pub(crate) fn replace_pi_provider(
     write_models_document(&path, &document, &expected_revision)
 }
 
-pub(crate) fn remove_pi_provider(provider_key: &str, expected: &Value) -> Result<bool, AppError> {
+pub(crate) fn remove_pi_provider(provider_key: &str) -> Result<Option<Value>, AppError> {
+    remove_pi_provider_inner(provider_key, None)
+}
+
+pub(crate) fn remove_pi_provider_if_matches(
+    provider_key: &str,
+    expected: &Value,
+) -> Result<bool, AppError> {
+    remove_pi_provider_inner(provider_key, Some(expected)).map(|removed| removed.is_some())
+}
+
+fn remove_pi_provider_inner(
+    provider_key: &str,
+    expected: Option<&Value>,
+) -> Result<Option<Value>, AppError> {
     let _guard = lock_models_file()?;
     let path = get_pi_models_path()?;
     let (mut document, expected_revision) = read_models_document_with_revision(&path)?;
     let providers = providers_mut(&mut document, &path)?;
-    let Some(current) = providers.get(provider_key) else {
-        return Ok(false);
+    let Some(current) = providers.get(provider_key).cloned() else {
+        return Ok(None);
     };
-    if is_pi_owned_provider(provider_key, current) || current != expected {
+    if is_pi_owned_provider(provider_key, &current) {
         return Err(AppError::Conflict(format!(
-            "Pi provider '{provider_key}' is not the value managed by CC Switch"
+            "Pi provider '{provider_key}' is managed by Pi and cannot be removed by CC Switch"
+        )));
+    }
+    if let Err(error) = validate_managed_provider(provider_key, &current) {
+        return Err(AppError::Conflict(format!(
+            "Pi provider '{provider_key}' changed outside CC Switch and is no longer supported: {error}"
+        )));
+    }
+    if expected.is_some_and(|expected| current != *expected) {
+        return Err(AppError::Conflict(format!(
+            "Pi provider '{provider_key}' changed outside CC Switch"
         )));
     }
     providers.remove(provider_key);
     write_models_document(&path, &document, &expected_revision)?;
-    Ok(true)
+    Ok(Some(current))
 }
 
 pub(crate) fn restore_pi_provider_if_missing(

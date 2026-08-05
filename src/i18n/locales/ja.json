@@ -242,6 +242,7 @@
     "claudeDesktopProxyRestartRequired": "切り替えました。CC Switch を起動したまま Claude Desktop を再起動してください",
     "addToConfigSuccess": "設定に追加しました",
     "removeFromConfigSuccess": "設定から削除しました",
+    "removeFromConfigFailed": "プロバイダーを削除できません",
     "switchFailedTitle": "切り替えに失敗しました",
     "switchFailed": "切り替えに失敗しました: {{error}}",
     "autoImported": "既存設定からデフォルトプロバイダーを自動作成しました",
@@ -906,7 +907,10 @@
     "provider": {
       "enabled": "Pi で有効にしました",
       "enableFailed": "Pi でこのプロバイダーを有効にできませんでした",
-      "removed": "Pi から削除しました"
+      "removed": "Pi から削除しました",
+      "removeCurrent": "このプロバイダーは Pi で使用中です。Pi の /model で切り替えてから削除してください。",
+      "configChanged": "Pi 側で設定が変更されました。Pi の変更は保持されています。最新の設定でもう一度お試しください。",
+      "managedByPi": "このプロバイダーは Pi が管理しているため、CC Switch では操作できません。"
     },
     "form": {
       "providerKey": "プロバイダーキー",
@@ -951,17 +955,8 @@
       "configSecretsHidden": "この表示では機密値を隠しています。保存時には元の値が保持されます。"
     },
     "current": {
-      "default": "現在のデフォルト",
-      "removeProtectedHint": "これは Pi の現在のデフォルトプロバイダーです。削除する前に Pi の /model で切り替えてください。",
-      "readFailed": "Pi の現在の設定を読み込めません",
-      "stateUnavailableHint": "CC Switch が Pi の現在の設定を読み込むまで、プロバイダーの変更は無効です。",
-      "configConflictHint": "Pi の同名プロバイダー設定が変更されています。先に外部変更を解決してください。",
-      "ownership": {
-        "managed": "CC Switch 管理",
-        "pi_native": "Pi ネイティブ設定",
-        "external": "外部 Pi 設定",
-        "unconfigured": "未設定"
-      }
+      "readFailed": "Pi のプロバイダー設定を読み込めません",
+      "stateUnavailableHint": "CC Switch が Pi のプロバイダー設定を読み込むまで、プロバイダーの変更は無効です。"
     },
     "prompts": {
       "globalTab": "グローバルプロンプト",

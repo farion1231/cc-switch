@@ -29,6 +29,10 @@ pub use live::{
     update_toml_common_config_snippet,
 };
 
+pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    pi::import_from_live(state)
+}
+
 // Internal re-exports (pub(crate))
 pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
@@ -2529,6 +2533,9 @@ impl ProviderService {
         state: &AppState,
         app_type: AppType,
     ) -> Result<IndexMap<String, Provider>, AppError> {
+        if app_type == AppType::Pi {
+            return pi::list(state);
+        }
         state.db.get_all_providers(app_type.as_str())
     }
 
@@ -2610,7 +2617,7 @@ impl ProviderService {
         provider: Provider,
     ) -> Result<bool, AppError> {
         if app_type == AppType::Pi {
-            return pi::update(state, original_id, provider);
+            return pi::update(state, original_id, provider, None);
         }
 
         let mut provider = provider;
@@ -2831,6 +2838,23 @@ impl ProviderService {
         }
 
         Ok(true)
+    }
+
+    pub(crate) fn update_pi_with_expected(
+        state: &AppState,
+        original_id: Option<&str>,
+        provider: Provider,
+        expected_settings_config: Option<&Value>,
+    ) -> Result<bool, AppError> {
+        pi::update(state, original_id, provider, expected_settings_config)
+    }
+
+    pub(crate) fn update_pi_usage_script(
+        state: &AppState,
+        id: &str,
+        script: crate::provider::UsageScript,
+    ) -> Result<bool, AppError> {
+        pi::update_usage_script(state, id, script)
     }
 
     /// Delete a provider

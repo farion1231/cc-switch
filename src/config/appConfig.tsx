@@ -68,6 +68,22 @@ export function isProxyAppId(appId: string): appId is ProxyAppId {
   return (PROXY_APP_IDS as string[]).includes(appId);
 }
 
+export type AdditiveAppId = Extract<
+  AppId,
+  "opencode" | "openclaw" | "hermes" | "pi"
+>;
+
+export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
+  "opencode",
+  "openclaw",
+  "hermes",
+  "pi",
+];
+
+export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
+  return (ADDITIVE_APP_IDS as string[]).includes(appId);
+}
+
 /** Pi has no native MCP registry; do not manufacture a disabled mirror. */
 export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw" | "pi">;
 export const MCP_APP_IDS: McpAppId[] = [

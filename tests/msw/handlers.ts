@@ -316,7 +316,6 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
     success({
-      ownership: "unconfigured",
       enabledProviderIds: [],
     }),
   ),

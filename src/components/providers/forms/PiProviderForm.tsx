@@ -1,13 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  AlertTriangle,
-  ChevronRight,
-  Download,
-  Loader2,
-  Plus,
-  Trash2,
-} from "lucide-react";
+import { ChevronRight, Download, Loader2, Plus, Trash2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
@@ -45,11 +38,10 @@ import {
 import type { ModelsDevResponse } from "@/lib/modelsDevPricing";
 import { isSensitiveConfigKey } from "@/utils/deeplinkRisk";
 import { loadModelsDevCatalog } from "@/lib/query/modelsDev";
-import { usePiCurrentState } from "@/lib/query/pi";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type { ProviderCategory } from "@/types";
-import { extractErrorMessage } from "@/utils/errorUtils";
+import { translatePiProviderMutationError } from "@/utils/errorUtils";
 import {
   resolvePiModelMetadata,
   type PiModelMetadata,
@@ -459,12 +451,6 @@ export function PiProviderForm({
     },
     [initialConfigHasNativeName, initialDisplayName, initialNativeName, isEdit],
   );
-  const {
-    data: piCurrentState,
-    isSuccess: isPiCurrentStateSuccess,
-    isError: isPiCurrentStateError,
-    error: piCurrentStateError,
-  } = usePiCurrentState(true);
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [selectedPreset, setSelectedPreset] = useState<PiProviderPreset | null>(
     null,
@@ -504,29 +490,6 @@ export function PiProviderForm({
       : [];
     return configured.map((model) => modelDraft(model));
   }, [initialConfig.models]);
-  const initialModelIds = useMemo(
-    () => new Set(initialModels.map((model) => model.id)),
-    [initialModels],
-  );
-  const currentManagedModelId =
-    isPiCurrentStateSuccess &&
-    piCurrentState &&
-    providerId &&
-    piCurrentState.managedProviderId === providerId
-      ? piCurrentState.modelId
-      : undefined;
-  const isCurrentProviderExternallyManaged =
-    isPiCurrentStateSuccess &&
-    Boolean(providerId) &&
-    piCurrentState?.providerKey === providerId &&
-    piCurrentState.ownership !== "managed";
-  const isSavedProviderDrifted =
-    isPiCurrentStateSuccess &&
-    Boolean(
-      providerId && piCurrentState?.driftedProviderIds?.includes(providerId),
-    );
-  const isProviderWriteProtected =
-    isCurrentProviderExternallyManaged || isSavedProviderDrifted;
   const [models, setModels] = useState<PiModelDraft[]>(initialModels);
   const [expandedModelKeys, setExpandedModelKeys] = useState<Set<string>>(
     () => new Set(),
@@ -548,10 +511,7 @@ export function PiProviderForm({
     mode: "onSubmit",
   });
   const hasConfigurationSelection = isEdit || selectedPresetId !== null;
-  const isSubmitReady =
-    hasConfigurationSelection &&
-    isPiCurrentStateSuccess &&
-    !isProviderWriteProtected;
+  const isSubmitReady = hasConfigurationSelection;
 
   useEffect(() => {
     onSubmitReadyChange?.(isSubmitReady);
@@ -832,12 +792,6 @@ export function PiProviderForm({
       if (!isEdit && selectedPresetId === null) {
         throw new PiFormValidationError(t("pi.form.selectPresetRequired"));
       }
-      if (!isPiCurrentStateSuccess) {
-        throw new PiFormValidationError(t("pi.current.stateUnavailableHint"));
-      }
-      if (isProviderWriteProtected) {
-        throw new PiFormValidationError(t("pi.current.configConflictHint"));
-      }
       const trimmedName = identity.name.trim();
       const trimmedKey = providerKey.trim();
       if (!trimmedName) {
@@ -954,20 +908,6 @@ export function PiProviderForm({
             : {}),
         };
       });
-      if (
-        isEdit &&
-        currentManagedModelId &&
-        initialModelIds.has(currentManagedModelId) &&
-        !seen.has(currentManagedModelId)
-      ) {
-        throw new PiFormValidationError(
-          t("pi.form.currentModelMustRemain", {
-            model: currentManagedModelId,
-          }),
-          "#pi-models-section",
-        );
-      }
-
       if (baseUrl.trim()) {
         validatePiField(
           () =>
@@ -1003,10 +943,15 @@ export function PiProviderForm({
         presetId: selectedPresetId ?? undefined,
         presetCategory: category,
         meta: initialData?.meta,
+        ...(isEdit ? { expectedSettingsConfig: initialConfig } : {}),
       };
       await onSubmit(values);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const rawMessage = error instanceof Error ? error.message : String(error);
+      const message =
+        error instanceof PiFormValidationError
+          ? rawMessage
+          : translatePiProviderMutationError(rawMessage, t) || rawMessage;
       setFormError(message);
       if (error instanceof PiFormValidationError) {
         const modelDetailsMatch = error.fieldSelector?.match(
@@ -1024,8 +969,8 @@ export function PiProviderForm({
             document.querySelector<HTMLElement>(error.fieldSelector!)?.focus();
           });
         }
+        toast.error(message);
       }
-      toast.error(message);
     } finally {
       onSubmittingChange?.(false);
     }
@@ -1094,31 +1039,6 @@ export function PiProviderForm({
             onPresetChange={selectPreset}
             category={category}
           />
-        )}
-
-        {isPiCurrentStateError && (
-          <div
-            role="alert"
-            className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200"
-          >
-            <div className="flex items-center gap-2 font-medium">
-              <AlertTriangle className="h-4 w-4 shrink-0" />
-              {t("pi.current.readFailed")}
-            </div>
-            <p className="mt-1 text-xs leading-relaxed">
-              {t("pi.current.stateUnavailableHint")}{" "}
-              {extractErrorMessage(piCurrentStateError)}
-            </p>
-          </div>
-        )}
-
-        {isProviderWriteProtected && (
-          <div
-            role="alert"
-            className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200"
-          >
-            {t("pi.current.configConflictHint")}
-          </div>
         )}
 
         {formError && (
@@ -1279,10 +1199,6 @@ export function PiProviderForm({
                     const canRestoreAutofill =
                       Boolean(model.autoMetadata) &&
                       hasAnyModelOverrides(model);
-                    const isCurrentManagedModel =
-                      Boolean(currentManagedModelId) &&
-                      model.id === currentManagedModelId &&
-                      initialModelIds.has(model.id);
                     return (
                       <div key={model.key} className="space-y-2">
                         <div className="flex items-center gap-2">
@@ -1348,20 +1264,8 @@ export function PiProviderForm({
                             variant="ghost"
                             size="icon"
                             onClick={() => removeModel(model.key)}
-                            disabled={isCurrentManagedModel}
                             aria-label={t("pi.form.removeModel")}
-                            title={
-                              isCurrentManagedModel
-                                ? t("pi.form.currentModelMustRemain", {
-                                    model: currentManagedModelId,
-                                  })
-                                : undefined
-                            }
-                            className={`h-9 w-9 shrink-0 text-muted-foreground ${
-                              isCurrentManagedModel
-                                ? "cursor-not-allowed opacity-40"
-                                : "hover:text-destructive"
-                            }`}
+                            className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>

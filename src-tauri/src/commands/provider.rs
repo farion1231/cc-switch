@@ -1,4 +1,5 @@
 use indexmap::IndexMap;
+use serde_json::Value;
 use tauri::{Emitter, Manager, State};
 
 use crate::app_config::AppType;
@@ -53,10 +54,21 @@ pub fn update_provider(
     app: String,
     provider: Provider,
     #[allow(non_snake_case)] originalId: Option<String>,
+    #[allow(non_snake_case)] expectedSettingsConfig: Option<Value>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::update(state.inner(), app_type, originalId.as_deref(), provider)
+    if app_type == AppType::Pi {
+        ProviderService::update_pi_with_expected(
+            state.inner(),
+            originalId.as_deref(),
+            provider,
+            expectedSettingsConfig.as_ref(),
+        )
         .map_err(|e| e.to_string())
+    } else {
+        ProviderService::update(state.inner(), app_type, originalId.as_deref(), provider)
+            .map_err(|e| e.to_string())
+    }
 }
 
 #[tauri::command]
