@@ -894,6 +894,9 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes"
   },
+  "appSwitcher": {
+    "more": "その他のアプリ"
+  },
   "grokBuild": {
     "apiBackend": "API Backend",
     "contextWindow": "コンテキストウィンドウ",

@@ -673,6 +673,8 @@ impl SkillService {
         let dest = ssot_dir.join(&install_name);
 
         let mut repo_branch = skill.repo_branch.clone();
+        // 真实解析出的源目录推导的文档路径（仅本次真正下载解析时可得）
+        let mut resolved_doc_path: Option<String> = None;
 
         // 如果已存在则跳过下载
         if !dest.exists() {
@@ -732,6 +734,10 @@ impl SkillService {
                 )));
             }
 
+            // 用真实解析出的源目录推导文档路径——skills.sh 的 directory 只是
+            // skillId（末级目录名），嵌套目录场景直接拼接会丢路径、链接 404（#6111）
+            resolved_doc_path = Self::doc_path_for_source(&canonical_temp, &canonical_source);
+
             Self::copy_dir_recursive(&canonical_source, &dest)?;
 
             // 使用实际下载成功的分支，避免 readme_url / repo_branch 与真实分支不一致。
@@ -746,18 +752,11 @@ impl SkillService {
             }
         }
 
-        let doc_path = skill
-            .readme_url
-            .as_deref()
-            .and_then(Self::extract_doc_path_from_url)
-            .map(|path| {
-                if path.ends_with("/SKILL.md") || path == "SKILL.md" {
-                    path
-                } else {
-                    format!("{}/SKILL.md", path.trim_end_matches('/'))
-                }
-            })
-            .unwrap_or_else(|| format!("{}/SKILL.md", skill.directory.trim_end_matches('/')));
+        let doc_path = Self::choose_doc_path(
+            resolved_doc_path,
+            skill.readme_url.as_deref(),
+            &skill.directory,
+        );
 
         let readme_url =
             Self::build_skill_doc_url(&skill.repo_owner, &skill.repo_name, &repo_branch, &doc_path);
@@ -2445,6 +2444,42 @@ impl SkillService {
         }
 
         None
+    }
+
+    /// 由真实解析出的源目录推导 SKILL.md 在仓库内的相对文档路径（正斜杠）。
+    /// 两个参数都应是已 canonicalize 的路径（安装流程已做包含性校验）。
+    fn doc_path_for_source(repo_root: &Path, source: &Path) -> Option<String> {
+        let rel = source.strip_prefix(repo_root).ok()?;
+        let mut parts: Vec<String> = rel
+            .components()
+            .filter_map(|component| match component {
+                std::path::Component::Normal(part) => Some(part.to_string_lossy().to_string()),
+                _ => None,
+            })
+            .collect();
+        parts.push("SKILL.md".to_string());
+        Some(parts.join("/"))
+    }
+
+    /// 选择 readme_url 使用的仓库内文档路径：真实解析出的源目录优先，其次是
+    /// 旧 readme_url 中保存的路径，最后才按 directory 拼接。skills.sh 的
+    /// `directory` 只是 skillId（末级目录名），嵌套目录场景直接拼接会丢路径、
+    /// 文档链接 404（#6111），所以真实源目录必须排第一优先级。
+    fn choose_doc_path(
+        resolved_source_doc_path: Option<String>,
+        readme_url: Option<&str>,
+        directory: &str,
+    ) -> String {
+        if let Some(path) = resolved_source_doc_path {
+            return path;
+        }
+        if let Some(path) = readme_url.and_then(Self::extract_doc_path_from_url) {
+            if path.ends_with("/SKILL.md") || path == "SKILL.md" {
+                return path;
+            }
+            return format!("{}/SKILL.md", path.trim_end_matches('/'));
+        }
+        format!("{}/SKILL.md", directory.trim_end_matches('/'))
     }
 
     /// 去重技能列表（基于完整 key，不同仓库的同名 skill 分开显示）
@@ -4620,6 +4655,74 @@ mod tests {
         assert!(
             resolved.is_none(),
             "no SKILL.md anywhere must resolve to None"
+        );
+    }
+
+    #[test]
+    fn choose_doc_path_prefers_resolved_source_over_stale_readme_url() {
+        // #6111 现场还原：skills.sh 安装嵌套目录 skill——directory 是 skillId
+        // （末级目录名），readme_url 是仓库根 URL，真实嵌套路径只能来自
+        // 解析出的源目录。若退回"readme_url 提取优先、directory 拼接兜底"，
+        // 本断言即失败（旧逻辑产出 alibabacloud-cli-guidance/SKILL.md → 404）。
+        let doc_path = SkillService::choose_doc_path(
+            Some("skills/developertools/solutions/alibabacloud-cli-guidance/SKILL.md".to_string()),
+            Some("https://github.com/aliyun/alibabacloud-aiops-skills"),
+            "alibabacloud-cli-guidance",
+        );
+        assert_eq!(
+            doc_path,
+            "skills/developertools/solutions/alibabacloud-cli-guidance/SKILL.md"
+        );
+    }
+
+    #[test]
+    fn choose_doc_path_falls_back_to_readme_url_path_then_directory() {
+        // 无解析结果（SSOT 目录已存在、未重新下载）时沿用旧 readme_url 的仓库内
+        // 路径，兼容 blob/tree 两种格式并补 SKILL.md 后缀
+        let doc_path = SkillService::choose_doc_path(
+            None,
+            Some("https://github.com/o/r/tree/main/skills/foo"),
+            "foo",
+        );
+        assert_eq!(doc_path, "skills/foo/SKILL.md");
+
+        // 旧 readme_url 已是完整文档路径时原样保留
+        let doc_path = SkillService::choose_doc_path(
+            None,
+            Some("https://github.com/o/r/blob/main/skills/foo/SKILL.md"),
+            "foo",
+        );
+        assert_eq!(doc_path, "skills/foo/SKILL.md");
+
+        // 两者都没有时按 directory 拼接
+        let doc_path = SkillService::choose_doc_path(None, None, "skills/foo");
+        assert_eq!(doc_path, "skills/foo/SKILL.md");
+    }
+
+    #[test]
+    fn doc_path_for_source_returns_repo_relative_skill_md_path() {
+        let temp = tempdir().expect("tempdir");
+        let nested = temp
+            .path()
+            .join("skills")
+            .join("developertools")
+            .join("solutions")
+            .join("foo");
+        fs::create_dir_all(&nested).expect("create nested dirs");
+
+        assert_eq!(
+            SkillService::doc_path_for_source(temp.path(), &nested),
+            Some("skills/developertools/solutions/foo/SKILL.md".to_string())
+        );
+        // 源目录即仓库根：文档路径就是根下的 SKILL.md
+        assert_eq!(
+            SkillService::doc_path_for_source(temp.path(), temp.path()),
+            Some("SKILL.md".to_string())
+        );
+        // 仓库根之外：None（调用方已做包含性校验，防御性兜底）
+        assert_eq!(
+            SkillService::doc_path_for_source(temp.path(), std::path::Path::new("/elsewhere")),
+            None
         );
     }
 }

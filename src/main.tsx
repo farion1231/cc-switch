@@ -136,7 +136,6 @@ async function bootstrap() {
           <QueryClientProvider client={queryClient}>
             <ThemeProvider defaultTheme="system" storageKey="cc-switch-theme">
               <FloatingUsageWindow />
-              <Toaster />
             </ThemeProvider>
           </QueryClientProvider>
         </FrontendErrorBoundary>

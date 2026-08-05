@@ -5,9 +5,16 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { emit, listen } from "@tauri-apps/api/event";
 
 type Theme = "light" | "dark" | "system";
+
+/**
+ * 跨窗口主题同步事件名：某个窗口切换主题时广播，其他窗口（如用量悬浮窗）
+ * 监听后同步本地主题状态，使 `<html>` 上的 class 与主窗口保持一致。
+ */
+const THEME_CHANGED_EVENT = "theme-changed";
 
 interface ThemeProviderProps {
   children: React.ReactNode;
@@ -133,10 +140,43 @@ export function ThemeProvider({
       setTheme: (nextTheme: Theme) => {
         if (nextTheme === theme) return;
         setThemeState(nextTheme);
+        // 广播给其他窗口（如用量悬浮窗），使其主题实时跟随本窗口
+        if (isTauri()) {
+          emit(THEME_CHANGED_EVENT, nextTheme).catch(() => {
+            // 广播失败不影响本地主题切换
+          });
+        }
       },
     }),
     [theme],
   );
+
+  // 监听其他窗口广播的主题变更，实现跨窗口实时同步。
+  // 注意仅用 setThemeState（不触发 emit），配合上方 `nextTheme === theme`
+  // 的判等短路，可避免窗口间反复广播形成环。
+  useEffect(() => {
+    if (typeof window === "undefined" || !isTauri()) {
+      return;
+    }
+
+    let unlisten: (() => void) | undefined;
+    listen<Theme>(THEME_CHANGED_EVENT, (event) => {
+      const incoming = event.payload;
+      if (
+        incoming === "light" ||
+        incoming === "dark" ||
+        incoming === "system"
+      ) {
+        setThemeState((prev) => (prev === incoming ? prev : incoming));
+      }
+    }).then((off) => {
+      unlisten = off;
+    });
+
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   return (
     <ThemeProviderContext.Provider value={value}>

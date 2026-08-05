@@ -376,6 +376,7 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "floating_usage" {
                     api.prevent_close();
+                    crate::save_window_state_before_exit(window.app_handle());
                     let _ = window.hide();
                     let mut settings = crate::settings::get_settings();
                     settings.enable_floating_usage = false;
@@ -421,8 +422,8 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(
             tauri_plugin_window_state::Builder::default()
-                .with_denylist(&["floating_usage"])
                 .with_state_flags(window_state_flags())
+                .with_denylist(&["floating_usage"])
                 .build(),
         )
         .setup(|app| {
@@ -1325,10 +1326,6 @@ pub fn run() {
                 }
             }
 
-            if settings.enable_floating_usage {
-                crate::commands::set_floating_usage_window_visible(app.handle(), true);
-            }
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1367,7 +1364,7 @@ pub fn run() {
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
-            commands::resize_floating_usage_window,
+            commands::resizeFloatingUsageWindow,
             commands::has_codex_unify_history_backup,
             commands::restore_codex_unified_history,
             commands::get_rectifier_config,

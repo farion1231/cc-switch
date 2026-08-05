@@ -133,12 +133,14 @@ html {
   line-height: 1.5;
   color-scheme: light;
   overscroll-behavior: none;
+  overflow: hidden;
 }
 
 body {
   @apply m-0 p-0 text-sm;
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
+  overflow: hidden;
 }
 
 html.dark {
