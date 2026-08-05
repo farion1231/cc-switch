@@ -462,17 +462,28 @@ pub(crate) fn update_sync_state(
     last_modified: i64,
     last_offset: i64,
 ) -> Result<(), AppError> {
+    let conn = lock_conn!(db.conn);
+    update_sync_state_on_conn(&conn, file_path, last_modified, last_offset)
+}
+
+/// [`update_sync_state`] 的免锁版本，供调用方在已持锁的事务内把游标推进
+/// 与数据插入绑成原子提交。
+pub(crate) fn update_sync_state_on_conn(
+    conn: &rusqlite::Connection,
+    file_path: &str,
+    last_modified: i64,
+    last_offset: i64,
+) -> Result<(), AppError> {
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
 
-    let conn = lock_conn!(db.conn);
-    conn.execute(
+    conn.prepare_cached(
         "INSERT OR REPLACE INTO session_log_sync (file_path, last_modified, last_line_offset, last_synced_at)
          VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![file_path, last_modified, last_offset, now],
     )
+    .and_then(|mut stmt| stmt.execute(rusqlite::params![file_path, last_modified, last_offset, now]))
     .map_err(|e| AppError::Database(format!("更新同步状态失败: {e}")))?;
     Ok(())
 }
