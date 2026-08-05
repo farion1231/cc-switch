@@ -1012,7 +1012,7 @@
       "templateContent": "範本 Markdown",
       "templateContentPlaceholder": "輸入 Pi 將展開的 Markdown；可保留 YAML frontmatter。",
       "templateSyntax": "Pi 範本語法",
-      "templateSyntaxDescription": "Pi 會原樣讀取 Markdown，並支援 description、argument-hint、$1 與 $@ 等原生語法。CC Switch 不會改寫未知欄位。",
+      "templateSyntaxDescription": "Pi 會原樣讀取 Markdown，並支援 description、argument-hint、$1 與 $@ 等原生語法。",
       "createTemplate": "建立範本",
       "templateCreated": "Pi 提示範本已建立",
       "templateSaved": "/{{slug}} 已儲存",

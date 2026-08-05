@@ -19,6 +19,7 @@ import MarkdownEditor from "@/components/MarkdownEditor";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ListItemRow } from "@/components/common/ListItemRow";
+import { ManagementListSearch } from "@/components/common/ManagementListSearch";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,6 +29,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   promptsApi,
   type PiPromptFileKind,
@@ -668,8 +670,8 @@ export const PiPromptTemplates = forwardRef<PiPromptTemplatesHandle>(
     );
 
     return (
-      <section>
-        <div className="mb-4">
+      <section className="flex h-full min-h-0 flex-col">
+        <div className="mb-4 shrink-0">
           <h3 className="text-sm font-semibold">{t("pi.prompts.templates")}</h3>
           <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">
             {t("pi.prompts.templatesDescription")}
@@ -677,122 +679,121 @@ export const PiPromptTemplates = forwardRef<PiPromptTemplatesHandle>(
         </div>
 
         {!templates.isLoading && !templates.isError && (
-          <div className="relative mb-3 max-w-lg">
-            <Search
-              className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-              aria-hidden="true"
-            />
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              className="pl-9"
-              placeholder={t("pi.prompts.searchTemplates")}
-            />
-          </div>
+          <ManagementListSearch
+            value={search}
+            onValueChange={setSearch}
+            placeholder={t("pi.prompts.searchTemplates")}
+            ariaLabel={t("pi.prompts.searchTemplates")}
+            clearLabel={t("common.clear")}
+          />
         )}
 
-        {templates.isLoading ? (
-          <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            {t("common.loading")}
-          </div>
-        ) : templates.isError ? (
-          <div className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-destructive/30 px-6 text-center">
-            <AlertTriangle
-              className="h-8 w-8 text-destructive/70"
-              aria-hidden="true"
-            />
-            <p className="text-sm text-muted-foreground">
-              {t("pi.prompts.templateLoadFailed")}
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void templates.refetch()}
-            >
-              <RefreshCw className="h-4 w-4" aria-hidden="true" />
-              {t("common.refresh")}
-            </Button>
-          </div>
-        ) : (templates.data ?? []).length === 0 ? (
-          <div className="flex min-h-52 flex-col items-center justify-center rounded-xl border border-dashed px-6 text-center">
-            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-              <SquareTerminal
-                className="h-5 w-5 text-muted-foreground"
-                aria-hidden="true"
-              />
-            </div>
-            <h4 className="text-sm font-medium">
-              {t("pi.prompts.noTemplates")}
-            </h4>
-            <p className="mt-1 max-w-sm text-xs leading-relaxed text-muted-foreground">
-              {t("pi.prompts.noTemplatesDescription")}
-            </p>
-          </div>
-        ) : filteredTemplates.length === 0 ? (
-          <div className="flex min-h-40 flex-col items-center justify-center rounded-xl border border-dashed px-6 text-center">
-            <Search
-              className="mb-3 h-8 w-8 text-muted-foreground/50"
-              aria-hidden="true"
-            />
-            <p className="text-sm text-muted-foreground">
-              {t("pi.prompts.noTemplateResults")}
-            </p>
-          </div>
-        ) : (
-          <div className="overflow-hidden rounded-xl border border-border bg-card">
-            {filteredTemplates.map((template, index) => {
-              const summary = getPiPromptTemplateSummary(template.content);
-              return (
-                <ListItemRow
-                  key={template.slug}
-                  isLast={index === filteredTemplates.length - 1}
+        <ScrollArea className="-mr-3 min-h-0 flex-1" type="auto">
+          <div className="pb-16 pr-3">
+            {templates.isLoading ? (
+              <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                {t("common.loading")}
+              </div>
+            ) : templates.isError ? (
+              <div className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-destructive/30 px-6 text-center">
+                <AlertTriangle
+                  className="h-8 w-8 text-destructive/70"
+                  aria-hidden="true"
+                />
+                <p className="text-sm text-muted-foreground">
+                  {t("pi.prompts.templateLoadFailed")}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void templates.refetch()}
                 >
-                  <button
-                    type="button"
-                    className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    onClick={() => setEditor({ mode: "edit", template })}
-                  >
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted font-mono text-sm text-muted-foreground">
-                      /
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <code className="truncate text-sm font-medium text-foreground">
-                          /{template.slug}
-                        </code>
-                        {summary.argumentHint && (
-                          <code className="hidden truncate text-xs text-muted-foreground sm:block">
-                            {summary.argumentHint}
-                          </code>
-                        )}
-                      </div>
-                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                        {summary.description ??
-                          t("pi.prompts.templateNoDescription")}
-                      </p>
-                    </div>
-                    <ChevronRight
-                      className="h-4 w-4 shrink-0 text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                  </button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="shrink-0 hover:text-destructive"
-                    onClick={() => setPendingDelete(template)}
-                    title={t("common.delete")}
-                  >
-                    <Trash2 className="h-4 w-4" aria-hidden="true" />
-                  </Button>
-                </ListItemRow>
-              );
-            })}
+                  <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                  {t("common.refresh")}
+                </Button>
+              </div>
+            ) : (templates.data ?? []).length === 0 ? (
+              <div className="flex min-h-52 flex-col items-center justify-center rounded-xl border border-dashed px-6 text-center">
+                <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                  <SquareTerminal
+                    className="h-5 w-5 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                </div>
+                <h4 className="text-sm font-medium">
+                  {t("pi.prompts.noTemplates")}
+                </h4>
+                <p className="mt-1 max-w-sm text-xs leading-relaxed text-muted-foreground">
+                  {t("pi.prompts.noTemplatesDescription")}
+                </p>
+              </div>
+            ) : filteredTemplates.length === 0 ? (
+              <div className="flex min-h-40 flex-col items-center justify-center rounded-xl border border-dashed px-6 text-center">
+                <Search
+                  className="mb-3 h-8 w-8 text-muted-foreground/50"
+                  aria-hidden="true"
+                />
+                <p className="text-sm text-muted-foreground">
+                  {t("pi.prompts.noTemplateResults")}
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-xl border border-border bg-card">
+                {filteredTemplates.map((template, index) => {
+                  const summary = getPiPromptTemplateSummary(template.content);
+                  return (
+                    <ListItemRow
+                      key={template.slug}
+                      isLast={index === filteredTemplates.length - 1}
+                    >
+                      <button
+                        type="button"
+                        className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        onClick={() => setEditor({ mode: "edit", template })}
+                      >
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted font-mono text-sm text-muted-foreground">
+                          /
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <code className="truncate text-sm font-medium text-foreground">
+                              /{template.slug}
+                            </code>
+                            {summary.argumentHint && (
+                              <code className="hidden truncate text-xs text-muted-foreground sm:block">
+                                {summary.argumentHint}
+                              </code>
+                            )}
+                          </div>
+                          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                            {summary.description ??
+                              t("pi.prompts.templateNoDescription")}
+                          </p>
+                        </div>
+                        <ChevronRight
+                          className="h-4 w-4 shrink-0 text-muted-foreground"
+                          aria-hidden="true"
+                        />
+                      </button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="shrink-0 hover:text-destructive"
+                        onClick={() => setPendingDelete(template)}
+                        title={t("common.delete")}
+                      >
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
+                      </Button>
+                    </ListItemRow>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        )}
+        </ScrollArea>
 
         {editor && (
           <PiPromptTemplateEditor

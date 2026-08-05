@@ -1,15 +1,13 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Edit3, FileText, Loader2, Power, Trash2 } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { ListItemRow } from "@/components/common/ListItemRow";
 import { usePromptActions } from "@/hooks/usePromptActions";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import type { Prompt } from "@/lib/api";
 import PromptFormPanel from "./PromptFormPanel";
+import { PromptLibrary } from "./PromptLibrary";
 import {
   PiPromptTemplates,
   PiSystemPromptFiles,
@@ -50,6 +48,7 @@ const PiPromptPanel = React.forwardRef<PiPromptPanelHandle, PiPromptPanelProps>(
     const [activeTab, setActiveTab] = useState<PiPromptTab>("global");
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
+    const [searchQuery, setSearchQuery] = useState("");
     const [deletingPrompt, setDeletingPrompt] = useState<Prompt | null>(null);
     const templatesRef = useRef<PiPromptTemplatesHandle>(null);
 
@@ -129,7 +128,7 @@ const PiPromptPanel = React.forwardRef<PiPromptPanelHandle, PiPromptPanelProps>(
       [activeTab],
     );
 
-    const promptEntries = useMemo(() => Object.entries(prompts), [prompts]);
+    const promptEntries = Object.entries(prompts);
     const activePrompt = promptEntries.find(([, prompt]) => prompt.enabled);
     const hasExternalPrompt =
       currentFileContent !== null && activePrompt === undefined;
@@ -164,169 +163,54 @@ const PiPromptPanel = React.forwardRef<PiPromptPanelHandle, PiPromptPanelProps>(
             </TabsList>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto pb-16">
-            <TabsContent value="global" className="m-0">
-              <section>
-                <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="text-sm font-semibold">
-                        {t("pi.prompts.agentsLibrary")}
-                      </h3>
-                      <Badge
-                        variant={
-                          activePrompt || hasExternalPrompt
-                            ? "secondary"
-                            : "outline"
-                        }
-                        className="font-normal"
-                      >
-                        {activePrompt ? (
-                          <>
-                            <Check
-                              className="mr-1 h-3 w-3"
-                              aria-hidden="true"
-                            />
-                            {t("pi.prompts.writtenToAgents")}
-                          </>
-                        ) : hasExternalPrompt ? (
-                          t("pi.prompts.externalAgents")
-                        ) : (
-                          t("pi.prompts.noGlobalPrompt")
-                        )}
-                      </Badge>
-                    </div>
-                    <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">
-                      {t("pi.prompts.agentsLibraryDescription")}
-                    </p>
-                  </div>
-                  <span className="text-xs text-muted-foreground">
-                    {t("prompts.count", { count: promptEntries.length })}
-                  </span>
-                </div>
+          <TabsContent
+            value="global"
+            className="m-0 min-h-0 flex-1 data-[state=active]:flex data-[state=active]:flex-col"
+          >
+            <PromptLibrary
+              prompts={prompts}
+              loading={loading}
+              searchQuery={searchQuery}
+              statusText={
+                activePrompt
+                  ? t("prompts.enabledName", { name: activePrompt[1].name })
+                  : hasExternalPrompt
+                    ? t("pi.prompts.externalAgents")
+                    : t("prompts.noneEnabled")
+              }
+              disabled={interactionBlocked}
+              onSearchQueryChange={setSearchQuery}
+              onToggle={(id, enabled) => {
+                void toggleEnabled(id, enabled).catch(() => undefined);
+              }}
+              onEdit={openGlobalPromptForm}
+              onDelete={(id) => {
+                const prompt = prompts[id];
+                if (prompt) setDeletingPrompt(prompt);
+              }}
+              isDeleteDisabled={(_id, prompt) => prompt.enabled}
+              getDeleteTitle={(_id, prompt) =>
+                prompt.enabled
+                  ? t("pi.prompts.stopBeforeDelete")
+                  : t("common.delete")
+              }
+            />
+          </TabsContent>
 
-                {loading ? (
-                  <div className="flex min-h-52 items-center justify-center gap-2 text-sm text-muted-foreground">
-                    <Loader2
-                      className="h-4 w-4 animate-spin"
-                      aria-hidden="true"
-                    />
-                    {t("prompts.loading")}
-                  </div>
-                ) : promptEntries.length === 0 ? (
-                  <div className="flex min-h-52 flex-col items-center justify-center rounded-xl border border-dashed px-6 text-center">
-                    <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-                      <FileText
-                        className="h-5 w-5 text-muted-foreground"
-                        aria-hidden="true"
-                      />
-                    </div>
-                    <h4 className="text-sm font-medium">
-                      {t("pi.prompts.noGlobalPrompts")}
-                    </h4>
-                    <p className="mt-1 max-w-sm text-xs leading-relaxed text-muted-foreground">
-                      {t("pi.prompts.noGlobalPromptsDescription")}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="overflow-hidden rounded-xl border border-border bg-card">
-                    {promptEntries.map(([id, prompt], index) => {
-                      const busy = togglingId === id;
-                      return (
-                        <ListItemRow
-                          key={id}
-                          isLast={index === promptEntries.length - 1}
-                        >
-                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                            <FileText className="h-4 w-4" aria-hidden="true" />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="truncate text-sm font-medium">
-                                {prompt.name}
-                              </span>
-                              {prompt.enabled && (
-                                <Badge
-                                  variant="secondary"
-                                  className="shrink-0 font-normal"
-                                >
-                                  {t("pi.prompts.writtenToAgents")}
-                                </Badge>
-                              )}
-                            </div>
-                            <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                              {prompt.description ||
-                                t("pi.prompts.noPromptDescription")}
-                            </p>
-                          </div>
-                          <Button
-                            type="button"
-                            variant={prompt.enabled ? "outline" : "default"}
-                            size="sm"
-                            className="min-w-[72px] shrink-0"
-                            disabled={Boolean(togglingId)}
-                            onClick={() => {
-                              void toggleEnabled(id, !prompt.enabled).catch(
-                                () => undefined,
-                              );
-                            }}
-                          >
-                            {busy ? (
-                              <Loader2
-                                className="h-3.5 w-3.5 animate-spin"
-                                aria-hidden="true"
-                              />
-                            ) : (
-                              <Power
-                                className="h-3.5 w-3.5"
-                                aria-hidden="true"
-                              />
-                            )}
-                            {prompt.enabled
-                              ? t("pi.prompts.stopUsing")
-                              : t("pi.prompts.usePrompt")}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="shrink-0"
-                            onClick={() => openGlobalPromptForm(id)}
-                            title={t("common.edit")}
-                          >
-                            <Edit3 className="h-4 w-4" aria-hidden="true" />
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="shrink-0 hover:text-destructive"
-                            disabled={prompt.enabled}
-                            onClick={() => setDeletingPrompt(prompt)}
-                            title={
-                              prompt.enabled
-                                ? t("pi.prompts.stopBeforeDelete")
-                                : t("common.delete")
-                            }
-                          >
-                            <Trash2 className="h-4 w-4" aria-hidden="true" />
-                          </Button>
-                        </ListItemRow>
-                      );
-                    })}
-                  </div>
-                )}
-              </section>
-            </TabsContent>
+          <TabsContent
+            value="system"
+            className="m-0 min-h-0 flex-1 overflow-hidden"
+          >
+            <ScrollArea className="-mr-3 h-full" type="auto">
+              <div className="pb-16 pr-3">
+                <PiSystemPromptFiles />
+              </div>
+            </ScrollArea>
+          </TabsContent>
 
-            <TabsContent value="system" className="m-0">
-              <PiSystemPromptFiles />
-            </TabsContent>
-
-            <TabsContent value="templates" className="m-0">
-              <PiPromptTemplates ref={templatesRef} />
-            </TabsContent>
-          </div>
+          <TabsContent value="templates" className="m-0 min-h-0 min-w-0 flex-1">
+            <PiPromptTemplates ref={templatesRef} />
+          </TabsContent>
         </Tabs>
 
         {isFormOpen && (

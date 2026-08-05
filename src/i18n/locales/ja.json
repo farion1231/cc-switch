@@ -1011,7 +1011,7 @@
       "templateContent": "テンプレート Markdown",
       "templateContentPlaceholder": "Pi が展開する Markdown を入力します。YAML frontmatter は保持されます。",
       "templateSyntax": "Pi テンプレート構文",
-      "templateSyntaxDescription": "Pi は Markdown をそのまま読み込み、description、argument-hint、$1、$@ などのネイティブ構文をサポートします。CC Switch は未知のフィールドを書き換えません。",
+      "templateSyntaxDescription": "Pi は Markdown をそのまま読み込み、description、argument-hint、$1、$@ などのネイティブ構文をサポートします。",
       "createTemplate": "テンプレートを作成",
       "templateCreated": "Pi プロンプトテンプレートを作成しました",
       "templateSaved": "/{{slug}} を保存しました",

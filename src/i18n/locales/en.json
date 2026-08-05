@@ -1011,7 +1011,7 @@
       "templateContent": "Template Markdown",
       "templateContentPlaceholder": "Enter the Markdown Pi should expand. YAML frontmatter is preserved.",
       "templateSyntax": "Pi template syntax",
-      "templateSyntaxDescription": "Pi reads the Markdown as written and supports native description, argument-hint, $1, and $@ syntax. CC Switch preserves unknown fields.",
+      "templateSyntaxDescription": "Pi reads the Markdown as written and supports native description, argument-hint, $1, and $@ syntax.",
       "createTemplate": "Create template",
       "templateCreated": "Pi prompt template created",
       "templateSaved": "/{{slug}} saved",
