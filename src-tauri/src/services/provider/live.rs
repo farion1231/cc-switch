@@ -239,9 +239,7 @@ fn kimi_for_coding_default_context_tokens(
 /// Returns true when at least one configured Kimi model slot is set AND every
 /// set slot targets `kimi-k3`. Empty slots are ignored so the user can leave
 /// tier-specific defaults unset without us losing the K3 signal.
-fn provider_env_targets_kimi_k3(
-    provider_env: Option<&serde_json::Map<String, Value>>,
-) -> bool {
+fn provider_env_targets_kimi_k3(provider_env: Option<&serde_json::Map<String, Value>>) -> bool {
     let Some(env) = provider_env else {
         return false;
     };
