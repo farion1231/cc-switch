@@ -247,6 +247,7 @@ pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolCo
     }
 
     if let Some(input) = body.get("input") {
+        collect_additional_tools(input, &mut context);
         collect_tool_search_output_tools(input, &mut context);
     }
 
@@ -718,6 +719,10 @@ fn append_responses_item_as_chat_message(
             // 到达时回溯附挂，见 attach_pending_reasoning_to_previous_assistant。
             append_pending_reasoning(pending_reasoning, responses_reasoning_item_text(item));
         }
+        // Responses Lite carries dynamically available tools as a structural
+        // input item. Its `role=developer` describes ownership, not a Chat
+        // message, and the item intentionally has no `content` field.
+        Some("additional_tools") => {}
         Some("input_text" | "input_image" | "input_file" | "input_audio") => {
             flush_pending_tool_calls(
                 messages,
@@ -857,10 +862,13 @@ fn responses_message_item_to_chat_message(
 ) -> Value {
     let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
     let chat_role = responses_role_to_chat_role(role);
-    let content = item
+    let mut content = item
         .get("content")
         .map(|value| responses_content_to_chat_content(chat_role, value))
         .unwrap_or(Value::Null);
+    if chat_role != "assistant" && content.is_null() {
+        content = Value::String(String::new());
+    }
 
     let mut message = json!({
         "role": chat_role,
@@ -1142,6 +1150,29 @@ fn responses_content_to_chat_content(_role: &str, content: &Value) -> Value {
 
 fn responses_input_file_to_chat_file(part: &Value) -> Option<Value> {
     chat_file_from_input_file(part)
+}
+
+fn collect_additional_tools(value: &Value, context: &mut CodexToolContext) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_additional_tools(item, context);
+            }
+        }
+        Value::Object(obj) => {
+            if obj.get("type").and_then(Value::as_str) == Some("additional_tools") {
+                if let Some(tools) = obj.get("tools").and_then(Value::as_array) {
+                    for tool in tools {
+                        context.add_response_tool(tool);
+                    }
+                }
+            }
+            for child in obj.values() {
+                collect_additional_tools(child, context);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn collect_tool_search_output_tools(value: &Value, context: &mut CodexToolContext) {
