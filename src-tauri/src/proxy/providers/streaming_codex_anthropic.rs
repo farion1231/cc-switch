@@ -61,6 +61,7 @@ struct AnthropicToResponsesState {
     output_items: Vec<(u32, Value)>,
     anthropic_usage: Map<String, Value>,
     stop_reason: Option<String>,
+    stream_truncated: bool,
     tool_context: CodexToolContext,
 }
 
@@ -76,6 +77,7 @@ impl Default for AnthropicToResponsesState {
             output_items: Vec::new(),
             anthropic_usage: Map::new(),
             stop_reason: None,
+            stream_truncated: false,
             tool_context: CodexToolContext::default(),
         }
     }
@@ -374,7 +376,11 @@ impl AnthropicToResponsesState {
                 let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&name);
                 let item = response_tool_call_item_from_chat_name(
                     &item_id,
-                    "completed",
+                    if self.stream_truncated {
+                        "incomplete"
+                    } else {
+                        "completed"
+                    },
                     &call_id,
                     &name,
                     &arguments,
@@ -382,19 +388,21 @@ impl AnthropicToResponsesState {
                     &self.tool_context,
                 );
                 let mut events = Vec::new();
-                if is_custom_tool {
-                    let input = item.get("input").and_then(Value::as_str).unwrap_or("");
-                    events.push(sse::custom_tool_call_input_done(
-                        output_index,
-                        &item_id,
-                        input,
-                    ));
-                } else {
-                    events.push(sse::function_call_arguments_done(
-                        output_index,
-                        &item_id,
-                        &arguments,
-                    ));
+                if !self.stream_truncated {
+                    if is_custom_tool {
+                        let input = item.get("input").and_then(Value::as_str).unwrap_or("");
+                        events.push(sse::custom_tool_call_input_done(
+                            output_index,
+                            &item_id,
+                            input,
+                        ));
+                    } else {
+                        events.push(sse::function_call_arguments_done(
+                            output_index,
+                            &item_id,
+                            &arguments,
+                        ));
+                    }
                 }
                 events.push(sse::output_item_done(output_index, &item));
                 self.output_items.push((output_index, item));
@@ -581,6 +589,21 @@ pub(crate) fn responses_sse_events_from_anthropic_message(
     tool_context: CodexToolContext,
 ) -> Vec<Bytes> {
     let mut state = AnthropicToResponsesState::with_tool_context(tool_context);
+
+    // The whole conversion below assumes `body` is an Anthropic message object.
+    // A misbehaving gateway can return a top-level JSON array (or scalar) with
+    // HTTP 200 despite `stream:true`; index-assigning `message_start["content"]`
+    // on such a non-object would panic. Bail out gracefully instead.
+    if !body.is_object() {
+        return state
+            .failed_event(
+                "upstream returned a non-object Anthropic message body".to_string(),
+                Some("invalid_response".to_string()),
+            )
+            .into_iter()
+            .collect();
+    }
+
     if body.get("type").and_then(Value::as_str) == Some("error") || body.get("error").is_some() {
         let (message, error_type) = extract_anthropic_sse_error(body);
         return state
@@ -746,6 +769,7 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
                 // an I/O error) after emitting partial output. Report it as incomplete so
                 // Codex does not accept the truncated output as a normal completion.
                 state.stop_reason = Some("max_tokens".to_string());
+                state.stream_truncated = true;
                 for event in state.finalize() {
                     yield Ok(event);
                 }
@@ -808,6 +832,15 @@ mod tests {
         assert!(merged.contains("authentication_error"));
         assert!(merged.contains("bad key"));
         assert!(!merged.contains("stream_truncated"));
+    }
+
+    #[test]
+    fn test_json_non_object_body_returns_failed_event_not_panic() {
+        // A gateway that ignores `stream:true` and returns a top-level JSON array
+        // would have panicked on `message_start["content"] = …` before the guard.
+        let merged = render_message_events(&json!([1, 2, 3]));
+        assert!(merged.contains("event: response.failed"));
+        assert!(merged.contains("invalid_response"));
     }
 
     #[test]
@@ -906,6 +939,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_truncated_tool_call_is_not_marked_completed() {
+        let input = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_tool_truncated\",\"model\":\"claude\"}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"exec\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"cmd\\\":\"}}\n\n"
+        );
+
+        let merged = run(input).await;
+        assert!(merged.contains("\"status\":\"incomplete\""));
+        assert!(!merged.contains("event: response.function_call_arguments.done"));
+        assert!(merged.contains("\"reason\":\"max_output_tokens\""));
+    }
+
+    #[tokio::test]
     async fn test_truncated_stream_without_output_reports_failed() {
         // Upstream closes before producing any output or terminal signal: report failed.
         let input = concat!(
@@ -999,6 +1049,8 @@ mod tests {
             "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\"}}\n\n",
             "event: content_block_delta\n",
             "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"hmm\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig\"}}\n\n",
             "event: content_block_stop\n",
             "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
             "event: message_delta\n",

@@ -1,0 +1,222 @@
+# Mirror release assets to Cloudflare R2 so ccswitch.io/download can serve
+# them directly (dl.ccswitch.io), and mirror the Tauri updater manifest and
+# artifacts so in-app updates avoid GitHub too (the updater verifies minisign
+# signatures client-side, so the mirror is untrusted).
+#
+# Triggered on release promotion (`released` fires when a prerelease is
+# flipped to a full release, or a release is published as stable directly) —
+# NOT on tag push. This keeps the R2 root manifests behind the same gate as
+# GitHub's /releases/latest/: while a release sits as prerelease, neither the
+# download page nor the updater sees it. Additionally, a run only touches the
+# root manifests (and prunes old versions) when its tag IS releases/latest —
+# manual backfills of older tags restore versioned files only.
+#
+# Caveat (by design of tauri-plugin-updater): the updater stops at the first
+# endpoint whose response parses, so a stale-but-valid R2 manifest would mask
+# newer GitHub releases. That is why this sync hard-fails on the official
+# repo when the R2 secrets are missing, instead of silently skipping.
+#
+# Required secrets: R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
+name: Sync release to R2
+
+on:
+  release:
+    types: [released]
+  # Manual recovery/backfill: re-sync any existing release tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to sync (e.g. v3.18.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# latest.json / manifest.json are last-writer-wins — serialize runs and keep
+# every trigger queued instead of the default replace-the-pending behavior.
+concurrency:
+  group: sync-r2
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  sync-to-r2:
+    name: Sync release to R2
+    runs-on: ubuntu-22.04
+    env:
+      R2_BUCKET: cc-switch-releases
+      R2_PUBLIC_BASE_URL: https://dl.ccswitch.io
+      KEEP_VERSIONS: "5"
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      # aws-cli >= 2.23 defaults to CRC checksums that R2 rejects.
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+      R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Check R2 secrets
+        id: r2
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        run: |
+          if [ -z "$TAG" ]; then
+            echo "::error::No release tag to sync."
+            exit 1
+          fi
+          if [ -n "$R2_ACCOUNT_ID" ] && [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_REPOSITORY" = "farion1231/cc-switch" ]; then
+            # A silently stale mirror strands updater users on old versions
+            # (the R2 endpoint wins as long as its manifest parses), so the
+            # official repo must never skip this sync.
+            echo "::error::R2 secrets (R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY) are missing on the official repo; refusing to skip the mirror sync."
+            exit 1
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "R2 secrets not configured; skipping download mirror sync."
+          fi
+
+      # Only the tag that IS GitHub's releases/latest may touch the bucket-root
+      # manifests or prune old versions. This keeps manual backfills of old
+      # tags harmless (they only restore versioned files — otherwise the root
+      # manifests would point at a version the prune step deletes right after)
+      # and makes out-of-order runs self-correcting: whichever run executes,
+      # only the true latest publishes the manifests.
+      - name: Check whether tag is the latest stable release
+        id: latest
+        if: steps.r2.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # An API failure must fail the run — mapping it to "not latest"
+          # would skip the root manifests on a green run, silently leaving
+          # them stale (the exact failure mode this workflow exists to make
+          # loud). Retry transient errors, then give up loudly.
+          latest=""
+          for attempt in 1 2 3 4; do
+            latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name || true)
+            if [ -n "$latest" ]; then
+              break
+            fi
+            if [ "$attempt" -lt 4 ]; then
+              sleep $((attempt * 10))
+            fi
+          done
+          if [ -z "$latest" ]; then
+            echo "::error::Could not resolve the latest stable release from GitHub after 4 attempts; failing instead of guessing."
+            exit 1
+          fi
+          if [ "$TAG" = "$latest" ]; then
+            echo "is_latest=true" >> "$GITHUB_OUTPUT"
+            echo "$TAG is the latest stable release; full sync."
+          else
+            echo "is_latest=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::$TAG is not the latest stable release ($latest); syncing versioned files only — root manifests and pruning are skipped."
+          fi
+
+      - name: Checkout scripts
+        if: steps.r2.outputs.configured == 'true' && steps.latest.outputs.is_latest == 'true'
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: scripts
+
+      - name: Download release assets
+        if: steps.r2.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p r2-assets
+          gh release download "$TAG" --dir r2-assets --repo "$GITHUB_REPOSITORY"
+          ls -la r2-assets
+
+      - name: Generate download manifest
+        if: steps.r2.outputs.configured == 'true' && steps.latest.outputs.is_latest == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          pub_date=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json publishedAt --jq .publishedAt)
+          node scripts/generate-download-manifest.mjs r2-assets "$TAG" "$R2_PUBLIC_BASE_URL" manifest.json "$pub_date"
+
+      - name: Rewrite updater manifest for R2
+        if: steps.r2.outputs.configured == 'true' && steps.latest.outputs.is_latest == 'true'
+        run: |
+          set -euo pipefail
+          node scripts/rewrite-updater-manifest.mjs r2-assets/latest.json "$TAG" "$R2_PUBLIC_BASE_URL" latest-r2.json
+
+      - name: Upload versioned assets to R2
+        if: steps.r2.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          # Versioned asset paths never change — cache hard at the edge.
+          # .tar.gz is the macOS updater payload; .sig files are not needed
+          # (signatures are embedded in latest.json) and latest.json goes to
+          # the bucket root with a short TTL instead.
+          aws s3 cp r2-assets "s3://$R2_BUCKET/$TAG/" \
+            --recursive \
+            --exclude "*.sig" --exclude "latest.json" \
+            --cache-control "public, max-age=31536000, immutable" \
+            --endpoint-url "$R2_ENDPOINT"
+
+      - name: Publish root manifests to R2
+        if: steps.r2.outputs.configured == 'true' && steps.latest.outputs.is_latest == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Re-verify right before touching the root manifests: a newer
+          # release may have been promoted while assets were downloading.
+          # Skipping then is safe — the newer release's own queued run
+          # publishes the newer manifests. An unresolvable API is still a
+          # hard failure, never a guess.
+          latest=""
+          for attempt in 1 2 3 4; do
+            latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name || true)
+            if [ -n "$latest" ]; then
+              break
+            fi
+            if [ "$attempt" -lt 4 ]; then
+              sleep $((attempt * 10))
+            fi
+          done
+          if [ -z "$latest" ]; then
+            echo "::error::Could not re-verify the latest stable release before publishing root manifests; failing instead of guessing."
+            exit 1
+          fi
+          if [ "$TAG" != "$latest" ]; then
+            echo "::warning::$TAG stopped being the latest stable release mid-run ($latest is); leaving root manifests untouched."
+            exit 0
+          fi
+          # Both manifests are replaced on every release — keep edge cache
+          # short. Uploaded after the assets they reference so an aborted run
+          # never leaves them pointing at missing files.
+          aws s3 cp manifest.json "s3://$R2_BUCKET/manifest.json" \
+            --content-type "application/json" \
+            --cache-control "public, max-age=300" \
+            --endpoint-url "$R2_ENDPOINT"
+          aws s3 cp latest-r2.json "s3://$R2_BUCKET/latest.json" \
+            --content-type "application/json" \
+            --cache-control "public, max-age=300" \
+            --endpoint-url "$R2_ENDPOINT"
+
+      - name: Prune old versions
+        if: steps.r2.outputs.configured == 'true' && steps.latest.outputs.is_latest == 'true'
+        run: |
+          set -euo pipefail
+          versions=$(aws s3 ls "s3://$R2_BUCKET/" --endpoint-url "$R2_ENDPOINT" \
+            | awk '$1 == "PRE" {print $2}' | tr -d '/' | grep -E '^v[0-9]' | sort -V || true)
+          count=$(printf '%s\n' "$versions" | grep -c . || true)
+          if [ "$count" -le "$KEEP_VERSIONS" ]; then
+            echo "Nothing to prune ($count versions, keeping up to $KEEP_VERSIONS)."
+            exit 0
+          fi
+          printf '%s\n' "$versions" | head -n "-$KEEP_VERSIONS" | while read -r old; do
+            [ -n "$old" ] || continue
+            echo "Pruning s3://$R2_BUCKET/$old/"
+            aws s3 rm "s3://$R2_BUCKET/$old/" --recursive --endpoint-url "$R2_ENDPOINT"
+          done

@@ -72,6 +72,12 @@ pub async fn stream_check_all_providers(
 
     let mut results = Vec::new();
     for (id, provider) in providers {
+        // Official OAuth providers intentionally have no user-configured probe
+        // target. Never turn their runtime adapter defaults into unauthenticated
+        // network probes against first-party endpoints.
+        if provider.category.as_deref() == Some("official") {
+            continue;
+        }
         if let Some(ids) = &allowed_ids {
             if !ids.contains(&id) {
                 continue;

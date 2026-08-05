@@ -10,21 +10,40 @@ describe("Kimi For Coding Provider Preset", () => {
     expect(kimiForCoding).toBeDefined();
   });
 
-  it("should use template placeholder for Claude Code auto-compact window", () => {
+  // CLAUDE_CODE_MAX_CONTEXT_TOKENS is ignored for claude-* model ids, so the
+  // preset must route the endpoint's own alias for the context envs to bite
+  it("should route the kimi-for-coding model id on every tier", () => {
     const env = (kimiForCoding!.settingsConfig as any).env;
-    expect(env).toHaveProperty(
-      "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
-      "${CLAUDE_CODE_AUTO_COMPACT_WINDOW}",
-    );
+    expect(env).toMatchObject({
+      ANTHROPIC_MODEL: "kimi-for-coding",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-for-coding",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-for-coding",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-for-coding",
+    });
   });
 
-  it("should expose auto-compact window as editable template value with Kimi default", () => {
-    const values = (kimiForCoding!.templateValues as any)
-      ?.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
-    expect(values).toBeDefined();
-    expect(values.defaultValue).toBe("262144");
-    expect(values.editorValue).toBe("262144");
-    expect(values.label).toBe("Auto Compact Window");
+  // 预设直接钉值，不再暴露表单输入框；要调整的用户直接改 JSON 编辑框
+  it("should pin the 256K context envs without exposing form fields", () => {
+    const env = (kimiForCoding!.settingsConfig as any).env;
+    expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("262144");
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("262144");
+    expect(kimiForCoding!.templateValues).toBeUndefined();
+  });
+});
+
+describe("Codex Provider Preset", () => {
+  const codex = providerPresets.find((p) => p.name === "Codex");
+
+  it("should include the Codex preset", () => {
+    expect(codex).toBeDefined();
+  });
+
+  // 预设直接钉 Codex 目录的 372K 窗口（openai/codex#31860），不暴露表单输入框
+  it("should pin the Codex-catalog 372K window without exposing form fields", () => {
+    const env = (codex!.settingsConfig as any).env;
+    expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("372000");
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("372000");
+    expect(codex!.templateValues).toBeUndefined();
   });
 });
 
