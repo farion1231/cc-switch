@@ -291,23 +291,29 @@ pub(crate) fn split_all_think_blocks(text: &str) -> Option<(String, String)> {
     let mut reasoning_parts: Vec<String> = Vec::new();
     let mut answer = String::new();
     let mut rest = text.to_string();
+    let mut stripped_any = false;
 
     while let Some((open_at, _)) = find_think_open_tag(&rest) {
-        // 只有整段内容开头的那个块才吃掉后面的分隔空白。
-        let is_leading = answer.is_empty() && open_at == 0;
+        // 开标签前只有空白时仍属于整段开头；这些空白和闭合标签后的空白都是
+        // 推理/正文分隔噪音，不能进入可见正文。
+        let prefix = &rest[..open_at];
+        let is_leading = answer.is_empty() && prefix.trim().is_empty();
         let Some((reasoning, tail)) = split_leading_think_block(&rest[open_at..], is_leading)
         else {
             // 开标签没有闭合，剩下的整段留给正文，交由调用方兜底。
             break;
         };
-        answer.push_str(&rest[..open_at]);
+        stripped_any = true;
+        if !is_leading {
+            answer.push_str(prefix);
+        }
         if !reasoning.is_empty() {
             reasoning_parts.push(reasoning);
         }
         rest = tail;
     }
 
-    if reasoning_parts.is_empty() {
+    if !stripped_any {
         return None;
     }
 

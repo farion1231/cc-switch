@@ -4284,6 +4284,53 @@ mod tests {
     }
 
     #[test]
+    fn chat_response_to_responses_strips_empty_thinking_block() {
+        let input = json!({
+            "id": "chatcmpl_empty_thinking",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "gpt-5-codex",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "<thinking>  </thinking>Done"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+
+        let result = chat_completion_to_response(input).unwrap();
+
+        assert_eq!(result["output"].as_array().unwrap().len(), 1);
+        assert_eq!(result["output"][0]["type"], "message");
+        assert_eq!(result["output"][0]["content"][0]["text"], "Done");
+    }
+
+    #[test]
+    fn chat_response_to_responses_strips_whitespace_around_leading_thinking_block() {
+        let input = json!({
+            "id": "chatcmpl_whitespace_thinking",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "gpt-5-codex",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "\n  <thinking>Checking</thinking>\n\nDone"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+
+        let result = chat_completion_to_response(input).unwrap();
+
+        assert_eq!(result["output"][0]["type"], "reasoning");
+        assert_eq!(result["output"][0]["summary"][0]["text"], "Checking");
+        assert_eq!(result["output"][1]["type"], "message");
+        assert_eq!(result["output"][1]["content"][0]["text"], "Done");
+    }
+
+    #[test]
     fn chat_response_to_responses_splits_mismatched_think_tags() {
         let input = json!({
             "id": "chatcmpl_thinking",
