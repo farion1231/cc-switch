@@ -382,7 +382,7 @@ impl ChatToResponsesState {
 
     fn push_inline_reasoning_delta(&mut self, delta: &str) -> Vec<Bytes> {
         let events = self.push_reasoning_delta(delta);
-        self.append_reasoning_to_active_tools(delta);
+        self.append_reasoning_block_to_active_tools(delta);
         events
     }
 
@@ -593,6 +593,20 @@ impl ChatToResponsesState {
             } else {
                 state.reasoning_content.push_str(delta);
             }
+        }
+    }
+
+    fn append_reasoning_block_to_active_tools(&mut self, block: &str) {
+        let block = block.trim();
+        if block.is_empty() {
+            return;
+        }
+
+        for state in self.tools.values_mut().filter(|state| !state.done) {
+            if !state.reasoning_content.is_empty() {
+                state.reasoning_content.push_str("\n\n");
+            }
+            state.reasoning_content.push_str(block);
         }
     }
 
@@ -1520,6 +1534,32 @@ mod tests {
         assert!(output.contains("event: response.output_item.done"));
         assert!(output.contains("\"type\":\"function_call\""));
         assert!(output.contains("\"reasoning_content\":\"Need file.\""));
+        assert!(!output.contains("<thinking>"));
+    }
+
+    #[tokio::test]
+    async fn separates_multiple_inline_thinking_blocks_on_active_tool_calls() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_tool_multi_inline\",\"model\":\"gpt-5-codex\",\"choices\":[{\"delta\":{\"content\":\"<thinking>first</thinking>\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tool_multi_inline\",\"model\":\"gpt-5-codex\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"README.md\\\"}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tool_multi_inline\",\"model\":\"gpt-5-codex\",\"choices\":[{\"delta\":{\"content\":\"<thinking>second</thinking>\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_tool_multi_inline\",\"model\":\"gpt-5-codex\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let item = events
+            .iter()
+            .find(|event| {
+                event["type"] == "response.output_item.done"
+                    && event["item"]["type"] == "function_call"
+            })
+            .and_then(|event| event.get("item"))
+            .expect("completed function call item");
+
+        assert_eq!(item["type"], "function_call");
+        assert_eq!(item["reasoning_content"], "first\n\nsecond");
+        assert!(!output.contains("firstsecond"));
         assert!(!output.contains("<thinking>"));
     }
 
