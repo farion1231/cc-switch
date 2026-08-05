@@ -1122,6 +1122,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn inline_thinking_preserves_following_valid_tool_call() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_thinking_tool\",\"model\":\"gpt-5-codex\",\"choices\":[{\"delta\":{\"content\":\"<thinking>Need the file contents</thinking>\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_thinking_tool\",\"model\":\"gpt-5-codex\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_read\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"notes.txt\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("Need the file contents"));
+        assert!(output.contains("event: response.function_call_arguments.done"));
+        assert!(output.contains("\"call_id\":\"call_read\""));
+        assert!(output.contains("\"name\":\"read_file\""));
+        assert!(!output.contains("<thinking>"));
+        assert!(!output.contains("event: response.failed"));
+        assert!(output.contains("event: response.completed"));
+    }
+
+    #[tokio::test]
     async fn converts_alternating_thinking_segments_without_leaking_tags() {
         let output = collect(vec![
             "data: {\"id\":\"chatcmpl_codex\",\"created\":123,\"model\":\"gpt-5-codex\",\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"<thinking>first pass</thinking>partial answer<thin\"}}]}\n\n",

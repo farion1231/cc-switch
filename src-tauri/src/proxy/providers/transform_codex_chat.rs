@@ -4033,6 +4033,33 @@ mod tests {
         assert!(err.to_string().contains("without a function name"));
     }
 
+    #[test]
+    fn inline_thinking_does_not_mask_unnamed_tool_call_error() {
+        let chat = json!({
+            "id": "chatcmpl_thinking_drop",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "gpt-5-codex",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "<thinking>Need another tool</thinking>",
+                    "tool_calls": [{
+                        "id": "call_bad",
+                        "type": "function",
+                        "function": {"arguments": "{}"}
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let err = chat_completion_to_response_with_context(chat, &CodexToolContext::default())
+            .unwrap_err();
+        assert!(matches!(err, ProxyError::TransformError(_)));
+        assert!(err.to_string().contains("without a function name"));
+    }
+
     /// 只要还剩下一个合法工具调用，Codex 本来就会继续，行为保持不变。
     #[test]
     fn chat_response_keeps_valid_tool_call_beside_unnamed_one() {
