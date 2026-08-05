@@ -6,6 +6,7 @@ import { usePromptActions } from "@/hooks/usePromptActions";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { ManagementListSearch } from "@/components/common/ManagementListSearch";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import PiPromptPanel, { type PromptPrimaryAction } from "./PiPromptPanel";
 import PromptListItem from "./PromptListItem";
 import PromptFormPanel from "./PromptFormPanel";
 import { ConfirmDialog } from "../ConfirmDialog";
@@ -16,15 +17,27 @@ interface PromptPanelProps {
   appId: AppId;
   onInteractionBlockedChange?: (blocked: boolean) => void;
   onNavigationBlockedChange?: (blocked: boolean) => void;
+  onPrimaryActionChange?: (action: PromptPrimaryAction) => void;
 }
 
 export interface PromptPanelHandle {
   openAdd: () => void;
 }
 
-const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
+export type { PromptPrimaryAction } from "./PiPromptPanel";
+
+const StandardPromptPanel = React.forwardRef<
+  PromptPanelHandle,
+  PromptPanelProps
+>(
   (
-    { open, appId, onInteractionBlockedChange, onNavigationBlockedChange },
+    {
+      open,
+      appId,
+      onInteractionBlockedChange,
+      onNavigationBlockedChange,
+      onPrimaryActionChange,
+    },
     ref,
   ) => {
     const { t } = useTranslation();
@@ -69,6 +82,10 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
     useEffect(() => {
       onNavigationBlockedChange?.(navigationBlocked);
     }, [navigationBlocked, onNavigationBlockedChange]);
+
+    useEffect(() => {
+      onPrimaryActionChange?.("prompt");
+    }, [onPrimaryActionChange]);
 
     useEffect(
       () => () => {
@@ -129,11 +146,9 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
       }
     }, [appId, runExternalReload]);
 
-    // Listen for prompt import events from deep link
     useEffect(() => {
       const handlePromptImported = (event: Event) => {
         const customEvent = event as CustomEvent;
-        // Reload if the import is for this app
         if (customEvent.detail?.app === appId) {
           void runExternalReload();
         }
@@ -145,7 +160,6 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
       };
     }, [appId, runExternalReload]);
 
-    // 应用项目 Profile 会切换激活的 prompt（prompts 非 react-query，需主动 reload）
     useTauriEvent("profile-applied", runExternalReload);
 
     const handleAdd = () => {
@@ -190,7 +204,7 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
             }
             overlayOpenRef.current = false;
             setConfirmDialog(null);
-          } catch (e) {
+          } catch {
             // Error handled by hook
           } finally {
             endWrite();
@@ -206,7 +220,7 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
         if (refreshed === false) {
           externalReloadQueuedRef.current = true;
         }
-      } catch (error) {
+      } catch {
         // Error handled by hook
       } finally {
         endWrite();
@@ -224,7 +238,7 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
           externalReloadQueuedRef.current = true;
         }
         return true;
-      } catch (error) {
+      } catch {
         // Error handled by hook
         return false;
       } finally {
@@ -260,7 +274,7 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
       );
     }, [normalizedSearchQuery, promptEntries]);
 
-    const enabledPrompt = promptEntries.find(([_, p]) => p.enabled);
+    const enabledPrompt = promptEntries.find(([, prompt]) => prompt.enabled);
 
     return (
       <div className="flex flex-col flex-1 min-h-0 px-6">
@@ -352,6 +366,26 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
         )}
       </div>
     );
+  },
+);
+
+StandardPromptPanel.displayName = "StandardPromptPanel";
+
+const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
+  (props, ref) => {
+    if (props.appId === "pi") {
+      return (
+        <PiPromptPanel
+          ref={ref}
+          open={props.open}
+          onInteractionBlockedChange={props.onInteractionBlockedChange}
+          onNavigationBlockedChange={props.onNavigationBlockedChange}
+          onPrimaryActionChange={props.onPrimaryActionChange}
+        />
+      );
+    }
+
+    return <StandardPromptPanel ref={ref} {...props} />;
   },
 );
 

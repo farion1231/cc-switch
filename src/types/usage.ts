@@ -16,6 +16,8 @@ export interface RequestLog {
   requestModel?: string;
   /** 写入时实际用于计价的模型名；路由接管 + request 计价模式下可能与 model 不同 */
   pricingModel?: string;
+  /** 0=legacy, 1=input includes cache buckets, 2=input is already fresh. */
+  inputTokenSemantics: 0 | 1 | 2;
   costMultiplier: string;
   inputTokens: number;
   outputTokens: number;
@@ -188,7 +190,13 @@ export interface UsageRangeSelection {
  * `opencode` / `openclaw` / `hermes` have no proxy handler at all — they
  * appear only as managed apps elsewhere.
  */
-export type AppType = "claude" | "codex" | "gemini" | "grokbuild" | "opencode";
+export type AppType =
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "grokbuild"
+  | "opencode"
+  | "pi";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -198,6 +206,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "gemini",
   "grokbuild",
   "opencode",
+  "pi",
 ];
 
 /**
@@ -218,11 +227,40 @@ export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
   "grokbuild",
 ]);
 
+/**
+ * Apps whose wire protocol is selected per request rather than fixed by the
+ * app. A summary row cannot prove that every request reported cache creation,
+ * especially after detail rows have been rolled up, so the UI must present
+ * cache-write totals as partial rather than as an authoritative zero.
+ */
+export const CACHE_PROTOCOL_MIXED_APP_TYPES: ReadonlySet<string> = new Set([
+  "pi",
+]);
+
+export type CacheWriteAvailability = "ok" | "partial" | "na";
+
+export function getCacheWriteAvailability(
+  appTypes: readonly string[],
+): CacheWriteAvailability {
+  if (appTypes.length === 0) return "ok";
+  if (appTypes.some((appType) => CACHE_PROTOCOL_MIXED_APP_TYPES.has(appType))) {
+    return "partial";
+  }
+
+  const unavailable = appTypes.filter((appType) =>
+    CACHE_INCLUSIVE_APP_TYPES.has(appType),
+  ).length;
+  if (unavailable === appTypes.length) return "na";
+  return unavailable === 0 ? "ok" : "partial";
+}
+
 /** Subset of request-log fields needed to derive cache-normalized input. */
 export interface CacheNormalizableLog {
   appType: string;
   inputTokens: number;
   cacheReadTokens: number;
+  cacheCreationTokens: number;
+  inputTokenSemantics: 0 | 1 | 2;
 }
 
 /**
@@ -231,6 +269,13 @@ export interface CacheNormalizableLog {
  * cache, so they pass through unchanged.
  */
 export function getFreshInputTokens(log: CacheNormalizableLog): number {
+  if (log.inputTokenSemantics === 2) return log.inputTokens;
+  if (log.inputTokenSemantics === 1) {
+    return Math.max(
+      0,
+      log.inputTokens - log.cacheReadTokens - log.cacheCreationTokens,
+    );
+  }
   if (
     CACHE_INCLUSIVE_APP_TYPES.has(log.appType) &&
     log.inputTokens >= log.cacheReadTokens

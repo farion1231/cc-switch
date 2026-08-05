@@ -11,6 +11,7 @@ import { openclawKeys } from "@/hooks/useOpenClaw";
 import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
+import { invalidatePiProviderCaches } from "@/lib/query/pi";
 import {
   CODEX_OFFICIAL_PROVIDER_ID,
   GROKBUILD_OFFICIAL_PROVIDER_ID,
@@ -71,7 +72,12 @@ export const useAddProviderMutation = (appId: AppId) => {
 
       let id: string;
 
-      if (appId === "opencode" || appId === "openclaw" || appId === "hermes") {
+      if (
+        appId === "opencode" ||
+        appId === "openclaw" ||
+        appId === "hermes" ||
+        appId === "pi"
+      ) {
         if (
           providerInput.category === "omo" ||
           providerInput.category === "omo-slim"
@@ -125,7 +131,6 @@ export const useAddProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
-
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -152,6 +157,11 @@ export const useAddProviderMutation = (appId: AppId) => {
           error: detail,
         }),
       );
+    },
+    onSettled: async () => {
+      if (appId === "pi") {
+        await invalidatePiProviderCaches(queryClient);
+      }
     },
   });
 };
@@ -207,6 +217,11 @@ export const useUpdateProviderMutation = (appId: AppId) => {
         }),
       );
     },
+    onSettled: async () => {
+      if (appId === "pi") {
+        await invalidatePiProviderCaches(queryClient);
+      }
+    },
   });
 };
 
@@ -245,7 +260,6 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
-
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -272,6 +286,11 @@ export const useDeleteProviderMutation = (appId: AppId) => {
           error: detail,
         }),
       );
+    },
+    onSettled: async () => {
+      if (appId === "pi") {
+        await invalidatePiProviderCaches(queryClient);
+      }
     },
   });
 };
@@ -322,7 +341,6 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
-
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -351,6 +369,11 @@ export const useSwitchProviderMutation = (appId: AppId) => {
           },
         },
       );
+    },
+    onSettled: async () => {
+      if (appId === "pi") {
+        await invalidatePiProviderCaches(queryClient);
+      }
     },
   });
 };

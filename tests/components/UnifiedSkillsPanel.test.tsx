@@ -123,6 +123,7 @@ const makeInstalledSkill = (
     opencode: false,
     openclaw: false,
     hermes: false,
+    pi: false,
   };
   const { apps, ...skillOverrides } = overrides;
 
@@ -445,9 +446,9 @@ describe("UnifiedSkillsPanel", () => {
       const row = screen.getByText("Alpha Skill").closest(".group");
       const appToggleButtons = Array.from(
         row!.querySelectorAll<HTMLButtonElement>("button"),
-      ).slice(0, 6);
+      ).slice(0, 7);
 
-      expect(appToggleButtons).toHaveLength(6);
+      expect(appToggleButtons).toHaveLength(7);
       appToggleButtons.forEach((button) => expect(button).toBeDisabled());
       expect(screen.getByTitle("skills.uninstall")).toBeDisabled();
       await userEvent.setup().click(appToggleButtons[0]);
@@ -751,5 +752,67 @@ describe("UnifiedSkillsPanel", () => {
       expect.any(Error),
     );
     consoleErrorSpy.mockRestore();
+  });
+
+  it("renders and toggles the Pi app state like the other apps", async () => {
+    installedSkillsMock = [
+      makeInstalledSkill({
+        id: "skill-1",
+        name: "Pi Skill",
+        directory: "pi-skill",
+        apps: { pi: true },
+      }),
+    ];
+
+    render(<UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="pi" />);
+
+    const piToggle = screen.getByRole("button", { name: "Pi" });
+    expect(piToggle).toHaveAttribute("aria-pressed", "true");
+
+    await userEvent.setup().click(piToggle);
+
+    await waitFor(() => {
+      expect(toggleSkillAppMock).toHaveBeenCalledWith({
+        id: "skill-1",
+        app: "pi",
+        enabled: false,
+      });
+    });
+  });
+
+  it("renders an inactive Pi state like the other apps", () => {
+    installedSkillsMock = [
+      makeInstalledSkill({
+        id: "skill-1",
+        name: "Claude Skill",
+        directory: "claude-skill",
+        apps: { claude: true, pi: false },
+      }),
+    ];
+
+    render(<UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="pi" />);
+
+    expect(screen.getByRole("button", { name: "Pi" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("does not add an inactive Pi toggle outside the Pi context", () => {
+    installedSkillsMock = [
+      makeInstalledSkill({
+        name: "Claude Skill",
+        apps: { claude: true, pi: false },
+      }),
+    ];
+
+    render(
+      <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="claude" />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Pi" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Claude" })).toBeInTheDocument();
   });
 });

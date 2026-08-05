@@ -1,6 +1,8 @@
 import type { ModelPricing, ModelsDevSyncConfig } from "@/types/usage";
 
 export const MODELS_DEV_API_URL = "https://models.dev/api.json";
+export const MODELS_DEV_QUERY_KEY = ["models-dev-pricing"] as const;
+export const MODELS_DEV_STALE_TIME_MS = 60 * 60 * 1000;
 const MODELS_DEV_FETCH_TIMEOUT_MS = 15_000;
 
 export interface ModelsDevCost {
@@ -15,12 +17,21 @@ export interface ModelsDevModalities {
   output?: string[];
 }
 
+export interface ModelsDevLimit {
+  context?: number;
+  input?: number;
+  output?: number;
+}
+
 export interface ModelsDevModel {
   id?: string;
   name?: string;
   release_date?: string;
+  reasoning?: boolean;
+  attachment?: boolean;
   cost?: ModelsDevCost;
   modalities?: ModelsDevModalities;
+  limit?: ModelsDevLimit;
   status?: string;
 }
 

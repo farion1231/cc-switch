@@ -25,6 +25,7 @@ mod model_capabilities;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
+mod pi_config;
 mod prompt;
 mod prompt_files;
 mod provider;
@@ -130,10 +131,25 @@ const MIN_KNOWN_SECRET_LEN: usize = 8;
 
 /// 唯一的密钥脱敏原语：把字符串里出现的、我们确切握有的密钥值替换为 [REDACTED]。
 /// 不做任何“看起来像密钥”的形状猜测——只隐藏已知值，天然收敛、不误伤正常路径。
-fn redact_known_secrets(text: &str, known_secrets: &[String]) -> String {
+pub(crate) fn redact_known_secrets(text: &str, known_secrets: &[String]) -> String {
+    redact_known_secrets_with_min_length(text, known_secrets, MIN_KNOWN_SECRET_LEN)
+}
+
+/// Exact-value redaction for user-visible error text. Unlike URL logging, a
+/// short known credential must still be hidden because the result reaches the
+/// UI rather than a diagnostic-only path.
+pub(crate) fn redact_known_secrets_strict(text: &str, known_secrets: &[String]) -> String {
+    redact_known_secrets_with_min_length(text, known_secrets, 1)
+}
+
+fn redact_known_secrets_with_min_length(
+    text: &str,
+    known_secrets: &[String],
+    minimum_chars: usize,
+) -> String {
     let mut output = text.to_string();
     for secret in known_secrets {
-        if secret.chars().count() >= MIN_KNOWN_SECRET_LEN {
+        if secret.chars().count() >= minimum_chars {
             output = output.replace(secret.as_str(), "[REDACTED]");
         }
     }
@@ -946,6 +962,7 @@ pub fn run() {
                     crate::app_config::AppType::OpenCode,
                     crate::app_config::AppType::OpenClaw,
                     crate::app_config::AppType::Hermes,
+                    crate::app_config::AppType::Pi,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
@@ -1408,6 +1425,15 @@ pub fn run() {
             commands::enable_prompt,
             commands::import_prompt_from_file,
             commands::get_current_prompt_file_content,
+            commands::get_pi_prompt_file,
+            commands::replace_pi_prompt_file,
+            commands::delete_pi_prompt_file,
+            commands::list_pi_prompt_templates,
+            commands::upsert_pi_prompt_template,
+            commands::delete_pi_prompt_template,
+            // Pi native provider and session views
+            commands::get_pi_current_state,
+            commands::get_pi_session_discovery,
             // Profile management (项目配置方案)
             commands::list_profiles,
             commands::create_profile,

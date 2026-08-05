@@ -395,7 +395,13 @@ impl RequestForwarder {
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
         // 获取适配器
-        let adapter = get_adapter(app_type);
+        let adapter = get_adapter(app_type).ok_or_else(|| ForwardError {
+            error: ProxyError::ConfigError(format!(
+                "{} does not support proxy routing",
+                app_type.as_str()
+            )),
+            provider: None,
+        })?;
         let app_type_str = app_type.as_str();
 
         if providers.is_empty() {
@@ -547,7 +553,7 @@ impl RequestForwarder {
                     let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
                     let is_anthropic_provider = matches!(
                         provider_type,
-                        ProviderType::Claude | ProviderType::ClaudeAuth
+                        Some(ProviderType::Claude | ProviderType::ClaudeAuth)
                     );
                     let mut signature_rectifier_non_retryable_client_error = false;
 

@@ -32,6 +32,13 @@ export function EditProviderDialog({
 }: EditProviderDialogProps) {
   const { t } = useTranslation();
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
+  const [isFormReady, setIsFormReady] = useState(appId !== "pi");
+
+  useEffect(() => {
+    if (open) {
+      setIsFormReady(appId !== "pi");
+    }
+  }, [appId, open, provider?.id]);
 
   // 默认使用传入的 provider.settingsConfig，若当前编辑对象是"当前生效供应商"，则尝试读取实时配置替换初始值
   const [liveSettings, setLiveSettings] = useState<Record<
@@ -66,10 +73,10 @@ export function EditProviderDialog({
         return;
       }
 
-      // OpenCode uses additive mode - each provider's config is stored independently in DB
-      // Reading live config would return the full opencode.json (with $schema, provider, mcp etc.)
-      // instead of just the provider fragment, causing incorrect nested structure on save
-      if (appId === "opencode") {
+      // OpenCode uses additive mode, while Pi's shared models.json is owned by
+      // the catalog coordinator. Neither has a per-provider generic live
+      // snapshot that may replace the DB aggregate in this form.
+      if (appId === "opencode" || appId === "pi") {
         if (!cancelled) {
           setLiveSettings(null);
           setHasLoadedLive(true);
@@ -189,7 +196,7 @@ export function EditProviderDialog({
         unknown
       >;
       const nextProviderId =
-        (appId === "opencode" || appId === "openclaw") &&
+        (appId === "opencode" || appId === "openclaw" || appId === "pi") &&
         values.providerKey?.trim()
           ? values.providerKey.trim()
           : provider.id;
@@ -230,7 +237,7 @@ export function EditProviderDialog({
         <Button
           type="submit"
           form="provider-form"
-          disabled={isFormSubmitting}
+          disabled={isFormSubmitting || !isFormReady}
           className="bg-primary text-primary-foreground hover:bg-primary/90"
         >
           <Save className="h-4 w-4 mr-2" />
@@ -245,6 +252,7 @@ export function EditProviderDialog({
         onSubmit={handleSubmit}
         onCancel={() => onOpenChange(false)}
         onSubmittingChange={setIsFormSubmitting}
+        onSubmitReadyChange={setIsFormReady}
         initialData={initialData}
         showButtons={false}
         isProxyTakeover={isProxyTakeover}
