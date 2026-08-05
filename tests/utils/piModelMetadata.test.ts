@@ -7,17 +7,17 @@ import { resolvePiModelMetadata } from "@/utils/piModelMetadata";
 describe("resolvePiModelMetadata", () => {
   it("uses the selected Pi preset before public catalog metadata", () => {
     const preset = piProviderPresets.find(
-      (candidate) => candidate.name === "Kimi",
+      (candidate) => candidate.name === "ZetaAPI",
     );
     expect(preset).toBeDefined();
 
     expect(
-      resolvePiModelMetadata("kimi-k2.7-code", {
+      resolvePiModelMetadata("gpt-5.6-sol", {
         selectedPreset: preset,
         modelsDevCatalog: {
           test: {
             models: {
-              "kimi-k2.7-code": {
+              "gpt-5.6-sol": {
                 name: "Different catalog name",
                 reasoning: false,
                 modalities: { input: ["text"] },
@@ -28,7 +28,7 @@ describe("resolvePiModelMetadata", () => {
         },
       }),
     ).toEqual({
-      name: "Kimi K2.7 Code",
+      name: "GPT-5.6 Sol",
       reasoning: true,
       imageInput: true,
       contextWindow: 200000,

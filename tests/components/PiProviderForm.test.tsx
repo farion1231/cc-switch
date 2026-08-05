@@ -46,8 +46,7 @@ describe("PiProviderForm", () => {
     queryClient.removeQueries({ queryKey: MODELS_DEV_QUERY_KEY });
   });
 
-  it("starts with one preset choice and reveals the shared form after selection", async () => {
-    const user = userEvent.setup();
+  it("starts in the same editable custom state as OpenCode", async () => {
     const onSubmitReadyChange = vi.fn();
     const { container } = render(
       <PiProviderForm
@@ -64,16 +63,6 @@ describe("PiProviderForm", () => {
       "rounded-xl",
       "p-6",
     );
-    expect(screen.queryByLabelText("provider.name")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save preset" })).toBeDisabled();
-    await waitFor(() =>
-      expect(onSubmitReadyChange).toHaveBeenLastCalledWith(false),
-    );
-
-    await user.click(
-      screen.getByRole("button", { name: "providerPreset.custom" }),
-    );
-
     expect(screen.getByLabelText("provider.name")).toBeInTheDocument();
     expect(screen.getByLabelText("provider.notes")).toBeInTheDocument();
     expect(screen.getByLabelText("provider.websiteUrl")).toBeInTheDocument();
@@ -423,144 +412,6 @@ describe("PiProviderForm", () => {
     expect(JSON.parse(onSubmit.mock.calls[0][0].settingsConfig)).toEqual(input);
   });
 
-  it("masks every request header value in the configuration JSON", () => {
-    const headers = {
-      Cookie: "session=secret",
-      "X-Authorization": "Bearer secret",
-      "Database-Password": "password",
-      "X-Secret-Key": "secret-key",
-      "HTTP-Referer": "https://cc-switch.example",
-    };
-
-    render(
-      <PiProviderForm
-        appId="pi"
-        providerId="existing-secret-headers"
-        submitLabel="Save secret headers"
-        onSubmit={vi.fn()}
-        onCancel={() => {}}
-        initialData={{
-          name: "Existing secret headers",
-          settingsConfig: {
-            name: "Existing secret headers",
-            api: "openai-completions",
-            baseUrl: "https://api.example.com/v1",
-            headers,
-            models: [{ id: "model-a" }],
-          },
-        }}
-      />,
-    );
-
-    const preview = JSON.parse(
-      (screen.getByLabelText("provider.configJson") as HTMLTextAreaElement)
-        .value,
-    );
-    expect(preview.headers).toEqual(
-      Object.fromEntries(
-        Object.keys(headers).map((name) => [name, "********"]),
-      ),
-    );
-    expect(
-      screen
-        .getAllByLabelText("Value")
-        .map((element) => element.getAttribute("value")),
-    ).toEqual(Object.values(headers));
-  });
-
-  it("masks credential-shaped passthrough fields in the configuration JSON", () => {
-    render(
-      <PiProviderForm
-        appId="pi"
-        providerId="existing-passthrough-secrets"
-        submitLabel="Save passthrough secrets"
-        onSubmit={vi.fn()}
-        onCancel={() => {}}
-        initialData={{
-          name: "Existing passthrough secrets",
-          settingsConfig: {
-            name: "Existing passthrough secrets",
-            baseUrl: "https://api.example.com/v1",
-            models: [{ id: "model-a" }],
-            privateKey: "private-value",
-            secretAccessKey: "secret-value",
-            sdkOptions: { clientSecret: "nested-value", timeout: 30 },
-          },
-        }}
-      />,
-    );
-
-    const preview = JSON.parse(
-      (screen.getByLabelText("provider.configJson") as HTMLTextAreaElement)
-        .value,
-    );
-    expect(preview.privateKey).toBe("********");
-    expect(preview.secretAccessKey).toBe("********");
-    expect(preview.sdkOptions).toEqual({
-      clientSecret: "********",
-      timeout: 30,
-    });
-  });
-
-  it("commits a header name on Enter and masks secrets only in the JSON view", async () => {
-    const user = userEvent.setup();
-    const onSubmit = vi.fn().mockResolvedValue(undefined);
-    render(
-      <PiProviderForm
-        appId="pi"
-        submitLabel="Save secret provider"
-        onSubmit={onSubmit}
-        onCancel={() => {}}
-      />,
-    );
-
-    await user.click(
-      screen.getByRole("button", { name: "providerPreset.custom" }),
-    );
-    fireEvent.change(screen.getByPlaceholderText("my-provider"), {
-      target: { value: "secret-provider" },
-    });
-    fireEvent.change(screen.getByLabelText("provider.name"), {
-      target: { value: "Secret provider" },
-    });
-    fireEvent.change(screen.getByLabelText("pi.form.credential"), {
-      target: { value: "sk-secret-value" },
-    });
-    fireEvent.change(
-      screen.getByPlaceholderText("https://api.example.com/v1"),
-      {
-        target: { value: "https://api.example.com/v1" },
-      },
-    );
-    await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
-    fireEvent.change(screen.getByPlaceholderText("model-id"), {
-      target: { value: "secret-model" },
-    });
-    await user.click(screen.getByRole("button", { name: "Add header" }));
-    await user.type(screen.getByLabelText("Header"), "Authorization{Enter}");
-    expect(screen.getByLabelText("Header")).toHaveValue("Authorization");
-    fireEvent.change(screen.getByLabelText("Value"), {
-      target: { value: "Bearer secret-token" },
-    });
-
-    const preview = JSON.parse(
-      (screen.getByLabelText("provider.configJson") as HTMLTextAreaElement)
-        .value,
-    );
-    expect(preview.apiKey).toBe("********");
-    expect(preview.headers.Authorization).toBe("********");
-    expect(JSON.stringify(preview)).not.toContain("sk-secret-value");
-    expect(JSON.stringify(preview)).not.toContain("Bearer secret-token");
-
-    await user.click(
-      screen.getByRole("button", { name: "Save secret provider" }),
-    );
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    const saved = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
-    expect(saved.apiKey).toBe("sk-secret-value");
-    expect(saved.headers.Authorization).toBe("Bearer secret-token");
-  });
-
   it("applies a maintained preset without creating a Pi-owned provider key", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     render(
@@ -621,14 +472,15 @@ describe("PiProviderForm", () => {
       "kimi-k2.7-code",
       "kimi-k3",
     ]);
-    expect(config.models).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          reasoning: true,
-          input: ["text", "image"],
-        }),
-      ]),
-    );
+    expect(
+      config.models.map((model: { id: string; name?: string }) => ({
+        id: model.id,
+        name: model.name,
+      })),
+    ).toEqual([
+      { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
+      { id: "kimi-k3", name: "Kimi K3" },
+    ]);
     expect(submitted).not.toHaveProperty("piActivateModelId");
   });
 

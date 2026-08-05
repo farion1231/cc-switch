@@ -951,8 +951,7 @@
       "effectiveApiRequired": "モデル {{id}} には、直接またはプロバイダーから継承した API が必要です",
       "effectiveBaseUrlRequired": "モデル {{id}} には、直接またはプロバイダーから継承したベース URL が必要です",
       "duplicateModel": "モデル ID {{id}} が重複しています",
-      "modelRequired": "モデルを 1 つ以上追加してください",
-      "configSecretsHidden": "この表示では機密値を隠しています。保存時には元の値が保持されます。"
+      "modelRequired": "モデルを 1 つ以上追加してください"
     },
     "current": {
       "readFailed": "Pi のプロバイダー設定を読み込めません",

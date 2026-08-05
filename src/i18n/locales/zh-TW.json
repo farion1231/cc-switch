@@ -952,8 +952,7 @@
       "effectiveApiRequired": "模型 {{id}} 必須直接設定或從供應商繼承 API",
       "effectiveBaseUrlRequired": "模型 {{id}} 必須直接設定或從供應商繼承基礎 URL",
       "duplicateModel": "模型 ID {{id}} 重複",
-      "modelRequired": "請至少新增一個模型",
-      "configSecretsHidden": "此處會隱藏敏感值，儲存時仍會保留原值。"
+      "modelRequired": "請至少新增一個模型"
     },
     "current": {
       "readFailed": "無法讀取 Pi 供應商設定",

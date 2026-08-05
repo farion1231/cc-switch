@@ -951,8 +951,7 @@
       "effectiveApiRequired": "Model {{id}} needs an API, either directly or from the provider",
       "effectiveBaseUrlRequired": "Model {{id}} needs a base URL, either directly or from the provider",
       "duplicateModel": "Model ID {{id}} is duplicated",
-      "modelRequired": "Add at least one model",
-      "configSecretsHidden": "Sensitive values are hidden in this view and remain unchanged when saved."
+      "modelRequired": "Add at least one model"
     },
     "current": {
       "readFailed": "Could not read Pi's provider configuration",

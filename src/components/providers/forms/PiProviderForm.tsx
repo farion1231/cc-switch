@@ -28,6 +28,7 @@ import {
 } from "./helpers/requestHeaders";
 import {
   piProviderPresets,
+  type PiApiFormat,
   type PiProviderPreset,
 } from "@/config/piProviderPresets";
 import {
@@ -36,7 +37,6 @@ import {
   type FetchedModel,
 } from "@/lib/api/model-fetch";
 import type { ModelsDevResponse } from "@/lib/modelsDevPricing";
-import { isSensitiveConfigKey } from "@/utils/deeplinkRisk";
 import { loadModelsDevCatalog } from "@/lib/query/modelsDev";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
@@ -52,7 +52,8 @@ const PI_API_FORMATS = [
   { value: "openai-responses", label: "OpenAI Responses" },
   { value: "anthropic-messages", label: "Anthropic Messages" },
   { value: "google-generative-ai", label: "Google Generative AI" },
-] as const;
+  { value: "bedrock-converse-stream", label: "Amazon Bedrock" },
+] as const satisfies ReadonlyArray<{ value: PiApiFormat; label: string }>;
 
 const ROOT_CONTROLLED_KEYS = new Set([
   "name",
@@ -70,7 +71,6 @@ const MODEL_CONTROLLED_KEYS = new Set([
   "contextWindow",
   "maxTokens",
 ]);
-const PI_REDACTED_SECRET = "********";
 
 interface PiModelDraft {
   key: string;
@@ -350,47 +350,6 @@ function modelPreview(model: PiModelDraft): Record<string, unknown> {
   };
 }
 
-function redactPiConfigSecrets(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(redactPiConfigSecrets);
-  }
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).map(([key, entry]) => {
-      if (
-        key.toLowerCase() === "headers" &&
-        entry &&
-        typeof entry === "object" &&
-        !Array.isArray(entry)
-      ) {
-        return [
-          key,
-          Object.fromEntries(
-            Object.entries(entry as Record<string, unknown>).map(
-              ([header, headerValue]) => [
-                header,
-                typeof headerValue === "string" && headerValue.length > 0
-                  ? PI_REDACTED_SECRET
-                  : redactPiConfigSecrets(headerValue),
-              ],
-            ),
-          ),
-        ];
-      }
-
-      return [
-        key,
-        isSensitiveConfigKey(key) && entry !== "" && entry != null
-          ? PI_REDACTED_SECRET
-          : redactPiConfigSecrets(entry),
-      ];
-    }),
-  );
-}
-
 function buildPiSettingsConfig({
   passthrough,
   nativeName,
@@ -451,7 +410,9 @@ export function PiProviderForm({
     },
     [initialConfigHasNativeName, initialDisplayName, initialNativeName, isEdit],
   );
-  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
+    isEdit ? null : "custom",
+  );
   const [selectedPreset, setSelectedPreset] = useState<PiProviderPreset | null>(
     null,
   );
@@ -993,18 +954,16 @@ export function PiProviderForm({
   const settingsConfigPreview = useMemo(
     () =>
       JSON.stringify(
-        redactPiConfigSecrets(
-          buildPiSettingsConfig({
-            passthrough: providerPassthrough,
-            nativeName: resolveNativeName(previewName),
-            baseUrl,
-            api,
-            includeApi,
-            apiKey,
-            headers: normalizeRequestHeaders(providerHeaders),
-            models: models.map(modelPreview),
-          }),
-        ),
+        buildPiSettingsConfig({
+          passthrough: providerPassthrough,
+          nativeName: resolveNativeName(previewName),
+          baseUrl,
+          api,
+          includeApi,
+          apiKey,
+          headers: normalizeRequestHeaders(providerHeaders),
+          models: models.map(modelPreview),
+        }),
         null,
         2,
       ),
@@ -1440,9 +1399,6 @@ export function PiProviderForm({
                 darkMode={isDarkMode}
                 readOnly
               />
-              <p className="text-xs text-muted-foreground">
-                {t("pi.form.configSecretsHidden")}
-              </p>
             </div>
           </>
         )}
