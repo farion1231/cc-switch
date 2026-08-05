@@ -202,4 +202,52 @@ describe("EditProviderDialog", () => {
       JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
     ).toEqual(provider.settingsConfig);
   });
+
+  it("Claude live 配置缺少 autoSyncContextWindow 时保留数据库开关状态", async () => {
+    const provider: Provider = {
+      id: "claude-proxy",
+      name: "Claude Proxy",
+      category: "aggregator",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_MODEL: "fallback-model[1M]",
+        },
+        autoSyncContextWindow: false,
+        autoSyncCompactRatio: 0.8,
+      },
+    };
+    const liveSettings = {
+      env: {
+        ANTHROPIC_MODEL: "fallback-model[1M]",
+      },
+    };
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+    apiMocks.getCurrent.mockResolvedValue(provider.id);
+    apiMocks.getLiveProviderSettings.mockResolvedValue(liveSettings);
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={handleSubmit}
+        appId="claude"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(apiMocks.getLiveProviderSettings).toHaveBeenCalled();
+    });
+
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual({
+        ...liveSettings,
+        autoSyncContextWindow: false,
+        autoSyncCompactRatio: 0.8,
+      });
+    });
+  });
 });

@@ -783,6 +783,7 @@ dependencies = [
  "indexmap 2.13.0",
  "json-five",
  "json5",
+ "libc",
  "log",
  "notify-debouncer-mini",
  "objc2 0.5.2",

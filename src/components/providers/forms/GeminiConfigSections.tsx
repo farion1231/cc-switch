@@ -11,6 +11,7 @@ interface GeminiEnvSectionProps {
   onCommonConfigToggle: (checked: boolean) => void;
   onEditCommonConfig: () => void;
   commonConfigError?: string;
+  commonConfigLoading?: boolean;
 }
 
 /**
@@ -25,6 +26,7 @@ export const GeminiEnvSection: React.FC<GeminiEnvSectionProps> = ({
   onCommonConfigToggle,
   onEditCommonConfig,
   commonConfigError,
+  commonConfigLoading = false,
 }) => {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -66,6 +68,7 @@ export const GeminiEnvSection: React.FC<GeminiEnvSectionProps> = ({
             type="checkbox"
             checked={useCommonConfig}
             onChange={(e) => onCommonConfigToggle(e.target.checked)}
+            disabled={commonConfigLoading}
             className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
           />
           {t("geminiConfig.writeCommonConfig", {

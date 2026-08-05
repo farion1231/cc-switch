@@ -45,17 +45,50 @@ pub(crate) fn resolve_active_model_window(
         .and_then(|e| e.get(env_key))
         .and_then(Value::as_str)?;
     // 4. 解析后缀得到窗口
-    let (_, window) = crate::claude_desktop_config::parse_context_window_suffix(env_value);
+    // 4. 优先解析后缀；无后缀的 Codex OAuth / Kimi 使用固定兜底窗口，
+    // 仍只在 watcher 观察到模型切换时写入。
+    let provider_env = provider
+        .settings_config
+        .get("env")
+        .and_then(Value::as_object);
+    let window = crate::claude_desktop_config::parse_context_window_suffix(env_value)
+        .1
+        .or_else(|| {
+            if provider.is_codex_oauth()
+                && crate::services::provider::provider_env_targets_gpt56(provider_env)
+            {
+                Some(372000)
+            } else if crate::services::provider::is_kimi_for_coding_provider(provider) {
+                Some(262144)
+            } else {
+                None
+            }
+        });
     window.map(|w| ActiveModelWindow {
         model: model.to_string(),
         window: w,
     })
 }
 
-/// 根据窗口值生成要写入 settings.json.env 的两个 env 项。
-/// ACW = 窗口 × 0.8（向下取整），MAX = 窗口本身。
-pub(crate) fn build_env_writes(window: u64) -> Vec<(&'static str, String)> {
-    let acw = (window * 80) / 100;
+/// 读取 provider 的自动压缩比例，缺失或非法时默认 1。
+pub(crate) fn provider_compact_ratio(provider: &Provider) -> f64 {
+    provider
+        .settings_config
+        .get("autoSyncCompactRatio")
+        .and_then(Value::as_f64)
+        .filter(|ratio| ratio.is_finite() && (0.2..=1.0).contains(ratio))
+        .unwrap_or(1.0)
+}
+
+/// 根据窗口值和压缩比例生成要写入 settings.json.env 的两个 env 项。
+/// ACW = 窗口 × ratio（向下取整），MAX = 窗口本身。
+pub(crate) fn build_env_writes(window: u64, ratio: f64) -> Vec<(&'static str, String)> {
+    let ratio = if ratio.is_finite() && (0.2..=1.0).contains(&ratio) {
+        ratio
+    } else {
+        1.0
+    };
+    let acw = ((window as f64) * ratio).floor() as u64;
     vec![
         ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", acw.to_string()),
         ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", window.to_string()),
@@ -216,7 +249,7 @@ fn handle_settings_change(
         .settings_config
         .get("autoSyncContextWindow")
         .and_then(Value::as_bool)
-        .unwrap_or(true);
+        .unwrap_or(false);
     if !auto_sync {
         log::debug!("[ClaudeSettingsWatcher] auto-sync disabled for provider, skip");
         return;
@@ -232,7 +265,7 @@ fn handle_settings_change(
     };
 
     // 6. 写 ACW/MAX
-    let writes = build_env_writes(active.window);
+    let writes = build_env_writes(active.window, provider_compact_ratio(provider));
     let new_content = match update_env_fields(&content, &writes) {
         Ok(c) => c,
         Err(e) => {
@@ -344,11 +377,39 @@ mod tests {
         assert!(resolve_active_model_window(&settings, &provider).is_none());
     }
 
+    #[test]
+    fn resolve_maps_codex_oauth_gpt56_without_suffix_to_372k() {
+        let settings = json!({ "model": "sonnet" });
+        let mut provider = make_provider(json!({
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-5.6",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gpt-5.6-luna"
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..Default::default()
+        });
+        let result = resolve_active_model_window(&settings, &provider).unwrap();
+        assert_eq!(result.model, "sonnet");
+        assert_eq!(result.window, 372000);
+    }
+
+    #[test]
+    fn resolve_maps_kimi_without_suffix_to_262k() {
+        let settings = json!({ "model": "sonnet" });
+        let provider = make_provider(json!({
+            "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-for-coding"
+        }));
+        let result = resolve_active_model_window(&settings, &provider).unwrap();
+        assert_eq!(result.model, "sonnet");
+        assert_eq!(result.window, 262144);
+    }
+
     // ========== Task 3: build_env_writes 测试 ==========
 
     #[test]
     fn build_writes_for_30k_window() {
-        let writes = build_env_writes(30000);
+        let writes = build_env_writes(30000, 0.8);
         assert_eq!(
             writes,
             vec![
@@ -360,7 +421,7 @@ mod tests {
 
     #[test]
     fn build_writes_for_1m_window() {
-        let writes = build_env_writes(1000000);
+        let writes = build_env_writes(1000000, 0.8);
         assert_eq!(
             writes,
             vec![
@@ -372,7 +433,7 @@ mod tests {
 
     #[test]
     fn build_writes_for_200k_window() {
-        let writes = build_env_writes(200000);
+        let writes = build_env_writes(200000, 0.8);
         assert_eq!(
             writes,
             vec![
@@ -385,7 +446,7 @@ mod tests {
     #[test]
     fn build_writes_for_1_token_boundary() {
         // 最小边界：1 token → ACW=0（×0.8 = 0.8，向下取整 = 0）
-        let writes = build_env_writes(1);
+        let writes = build_env_writes(1, 0.8);
         assert_eq!(
             writes,
             vec![
@@ -395,6 +456,63 @@ mod tests {
         );
     }
 
+    #[test]
+    fn compact_ratio_defaults_to_one_when_missing_or_invalid() {
+        let missing =
+            Provider::with_id("p".to_string(), "P".to_string(), json!({ "env": {} }), None);
+        assert_eq!(provider_compact_ratio(&missing), 1.0);
+
+        let too_low = Provider::with_id(
+            "p".to_string(),
+            "P".to_string(),
+            json!({ "autoSyncCompactRatio": 0.1 }),
+            None,
+        );
+        assert_eq!(provider_compact_ratio(&too_low), 1.0);
+
+        let too_high = Provider::with_id(
+            "p".to_string(),
+            "P".to_string(),
+            json!({ "autoSyncCompactRatio": 1.5 }),
+            None,
+        );
+        assert_eq!(provider_compact_ratio(&too_high), 1.0);
+    }
+
+    #[test]
+    fn compact_ratio_accepts_valid_range() {
+        let provider = Provider::with_id(
+            "p".to_string(),
+            "P".to_string(),
+            json!({ "autoSyncCompactRatio": 0.6 }),
+            None,
+        );
+        assert_eq!(provider_compact_ratio(&provider), 0.6);
+    }
+
+    #[test]
+    fn build_writes_use_custom_ratio() {
+        let writes = build_env_writes(30000, 0.5);
+        assert_eq!(
+            writes,
+            vec![
+                ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "15000".to_string()),
+                ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "30000".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_writes_fallback_to_one_for_invalid_ratio() {
+        let writes = build_env_writes(30000, 2.0);
+        assert_eq!(
+            writes,
+            vec![
+                ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "30000".to_string()),
+                ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "30000".to_string()),
+            ]
+        );
+    }
     // ========== Task 4: 无效输入处理测试 ==========
 
     #[test]
@@ -540,7 +658,7 @@ mod tests {
     #[test]
     fn fs_update_env_fields_writes_only_env_keys() {
         let original = r#"{"model":"sonnet","effortLevel":"xhigh","env":{"ANTHROPIC_DEFAULT_SONNET_MODEL":"MiniMax-M3[1M]"}}"#;
-        let writes = build_env_writes(1000000);
+        let writes = build_env_writes(1000000, 0.8);
         let result = update_env_fields(original, &writes).unwrap();
         let v: Value = serde_json::from_str(&result).unwrap();
         // 顶层字段不动
@@ -556,7 +674,7 @@ mod tests {
     #[test]
     fn fs_update_env_fields_creates_env_if_missing() {
         let original = r#"{"model":"haiku","effortLevel":"max"}"#;
-        let writes = build_env_writes(30000);
+        let writes = build_env_writes(30000, 0.8);
         let result = update_env_fields(original, &writes).unwrap();
         let v: Value = serde_json::from_str(&result).unwrap();
         assert_eq!(v["model"], "haiku");
@@ -568,7 +686,7 @@ mod tests {
     #[test]
     fn fs_update_env_fields_preserves_existing_env_fields() {
         let original = r#"{"model":"haiku","env":{"ANTHROPIC_DEFAULT_HAIKU_MODEL":"Kimi[30k]","CLAUDE_CODE_SUBAGENT_MODEL":"deepseek"}}"#;
-        let writes = build_env_writes(30000);
+        let writes = build_env_writes(30000, 0.8);
         let result = update_env_fields(original, &writes).unwrap();
         let v: Value = serde_json::from_str(&result).unwrap();
         assert_eq!(v["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "Kimi[30k]");
@@ -579,7 +697,7 @@ mod tests {
     #[test]
     fn fs_update_env_fields_overwrites_existing_acw_max() {
         let original = r#"{"model":"haiku","env":{"CLAUDE_CODE_AUTO_COMPACT_WINDOW":"999","CLAUDE_CODE_MAX_CONTEXT_TOKENS":"888"}}"#;
-        let writes = build_env_writes(30000);
+        let writes = build_env_writes(30000, 0.8);
         let result = update_env_fields(original, &writes).unwrap();
         let v: Value = serde_json::from_str(&result).unwrap();
         assert_eq!(v["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "24000");
@@ -602,9 +720,17 @@ mod tests {
         });
         fs::write(&path, initial.to_string()).unwrap();
 
-        let provider = Arc::new(make_provider(json!({
-            "ANTHROPIC_DEFAULT_SONNET_MODEL":"MiniMax-M3[1M]","ANTHROPIC_DEFAULT_HAIKU_MODEL":"Kimi-K2.7-Code[30k]"
-        })));
+        let provider = Arc::new(Provider::with_id(
+            "p".to_string(),
+            "P".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL":"MiniMax-M3[1M]","ANTHROPIC_DEFAULT_HAIKU_MODEL":"Kimi-K2.7-Code[30k]"
+                },
+                "autoSyncContextWindow":true
+            }),
+            None,
+        ));
 
         let watcher = spawn_claude_settings_watcher(path.clone(), provider).unwrap();
 
@@ -625,12 +751,64 @@ mod tests {
         let content = fs::read_to_string(&path).unwrap();
         let v: Value = serde_json::from_str(&content).unwrap();
         assert_eq!(v["model"], "haiku");
-        assert_eq!(v["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "24000");
+        assert_eq!(v["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "30000");
         assert_eq!(v["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "30000");
 
         drop(watcher);
     }
 
+    /// provider 配置 autoSyncCompactRatio 时，watcher 按该比例写 ACW。
+    #[test]
+    #[serial]
+    fn fs_real_watcher_uses_provider_compact_ratio() {
+        use std::fs;
+        use std::thread;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let initial = json!({
+            "model": "sonnet",
+            "env": {
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M3[1M]",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "Kimi-K2.7-Code[30k]"
+            }
+        });
+        fs::write(&path, initial.to_string()).unwrap();
+
+        let provider = Arc::new(Provider::with_id(
+            "p".to_string(),
+            "P".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M3[1M]",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "Kimi-K2.7-Code[30k]"
+                },
+                "autoSyncContextWindow": true,
+                "autoSyncCompactRatio": 0.5
+            }),
+            None,
+        ));
+
+        let watcher = spawn_claude_settings_watcher(path.clone(), provider).unwrap();
+
+        let new_content = json!({
+            "model": "haiku",
+            "env": {
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M3[1M]",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "Kimi-K2.7-Code[30k]"
+            }
+        });
+        fs::write(&path, new_content.to_string()).unwrap();
+
+        thread::sleep(Duration::from_millis(800));
+
+        let content = fs::read_to_string(&path).unwrap();
+        let v: Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(v["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "15000");
+        assert_eq!(v["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "30000");
+
+        drop(watcher);
+    }
     /// 只改 effortLevel 不应该触发 ACW/MAX 写入
     #[test]
     fn fs_real_watcher_effort_change_no_trigger() {
@@ -715,10 +893,18 @@ mod tests {
         });
         fs::write(&path, initial.to_string()).unwrap();
 
-        let provider = Arc::new(make_provider(json!({
-            "ANTHROPIC_DEFAULT_SONNET_MODEL":"MiniMax-M3[1M]",
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL":"Kimi-K2.7-Code[30k]"
-        })));
+        let provider = Arc::new(Provider::with_id(
+            "p".to_string(),
+            "P".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL":"MiniMax-M3[1M]",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL":"Kimi-K2.7-Code[30k]"
+                },
+                "autoSyncContextWindow":true
+            }),
+            None,
+        ));
 
         // 模拟 production 调用：spawn 后立即存进进程单例，不保留局部绑定。
         // spawned 在这里 move 进 replace_watcher，没有局部变量持有 watcher。
@@ -740,7 +926,7 @@ mod tests {
         let content = fs::read_to_string(&path).unwrap();
         let v: Value = serde_json::from_str(&content).unwrap();
         assert_eq!(v["model"], "haiku");
-        assert_eq!(v["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "24000");
+        assert_eq!(v["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "30000");
         assert_eq!(v["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "30000");
     }
 
@@ -829,10 +1015,18 @@ mod tests {
         });
         fs::write(&path, initial.to_string()).unwrap();
 
-        let provider = Arc::new(make_provider(json!({
-            "ANTHROPIC_DEFAULT_SONNET_MODEL":"MiniMax-M3[1M]",
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL":"Kimi-K2.7-Code[30k]"
-        })));
+        let provider = Arc::new(Provider::with_id(
+            "p".to_string(),
+            "P".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL":"MiniMax-M3[1M]",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL":"Kimi-K2.7-Code[30k]"
+                },
+                "autoSyncContextWindow":true
+            }),
+            None,
+        ));
 
         let spawned = spawn_claude_settings_watcher(path.clone(), provider).unwrap();
         replace_watcher(spawned);
@@ -852,7 +1046,7 @@ mod tests {
         let content = fs::read_to_string(&path).unwrap();
         let v: Value = serde_json::from_str(&content).unwrap();
         assert_eq!(v["model"], "haiku");
-        assert_eq!(v["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "24000");
+        assert_eq!(v["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "30000");
         assert_eq!(v["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "30000");
     }
 }

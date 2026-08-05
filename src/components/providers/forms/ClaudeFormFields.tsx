@@ -68,9 +68,35 @@ import {
   providerPresets,
   type TemplateValueConfig,
 } from "@/config/claudeProviderPresets";
+import {
+  applyAutoSyncCompactRatioSetting,
+  applyAutoSyncContextWindowSetting,
+} from "@/utils/settingsConfigMerge";
 
 interface EndpointCandidate {
   url: string;
+}
+
+function parseAutoSyncCompactRatio(config?: string): number | null {
+  try {
+    const parsed = JSON.parse(config ?? "{}") as Record<string, unknown>;
+    const ratio = parsed.autoSyncCompactRatio;
+    if (
+      typeof ratio === "number" &&
+      Number.isFinite(ratio) &&
+      ratio >= 0.2 &&
+      ratio <= 1
+    ) {
+      return ratio;
+    }
+  } catch {
+    // 忽略无效 JSON，按空值处理
+  }
+  return null;
+}
+
+function formatAutoSyncCompactRatio(ratio: number | null): string {
+  return ratio === null ? "" : String(ratio);
 }
 
 interface ClaudeFormFieldsProps {
@@ -163,6 +189,8 @@ interface ClaudeFormFieldsProps {
   onLocalProxyBodyOverrideChange: (value: string) => void;
   settingsConfig?: string;
   onSettingsConfigChange?: (config: string) => void;
+  onAutoSyncContextWindowChange?: (checked: boolean) => void;
+  onAutoSyncCompactRatioChange?: (ratio: number | null) => void;
 }
 
 export function ClaudeFormFields({
@@ -230,6 +258,8 @@ export function ClaudeFormFields({
   onLocalProxyBodyOverrideChange,
   settingsConfig,
   onSettingsConfigChange,
+  onAutoSyncContextWindowChange,
+  onAutoSyncCompactRatioChange,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
   const hasRequestOverrides = Boolean(
@@ -256,46 +286,99 @@ export function ClaudeFormFields({
   // 直接派生会导致 Switch 点击后 checked 不更新（看起来"不能切换"）。
   // local state 立即响应点击，useEffect 在 settingsConfig 外部变化时同步。
   const [autoSyncContextWindow, setAutoSyncContextWindow] = useState(() => {
-    if (!settingsConfig) return true;
     try {
-      const parsed = JSON.parse(settingsConfig);
-      return (
-        (parsed as Record<string, unknown>).autoSyncContextWindow !== false
-      );
+      const parsed = JSON.parse(settingsConfig ?? "{}");
+      return (parsed as Record<string, unknown>).autoSyncContextWindow === true;
     } catch {
-      return true;
+      return false;
     }
   });
 
   useEffect(() => {
     if (!settingsConfig) {
-      setAutoSyncContextWindow(true);
+      setAutoSyncContextWindow(false);
       return;
     }
     try {
-      const parsed = JSON.parse(settingsConfig);
+      const parsed = JSON.parse(settingsConfig ?? "{}");
       setAutoSyncContextWindow(
-        (parsed as Record<string, unknown>).autoSyncContextWindow !== false,
+        (parsed as Record<string, unknown>).autoSyncContextWindow === true,
       );
     } catch {
-      setAutoSyncContextWindow(true);
+      setAutoSyncContextWindow(false);
     }
   }, [settingsConfig]);
+
+  const [autoSyncCompactRatioInput, setAutoSyncCompactRatioInput] = useState(
+    () => formatAutoSyncCompactRatio(parseAutoSyncCompactRatio(settingsConfig)),
+  );
+  const [autoSyncCompactRatioError, setAutoSyncCompactRatioError] =
+    useState("");
+
+  useEffect(() => {
+    setAutoSyncCompactRatioInput(
+      formatAutoSyncCompactRatio(parseAutoSyncCompactRatio(settingsConfig)),
+    );
+    setAutoSyncCompactRatioError("");
+  }, [settingsConfig]);
+
+  const handleAutoSyncCompactRatioChange = useCallback(
+    (value: string) => {
+      setAutoSyncCompactRatioInput(value);
+      if (value.trim() === "") {
+        setAutoSyncCompactRatioError("");
+        if (onAutoSyncCompactRatioChange) {
+          onAutoSyncCompactRatioChange(null);
+        } else if (onSettingsConfigChange) {
+          onSettingsConfigChange(
+            applyAutoSyncCompactRatioSetting(settingsConfig ?? "{}", null),
+          );
+        }
+        return;
+      }
+      const parsed = Number(value);
+      if (Number.isFinite(parsed) && parsed >= 0.2 && parsed <= 1) {
+        setAutoSyncCompactRatioError("");
+        if (onAutoSyncCompactRatioChange) {
+          onAutoSyncCompactRatioChange(parsed);
+        } else if (onSettingsConfigChange) {
+          onSettingsConfigChange(
+            applyAutoSyncCompactRatioSetting(settingsConfig ?? "{}", parsed),
+          );
+        }
+      } else {
+        setAutoSyncCompactRatioError(
+          t("providerForm.autoSyncCompactRatioInvalid", {
+            defaultValue: "压缩比例必须是 0.2~1 之间的数字",
+          }),
+        );
+      }
+    },
+    [onAutoSyncCompactRatioChange, onSettingsConfigChange, settingsConfig, t],
+  );
+
+  const handleAutoSyncCompactRatioBlur = useCallback(() => {
+    if (!autoSyncCompactRatioError) return;
+    setAutoSyncCompactRatioInput(
+      formatAutoSyncCompactRatio(parseAutoSyncCompactRatio(settingsConfig)),
+    );
+    setAutoSyncCompactRatioError("");
+  }, [autoSyncCompactRatioError, settingsConfig]);
 
   const handleAutoSyncChange = useCallback(
     (checked: boolean) => {
       // 立即更新 local state，让 Switch 视觉响应
       setAutoSyncContextWindow(checked);
-      if (!onSettingsConfigChange) return;
-      try {
-        const parsed = settingsConfig ? JSON.parse(settingsConfig) : {};
-        parsed.autoSyncContextWindow = checked;
-        onSettingsConfigChange(JSON.stringify(parsed, null, 2));
-      } catch (err) {
-        console.error("Failed to update autoSyncContextWindow:", err);
+      if (onAutoSyncContextWindowChange) {
+        onAutoSyncContextWindowChange(checked);
+        return;
       }
+      if (!onSettingsConfigChange) return;
+      onSettingsConfigChange(
+        applyAutoSyncContextWindowSetting(settingsConfig ?? "{}", checked),
+      );
     },
-    [settingsConfig, onSettingsConfigChange],
+    [settingsConfig, onSettingsConfigChange, onAutoSyncContextWindowChange],
   );
 
   // 预设填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
@@ -1129,11 +1212,53 @@ export function ClaudeFormFields({
                 })}
                 className="h-5 w-9"
               />
+              <label
+                htmlFor="auto-sync-compact-ratio"
+                className="text-xs text-muted-foreground"
+              >
+                {t("providerForm.autoSyncCompactRatio", {
+                  defaultValue: "压缩比例",
+                })}
+              </label>
+              <Input
+                id="auto-sync-compact-ratio"
+                type="number"
+                min={0.2}
+                max={1}
+                step={0.1}
+                className="h-7 w-20 text-center"
+                value={autoSyncCompactRatioInput}
+                onChange={(event) =>
+                  handleAutoSyncCompactRatioChange(event.target.value)
+                }
+                onBlur={handleAutoSyncCompactRatioBlur}
+                disabled={!autoSyncContextWindow}
+                aria-label={t("providerForm.autoSyncCompactRatio", {
+                  defaultValue: "压缩比例",
+                })}
+              />
             </div>
+            {autoSyncCompactRatioError && (
+              <p className="mt-1.5 ml-1 text-xs text-red-500">
+                {autoSyncCompactRatioError}
+              </p>
+            )}
             <p className="mt-1.5 ml-1 text-xs leading-relaxed text-muted-foreground">
-              {t("providerForm.autoSyncContextWindowTooltip", {
+              {t(
+                autoSyncContextWindow
+                  ? "providerForm.autoSyncContextWindowTooltipOn"
+                  : "providerForm.autoSyncContextWindowTooltipOff",
+                {
+                  defaultValue: autoSyncContextWindow
+                    ? "上下文长度和压缩阈值按切换的模型更新配置 json。切换后需重启 Claude Code（退出后用 claude --resume 恢复会话）才生效。多CC终端使用不同模型，以最后切换模型时的上下文长度作为全局变量。"
+                    : "对于[1M]后缀的模型Claude Code原生支持1M上下文，其他输入形式或不输入默认为200k，切换模型后终端内生效。",
+                },
+              )}
+            </p>
+            <p className="mt-1.5 ml-1 text-xs leading-relaxed text-muted-foreground">
+              {t("providerForm.autoSyncCompactRatioHint", {
                 defaultValue:
-                  "终端内切换模型时，上下文长度和压缩阈值按切换的模型更新配置 json。多 claude 终端使用不同模型，以最后切换模型时的上下文长度作为全局变量。切换后需重启 Claude Code（退出后用 claude --resume 恢复会话）才生效。",
+                  "该参数是模型自动压缩上下文窗口的比例，范围 0.2~1，留空按 1 处理。",
               })}
             </p>
 
