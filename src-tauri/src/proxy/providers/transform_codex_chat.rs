@@ -1409,11 +1409,28 @@ pub(crate) fn chat_completion_to_response_with_context(
     if let Some(message_item) = chat_message_to_response_output_item(message, &response_id) {
         output.push(message_item);
     }
-    output.extend(chat_tool_calls_to_response_output_items(
-        message,
-        reasoning.as_deref(),
-        tool_context,
-    ));
+    let tool_calls =
+        chat_tool_calls_to_response_output_items(message, reasoning.as_deref(), tool_context);
+
+    // 丢弃过工具调用、且最终一个工具调用都没剩下时，Codex 会收到一个
+    // "status=completed 但 output 里没有任何工具调用" 的回合，agent loop 必然静默
+    // 收尾（#4341）。此时如实报错，而不是谎报成功。只要还剩下任何一个合法工具
+    // 调用，Codex 本来就会继续，判据不成立，行为保持不变。
+    //
+    // 🔴 与流式分支一致，只对本应 `completed` 的回合生效：`finish_reason=length`
+    // 是截断，工具调用缺 name 是截断的后果而非上游发了畸形数据，报成
+    // tool_call_dropped 会给出错误的归因。
+    if response_status_from_finish_reason(finish_reason) == "completed"
+        && tool_calls.dropped > 0
+        && tool_calls.items.is_empty()
+    {
+        return Err(ProxyError::TransformError(format!(
+            "Upstream returned {} tool call(s) without a function name, \
+             leaving no usable tool call in this turn",
+            tool_calls.dropped
+        )));
+    }
+    output.extend(tool_calls.items);
 
     let mut response = json!({
         "id": response_id,
@@ -1533,12 +1550,20 @@ fn chat_message_to_response_output_item(message: &Value, response_id: &str) -> O
     }))
 }
 
+/// 非流式工具调用转换结果。`dropped` 记录因缺少合法函数名而被丢弃的条数，
+/// 供调用方判断本回合是否已经不可能让 Codex 继续（见 #4341）。
+struct ChatToolCallItems {
+    items: Vec<Value>,
+    dropped: usize,
+}
+
 fn chat_tool_calls_to_response_output_items(
     message: &Value,
     reasoning: Option<&str>,
     tool_context: &CodexToolContext,
-) -> Vec<Value> {
+) -> ChatToolCallItems {
     let mut output = Vec::new();
+    let mut dropped = 0usize;
 
     if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
         for (index, tool_call) in tool_calls.iter().enumerate() {
@@ -1546,8 +1571,24 @@ fn chat_tool_calls_to_response_output_items(
             // may generate tool calls without providing a valid name)
             let function = tool_call.get("function").unwrap_or(&Value::Null);
             let name = function.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            if name.is_empty() {
-                log::warn!("[Codex] Skipping tool call with missing name");
+            // 纯空白名同样对应不到任何已发布工具，与空名同等对待。
+            if name.trim().is_empty() {
+                dropped += 1;
+                // 只记结构信息，不记 arguments 内容（可能包含用户代码）。
+                let call_id_empty = tool_call
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .is_none_or(str::is_empty);
+                let args_bytes = function
+                    .get("arguments")
+                    .and_then(|v| v.as_str())
+                    .map(str::len)
+                    .unwrap_or(0);
+                log::warn!(
+                    "[Codex] dropped tool call: index={index} call_id_empty={call_id_empty} \
+                     args_bytes={args_bytes} tools_total={}",
+                    tool_calls.len()
+                );
                 continue;
             }
             output.push(chat_tool_call_to_response_item(
@@ -1558,14 +1599,16 @@ fn chat_tool_calls_to_response_output_items(
             ));
         }
     } else if let Some(function_call) = message.get("function_call") {
-        if let Some(item) =
-            chat_legacy_function_call_to_response_item(function_call, reasoning, tool_context)
-        {
-            output.push(item);
+        match chat_legacy_function_call_to_response_item(function_call, reasoning, tool_context) {
+            Some(item) => output.push(item),
+            None => dropped += 1,
         }
     }
 
-    output
+    ChatToolCallItems {
+        items: output,
+        dropped,
+    }
 }
 
 fn chat_tool_call_to_response_item(
@@ -1612,9 +1655,18 @@ fn chat_legacy_function_call_to_response_item(
         .unwrap_or("");
 
     // Skip legacy function calls with missing names (defensive: some models
-    // may generate function_call without providing a valid name)
-    if name.is_empty() {
-        log::warn!("[Codex] Skipping legacy function_call with missing name");
+    // may generate function_call without providing a valid name)。
+    // 纯空白名同样对应不到任何已发布工具，与空名同等对待。
+    if name.trim().is_empty() {
+        // 只记结构信息，不记 arguments 内容（可能包含用户代码）。
+        let args_bytes = function_call
+            .get("arguments")
+            .and_then(|v| v.as_str())
+            .map(str::len)
+            .unwrap_or(0);
+        log::warn!(
+            "[Codex] dropped legacy function_call: call_id={call_id} args_bytes={args_bytes}"
+        );
         return None;
     }
 
@@ -3950,6 +4002,165 @@ mod tests {
             result["output"][0]["input"],
             "*** Begin Patch\n*** End Patch"
         );
+    }
+
+    /// #4341（非流式路径）：丢弃后一个工具调用都不剩时，必须如实报错，
+    /// 而不是返回一个 Codex 会当成正常完成的空壳回合。
+    #[test]
+    fn chat_response_with_only_unnamed_tool_call_is_an_error() {
+        let chat = json!({
+            "id": "chatcmpl_drop",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "kimi-k3",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "让我继续处理这个文件",
+                    "tool_calls": [{
+                        "id": "call_bad",
+                        "type": "function",
+                        "function": {"arguments": "{}"}
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let err = chat_completion_to_response_with_context(chat, &CodexToolContext::default())
+            .unwrap_err();
+        assert!(matches!(err, ProxyError::TransformError(_)));
+        assert!(err.to_string().contains("without a function name"));
+    }
+
+    /// 只要还剩下一个合法工具调用，Codex 本来就会继续，行为保持不变。
+    #[test]
+    fn chat_response_keeps_valid_tool_call_beside_unnamed_one() {
+        let chat = json!({
+            "id": "chatcmpl_mixed",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "kimi-k3",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {"id": "call_bad", "type": "function", "function": {"arguments": "{}"}},
+                        {
+                            "id": "call_good",
+                            "type": "function",
+                            "function": {"name": "exec_command", "arguments": "{\"cmd\":\"ls\"}"}
+                        }
+                    ]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let result =
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default()).unwrap();
+        let output = result["output"].as_array().unwrap();
+
+        assert_eq!(output.len(), 1);
+        assert_eq!(output[0]["name"], "exec_command");
+        assert_eq!(output[0]["call_id"], "call_good");
+        assert_eq!(result["status"], "completed");
+    }
+
+    /// legacy `function_call` 形态同样受判据保护。
+    #[test]
+    fn chat_response_with_unnamed_legacy_function_call_is_an_error() {
+        let chat = json!({
+            "id": "chatcmpl_legacy",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "kimi-k3",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "function_call": {"id": "call_legacy", "arguments": "{}"}
+                },
+                "finish_reason": "function_call"
+            }]
+        });
+
+        let err = chat_completion_to_response_with_context(chat, &CodexToolContext::default())
+            .unwrap_err();
+        assert!(matches!(err, ProxyError::TransformError(_)));
+    }
+
+    /// `finish_reason=length` 是截断，不是"上游发了畸形数据"——归因必须保持
+    /// incomplete，不能报成 tool_call_dropped。
+    #[test]
+    fn chat_response_truncated_stays_incomplete_instead_of_error() {
+        let chat = json!({
+            "id": "chatcmpl_trunc",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "kimi-k3",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "我来看看",
+                    "tool_calls": [{
+                        "id": "call_cut",
+                        "type": "function",
+                        "function": {"arguments": "{\"pa"}
+                    }]
+                },
+                "finish_reason": "length"
+            }]
+        });
+
+        let result =
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default()).unwrap();
+        assert_eq!(result["status"], "incomplete");
+        assert_eq!(result["incomplete_details"]["reason"], "max_output_tokens");
+    }
+
+    /// 纯空白函数名必须与空名同等对待，否则会伪装成"本回合还有工具调用"。
+    #[test]
+    fn chat_response_whitespace_only_tool_name_is_an_error() {
+        let chat = json!({
+            "id": "chatcmpl_ws",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "kimi-k3",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_ws",
+                        "type": "function",
+                        "function": {"name": "   ", "arguments": "{}"}
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let err = chat_completion_to_response_with_context(chat, &CodexToolContext::default())
+            .unwrap_err();
+        assert!(matches!(err, ProxyError::TransformError(_)));
+    }
+
+    /// 纯文本回合（从未出现工具调用）不受判据影响。
+    #[test]
+    fn chat_response_text_only_still_completes() {
+        let chat = json!({
+            "id": "chatcmpl_text",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "kimi-k3",
+            "choices": [{
+                "message": {"role": "assistant", "content": "完成了"},
+                "finish_reason": "stop"
+            }]
+        });
+
+        let result =
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default()).unwrap();
+        assert_eq!(result["status"], "completed");
     }
 
     #[test]
