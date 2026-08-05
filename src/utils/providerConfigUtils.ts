@@ -133,8 +133,29 @@ const isSubset = (target: any, source: any): boolean => {
 
   if (Array.isArray(source)) {
     if (!Array.isArray(target)) return false;
-    return source.every((sourceItem) =>
-      target.some((targetItem) => isSubset(targetItem, sourceItem)),
+    // Relocate earlier matches when needed so each source item claims a distinct target.
+    const matchedSourceByTarget = new Array<number>(target.length).fill(-1);
+    const tryMatch = (sourceIndex: number, seen: boolean[]): boolean => {
+      for (let targetIndex = 0; targetIndex < target.length; targetIndex += 1) {
+        if (
+          seen[targetIndex] ||
+          !isSubset(target[targetIndex], source[sourceIndex])
+        ) {
+          continue;
+        }
+
+        seen[targetIndex] = true;
+        const matchedSource = matchedSourceByTarget[targetIndex];
+        if (matchedSource === -1 || tryMatch(matchedSource, seen)) {
+          matchedSourceByTarget[targetIndex] = sourceIndex;
+          return true;
+        }
+      }
+      return false;
+    };
+
+    return source.every((_, sourceIndex) =>
+      tryMatch(sourceIndex, new Array(target.length).fill(false)),
     );
   }
 

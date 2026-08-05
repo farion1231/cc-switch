@@ -218,6 +218,17 @@ describe("common config array merging", () => {
     expect(JSON.parse(removed).permissions.deny).toEqual(["WebSearch"]);
     expect(hasCommonConfigSnippet(removed, commonSnippet)).toBe(false);
   });
+
+  it("does not reuse one target item for multiple snippet entries", () => {
+    const config = JSON.stringify({ hooks: [{ a: 1, b: 2 }] });
+    const snippet = JSON.stringify({ hooks: [{ a: 1 }, { a: 1, b: 2 }] });
+
+    expect(hasCommonConfigSnippet(config, snippet)).toBe(false);
+
+    const merged = updateCommonConfigSnippet(config, snippet, true).updatedConfig;
+    expect(JSON.parse(merged).hooks).toEqual([{ a: 1, b: 2 }, { a: 1 }]);
+    expect(hasCommonConfigSnippet(merged, snippet)).toBe(true);
+  });
 });
 
 describe("common config snippet prototype-pollution guards", () => {
