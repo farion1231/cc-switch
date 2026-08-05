@@ -171,9 +171,25 @@ fn replace_images_in_message(message: &mut Value) -> usize {
             &replacement_block,
             UNSUPPORTED_IMAGE_MARKER,
         );
+        wrap_object_content_after_replacement(content, replaced);
         replaced
     } else {
         replace_images_in_content(content)
+    }
+}
+
+/// Anthropic 协议要求 message / tool_result 的 content 必须是字符串或 block 数组。
+///
+/// `strip_media_from_tool_value` 会把裸 image 对象（MCP / 自定义工具直接以
+/// `{"type":"image",...}` 对象作为 tool_result content 输出）整体替换成 text
+/// 对象——若 content 本身就是该对象，替换后 content 会变成非法对象结构，
+/// 被 SenseNova 等严格网关以 "The content field is a required field" 拒绝
+/// （issue #6170）。这里把替换后的对象包装成单元素数组，恢复合法的
+/// Anthropic 结构。非对象 content（字符串 / 数组）不受影响。
+fn wrap_object_content_after_replacement(content: &mut Value, replaced: usize) {
+    if replaced > 0 && content.is_object() {
+        let wrapped = std::mem::take(content);
+        *content = json!([wrapped]);
     }
 }
 
@@ -208,13 +224,18 @@ fn replace_images_in_content_with_text_type(content: &mut Value, text_type: &str
                     "text":UNSUPPORTED_IMAGE_MARKER
                 });
                 let mut discarded_media = Vec::new();
-                replaced += strip_media_from_tool_value(
+                let nested_replaced = strip_media_from_tool_value(
                     nested_content,
                     &mut discarded_media,
                     ToolMediaScope::ImagesOnly,
                     &replacement_block,
                     UNSUPPORTED_IMAGE_MARKER,
                 );
+                replaced += nested_replaced;
+                // MCP / 自定义工具可能把图片作为裸对象输出（tool_result.content
+                // 为对象而非数组/字符串）。strip 将其替换成 text 对象后必须包装成
+                // 数组，保证 Anthropic content 结构合法（issue #6170）。
+                wrap_object_content_after_replacement(nested_content, nested_replaced);
             } else {
                 replaced += replace_images_in_content_with_text_type(nested_content, text_type);
             }
@@ -382,13 +403,19 @@ fn replace_images_in_responses_input_item(item: &mut Value) -> usize {
             "text": UNSUPPORTED_IMAGE_MARKER
         });
         let mut discarded_media = Vec::new();
-        replaced += strip_media_from_tool_value(
+        let output_replaced = strip_media_from_tool_value(
             output,
             &mut discarded_media,
             ToolMediaScope::ImagesOnly,
             &replacement_block,
             UNSUPPORTED_IMAGE_MARKER,
         );
+        replaced += output_replaced;
+        // Responses function_call_output.output 必须是字符串。裸 image 对象被
+        // 替换成对象后需还原为字符串标记，避免向严格网关发送对象结构。
+        if output_replaced > 0 && output.is_object() {
+            *output = Value::String(UNSUPPORTED_IMAGE_MARKER.to_string());
+        }
     }
 
     replaced
@@ -1227,6 +1254,92 @@ mod tests {
         assert_eq!(block["type"], "text");
         assert_eq!(block["text"], UNSUPPORTED_IMAGE_MARKER);
         assert_eq!(block["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn tool_result_object_image_content_is_wrapped_into_array() {
+        // issue #6170: MCP / 自定义工具可能把图片作为裸对象输出
+        // （tool_result.content 为对象而非数组/字符串）。替换后 content 必须是
+        // string 或数组，否则 SenseNova 等严格网关报
+        // "The content field is a required field"。
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_1",
+                    "content": {
+                        "type": "image",
+                        "data": "MCP_IMG_SENTINEL",
+                        "mimeType": "image/png"
+                    }
+                }]
+            }]
+        });
+
+        assert!(contains_image_blocks(&body));
+        let count = replace_image_blocks_with_marker(&mut body);
+
+        assert_eq!(count, 1);
+        let content = &body["messages"][0]["content"][0]["content"];
+        assert!(content.is_array(), "tool_result.content 必须是数组，实际: {content}");
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], UNSUPPORTED_IMAGE_MARKER);
+        assert!(!body.to_string().contains("MCP_IMG_SENTINEL"));
+    }
+
+    #[test]
+    fn tool_message_object_image_content_is_wrapped_into_array() {
+        // role=tool 消息的 content 是裸 image 对象时，替换后必须包装成数组。
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "tool",
+                "tool_call_id": "toolu_1",
+                "content": {
+                    "type": "image",
+                    "data": "TOOL_MSG_IMG_SENTINEL",
+                    "mimeType": "image/png"
+                }
+            }]
+        });
+
+        assert!(contains_image_blocks(&body));
+        let count = replace_image_blocks_with_marker(&mut body);
+
+        assert_eq!(count, 1);
+        let content = &body["messages"][0]["content"];
+        assert!(content.is_array(), "tool 消息 content 必须是数组，实际: {content}");
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], UNSUPPORTED_IMAGE_MARKER);
+    }
+
+    #[test]
+    fn responses_output_object_image_becomes_string_marker() {
+        // Responses function_call_output.output 必须是字符串；裸 image 对象
+        // 替换后应还原为字符串标记而不是对象。
+        let mut body = json!({
+            "model": "text-model",
+            "input": [{
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": {
+                    "type": "image",
+                    "data": "RESP_OUTPUT_IMG_SENTINEL",
+                    "mimeType": "image/png"
+                }
+            }]
+        });
+
+        assert!(contains_image_blocks(&body));
+        let replaced = replace_image_blocks_with_marker(&mut body);
+
+        assert_eq!(replaced, 1);
+        assert_eq!(
+            body["input"][0]["output"],
+            Value::String(UNSUPPORTED_IMAGE_MARKER.to_string())
+        );
     }
 
     #[test]
