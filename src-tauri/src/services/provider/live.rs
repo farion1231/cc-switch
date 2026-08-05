@@ -1261,10 +1261,21 @@ fn proxy_owns_live_config(state: &AppState, app_type: &AppType, has_live_backup:
         return true;
     }
 
+    // 读不到接管标志时按"未接管"处理：保证保存供应商这件事能真正生效，代价是
+    // 极端情况下（接管开着、live 里又没有占位符、代理也没在跑）可能覆盖接管的
+    // live 配置。这种组合本身已经是坏状态，但必须留下痕迹，否则排查时无从下手。
     let takeover_enabled =
-        futures::executor::block_on(state.db.get_proxy_config_for_app(app_type.as_str()))
-            .map(|config| config.enabled)
-            .unwrap_or(false);
+        match futures::executor::block_on(state.db.get_proxy_config_for_app(app_type.as_str())) {
+            Ok(config) => config.enabled,
+            Err(err) => {
+                log::warn!(
+                    "读取 {} 代理接管标志失败，按未接管处理并继续写入 live 配置；\
+                     若该应用此刻确实处于接管状态，本次写入会覆盖接管的 live: {err}",
+                    app_type.as_str()
+                );
+                false
+            }
+        };
     if takeover_enabled {
         return true;
     }
