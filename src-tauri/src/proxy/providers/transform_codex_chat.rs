@@ -355,9 +355,7 @@ pub(crate) fn ensure_responses_tool_search_shim(
             Some("tool_search") => {
                 return ToolSearchShimStatus::ExistingNative;
             }
-            Some("function")
-                if responses_tool_name(tool).as_deref() == Some(TOOL_SEARCH_PROXY_NAME) =>
-            {
+            _ if responses_tool_name(tool).as_deref() == Some(TOOL_SEARCH_PROXY_NAME) => {
                 return ToolSearchShimStatus::ExistingFunction;
             }
             _ => {}
@@ -400,9 +398,7 @@ pub(crate) fn request_uses_responses_tool_search_shim(body: &Value) -> bool {
     for tool in tools {
         match tool.get("type").and_then(Value::as_str) {
             Some("tool_search") => return true,
-            Some("function")
-                if responses_tool_name(tool).as_deref() == Some(TOOL_SEARCH_PROXY_NAME) =>
-            {
+            _ if responses_tool_name(tool).as_deref() == Some(TOOL_SEARCH_PROXY_NAME) => {
                 return is_proxy_tool_search_function(tool);
             }
             _ => {}
@@ -2693,6 +2689,24 @@ mod tests {
             "tools": [{"type": "tool_search"}]
         });
         assert!(request_uses_responses_tool_search_shim(&native));
+    }
+
+    #[test]
+    fn custom_tool_search_name_collision_suppresses_shim() {
+        let mut custom = json!({
+            "tools": [{
+                "type": "custom",
+                "name": TOOL_SEARCH_PROXY_NAME,
+                "description": "An application-owned custom search tool"
+            }]
+        });
+
+        assert_eq!(
+            ensure_responses_tool_search_shim(&mut custom, false),
+            ToolSearchShimStatus::ExistingFunction
+        );
+        assert_eq!(custom["tools"].as_array().unwrap().len(), 1);
+        assert!(!request_uses_responses_tool_search_shim(&custom));
     }
 
     #[test]
