@@ -760,6 +760,18 @@ pub async fn handle_chat_completions(
     .await
 }
 
+fn should_restore_codex_responses_namespaces(
+    provider: &crate::provider::Provider,
+    endpoint: &str,
+    allow_tool_search_compat: bool,
+    has_namespace_restore_map: bool,
+) -> bool {
+    has_namespace_restore_map
+        && (super::providers::provider_needs_responses_namespace_flatten(provider)
+            || (allow_tool_search_compat
+                && super::providers::should_inject_codex_tool_search_shim(provider, endpoint)))
+}
+
 /// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI 透传）
 pub async fn handle_responses(
     State(state): State<ProxyState>,
@@ -878,10 +890,12 @@ async fn handle_responses_for_app(
 
     let restore_tool_search = request_uses_tool_search_shim
         && super::providers::should_restore_codex_native_tool_search(&ctx.provider, &endpoint);
-    let restore_namespaces =
-        (super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)
-            || restore_tool_search)
-            && !namespace_restore_map.is_empty();
+    let restore_namespaces = should_restore_codex_responses_namespaces(
+        &ctx.provider,
+        &endpoint,
+        allow_tool_search_compat,
+        !namespace_restore_map.is_empty(),
+    );
     if restore_tool_search || restore_namespaces {
         log::debug!(
             "[Codex] Native Responses tool restore provider={} tool_search={} namespaces={}",
@@ -1025,10 +1039,12 @@ async fn handle_responses_compact_for_app(
 
     let restore_tool_search = request_uses_tool_search_shim
         && super::providers::should_restore_codex_native_tool_search(&ctx.provider, &endpoint);
-    let restore_namespaces =
-        (super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)
-            || restore_tool_search)
-            && !namespace_restore_map.is_empty();
+    let restore_namespaces = should_restore_codex_responses_namespaces(
+        &ctx.provider,
+        &endpoint,
+        allow_tool_search_compat,
+        !namespace_restore_map.is_empty(),
+    );
     if restore_tool_search || restore_namespaces {
         log::debug!(
             "[Codex] Native Responses compact tool restore provider={} tool_search={} namespaces={}",
@@ -3370,5 +3386,52 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
         assert_eq!(body["error"]["provider"], "HCAI");
         assert_eq!(body["error"]["model"], "gpt-5.5");
         assert_eq!(body["error"]["endpoint"], "/responses");
+    }
+    #[test]
+    fn native_namespace_restore_matches_route_flatten_with_ordinary_tool_search() {
+        let provider = crate::provider::Provider::with_id(
+            "native-provider".to_string(),
+            "Native Responses".to_string(),
+            serde_json::json!({
+                "auth": { "OPENAI_API_KEY": "sk-test" },
+                "config": "base_url = \"https://api.example.com/v1\"\nwire_api = \"responses\""
+            }),
+            None,
+        );
+        let request = serde_json::json!({
+            "tools": [
+                {
+                    "type": "namespace",
+                    "name": "demo",
+                    "tools": [{
+                        "type": "function",
+                        "name": "run",
+                        "parameters": { "type": "object" }
+                    }]
+                },
+                {
+                    "type": "function",
+                    "name": "tool_search",
+                    "parameters": { "type": "object" }
+                }
+            ]
+        });
+        let namespace_restore_map =
+            crate::proxy::providers::transform_codex_responses_namespace::namespace_restore_map(
+                &request,
+            );
+        let request_uses_tool_search_shim =
+            crate::proxy::providers::transform_codex_chat::request_uses_responses_tool_search_shim(
+                &request,
+            );
+        assert!(!request_uses_tool_search_shim);
+        assert!(!namespace_restore_map.is_empty());
+
+        assert!(super::should_restore_codex_responses_namespaces(
+            &provider,
+            "/responses",
+            true,
+            !namespace_restore_map.is_empty(),
+        ));
     }
 }
