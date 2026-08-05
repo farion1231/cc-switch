@@ -2743,6 +2743,139 @@ mod tests {
     }
 
     #[test]
+    fn responses_lite_additional_tools_preserves_tools_without_creating_a_message() {
+        let input = json!({
+            "model": "qwen3.6",
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "role": "developer",
+                    "tools": [{
+                        "type": "function",
+                        "name": "read_workspace_file",
+                        "description": "Read a file from the active workspace.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"path": {"type": "string"}},
+                            "required": ["path"]
+                        }
+                    }]
+                },
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [{"type": "input_text", "text": "You are Codex."}]
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions_with_reasoning(input, None).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+        let tools = result["tools"].as_array().expect("additional tools");
+
+        assert_eq!(
+            messages,
+            &vec![json!({
+                "role": "system",
+                "content": "You are Codex."
+            })]
+        );
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["function"]["name"], "read_workspace_file");
+    }
+
+    #[test]
+    fn responses_lite_additional_tools_reuses_custom_namespace_and_deduplication_rules() {
+        let input = json!({
+            "model": "qwen3.6",
+            "tools": [{
+                "type": "function",
+                "name": "lookup",
+                "parameters": {"type": "object", "properties": {}}
+            }],
+            "input": [{
+                "type": "additional_tools",
+                "role": "developer",
+                "tools": [
+                    {
+                        "type": "function",
+                        "name": "lookup",
+                        "parameters": {"type": "object", "properties": {}}
+                    },
+                    {
+                        "type": "custom",
+                        "name": "apply_patch",
+                        "description": "Apply a free-form patch."
+                    },
+                    {
+                        "type": "namespace",
+                        "name": "mcp__mail",
+                        "tools": [{
+                            "type": "function",
+                            "name": "search",
+                            "parameters": {"type": "object", "properties": {}}
+                        }]
+                    }
+                ]
+            }]
+        });
+
+        let result = responses_to_chat_completions_with_reasoning(input, None).unwrap();
+        let names = result["tools"]
+            .as_array()
+            .expect("converted tools")
+            .iter()
+            .filter_map(|tool| tool.pointer("/function/name").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, vec!["lookup", "apply_patch", "mcp__mail__search"]);
+        assert_eq!(
+            result["tools"][1]["function"]["parameters"]["required"][0],
+            "input"
+        );
+    }
+
+    #[test]
+    fn responses_non_assistant_null_content_becomes_a_string_but_assistant_tool_call_stays_null() {
+        let input = json!({
+            "model": "qwen3.6",
+            "input": [
+                {"type": "message", "role": "system"},
+                {"type": "message", "role": "developer", "content": null},
+                {"type": "message", "role": "user"},
+                {"type": "message", "role": "user", "content": null},
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "lookup",
+                    "arguments": "{}"
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions_with_reasoning(input, None).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert!(messages
+            .iter()
+            .all(|message| { message["role"] == "assistant" || message["content"].is_string() }));
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| message["role"] == "user")
+                .map(|message| message["content"].as_str())
+                .collect::<Vec<_>>(),
+            vec![Some(""), Some("")]
+        );
+        let assistant = messages
+            .iter()
+            .find(|message| message["role"] == "assistant")
+            .expect("synthetic assistant tool-call message");
+        assert!(assistant["content"].is_null());
+        assert_eq!(assistant["tool_calls"][0]["id"], "call_1");
+    }
+
+    #[test]
     fn collapse_system_messages_preserves_non_system_order() {
         let input = vec![
             json!({"role": "system", "content": "S1"}),
