@@ -56,6 +56,7 @@ import { HermesFormFields } from "./HermesFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import {
   applyTemplateValues,
+  getApiKeyFromConfig,
   hasApiKeyField,
 } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
@@ -408,23 +409,25 @@ function ProviderFormFull({
   });
   const { isSubmitting } = form.formState;
 
-  // settingsConfig 没有通过 register/Controller 订阅，form.setValue 不会触发
-  // 重渲染。而本组件里所有派生状态（Base URL / API Key / 模型 / 各应用子表单）
-  // 都是在渲染期用 form.getValues("settingsConfig") 取快照的：少了这次重渲染，
-  // 那些快照就停在改动之前，下一个结构化字段一改动就把 JSON 编辑器里刚输入的
-  // 内容按旧快照覆盖回去 —— 表现为"改了请求地址，保存成功，文件里还是旧值"。
-  // 因此每次写 settingsConfig 都必须顺带强制一次重渲染。
-  const [, bumpSettingsConfigRevision] = useState(0);
+  // settingsConfig 没有通过 register/Controller 订阅，form.setValue 不触发重渲染。
+  //
+  // 千万不要为此强制重渲染来刷新派生状态：那样会让"表单初始值回填"和"通用配置
+  // 片段自动合并"两个写入方互相把对方的结果盖回去，编辑弹窗在数据库配置与
+  // live 文件配置之间来回跳。正确做法是让各个处理函数在被调用时用
+  // getSettingsConfig() 现读当前值，而不是依赖渲染期快照。
   const handleSettingsConfigChange = useCallback(
     (config: string) => {
-      // 值没变就不写、不重渲染：结构化字段每次按键都会重建整份 JSON，
-      // 没有这道短路会平白多一次大组件重渲染。
       if (form.getValues("settingsConfig") === config) {
         return;
       }
       form.setValue("settingsConfig", config);
-      bumpSettingsConfigRevision((revision) => revision + 1);
     },
+    [form],
+  );
+
+  // 供各表单 hook 在事件处理时现读当前配置，绕过渲染期快照。
+  const getSettingsConfig = useCallback(
+    () => form.getValues("settingsConfig"),
     [form],
   );
 
@@ -462,6 +465,7 @@ function ProviderFormFull({
   } = useApiKeyState({
     initialConfig: form.getValues("settingsConfig"),
     onConfigChange: handleSettingsConfigChange,
+    getConfig: getSettingsConfig,
     selectedPresetId,
     category,
     appType: appId,
@@ -475,6 +479,7 @@ function ProviderFormFull({
     codexConfig: "",
     onSettingsConfigChange: handleSettingsConfigChange,
     onCodexConfigChange: () => {},
+    getSettingsConfig,
   });
 
   const {
@@ -492,7 +497,39 @@ function ProviderFormFull({
   } = useModelState({
     settingsConfig: form.getValues("settingsConfig"),
     onConfigChange: handleSettingsConfigChange,
+    getSettingsConfig,
   });
+
+  /**
+   * 提交时的端点 / 凭据必须从当前配置现取，不能用 baseUrl、apiKey 这两个 hook
+   * 状态：直接在 JSON 编辑器里改配置不会刷新它们（写 settingsConfig 不触发
+   * 重渲染）。这两个值参与的是真正影响结果的判断 —— 软校验"请填写 API 端点 /
+   * API Key"，以及按端点识别 GitHub Copilot 从而决定存哪种 providerType。用旧值
+   * 会让校验被跳过，或者把供应商存成错误的类型。
+   */
+  const readSubmitTimeCredentials = useCallback(() => {
+    const raw = getSettingsConfig() || "{}";
+    let parsedBaseUrl: string | null = null;
+    try {
+      const parsed = JSON.parse(raw) as { env?: Record<string, unknown> };
+      const candidate =
+        appId === "gemini"
+          ? parsed.env?.GOOGLE_GEMINI_BASE_URL
+          : parsed.env?.ANTHROPIC_BASE_URL;
+      if (typeof candidate === "string") {
+        parsedBaseUrl = candidate.trim();
+      } else {
+        parsedBaseUrl = "";
+      }
+    } catch {
+      // JSON 不合法时退回 hook 状态；此时另有独立的 JSON 校验会拦下保存。
+      parsedBaseUrl = null;
+    }
+    return {
+      baseUrl: parsedBaseUrl ?? baseUrl,
+      apiKey: parsedBaseUrl === null ? apiKey : getApiKeyFromConfig(raw, appId),
+    };
+  }, [apiKey, appId, baseUrl, getSettingsConfig]);
 
   const [localApiFormat, setLocalApiFormat] = useState<ClaudeApiFormat>(() => {
     if (appId !== "claude") return "anthropic";
@@ -750,6 +787,7 @@ function ProviderFormFull({
     selectedPresetId: appId === "claude" ? selectedPresetId : null,
     presetEntries: appId === "claude" ? presetEntries : [],
     settingsConfig: form.getValues("settingsConfig"),
+    getSettingsConfig,
     onConfigChange: handleSettingsConfigChange,
   });
 
@@ -763,6 +801,7 @@ function ProviderFormFull({
     handleExtract: handleClaudeExtract,
   } = useCommonConfigSnippet({
     settingsConfig: form.getValues("settingsConfig"),
+    getSettingsConfig,
     onConfigChange: handleSettingsConfigChange,
     initialData: appId === "claude" ? initialData : undefined,
     initialEnabled:
@@ -898,7 +937,7 @@ function ProviderFormFull({
     appId,
     providerId,
     onSettingsConfigChange: handleSettingsConfigChange,
-    getSettingsConfig: () => form.getValues("settingsConfig"),
+    getSettingsConfig,
   });
 
   const initialOmoSettings =
@@ -919,7 +958,7 @@ function ProviderFormFull({
     appId,
     providerId,
     onSettingsConfigChange: handleSettingsConfigChange,
-    getSettingsConfig: () => form.getValues("settingsConfig"),
+    getSettingsConfig,
   });
   const {
     data: openclawLiveProviderIds = [],
@@ -931,7 +970,7 @@ function ProviderFormFull({
     appId,
     providerId,
     onSettingsConfigChange: handleSettingsConfigChange,
-    getSettingsConfig: () => form.getValues("settingsConfig"),
+    getSettingsConfig,
   });
   const {
     data: hermesLiveProviderIds = [],
@@ -1174,11 +1213,15 @@ function ProviderFormFull({
       }
     }
 
+    // 端点 / 凭据现取，不用可能已过期的 hook 状态。见 readSubmitTimeCredentials。
+    const { baseUrl: submitBaseUrl, apiKey: submitApiKey } =
+      readSubmitTimeCredentials();
+
     // OAuth 未登录：B 类（token 根本不存在，保存了也没法建立）
     const isCopilotProvider =
       presetProviderType === "github_copilot" ||
       initialData?.meta?.providerType === "github_copilot" ||
-      baseUrl.includes("githubcopilot.com");
+      submitBaseUrl.includes("githubcopilot.com");
     const isCodexOauthProvider =
       presetProviderType === "codex_oauth" ||
       initialData?.meta?.providerType === "codex_oauth";
@@ -1287,7 +1330,11 @@ function ProviderFormFull({
     // cloud_provider（如 Bedrock）通过模板变量处理认证，跳过通用校验
     if (category !== "official" && category !== "cloud_provider") {
       if (appId === "claude") {
-        if (!isCodexOauthProvider && !isXaiOauthProvider && !baseUrl.trim()) {
+        if (
+          !isCodexOauthProvider &&
+          !isXaiOauthProvider &&
+          !submitBaseUrl.trim()
+        ) {
           issues.push(
             t("providerForm.endpointRequired", {
               defaultValue: "非官方供应商请填写 API 端点",
@@ -1298,7 +1345,7 @@ function ProviderFormFull({
           !isCopilotProvider &&
           !isCodexOauthProvider &&
           !isXaiOauthProvider &&
-          !apiKey.trim()
+          !submitApiKey.trim()
         ) {
           issues.push(
             t("providerForm.apiKeyRequired", {
@@ -1370,7 +1417,7 @@ function ProviderFormFull({
     const isCopilotProvider =
       presetProviderType === "github_copilot" ||
       initialData?.meta?.providerType === "github_copilot" ||
-      baseUrl.includes("githubcopilot.com");
+      readSubmitTimeCredentials().baseUrl.includes("githubcopilot.com");
     const isCodexOauthProvider =
       presetProviderType === "codex_oauth" ||
       initialData?.meta?.providerType === "codex_oauth";

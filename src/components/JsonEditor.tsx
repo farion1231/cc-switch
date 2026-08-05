@@ -3,13 +3,18 @@ import { EditorView, basicSetup } from "codemirror";
 import { json } from "@codemirror/lang-json";
 import { javascript } from "@codemirror/lang-javascript";
 import { oneDark } from "@codemirror/theme-one-dark";
-import { EditorState } from "@codemirror/state";
+import { Annotation, EditorState } from "@codemirror/state";
 import { placeholder } from "@codemirror/view";
 import { linter, Diagnostic } from "@codemirror/lint";
 import { useTranslation } from "react-i18next";
 import { Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import { formatJSON } from "@/utils/formatters";
+
+/**
+ * 标记"把 value 属性推进编辑器"这类事务，与用户敲键盘产生的事务区分开。
+ */
+const ExternalSync = Annotation.define<boolean>();
 
 interface JsonEditorProps {
   id?: string;
@@ -37,6 +42,12 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
   const { t } = useTranslation();
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+
+  // 编辑器只在 [darkMode, rows, height, language, jsonLinter] 变化时重建，
+  // onChange 故意不在依赖里。因此监听器必须通过 ref 读最新的回调，否则会一直
+  // 用挂载时那个闭包（连同它捕获的那份旧 settingsConfig）。
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
 
   // JSON linter 函数
   const jsonLinter = useMemo(
@@ -143,10 +154,23 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
       sizingTheme,
       jsonLinter,
       EditorView.updateListener.of((update) => {
-        if (update.docChanged) {
-          const newValue = update.state.doc.toString();
-          onChange(newValue);
+        if (!update.docChanged) return;
+        // 把 value 属性同步进编辑器的那次 dispatch 也算 docChanged。若把它当成
+        // 用户输入回吐给 onChange，调用方就分不清"用户改了"和"我刚把值推进来"。
+        // 两个持有不同文档的编辑器实例会因此互相回吐，各自把对方的值盖掉，
+        // 表现为编辑弹窗在两份配置之间无休止地闪。带注解的同步事务必须跳过。
+        //
+        // 用 every 而不是 some：CodeMirror 会把一次更新里的多个事务合并上报，
+        // 用户按键有可能和同步 dispatch 落在同一个 ViewUpdate 里。用 some 会把
+        // 整批丢掉，用户敲的内容永远传不出去 —— 正是本修复要消灭的那类问题。
+        // 只有整批都是同步事务时才跳过。
+        if (update.transactions.every((tr) => tr.annotation(ExternalSync))) {
+          return;
         }
+        // 走 ref 而不是闭包捕获的 onChange：本 effect 的依赖里没有 onChange
+        //（避免每次父组件重渲染都重建编辑器），直接捕获会把挂载那一刻的回调
+        // 永久冻结在监听器里，之后每次输入都基于挂载时的旧状态重建配置。
+        onChangeRef.current(update.state.doc.toString());
       }),
     ];
 
@@ -219,6 +243,8 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
           to: viewRef.current.state.doc.length,
           insert: value,
         },
+        // 标记为"外部同步"，updateListener 据此不把它回吐成 onChange。
+        annotations: ExternalSync.of(true),
       });
       viewRef.current.dispatch(transaction);
     }
