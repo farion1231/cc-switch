@@ -192,15 +192,39 @@ impl PiPromptTemplateService {
 
     pub fn upsert(
         slug: &str,
+        original_slug: Option<&str>,
         expected_revision: &str,
         content: &str,
     ) -> Result<PiPromptTemplate, AppError> {
         validate_template_slug(slug)?;
+        if let Some(original_slug) = original_slug {
+            validate_template_slug(original_slug)?;
+        }
         validate_content_size(content, "Pi prompt template")?;
         let _guard = lock_prompt_files()?;
-        let path = template_path(&get_pi_agent_dir()?.join("prompts"), slug);
-        ensure_revision(&path, expected_revision, "Pi prompt template")?;
-        atomic_write(&path, content.as_bytes())?;
+        let dir = get_pi_agent_dir()?.join("prompts");
+        let path = template_path(&dir, slug);
+
+        if let Some(original_slug) = original_slug.filter(|value| *value != slug) {
+            let original_path = template_path(&dir, original_slug);
+            ensure_revision(&original_path, expected_revision, "Pi prompt template")?;
+            ensure_revision(&path, MISSING_REVISION, "Pi prompt template")?;
+            fs::rename(&original_path, &path)
+                .map_err(|error| AppError::io(&original_path, error))?;
+
+            if let Err(write_error) = atomic_write(&path, content.as_bytes()) {
+                if let Err(rollback_error) = fs::rename(&path, &original_path) {
+                    return Err(AppError::Message(format!(
+                        "Pi prompt template save failed ({write_error}); rename rollback also failed: {rollback_error}"
+                    )));
+                }
+                return Err(write_error);
+            }
+        } else {
+            ensure_revision(&path, expected_revision, "Pi prompt template")?;
+            atomic_write(&path, content.as_bytes())?;
+        }
+
         Ok(PiPromptTemplate {
             slug: slug.to_string(),
             content: content.to_string(),
@@ -403,7 +427,7 @@ mod tests {
     #[serial]
     fn empty_prompt_template_round_trips() {
         let _agent = TestAgentDir::new();
-        PiPromptTemplateService::upsert("empty", MISSING_REVISION, "")
+        PiPromptTemplateService::upsert("empty", None, MISSING_REVISION, "")
             .expect("create empty template");
         assert_eq!(
             PiPromptTemplateService::list().expect("list templates"),
@@ -413,6 +437,30 @@ mod tests {
                 revision: revision(b""),
             }]
         );
+    }
+
+    #[test]
+    #[serial]
+    fn prompt_template_can_be_renamed_and_updated_together() {
+        let _agent = TestAgentDir::new();
+        let created = PiPromptTemplateService::upsert("draft", None, MISSING_REVISION, "before")
+            .expect("create template");
+
+        let renamed =
+            PiPromptTemplateService::upsert("review", Some("draft"), &created.revision, "after")
+                .expect("rename template");
+
+        assert_eq!(renamed.slug, "review");
+        assert_eq!(renamed.content, "after");
+        assert_eq!(
+            PiPromptTemplateService::list().expect("list renamed template"),
+            vec![renamed]
+        );
+        assert!(!get_pi_agent_dir()
+            .expect("agent directory")
+            .join("prompts")
+            .join("draft.md")
+            .exists());
     }
 
     #[test]

@@ -302,12 +302,12 @@ function modelMetadataStatusKey(
   model: PiModelDraft,
   isLoading: boolean,
   lookupComplete: boolean,
-): string {
+): string | null {
   const hasOverrides = hasAnyModelOverrides(model);
   if (model.autoMetadata && hasOverrides) {
     return "pi.form.modelMetadataOverridden";
   }
-  if (model.autoMetadata) return "pi.form.modelMetadataAutofilled";
+  if (model.autoMetadata) return null;
   if (hasOverrides) return "pi.form.modelMetadataManual";
   if (model.id && isLoading) return "pi.form.modelMetadataLoading";
   if (model.id && lookupComplete) return "pi.form.modelMetadataUnknown";
@@ -1154,7 +1154,14 @@ export function PiProviderForm({
                     <span className="w-9" />
                   </div>
                   {models.map((model) => {
-                    const metadataStatusId = `pi-model-metadata-status-${model.key}`;
+                    const metadataStatusKey = modelMetadataStatusKey(
+                      model,
+                      isModelMetadataLoading,
+                      modelMetadataLookupComplete,
+                    );
+                    const metadataStatusId = metadataStatusKey
+                      ? `pi-model-metadata-status-${model.key}`
+                      : undefined;
                     const canRestoreAutofill =
                       Boolean(model.autoMetadata) &&
                       hasAnyModelOverrides(model);
@@ -1280,35 +1287,31 @@ export function PiProviderForm({
                                   aria-describedby={metadataStatusId}
                                 />
                               </div>
-                              <div className="ml-auto flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                                {isModelMetadataLoading &&
-                                  !model.autoMetadata &&
-                                  model.id && (
-                                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                              {metadataStatusKey && (
+                                <div className="ml-auto flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                                  {isModelMetadataLoading &&
+                                    !model.autoMetadata &&
+                                    model.id && (
+                                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                                    )}
+                                  <span id={metadataStatusId}>
+                                    {t(metadataStatusKey)}
+                                  </span>
+                                  {canRestoreAutofill && (
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() =>
+                                        restoreModelAutofill(model.key)
+                                      }
+                                      className="h-7 shrink-0 px-2 text-xs"
+                                    >
+                                      {t("pi.form.restoreModelAutofill")}
+                                    </Button>
                                   )}
-                                <span id={metadataStatusId}>
-                                  {t(
-                                    modelMetadataStatusKey(
-                                      model,
-                                      isModelMetadataLoading,
-                                      modelMetadataLookupComplete,
-                                    ),
-                                  )}
-                                </span>
-                                {canRestoreAutofill && (
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() =>
-                                      restoreModelAutofill(model.key)
-                                    }
-                                    className="h-7 shrink-0 px-2 text-xs"
-                                  >
-                                    {t("pi.form.restoreModelAutofill")}
-                                  </Button>
-                                )}
-                              </div>
+                                </div>
+                              )}
                             </div>
                             <Field
                               label={t("pi.form.contextWindow")}
@@ -1330,7 +1333,6 @@ export function PiProviderForm({
                                   )
                                 }
                                 placeholder="128000"
-                                aria-describedby={`pi-model-limits-hint-${model.key}`}
                               />
                             </Field>
                             <Field
@@ -1349,15 +1351,8 @@ export function PiProviderForm({
                                   })
                                 }
                                 placeholder="16384"
-                                aria-describedby={`pi-model-limits-hint-${model.key}`}
                               />
                             </Field>
-                            <p
-                              id={`pi-model-limits-hint-${model.key}`}
-                              className="text-xs text-muted-foreground sm:col-span-2"
-                            >
-                              {t("pi.form.modelLimitsHint")}
-                            </p>
                           </div>
                         )}
                       </div>

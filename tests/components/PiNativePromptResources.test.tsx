@@ -149,6 +149,11 @@ describe("Pi native prompt resources", () => {
     const editor = screen.getByPlaceholderText(
       "pi.prompts.instructionPlaceholder",
     );
+    expect(
+      within(screen.getByLabelText("APPEND_SYSTEM.md")).queryByRole("button", {
+        name: "common.cancel",
+      }),
+    ).not.toBeInTheDocument();
     fireEvent.change(editor, { target: { value: "new append" } });
     fireEvent.click(screen.getByRole("button", { name: "common.save" }));
 
@@ -212,6 +217,87 @@ describe("Pi native prompt resources", () => {
         "new-empty",
         "missing",
         "",
+        undefined,
+      ),
+    );
+  });
+
+  it("renames an existing slash-command template while saving it", async () => {
+    vi.spyOn(promptsApi, "upsertPiPromptTemplate").mockResolvedValue({
+      slug: "renamed",
+      content: "",
+      revision: "renamed-revision",
+    });
+    renderWithQueryClient(<TemplateHarness />);
+
+    const edit = await screen.findByTitle("common.edit");
+    fireEvent.click(edit);
+    const slug = screen.getByPlaceholderText("pi.prompts.templateSlug");
+    expect(slug).toBeEnabled();
+    fireEvent.change(slug, { target: { value: "renamed" } });
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() =>
+      expect(promptsApi.upsertPiPromptTemplate).toHaveBeenCalledWith(
+        "renamed",
+        "empty-revision",
+        "",
+        "empty",
+      ),
+    );
+  });
+
+  it("edits Pi description as notes without duplicating it in the body", async () => {
+    vi.spyOn(promptsApi, "listPiPromptTemplates").mockResolvedValue([
+      {
+        slug: "review",
+        content:
+          '---\ndescription: "Existing note"\nargument-hint: "<target>"\n---\nReview $1',
+        revision: "review-revision",
+      },
+    ]);
+    vi.spyOn(promptsApi, "upsertPiPromptTemplate").mockResolvedValue({
+      slug: "review",
+      content:
+        '---\ndescription: "Updated note"\nargument-hint: "<target>"\n---\nReview $1',
+      revision: "updated-revision",
+    });
+    renderWithQueryClient(<TemplateHarness />);
+
+    expect(await screen.findByText("Existing note")).toBeInTheDocument();
+    expect(screen.queryByText("Review $1")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("common.edit"));
+
+    const notes = screen.getByPlaceholderText(
+      "pi.prompts.templateDescriptionPlaceholder",
+    );
+    const body = screen.getByPlaceholderText(
+      "pi.prompts.templateContentPlaceholder",
+    );
+    expect(notes).toHaveValue("Existing note");
+    expect(body).toHaveValue('---\nargument-hint: "<target>"\n---\nReview $1');
+    expect(
+      within(screen.getByLabelText("pi.prompts.editTemplate")).queryByRole(
+        "button",
+        { name: "common.delete" },
+      ),
+    ).not.toBeInTheDocument();
+    expect(
+      within(screen.getByLabelText("pi.prompts.editTemplate")).queryByRole(
+        "button",
+        { name: "common.cancel" },
+      ),
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(notes, { target: { value: "Updated note" } });
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() =>
+      expect(promptsApi.upsertPiPromptTemplate).toHaveBeenCalledWith(
+        "review",
+        "review-revision",
+        '---\ndescription: "Updated note"\nargument-hint: "<target>"\n---\nReview $1',
+        "review",
       ),
     );
   });
@@ -271,6 +357,45 @@ describe("Pi native prompt resources", () => {
         "missing",
         "replace the system prompt",
       ),
+    );
+  });
+
+  it("removes the global SYSTEM.md file through the native file API", async () => {
+    vi.spyOn(promptsApi, "getPiPromptFile").mockImplementation(
+      async (kind: PiPromptFileKind) => ({
+        kind,
+        path:
+          kind === "system_override"
+            ? "/agent/SYSTEM.md"
+            : "/agent/APPEND_SYSTEM.md",
+        exists: kind === "system_override",
+        revision: kind === "system_override" ? "system-revision" : "missing",
+        content: kind === "system_override" ? "custom system prompt" : "",
+      }),
+    );
+    const remove = vi
+      .spyOn(promptsApi, "deletePiPromptFile")
+      .mockResolvedValue(true);
+    renderWithQueryClient(<PiSystemPromptFiles />);
+
+    await screen.findByText("pi.prompts.configured");
+    fireEvent.click(screen.getByText("SYSTEM.md").closest("button")!);
+    fireEvent.click(
+      screen.getByRole("button", { name: "pi.prompts.removeGlobalFile" }),
+    );
+
+    const dialog = screen
+      .getByText("pi.prompts.removeFileTitle")
+      .closest('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    fireEvent.click(
+      within(dialog as HTMLElement).getByRole("button", {
+        name: "common.delete",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(remove).toHaveBeenCalledWith("system_override", "system-revision"),
     );
   });
 });

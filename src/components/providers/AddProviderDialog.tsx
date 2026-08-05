@@ -381,7 +381,7 @@ export function AddProviderDialog({
       title={t("provider.addNewProvider")}
       onClose={() => onOpenChange(false)}
       footer={footer}
-      contentClassName="pt-3"
+      contentClassName={appId === "pi" ? "pt-3 pb-0" : "pt-3"}
     >
       {showUniversalTab ? (
         <Tabs

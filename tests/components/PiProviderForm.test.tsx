@@ -702,10 +702,6 @@ describe("PiProviderForm", () => {
       1_050_000,
     );
     expect(screen.getByLabelText("pi.form.maxTokens")).toHaveValue(128_000);
-    expect(
-      screen.getByText("pi.form.modelMetadataAutofilled"),
-    ).toBeInTheDocument();
-
     fireEvent.change(modelNameInput, {
       target: { value: "My Luna" },
     });

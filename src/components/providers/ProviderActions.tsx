@@ -180,9 +180,7 @@ export function ProviderActions({
         disabled: false,
         variant: "default" as const,
         className:
-          appId === "pi"
-            ? "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700"
-            : "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
+          "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
         icon: <Plus className="h-4 w-4" />,
         text:
           appId === "pi"

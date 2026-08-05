@@ -83,9 +83,11 @@ export const promptsApi = {
     slug: string,
     expectedRevision: string,
     content: string,
+    originalSlug?: string,
   ): Promise<PiPromptTemplate> {
     return await invoke("upsert_pi_prompt_template", {
       slug,
+      originalSlug: originalSlug ?? null,
       expectedRevision,
       content,
     });

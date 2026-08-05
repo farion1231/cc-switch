@@ -5,6 +5,7 @@ import {
   Braces,
   ChevronDown,
   ChevronRight,
+  Edit3,
   FilePlus2,
   FileText,
   Loader2,
@@ -37,7 +38,12 @@ import {
   type PiPromptTemplate,
 } from "@/lib/api/prompts";
 import { useDarkMode } from "@/hooks/useDarkMode";
-import { getPiPromptTemplateSummary } from "@/lib/piPromptTemplate";
+import {
+  getPiPromptTemplateDescription,
+  getPiPromptTemplateSummary,
+  setPiPromptTemplateDescription,
+  stripPiPromptTemplateDescription,
+} from "@/lib/piPromptTemplate";
 import { isValidPiPromptTemplateSlug } from "@/lib/piPromptSlug";
 import { cn } from "@/lib/utils";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -159,14 +165,6 @@ function PiInstructionFileEditor({
                 {t("pi.prompts.removeGlobalFile")}
               </Button>
             )}
-            <Button
-              type="button"
-              variant="outline"
-              onClick={onClose}
-              disabled={busy}
-            >
-              {t("common.cancel")}
-            </Button>
             <Button
               type="button"
               onClick={requestSave}
@@ -376,7 +374,7 @@ export function PiSystemPromptFiles() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3">
         {EDITABLE_FILES.map((file) => (
           <PiInstructionFileCard key={file.kind} file={file} />
         ))}
@@ -400,26 +398,38 @@ function PiPromptTemplateEditor({
 }: PiPromptTemplateEditorProps) {
   const { t } = useTranslation();
   const darkMode = useDarkMode();
+  const initialDescription = getPiPromptTemplateDescription(
+    template?.content ?? "",
+  );
+  const initialContent = stripPiPromptTemplateDescription(
+    template?.content ?? "",
+  );
   const [slug, setSlug] = useState(template?.slug ?? "");
-  const [content, setContent] = useState(template?.content ?? "");
+  const [description, setDescription] = useState(initialDescription ?? "");
+  const [content, setContent] = useState(initialContent);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const isCreate = !template;
   const normalizedSlug = slug.trim();
   const slugIsValid = isValidPiPromptTemplateSlug(normalizedSlug);
+  const slugChanged = normalizedSlug !== template?.slug;
   const slugAlreadyExists =
-    isCreate && normalizedSlug.length > 0 && existingSlugs.has(normalizedSlug);
-  const changed =
-    isCreate ||
-    normalizedSlug !== template.slug ||
-    content !== template.content;
+    normalizedSlug.length > 0 &&
+    slugChanged &&
+    existingSlugs.has(normalizedSlug);
+  const templateContentChanged =
+    description !== (initialDescription ?? "") || content !== initialContent;
+  const changed = isCreate || slugChanged || templateContentChanged;
+  const serializedContent = templateContentChanged
+    ? setPiPromptTemplateDescription(content, description)
+    : (template?.content ?? content);
 
   const save = useMutation({
     mutationFn: () =>
       promptsApi.upsertPiPromptTemplate(
-        isCreate ? normalizedSlug : template.slug,
+        normalizedSlug,
         template?.revision ?? "missing",
-        content,
+        serializedContent,
+        template?.slug,
       ),
     onSuccess: async (saved) => {
       await onChanged();
@@ -435,29 +445,8 @@ function PiPromptTemplateEditor({
       showMutationError(error, t("pi.prompts.templateSaveFailed")),
   });
 
-  const remove = useMutation({
-    mutationFn: () => {
-      if (!template) throw new Error(t("pi.prompts.templateLoadFailed"));
-      return promptsApi.deletePiPromptTemplate(
-        template.slug,
-        template.revision,
-      );
-    },
-    onSuccess: async () => {
-      await onChanged();
-      toast.success(t("pi.prompts.templateDeleted", { slug: template?.slug }), {
-        description: t("pi.prompts.reloadNotice"),
-      });
-      setConfirmDelete(false);
-      onClose();
-    },
-    onError: (error) =>
-      showMutationError(error, t("pi.prompts.templateDeleteFailed")),
-  });
-
-  const busy = save.isPending || remove.isPending;
-  const canSave =
-    slugIsValid && !slugAlreadyExists && changed && !save.isPending;
+  const busy = save.isPending;
+  const canSave = slugIsValid && !slugAlreadyExists && changed && !busy;
 
   return (
     <>
@@ -470,38 +459,16 @@ function PiPromptTemplateEditor({
         }
         onClose={onClose}
         footer={
-          <>
-            {!isCreate && (
-              <Button
-                type="button"
-                variant="outline"
-                className="mr-auto text-destructive hover:text-destructive"
-                disabled={busy}
-                onClick={() => setConfirmDelete(true)}
-              >
-                <Trash2 className="h-4 w-4" aria-hidden="true" />
-                {t("common.delete")}
-              </Button>
+          <Button
+            type="button"
+            disabled={!canSave || busy}
+            onClick={() => save.mutate()}
+          >
+            {save.isPending && (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             )}
-            <Button
-              type="button"
-              variant="outline"
-              disabled={busy}
-              onClick={onClose}
-            >
-              {t("common.cancel")}
-            </Button>
-            <Button
-              type="button"
-              disabled={!canSave || busy}
-              onClick={() => save.mutate()}
-            >
-              {save.isPending && (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              )}
-              {isCreate ? t("pi.prompts.createTemplate") : t("common.save")}
-            </Button>
-          </>
+            {isCreate ? t("pi.prompts.createTemplate") : t("common.save")}
+          </Button>
         }
       >
         <div className="mx-auto w-full max-w-4xl space-y-5">
@@ -517,7 +484,7 @@ function PiPromptTemplateEditor({
                 id="pi-template-slug"
                 value={slug}
                 onChange={(event) => setSlug(event.target.value)}
-                disabled={!isCreate}
+                disabled={busy}
                 className="pl-7 font-mono"
                 placeholder={t("pi.prompts.templateSlug")}
                 aria-invalid={
@@ -536,6 +503,20 @@ function PiPromptTemplateEditor({
                 {t("pi.prompts.templateSlugExists")}
               </p>
             )}
+          </div>
+
+          <div>
+            <Label htmlFor="pi-template-description">
+              {t("pi.prompts.templateDescription")}
+            </Label>
+            <Input
+              id="pi-template-description"
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              disabled={busy}
+              className="mt-2"
+              placeholder={t("pi.prompts.templateDescriptionPlaceholder")}
+            />
           </div>
 
           <div>
@@ -579,30 +560,18 @@ function PiPromptTemplateEditor({
                 <pre className="mt-3 overflow-x-auto rounded-md border border-border bg-background p-3 font-mono text-foreground">
                   {`---
 description: Review the current changes
-argument-hint: [focus]
+argument-hint: "<target> [focus]"
 ---
-Review the changes. Focus on: $1
-Additional context: $@`}
+Review $1.
+Focus on: $2
+Remaining arguments: \${@:2}
+All arguments: $ARGUMENTS`}
                 </pre>
               </div>
             </CollapsibleContent>
           </Collapsible>
         </div>
       </FullScreenPanel>
-
-      <ConfirmDialog
-        isOpen={confirmDelete}
-        title={t("pi.prompts.deleteTemplateTitle", {
-          slug: template?.slug,
-        })}
-        message={t("pi.prompts.deleteTemplateMessage", {
-          slug: template?.slug,
-        })}
-        confirmText={t("common.delete")}
-        zIndex="top"
-        onConfirm={() => remove.mutate()}
-        onCancel={() => setConfirmDelete(false)}
-      />
     </>
   );
 }
@@ -659,7 +628,8 @@ export const PiPromptTemplates = forwardRef<PiPromptTemplatesHandle>(
         return (
           template.slug.toLocaleLowerCase().includes(query) ||
           summary.description?.toLocaleLowerCase().includes(query) ||
-          summary.argumentHint?.toLocaleLowerCase().includes(query)
+          summary.argumentHint?.toLocaleLowerCase().includes(query) ||
+          template.content.toLocaleLowerCase().includes(query)
         );
       });
     }, [search, templates.data]);
@@ -752,6 +722,7 @@ export const PiPromptTemplates = forwardRef<PiPromptTemplatesHandle>(
                         type="button"
                         className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         onClick={() => setEditor({ mode: "edit", template })}
+                        title={t("common.edit")}
                       >
                         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted font-mono text-sm text-muted-foreground">
                           /
@@ -767,12 +738,13 @@ export const PiPromptTemplates = forwardRef<PiPromptTemplatesHandle>(
                               </code>
                             )}
                           </div>
-                          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                            {summary.description ??
-                              t("pi.prompts.templateNoDescription")}
-                          </p>
+                          {summary.description && (
+                            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                              {summary.description}
+                            </p>
+                          )}
                         </div>
-                        <ChevronRight
+                        <Edit3
                           className="h-4 w-4 shrink-0 text-muted-foreground"
                           aria-hidden="true"
                         />

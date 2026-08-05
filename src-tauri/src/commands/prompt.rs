@@ -98,10 +98,11 @@ pub async fn list_pi_prompt_templates() -> Result<Vec<PiPromptTemplate>, String>
 #[tauri::command]
 pub async fn upsert_pi_prompt_template(
     slug: String,
+    #[allow(non_snake_case)] originalSlug: Option<String>,
     #[allow(non_snake_case)] expectedRevision: String,
     content: String,
 ) -> Result<PiPromptTemplate, String> {
-    PiPromptTemplateService::upsert(&slug, &expectedRevision, &content)
+    PiPromptTemplateService::upsert(&slug, originalSlug.as_deref(), &expectedRevision, &content)
         .map_err(|error| error.to_string())
 }
 

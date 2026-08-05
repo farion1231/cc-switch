@@ -237,6 +237,7 @@ export function EditProviderDialog({
       isOpen={open}
       title={t("provider.editProvider")}
       onClose={() => onOpenChange(false)}
+      contentClassName={appId === "pi" ? "pb-0" : undefined}
       footer={
         <Button
           type="submit"
