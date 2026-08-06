@@ -110,6 +110,14 @@ pub(crate) fn append_reasoning_content(message: &mut Map<String, Value>, reasoni
 
     match message.get_mut("reasoning_content") {
         Some(Value::String(existing)) if !existing.is_empty() => {
+            let existing_trimmed = existing.trim();
+            if existing_trimmed == reasoning || reasoning == "tool call" {
+                return false;
+            }
+            if existing_trimmed == "tool call" {
+                *existing = reasoning.to_string();
+                return true;
+            }
             existing.push_str("\n\n");
             existing.push_str(reasoning);
         }
