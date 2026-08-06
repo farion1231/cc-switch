@@ -30,6 +30,8 @@ import {
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
+import { toast } from "sonner";
+import { shareProviderDeeplink } from "@/utils/shareProviderDeeplink";
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -175,6 +177,21 @@ export function ProviderCard({
   const isAdditiveMode = appId === "opencode" && !isAnyOmo;
 
   const { data: health } = useProviderHealth(provider.id, appId);
+
+  const handleShare = async () => {
+    try {
+      await shareProviderDeeplink(appId, provider.id);
+      toast.success(
+        t("provider.shareLinkCopied", {
+          defaultValue: "分享链接已复制（含 API Key，请注意分享范围）",
+        }),
+      );
+    } catch (error) {
+      toast.error(
+        `${t("provider.shareLinkFailed", { defaultValue: "生成分享链接失败" })}: ${String(error)}`,
+      );
+    }
+  };
 
   const fallbackUrlText = t("provider.notConfigured", {
     defaultValue: "未配置接口地址",
@@ -569,6 +586,7 @@ export function ProviderCard({
               onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
+              onShare={appId === "claude-desktop" ? undefined : handleShare}
               onTest={
                 // 连通检测对第三方/自定义/Copilot/Codex-OAuth 供应商开放（这些正是旧的
                 // 真实请求探测会误报、而可达性探测能正确处理的对象）。官方供应商
