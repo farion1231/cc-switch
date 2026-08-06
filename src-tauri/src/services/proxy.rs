@@ -730,6 +730,13 @@ impl ProxyService {
         // OpenCode and OpenClaw don't support proxy features, always return false
         let opencode_enabled = false;
         let openclaw_enabled = false;
+        // Claude Science 无 Live 配置，enabled 仅是路由命名空间开关
+        let claude_science_enabled = self
+            .db
+            .get_proxy_config_for_app("claude-science")
+            .await
+            .map(|c| c.enabled)
+            .unwrap_or(false);
 
         Ok(ProxyTakeoverStatus {
             claude: claude_enabled,
@@ -738,6 +745,7 @@ impl ProxyService {
             grokbuild: grokbuild_enabled,
             opencode: opencode_enabled,
             openclaw: openclaw_enabled,
+            claude_science: claude_science_enabled,
         })
     }
 

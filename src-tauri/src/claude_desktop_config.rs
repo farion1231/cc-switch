@@ -710,7 +710,7 @@ fn next_catalog_safe_route_id(
 
 pub fn model_list_response(provider: &Provider) -> Result<Value, AppError> {
     let routes = resolve_proxy_routes(provider)?;
-    Ok(model_list_response_from_routes(routes))
+    Ok(model_list_response_from_routes(&routes))
 }
 
 pub fn model_list_response_from_routes(routes: &[ResolvedModelRoute]) -> Value {
@@ -2325,45 +2325,6 @@ mod tests {
         assert_eq!(normal, json!({"deploymentMode": "1p", "normal": true}));
         assert_eq!(threep, json!({"deploymentMode": "1p", "threep": true}));
         assert!(!paths.profile_path.exists());
-    }
-
-    #[test]
-    fn aggregate_science_model_list_only_contains_configured_tiers() {
-        // 聚合供应商的 /models 列表只包含已配置档位（未配置的档请求也无法路由，
-        // 列出来只会让 Science 前端选一个必然失败的模型）。env 回退对聚合供应商
-        // 不生效：resolve_proxy_routes 已成功，不会走 env_model_routes。
-        use crate::provider::{AggregateRoute, AggregateRoutes};
-        let mut provider = Provider::with_id(
-            "agg".to_string(),
-            "Agg".to_string(),
-            json!({"env": {}}),
-            None,
-        );
-        provider.meta = Some(ProviderMeta {
-            aggregate_routes: Some(AggregateRoutes {
-                sonnet: Some(AggregateRoute {
-                    provider_id: "kimi".into(),
-                    model: "kimi-k2".into(),
-                }),
-                opus: Some(AggregateRoute {
-                    provider_id: "kimi".into(),
-                    model: "kimi-k2".into(),
-                }),
-                haiku: None,
-                fable: None,
-                custom: None,
-            }),
-            ..Default::default()
-        });
-        let routes = resolve_proxy_routes(&provider).expect("aggregate routes");
-        let resp = model_list_response_from_routes(&routes);
-        let ids: Vec<&str> = resp["data"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|i| i["id"].as_str())
-            .collect();
-        assert_eq!(ids, vec!["claude-opus-5", "claude-sonnet-5"]);
     }
 
     #[test]

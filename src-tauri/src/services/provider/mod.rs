@@ -3483,6 +3483,7 @@ impl ProviderService {
         match app_type {
             AppType::Claude => Self::extract_claude_common_config(&provider.settings_config),
             AppType::ClaudeDesktop => Ok(String::new()),
+            AppType::ClaudeScience => Ok(String::new()), // Claude Science 无 live 文件，不使用通用配置片段
             AppType::Codex => Self::extract_codex_common_config(&provider.settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
             AppType::GrokBuild => Ok(String::new()),
@@ -3500,6 +3501,7 @@ impl ProviderService {
         match app_type {
             AppType::Claude => Self::extract_claude_common_config(settings_config),
             AppType::ClaudeDesktop => Ok(String::new()),
+            AppType::ClaudeScience => Ok(String::new()), // Claude Science 无 live 文件，不使用通用配置片段
             AppType::Codex => Self::extract_codex_common_config(settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
             AppType::GrokBuild => Ok(String::new()),
@@ -4157,7 +4159,7 @@ impl ProviderService {
 
     fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
         match app_type {
-            AppType::Claude => {
+            AppType::Claude | AppType::ClaudeScience => {
                 if !provider.settings_config.is_object() {
                     return Err(AppError::localized(
                         "provider.claude.settings.not_object",
@@ -4295,7 +4297,8 @@ impl ProviderService {
         app_type: &AppType,
     ) -> Result<(String, String), AppError> {
         match app_type {
-            AppType::Claude => {
+            // Claude Science 与 Claude 同为 Anthropic env 结构，复用同一套凭据提取
+            AppType::Claude | AppType::ClaudeScience => {
                 let env = provider
                     .settings_config
                     .get("env")
