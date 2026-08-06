@@ -1353,6 +1353,7 @@ pub fn run() {
             commands::save_settings,
             commands::has_codex_unify_history_backup,
             commands::restore_codex_unified_history,
+            commands::repair_codex_tool_search_history_item_ids,
             commands::get_rectifier_config,
             commands::set_rectifier_config,
             commands::get_optimizer_config,

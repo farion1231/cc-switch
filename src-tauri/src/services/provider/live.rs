@@ -848,6 +848,22 @@ fn restore_live_settings_for_provider_backfill(
     }
 
     let mut settings = live_settings;
+    if provider.category.as_deref() == Some("official") {
+        let live_has_oauth = settings
+            .get("auth")
+            .is_some_and(crate::codex_config::codex_auth_has_oauth_login_material);
+        if !live_has_oauth {
+            if let (Some(settings), Some(stored_auth)) = (
+                settings.as_object_mut(),
+                provider
+                    .settings_config
+                    .get("auth")
+                    .filter(|auth| auth.is_object()),
+            ) {
+                settings.insert("auth".to_string(), stored_auth.clone());
+            }
+        }
+    }
     let restore_provider_token =
         crate::codex_config::should_restore_codex_provider_token_for_backfill(
             provider.category.as_deref(),

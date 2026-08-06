@@ -1423,6 +1423,42 @@ impl RequestForwarder {
         // suffix and add the context-1m beta header.
         let mut codex_anthropic_one_m = false;
 
+        // This compatibility hook only runs after the local proxy has selected
+        // the actual third-party provider. Direct/non-takeover Codex routing
+        // bypasses this forwarder, while official ChatGPT/OAuth providers are
+        // explicitly excluded by the provider gate.
+        let allow_tool_search_compat = super::supports_codex_tool_search_compat(app_type);
+        if allow_tool_search_compat
+            && super::providers::should_inject_codex_tool_search_shim(provider, endpoint)
+        {
+            let action = super::providers::transform_codex_chat::ensure_responses_tool_search_shim(
+                &mut mapped_body,
+                should_replace_native_tool_search(
+                    codex_responses_to_chat,
+                    codex_responses_to_anthropic,
+                ),
+            );
+            let provider_type = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.provider_type.as_deref())
+                .unwrap_or("custom");
+            let compatibility_path = if codex_responses_to_chat {
+                "responses_to_chat"
+            } else if codex_responses_to_anthropic {
+                "responses_to_anthropic"
+            } else {
+                "native_responses"
+            };
+            log::debug!(
+                "[Codex] tool_search shim provider={} provider_type={} path={} action={}",
+                provider.id,
+                provider_type,
+                compatibility_path,
+                action.as_str()
+            );
+        }
+
         // 转换请求体（如果需要）
         let mut request_body = if codex_responses_to_chat {
             let mut mapped_body = mapped_body;
@@ -1442,9 +1478,10 @@ impl RequestForwarder {
             super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
-            let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+            let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning_and_tool_search_compat(
                 mapped_body,
                 reasoning_config.as_ref(),
+                allow_tool_search_compat,
             )?;
             super::providers::inject_codex_chat_prompt_cache_key(
                 provider,
@@ -1481,9 +1518,10 @@ impl RequestForwarder {
             // transform clamps any thinking budget below this value.
             const DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS: u64 = 8192;
             let mut anthropic_body =
-                super::providers::transform_codex_anthropic::responses_request_to_anthropic(
+                super::providers::transform_codex_anthropic::responses_request_to_anthropic_with_tool_search_compat(
                     mapped_body,
                     DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS,
+                    allow_tool_search_compat,
                 )?;
             // Handle the 1M-context marker [1m]: strip the model-name suffix (the
             // gateway doesn't recognize it) and set the flag so the beta header is
@@ -1530,17 +1568,18 @@ impl RequestForwarder {
             mapped_body
         };
 
-        // Native Responses passthrough to a strict third-party gateway (xAI):
-        // flatten Codex's private `namespace`/plugin tool declarations into
-        // top-level function tools so the upstream's strict serde parser does
-        // not 422 on `unknown variant "namespace"`. The Chat/Anthropic paths
-        // above already unwrap namespaces, so this only fires on the native
-        // passthrough. The response handler restores the flat names using a map
-        // re-derived from the same request tools.
+        // Native Responses passthrough to a third-party gateway: replay the
+        // synthetic tool-search exchange as ordinary function call/output items,
+        // promote tools returned by `tool_search_output`, and flatten private
+        // `namespace` declarations. The Chat/Anthropic adapters already perform
+        // the equivalent normalization. The response handler restores flat names
+        // using a map re-derived from the same request, including discovered tools.
         if matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
-            && super::providers::provider_needs_responses_namespace_flatten(provider)
+            && (super::providers::provider_needs_responses_namespace_flatten(provider)
+                || (super::supports_codex_tool_search_compat(app_type)
+                    && super::providers::should_inject_codex_tool_search_shim(provider, endpoint)))
             && super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
                 &mut request_body,
             )?
@@ -1549,6 +1588,34 @@ impl RequestForwarder {
                 "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
                 provider.id
             );
+        }
+
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+        {
+            let activated_names: Vec<&str> = request_body
+                .get("tools")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+                .filter(|name| name.contains("__") && *name != "tool_search")
+                .collect();
+            if !activated_names.is_empty() {
+                let tool_choice = request_body
+                    .get("tool_choice")
+                    .map(crate::proxy::json_canonical::canonical_json_string)
+                    .unwrap_or_else(|| "<absent>".to_string());
+                log::info!(
+                    "[Codex] Activated deferred tools for native Responses upstream \
+                     (provider={}, count={}, tool_choice={}, names={:?})",
+                    provider.id,
+                    activated_names.len(),
+                    tool_choice,
+                    activated_names
+                );
+            }
         }
 
         // Same native-Responses path: scrub the OpenAI-backend-private fields
@@ -3583,6 +3650,14 @@ fn value_for_log(value: &Value) -> String {
         Value::Object(values) => format!("object(len={})", values.len()),
     }
 }
+/// Native Responses routes use the function shim because third-party gateways
+/// cannot be assumed to implement Codex's private native tool_search carrier.
+fn should_replace_native_tool_search(
+    codex_responses_to_chat: bool,
+    codex_responses_to_anthropic: bool,
+) -> bool {
+    !codex_responses_to_chat && !codex_responses_to_anthropic
+}
 
 #[cfg(test)]
 mod tests {
@@ -3615,6 +3690,18 @@ mod tests {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    #[test]
+    fn native_tool_search_replacement_is_not_xai_only() {
+        assert!(!should_replace_native_tool_search(true, false));
+        assert!(!should_replace_native_tool_search(false, true));
+        let replace_native = should_replace_native_tool_search(false, false);
+
+        assert!(
+            replace_native,
+            "every shimmed native Responses route needs replacement"
+        );
     }
 
     fn test_forwarder(

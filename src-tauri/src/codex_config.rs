@@ -127,6 +127,11 @@ const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
 pub enum CodexCatalogToolProfile {
     ProxyChat,
     NativeResponses,
+    /// Codex reaches a third-party native Responses gateway through CC-Switch's
+    /// local proxy. Keep the clean function-only native tool shape, but advertise
+    /// ToolSearch support so app-server builds the deferred dynamic-tool index;
+    /// the proxy translates ToolSearch for upstream compatibility.
+    ProxiedNativeResponses,
     /// Codex talks (through cc-switch's proxy) to a native Anthropic Messages
     /// gateway. Like `NativeResponses` it must suppress Codex's freeform custom
     /// tools — the Responses→Anthropic transform keeps only `function` tools.
@@ -134,6 +139,11 @@ pub enum CodexCatalogToolProfile {
     /// (the transform drops it), so it is always disabled — see
     /// `prepare_codex_config_text_with_model_catalog`.
     Anthropic,
+    /// The same Anthropic transport while CC-Switch owns the local proxy route.
+    /// It keeps the conservative Anthropic tool shape while advertising
+    /// ToolSearch so app-server builds the deferred dynamic-tool index that the
+    /// proxy shim transports upstream.
+    ProxiedAnthropic,
 }
 
 impl CodexCatalogToolProfile {
@@ -617,6 +627,13 @@ fn codex_catalog_model_entry(
         if let Some(parallel) = spec.supports_parallel_tool_calls {
             entry_obj.insert("supports_parallel_tool_calls".to_string(), json!(parallel));
         }
+    }
+
+    if matches!(
+        profile,
+        CodexCatalogToolProfile::ProxiedNativeResponses | CodexCatalogToolProfile::ProxiedAnthropic
+    ) {
+        entry_obj.insert("supports_search_tool".to_string(), json!(true));
     }
 
     entry
@@ -1225,9 +1242,10 @@ fn codex_model_catalog_from_settings(
     // no cache dependency); proxy-chat providers keep cloning Codex's gpt-5.5
     // entry so the proxy can rewrite custom<->function tools as before.
     let template = match profile {
-        CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
-            load_codex_native_responses_template()
-        }
+        CodexCatalogToolProfile::NativeResponses
+        | CodexCatalogToolProfile::ProxiedNativeResponses
+        | CodexCatalogToolProfile::ProxiedAnthropic
+        | CodexCatalogToolProfile::Anthropic => load_codex_native_responses_template(),
         CodexCatalogToolProfile::ProxyChat => load_codex_model_catalog_template()?,
     };
     Ok(Some(codex_model_catalog_from_specs(
@@ -1317,8 +1335,9 @@ pub fn prepare_codex_config_text_with_model_catalog(
         let disable_web_search = match profile {
             // The Responses→Anthropic transform silently drops the Codex web_search
             // hosted tool, so always disable it here rather than present a dead tool.
-            CodexCatalogToolProfile::Anthropic => true,
-            CodexCatalogToolProfile::NativeResponses => {
+            CodexCatalogToolProfile::Anthropic | CodexCatalogToolProfile::ProxiedAnthropic => true,
+            CodexCatalogToolProfile::NativeResponses
+            | CodexCatalogToolProfile::ProxiedNativeResponses => {
                 codex_native_gateway_rejects_web_search(&config_text)
             }
             CodexCatalogToolProfile::ProxyChat => false,
@@ -1331,7 +1350,10 @@ pub fn prepare_codex_config_text_with_model_catalog(
         // Even without a generated catalog, the Responses→Anthropic transform drops the
         // Codex web_search hosted tool, so keep the invariant that an Anthropic provider
         // never presents it as a dead tool.
-        let disable_web_search = profile == CodexCatalogToolProfile::Anthropic;
+        let disable_web_search = matches!(
+            profile,
+            CodexCatalogToolProfile::Anthropic | CodexCatalogToolProfile::ProxiedAnthropic
+        );
         set_codex_native_web_search_field(&config_text, disable_web_search)
     }
 }
@@ -3220,6 +3242,40 @@ base_url = "https://production.api/v1"
         assert_eq!(
             catalog["models"][0]
                 .get("supports_reasoning_summaries")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn proxied_anthropic_catalog_advertises_tool_search_without_enabling_direct_profile() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [{
+                    "model": "claude-sonnet",
+                    "displayName": "Claude Sonnet",
+                    "contextWindow": 200_000
+                }]
+            }
+        });
+        let catalog_for = |profile| {
+            codex_model_catalog_from_settings(&settings, "", profile)
+                .expect("catalog generation should not error")
+                .expect("non-empty modelCatalog must yield a catalog")
+        };
+
+        let direct = catalog_for(CodexCatalogToolProfile::Anthropic);
+        let proxied = catalog_for(CodexCatalogToolProfile::ProxiedAnthropic);
+
+        assert_eq!(
+            direct["models"][0]
+                .get("supports_search_tool")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            proxied["models"][0]
+                .get("supports_search_tool")
                 .and_then(Value::as_bool),
             Some(true)
         );

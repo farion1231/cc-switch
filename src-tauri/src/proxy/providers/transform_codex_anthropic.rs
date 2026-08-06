@@ -10,9 +10,12 @@
 //! - `transform_responses.rs`: Anthropic request → Responses request, Responses response → Anthropic response
 //! - this module:               Responses request → Anthropic request, Anthropic response → Responses response
 
+#[cfg(test)]
+use super::transform_codex_chat::build_codex_tool_context_from_request;
 use super::transform_codex_chat::{
-    build_codex_tool_context_from_request, response_tool_call_item_from_chat_name,
-    response_tool_call_item_id_from_chat_name, CodexToolContext,
+    build_codex_tool_context_from_request_with_tool_search_compat,
+    response_tool_call_item_from_chat_name, response_tool_call_item_id_from_chat_name,
+    CodexToolContext,
 };
 use super::transform_responses::{sanitize_anthropic_tool_use_input, TOOL_RESULT_ERROR_MARKER};
 use crate::proxy::error::ProxyError;
@@ -223,12 +226,24 @@ fn responses_system_text(item: &Value) -> Vec<String> {
     }
 }
 
+#[allow(dead_code)]
 pub fn responses_request_to_anthropic(
     body: Value,
     default_max_tokens: u64,
 ) -> Result<Value, ProxyError> {
+    responses_request_to_anthropic_with_tool_search_compat(body, default_max_tokens, true)
+}
+
+pub(crate) fn responses_request_to_anthropic_with_tool_search_compat(
+    body: Value,
+    default_max_tokens: u64,
+    allow_tool_search_compat: bool,
+) -> Result<Value, ProxyError> {
     let mut result = json!({});
-    let tool_context = build_codex_tool_context_from_request(&body);
+    let tool_context = build_codex_tool_context_from_request_with_tool_search_compat(
+        &body,
+        allow_tool_search_compat,
+    );
     let model = body
         .get("model")
         .and_then(|value| value.as_str())
@@ -1690,11 +1705,39 @@ mod tests {
         });
         let result = responses_request_to_anthropic(input, 4096).unwrap();
         let tools = result["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 2);
+        assert_eq!(tools.len(), 3);
         assert_eq!(tools[0]["name"], "get_weather");
         assert_eq!(tools[0]["input_schema"]["type"], "object");
         assert!(tools[0].get("parameters").is_none());
         assert_eq!(tools[1]["name"], "apply_patch");
+        assert_eq!(tools[2]["name"], "tool_search");
+        assert_eq!(tools[2]["input_schema"]["required"][0], "query");
+    }
+
+    #[test]
+    fn test_request_skips_tool_search_when_compat_is_disabled() {
+        let input = json!({
+            "model": "grok-4.1-fast",
+            "max_output_tokens": 100,
+            "input": [{ "role": "user", "content": "hi" }],
+            "tools": [{
+                "type": "function",
+                "name": "get_weather",
+                "description": "d",
+                "parameters": {"type": "object"}
+            }]
+        });
+
+        let result =
+            responses_request_to_anthropic_with_tool_search_compat(input, 4096, false).unwrap();
+        let tool_names = result["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+
+        assert_eq!(tool_names, vec!["get_weather"]);
     }
 
     #[test]
@@ -1733,6 +1776,34 @@ mod tests {
             input_schema["oneOf"][1]["properties"]["name"]["type"],
             "string"
         );
+    }
+
+    #[test]
+    fn test_tool_search_output_resets_stale_none_choice_before_anthropic_mapping() {
+        let mut input = json!({
+            "model": "claude",
+            "max_output_tokens": 100,
+            "tool_choice": "none",
+            "input": [
+            {"role": "user", "content": "Find the documentation."}, {
+                "type": "tool_search_output",
+                "call_id": "tool_none_1",
+                "tools": [{
+                    "type": "function",
+                    "name": "search_docs",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}}
+                    }
+                }]
+            }]
+        });
+
+        super::super::transform_codex_chat::ensure_responses_tool_search_shim(&mut input, false);
+        assert_eq!(input["tool_choice"], "auto");
+
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        assert_eq!(result["tool_choice"], json!({"type": "auto"}));
     }
 
     #[test]
@@ -2253,8 +2324,9 @@ mod tests {
             "tool_choice": "required"
         });
         let result = responses_request_to_anthropic(input, 4096).unwrap();
-        assert_eq!(result["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(result["tools"].as_array().unwrap().len(), 2);
         assert_eq!(result["tools"][0]["name"], "apply_patch");
+        assert_eq!(result["tools"][1]["name"], "tool_search");
         assert_eq!(result["tool_choice"], json!({ "type": "any" }));
     }
 
@@ -2441,9 +2513,68 @@ mod tests {
         let result = anthropic_response_to_responses(input).unwrap();
         assert_eq!(result["status"], "completed");
         assert_eq!(result["output"][0]["type"], "function_call");
+        assert_eq!(result["output"][0]["id"], "fc_call_1");
         assert_eq!(result["output"][0]["call_id"], "call_1");
         assert_eq!(result["output"][0]["name"], "get_weather");
         assert_eq!(result["output"][0]["arguments"], "{\"city\":\"Tokyo\"}");
+    }
+
+    #[test]
+    fn test_response_tool_search_use_has_typed_item_id() {
+        let context = build_codex_tool_context_from_request(&json!({
+            "tools": [{"type": "tool_search"}]
+        }));
+        let result = anthropic_response_to_responses_with_context(
+            json!({
+                "id": "msg_search",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "call_search_1",
+                    "name": "tool_search",
+                    "input": {"query": "calendar tools"}
+                }],
+                "stop_reason": "tool_use"
+            }),
+            &context,
+        )
+        .unwrap();
+
+        assert_eq!(result["output"][0]["type"], "tool_search_call");
+        assert_eq!(result["output"][0]["id"], "tsc_call_search_1");
+        assert_eq!(result["output"][0]["call_id"], "call_search_1");
+    }
+
+    #[test]
+    fn test_response_keeps_tool_search_as_function_when_compat_is_disabled() {
+        let request = json!({
+            "model": "grok-4.1-fast",
+            "tools": [{
+                "type": "function",
+                "name": "get_weather",
+                "parameters": {"type": "object"}
+            }],
+            "input": "hi"
+        });
+        let context =
+            build_codex_tool_context_from_request_with_tool_search_compat(&request, false);
+        let result = anthropic_response_to_responses_with_context(
+            json!({
+                "id": "msg_search",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "call_search_1",
+                    "name": "tool_search",
+                    "input": {"query": "docs"}
+                }],
+                "stop_reason": "tool_use"
+            }),
+            &context,
+        )
+        .unwrap();
+
+        assert_eq!(result["output"][0]["type"], "function_call");
+        assert_eq!(result["output"][0]["id"], "fc_call_search_1");
+        assert_eq!(result["output"][0]["name"], "tool_search");
     }
 
     #[test]
