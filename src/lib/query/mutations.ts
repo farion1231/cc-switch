@@ -50,13 +50,34 @@ export const useAddProviderMutation = (appId: AppId) => {
       }
 
       if (appId === "codex" && ensureCodexOfficialSeed) {
-        await providersApi.ensureCodexOfficialProvider();
+        const inserted = await providersApi.ensureCodexOfficialProvider();
         const providers = await providersApi.getAll(appId);
         const officialProvider = providers[CODEX_OFFICIAL_PROVIDER_ID];
         if (!officialProvider) {
           throw new Error("Codex official provider was not created");
         }
-        return officialProvider;
+
+        // The ensure command deliberately preserves an existing fixed-id row.
+        // Re-entering the Official preset from Add Provider must honor that
+        // contract instead of silently overwriting the user's saved provider.
+        if (!inserted) {
+          return officialProvider;
+        }
+
+        // The fixed seed supplies identity/order, while the Add Provider form
+        // supplies the selected managed-account binding for a newly recreated
+        // row. Persist through the normal update path so current-provider live
+        // sync and managed auth preflight run too.
+        const updatedOfficialProvider: Provider = {
+          ...officialProvider,
+          ...rest,
+          id: CODEX_OFFICIAL_PROVIDER_ID,
+          category: "official",
+          createdAt: officialProvider.createdAt,
+          sortIndex: officialProvider.sortIndex,
+        };
+        await providersApi.update(updatedOfficialProvider, appId);
+        return updatedOfficialProvider;
       }
 
       if (appId === "grokbuild" && ensureGrokBuildOfficialSeed) {

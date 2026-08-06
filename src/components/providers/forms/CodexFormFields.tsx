@@ -26,6 +26,7 @@ import {
   Trash2,
 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
+import { CodexOAuthSection } from "./CodexOAuthSection";
 import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
 import { XaiOAuthSection } from "./XaiOAuthSection";
 import {
@@ -45,6 +46,7 @@ import type {
   PromptCacheRoutingMode,
   ProviderCategory,
 } from "@/types";
+import type { ManagedAuthProvider } from "@/lib/api";
 import type { AppId } from "@/lib/api";
 
 interface EndpointCandidate {
@@ -67,6 +69,11 @@ interface CodexFormFieldsProps {
   websiteUrl: string;
   isPartner?: boolean;
   partnerPromotionKey?: string;
+  isCodexOauthPreset?: boolean;
+  selectedCodexAccountId?: string | null;
+  onCodexAccountSelect?: (accountId: string | null) => void;
+  onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
+  codexOauthNoneOptionLabel?: string;
 
   // Base URL
   shouldShowSpeedTest: boolean;
@@ -177,6 +184,11 @@ export function CodexFormFields({
   websiteUrl,
   isPartner,
   partnerPromotionKey,
+  isCodexOauthPreset = false,
+  selectedCodexAccountId,
+  onCodexAccountSelect,
+  onManageAuthAccounts,
+  codexOauthNoneOptionLabel,
   shouldShowSpeedTest,
   codexBaseUrl,
   onBaseUrlChange,
@@ -501,6 +513,21 @@ export function CodexFormFields({
 
   return (
     <>
+      {/* Codex OAuth 账号选择 */}
+      {isCodexOauthPreset && (
+        <CodexOAuthSection
+          mode="select"
+          selectedAccountId={selectedCodexAccountId}
+          onAccountSelect={onCodexAccountSelect}
+          onManageAccounts={
+            onManageAuthAccounts
+              ? () => onManageAuthAccounts("codex_oauth")
+              : undefined
+          }
+          noneOptionLabel={codexOauthNoneOptionLabel}
+        />
+      )}
+
       {/* xAI OAuth 认证（Grok 订阅托管账号） */}
       {isXaiOauthPreset && (
         <XaiOAuthSection
@@ -510,7 +537,7 @@ export function CodexFormFields({
       )}
 
       {/* Codex API Key 输入框（托管 OAuth 预设无需 Key） */}
-      {!isXaiOauthPreset && (
+      {!isCodexOauthPreset && !isXaiOauthPreset && (
         <ApiKeySection
           id="codexApiKey"
           label="API Key"

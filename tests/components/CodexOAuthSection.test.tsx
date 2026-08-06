@@ -39,9 +39,13 @@ describe("CodexOAuthSection", () => {
           authenticated_at: 0,
           is_default: true,
           github_domain: "",
+          reauth_required: false,
+          requires_reauth: false,
         },
       ],
       defaultAccountId: "account-1",
+      isStatusSuccess: true,
+      isStatusError: false,
       hasAnyAccount: true,
       pollingState: "idle",
       deviceCode: null,
@@ -55,6 +59,7 @@ describe("CodexOAuthSection", () => {
       setDefaultAccount: vi.fn(),
       cancelAuth: vi.fn(),
       logout: vi.fn(),
+      refetchStatus: vi.fn(),
     });
   });
 

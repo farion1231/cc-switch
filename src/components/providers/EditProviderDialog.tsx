@@ -8,7 +8,14 @@ import {
   ProviderForm,
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
-import { openclawApi, providersApi, vscodeApi, type AppId } from "@/lib/api";
+import { AuthSettingsPanel } from "@/components/providers/AuthSettingsPanel";
+import {
+  openclawApi,
+  providersApi,
+  vscodeApi,
+  type AppId,
+  type ManagedAuthProvider,
+} from "@/lib/api";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -32,6 +39,8 @@ export function EditProviderDialog({
 }: EditProviderDialogProps) {
   const { t } = useTranslation();
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
+  const [authSettingsTarget, setAuthSettingsTarget] =
+    useState<ManagedAuthProvider | null>(null);
 
   // 默认使用传入的 provider.settingsConfig，若当前编辑对象是"当前生效供应商"，则尝试读取实时配置替换初始值
   const [liveSettings, setLiveSettings] = useState<Record<
@@ -41,6 +50,19 @@ export function EditProviderDialog({
 
   // 使用 ref 标记是否已经加载过，防止重复读取覆盖用户编辑
   const [hasLoadedLive, setHasLoadedLive] = useState(false);
+
+  const closeDialog = useCallback(() => {
+    setAuthSettingsTarget(null);
+    onOpenChange(false);
+  }, [onOpenChange]);
+
+  const handlePanelClose = useCallback(() => {
+    if (authSettingsTarget) {
+      setAuthSettingsTarget(null);
+      return;
+    }
+    closeDialog();
+  }, [authSettingsTarget, closeDialog]);
 
   useEffect(() => {
     let cancelled = false;
@@ -212,9 +234,9 @@ export function EditProviderDialog({
         provider: updatedProvider,
         originalId: provider.id,
       });
-      onOpenChange(false);
+      closeDialog();
     },
-    [appId, onSubmit, onOpenChange, provider],
+    [appId, onSubmit, closeDialog, provider],
   );
 
   if (!provider || !initialData) {
@@ -225,7 +247,7 @@ export function EditProviderDialog({
     <FullScreenPanel
       isOpen={open}
       title={t("provider.editProvider")}
-      onClose={() => onOpenChange(false)}
+      onClose={handlePanelClose}
       footer={
         <Button
           type="submit"
@@ -243,11 +265,16 @@ export function EditProviderDialog({
         providerId={provider.id}
         submitLabel={t("common.save")}
         onSubmit={handleSubmit}
-        onCancel={() => onOpenChange(false)}
+        onCancel={closeDialog}
+        onManageAuthAccounts={setAuthSettingsTarget}
         onSubmittingChange={setIsFormSubmitting}
         initialData={initialData}
         showButtons={false}
         isProxyTakeover={isProxyTakeover}
+      />
+      <AuthSettingsPanel
+        target={authSettingsTarget}
+        onClose={() => setAuthSettingsTarget(null)}
       />
     </FullScreenPanel>
   );
