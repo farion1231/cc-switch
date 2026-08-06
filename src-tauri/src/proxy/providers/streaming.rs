@@ -644,16 +644,31 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
             }
         }
 
-        // 流自然结束但未收到 [DONE] 时，确保发送缓存的 message_delta 和 message_stop。
-        // 若上游已显式报错，则只保留 error 事件，避免把失败伪装成成功完成。
+        // 流自然结束：确保发送 terminal 事件，避免 Claude Code CLI 永远等待。
+        // 即使没有 finish_reason（DeepSeek v4 flash 可能不发送），也要发送 message_stop。
         if !stream_ended_with_error {
             let emitted_pending_message_delta = if let Some((stop_reason, usage_json)) =
                 pending_message_delta.take()
             {
                 let event = build_message_delta_event(stop_reason, usage_json);
-                let sse_data = format!("event: message_delta\ndata: {}\n\n",
+                let sse_data = format!("event: message_delta
+data: {}
+
+",
                     serde_json::to_string(&event).unwrap_or_default());
                 log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_delta (at stream end)");
+                yield Ok(Bytes::from(sse_data));
+                true
+            } else if has_sent_message_start && !has_emitted_message_delta {
+                // No finish_reason but message_start was sent (e.g. deepseek-v4-flash).
+                // Send a default message_delta so the client knows the stream is done.
+                let event = build_message_delta_event(Some("end_turn".to_string()), None);
+                let sse_data = format!("event: message_delta
+data: {}
+
+",
+                    serde_json::to_string(&event).unwrap_or_default());
+                log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_delta (at stream end, no finish_reason)");
                 yield Ok(Bytes::from(sse_data));
                 true
             } else {
@@ -662,7 +677,10 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
 
             if emitted_pending_message_delta && !has_sent_message_stop {
                 let event = json!({"type": "message_stop"});
-                let sse_data = format!("event: message_stop\ndata: {}\n\n",
+                let sse_data = format!("event: message_stop
+data: {}
+
+",
                     serde_json::to_string(&event).unwrap_or_default());
                 log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_stop (at stream end)");
                 yield Ok(Bytes::from(sse_data));
@@ -1199,17 +1217,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_stream_end_without_finish_reason_does_not_emit_success_terminal_events() {
+    async fn test_stream_end_without_finish_reason_emits_success_terminal_events() {
         let input = "data: {\"id\":\"chatcmpl_truncated\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n";
 
         let events = collect_anthropic_events(input).await;
 
-        assert!(!events
-            .iter()
-            .any(|event| event_type(event) == Some("message_delta")));
-        assert!(!events
-            .iter()
-            .any(|event| event_type(event) == Some("message_stop")));
+        assert!(events.iter().any(|event| {
+            event_type(event) == Some("message_delta")
+                && event.pointer("/delta/stop_reason").and_then(|v| v.as_str()) == Some("end_turn")
+        }));
+        assert_eq!(
+            events.last().and_then(|event| event_type(event)),
+            Some("message_stop")
+        );
     }
 
     #[tokio::test]
