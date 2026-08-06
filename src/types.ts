@@ -227,6 +227,10 @@ export interface ProviderMeta {
   customUserAgent?: string;
   // Local proxy request overrides. Only applied by the local proxy after route transforms.
   localProxyRequestOverrides?: LocalProxyRequestOverrides;
+  // 测速可用性检测专属测试模型
+  testModel?: string;
+  // 测速可用性检测专属测试提示词
+  testPrompt?: string;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
