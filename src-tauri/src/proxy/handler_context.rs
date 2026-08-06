@@ -70,6 +70,8 @@ pub struct RequestContext {
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
+    /// Raw request body JSON string (for detail capture)
+    pub request_body: String,
 }
 
 impl RequestContext {
@@ -157,6 +159,8 @@ impl RequestContext {
             session_id
         );
 
+        let request_body = serde_json::to_string(body).unwrap_or_default();
+
         Ok(Self {
             start_time,
             app_config,
@@ -170,6 +174,7 @@ impl RequestContext {
             app_type,
             session_id,
             session_client_provided: session_result.client_provided,
+            request_body,
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,

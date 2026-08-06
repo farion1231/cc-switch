@@ -7,6 +7,8 @@
 //! - 各 handler 只保留独特的业务逻辑
 //! - Claude 的格式转换逻辑保留在此文件（用于 OpenRouter 旧接口回退）
 
+use std::sync::Arc;
+
 use super::{
     content_encoding::{decompress_body, get_content_encoding, is_supported_content_encoding},
     error_mapper::{get_error_message, map_proxy_error_to_status},
@@ -32,13 +34,14 @@ use super::{
         transform_codex_responses_namespace, transform_gemini, transform_responses,
     },
     response_processor::{
-        create_logged_passthrough_stream, create_usage_collector, process_response,
-        read_decoded_body, strip_entity_headers_for_rebuilt_body,
+        create_logged_passthrough_stream, create_usage_collector, header_map_to_json,
+        process_response, read_decoded_body, strip_entity_headers_for_rebuilt_body,
         strip_hop_by_hop_response_headers, usage_logging_enabled, SseUsageCollector,
     },
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
     types::*,
+    usage::logger::UsageLogger,
     usage::parser::TokenUsage,
     ProxyError,
 };
@@ -410,6 +413,7 @@ async fn handle_claude_transform(
 
     if use_streaming {
         // 根据 api_format 选择流式转换器
+        let capture_response_headers = response.headers().clone();
         let stream = response.bytes_stream();
         let sse_stream: Box<
             dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin,
@@ -428,10 +432,14 @@ async fn handle_claude_transform(
         };
 
         // 创建使用量收集器；关闭 usage logging 时不要再解析转换后的 SSE。
+        // 流式 capture 的 request_id 通道：与 usage collector 共享，collector 解析出
+        // usage 时同步写入，供流结束落详情取用（与 usage 行关联）。
+        let request_id_for_detail = Arc::new(std::sync::Mutex::new(None::<String>));
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
             let request_model = ctx.request_model.clone();
+            let request_id_sink = request_id_for_detail.clone();
             // 上游/转换层未回显模型时，优先用映射后的出站模型兜底（路由接管真值），
             // 其次才是客户端请求别名。空字符串视为缺失（转换器对无回显上游会合成 ""）。
             let fallback_model = ctx
@@ -461,6 +469,12 @@ async fn handle_claude_transform(
                         let session_id = session_id.clone();
                         let request_model = request_model.clone();
                         let outbound_model = fallback_model.clone();
+                        let dedup_scope =
+                            super::usage::parser::dedup_scope_for_app(app_type_str, &provider_id);
+                        let rid = usage.dedup_request_id(dedup_scope);
+                        if let Ok(mut guard) = request_id_sink.lock() {
+                            *guard = Some(rid.clone());
+                        }
 
                         tokio::spawn(async move {
                             log_usage(
@@ -497,6 +511,10 @@ async fn handle_claude_transform(
             usage_collector,
             timeout_config,
             connection_guard,
+            state.clone(),
+            ctx.request_body.clone(),
+            capture_response_headers,
+            request_id_for_detail,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -637,6 +655,34 @@ async fn handle_claude_transform(
         log::error!("[Claude] 序列化响应失败: {e}");
         ProxyError::TransformError(format!("Failed to serialize response: {e}"))
     })?;
+
+    // Record request/response detail (only when capture_details is enabled;
+    // stores upstream raw body for troubleshooting)
+    if state
+        .db
+        .get_log_config()
+        .map(|c| c.capture_details)
+        .unwrap_or(false)
+    {
+        let usage = TokenUsage::from_claude_response(&anthropic_response);
+        let dedup_scope =
+            super::usage::parser::dedup_scope_for_app(ctx.app_type_str, &ctx.provider.id);
+        let request_id = usage
+            .as_ref()
+            .map(|u| u.dedup_request_id(dedup_scope))
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let response_headers_json =
+            serde_json::to_string(&header_map_to_json(&response_headers)).unwrap_or_default();
+        if let Err(e) = UsageLogger::new(&state.db).save_detail_capture(
+            &request_id,
+            None,
+            Some(&ctx.request_body),
+            Some(&response_headers_json),
+            Some(&body_str),
+        ) {
+            log::warn!("[Claude] Failed to save non-streaming response detail: {e}");
+        }
+    }
 
     let body = axum::body::Body::from(response_body);
     builder.body(body).map_err(|e| {
@@ -1070,14 +1116,28 @@ async fn handle_codex_responses_namespace_restore(
                 response.bytes_stream(),
                 restore_map,
             );
-        let usage_collector =
-            create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
+        // 流式 capture 的 request_id 传递通道
+        let request_id_for_detail = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+        let request_body = ctx.request_body.clone();
+        let capture_response_headers = response_headers.clone();
+
+        let usage_collector = create_usage_collector(
+            ctx,
+            state,
+            status.as_u16(),
+            &CODEX_PARSER_CONFIG,
+            request_id_for_detail.clone(),
+        );
         let logged_stream = create_logged_passthrough_stream(
             restore_stream,
             ctx.tag,
             usage_collector,
             ctx.streaming_timeout_config(),
             connection_guard,
+            state.clone(),
+            request_body,
+            capture_response_headers,
+            request_id_for_detail,
         );
 
         let body = axum::body::Body::from_stream(logged_stream);
@@ -1197,14 +1257,19 @@ async fn handle_codex_chat_to_responses_transform(
     }
 
     if is_stream || response.is_sse() {
+        let capture_response_headers = response.headers().clone();
         let stream = response.bytes_stream();
         let sse_stream = create_responses_sse_stream_from_chat_with_context(stream, tool_context);
         let sse_stream = record_responses_sse_stream(sse_stream, state.codex_chat_history.clone());
 
+        // 流式 capture 的 request_id 通道：与 usage collector 共享，collector 解析出
+        // usage 时同步写入，供流结束落详情取用（与 usage 行关联）。
+        let request_id_for_detail = Arc::new(std::sync::Mutex::new(None::<String>));
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
             let request_model = ctx.request_model.clone();
+            let request_id_sink = request_id_for_detail.clone();
             // 接管/模型覆写场景的归因兜底：出站真值优先于客户端请求别名
             let fallback_model = ctx
                 .outbound_model
@@ -1241,6 +1306,12 @@ async fn handle_codex_chat_to_responses_transform(
                     let request_model = request_model.clone();
                     let outbound_model = fallback_model.clone();
                     let session_id = session_id.clone();
+                    let dedup_scope =
+                        super::usage::parser::dedup_scope_for_app(app_type_str, &provider_id);
+                    let rid = usage.dedup_request_id(dedup_scope);
+                    if let Ok(mut guard) = request_id_sink.lock() {
+                        *guard = Some(rid.clone());
+                    }
 
                     tokio::spawn(async move {
                         log_usage(
@@ -1271,6 +1342,10 @@ async fn handle_codex_chat_to_responses_transform(
             usage_collector,
             ctx.streaming_timeout_config(),
             connection_guard,
+            state.clone(),
+            ctx.request_body.clone(),
+            capture_response_headers,
+            request_id_for_detail,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -1397,6 +1472,34 @@ async fn handle_codex_chat_to_responses_transform(
         axum::http::HeaderValue::from_static("application/json"),
     );
 
+    // Record request/response detail (only when capture_details is enabled;
+    // stores upstream raw body for troubleshooting)
+    if state
+        .db
+        .get_log_config()
+        .map(|c| c.capture_details)
+        .unwrap_or(false)
+    {
+        let usage = TokenUsage::from_codex_response_auto(&responses_response);
+        let dedup_scope =
+            super::usage::parser::dedup_scope_for_app(ctx.app_type_str, &ctx.provider.id);
+        let request_id = usage
+            .as_ref()
+            .map(|u| u.dedup_request_id(dedup_scope))
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let response_headers_json =
+            serde_json::to_string(&header_map_to_json(&response_headers)).unwrap_or_default();
+        if let Err(e) = UsageLogger::new(&state.db).save_detail_capture(
+            &request_id,
+            None,
+            Some(&ctx.request_body),
+            Some(&response_headers_json),
+            Some(&body_str),
+        ) {
+            log::warn!("[Codex] Failed to save non-streaming response detail: {e}");
+        }
+    }
+
     let response_body = serde_json::to_vec(&responses_response).map_err(|e| {
         log::error!("[Codex] 序列化 Responses 响应失败: {e}");
         ProxyError::TransformError(format!("Failed to serialize responses response: {e}"))
@@ -1436,6 +1539,7 @@ async fn handle_codex_anthropic_to_responses_transform(
     // explicit JSON media type. Explicit JSON is buffered below so 2xx error
     // envelopes and gateways that ignore stream:true can be converted faithfully.
     if response.is_sse() || (is_stream && !response.is_json()) {
+        let capture_headers = response.headers().clone();
         let stream = response.bytes_stream();
         let sse_stream =
             create_responses_sse_stream_from_anthropic_with_context(stream, codex_tool_context);
@@ -1445,6 +1549,7 @@ async fn handle_codex_anthropic_to_responses_transform(
             state,
             status,
             connection_guard,
+            capture_headers,
         );
     }
 
@@ -1493,6 +1598,7 @@ async fn handle_codex_anthropic_to_responses_transform(
             state,
             status,
             connection_guard,
+            response_headers.clone(),
         );
     }
 
@@ -1580,11 +1686,16 @@ fn build_codex_anthropic_sse_response(
     state: &ProxyState,
     status: StatusCode,
     connection_guard: Option<ActiveConnectionGuard>,
+    response_headers: axum::http::HeaderMap,
 ) -> Result<axum::response::Response, ProxyError> {
+    // 流式 capture 的 request_id 通道：与 usage collector 共享，collector 解析出
+    // usage 时同步写入，供流结束落详情取用（与 usage 行关联）。
+    let request_id_for_detail = Arc::new(std::sync::Mutex::new(None::<String>));
     let usage_collector = if usage_logging_enabled(state) {
         let state = state.clone();
         let provider_id = ctx.provider.id.clone();
         let request_model = ctx.request_model.clone();
+        let request_id_sink = request_id_for_detail.clone();
         let fallback_model = ctx
             .outbound_model
             .clone()
@@ -1614,6 +1725,12 @@ fn build_codex_anthropic_sse_response(
                 let request_model = request_model.clone();
                 let outbound_model = fallback_model.clone();
                 let session_id = session_id.clone();
+                let dedup_scope =
+                    super::usage::parser::dedup_scope_for_app(app_type_str, &provider_id);
+                let rid = usage.dedup_request_id(dedup_scope);
+                if let Ok(mut guard) = request_id_sink.lock() {
+                    *guard = Some(rid.clone());
+                }
 
                 tokio::spawn(async move {
                     log_usage(
@@ -1644,6 +1761,10 @@ fn build_codex_anthropic_sse_response(
         usage_collector,
         ctx.streaming_timeout_config(),
         connection_guard,
+        state.clone(),
+        ctx.request_body.clone(),
+        response_headers,
+        request_id_for_detail,
     );
 
     let mut headers = axum::http::HeaderMap::new();
