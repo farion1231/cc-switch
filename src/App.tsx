@@ -1313,7 +1313,8 @@ function App() {
                   className="flex shrink-0 items-center gap-1.5"
                   style={{ WebkitAppRegion: "no-drag" } as any}
                 >
-                  {((activeApp === "claude" && settingsData?.enableLocalProxy) ||
+                  {((activeApp === "claude" &&
+                    settingsData?.enableLocalProxy) ||
                     activeApp === "claude-science") && (
                     <Button
                       variant="ghost"

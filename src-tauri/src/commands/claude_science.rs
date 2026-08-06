@@ -1175,9 +1175,7 @@ fn wsl_user_home(distro: &str) -> Option<String> {
 #[cfg(target_os = "windows")]
 fn wsl_unc_science_home(distro: &str, linux_home: &str) -> PathBuf {
     let windows_home = linux_home.trim_end_matches('/').replace('/', "\\");
-    PathBuf::from(format!(
-        "\\\\wsl$\\{distro}{windows_home}\\.claude-science"
-    ))
+    PathBuf::from(format!("\\\\wsl$\\{distro}{windows_home}\\.claude-science"))
 }
 
 /// Run a bash script inside a WSL distro. The script is base64-encoded before
@@ -1217,9 +1215,7 @@ fn find_claude_science_binary_wsl(distro: &str) -> Result<Option<String>, String
         } else {
             format!("exit status {}", output.status)
         };
-        return Err(format!(
-            "WSL command failed in distro '{distro}': {detail}"
-        ));
+        return Err(format!("WSL command failed in distro '{distro}': {detail}"));
     }
 
     let line = String::from_utf8_lossy(&output.stdout)

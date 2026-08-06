@@ -275,7 +275,9 @@ const UnifiedSkillsPanel = React.forwardRef<
     if (!skills || !beginWrite()) return;
 
     const ids = skills
-      .filter((skill) => Boolean(skill.apps[app as keyof SkillApps]) !== enabled)
+      .filter(
+        (skill) => Boolean(skill.apps[app as keyof SkillApps]) !== enabled,
+      )
       .map((skill) => skill.id);
     if (ids.length === 0) {
       endWrite();
