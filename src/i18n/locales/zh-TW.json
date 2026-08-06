@@ -1898,6 +1898,7 @@
     "enabled": "已啟用",
     "enable": "啟用",
     "enabledName": "已啟用：{{name}}",
+    "enabledCount": "已啟用 {{count}} 個",
     "noneEnabled": "未啟用任何提示詞",
     "currentFile": "目前 {{filename}} 內容",
     "empty": "暫無提示詞",

@@ -21,8 +21,8 @@ fn enabled_prompt_content(prompts: &IndexMap<String, Prompt>) -> String {
     prompts
         .values()
         .filter(|prompt| prompt.enabled)
-        .map(|prompt| prompt.content.trim())
-        .filter(|content| !content.is_empty())
+        .map(|prompt| prompt.content.as_str())
+        .filter(|content| !content.trim().is_empty())
         .collect::<Vec<_>>()
         .join("\n\n")
 }
@@ -317,5 +317,47 @@ impl PromptService {
 
         log::info!("自动导入完成: {}", app.as_str());
         Ok(1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::enabled_prompt_content;
+    use crate::prompt::Prompt;
+    use indexmap::IndexMap;
+
+    #[test]
+    fn enabled_prompt_content_preserves_prompt_whitespace_when_composing() {
+        let prompts = IndexMap::from([
+            (
+                "first".to_string(),
+                Prompt {
+                    id: "first".to_string(),
+                    name: "First".to_string(),
+                    content: "  first prompt  ".to_string(),
+                    description: None,
+                    enabled: true,
+                    created_at: None,
+                    updated_at: None,
+                },
+            ),
+            (
+                "second".to_string(),
+                Prompt {
+                    id: "second".to_string(),
+                    name: "Second".to_string(),
+                    content: "second prompt".to_string(),
+                    description: None,
+                    enabled: true,
+                    created_at: None,
+                    updated_at: None,
+                },
+            ),
+        ]);
+
+        assert_eq!(
+            enabled_prompt_content(&prompts),
+            "  first prompt  \n\nsecond prompt"
+        );
     }
 }

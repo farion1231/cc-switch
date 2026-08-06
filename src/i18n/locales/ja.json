@@ -1926,6 +1926,7 @@
     "enabled": "有効",
     "enable": "有効化",
     "enabledName": "有効: {{name}}",
+    "enabledCount": "{{count}} 件のプロンプトが有効",
     "noneEnabled": "有効なプロンプトがありません",
     "currentFile": "現在の {{filename}} の内容",
     "empty": "まだプロンプトがありません",
