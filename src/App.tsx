@@ -212,6 +212,7 @@ function App() {
     opencode: true,
     openclaw: true,
     hermes: true,
+    cursor: false,
   };
 
   const getFirstVisibleApp = (): AppId => {
@@ -242,7 +243,8 @@ function App() {
       sharedFeatureApp !== "opencode" &&
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
-      sharedFeatureApp !== "hermes"
+      sharedFeatureApp !== "hermes" &&
+      sharedFeatureApp !== "cursor"
     ) {
       setCurrentView("providers");
     }
@@ -309,7 +311,8 @@ function App() {
     sharedFeatureApp === "opencode" ||
     sharedFeatureApp === "openclaw" ||
     sharedFeatureApp === "gemini" ||
-    sharedFeatureApp === "hermes";
+    sharedFeatureApp === "hermes" ||
+    sharedFeatureApp === "cursor";
 
   const {
     addProvider,
@@ -1043,6 +1046,10 @@ function App() {
                       onDuplicate={handleDuplicateProvider}
                       onConfigureUsage={setUsageProvider}
                       onOpenWebsite={handleOpenWebsite}
+                      onOpenPublicRouteSettings={() => {
+                        setSettingsDefaultTab("proxy");
+                        setCurrentView("settings");
+                      }}
                       onOpenTerminal={
                         activeApp === "claude" ? handleOpenTerminal : undefined
                       }

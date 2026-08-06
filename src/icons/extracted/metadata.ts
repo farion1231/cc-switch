@@ -703,6 +703,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["stepfun", "step", "jieyue", "阶跃星辰"],
     defaultColor: "#005AFF",
   },
+  cursor: {
+    name: "cursor",
+    displayName: "Cursor",
+    category: "ai-provider",
+    keywords: ["cursor", "ide", "ai-editor", "cursor.sh"],
+    defaultColor: "#A855F7",
+  },
 };
 
 export function getIconMetadata(name: string): IconMetadata | undefined {

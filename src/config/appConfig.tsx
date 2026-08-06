@@ -24,6 +24,7 @@ export const APP_IDS: AppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "cursor",
 ];
 
 /** App IDs shown in Skills panels (excludes OpenClaw — it doesn't support Skills) */
@@ -34,6 +35,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "grokbuild",
   "opencode",
   "hermes",
+  "cursor",
 ];
 
 /** App IDs shown in MCP panels (excludes OpenClaw) */
@@ -124,5 +126,20 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-violet-500/10 ring-1 ring-violet-500/20 hover:bg-violet-500/20 text-violet-600 dark:text-violet-400",
     badgeClass:
       "bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 border-0 gap-1.5",
+  },
+  cursor: {
+    label: "Cursor",
+    icon: (
+      <ProviderIcon
+        icon="cursor"
+        name="Cursor"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-purple-500/10 ring-1 ring-purple-500/20 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400",
+    badgeClass:
+      "bg-purple-500/10 text-purple-700 dark:text-purple-300 hover:bg-purple-500/20 border-0 gap-1.5",
   },
 };

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { createElement } from "react";
-import { SessionMeta } from "@/types";
+import { SessionMessage, SessionMeta } from "@/types";
 
 const CODEX_IDE_CONTEXT_PREFIX = "# Context from my IDE setup:";
 const CODEX_REQUEST_MARKER = "my request for codex";
@@ -144,6 +144,38 @@ export const getRoleLabel = (role: string, t: (key: string) => string) => {
   if (normalized === "system") return t("sessionManager.roleSystem");
   if (normalized === "tool") return t("sessionManager.roleTool");
   return role;
+};
+
+const ROLE_HEADINGS: Record<string, string> = {
+  user: "User",
+  assistant: "Assistant",
+  system: "System",
+  tool: "Tool",
+};
+
+/**
+ * 将会话导出为 Markdown（标题 + 角色分区），可直接粘贴给其他 AI 工具。
+ * Cursor 无按会话 ID 恢复的接口，导出是回顾对话的主要方式。
+ */
+export const buildSessionMarkdown = (
+  session: SessionMeta,
+  messages: SessionMessage[],
+): string => {
+  const lines: string[] = [
+    `# ${session.title?.trim() || session.providerId}`,
+    "",
+  ];
+  for (const message of messages) {
+    const content = message.content.trim();
+    if (!content) continue;
+    lines.push(
+      `## ${ROLE_HEADINGS[message.role] ?? message.role}`,
+      "",
+      content,
+      "",
+    );
+  }
+  return lines.join("\n").trimEnd() + "\n";
 };
 
 export const formatSessionTitle = (session: SessionMeta) => {
