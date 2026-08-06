@@ -664,26 +664,46 @@ fn apply_common_config_to_settings(
     }
 }
 
+/// Merge the enabled common configuration into an existing live snapshot.
+///
+/// Unlike `build_effective_settings_with_common_config`, this starts with the
+/// supplied snapshot rather than the provider's stored settings. That matters
+/// during crash recovery: the Live backup can contain authentication, model,
+/// MCP, and other user fields that are newer than the provider record and must
+/// not be replaced by a provider-only rebuild.
+pub(crate) fn merge_common_config_into_settings(
+    db: &Database,
+    app_type: &AppType,
+    provider: &Provider,
+    settings: &Value,
+) -> Result<Value, AppError> {
+    let snippet = db.get_config_snippet(app_type.as_str())?;
+    if !provider_uses_common_config(app_type, provider, snippet.as_deref()) {
+        return Ok(settings.clone());
+    }
+
+    let Some(snippet_text) = snippet.as_deref() else {
+        return Ok(settings.clone());
+    };
+
+    apply_common_config_to_settings(app_type, settings, snippet_text)
+}
+
 pub(crate) fn build_effective_settings_with_common_config(
     db: &Database,
     app_type: &AppType,
     provider: &Provider,
 ) -> Result<Value, AppError> {
-    let snippet = db.get_config_snippet(app_type.as_str())?;
     let mut effective_settings = provider.settings_config.clone();
 
-    if provider_uses_common_config(app_type, provider, snippet.as_deref()) {
-        if let Some(snippet_text) = snippet.as_deref() {
-            match apply_common_config_to_settings(app_type, &effective_settings, snippet_text) {
-                Ok(settings) => effective_settings = settings,
-                Err(err) => {
-                    log::warn!(
-                        "Failed to apply common config for {} provider '{}': {err}",
-                        app_type.as_str(),
-                        provider.id
-                    );
-                }
-            }
+    match merge_common_config_into_settings(db, app_type, provider, &effective_settings) {
+        Ok(settings) => effective_settings = settings,
+        Err(err) => {
+            log::warn!(
+                "Failed to apply common config for {} provider '{}': {err}",
+                app_type.as_str(),
+                provider.id
+            );
         }
     }
 
