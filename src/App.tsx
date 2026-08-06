@@ -1629,11 +1629,11 @@ function App() {
                         </motion.div>
                       </AnimatePresence>
                     </div>
-
                     <Button
                       onClick={() => setIsAddOpen(true)}
                       size="icon"
                       className={`ml-2 ${addActionButtonClass}`}
+                      title={t("header.addProvider")}
                     >
                       <Plus className="w-5 h-5" />
                     </Button>
