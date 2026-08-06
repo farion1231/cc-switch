@@ -167,6 +167,10 @@ fn replace_images_in_message(message: &mut Value) -> usize {
         // into the content array. Detect that before recursing.
         let root_was_media = content.is_object()
             && chat_media_part_from_tool_part(content, ToolMediaScope::ImagesOnly).is_some();
+        // strip 会把根 media 对象整体替换成 replacement_block；cache_control
+        // 需在替换前提取，替换后再迁移回标记 block（与数组路径
+        // replace_image_block_with_text_marker 的行为保持一致）。
+        let cache_control = content.get("cache_control").cloned();
         let mut replaced = replace_images_in_content(content);
         let replacement_block = json!({
             "type":"text",
@@ -181,7 +185,7 @@ fn replace_images_in_message(message: &mut Value) -> usize {
             UNSUPPORTED_IMAGE_MARKER,
         );
         if root_was_media {
-            wrap_object_content_after_replacement(content, replaced);
+            wrap_object_content_after_replacement(content, replaced, cache_control);
         }
         replaced
     } else {
@@ -193,12 +197,20 @@ fn replace_images_in_message(message: &mut Value) -> usize {
 ///
 /// 仅在根对象本身是 media block 且被 `strip_media_from_tool_value` 整体替换成
 /// text 对象后调用（MCP / 自定义工具直接以 `{"type":"image",...}` 对象作为
-/// tool_result content 输出）：把替换后的对象包装成单元素数组，恢复合法的
-/// Anthropic 结构（issue #6170）。包装对象（含嵌套 media、根对象自身不是
-/// media block）不经过此函数——它的对象形态是上游原始结构，不属于媒体替换
-/// 引入的回归。非对象 content（字符串 / 数组）不受影响。
-fn wrap_object_content_after_replacement(content: &mut Value, replaced: usize) {
+/// tool_result content 输出）：把调用方在替换前提取的 cache_control（若有）
+/// 迁移回标记 block，再把对象包装成单元素数组，恢复合法的 Anthropic 结构
+/// （issue #6170）。包装对象（含嵌套 media、根对象自身不是 media block）
+/// 不经过此函数——它的对象形态是上游原始结构，不属于媒体替换引入的回归。
+/// 非对象 content（字符串 / 数组）不受影响。
+fn wrap_object_content_after_replacement(
+    content: &mut Value,
+    replaced: usize,
+    cache_control: Option<Value>,
+) {
     if replaced > 0 && content.is_object() {
+        if let (Some(cache_control), Some(object)) = (cache_control, content.as_object_mut()) {
+            object.insert("cache_control".to_string(), cache_control);
+        }
         let wrapped = std::mem::take(content);
         *content = json!([wrapped]);
     }
@@ -236,6 +248,9 @@ fn replace_images_in_content_with_text_type(content: &mut Value, text_type: &str
                 let root_was_media = nested_content.is_object()
                     && chat_media_part_from_tool_part(nested_content, ToolMediaScope::ImagesOnly)
                         .is_some();
+                // strip 会把根 media 对象整体替换成 replacement_block；cache_control
+                // 需在替换前提取，替换后再迁移回标记 block。
+                let cache_control = nested_content.get("cache_control").cloned();
                 replaced += replace_images_in_content_with_text_type(nested_content, text_type);
                 let replacement_block = json!({
                     "type":text_type,
@@ -254,7 +269,11 @@ fn replace_images_in_content_with_text_type(content: &mut Value, text_type: &str
                 // 为对象而非数组/字符串）。strip 将其替换成 text 对象后必须包装成
                 // 数组，保证 Anthropic content 结构合法（issue #6170）。
                 if root_was_media {
-                    wrap_object_content_after_replacement(nested_content, nested_replaced);
+                    wrap_object_content_after_replacement(
+                        nested_content,
+                        nested_replaced,
+                        cache_control,
+                    );
                 }
             } else {
                 replaced += replace_images_in_content_with_text_type(nested_content, text_type);
@@ -1443,6 +1462,37 @@ mod tests {
         assert_eq!(output["content"][0]["text"], "caption");
         assert_eq!(output["content"][1]["type"], "input_text");
         assert_eq!(output["content"][1]["text"], UNSUPPORTED_IMAGE_MARKER);
+    }
+
+    #[test]
+    fn object_image_content_preserves_cache_control_after_wrap() {
+        // 裸 image 对象被替换并包装成数组后，cache_control 断点应迁移到
+        // 标记 block（与数组路径 replace_image_block_with_text_marker 一致）。
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_1",
+                    "content": {
+                        "type": "image",
+                        "data": "CC_IMG_SENTINEL",
+                        "mimeType": "image/png",
+                        "cache_control": { "type": "ephemeral" }
+                    }
+                }]
+            }]
+        });
+
+        let count = replace_image_blocks_with_marker(&mut body);
+
+        assert_eq!(count, 1);
+        let block = &body["messages"][0]["content"][0]["content"][0];
+        assert_eq!(block["type"], "text");
+        assert_eq!(block["text"], UNSUPPORTED_IMAGE_MARKER);
+        assert_eq!(block["cache_control"]["type"], "ephemeral");
+        assert!(!body.to_string().contains("CC_IMG_SENTINEL"));
     }
 
     #[test]
