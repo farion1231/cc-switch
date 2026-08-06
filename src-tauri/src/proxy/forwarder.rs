@@ -1178,6 +1178,17 @@ impl RequestForwarder {
             super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
         }
 
+        if matches!(app_type, AppType::Codex)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+        {
+            super::providers::apply_codex_native_model_fallback(
+                provider,
+                endpoint,
+                &mut mapped_body,
+            );
+        }
+
         if is_copilot {
             mapped_body =
                 super::providers::copilot_model_map::apply_copilot_model_normalization(mapped_body);

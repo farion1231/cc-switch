@@ -497,6 +497,14 @@ pub struct ProviderMeta {
     /// Codex OAuth FAST mode: inject `service_tier = "priority"` for ChatGPT Codex requests.
     #[serde(rename = "codexFastMode", skip_serializing_if = "Option::is_none")]
     pub codex_fast_mode: Option<bool>,
+    /// Native Codex Responses routing: replace a request model that is absent
+    /// from the current provider catalog with the provider's configured model.
+    /// Enabled by default so resumed threads follow provider switches.
+    #[serde(
+        rename = "codexNativeModelFallback",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub codex_native_model_fallback: Option<bool>,
     /// Codex Responses -> Chat Completions reasoning capability metadata.
     #[serde(rename = "codexChatReasoning", skip_serializing_if = "Option::is_none")]
     pub codex_chat_reasoning: Option<CodexChatReasoningConfig>,
@@ -572,6 +580,10 @@ impl ProviderMeta {
     /// 会按更高速率消耗 ChatGPT 订阅配额，用户需显式开启以换取更低延迟。
     pub fn codex_fast_mode_enabled(&self) -> bool {
         self.codex_fast_mode.unwrap_or(false)
+    }
+
+    pub fn codex_native_model_fallback_enabled(&self) -> bool {
+        self.codex_native_model_fallback.unwrap_or(true)
     }
 
     /// 经校验的 Provider 级自定义 User-Agent。见 [`parse_custom_user_agent`]。

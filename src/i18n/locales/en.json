@@ -1342,6 +1342,8 @@
     "promptCacheRoutingEnabled": "Enabled",
     "promptCacheRoutingDisabled": "Disabled",
     "promptCacheRoutingHint": "Auto sends prompt_cache_key only to known-compatible upstreams. Enable it for other compatible gateways, or disable it if a strict gateway rejects unknown fields with HTTP 400. Only a stable client-provided session ID is used.",
+    "nativeModelFallbackLabel": "Follow default model after switching",
+    "nativeModelFallbackHint": "When a resumed thread sends a model outside the current mapping, use this provider's default model. Disable this to send unmapped model names directly.",
     "upstreamModelName": "Upstream Model Name",
     "upstreamModelNameHint": "For Chat format, enter the real upstream model here; routing converts Codex Responses requests to Chat Completions while keeping this model.",
     "modelNamePlaceholder": "e.g., gpt-5-codex",
