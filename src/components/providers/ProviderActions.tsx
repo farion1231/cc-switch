@@ -25,6 +25,7 @@ interface ProviderActionsProps {
   isProxyTakeover?: boolean;
   isOmo?: boolean;
   onSwitch: () => void;
+  onStopUsing?: () => void;
   onEdit: () => void;
   onDuplicate: () => void;
   onTest?: () => void;
@@ -64,6 +65,7 @@ export function ProviderActions({
   isProxyTakeover = false,
   isOmo = false,
   onSwitch,
+  onStopUsing,
   onEdit,
   onDuplicate,
   onTest,
@@ -114,6 +116,8 @@ export function ProviderActions({
       }
     } else if (isFailoverMode) {
       onToggleFailover(!isInFailoverQueue);
+    } else if (isCurrent && onStopUsing) {
+      onStopUsing();
     } else {
       onSwitch();
     }
@@ -187,12 +191,12 @@ export function ProviderActions({
 
     if (isCurrent) {
       return {
-        disabled: true,
+        disabled: false,
         variant: "secondary" as const,
         className:
-          "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
+          "bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/50 dark:text-yellow-400 dark:hover:bg-yellow-900/70",
         icon: <Check className="h-4 w-4" />,
-        text: t("provider.inUse"),
+        text: t("provider.stopUsing", "取消使用"),
       };
     }
 

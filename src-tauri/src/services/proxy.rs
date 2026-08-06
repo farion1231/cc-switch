@@ -7339,4 +7339,175 @@ experimental_bearer_token = "PROXY_MANAGED"
             .expect("backup exists");
         assert_eq!(backup.original_config, original_backup);
     }
+
+    /// Regression: 代理接管激活时调用 `clear_current_provider` 只清 provider
+    /// 标记，不关闭接管。此后 provider_router 在 failover 关闭时会返回
+    /// NoProvidersConfigured，每个请求都失败。
+    /// 修复：取消使用 应通过 `clear_current_provider_with_takeover` 关闭接管并
+    /// 恢复 Live 配置。
+    #[tokio::test]
+    #[serial]
+    async fn clear_current_provider_with_takeover_restores_live_and_clears_provider() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "a-key",
+                    "ANTHROPIC_BASE_URL": "https://api.a.example"
+                }
+            }),
+            None,
+        );
+
+        db.save_provider("claude", &provider_a)
+            .expect("save provider");
+        db.set_current_provider("claude", "a")
+            .expect("set current");
+        crate::settings::set_current_provider(&AppType::Claude, Some("a"))
+            .expect("set local current");
+
+        // 保存好备份
+        let original_backup = serde_json::to_string(&provider_a.settings_config)
+            .expect("serialize original");
+        db.save_live_backup("claude", &original_backup)
+            .await
+            .expect("seed backup");
+
+        // 写入接管占位符
+        service
+            .write_claude_live(&json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": PROXY_TOKEN_PLACEHOLDER,
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721"
+                }
+            }))
+            .expect("seed takeover live");
+
+        // 标记 proxy_config.enabled = true（模拟接管激活）
+        let mut config = db.get_proxy_config_for_app("claude").await.expect("get config");
+        config.enabled = true;
+        db.update_proxy_config_for_app(config).await.expect("update config");
+
+        // 直接调用 set_takeover_for_app(false) + clear_current_provider
+        let app_type = AppType::Claude;
+        let app_type_str = app_type.as_str();
+        if let Err(e) = service.set_takeover_for_app(app_type_str, false).await {
+            log::warn!("关闭 {app_type_str} 代理接管失败: {e}");
+        }
+        crate::settings::set_current_provider(&app_type, None)
+            .expect("clear local current");
+        db.clear_current_provider(app_type.as_str())
+            .expect("clear db current");
+
+        // 断言：current provider 已清除
+        assert_eq!(
+            crate::settings::get_current_provider(&AppType::Claude),
+            None,
+            "local current provider should be cleared"
+        );
+        assert_eq!(
+            db.get_current_provider("claude").expect("db current"),
+            None,
+            "db current provider should be cleared"
+        );
+
+        // 断言：proxy_config.enabled 已清除
+        let config_after = db.get_proxy_config_for_app("claude").await.expect("get config");
+        assert!(!config_after.enabled, "proxy_config.enabled should be false after takeover off");
+
+        // 断言：备份已删除
+        let backup = db.get_live_backup("claude").await.expect("get backup");
+        assert!(
+            backup.is_none(),
+            "live backup should be deleted after takeover off"
+        );
+
+        // 断言：Live 配置已恢复（不再是接管占位符）
+        let live = service.read_claude_live().expect("read live");
+        let env = live.get("env").and_then(|v| v.as_object()).expect("live env");
+        assert_eq!(
+            env.get("ANTHROPIC_API_KEY").and_then(|v| v.as_str()),
+            Some("a-key"),
+            "live should be restored to provider config (API key)"
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()),
+            Some("https://api.a.example"),
+            "live should be restored to provider config (base URL)"
+        );
+        assert!(
+            !env.contains_key("ANTHROPIC_AUTH_TOKEN"),
+            "live should not contain proxy placeholder"
+        );
+        assert!(
+            env.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()) != Some("http://127.0.0.1:15721"),
+            "live should not point at local proxy"
+        );
+    }
+
+    /// 验证普通 clear（不经 takeover）不影响 proxy_config.enabled
+    #[tokio::test]
+    #[serial]
+    async fn clear_current_provider_without_takeover_does_not_affect_enabled_flag() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "a-key" } }),
+            None,
+        );
+
+        db.save_provider("claude", &provider_a)
+            .expect("save provider");
+        db.set_current_provider("claude", "a")
+            .expect("set current");
+        crate::settings::set_current_provider(&AppType::Claude, Some("a"))
+            .expect("set local current");
+
+        // 写入初始 live 配置
+        service
+            .write_claude_live(&provider_a.settings_config)
+            .expect("seed initial live config");
+
+        // 不调用 takeover，直接 clear
+        crate::settings::set_current_provider(&AppType::Claude, None)
+            .expect("clear local current");
+        db.clear_current_provider("claude").expect("clear db current");
+
+        assert_eq!(
+            crate::settings::get_current_provider(&AppType::Claude),
+            None,
+            "local current should be cleared"
+        );
+        assert_eq!(
+            db.get_current_provider("claude").expect("db current"),
+            None,
+            "db current should be cleared"
+        );
+
+        // proxy_config.enabled 保持不变（未启用，仍为 false）
+        let config = db.get_proxy_config_for_app("claude").await.expect("get config");
+        assert!(!config.enabled, "enabled should remain false");
+
+        // Live 配置未被修改
+        let live = service.read_claude_live().expect("read live");
+        let env = live.get("env").and_then(|v| v.as_object()).expect("live env");
+        assert_eq!(
+            env.get("ANTHROPIC_API_KEY").and_then(|v| v.as_str()),
+            Some("a-key"),
+            "live config should not be modified"
+        );
+    }
 }

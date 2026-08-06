@@ -1018,6 +1018,13 @@ function App() {
                       }
                       activeProviderId={activeProviderId}
                       onSwitch={switchProvider}
+                      onStopUsing={
+                        activeApp === "gemini" || activeApp === "claude" || activeApp === "codex" || activeApp === "grokbuild" || activeApp === "claude-desktop"
+                          ? () => (isProxyRunning && isCurrentAppTakeoverActive)
+                            ? providersApi.clearCurrentWithTakeover(activeApp)
+                            : providersApi.clearCurrent(activeApp)
+                          : undefined
+                      }
                       onEdit={(provider) => {
                         setEditingProvider(provider);
                       }}
