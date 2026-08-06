@@ -318,15 +318,21 @@ pub fn direct_gateway_credentials(
         .to_string();
 
     let api_key = env
-        .get("ANTHROPIC_AUTH_TOKEN")
+        .get("ANTHROPIC_API_KEY")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .or_else(|| {
+            env.get("ANTHROPIC_AUTH_TOKEN")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
         .ok_or_else(|| {
             AppError::localized(
-                "claude_desktop.provider.auth_token_missing",
-                "Claude Desktop 直连供应商缺少 ANTHROPIC_AUTH_TOKEN（Bearer Token）",
-                "Claude Desktop direct provider is missing ANTHROPIC_AUTH_TOKEN (Bearer Token)",
+                "claude_desktop.provider.api_key_missing",
+                "Claude Desktop 直连供应商缺少 ANTHROPIC_API_KEY",
+                "Claude Desktop direct provider is missing ANTHROPIC_API_KEY",
             )
         })?
         .to_string();
@@ -2206,7 +2212,7 @@ mod tests {
         });
         assert!(!is_compatible_direct_provider(&full_url));
 
-        let missing_bearer = Provider::with_id(
+        let api_key_provider = Provider::with_id(
             "x-api-key".to_string(),
             "x-api-key".to_string(),
             json!({
@@ -2217,6 +2223,50 @@ mod tests {
             }),
             None,
         );
-        assert!(!is_compatible_direct_provider(&missing_bearer));
+        assert!(is_compatible_direct_provider(&api_key_provider));
+        assert_eq!(
+            direct_gateway_credentials(&api_key_provider)
+                .expect("ANTHROPIC_API_KEY should be accepted")
+                .api_key,
+            "sk-ant"
+        );
+
+        let both_fields = Provider::with_id(
+            "both-fields".to_string(),
+            "both-fields".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://gateway.example.com",
+                    "ANTHROPIC_API_KEY": "current-key",
+                    "ANTHROPIC_AUTH_TOKEN": "legacy-token"
+                }
+            }),
+            None,
+        );
+        assert_eq!(
+            direct_gateway_credentials(&both_fields)
+                .expect("ANTHROPIC_API_KEY should take precedence")
+                .api_key,
+            "current-key"
+        );
+
+        let empty_api_key = Provider::with_id(
+            "empty-api-key".to_string(),
+            "empty-api-key".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://gateway.example.com",
+                    "ANTHROPIC_API_KEY": " ",
+                    "ANTHROPIC_AUTH_TOKEN": "legacy-token"
+                }
+            }),
+            None,
+        );
+        assert_eq!(
+            direct_gateway_credentials(&empty_api_key)
+                .expect("empty ANTHROPIC_API_KEY should fall back to the legacy token")
+                .api_key,
+            "legacy-token"
+        );
     }
 }
