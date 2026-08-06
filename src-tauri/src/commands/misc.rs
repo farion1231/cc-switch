@@ -193,16 +193,67 @@ pub async fn run_tool_lifecycle_action(
         ToolLifecycleAction::Install => "tool_install",
         ToolLifecycleAction::Update => "tool_update",
     };
+    let proxy_url = crate::proxy::http_client::get_current_proxy_url();
 
     // build 阶段含锚定探测（对每个工具跑 `--version` 定位命令行实际命中那处），
     // 与执行一并放进 blocking 线程，避免阻塞 async runtime。
     tokio::task::spawn_blocking(move || {
         let command_line =
             build_tool_lifecycle_command(&requested, action, wsl_shell_by_tool.as_ref())?;
-        run_tool_lifecycle_silently(&command_line, label)
+        run_tool_lifecycle_silently(&command_line, label, proxy_url.as_deref())
     })
     .await
     .map_err(|e| format!("tool lifecycle task join error: {e}"))?
+}
+
+const TOOL_PROXY_ENV_KEYS: [&str; 6] = [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+];
+
+/// 将 CC Switch 当前显式配置的全局代理传给 CLI 安装/升级子进程。
+/// 未配置时不改写环境，让工具继续使用自身配置、系统代理或继承的环境变量。
+fn apply_tool_proxy_env(command: &mut std::process::Command, proxy_url: Option<&str>) {
+    let Some(proxy_url) = proxy_url.filter(|url| !url.trim().is_empty()) else {
+        return;
+    };
+
+    for key in TOOL_PROXY_ENV_KEYS {
+        command.env(key, proxy_url);
+    }
+
+    #[cfg(target_os = "windows")]
+    command.env(
+        "WSLENV",
+        merge_tool_proxy_wslenv(std::env::var("WSLENV").ok().as_deref()),
+    );
+}
+
+/// WSL 只转发 `WSLENV` 声明的 Windows 环境变量。保留用户原有条目，
+/// 并把代理变量统一改成仅 Windows -> WSL，避免旧 `/w` 标记阻止传入 WSL。
+#[cfg(target_os = "windows")]
+fn merge_tool_proxy_wslenv(existing: Option<&str>) -> String {
+    let mut entries = existing
+        .into_iter()
+        .flat_map(|value| value.split(':'))
+        .filter(|entry| !entry.is_empty())
+        .filter(|entry| {
+            let name = entry.split('/').next().unwrap_or(entry);
+            !TOOL_PROXY_ENV_KEYS
+                .iter()
+                .any(|key| key.eq_ignore_ascii_case(name))
+        })
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+    // Windows 环境变量名不区分大小写但会保留既有名称，WSLENV 则区分大小写。
+    // 同时声明两套名称，确保实际保留下来的那一套能够进入 WSL。
+    entries.extend(TOOL_PROXY_ENV_KEYS.map(|key| format!("{key}/u")));
+    entries.join(":")
 }
 
 /// 静默执行工具安装/更新脚本：直接捕获子进程输出并阻塞到命令真正结束，
@@ -210,7 +261,11 @@ pub async fn run_tool_lifecycle_action(
 /// 后者仍保留给 provider 切换等需要交互式终端的场景）。
 /// 失败时回传 stderr/stdout 末尾若干行，供前端 toast 提示。
 #[cfg(not(target_os = "windows"))]
-fn run_tool_lifecycle_silently(command_line: &str, _label: &str) -> Result<(), String> {
+fn run_tool_lifecycle_silently(
+    command_line: &str,
+    _label: &str,
+    proxy_url: Option<&str>,
+) -> Result<(), String> {
     use std::process::Command;
     // command_line 是 bash 风格脚本（含 `set -e` 与多行命令）；强制用 bash 执行，
     // 避免用户默认 shell 为 fish/zsh 时 `set -e` 等语义不一致。
@@ -223,6 +278,7 @@ fn run_tool_lifecycle_silently(command_line: &str, _label: &str) -> Result<(), S
         let inherited = std::env::var("PATH").unwrap_or_default();
         cmd.env("PATH", merge_path_segments(&login_path, &inherited));
     }
+    apply_tool_proxy_env(&mut cmd, proxy_url);
     let output = cmd.output().map_err(|e| format!("启动安装进程失败: {e}"))?;
     finish_lifecycle_output(&output)
 }
@@ -230,7 +286,11 @@ fn run_tool_lifecycle_silently(command_line: &str, _label: &str) -> Result<(), S
 /// Windows 静默执行：command_line 是 .bat 内容（@echo off + call/wsl 行，CRLF 分隔），
 /// 写临时 .bat 后用 `cmd /C` 执行，`CREATE_NO_WINDOW` 抑制 console 窗口。
 #[cfg(target_os = "windows")]
-fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), String> {
+fn run_tool_lifecycle_silently(
+    command_line: &str,
+    label: &str,
+    proxy_url: Option<&str>,
+) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
 
@@ -238,11 +298,13 @@ fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), St
         std::env::temp_dir().join(format!("cc_switch_{}_{}.bat", label, std::process::id()));
     std::fs::write(&bat_file, command_line).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
-    let output = Command::new("cmd")
+    let mut command = Command::new("cmd");
+    command
         .arg("/C")
         .arg(&bat_file)
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
+        .creation_flags(CREATE_NO_WINDOW);
+    apply_tool_proxy_env(&mut command, proxy_url);
+    let output = command.output();
     let _ = std::fs::remove_file(&bat_file);
 
     finish_lifecycle_output(&output.map_err(|e| format!("启动安装进程失败: {e}"))?)
@@ -4269,6 +4331,102 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    fn command_env_value(command: &std::process::Command, name: &str) -> Option<String> {
+        command.get_envs().find_map(|(key, value)| {
+            let matches = if cfg!(target_os = "windows") {
+                key.to_string_lossy().eq_ignore_ascii_case(name)
+            } else {
+                key == std::ffi::OsStr::new(name)
+            };
+            if matches {
+                value.map(|value| value.to_string_lossy().into_owned())
+            } else {
+                None
+            }
+        })
+    }
+
+    #[test]
+    fn tool_proxy_env_overrides_inherited_proxy_for_lifecycle_child() {
+        let proxy = "http://127.0.0.1:17897";
+        let mut command = std::process::Command::new("unused");
+        for key in TOOL_PROXY_ENV_KEYS {
+            command.env(key, "http://old.invalid:8080");
+        }
+
+        apply_tool_proxy_env(&mut command, Some(proxy));
+
+        #[cfg(not(target_os = "windows"))]
+        for key in TOOL_PROXY_ENV_KEYS {
+            assert_eq!(command_env_value(&command, key).as_deref(), Some(proxy));
+        }
+
+        // Windows 环境变量名大小写不敏感，因此每组只会保留一个显式条目。
+        #[cfg(target_os = "windows")]
+        for key in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"] {
+            assert_eq!(command_env_value(&command, key).as_deref(), Some(proxy));
+        }
+    }
+
+    #[test]
+    fn tool_proxy_env_keeps_existing_behavior_when_global_proxy_is_absent() {
+        let mut command = std::process::Command::new("unused");
+
+        apply_tool_proxy_env(&mut command, None);
+        apply_tool_proxy_env(&mut command, Some("   "));
+
+        assert!(TOOL_PROXY_ENV_KEYS
+            .iter()
+            .all(|key| command_env_value(&command, key).is_none()));
+    }
+
+    #[test]
+    fn tool_proxy_env_reaches_spawned_lifecycle_child() {
+        let proxy = "http://127.0.0.1:17897";
+
+        #[cfg(target_os = "windows")]
+        let mut command = {
+            let mut command = std::process::Command::new("cmd");
+            command.args([
+                "/D",
+                "/S",
+                "/C",
+                "if not \"%HTTP_PROXY%\"==\"http://127.0.0.1:17897\" exit /b 11 & if not \"%HTTPS_PROXY%\"==\"http://127.0.0.1:17897\" exit /b 12 & if not \"%ALL_PROXY%\"==\"http://127.0.0.1:17897\" exit /b 13",
+            ]);
+            command
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let mut command = {
+            let mut command = std::process::Command::new("sh");
+            command.args([
+                "-c",
+                "test \"$HTTP_PROXY\" = 'http://127.0.0.1:17897' && test \"$HTTPS_PROXY\" = 'http://127.0.0.1:17897' && test \"$ALL_PROXY\" = 'http://127.0.0.1:17897'",
+            ]);
+            command
+        };
+
+        for key in TOOL_PROXY_ENV_KEYS {
+            command.env(key, "http://old.invalid:8080");
+        }
+        apply_tool_proxy_env(&mut command, Some(proxy));
+
+        let status = command.status().expect("spawn lifecycle child");
+        assert!(status.success(), "child did not receive configured proxy");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn tool_proxy_wslenv_preserves_user_entries_and_replaces_wrong_direction_flags() {
+        let merged =
+            merge_tool_proxy_wslenv(Some("GOPATH/p:HTTP_PROXY/u:https_proxy:USER_SETTING/w"));
+
+        assert_eq!(
+            merged,
+            "GOPATH/p:USER_SETTING/w:HTTP_PROXY/u:HTTPS_PROXY/u:ALL_PROXY/u:http_proxy/u:https_proxy/u:all_proxy/u"
+        );
+    }
 
     #[cfg(target_os = "windows")]
     #[test]
