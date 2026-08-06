@@ -1177,7 +1177,6 @@
     "fetchModelsNotSupported": "该供应商不支持获取模型列表",
     "fetchModelsEndpointNotFound": "未找到可用的模型列表端点，请检查 Base URL 或确认供应商是否开放该接口",
     "fetchModelsTimeout": "请求超时，请检查网络连接",
-    "providerKeyStatusLoading": "正在加载供应商标识状态，请稍后再试",
     "requiredFields": "请填写供应商名称、API 地址、API Key 和模型"
   },
   "copilot": {
@@ -1276,6 +1275,7 @@
     "loginRequired": "请先登录 xAI 账号"
   },
   "managedAuth": {
+    "accountRemoved": "账号已移除",
     "selectedAccountNeedsReauth": "已绑定账号不存在或需要重新登录",
     "selectedAccountUnavailable": "已绑定账号不存在或需要重新登录，请重新选择账号"
   },

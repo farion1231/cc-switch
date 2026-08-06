@@ -10,7 +10,6 @@ use crate::model_capabilities::{image_input_capability_from_modalities, ImageInp
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::fs;
 use std::process::{Command, Stdio};
 use toml_edit::DocumentMut;
@@ -121,7 +120,6 @@ const CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME: &str = "codex_managed_oauth
 struct CodexManagedOAuthLiveAuthMarker {
     version: u32,
     account_id: String,
-    access_token_sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -354,21 +352,18 @@ fn get_codex_managed_oauth_live_auth_marker_path() -> PathBuf {
     crate::config::get_app_config_dir().join(CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME)
 }
 
-fn sha256_hex(text: &str) -> String {
-    let digest = Sha256::digest(text.as_bytes());
-    digest
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>()
+#[cfg(test)]
+pub(crate) fn codex_managed_oauth_live_auth_marker_exists() -> bool {
+    get_codex_managed_oauth_live_auth_marker_path().exists()
 }
 
-/// 从 live/备份的 Codex `auth` 中提取 `(account_id, access_token)`，用于 marker 记录/比对。
+/// 从 live/备份的 Codex `auth` 中提取 `account_id`，用于 marker 记录/比对。
 ///
 /// 仅接受 ChatGPT 登录形状（`auth_mode == "chatgpt"`、`OPENAI_API_KEY` 可清空）。
 /// 托管账号写入的完整 bundle 会额外带 `tokens.refresh_token` 与顶层 `last_refresh`，
-/// 这里一并容忍，从而能对完整 bundle 记录/比对指纹（marker 靠 account_id +
-/// access_token 哈希识别「我们写的那一份」，与用户原生登录区分开）。
-fn extract_codex_managed_oauth_auth(auth: &Value) -> Option<(String, String)> {
+/// 这里一并容忍。所有权按 account-scoped 内容判断；Codex CLI 自刷新会轮换
+/// access_token，因此短期 token 指纹不能作为稳定的删除谓词。
+fn extract_codex_managed_oauth_account_id(auth: &Value) -> Option<String> {
     let auth_obj = auth.as_object()?;
 
     if auth_obj.keys().any(|key| {
@@ -407,13 +402,13 @@ fn extract_codex_managed_oauth_auth(auth: &Value) -> Option<(String, String)> {
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|id| !id.is_empty())?;
-    let access_token = tokens
+    tokens
         .get("access_token")
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|token| !token.is_empty())?;
 
-    Some((account_id.to_string(), access_token.to_string()))
+    Some(account_id.to_string())
 }
 
 /// Build the native-shaped ChatGPT auth bundle shared by cc-switch and Codex CLI.
@@ -449,14 +444,13 @@ pub fn codex_managed_oauth_auth_value(
 }
 
 pub fn record_codex_managed_oauth_live_auth(auth: &Value) -> Result<(), AppError> {
-    let Some((account_id, access_token)) = extract_codex_managed_oauth_auth(auth) else {
+    let Some(account_id) = extract_codex_managed_oauth_account_id(auth) else {
         return Ok(());
     };
 
     let marker = CodexManagedOAuthLiveAuthMarker {
-        version: 1,
+        version: 2,
         account_id,
-        access_token_sha256: sha256_hex(&access_token),
     };
     crate::config::write_json_file(&get_codex_managed_oauth_live_auth_marker_path(), &marker)
 }
@@ -470,7 +464,7 @@ pub fn codex_auth_matches_recorded_managed_oauth(
         return Ok(false);
     }
 
-    let Some((auth_account_id, access_token)) = extract_codex_managed_oauth_auth(auth) else {
+    let Some(auth_account_id) = extract_codex_managed_oauth_account_id(auth) else {
         return Ok(false);
     };
     if auth_account_id != account_id {
@@ -489,24 +483,109 @@ pub fn codex_auth_matches_recorded_managed_oauth(
         }
     };
 
-    Ok(marker.version == 1
-        && marker.account_id == account_id
-        && marker.access_token_sha256 == sha256_hex(&access_token))
+    // v1 markers also carry an access-token fingerprint. Serde ignores that
+    // legacy extra field, and matching intentionally no longer consults it:
+    // the Codex CLI rotates access tokens during normal self-refresh.
+    Ok(matches!(marker.version, 1 | 2) && marker.account_id == account_id)
 }
 
-/// 切走托管 provider 时删除其残留在 `~/.codex/auth.json` 的**由本应用写入的**托管登录。
+fn clear_codex_managed_oauth_live_auth_marker_for_account(
+    account_id: &str,
+) -> Result<(), AppError> {
+    let marker_path = get_codex_managed_oauth_live_auth_marker_path();
+    if !marker_path.exists() {
+        return Ok(());
+    }
+    let marker: CodexManagedOAuthLiveAuthMarker = match read_json_file(&marker_path) {
+        Ok(marker) => marker,
+        Err(error) => {
+            log::warn!(
+                "Failed to read Codex managed OAuth auth marker at {} while cleaning account {}: {error}",
+                marker_path.display(),
+                account_id
+            );
+            // A malformed marker cannot establish ownership for any account
+            // and is unusable for rollback/synchronization; remove the stale
+            // bookkeeping file while leaving non-matching live auth untouched.
+            return delete_file(&marker_path);
+        }
+    };
+    if marker.account_id == account_id.trim() {
+        delete_file(&marker_path)?;
+    }
+    Ok(())
+}
+
+/// 切走托管 provider 或从认证中心删除账号时，清理其残留在
+/// `~/.codex/auth.json` 的 ChatGPT 登录。
 ///
-/// 仅当 live auth 与最近一次记录的 marker（account_id + access_token 指纹）匹配时才删除，
-/// 从而绝不误删用户自己 `codex login` 的原生登录。
+/// 删除谓词按 `auth_mode + tokens.account_id` 的内容判断，而不依赖会被 Codex CLI
+/// 自刷新破坏的 access-token 指纹。同一账号的原生 `codex login` 也会被视为该账号
+/// 的登录；切换路径必须先把盘上轮换后的 refresh token 采纳回 manager，再调用本函数，
+/// 因而这种 account-scoped 取舍不会丢失凭据。认证中心显式删除/登出则有意移除它。
 pub fn clear_codex_live_auth_for_managed_account(account_id: &str) -> Result<(), AppError> {
+    clear_codex_live_auth_for_managed_account_if_unchanged(account_id, None)
+}
+
+/// Verify that the outgoing account's live refresh generation has not changed
+/// since it was adopted into the OAuth manager.
+pub fn ensure_codex_live_auth_unchanged_for_managed_account(
+    account_id: &str,
+    expected_refresh_token: &str,
+) -> Result<(), AppError> {
     let auth_path = get_codex_auth_path();
+    if !auth_path.exists() {
+        return Err(AppError::Message(format!(
+            "Codex CLI 账号 {account_id} 的 live auth 已在切换期间被移除，请重试"
+        )));
+    }
+    let auth: Value = read_json_file(&auth_path)?;
+    let current_refresh_token = auth
+        .pointer("/tokens/refresh_token")
+        .and_then(Value::as_str)
+        .map(str::trim);
+    if !codex_live_auth_is_managed_chatgpt_login(&auth, account_id)
+        || current_refresh_token != Some(expected_refresh_token.trim())
+    {
+        return Err(AppError::Message(format!(
+            "Codex CLI 账号 {account_id} 的 live 凭据在切换期间已刷新；为避免覆盖新 refresh token，本次操作已取消，请重试"
+        )));
+    }
+    Ok(())
+}
+
+/// Content-based cleanup with an optional compare-before-delete guard.
+pub fn clear_codex_live_auth_for_managed_account_if_unchanged(
+    account_id: &str,
+    expected_refresh_token: Option<&str>,
+) -> Result<(), AppError> {
+    let auth_path = get_codex_auth_path();
+    let mut removed_matching_auth = false;
     if auth_path.exists() {
         let auth: Value = read_json_file(&auth_path)?;
-        if !codex_auth_matches_recorded_managed_oauth(&auth, account_id)? {
-            return Ok(());
+        if codex_live_auth_is_managed_chatgpt_login(&auth, account_id) {
+            if let Some(expected_refresh_token) = expected_refresh_token {
+                let current_refresh_token = auth
+                    .pointer("/tokens/refresh_token")
+                    .and_then(Value::as_str)
+                    .map(str::trim);
+                if current_refresh_token != Some(expected_refresh_token.trim()) {
+                    return Err(AppError::Message(format!(
+                        "Codex CLI 账号 {account_id} 的 live 凭据在切换期间已刷新；为避免删除新 refresh token，本次操作已取消，请重试"
+                    )));
+                }
+            }
+            delete_file(&auth_path)?;
+            removed_matching_auth = true;
         }
-        delete_file(&auth_path)?;
-        let _ = delete_file(&get_codex_managed_oauth_live_auth_marker_path());
+    }
+
+    if removed_matching_auth {
+        // Once the matching live file is gone, any marker is stale regardless
+        // of version or parseability.
+        delete_file(&get_codex_managed_oauth_live_auth_marker_path())?;
+    } else {
+        clear_codex_managed_oauth_live_auth_marker_for_account(account_id)?;
     }
     Ok(())
 }
@@ -588,12 +667,14 @@ pub fn read_codex_live_auth_refresh_for_account(
 /// Keep Codex CLI's live auth in the same refresh-token generation after the
 /// manager refreshes a managed account.
 ///
-/// The write is compare-and-swap-like: it only proceeds while auth.json still
-/// contains the exact refresh token used for the network request. If Codex CLI
-/// refreshed concurrently, its newer file wins and is never overwritten.
-/// Ownership is preserved separately: a file previously recorded as cc-switch
-/// managed gets a new marker fingerprint, while a same-account native login is
-/// updated without becoming eligible for deletion on unbind.
+/// The write is compare-and-swap-like: immediately before replacing auth.json,
+/// it verifies that the file still contains the refresh token used for the
+/// network request. Codex CLI does not share cc-switch's process lock, so this
+/// is a best-effort guard that narrows (but cannot make atomic) the cross-process
+/// check-to-replace window.
+/// Ownership is account-scoped: a file recorded for the same managed account
+/// keeps its marker across access-token rotation. A same-account native login
+/// has the same content identity and is intentionally treated equivalently.
 pub fn sync_codex_managed_oauth_live_auth_after_refresh(
     account_id: &str,
     expected_refresh_token: &str,
@@ -2792,6 +2873,122 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
 mod tests {
     use super::*;
     use serde_json::json;
+    use serial_test::serial;
+    use std::ffi::OsString;
+
+    struct CodexLiveTestHome {
+        _dir: tempfile::TempDir,
+        original_test_home: Option<OsString>,
+    }
+
+    impl CodexLiveTestHome {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("create isolated Codex live test home");
+            let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            crate::settings::reload_settings().expect("reload settings for isolated test home");
+
+            Self {
+                _dir: dir,
+                original_test_home,
+            }
+        }
+    }
+
+    impl Drop for CodexLiveTestHome {
+        fn drop(&mut self) {
+            match &self.original_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            let _ = crate::settings::reload_settings();
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct CodexLiveTestState {
+        auth_bytes: Vec<u8>,
+        auth_value: Value,
+        config_bytes: Vec<u8>,
+        config_value: toml::Value,
+        catalog_bytes: Vec<u8>,
+        catalog_value: Value,
+        marker_bytes: Vec<u8>,
+        marker_value: Value,
+    }
+
+    fn capture_codex_live_test_state() -> CodexLiveTestState {
+        let auth_bytes = fs::read(get_codex_auth_path()).expect("read live auth bytes");
+        let config_bytes = fs::read(get_codex_config_path()).expect("read live config bytes");
+        let catalog_bytes =
+            fs::read(get_codex_model_catalog_path()).expect("read live catalog bytes");
+        let marker_bytes = fs::read(get_codex_managed_oauth_live_auth_marker_path())
+            .expect("read managed auth marker bytes");
+
+        CodexLiveTestState {
+            auth_value: serde_json::from_slice(&auth_bytes).expect("parse live auth"),
+            config_value: toml::from_str(
+                std::str::from_utf8(&config_bytes).expect("live config must be UTF-8"),
+            )
+            .expect("parse live config"),
+            catalog_value: serde_json::from_slice(&catalog_bytes).expect("parse live catalog"),
+            marker_value: serde_json::from_slice(&marker_bytes).expect("parse managed auth marker"),
+            auth_bytes,
+            config_bytes,
+            catalog_bytes,
+            marker_bytes,
+        }
+    }
+
+    fn seed_rotated_managed_codex_live_state() -> CodexLiveTestState {
+        let auth = codex_managed_oauth_auth_value(
+            "account-a",
+            "access-r1",
+            Some("id-r1"),
+            "refresh-r1",
+            "2026-08-06T00:00:01Z",
+        );
+        crate::config::write_json_file(&get_codex_auth_path(), &auth).expect("seed live auth R1");
+        crate::config::write_text_file(
+            &get_codex_config_path(),
+            "# cas-guard-sentinel\nmodel = \"gpt-5.5\"\nmodel_catalog_json = \"cc-switch-model-catalog.json\"\n",
+        )
+        .expect("seed live config");
+        crate::config::write_json_file(
+            &get_codex_model_catalog_path(),
+            &json!({ "models": [{ "slug": "cas-guard-sentinel" }] }),
+        )
+        .expect("seed live catalog");
+        record_codex_managed_oauth_live_auth(&auth).expect("seed managed auth marker");
+
+        capture_codex_live_test_state()
+    }
+
+    #[test]
+    #[serial]
+    fn ensure_live_auth_guard_rejects_rotated_refresh_without_mutating_live_bundle() {
+        let _home = CodexLiveTestHome::new();
+        let before = seed_rotated_managed_codex_live_state();
+
+        let result =
+            ensure_codex_live_auth_unchanged_for_managed_account("account-a", "refresh-r0");
+
+        assert!(result.is_err(), "R1 live auth must reject an expected R0");
+        assert_eq!(capture_codex_live_test_state(), before);
+    }
+
+    #[test]
+    #[serial]
+    fn clear_live_auth_guard_rejects_rotated_refresh_without_mutating_live_bundle() {
+        let _home = CodexLiveTestHome::new();
+        let before = seed_rotated_managed_codex_live_state();
+
+        let result =
+            clear_codex_live_auth_for_managed_account_if_unchanged("account-a", Some("refresh-r0"));
+
+        assert!(result.is_err(), "R1 live auth must reject an expected R0");
+        assert_eq!(capture_codex_live_test_state(), before);
+    }
 
     #[test]
     fn catalog_tool_profile_from_api_format() {

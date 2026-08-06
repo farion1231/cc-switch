@@ -828,11 +828,20 @@ fn get_codex_managed_oauth_live_auth_value(
                         "Codex OAuth 账号 {account_id} 认证失败，请重新登录 ChatGPT 账号: {err}"
                     )
                 })?;
+            let id_token = bundle
+                .id_token
+                .as_deref()
+                .filter(|token| !token.trim().is_empty())
+                .ok_or_else(|| {
+                    format!(
+                        "Codex OAuth 账号 {account_id} 缺少 id_token，请在认证中心重新登录后再保存"
+                    )
+                })?;
 
             Ok::<Value, String>(codex_managed_oauth_live_auth(
                 &account_id,
                 &bundle.access_token,
-                bundle.id_token.as_deref(),
+                Some(id_token),
                 &bundle.refresh_token,
                 &bundle.last_refresh,
             ))
@@ -840,6 +849,26 @@ fn get_codex_managed_oauth_live_auth_value(
     })
     .join()
     .map_err(|_| AppError::Message("Codex OAuth token 获取线程异常退出".to_string()))?
+    .map_err(AppError::Message)
+}
+
+/// Before replacing an outgoing managed account's live auth, adopt any Codex
+/// CLI-rotated refresh generation and return the exact disk refresh token for
+/// a compare-before-write check.
+pub(crate) fn prepare_codex_managed_oauth_live_auth_switch_away(
+    manager: Arc<CodexOAuthManager>,
+    account_id: String,
+) -> Result<Option<String>, AppError> {
+    std::thread::spawn(move || {
+        tauri::async_runtime::block_on(async move {
+            manager
+                .prepare_live_auth_for_account_switch_away(&account_id)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    })
+    .join()
+    .map_err(|_| AppError::Message("Codex OAuth live 凭据采纳线程异常退出".to_string()))?
     .map_err(AppError::Message)
 }
 

@@ -391,6 +391,7 @@ export function ClaudeDesktopProviderForm({
     useCopilotAuth();
   const {
     isAuthenticated: isCodexOauthAuthenticated,
+    defaultAccountId: codexOauthDefaultAccountId,
     accounts: codexOauthAccounts,
   } = useCodexOauth();
   const {
@@ -608,6 +609,20 @@ export function ClaudeDesktopProviderForm({
     ) =>
       accountId === null ||
       accounts.some((account) => account.id === accountId);
+    const selectedCodexAccountIsUsable = (accountId: string | null) => {
+      const effectiveAccountId =
+        accountId ??
+        codexOauthDefaultAccountId ??
+        codexOauthAccounts.find((account) => account.is_default)?.id ??
+        codexOauthAccounts[0]?.id;
+      return (
+        !!effectiveAccountId &&
+        codexOauthAccounts.some(
+          (account) =>
+            account.id === effectiveAccountId && !account.reauth_required,
+        )
+      );
+    };
     const selectedXaiAccountIsUsable = (accountId: string | null) =>
       accountId === null ||
       xaiOauthAccounts.some(
@@ -647,14 +662,16 @@ export function ClaudeDesktopProviderForm({
       return;
     }
     const selectedManagedAccountIsUsable =
-      activeProviderType === "xai_oauth"
-        ? selectedXaiAccountIsUsable(selectedXaiAccountId)
-        : managedAuthState
-          ? selectedAccountExists(
-              managedAuthState.accountId,
-              managedAuthState.accounts,
-            )
-          : true;
+      activeProviderType === "codex_oauth"
+        ? selectedCodexAccountIsUsable(selectedCodexAccountId)
+        : activeProviderType === "xai_oauth"
+          ? selectedXaiAccountIsUsable(selectedXaiAccountId)
+          : managedAuthState
+            ? selectedAccountExists(
+                managedAuthState.accountId,
+                managedAuthState.accounts,
+              )
+            : true;
     if (managedAuthState && !selectedManagedAccountIsUsable) {
       toast.error(
         t("managedAuth.selectedAccountUnavailable", {

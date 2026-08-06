@@ -552,6 +552,7 @@ function ProviderFormFull({
     isAuthenticated: isCodexOauthAuthenticated,
     isStatusSuccess: isCodexOauthStatusSuccess,
     isStatusError: isCodexOauthStatusError,
+    defaultAccountId: codexOauthDefaultAccountId,
     accounts: codexOauthAccounts,
   } = useCodexOauth();
 
@@ -1281,6 +1282,20 @@ function ProviderFormFull({
     ) =>
       accountId === null ||
       accounts.some((account) => account.id === accountId);
+    const selectedCodexAccountIsUsable = (accountId: string | null) => {
+      const effectiveAccountId =
+        accountId ??
+        codexOauthDefaultAccountId ??
+        codexOauthAccounts.find((account) => account.is_default)?.id ??
+        codexOauthAccounts[0]?.id;
+      return (
+        !!effectiveAccountId &&
+        codexOauthAccounts.some(
+          (account) =>
+            account.id === effectiveAccountId && !account.reauth_required,
+        )
+      );
+    };
     const selectedXaiAccountIsUsable = (accountId: string | null) =>
       accountId === null ||
       xaiOauthAccounts.some(
@@ -1299,11 +1314,11 @@ function ProviderFormFull({
     }
     if (
       requiresCodexOauthLogin &&
-      !selectedAccountExists(selectedCodexAccountId, codexOauthAccounts)
+      !selectedCodexAccountIsUsable(selectedCodexAccountId)
     ) {
       toast.error(
-        t("managedAuth.selectedAccountUnavailable", {
-          defaultValue: "已绑定账号不存在，请重新选择账号",
+        t("managedAuth.selectedAccountNeedsReauth", {
+          defaultValue: "已绑定账号不存在或需要重新登录",
         }),
       );
       return;

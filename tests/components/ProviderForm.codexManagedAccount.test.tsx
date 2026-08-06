@@ -1,11 +1,25 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ProviderForm,
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
 import { createTestQueryClient } from "../utils/testQueryClient";
+
+const authState = vi.hoisted(() => ({
+  codexReauthRequired: false,
+}));
+const toastMocks = vi.hoisted(() => ({
+  error: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    error: toastMocks.error,
+    success: vi.fn(),
+  },
+}));
 
 vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
   CodexOAuthSection: ({
@@ -47,10 +61,12 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
       isAuthenticated: true,
       isStatusSuccess: true,
       isStatusError: false,
+      defaultAccountId: "acct-managed",
       accounts: [
         {
           id: "acct-managed",
-          reauth_required: false,
+          is_default: true,
+          reauth_required: authState.codexReauthRequired,
           requires_reauth: false,
         },
       ],
@@ -58,6 +74,16 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
     useXaiOauth: () => ({
       isAuthenticated: false,
       accounts: [],
+    }),
+    useCommonConfigSnippet: () => ({
+      useCommonConfig: false,
+      commonConfigSnippet: "",
+      commonConfigError: null,
+      isLoading: false,
+      isExtracting: false,
+      handleCommonConfigToggle: vi.fn(),
+      handleCommonConfigSnippetChange: vi.fn(),
+      handleExtract: vi.fn(),
     }),
     useCodexCommonConfig: () => ({
       useCommonConfig: false,
@@ -106,7 +132,31 @@ function renderCodexForm(onSubmit: (values: ProviderFormValues) => void) {
   );
 }
 
+function renderClaudeCodexForm(onSubmit: (values: ProviderFormValues) => void) {
+  const queryClient = createTestQueryClient();
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <ProviderForm
+        appId="claude"
+        submitLabel="save-provider"
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+        initialData={{
+          name: "Claude via Codex OAuth",
+          category: "third_party",
+          settingsConfig: { env: {} },
+          meta: { providerType: "codex_oauth" },
+        }}
+      />
+    </QueryClientProvider>,
+  );
+}
+
 describe("ProviderForm Codex Official managed account", () => {
+  beforeEach(() => {
+    authState.codexReauthRequired = false;
+  });
+
   it("persists the selected managed account while stripping OAuth secrets", async () => {
     const onSubmit = vi.fn();
     renderCodexForm(onSubmit);
@@ -158,5 +208,39 @@ describe("ProviderForm Codex Official managed account", () => {
     expect(submitted.presetCategory).toBe("official");
     expect(submitted.meta?.providerType).toBeUndefined();
     expect(submitted.meta?.authBinding).toBeUndefined();
+  });
+
+  it("blocks saving a managed account that requires reauthentication", async () => {
+    authState.codexReauthRequired = true;
+    const onSubmit = vi.fn();
+    renderCodexForm(onSubmit);
+
+    fireEvent.click(screen.getByRole("button", { name: /OpenAI Official/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "select-managed-account" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+
+    await waitFor(() =>
+      expect(toastMocks.error).toHaveBeenCalledWith(
+        "已绑定账号不存在或需要重新登录",
+      ),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("blocks the reauth-required default account when no account is selected", async () => {
+    authState.codexReauthRequired = true;
+    const onSubmit = vi.fn();
+    renderClaudeCodexForm(onSubmit);
+
+    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+
+    await waitFor(() =>
+      expect(toastMocks.error).toHaveBeenCalledWith(
+        "已绑定账号不存在或需要重新登录",
+      ),
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });

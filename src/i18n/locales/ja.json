@@ -1177,7 +1177,6 @@
     "fetchModelsNotSupported": "このプロバイダーはモデル一覧の取得に対応していません",
     "fetchModelsEndpointNotFound": "利用可能なモデル一覧エンドポイントが見つかりません。Base URL を確認するか、プロバイダーが該当 API を公開しているかご確認ください",
     "fetchModelsTimeout": "リクエストがタイムアウトしました。ネットワーク接続を確認してください",
-    "providerKeyStatusLoading": "プロバイダー識別状態を読み込み中です。しばらくしてからもう一度お試しください",
     "requiredFields": "プロバイダー名、API エンドポイント、API Key、モデルを入力してください"
   },
   "copilot": {
@@ -1276,6 +1275,7 @@
     "loginRequired": "先に xAI アカウントへログインしてください"
   },
   "managedAuth": {
+    "accountRemoved": "アカウントを削除しました",
     "selectedAccountNeedsReauth": "リンクされたアカウントが存在しないか、再ログインが必要です",
     "selectedAccountUnavailable": "リンクされたアカウントが存在しないか、再ログインが必要です。別のアカウントを選択してください"
   },

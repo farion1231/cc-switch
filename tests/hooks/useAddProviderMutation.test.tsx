@@ -200,11 +200,14 @@ describe("useAddProviderMutation", () => {
     );
   });
 
-  it("clears a prior managed binding when Codex Official uses native login", async () => {
-    const seedProvider: Provider = {
+  it("preserves an existing Codex official row when the preset is added again", async () => {
+    const existingProvider: Provider = {
       id: "codex-official",
-      name: "OpenAI Official",
-      settingsConfig: { auth: {}, config: "" },
+      name: "My existing official provider",
+      settingsConfig: {
+        auth: { OPENAI_API_KEY: "preserve-me" },
+        config: 'model = "existing-model"',
+      },
       category: "official",
       meta: {
         providerType: "codex_oauth",
@@ -215,8 +218,9 @@ describe("useAddProviderMutation", () => {
         },
       },
     };
+    apiMocks.ensureCodexOfficialProvider.mockResolvedValueOnce(false);
     apiMocks.getAll.mockResolvedValueOnce({
-      "codex-official": seedProvider,
+      "codex-official": existingProvider,
     });
     const { wrapper } = createWrapper();
     const { result } = renderHook(() => useAddProviderMutation("codex"), {
@@ -228,18 +232,21 @@ describe("useAddProviderMutation", () => {
         name: "OpenAI Official",
         settingsConfig: { auth: {}, config: "" },
         category: "official",
-        meta: {},
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "codex_oauth",
+            accountId: "different-account",
+          },
+        },
         ensureCodexOfficialSeed: true,
       }),
     );
 
-    expect(apiMocks.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: "codex-official",
-        meta: {},
-      }),
-      "codex",
-    );
-    expect(persistedProvider.meta).toEqual({});
+    expect(apiMocks.ensureCodexOfficialProvider).toHaveBeenCalledTimes(1);
+    expect(apiMocks.getAll).toHaveBeenCalledWith("codex");
+    expect(apiMocks.add).not.toHaveBeenCalled();
+    expect(apiMocks.update).not.toHaveBeenCalled();
+    expect(persistedProvider).toEqual(existingProvider);
   });
 });
