@@ -7,7 +7,7 @@
 use super::codex_chat_common::{
     append_reasoning_content, extract_reasoning_field_text, extract_reasoning_summary_text,
     response_function_call_item, response_function_call_item_with_namespace,
-    split_leading_think_block,
+    split_all_think_blocks,
 };
 use crate::provider::CodexChatReasoningConfig;
 use crate::proxy::{
@@ -1474,7 +1474,7 @@ fn chat_reasoning_text(message: &Value) -> Option<String> {
     }
 
     if let Some(content) = message.get("content").and_then(|v| v.as_str()) {
-        if let Some((reasoning, _answer)) = split_leading_think_block(content) {
+        if let Some((reasoning, _answer)) = split_all_think_blocks(content) {
             if !reasoning.is_empty() {
                 return Some(reasoning);
             }
@@ -1488,7 +1488,7 @@ fn chat_message_to_response_output_item(message: &Value, response_id: &str) -> O
     let mut content = Vec::new();
 
     if let Some(text) = message.get("content").and_then(|v| v.as_str()) {
-        let text = split_leading_think_block(text)
+        let text = split_all_think_blocks(text)
             .map(|(_reasoning, answer)| answer)
             .unwrap_or_else(|| text.to_string());
         if !text.is_empty() {
@@ -4033,6 +4033,33 @@ mod tests {
         assert!(err.to_string().contains("without a function name"));
     }
 
+    #[test]
+    fn inline_thinking_does_not_mask_unnamed_tool_call_error() {
+        let chat = json!({
+            "id": "chatcmpl_thinking_drop",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "gpt-5-codex",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "<thinking>Need another tool</thinking>",
+                    "tool_calls": [{
+                        "id": "call_bad",
+                        "type": "function",
+                        "function": {"arguments": "{}"}
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let err = chat_completion_to_response_with_context(chat, &CodexToolContext::default())
+            .unwrap_err();
+        assert!(matches!(err, ProxyError::TransformError(_)));
+        assert!(err.to_string().contains("without a function name"));
+    }
+
     /// 只要还剩下一个合法工具调用，Codex 本来就会继续，行为保持不变。
     #[test]
     fn chat_response_keeps_valid_tool_call_beside_unnamed_one() {
@@ -4227,6 +4254,107 @@ mod tests {
             result["usage"]["output_tokens_details"]["reasoning_tokens"],
             18
         );
+    }
+
+    #[test]
+    fn chat_response_to_responses_splits_inline_thinking_content() {
+        let input = json!({
+            "id": "chatcmpl_thinking",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "gpt-5-codex",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "<thinking>\nChecking final status\n</thinking>\n\nDone"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+
+        let result = chat_completion_to_response(input).unwrap();
+
+        assert_eq!(result["output"][0]["type"], "reasoning");
+        assert_eq!(
+            result["output"][0]["summary"][0]["text"],
+            "Checking final status"
+        );
+        assert_eq!(result["output"][1]["type"], "message");
+        assert_eq!(result["output"][1]["content"][0]["text"], "Done");
+    }
+
+    #[test]
+    fn chat_response_to_responses_strips_empty_thinking_block() {
+        let input = json!({
+            "id": "chatcmpl_empty_thinking",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "gpt-5-codex",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "<thinking>  </thinking>Done"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+
+        let result = chat_completion_to_response(input).unwrap();
+
+        assert_eq!(result["output"].as_array().unwrap().len(), 1);
+        assert_eq!(result["output"][0]["type"], "message");
+        assert_eq!(result["output"][0]["content"][0]["text"], "Done");
+    }
+
+    #[test]
+    fn chat_response_to_responses_strips_whitespace_around_leading_thinking_block() {
+        let input = json!({
+            "id": "chatcmpl_whitespace_thinking",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "gpt-5-codex",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "\n  <thinking>Checking</thinking>\n\nDone"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+
+        let result = chat_completion_to_response(input).unwrap();
+
+        assert_eq!(result["output"][0]["type"], "reasoning");
+        assert_eq!(result["output"][0]["summary"][0]["text"], "Checking");
+        assert_eq!(result["output"][1]["type"], "message");
+        assert_eq!(result["output"][1]["content"][0]["text"], "Done");
+    }
+
+    #[test]
+    fn chat_response_to_responses_splits_mismatched_think_tags() {
+        let input = json!({
+            "id": "chatcmpl_thinking",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "gpt-5-codex",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "<think>Checking final status</thinking>Done"
+                },
+                "finish_reason": "stop"
+            }]
+        });
+
+        let result = chat_completion_to_response(input).unwrap();
+
+        assert_eq!(result["output"][0]["type"], "reasoning");
+        assert_eq!(
+            result["output"][0]["summary"][0]["text"],
+            "Checking final status"
+        );
+        assert_eq!(result["output"][1]["type"], "message");
+        assert_eq!(result["output"][1]["content"][0]["text"], "Done");
     }
 
     #[test]
