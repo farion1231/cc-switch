@@ -63,7 +63,7 @@ CC Switch 的做法是让 Codex 始终连本机路由，仍以 Responses API 发
 
 只有 `Responses（原生）` 不需要开启路由接管，另外两个都需要。自定义供应商的思考参数由 CC Switch 按名称与地址自动推断，只有在识别不准时才需要展开 `思考能力` 手动覆盖。
 
-> **改造已有的 DeepSeek 供应商**：把 `上游格式` 改成 `Responses（原生）` 即可，不必删掉重建。下次切换到它时，CC Switch 会认出 `deepseek.com` 地址并套用 DeepSeek 官方的模型目录，freeform `apply_patch`、GPT-5 harness、low/high/max 思考档与 web_search 都会照常生效。
+> **改造已有的 DeepSeek 供应商**：把 `上游格式` 改成 `Responses（原生）` 即可，不必删掉重建。下次切换到它时，CC Switch 会认出 `deepseek.com` 地址并套用 DeepSeek 官方的模型目录，freeform `apply_patch`、GPT-5 harness、low/high/xhigh 思考档与 web_search 都会照常生效。
 >
 > 唯一的小差别是上下文窗口：供应商自己保存的模型行优先级更高，3.19.1 之前存下的 `1000000` 会盖掉官方声明的 `1048576`，少 4 万多 token。介意的话，在 `高级选项` → `模型映射` 里把该行的 `上下文窗口` 改成 `1048576` 就行，或者干脆用预设新建一个。
 >

@@ -41,7 +41,7 @@
           "description": "Extra high reasoning depth for complex problems"
         },
         {
-          "effort": "max",
+          "effort": "xhigh",
           "description": "Maximum reasoning depth for the hardest problems"
         }
       ],
@@ -108,7 +108,7 @@
           "description": "Extra high reasoning depth for complex problems"
         },
         {
-          "effort": "max",
+          "effort": "xhigh",
           "description": "Maximum reasoning depth for the hardest problems"
         }
       ],
