@@ -652,12 +652,30 @@ pub fn model_list_response(provider: &Provider) -> Result<Value, AppError> {
     let data: Vec<Value> = routes
         .iter()
         .map(|route| {
-            let model_id = route.route_id.clone();
+            // Anthropic's /v1/models returns both `id` and `display_name`.
+            // Claude Science 0.1.25 reads `display_name` (and falls back to
+            // `name`) when rendering the session model picker; emitting only
+            // `id` makes its UI hit `undefined.replace(...)` and crash the
+            // session with "Something went wrong".
+            //
+            // Surface `label_override` as both `display_name` and
+            // `labelOverride` so users see the friendly upstream name (Kimi
+            // K2, GPT-5.4, …) instead of the underlying route_id, matching
+            // the live-config shape produced by `inference_model_json`.
+            let display_name = route
+                .label_override
+                .clone()
+                .unwrap_or_else(|| route.route_id.clone());
             let mut item = json!({
                 "type": "model",
-                "id": model_id,
+                "id": route.route_id,
+                "name": route.route_id,
+                "display_name": display_name,
                 "created_at": DEFAULT_CREATED_AT,
             });
+            if let Some(label_override) = route.label_override.as_deref() {
+                item["labelOverride"] = json!(label_override);
+            }
             if route.supports_1m {
                 item["supports1m"] = json!(true);
             }
@@ -1623,6 +1641,9 @@ mod tests {
 
         let models = model_list_response(&provider).expect("model list");
         assert_eq!(models["data"][0]["id"], json!("claude-sonnet-4-6"));
+        assert_eq!(models["data"][0]["name"], json!("claude-sonnet-4-6"));
+        assert_eq!(models["data"][0]["display_name"], json!("Kimi K2"));
+        assert_eq!(models["data"][0]["labelOverride"], json!("Kimi K2"));
         assert_eq!(models["data"][0]["supports1m"], json!(true));
 
         let err = map_proxy_request_model(json!({"model": "claude-opus-4-8"}), &provider)
