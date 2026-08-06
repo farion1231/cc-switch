@@ -186,6 +186,10 @@ pub(crate) fn provider_exists_in_live_config(
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        // Cursor is switch-mode: env.json always reflects the current provider.
+        // Just check the file exists and is non-empty.
+        AppType::Cursor => crate::cursor_config::get_providers()
+            .map(|providers| !providers.as_object().is_none_or(|o| o.is_empty())),
         _ => Ok(false),
     }
 }
@@ -527,7 +531,8 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
-        | AppType::ClaudeDesktop => false,
+        | AppType::ClaudeDesktop
+        | AppType::Cursor => false,
     }
 }
 
@@ -601,7 +606,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
+        | AppType::ClaudeDesktop
+        | AppType::Cursor => Ok(settings.clone()),
     }
 }
 
@@ -660,7 +666,8 @@ fn apply_common_config_to_settings(
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
+        | AppType::ClaudeDesktop
+        | AppType::Cursor => Ok(settings.clone()),
     }
 }
 
@@ -1162,6 +1169,10 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::Cursor => {
+            crate::cursor_config::set_provider(&provider.settings_config)?;
+            log::debug!("Cursor provider '{}' written to live config", provider.id);
+        }
     }
     Ok(())
 }
@@ -1417,7 +1428,45 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = crate::hermes_config::yaml_to_json(&yaml_config)?;
             Ok(config)
         }
+        // Cursor: convert env.json env vars to canonical format { baseUrl, apiKey, model }
+        AppType::Cursor => {
+            let env = crate::cursor_config::read_cursor_env()?;
+            Ok(cursor_env_to_canonical(&env))
+        }
     }
+}
+
+/// Convert Cursor env.json content (flat env vars) to canonical provider format.
+///
+/// env.json stores env vars like `ANTHROPIC_BASE_URL`, `OPENAI_API_KEY`, etc.
+/// The canonical settingsConfig uses `{ baseUrl, apiKey, model }`.
+/// Also handles legacy `{ "env": {...} }` wrapping from old import code.
+fn cursor_env_to_canonical(env: &Value) -> Value {
+    // If the top-level object has an "env" key (legacy import format),
+    // unwrap it so we read the actual env vars underneath.
+    let effective = env.get("env").filter(|v| v.is_object()).unwrap_or(env);
+
+    let base_url = effective
+        .get("ANTHROPIC_BASE_URL")
+        .or_else(|| effective.get("OPENAI_BASE_URL"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let api_key = effective
+        .get("ANTHROPIC_API_KEY")
+        .or_else(|| effective.get("ANTHROPIC_AUTH_TOKEN"))
+        .or_else(|| effective.get("OPENAI_API_KEY"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let model = effective
+        .get("ANTHROPIC_MODEL")
+        .or_else(|| effective.get("OPENAI_MODEL"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    json!({
+        "baseUrl": base_url,
+        "apiKey": api_key,
+        "model": model
+    })
 }
 
 /// Import default configuration from live files
@@ -1528,6 +1577,10 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
             unreachable!("additive mode apps are handled by early return")
+        }
+        AppType::Cursor => {
+            let env = crate::cursor_config::read_cursor_env()?;
+            cursor_env_to_canonical(&env)
         }
     };
 

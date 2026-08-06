@@ -84,6 +84,59 @@ pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &st
     ) && codex_provider_uses_chat_completions(provider)
 }
 
+/// 公网路由（Cursor 经公网隧道接入）场景：第三方 Cursor 供应商（Kimi、DeepSeek 等）的上游基本都是
+/// OpenAI Chat Completions 接口，不支持 Responses API；Cursor Agent 模式发来的
+/// Responses 请求需要像 Codex 路由一样降格式转换。
+///
+/// 显式配置了 api_format 的供应商尊重其配置；官方 Cursor 供应商不做转换。
+pub fn cursor_provider_uses_chat_completions(provider: &Provider) -> bool {
+    if let Some(api_format) = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.api_format.as_deref())
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("api_format")
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("apiFormat")
+                .and_then(|v| v.as_str())
+        })
+    {
+        return is_chat_wire_api(api_format);
+    }
+
+    provider.category.as_deref() != Some("official")
+}
+
+/// 统一判定：某个应用收到的 Responses 请求是否需要降格式为 Chat Completions。
+/// Codex / GrokBuild 沿用供应商级判定；Cursor（公网路由隧道）按其供应商判定。
+pub fn should_convert_responses_to_chat_for_app(
+    app_type: &crate::app_config::AppType,
+    provider: &Provider,
+    endpoint: &str,
+) -> bool {
+    match app_type {
+        crate::app_config::AppType::Codex | crate::app_config::AppType::GrokBuild => {
+            should_convert_codex_responses_to_chat(provider, endpoint)
+        }
+        crate::app_config::AppType::Cursor => {
+            let path = endpoint
+                .split_once('?')
+                .map_or(endpoint, |(path, _query)| path);
+            matches!(
+                path,
+                "/responses" | "/v1/responses" | "/responses/compact" | "/v1/responses/compact"
+            ) && cursor_provider_uses_chat_completions(provider)
+        }
+        _ => false,
+    }
+}
+
 /// Whether a converted Codex Responses request may send `prompt_cache_key` to
 /// its Chat Completions upstream. Unknown OpenAI-compatible gateways default to
 /// false because many reject unsupported request fields with HTTP 400.
@@ -694,6 +747,17 @@ impl ProviderAdapter for CodexAdapter {
             .settings_config
             .get("baseURL")
             .and_then(|v| v.as_str())
+        {
+            return Ok(url.trim_end_matches('/').to_string());
+        }
+
+        // 2.5 尝试 baseUrl（Cursor / OpenCode 等供应商配置使用 camelCase 键）
+        if let Some(url) = provider
+            .settings_config
+            .get("baseUrl")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
         {
             return Ok(url.trim_end_matches('/').to_string());
         }
@@ -1365,6 +1429,86 @@ wire_api = "chat"
         assert!(should_convert_codex_responses_to_chat(
             &provider,
             "/v1/responses"
+        ));
+    }
+
+    // ===== 公网路由 降格式 gating =====
+
+    #[test]
+    fn test_cursor_public_route_third_party_provider_converts_responses_to_chat() {
+        use crate::app_config::AppType;
+        // Kimi 等第三方 Cursor 供应商（无 api_format 声明、非 official）默认降格式
+        let provider = create_provider(json!({
+            "baseUrl": "https://api.kimi.com/coding/v1"
+        }));
+        assert!(cursor_provider_uses_chat_completions(&provider));
+        assert!(should_convert_responses_to_chat_for_app(
+            &AppType::Cursor,
+            &provider,
+            "/responses"
+        ));
+        assert!(should_convert_responses_to_chat_for_app(
+            &AppType::Cursor,
+            &provider,
+            "/v1/responses?stream=true"
+        ));
+        // 非 responses 端点不转换
+        assert!(!should_convert_responses_to_chat_for_app(
+            &AppType::Cursor,
+            &provider,
+            "/chat/completions"
+        ));
+    }
+
+    #[test]
+    fn test_cursor_public_route_official_provider_does_not_convert() {
+        use crate::app_config::AppType;
+        let mut provider = create_provider(json!({}));
+        provider.category = Some("official".to_string());
+        assert!(!cursor_provider_uses_chat_completions(&provider));
+        assert!(!should_convert_responses_to_chat_for_app(
+            &AppType::Cursor,
+            &provider,
+            "/responses"
+        ));
+    }
+
+    #[test]
+    fn test_cursor_public_route_explicit_api_format_respected() {
+        use crate::app_config::AppType;
+        // 显式声明 wire api 的供应商尊重其声明：responses 不转换，chat 转换
+        let chat_provider = create_provider(json!({
+            "baseUrl": "https://example.com/v1",
+            "api_format": "chat"
+        }));
+        assert!(should_convert_responses_to_chat_for_app(
+            &AppType::Cursor,
+            &chat_provider,
+            "/responses"
+        ));
+
+        let responses_provider = create_provider(json!({
+            "baseUrl": "https://example.com/v1",
+            "api_format": "responses"
+        }));
+        assert!(!should_convert_responses_to_chat_for_app(
+            &AppType::Cursor,
+            &responses_provider,
+            "/responses"
+        ));
+    }
+
+    #[test]
+    fn test_codex_gating_unchanged_by_cursor_rules() {
+        use crate::app_config::AppType;
+        // Codex 路径仍走供应商级判定：第三方但未声明 chat 的 Codex 供应商不转换
+        let provider = create_provider(json!({
+            "baseUrl": "https://api.kimi.com/coding/v1"
+        }));
+        assert!(!should_convert_responses_to_chat_for_app(
+            &AppType::Codex,
+            &provider,
+            "/responses"
         ));
     }
 

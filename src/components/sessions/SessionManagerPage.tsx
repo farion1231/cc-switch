@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Copy,
+  Download,
   RefreshCw,
   Search,
   Play,
@@ -60,6 +61,7 @@ import { SessionItem } from "./SessionItem";
 import { SessionMessageItem } from "./SessionMessageItem";
 import { SessionTocDialog, SessionTocSidebar } from "./SessionToc";
 import {
+  buildSessionMarkdown,
   extractCodexPromptPreview,
   formatSessionMessagePreview,
   formatSessionTitle,
@@ -88,7 +90,8 @@ type ProviderFilter =
   | "opencode"
   | "openclaw"
   | "gemini"
-  | "hermes";
+  | "hermes"
+  | "cursor";
 
 type SessionListViewMode = "flat" | "grouped";
 
@@ -414,6 +417,17 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     },
     [handleCopy, t],
   );
+
+  const handleExportMarkdown = useCallback(() => {
+    if (!selectedSession) return;
+    const markdown = buildSessionMarkdown(selectedSession, messages);
+    void handleCopy(
+      markdown,
+      t("sessionManager.exportMarkdownCopied", {
+        defaultValue: "Markdown 已复制",
+      }),
+    );
+  }, [selectedSession, messages, handleCopy, t]);
 
   const handleResume = async () => {
     if (!selectedSession?.resumeCommand) return;
@@ -1128,6 +1142,16 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                 <span>Gemini CLI</span>
                               </div>
                             </SelectItem>
+                            <SelectItem value="cursor">
+                              <div className="flex items-center gap-2">
+                                <ProviderIcon
+                                  icon="cursor"
+                                  name="cursor"
+                                  size={14}
+                                />
+                                <span>Cursor</span>
+                              </div>
+                            </SelectItem>
                           </SelectContent>
                         </Select>
 
@@ -1546,6 +1570,32 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                             </TooltipContent>
                           </Tooltip>
                         )}
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="gap-1.5"
+                              onClick={() => void handleExportMarkdown()}
+                              disabled={
+                                !selectedSession.sourcePath ||
+                                messages.length === 0
+                              }
+                            >
+                              <Download className="size-3.5" />
+                              <span className="hidden sm:inline">
+                                {t("sessionManager.exportMarkdown", {
+                                  defaultValue: "导出 Markdown",
+                                })}
+                              </span>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {t("sessionManager.exportMarkdownTooltip", {
+                              defaultValue: "导出为 Markdown 复制到剪贴板",
+                            })}
+                          </TooltipContent>
+                        </Tooltip>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button

@@ -25,6 +25,7 @@ import {
 } from "@/utils/providerConfigUtils";
 import {
   supportsOfficialProxyTakeover,
+  providerNeedsPublicRoute,
   providerNeedsRouting,
 } from "@/utils/providerCapabilities";
 import { useProviderHealth } from "@/lib/query/failover";
@@ -52,6 +53,7 @@ interface ProviderCardProps {
   onDisableOmoSlim?: () => void;
   onConfigureUsage: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
+  onOpenPublicRouteSettings?: () => void;
   onDuplicate: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
   onOpenTerminal?: (provider: Provider) => void;
@@ -151,6 +153,7 @@ export function ProviderCard({
   onDisableOmoSlim,
   onConfigureUsage,
   onOpenWebsite,
+  onOpenPublicRouteSettings,
   onDuplicate,
   onTest,
   onOpenTerminal,
@@ -391,6 +394,24 @@ export function ProviderCard({
                     defaultValue: "需要路由",
                   })}
                 </span>
+              )}
+
+              {isProxyTakeover && providerNeedsPublicRoute(appId, provider) && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenPublicRouteSettings?.();
+                  }}
+                  className="inline-flex items-center rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-300 dark:hover:bg-amber-900/60 cursor-pointer"
+                  title={t("cursor.needsPublicRouteHint", {
+                    defaultValue: "打开设置中的公网路由",
+                  })}
+                >
+                  {t("cursor.needsPublicRoute", {
+                    defaultValue: "需要公网路由",
+                  })}
+                </button>
               )}
 
               {appId === "claude" && provider.category === "official" && (

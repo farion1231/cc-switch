@@ -42,7 +42,8 @@
     "deleting": "刪除中...",
     "auto": "自動",
     "enabled": "已啟用",
-    "notSet": "未設定"
+    "notSet": "未設定",
+    "copyFailed": "複製失敗，請手動複製"
   },
   "firstRunNotice": {
     "title": "歡迎使用 CC Switch",
@@ -426,6 +427,13 @@
           "debug": "詳細資訊，包含 SSE 串流與請求/回應詳情",
           "trace": "全部日誌，最詳細"
         }
+      },
+      "publicRoute": {
+        "title": "公網路由",
+        "description": "經公網隧道將本地路由暴露給支援自訂 Base URL 的應用（如 Cursor）",
+        "enabled": "已啟用",
+        "disabled": "未啟用",
+        "proxyRequired": "需要先啟動本地路由，才能設定公網路由"
       }
     },
     "language": "介面語言",
@@ -891,7 +899,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "cursor": "Cursor"
   },
   "appSwitcher": {
     "more": "更多應用程式"
@@ -979,6 +988,9 @@
     "resume": "繼續工作階段",
     "resumeTooltip": "在終端機中繼續此工作階段",
     "noResumeCommand": "此工作階段無法繼續",
+    "exportMarkdown": "匯出 Markdown",
+    "exportMarkdownCopied": "Markdown 已複製",
+    "exportMarkdownTooltip": "將工作階段匯出為 Markdown 複製到剪貼簿",
     "copyCommand": "複製命令",
     "copyMessage": "複製訊息",
     "messageCopied": "已複製訊息內容",
@@ -1812,7 +1824,8 @@
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "cursor": "Cursor"
       }
     },
     "userLevelPath": "使用者級 MCP 設定路徑",
@@ -2232,6 +2245,18 @@
       "openConfig": "在 Hermes Web UI 調整上限",
       "runtimeNote": "變更將在 Hermes 下次啟動或建立新工作階段時生效。"
     }
+  },
+  "cursor": {
+    "needsRouting": "需要路由",
+    "form": {
+      "baseUrl": "API 端點",
+      "baseUrlHint": "供應商的 API 端點位址。",
+      "model": "模型（選填）",
+      "modelPlaceholder": "gpt-4o, claude-sonnet-4-20250514, ...",
+      "modelHint": "選填。留空則使用供應商的預設模型。"
+    },
+    "needsPublicRoute": "需要公網路由",
+    "needsPublicRouteHint": "打開設定中的公網路由"
   },
   "env": {
     "warning": {
@@ -2756,7 +2781,45 @@
       "stopFailed": "停止路由服務失敗：{{detail}}"
     },
     "stoppedWithRestore": "路由服務已關閉，已還原所有路由設定",
-    "stopWithRestoreFailed": "停止失敗：{{detail}}"
+    "stopWithRestoreFailed": "停止失敗：{{detail}}",
+    "publicRoute": {
+      "title": "公網路由",
+      "statusOff": "將本地路由經公網隧道暴露給外部應用",
+      "statusStarting": "隧道建立中…",
+      "statusRunning": "隧道已建立",
+      "enabled": "公網路由已啟用，正在建立隧道…",
+      "disabled": "公網路由已關閉",
+      "toggleFailed": "切換公網路由失敗",
+      "waitingTunnel": "正在建立公網隧道（cloudflared），通常需要幾秒…",
+      "publicUrl": "公網地址",
+      "setupTitle": "接入範例：在 Cursor 中完成以下設定",
+      "stepBaseUrl": "Settings → Models → Override OpenAI Base URL 填：",
+      "stepApiKey": "OpenAI API Key 填 CC Switch 自動生成的隧道密鑰（必填，公網隧道鑒權用）：",
+      "stepModel": "新增模型並選中使用：模型名填供應商 modelCatalog 裡配置的客戶端名（Cursor Model Name），代理會自動映射為上游模型名",
+      "ephemeralHint": "快速隧道地址每次重建都會變；新地址已自動複製到剪貼簿，需在 Cursor 中重新貼上。需要固定地址可在關閉後改用「固定域名」模式。",
+      "keyCopied": "密鑰已複製",
+      "takeoverHint": "Cursor 經本地路由接管時需要設定公網路由（隧道），請到 設定 → 路由 → 公網路由 查看設定方式",
+      "switching": "切換中…",
+      "tunnelMode": "隧道模式",
+      "modeQuick": "快速隧道",
+      "modeQuickHint": "免帳號，地址每次重建都會變",
+      "modeNamed": "固定域名",
+      "modeNamedHint": "需 Cloudflare 帳戶，地址不變",
+      "namedTunnelName": "隧道名",
+      "namedHostname": "對外域名",
+      "namedSetupTitle": "一次性設定（在終端機執行）",
+      "saveTunnelConfig": "儲存隧道設定",
+      "configSaved": "隧道設定已儲存",
+      "configSaveFailed": "儲存隧道設定失敗",
+      "baseUrlCopied": "Base URL 已複製，請到 Cursor → Settings → Models → Override OpenAI Base URL 貼上",
+      "routePathsTitle": "各應用路由路徑（按需複製）",
+      "namedStableHint": "固定域名不會變化，Cursor 裡貼上一次即可長期使用。",
+      "regenerateKey": "重新生成",
+      "keyRegenerated": "新密鑰已生成並複製，請到 Cursor → Settings → Models → OpenAI API Key 重新貼上",
+      "keyRegenerateFailed": "重新生成密鑰失敗",
+      "keyRegeneratedNoCopy": "新密鑰已生成，請點擊上方複製按鈕手動複製到 Cursor",
+      "routePathsGateHint": "僅已開啟「本地路由」接管的应用可經公網路由存取；未開啟的應用請求會被拒絕"
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} 連通正常 ({{responseTimeMs}}ms)",

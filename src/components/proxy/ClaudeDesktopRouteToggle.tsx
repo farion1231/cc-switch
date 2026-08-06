@@ -28,7 +28,8 @@ export function ClaudeDesktopRouteToggle({
     takeoverStatus?.claude ||
       takeoverStatus?.codex ||
       takeoverStatus?.gemini ||
-      takeoverStatus?.grokbuild,
+      takeoverStatus?.grokbuild ||
+      takeoverStatus?.cursor,
   );
   const routeAddress = status?.address ?? "127.0.0.1";
   const routePort = status?.port ?? 15721;
