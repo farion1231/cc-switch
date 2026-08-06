@@ -530,7 +530,7 @@ export function CodexFormFields({
                   ? match.displayName?.trim() || r.displayName || ""
                   : r.displayName,
                 contextWindow: match
-                  ? match.contextWindow ?? r.contextWindow ?? ""
+                  ? (match.contextWindow ?? r.contextWindow ?? "")
                   : r.contextWindow,
               }
             : r,
@@ -1110,22 +1110,23 @@ export function CodexFormFields({
                       <ModelInputWithFetch
                         id={`custom-upstream-${index}`}
                         value={row.upstreamModel ?? row.model}
-                        onChange={(value) => handleCustomModelChange(index, value)}
+                        onChange={(value) =>
+                          handleCustomModelChange(index, value)
+                        }
                         placeholder={t("codexConfig.catalogColumnModel", {
                           defaultValue: "实际请求模型",
                         })}
                         ariaLabel={t("codexConfig.catalogColumnModel", {
                           defaultValue: "实际请求模型",
                         })}
-                        fetchedModels={(customCatalogByProvider[row.providerId] ?? []).map(
-                          (model) => ({
-                            id: model.model,
-                            ownedBy:
-                              codexProviders.find(
-                                (p) => p.id === row.providerId,
-                              )?.name ?? "Catalog",
-                          }),
-                        )}
+                        fetchedModels={(
+                          customCatalogByProvider[row.providerId] ?? []
+                        ).map((model) => ({
+                          id: model.model,
+                          ownedBy:
+                            codexProviders.find((p) => p.id === row.providerId)
+                              ?.name ?? "Catalog",
+                        }))}
                         isLoading={false}
                         disabled={!row.providerId}
                       />

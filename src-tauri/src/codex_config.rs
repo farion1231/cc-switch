@@ -829,7 +829,8 @@ pub(crate) fn codex_custom_model_entries(settings: &Value) -> Vec<CodexCustomMod
         };
         // 去重 key 与路由匹配一致：剥离 `[1M]` 上下文后缀后再判重，避免
         // `foo` 与 `foo[1M]` 并存导致带后缀请求被路由到错误的供应商。
-        let dedup_key = crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(model).to_string();
+        let dedup_key =
+            crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(model).to_string();
         if !seen.insert(dedup_key) {
             log::warn!("[codex] 忽略重复的自定义模型插槽 `{model}`（首个条目生效）");
             continue;

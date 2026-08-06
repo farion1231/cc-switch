@@ -64,7 +64,13 @@ describe("customRowsMatchModels", () => {
   it("treats undefined and empty-string optional fields as equal", () => {
     expect(
       customRowsMatchModels(
-        [{ model: "gpt-5.2", providerId: "provider-1", upstreamModel: undefined }],
+        [
+          {
+            model: "gpt-5.2",
+            providerId: "provider-1",
+            upstreamModel: undefined,
+          },
+        ],
         [{ model: "gpt-5.2", providerId: "provider-1", upstreamModel: "" }],
       ),
     ).toBe(true);
@@ -73,8 +79,20 @@ describe("customRowsMatchModels", () => {
   it("compares contextWindow across number and string representations", () => {
     expect(
       customRowsMatchModels(
-        [{ model: "gpt-5.2", providerId: "provider-1", contextWindow: 128_000 }],
-        [{ model: "gpt-5.2", providerId: "provider-1", contextWindow: "128000" }],
+        [
+          {
+            model: "gpt-5.2",
+            providerId: "provider-1",
+            contextWindow: 128_000,
+          },
+        ],
+        [
+          {
+            model: "gpt-5.2",
+            providerId: "provider-1",
+            contextWindow: "128000",
+          },
+        ],
       ),
     ).toBe(true);
   });

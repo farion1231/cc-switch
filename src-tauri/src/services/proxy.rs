@@ -102,7 +102,8 @@ async fn refresh_codex_models_cache_once(
     // DB 读取与缓存写入（含探测 codex CLI 版本等子进程）是阻塞工作，挪到
     // spawn_blocking，避免长时间占用 tokio worker 线程。
     tokio::task::spawn_blocking(move || {
-        let Some(current_id) = crate::settings::get_effective_current_provider(&db, &AppType::Codex)?
+        let Some(current_id) =
+            crate::settings::get_effective_current_provider(&db, &AppType::Codex)?
         else {
             return Ok(false);
         };

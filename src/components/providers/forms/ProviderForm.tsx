@@ -209,14 +209,21 @@ export const normalizeCodexCustomModelsForSave = (
       ...(item.supportsParallelToolCalls !== undefined
         ? { supportsParallelToolCalls: item.supportsParallelToolCalls }
         : {}),
-      ...(item.inputModalities ? { inputModalities: item.inputModalities } : {}),
-      ...(item.baseInstructions ? { baseInstructions: item.baseInstructions } : {}),
+      ...(item.inputModalities
+        ? { inputModalities: item.inputModalities }
+        : {}),
+      ...(item.baseInstructions
+        ? { baseInstructions: item.baseInstructions }
+        : {}),
     }))
     .filter(
       (item) =>
         item.model &&
         item.providerId &&
-        !(opts.officialLogin === false && item.providerId === CODEX_OFFICIAL_PROVIDER_ID),
+        !(
+          opts.officialLogin === false &&
+          item.providerId === CODEX_OFFICIAL_PROVIDER_ID
+        ),
     );
 
 const normalizeCodexChatReasoningForSave = (
