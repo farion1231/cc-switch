@@ -189,6 +189,23 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
     Ok(true)
 }
 
+/// 构建应用更新器，让更新检查与安装包下载也走全局出站代理。
+///
+/// updater 插件自建 reqwest 客户端，默认只认系统代理 env，读不到 cc-switch
+/// 应用内的全局代理设置。这里把 `http_client` 记录的代理 URL 显式传给 builder；
+/// 未配置全局代理时不传，保持插件默认行为。
+fn build_updater_with_proxy(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
+    let mut builder = app.updater_builder();
+    if let Some(proxy_url) = crate::proxy::http_client::get_current_proxy_url() {
+        if let Ok(parsed) = url::Url::parse(&proxy_url) {
+            builder = builder.proxy(parsed);
+        }
+    }
+    builder
+        .build()
+        .map_err(|e| format!("初始化更新器失败: {e}"))
+}
+
 /// 下载并安装应用更新，然后由后端直接重启应用。
 ///
 /// macOS 更新会原地替换 `.app` bundle。如果先返回前端、再让旧 WebView 调
@@ -196,10 +213,7 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
 /// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
 #[tauri::command]
 pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> {
-    let updater = app
-        .updater_builder()
-        .build()
-        .map_err(|e| format!("初始化更新器失败: {e}"))?;
+    let updater = build_updater_with_proxy(&app)?;
 
     let Some(update) = updater
         .check()
@@ -273,10 +287,7 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
 /// 升级无法解决，而不是让其反复尝试。
 #[tauri::command]
 pub async fn check_app_update_available(app: AppHandle) -> Result<Option<String>, String> {
-    let updater = app
-        .updater_builder()
-        .build()
-        .map_err(|e| format!("初始化更新器失败: {e}"))?;
+    let updater = build_updater_with_proxy(&app)?;
     let update = updater
         .check()
         .await
