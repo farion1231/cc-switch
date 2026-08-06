@@ -254,7 +254,9 @@ fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             // 大小写不敏感比较：上游若把 "TOKENS_LIMIT" 改成小写或驼峰，依然能识别
-            if !limit_type.eq_ignore_ascii_case("TOKENS_LIMIT") {
+            if !(limit_type.eq_ignore_ascii_case("TOKENS_LIMIT")
+                || limit_type.eq_ignore_ascii_case("CREDIT_LIMIT"))
+            {
                 continue;
             }
             let percentage = limit_item
