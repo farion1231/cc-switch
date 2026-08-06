@@ -11,23 +11,38 @@ use crate::services::s3_sync as s3_sync_service;
 use crate::settings::{self, S3SyncSettings};
 use crate::store::AppState;
 
+fn current_language() -> String {
+    settings::get_settings()
+        .language
+        .unwrap_or_else(|| "zh".to_string())
+}
+
+fn format_error(error: &AppError) -> String {
+    error.localized_message(&current_language())
+}
+
 fn persist_sync_error(settings: &mut S3SyncSettings, error: &AppError, source: &str) {
-    settings.status.last_error = Some(error.to_string());
+    settings.status.last_error = Some(format_error(error));
     settings.status.last_error_source = Some(source.to_string());
     let _ = settings::update_s3_sync_status(settings.status.clone());
 }
 
 fn s3_not_configured_error() -> String {
-    AppError::localized(
+    format_error(&AppError::localized_ru(
         "s3.sync.not_configured",
         "未配置 S3 同步",
         "S3 sync is not configured.",
-    )
-    .to_string()
+        "Синхронизация S3 не настроена.",
+    ))
 }
 
 fn s3_sync_disabled_error() -> String {
-    AppError::localized("s3.sync.disabled", "S3 同步未启用", "S3 sync is disabled.").to_string()
+    format_error(&AppError::localized_ru(
+        "s3.sync.disabled",
+        "S3 同步未启用",
+        "S3 sync is disabled.",
+        "Синхронизация S3 отключена.",
+    ))
 }
 
 fn require_enabled_s3_settings() -> Result<S3SyncSettings, String> {
@@ -71,7 +86,7 @@ where
         Ok(value) => Ok(value),
         Err(err) => {
             on_error(&err);
-            Err(err.to_string())
+            Err(format_error(&err))
         }
     }
 }
@@ -86,7 +101,7 @@ pub async fn s3_test_connection(
         resolve_secret_for_request(settings, settings::get_s3_sync_settings(), preserve_empty);
     s3_sync_service::check_connection(&resolved)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format_error(&e))?;
     Ok(json!({
         "success": true,
         "message": "S3 connection ok"
@@ -146,8 +161,8 @@ pub async fn s3_sync_save_settings(
     }
 
     sync_settings.normalize();
-    sync_settings.validate().map_err(|e| e.to_string())?;
-    settings::set_s3_sync_settings(Some(sync_settings)).map_err(|e| e.to_string())?;
+    sync_settings.validate().map_err(|e| format_error(&e))?;
+    settings::set_s3_sync_settings(Some(sync_settings)).map_err(|e| format_error(&e))?;
     Ok(json!({ "success": true }))
 }
 
@@ -156,14 +171,14 @@ pub async fn s3_sync_fetch_remote_info() -> Result<Value, String> {
     let settings = require_enabled_s3_settings()?;
     let info = s3_sync_service::fetch_remote_info(&settings)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format_error(&e))?;
     Ok(info.unwrap_or(json!({ "empty": true })))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        map_sync_result, persist_sync_error, require_enabled_s3_settings,
+        format_error, map_sync_result, persist_sync_error, require_enabled_s3_settings,
         resolve_secret_for_request, run_with_s3_lock, s3_sync_mutex,
     };
     use crate::error::AppError;
@@ -348,5 +363,26 @@ mod tests {
         let settings = require_enabled_s3_settings().expect("enabled settings should be accepted");
         assert!(settings.enabled);
         assert_eq!(settings.region, "us-east-1");
+    }
+
+    #[test]
+    #[serial]
+    fn format_error_uses_russian_for_s3_settings_validation() {
+        let test_home = std::env::temp_dir().join("cc-switch-s3-sync-ru-validation-test");
+        let _ = std::fs::remove_dir_all(&test_home);
+        std::fs::create_dir_all(&test_home).expect("create test home");
+        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+
+        crate::settings::update_settings(AppSettings {
+            language: Some("ru".to_string()),
+            ..AppSettings::default()
+        })
+        .expect("set Russian language");
+
+        let err = S3SyncSettings::default()
+            .validate()
+            .expect_err("empty S3 settings should fail validation");
+
+        assert_eq!(format_error(&err), "S3-бакет обязателен.");
     }
 }

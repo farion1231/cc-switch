@@ -14,4 +14,9 @@ describe("usage format helpers", () => {
     expect(getLocaleFromLanguage("zh_TW")).toBe("zh-TW");
     expect(getLocaleFromLanguage("zh-HK")).toBe("zh-TW");
   });
+
+  it("resolves Russian locale aliases", () => {
+    expect(getLocaleFromLanguage("ru")).toBe("ru-RU");
+    expect(getLocaleFromLanguage("ru_RU")).toBe("ru-RU");
+  });
 });

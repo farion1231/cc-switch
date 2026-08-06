@@ -144,17 +144,19 @@ impl Default for WebDavSyncSettings {
 impl WebDavSyncSettings {
     pub fn validate(&self) -> Result<(), crate::error::AppError> {
         if self.base_url.trim().is_empty() {
-            return Err(crate::error::AppError::localized(
+            return Err(crate::error::AppError::localized_ru(
                 "webdav.base_url.required",
                 "WebDAV 地址不能为空",
                 "WebDAV URL is required.",
+                "WebDAV URL обязателен.",
             ));
         }
         if self.username.trim().is_empty() {
-            return Err(crate::error::AppError::localized(
+            return Err(crate::error::AppError::localized_ru(
                 "webdav.username.required",
                 "WebDAV 用户名不能为空",
                 "WebDAV username is required.",
+                "Имя пользователя WebDAV обязательно.",
             ));
         }
         Ok(())
@@ -225,31 +227,35 @@ impl Default for S3SyncSettings {
 impl S3SyncSettings {
     pub fn validate(&self) -> Result<(), crate::error::AppError> {
         if self.bucket.trim().is_empty() {
-            return Err(crate::error::AppError::localized(
+            return Err(crate::error::AppError::localized_ru(
                 "s3.bucket.required",
                 "S3 存储桶不能为空",
                 "S3 bucket is required.",
+                "S3-бакет обязателен.",
             ));
         }
         if self.region.trim().is_empty() {
-            return Err(crate::error::AppError::localized(
+            return Err(crate::error::AppError::localized_ru(
                 "s3.region.required",
                 "S3 区域不能为空",
                 "S3 region is required.",
+                "Регион S3 обязателен.",
             ));
         }
         if self.access_key_id.trim().is_empty() {
-            return Err(crate::error::AppError::localized(
+            return Err(crate::error::AppError::localized_ru(
                 "s3.access_key_id.required",
                 "S3 Access Key ID 不能为空",
                 "S3 Access Key ID is required.",
+                "S3 Access Key ID обязателен.",
             ));
         }
         if self.secret_access_key.trim().is_empty() {
-            return Err(crate::error::AppError::localized(
+            return Err(crate::error::AppError::localized_ru(
                 "s3.secret_access_key.required",
                 "S3 Secret Access Key 不能为空",
                 "S3 Secret Access Key is required.",
+                "S3 Secret Access Key обязателен.",
             ));
         }
         Ok(())
@@ -618,7 +624,7 @@ impl AppSettings {
             .language
             .as_ref()
             .map(|s| s.trim())
-            .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja"))
+            .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja" | "ru"))
             .map(|s| s.to_string());
 
         if let Some(sync) = &mut self.webdav_sync {
