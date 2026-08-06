@@ -176,9 +176,16 @@ pub async fn handle_claude_science_models(
         .await
         .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
     let provider = providers.first().ok_or(ProxyError::NoAvailableProvider)?;
-    let response = crate::claude_desktop_config::model_list_response(provider)
+    // Claude Science 供应商通常只有 Claude Code 风格 env 模型配置，没有
+    // Desktop 的 claudeDesktopModelRoutes 路由表；路由解析失败时回退到
+    // env 投影，否则 Science 前端拿不到模型列表，会把会话已存模型（如
+    // claude-opus-5）标记为 unavailable 并中断会话。
+    let routes = crate::claude_desktop_config::resolve_proxy_routes(provider)
+        .or_else(|_| crate::claude_desktop_config::env_model_routes(provider))
         .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
-    Ok(Json(response))
+    Ok(Json(
+        crate::claude_desktop_config::model_list_response_from_routes(&routes),
+    ))
 }
 
 pub async fn handle_claude_desktop_models(
