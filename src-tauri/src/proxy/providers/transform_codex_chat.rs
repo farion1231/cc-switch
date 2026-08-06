@@ -4243,8 +4243,9 @@ mod tests {
             }]
         });
 
-        let err = chat_completion_to_response_with_context(chat, &CodexToolContext::default())
-            .unwrap_err();
+        let err =
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default(), None)
+                .unwrap_err();
         assert!(matches!(err, ProxyError::TransformError(_)));
         assert!(err.to_string().contains("without a function name"));
     }
@@ -4274,7 +4275,8 @@ mod tests {
         });
 
         let result =
-            chat_completion_to_response_with_context(chat, &CodexToolContext::default()).unwrap();
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default(), None)
+                .unwrap();
         let output = result["output"].as_array().unwrap();
 
         assert_eq!(output.len(), 1);
@@ -4300,8 +4302,9 @@ mod tests {
             }]
         });
 
-        let err = chat_completion_to_response_with_context(chat, &CodexToolContext::default())
-            .unwrap_err();
+        let err =
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default(), None)
+                .unwrap_err();
         assert!(matches!(err, ProxyError::TransformError(_)));
     }
 
@@ -4329,7 +4332,8 @@ mod tests {
         });
 
         let result =
-            chat_completion_to_response_with_context(chat, &CodexToolContext::default()).unwrap();
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default(), None)
+                .unwrap();
         assert_eq!(result["status"], "incomplete");
         assert_eq!(result["incomplete_details"]["reason"], "max_output_tokens");
     }
@@ -4355,8 +4359,9 @@ mod tests {
             }]
         });
 
-        let err = chat_completion_to_response_with_context(chat, &CodexToolContext::default())
-            .unwrap_err();
+        let err =
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default(), None)
+                .unwrap_err();
         assert!(matches!(err, ProxyError::TransformError(_)));
     }
 
@@ -4375,7 +4380,8 @@ mod tests {
         });
 
         let result =
-            chat_completion_to_response_with_context(chat, &CodexToolContext::default()).unwrap();
+            chat_completion_to_response_with_context(chat, &CodexToolContext::default(), None)
+                .unwrap();
         assert_eq!(result["status"], "completed");
     }
 
