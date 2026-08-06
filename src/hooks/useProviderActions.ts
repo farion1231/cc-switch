@@ -2,7 +2,13 @@ import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
-import { providersApi, settingsApi, openclawApi, type AppId } from "@/lib/api";
+import {
+  piApi,
+  providersApi,
+  settingsApi,
+  openclawApi,
+  type AppId,
+} from "@/lib/api";
 import type {
   Provider,
   UsageScript,
@@ -142,7 +148,10 @@ export function useProviderActions(
   // 更新供应商
   const updateProvider = useCallback(
     async (provider: Provider, originalId?: string) => {
-      await updateProviderMutation.mutateAsync({ provider, originalId });
+      await updateProviderMutation.mutateAsync({
+        provider,
+        originalId,
+      });
 
       // 更新托盘菜单（失败不影响主操作）
       try {
@@ -362,7 +371,11 @@ export function useProviderActions(
           },
         };
 
-        await providersApi.update(updatedProvider, activeApp);
+        if (activeApp === "pi") {
+          await piApi.updateProviderUsageScript(provider.id, script);
+        } else {
+          await providersApi.update(updatedProvider, activeApp);
+        }
         await queryClient.invalidateQueries({
           queryKey: ["providers", activeApp],
         });

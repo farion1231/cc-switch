@@ -207,6 +207,11 @@ impl Provider {
                 str_at(settings.get("baseUrl")),
                 str_at(settings.get("apiKey")),
             ),
+            // Pi custom providers use the native models.json field names.
+            AppType::Pi => (
+                crate::pi_config::provider_base_url(settings).unwrap_or_default(),
+                str_at(settings.get("apiKey")),
+            ),
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
             AppType::OpenCode => {
                 let options = settings.get("options");
@@ -1525,6 +1530,25 @@ mod tests {
             (
                 "https://api.deepseek.com".to_string(),
                 "sk-openclaw".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_credentials_pi_uses_native_model_level_base_url() {
+        let p = provider_with(json!({
+            "apiKey": "sk-pi",
+            "models": [{
+                "id": "model-a",
+                "api": "openai-completions",
+                "baseUrl": "https://api.example.com/v1/"
+            }]
+        }));
+        assert_eq!(
+            p.resolve_usage_credentials(&AppType::Pi),
+            (
+                "https://api.example.com/v1".to_string(),
+                "sk-pi".to_string()
             )
         );
     }

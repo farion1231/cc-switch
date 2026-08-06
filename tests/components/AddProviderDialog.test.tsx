@@ -29,10 +29,15 @@ let mockFormValues: ProviderFormValues;
 vi.mock("@/components/providers/forms/ProviderForm", () => ({
   ProviderForm: ({
     onSubmit,
+    onSubmitReadyChange,
   }: {
     onSubmit: (values: ProviderFormValues) => void;
+    onSubmitReadyChange?: (isReady: boolean) => void;
   }) => (
     <form
+      ref={(node) => {
+        if (node) onSubmitReadyChange?.(true);
+      }}
       id="provider-form"
       onSubmit={(event) => {
         event.preventDefault();
@@ -165,5 +170,50 @@ context_window = 500000
     const submitted = handleSubmit.mock.calls[0][0];
     expect(submitted.icon).toBeUndefined();
     expect(submitted.iconColor).toBeUndefined();
+  });
+
+  it("Pi 添加供应商时仅提交供应商目录", async () => {
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+    mockFormValues = {
+      name: "Pi Provider",
+      providerKey: "pi-provider",
+      websiteUrl: "",
+      settingsConfig: JSON.stringify({
+        baseUrl: "https://api.example.com/v1",
+        models: [
+          { id: "selected-model", name: "Selected" },
+          { id: "other-model", name: "Other" },
+        ],
+      }),
+      meta: {
+        isPartner: true,
+        endpointAutoSelect: true,
+        custom_endpoints: {
+          "https://failover.example.com/v1": {
+            url: "https://failover.example.com/v1",
+            addedAt: 1,
+          },
+        },
+      },
+    };
+
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="pi"
+        onSubmit={handleSubmit}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "common.add" }));
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+    expect(handleSubmit.mock.calls[0][0]).toMatchObject({
+      providerKey: "pi-provider",
+      meta: { isPartner: true },
+    });
+    expect(handleSubmit.mock.calls[0][0]).not.toHaveProperty(
+      "piActivateModelId",
+    );
   });
 });

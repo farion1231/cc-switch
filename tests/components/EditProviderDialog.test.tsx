@@ -42,6 +42,7 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
   ProviderForm: ({
     initialData,
     onSubmit,
+    onSubmitReadyChange,
     isProxyTakeover,
   }: {
     initialData: {
@@ -62,9 +63,14 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
       icon?: string;
       iconColor?: string;
     }) => void;
+    onSubmitReadyChange?: (isReady: boolean) => void;
     isProxyTakeover?: boolean;
+    appId?: string;
   }) => (
     <form
+      ref={(node) => {
+        if (node) onSubmitReadyChange?.(true);
+      }}
       id="provider-form"
       onSubmit={(event) => {
         event.preventDefault();
@@ -201,5 +207,47 @@ describe("EditProviderDialog", () => {
     expect(
       JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
     ).toEqual(provider.settingsConfig);
+  });
+
+  it("编辑 Pi 供应商时保留通用元数据", async () => {
+    const provider: Provider = {
+      id: "pi-provider",
+      name: "Pi Provider",
+      settingsConfig: {
+        baseUrl: "https://api.example.com/v1",
+        models: [{ id: "model" }],
+      },
+      meta: {
+        isPartner: true,
+        endpointAutoSelect: true,
+        custom_endpoints: {
+          "https://failover.example.com/v1": {
+            url: "https://failover.example.com/v1",
+            addedAt: 1,
+          },
+        },
+      },
+    };
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={handleSubmit}
+        appId="pi"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+    expect(handleSubmit.mock.calls[0][0].provider.meta).toMatchObject({
+      isPartner: true,
+    });
+    expect(handleSubmit.mock.calls[0][0]).not.toHaveProperty(
+      "expectedSettingsConfig",
+    );
   });
 });

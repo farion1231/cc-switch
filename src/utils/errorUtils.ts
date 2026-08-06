@@ -37,6 +37,19 @@ export const extractErrorMessage = (error: unknown): string => {
   return "";
 };
 
+export const translatePiProviderMutationError = (
+  message: string,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string => {
+  if (!message) return "";
+
+  if (message.includes("models.json changed")) {
+    return t("pi.provider.writeConflict");
+  }
+
+  return "";
+};
+
 /**
  * 将已知的 MCP 相关后端错误（通常为中文硬编码）映射为 i18n 文案
  * 采用包含式匹配，尽量稳健地覆盖不同上下文的相似消息。
