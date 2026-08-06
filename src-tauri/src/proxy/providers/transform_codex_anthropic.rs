@@ -18,6 +18,7 @@ use super::transform_responses::{sanitize_anthropic_tool_use_input, TOOL_RESULT_
 use crate::proxy::error::ProxyError;
 use crate::proxy::json_canonical::canonical_json_string;
 use crate::proxy::sse::{strip_sse_field, take_sse_block};
+use crate::proxy::thinking_capability::{ThinkingCapability, ThinkingMode};
 use crate::proxy::tool_media::{
     strip_and_clamp_media_from_tool_value, ToolMediaScope, TOOL_RESULT_MEDIA_ATTACHED_MARKER,
 };
@@ -223,16 +224,33 @@ fn responses_system_text(item: &Value) -> Vec<String> {
     }
 }
 
-pub fn responses_request_to_anthropic(
+/// Test-only shorthand: convert with the thinking shape decided by the built-in
+/// heuristic alone.
+///
+/// Production always goes through [`responses_request_to_anthropic_with_capability`] so
+/// the conversion also honors any shape correction learned from a previous upstream
+/// rejection (see `proxy::thinking_mode_rectifier`). The heuristic used here is the same
+/// one the store falls back to on a cache miss.
+#[cfg(test)]
+fn responses_request_to_anthropic(
     body: Value,
     default_max_tokens: u64,
 ) -> Result<Value, ProxyError> {
+    let capability = crate::proxy::thinking_capability::resolve_capability(
+        body.get("model")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    );
+    responses_request_to_anthropic_with_capability(body, default_max_tokens, capability)
+}
+
+pub fn responses_request_to_anthropic_with_capability(
+    body: Value,
+    default_max_tokens: u64,
+    capability: ThinkingCapability,
+) -> Result<Value, ProxyError> {
     let mut result = json!({});
     let tool_context = build_codex_tool_context_from_request(&body);
-    let model = body
-        .get("model")
-        .and_then(|value| value.as_str())
-        .unwrap_or("");
 
     // Pass model through (the upstream model has already been applied by the forwarder)
     if let Some(model) = body.get("model").and_then(|m| m.as_str()) {
@@ -296,10 +314,9 @@ pub fn responses_request_to_anthropic(
     let reasoning_effort = body
         .pointer("/reasoning/effort")
         .and_then(|value| value.as_str());
-    let adaptive_model = crate::proxy::thinking_optimizer::uses_adaptive_thinking(model);
-    let adaptive_by_default = crate::proxy::thinking_optimizer::adaptive_thinking_is_default(model);
-    let cannot_disable_thinking =
-        crate::proxy::thinking_optimizer::thinking_cannot_be_disabled(model);
+    let adaptive_model = capability.mode == ThinkingMode::Adaptive;
+    let adaptive_by_default = capability.adaptive_is_default;
+    let cannot_disable_thinking = capability.cannot_disable;
 
     // max_output_tokens → max_tokens (required)
     let max_tokens = body
@@ -1740,7 +1757,7 @@ mod tests {
         // A function tool must be present, else tool_choice is (correctly) dropped.
         let base = |tc: Value| {
             json!({
-                "model": "c", "max_output_tokens": 100,
+                "model": "claude-sonnet-4-5", "max_output_tokens": 100,
                 "input": [{ "role": "user", "content": "hi" }],
                 "tools": [{ "type": "function", "name": "x", "parameters": {"type": "object"} }],
                 "tool_choice": tc
@@ -1764,7 +1781,7 @@ mod tests {
     #[test]
     fn test_request_function_call_renests_into_assistant_tool_use() {
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "input": [
                 { "role": "assistant", "content": [{ "type": "output_text", "text": "Let me check" }] },
@@ -1790,7 +1807,7 @@ mod tests {
         // Consecutive function_call_output items (each paired with a preceding
         // function_call) merge into a single user message of tool_result blocks.
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "input": [
                 { "type": "function_call", "call_id": "c1", "name": "t", "arguments": "{}" },
@@ -1815,7 +1832,7 @@ mod tests {
     #[test]
     fn test_request_unanswered_trailing_tool_use_is_dropped() {
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "input": [
                 { "role": "user", "content": "run it" },
@@ -1832,7 +1849,7 @@ mod tests {
     #[test]
     fn test_request_partial_parallel_tool_turn_is_dropped_as_a_unit() {
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "input": [
                 { "role": "user", "content": "run both" },
@@ -1858,7 +1875,7 @@ mod tests {
     #[test]
     fn test_request_tool_results_precede_user_text() {
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "input": [
                 { "role": "user", "content": "run it" },
@@ -1883,7 +1900,7 @@ mod tests {
         // compaction) becomes an orphan tool_result; it must be removed so Anthropic
         // does not 400, while the rest of the turn is preserved.
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "input": [
                 { "type": "function_call_output", "call_id": "ghost", "output": "X" },
@@ -1907,7 +1924,7 @@ mod tests {
         // filtered out (Anthropic 400s on empty text blocks), keeping the tool_use, and
         // a user turn made up solely of empty text must not leave an empty message.
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "input": [
                 { "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
@@ -1939,7 +1956,7 @@ mod tests {
         // If the entire input is orphan tool_results, dropping them empties the
         // message list and conversion errors (nothing valid to send to Anthropic).
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "input": [
                 { "type": "function_call_output", "call_id": "c1", "output": "A" },
@@ -1953,7 +1970,7 @@ mod tests {
     fn test_request_paired_tool_result_kept() {
         // A tool_result whose function_call is present survives the orphan guard.
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "input": [
                 { "type": "function_call", "call_id": "c1", "name": "t", "arguments": "{}" },
@@ -1971,7 +1988,7 @@ mod tests {
     #[test]
     fn test_request_empty_arguments_parses_to_empty_object() {
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "input": [
                 { "type": "function_call", "call_id": "c1", "name": "t", "arguments": "" },
@@ -2027,7 +2044,7 @@ mod tests {
     #[test]
     fn test_request_image_data_url() {
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "input": [{
                 "role": "user",
@@ -2048,7 +2065,7 @@ mod tests {
     #[test]
     fn test_request_top_level_content_items() {
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "input": [
                 { "type": "input_text", "text": "what?" },
@@ -2070,7 +2087,7 @@ mod tests {
     #[test]
     fn test_request_image_http_url() {
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "input": [{
                 "role": "user",
@@ -2087,7 +2104,7 @@ mod tests {
     #[test]
     fn test_request_effort_to_thinking_and_drops_temperature() {
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             // Well above 2× the high-effort budget so the output-headroom cap
             // (max_tokens/2) does not clamp it — this test covers effort mapping.
             "max_output_tokens": 40000,
@@ -2101,6 +2118,67 @@ mod tests {
         assert_eq!(result["thinking"]["budget_tokens"], 16384);
         assert!(result.get("temperature").is_none());
         assert!(result.get("top_p").is_none());
+    }
+
+    #[test]
+    fn test_opus_5_uses_adaptive_thinking_not_budget_tokens() {
+        // 回归：opus-5 不在旧白名单里，会落到 legacy 分支发出
+        // thinking:{type:"enabled",budget_tokens:N}，被 Anthropic 以
+        // `"thinking.type.enabled" is not supported for this model` 400 拒绝。
+        let input = json!({
+            "model": "claude-opus-5",
+            "max_output_tokens": 40000,
+            "reasoning": { "effort": "high" },
+            "input": [{ "role": "user", "content": "hi" }]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+
+        assert_eq!(result["thinking"]["type"], "adaptive");
+        assert!(result["thinking"].get("budget_tokens").is_none());
+        assert_eq!(result["output_config"]["effort"], "high");
+    }
+
+    #[test]
+    fn test_unknown_and_future_models_use_adaptive_thinking() {
+        // 「未知的 Claude 即新 Claude」：出新模型不需要改代码
+        for model in ["claude-opus-6", "claude-sonnet-6", "claude-gateway-alias"] {
+            let input = json!({
+                "model": model,
+                "max_output_tokens": 40000,
+                "reasoning": { "effort": "medium" },
+                "input": [{ "role": "user", "content": "hi" }]
+            });
+            let result = responses_request_to_anthropic(input, 4096).unwrap();
+
+            assert_eq!(result["thinking"]["type"], "adaptive", "model={model}");
+            assert!(
+                result["thinking"].get("budget_tokens").is_none(),
+                "model={model}"
+            );
+            assert_eq!(result["output_config"]["effort"], "medium", "model={model}");
+        }
+    }
+
+    #[test]
+    fn test_learned_legacy_capability_overrides_the_heuristic() {
+        // 整流器学到「这个模型只认 legacy」之后，转换要照学到的形状走
+        let input = json!({
+            "model": "claude-opus-5",
+            "max_output_tokens": 40000,
+            "reasoning": { "effort": "high" },
+            "input": [{ "role": "user", "content": "hi" }]
+        });
+        let legacy = ThinkingCapability {
+            mode: ThinkingMode::Legacy,
+            adaptive_is_default: false,
+            cannot_disable: false,
+            grounded: true,
+        };
+        let result = responses_request_to_anthropic_with_capability(input, 4096, legacy).unwrap();
+
+        assert_eq!(result["thinking"]["type"], "enabled");
+        assert_eq!(result["thinking"]["budget_tokens"], 16384);
+        assert!(result.get("output_config").is_none());
     }
 
     #[test]
@@ -2123,7 +2201,7 @@ mod tests {
     fn test_request_unknown_effort_keeps_sampling_params() {
         // An unrecognized effort should not enable thinking, nor swallow temperature/top_p.
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 20000,
             "temperature": 0.7,
             "top_p": 0.9,
@@ -2142,7 +2220,7 @@ mod tests {
         // even if effort is set, and fall back to passing temperature/top_p through,
         // to avoid the Anthropic 400 caused by a missing thinking block.
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 20000,
             "temperature": 0.5,
             "reasoning": { "effort": "high" },
@@ -2220,7 +2298,7 @@ mod tests {
         // by a fresh user question: the trailing turn is text-only, so thinking must be
         // re-enabled — unlike a whole-history scan, which would stay off forever.
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 20000,
             "reasoning": { "effort": "high" },
             "input": [
@@ -2243,7 +2321,7 @@ mod tests {
     #[test]
     fn test_request_custom_tool_survives_with_required_choice() {
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "input": [{ "role": "user", "content": "hi" }],
             "tools": [
@@ -2261,7 +2339,7 @@ mod tests {
     #[test]
     fn test_request_forced_tool_choice_disables_thinking_instead_of_downgrading() {
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 20000,
             "reasoning": { "effort": "high" },
             "tools": [{ "type": "function", "name": "x", "parameters": {"type": "object"} }],
@@ -2279,7 +2357,7 @@ mod tests {
     fn test_request_forced_tool_choice_kept_without_thinking() {
         // With no effort (thinking off), a forced tool_choice is kept as-is.
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "tools": [{ "type": "function", "name": "x", "parameters": {"type": "object"} }],
             "tool_choice": "required",
@@ -2295,7 +2373,7 @@ mod tests {
         // < 1024 → disable thinking, fall back to sampling, and do not raise the
         // caller's max_tokens (to avoid exceeding the model's output ceiling and 400).
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 1000,
             "temperature": 0.7,
             "reasoning": { "effort": "high" },
@@ -2313,7 +2391,7 @@ mod tests {
         // max_tokens/2 (reserving the other half for the visible answer) while staying
         // >= 1024, so thinking stays enabled.
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 5000,
             "reasoning": { "effort": "high" }, // budget 16384
             "input": [{ "role": "user", "content": "hi" }]
@@ -2331,7 +2409,7 @@ mod tests {
         // and high effort (16384), the budget is capped at 8192/2 = 4096, leaving 4096 for
         // the visible answer (previously it clamped to 8191, leaving ~1 output token).
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "reasoning": { "effort": "high" },
             "input": [{ "role": "user", "content": "hi" }]
         });
@@ -2352,7 +2430,7 @@ mod tests {
         // A resumed/compacted history ending in an unpaired assistant tool_use is
         // removed, leaving the original user prompt as a fresh thinking turn.
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 40000,
             "reasoning": { "effort": "high" },
             "input": [
@@ -2370,7 +2448,7 @@ mod tests {
     #[test]
     fn test_request_reasoning_item_dropped() {
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "input": [
                 { "type": "reasoning", "id": "rs_1", "encrypted_content": "xxx" },
@@ -2386,7 +2464,7 @@ mod tests {
     #[test]
     fn test_request_drops_openai_only_fields() {
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "store": false,
             "include": ["reasoning.encrypted_content"],
@@ -2655,7 +2733,7 @@ mod tests {
     fn test_request_parallel_tool_calls_false_disables_parallel_use() {
         let response = responses_request_to_anthropic(
             json!({
-                "model": "c",
+                "model": "claude-sonnet-4-5",
                 "input": [{"role": "user", "content": "hi"}],
                 "tools": [{"type": "function", "name": "x", "parameters": {"type": "object"}}],
                 "parallel_tool_calls": false
@@ -2671,7 +2749,7 @@ mod tests {
     fn test_request_trims_trailing_assistant_whitespace() {
         let response = responses_request_to_anthropic(
             json!({
-                "model": "c",
+                "model": "claude-sonnet-4-5",
                 "input": [
                     {"role": "user", "content": "continue"},
                     {"role": "assistant", "content": [{"type": "output_text", "text": "prefix   \n"}]}
@@ -2687,7 +2765,7 @@ mod tests {
     fn test_structured_tool_output_preserves_text_and_image_blocks() {
         let response = responses_request_to_anthropic(
             json!({
-                "model": "c",
+                "model": "claude-sonnet-4-5",
                 "input": [
                     {"type": "function_call", "call_id": "c1", "name": "inspect", "arguments": "{}"},
                     {"type": "function_call_output", "call_id": "c1", "output": [
@@ -2708,7 +2786,7 @@ mod tests {
     fn test_alternate_mcp_tool_image_is_not_stringified_for_anthropic() {
         let response = responses_request_to_anthropic(
             json!({
-                "model": "c",
+                "model": "claude-sonnet-4-5",
                 "input": [
                     {"type": "function_call", "call_id": "c1", "name": "inspect", "arguments": "{}"},
                     {"type": "function_call_output", "call_id": "c1", "output": [{
@@ -2751,7 +2829,7 @@ mod tests {
         .to_string();
         let response = responses_request_to_anthropic(
             json!({
-                "model": "c",
+                "model": "claude-sonnet-4-5",
                 "input": [
                     {"type": "function_call", "call_id": "c1", "name": "inspect", "arguments": "{}"},
                     {"type": "function_call_output", "call_id": "c1", "output": encoded_output}
@@ -2818,7 +2896,7 @@ mod tests {
     fn test_request_empty_messages_errors() {
         // input is entirely reasoning (dropped) → messages is empty → error explicitly rather than leaving it to the upstream 400.
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "instructions": "sys",
             "input": [
@@ -2831,7 +2909,7 @@ mod tests {
     #[test]
     fn test_request_assistant_first_gets_leading_user() {
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "input": [
                 { "role": "assistant", "content": [{ "type": "output_text", "text": "hi" }] }
@@ -2848,7 +2926,7 @@ mod tests {
     #[test]
     fn test_request_tool_without_description_or_params() {
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "input": [{ "role": "user", "content": "hi" }],
             "tools": [ { "type": "function", "name": "noop" } ]
@@ -2863,7 +2941,7 @@ mod tests {
     #[test]
     fn test_request_unknown_object_tool_choice_degrades_to_auto() {
         let input = json!({
-            "model": "c",
+            "model": "claude-sonnet-4-5",
             "max_output_tokens": 100,
             "input": [{ "role": "user", "content": "hi" }],
             "tools": [{ "type": "function", "name": "x", "parameters": {"type": "object"} }],

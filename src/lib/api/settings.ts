@@ -325,6 +325,7 @@ export interface RectifierConfig {
   enabled: boolean;
   requestThinkingSignature: boolean;
   requestThinkingBudget: boolean;
+  requestThinkingMode: boolean;
   requestMediaFallback: boolean;
   requestMediaHeuristic: boolean;
 }

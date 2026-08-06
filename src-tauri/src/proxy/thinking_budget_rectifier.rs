@@ -144,32 +144,20 @@ mod tests {
     use serde_json::json;
 
     fn enabled_config() -> RectifierConfig {
-        RectifierConfig {
-            enabled: true,
-            request_thinking_signature: true,
-            request_thinking_budget: true,
-            request_media_fallback: true,
-            request_media_heuristic: true,
-        }
+        RectifierConfig::default()
     }
 
     fn budget_disabled_config() -> RectifierConfig {
         RectifierConfig {
-            enabled: true,
-            request_thinking_signature: true,
             request_thinking_budget: false,
-            request_media_fallback: true,
-            request_media_heuristic: true,
+            ..RectifierConfig::default()
         }
     }
 
     fn master_disabled_config() -> RectifierConfig {
         RectifierConfig {
             enabled: false,
-            request_thinking_signature: true,
-            request_thinking_budget: true,
-            request_media_fallback: true,
-            request_media_heuristic: true,
+            ..RectifierConfig::default()
         }
     }
 

@@ -390,6 +390,8 @@
         "thinkingSignatureDescription": "当 Anthropic 类型供应商返回 thinking 签名不兼容或非法请求等错误时，自动移除不兼容的 thinking 相关块并对同一供应商重试一次",
         "thinkingBudget": "Thinking Budget 整流",
         "thinkingBudgetDescription": "当 Anthropic 类型供应商返回 budget_tokens 约束错误（如至少 1024）时，自动将 thinking 规范为 enabled 并将 budget 设为 32000，同时在需要时将 max_tokens 设为 64000，然后重试一次",
+        "thinkingMode": "Thinking 形状整流",
+        "thinkingModeDescription": "当上游拒绝当前使用的 thinking 形状时，从报错中学出正确形状并重试一次，双向自愈（\"thinking.type.enabled\" is not supported ⇄ Input tag 'adaptive' does not match expected tags）。学到的结论按供应商与模型记住，所以新发布的模型只会失败一次就自行恢复，不需要等应用更新",
         "mediaFallback": "不支持图片降级",
         "mediaFallbackDescription": "当供应商不支持图片输入时（已声明纯文本能力，或上游返回不支持图片的错误），自动将图片块替换为 [Unsupported Image] 标记，使对话不中断",
         "mediaHeuristic": "纯文本模型预判",
