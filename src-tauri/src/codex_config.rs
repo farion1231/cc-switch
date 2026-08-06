@@ -1248,7 +1248,22 @@ fn set_codex_model_catalog_json_field(
 
     match catalog_path {
         Some(_) => {
-            doc["model_catalog_json"] = toml_edit::value(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+            // Only claim the pointer when it is absent or already cc-switch-owned.
+            // A user-managed external catalog file (custom filename or path) is
+            // left untouched, mirroring the None arm's ownership rule that
+            // `resolve_cc_switch_catalog_path` relies on.
+            let is_cc_switch_owned = doc
+                .get("model_catalog_json")
+                .and_then(|item| item.as_str())
+                .map(|path| {
+                    Path::new(path).file_name().and_then(|name| name.to_str())
+                        == Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+                })
+                .unwrap_or(true);
+            if is_cc_switch_owned {
+                doc["model_catalog_json"] =
+                    toml_edit::value(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+            }
         }
         None => {
             let should_remove = doc
@@ -4293,6 +4308,44 @@ model = "glm-5"
             parsed.get("model_catalog_json").and_then(|v| v.as_str()),
             Some("/Users/me/.codex/my-custom-catalog.json"),
             "None arm should NOT remove user-owned catalog"
+        );
+    }
+
+    #[test]
+    fn set_catalog_json_some_preserves_user_owned_catalog() {
+        // When CC Switch generates a catalog (Some arm), it must still respect a
+        // user-managed external catalog file instead of clobbering it with the
+        // cc-switch-owned filename. Only an absent or cc-switch-owned pointer is
+        // claimed; this mirrors the None arm's ownership rule.
+        let input = r#"model_provider = "custom"
+model = "glm-5"
+model_catalog_json = "/Users/me/.codex/my-custom-catalog.json"
+"#;
+        let catalog_path = Path::new("/tmp/cc-switch-model-catalog.json");
+        let result = set_codex_model_catalog_json_field(input, Some(catalog_path)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some("/Users/me/.codex/my-custom-catalog.json"),
+            "Some arm should NOT clobber a user-owned catalog (full path)"
+        );
+    }
+
+    #[test]
+    fn set_catalog_json_some_preserves_user_owned_relative_filename() {
+        // A bare custom filename (no directory component) is also user-owned
+        // and must be preserved by the Some arm.
+        let input = r#"model_provider = "custom"
+model = "glm-5"
+model_catalog_json = "my-custom-catalog.json"
+"#;
+        let catalog_path = Path::new("/tmp/cc-switch-model-catalog.json");
+        let result = set_codex_model_catalog_json_field(input, Some(catalog_path)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some("my-custom-catalog.json"),
+            "Some arm should NOT clobber a relative user-owned catalog"
         );
     }
 
