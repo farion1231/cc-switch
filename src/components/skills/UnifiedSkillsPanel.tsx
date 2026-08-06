@@ -371,28 +371,48 @@ const UnifiedSkillsPanel = React.forwardRef<
       const filePath = await skillsApi.openZipFileDialog();
       if (!filePath) return;
 
-      const installed = await installFromZipMutation.mutateAsync({
+      const result = await installFromZipMutation.mutateAsync({
         filePath,
         currentApp,
       });
+      const { installed, skipped } = result;
 
-      if (installed.length === 0) {
-        toast.info(t("skills.installFromZip.noSkillsFound"), {
-          closeButton: true,
-        });
-      } else if (installed.length === 1) {
+      if (installed.length === 1) {
         toast.success(
           t("skills.installFromZip.successSingle", {
             name: installed[0].name,
           }),
           { closeButton: true },
         );
-      } else {
+      } else if (installed.length > 1) {
         toast.success(
           t("skills.installFromZip.successMultiple", {
             count: installed.length,
           }),
           { closeButton: true },
+        );
+      }
+
+      if (skipped.length > 0) {
+        const visible = skipped.slice(0, 3).map((item) =>
+          t("skills.installFromZip.skippedItem", {
+            name: item.name,
+            reason: t(`skills.installFromZip.skipReasons.${item.reason}`),
+          }),
+        );
+        const remaining = skipped.length - visible.length;
+        if (remaining > 0) {
+          visible.push(
+            t("skills.installFromZip.skippedRemaining", { count: remaining }),
+          );
+        }
+
+        toast.warning(
+          t("skills.installFromZip.skipped", { count: skipped.length }),
+          {
+            description: visible.join("\n"),
+            closeButton: true,
+          },
         );
       }
     } catch (error) {

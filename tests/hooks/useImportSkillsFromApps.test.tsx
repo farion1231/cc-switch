@@ -172,7 +172,16 @@ describe("Skills install and import mutation hooks", () => {
     const last = makeSkill({ name: "Last ZIP Value" });
     const second = makeSkill({ id: "skill-b", name: "Skill B" });
     queryClient.setQueryData(["skills", "installed"], [stale]);
-    apiMocks.installFromZip.mockResolvedValueOnce([first, last, second]);
+    apiMocks.installFromZip.mockResolvedValueOnce({
+      installed: [first, last, second],
+      skipped: [
+        {
+          directory: "conflict",
+          name: "Conflict",
+          reason: "managed_conflict",
+        },
+      ],
+    });
     const { result } = renderHook(() => useInstallSkillsFromZip(), {
       wrapper: createWrapper(queryClient),
     });

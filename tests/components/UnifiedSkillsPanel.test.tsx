@@ -11,6 +11,7 @@ import type {
   SkillBackupEntry,
   SkillUpdateInfo,
 } from "@/lib/api/skills";
+import { skillsApi } from "@/lib/api/skills";
 
 const scanUnmanagedMock = vi.fn();
 const toggleSkillAppMock = vi.fn();
@@ -23,10 +24,14 @@ const bulkToggleSkillAppMock = vi.fn();
 const checkUpdatesMock = vi.fn();
 const updateSkillMock = vi.fn();
 const refetchSkillBackupsMock = vi.fn();
-const { toastErrorMock, toastSuccessMock } = vi.hoisted(() => ({
-  toastErrorMock: vi.fn(),
-  toastSuccessMock: vi.fn(),
-}));
+const { toastErrorMock, toastSuccessMock, toastWarningMock, toastInfoMock } =
+  vi.hoisted(() => ({
+    toastErrorMock: vi.fn(),
+    toastSuccessMock: vi.fn(),
+    toastWarningMock: vi.fn(),
+    toastInfoMock: vi.fn(),
+  }));
+const openZipFileDialogMock = vi.spyOn(skillsApi, "openZipFileDialog");
 let installedSkillsMock: InstalledSkill[] = [];
 let skillBackupsMock: SkillBackupEntry[] = [];
 let skillUpdatesMock: SkillUpdateInfo[] = [];
@@ -44,7 +49,8 @@ vi.mock("sonner", () => ({
   toast: {
     success: toastSuccessMock,
     error: toastErrorMock,
-    info: vi.fn(),
+    warning: toastWarningMock,
+    info: toastInfoMock,
   },
 }));
 
@@ -172,6 +178,10 @@ describe("UnifiedSkillsPanel", () => {
     bulkToggleSkillAppMock.mockResolvedValue({ succeeded: [], failed: [] });
     toastErrorMock.mockReset();
     toastSuccessMock.mockReset();
+    toastWarningMock.mockReset();
+    toastInfoMock.mockReset();
+    openZipFileDialogMock.mockReset();
+    openZipFileDialogMock.mockResolvedValue("C:\\skills.zip");
     uninstallSkillMock.mockReset();
     importSkillsMock.mockReset();
     installFromZipMock.mockReset();
@@ -184,6 +194,83 @@ describe("UnifiedSkillsPanel", () => {
     updateSkillMock.mockReset();
     updateSkillMock.mockImplementation(async (id: string) =>
       makeInstalledSkill({ id }),
+    );
+  });
+
+  it("reports a managed ZIP conflict instead of claiming the archive has no skills", async () => {
+    installFromZipMock.mockResolvedValue({
+      installed: [],
+      skipped: [
+        {
+          directory: "alpha-skill",
+          name: "Alpha Skill",
+          reason: "managed_conflict",
+          existingSkillId: "owner/repo:alpha-skill",
+        },
+      ],
+    });
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+      />,
+    );
+
+    await act(async () => {
+      await ref.current?.openInstallFromZip();
+    });
+
+    expect(installFromZipMock).toHaveBeenCalledWith({
+      filePath: "C:\\skills.zip",
+      currentApp: "claude",
+    });
+    expect(toastWarningMock).toHaveBeenCalledWith(
+      "skills.installFromZip.skipped",
+      {
+        description: "skills.installFromZip.skippedItem",
+        closeButton: true,
+      },
+    );
+    expect(toastInfoMock).not.toHaveBeenCalled();
+    expect(toastSuccessMock).not.toHaveBeenCalled();
+  });
+
+  it("reports installed and skipped items separately for a mixed ZIP", async () => {
+    installFromZipMock.mockResolvedValue({
+      installed: [makeInstalledSkill({ id: "local:fresh", name: "Fresh" })],
+      skipped: [
+        {
+          directory: "alpha-skill",
+          name: "Alpha Skill",
+          reason: "storage_conflict",
+        },
+      ],
+    });
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+      />,
+    );
+
+    await act(async () => {
+      await ref.current?.openInstallFromZip();
+    });
+
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "skills.installFromZip.successSingle",
+      { closeButton: true },
+    );
+    expect(toastWarningMock).toHaveBeenCalledWith(
+      "skills.installFromZip.skipped",
+      {
+        description: "skills.installFromZip.skippedItem",
+        closeButton: true,
+      },
     );
   });
 
