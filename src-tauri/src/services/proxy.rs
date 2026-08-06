@@ -1895,17 +1895,25 @@ impl ProxyService {
         app_type: &AppType,
         config: Value,
     ) -> Result<Value, String> {
-        let Some(current_id) = crate::settings::get_effective_current_provider(&self.db, app_type)
-            .map_err(|e| format!("获取 {app_type:?} 当前供应商失败: {e}"))?
-        else {
-            log::warn!("{app_type:?} 没有有效的当前供应商，保留原始 Live 备份，不合并通用配置");
-            return Ok(config);
+        let current_id = match crate::settings::get_effective_current_provider(&self.db, app_type) {
+            Ok(Some(current_id)) => current_id,
+            Ok(None) => {
+                log::warn!("{app_type:?} 没有有效的当前供应商，保留原始 Live 备份，不合并通用配置");
+                return Ok(config);
+            }
+            Err(error) => {
+                log::warn!("获取 {app_type:?} 当前供应商失败，保留原始 Live 备份继续恢复: {error}");
+                return Ok(config);
+            }
         };
 
-        let providers = self
-            .db
-            .get_all_providers(app_type.as_str())
-            .map_err(|e| format!("读取 {app_type:?} 供应商列表失败: {e}"))?;
+        let providers = match self.db.get_all_providers(app_type.as_str()) {
+            Ok(providers) => providers,
+            Err(error) => {
+                log::warn!("读取 {app_type:?} 供应商列表失败，保留原始 Live 备份继续恢复: {error}");
+                return Ok(config);
+            }
+        };
         let Some(provider) = providers.get(&current_id) else {
             log::warn!(
                 "{app_type:?} 当前供应商 {current_id} 不在数据库中，保留原始 Live 备份，不合并通用配置"
@@ -6689,6 +6697,91 @@ command = "user-command"
                 .await
                 .expect("read takeover state"),
             "crash recovery should clear the takeover flag"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn restore_keeps_backup_when_provider_lookup_fails() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = crate::store::AppState::new(db.clone());
+
+        db.set_config_snippet(
+            "codex",
+            Some(
+                r#"[mcp_servers.shared]
+command = "shared-command"
+"#
+                .to_string(),
+            ),
+        )
+        .expect("set common config snippet");
+
+        let mut provider = Provider::with_id(
+            "codex-provider".to_string(),
+            "Codex Provider".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "provider-key" },
+                "config": "model = \"provider-model\""
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        db.save_provider("codex", &provider)
+            .expect("save current provider");
+        db.set_current_provider("codex", provider.id.as_str())
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some(&provider.id))
+            .expect("set local current provider");
+
+        let backup = json!({
+            "auth": { "OPENAI_API_KEY": "backup-key" },
+            "config": "model = \"backup-model\"\n\n[mcp_servers.user]\ncommand = \"user-command\"\n"
+        });
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&backup).expect("serialize backup"),
+        )
+        .await
+        .expect("save live backup");
+
+        // Simulate a provider lookup failure after the backup has already been read.
+        db.conn
+            .lock()
+            .expect("lock database")
+            .execute("DROP TABLE providers", [])
+            .expect("drop providers table");
+
+        state
+            .proxy_service
+            .restore_live_config_for_app_with_fallback(&AppType::Codex)
+            .await
+            .expect("restore should keep the last-known-good backup");
+
+        let restored = crate::codex_config::read_codex_live_settings()
+            .expect("read restored Codex live config");
+        assert_eq!(restored["auth"]["OPENAI_API_KEY"], "backup-key");
+        let restored_config = restored["config"]
+            .as_str()
+            .expect("restored Codex config text");
+        let parsed: toml::Value = toml::from_str(restored_config).expect("parse restored config");
+        assert_eq!(parsed["model"].as_str(), Some("backup-model"));
+        assert_eq!(
+            parsed["mcp_servers"]["user"]["command"].as_str(),
+            Some("user-command")
+        );
+        assert!(
+            parsed
+                .get("mcp_servers")
+                .and_then(|servers| servers.get("shared"))
+                .is_none(),
+            "provider lookup failure must not partially apply common config"
         );
     }
 
