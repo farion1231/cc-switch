@@ -376,6 +376,26 @@ impl CircuitBreaker {
         self.half_open_requests.store(0, Ordering::SeqCst);
     }
 
+    /// 主动强制 Open → HalfOpen（绕过 timeout_seconds）
+    ///
+    /// 与被动等待 [`is_available`] / [`allow_request`] 的 `timeout_seconds` 不同，
+    /// 此方法立即将 Open → HalfOpen，使下一次真实请求直接走恢复路径，
+    /// 而不必依赖真实流量触发超时检测。供 [`crate::proxy::health::HealthChecker`] 主动探测使用。
+    ///
+    /// 已是 Closed / HalfOpen 时为幂等 no-op，**不**重置 in-flight 探测名额。
+    pub async fn force_half_open(&self) {
+        // 转换前先检查：仅在 Open 状态生效，避免 HalfOpen 时重置 in-flight 名额
+        let current = *self.state.read().await;
+        if current != CircuitState::Open {
+            return;
+        }
+        log::info!(
+            "[{}] 熔断器 Open → HalfOpen (主动健康检查触发)",
+            log_cb::OPEN_TO_HALF_OPEN
+        );
+        self.transition_to_half_open().await;
+    }
+
     /// 转换到关闭状态
     async fn transition_to_closed(&self) {
         *self.state.write().await = CircuitState::Closed;
@@ -491,5 +511,58 @@ mod tests {
         breaker.reset().await;
         assert_eq!(breaker.get_state().await, CircuitState::Closed);
         assert!(breaker.allow_request().await.allowed);
+    }
+
+    #[tokio::test]
+    async fn force_half_open_transitions_open_to_half_open() {
+        // 用极长 timeout 证明 force_half_open 不依赖时间
+        let config = CircuitBreakerConfig {
+            failure_threshold: 1,
+            timeout_seconds: 3600,
+            ..Default::default()
+        };
+        let breaker = CircuitBreaker::new(config);
+
+        breaker.record_failure(false).await;
+        assert_eq!(breaker.get_state().await, CircuitState::Open);
+
+        breaker.force_half_open().await;
+        assert_eq!(breaker.get_state().await, CircuitState::HalfOpen);
+    }
+
+    #[tokio::test]
+    async fn force_half_open_is_noop_when_closed() {
+        let breaker = CircuitBreaker::new(CircuitBreakerConfig::default());
+        assert_eq!(breaker.get_state().await, CircuitState::Closed);
+
+        breaker.force_half_open().await;
+
+        // 仍为 Closed，未触发状态变化
+        assert_eq!(breaker.get_state().await, CircuitState::Closed);
+    }
+
+    #[tokio::test]
+    async fn force_half_open_does_not_reset_inflight_permit_when_already_half_open() {
+        // 已在 HalfOpen 且占用探测名额时再次调用 force_half_open，
+        // 不应重置 in-flight 名额（避免误释放正在进行的探测）
+        let config = CircuitBreakerConfig {
+            failure_threshold: 1,
+            timeout_seconds: 0,
+            ..Default::default()
+        };
+        let breaker = CircuitBreaker::new(config);
+
+        breaker.record_failure(false).await;
+        let first = breaker.allow_request().await;
+        assert!(first.allowed);
+        assert!(first.used_half_open_permit);
+        assert_eq!(breaker.get_state().await, CircuitState::HalfOpen);
+
+        breaker.force_half_open().await;
+
+        // 名额仍被占用，第二次请求应被拒绝
+        let second = breaker.allow_request().await;
+        assert!(!second.allowed);
+        assert!(!second.used_half_open_permit);
     }
 }
