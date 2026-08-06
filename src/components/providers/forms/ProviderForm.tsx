@@ -12,6 +12,7 @@ import {
   buildLocalProxyRequestOverrides,
   formatRequestOverrideObject,
 } from "@/lib/requestOverrides";
+import { isValidCodexLiveConfig } from "@/lib/codexLive";
 import { providersApi, settingsApi, type AppId } from "@/lib/api";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type {
@@ -625,6 +626,37 @@ function ProviderFormFull({
         ? String(initialData.meta.maxOutputTokens)
         : "",
     );
+  const [localCodexLiveEnabled, setLocalCodexLiveEnabled] = useState<boolean>(
+    initialData?.meta?.codexLive?.enabled === true,
+  );
+  const [localCodexLiveCreateEndpoint, setLocalCodexLiveCreateEndpoint] =
+    useState<string>(initialData?.meta?.codexLive?.createEndpoint ?? "live");
+  const [localCodexLiveSidebandEndpoint, setLocalCodexLiveSidebandEndpoint] =
+    useState<string>(
+      initialData?.meta?.codexLive?.sidebandEndpoint ?? "live/{call_id}",
+    );
+  useEffect(() => {
+    setLocalCodexLiveEnabled(initialData?.meta?.codexLive?.enabled === true);
+    setLocalCodexLiveCreateEndpoint(
+      initialData?.meta?.codexLive?.createEndpoint ?? "live",
+    );
+    setLocalCodexLiveSidebandEndpoint(
+      initialData?.meta?.codexLive?.sidebandEndpoint ?? "live/{call_id}",
+    );
+  }, [initialData]);
+
+  useEffect(() => {
+    if (appId === "codex" && localIsFullUrl && localCodexLiveEnabled) {
+      setLocalCodexLiveEnabled(false);
+    }
+  }, [appId, localCodexLiveEnabled, localIsFullUrl]);
+
+  const handleCodexFullUrlChange = useCallback((value: boolean) => {
+    setLocalIsFullUrl(value);
+    if (value) {
+      setLocalCodexLiveEnabled(false);
+    }
+  }, []);
 
   const { configError: codexConfigError, debouncedValidate } =
     useCodexTomlValidation();
@@ -1354,6 +1386,39 @@ function ProviderFormFull({
       return;
     }
 
+    if (
+      appId === "codex" &&
+      category !== "official" &&
+      localCodexLiveEnabled &&
+      localIsFullUrl
+    ) {
+      toast.error(
+        t("codexConfig.liveFullUrlUnsupported", {
+          defaultValue:
+            "Codex Live requires a base URL. Disable Full URL mode before enabling Live.",
+        }),
+      );
+      return;
+    }
+
+    if (
+      appId === "codex" &&
+      category !== "official" &&
+      localCodexLiveEnabled &&
+      !isValidCodexLiveConfig({
+        createEndpoint: localCodexLiveCreateEndpoint,
+        sidebandEndpoint: localCodexLiveSidebandEndpoint,
+      })
+    ) {
+      toast.error(
+        t("providerForm.codexLiveEndpointsInvalid", {
+          defaultValue:
+            "Live endpoints must be relative paths without query strings or traversal, and the sideband path must contain {call_id} exactly once.",
+        }),
+      );
+      return;
+    }
+
     // OAuth / 其它身份识别（与 handleSubmit 保持一致）
     const isCopilotProvider =
       presetProviderType === "github_copilot" ||
@@ -1647,6 +1712,24 @@ function ProviderFormFull({
         Number(localCodexMaxOutputTokens) > 0
           ? Number(localCodexMaxOutputTokens)
           : undefined,
+      codexLive:
+        appId === "codex" &&
+        category !== "official" &&
+        localCodexLiveEnabled &&
+        !localIsFullUrl
+          ? {
+              enabled: true,
+              createEndpoint:
+                (localCodexLiveCreateEndpoint.trim() || "live") === "live"
+                  ? undefined
+                  : localCodexLiveCreateEndpoint.trim(),
+              sidebandEndpoint:
+                (localCodexLiveSidebandEndpoint.trim() || "live/{call_id}") ===
+                "live/{call_id}"
+                  ? undefined
+                  : localCodexLiveSidebandEndpoint.trim(),
+            }
+          : undefined,
       isFullUrl:
         supportsFullUrl &&
         category !== "official" &&
@@ -1769,6 +1852,9 @@ function ProviderFormFull({
         resetCodexConfig(template.auth, template.config);
         setCodexChatReasoning({});
         setPromptCacheRouting("auto");
+        setLocalCodexLiveEnabled(false);
+        setLocalCodexLiveCreateEndpoint("live");
+        setLocalCodexLiveSidebandEndpoint("live/{call_id}");
         setLocalCodexApiFormat(
           codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
             "openai_responses",
@@ -1811,6 +1897,9 @@ function ProviderFormFull({
       resetCodexConfig(auth, config, preset.modelCatalog ?? []);
       setCodexChatReasoning(preset.codexChatReasoning ?? {});
       setPromptCacheRouting(preset.promptCacheRouting ?? "auto");
+      setLocalCodexLiveEnabled(false);
+      setLocalCodexLiveCreateEndpoint("live");
+      setLocalCodexLiveSidebandEndpoint("live/{call_id}");
       setLocalCodexApiFormat(
         preset.apiFormat ??
           codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
@@ -2278,6 +2367,7 @@ function ProviderFormFull({
 
           {appId === "codex" && (
             <CodexFormFields
+              appId="codex"
               providerId={providerId}
               isXaiOauthPreset={
                 presetProviderType === "xai_oauth" ||
@@ -2297,7 +2387,7 @@ function ProviderFormFull({
               codexBaseUrl={codexBaseUrl}
               onBaseUrlChange={handleCodexBaseUrlChange}
               isFullUrl={localIsFullUrl}
-              onFullUrlChange={setLocalIsFullUrl}
+              onFullUrlChange={handleCodexFullUrlChange}
               isEndpointModalOpen={isCodexEndpointModalOpen}
               onEndpointModalToggle={setIsCodexEndpointModalOpen}
               onCustomEndpointsChange={
@@ -2319,6 +2409,14 @@ function ProviderFormFull({
               onCodexChatReasoningChange={setCodexChatReasoning}
               promptCacheRouting={promptCacheRouting}
               onPromptCacheRoutingChange={setPromptCacheRouting}
+              codexLiveEnabled={localCodexLiveEnabled}
+              onCodexLiveEnabledChange={setLocalCodexLiveEnabled}
+              codexLiveCreateEndpoint={localCodexLiveCreateEndpoint}
+              onCodexLiveCreateEndpointChange={setLocalCodexLiveCreateEndpoint}
+              codexLiveSidebandEndpoint={localCodexLiveSidebandEndpoint}
+              onCodexLiveSidebandEndpointChange={
+                setLocalCodexLiveSidebandEndpoint
+              }
               catalogModels={codexCatalogModels}
               onCatalogModelsChange={setCodexCatalogModels}
               speedTestEndpoints={speedTestEndpoints}

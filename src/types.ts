@@ -168,6 +168,12 @@ export interface LocalProxyRequestOverrides {
   body?: Record<string, unknown>;
 }
 
+export interface CodexLiveProviderConfig {
+  enabled?: boolean;
+  createEndpoint?: string;
+  sidebandEndpoint?: string;
+}
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
@@ -227,6 +233,8 @@ export interface ProviderMeta {
   customUserAgent?: string;
   // Local proxy request overrides. Only applied by the local proxy after route transforms.
   localProxyRequestOverrides?: LocalProxyRequestOverrides;
+  // Explicit support for Codex Desktop Live HTTP + WebSocket transport.
+  codexLive?: CodexLiveProviderConfig;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
@@ -340,6 +348,11 @@ export interface RemoteSnapshotInfo {
 
 // 应用设置类型（用于设置对话框与 Tauri API）
 // 存储在本地 ~/.cc-switch/settings.json，不随数据库同步
+export type CodexLiveVoiceRoute =
+  | "official"
+  | "current_provider"
+  | "official_then_current";
+
 export interface Settings {
   // ===== 设备级 UI 设置 =====
   // 是否在系统托盘（macOS 菜单栏）显示图标
@@ -372,6 +385,10 @@ export interface Settings {
   // Run official Codex under the shared "custom" provider id so future
   // sessions share one resume-history bucket with third-party providers
   unifyCodexSessionHistory?: boolean;
+  // Route Codex Desktop Live voice requests through the local CC Switch proxy
+  enableCodexLiveVoice?: boolean;
+  // Select which account/provider may be billed for a Live call.
+  codexLiveVoiceRoute?: CodexLiveVoiceRoute;
   // User opted in (enable dialog checkbox) to migrate existing official sessions
   unifyCodexMigrateExisting?: boolean;
   // User has confirmed the failover toggle first-run notice
