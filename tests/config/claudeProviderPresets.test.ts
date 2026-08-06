@@ -31,6 +31,31 @@ describe("Kimi For Coding Provider Preset", () => {
   });
 });
 
+describe("Kimi K3 1M Provider Preset", () => {
+  const kimiK3 = providerPresets.find(
+    (preset) => preset.name === "Kimi K3 (1M)",
+  );
+
+  it("uses Claude Code's explicit K3 1M selector on every route", () => {
+    const env = (kimiK3!.settingsConfig as any).env;
+    expect(kimiK3).toBeDefined();
+    expect(env).toMatchObject({
+      ANTHROPIC_MODEL: "k3[1m]",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "k3[1m]",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "k3[1m]",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "k3[1m]",
+      ANTHROPIC_DEFAULT_FABLE_MODEL: "k3[1m]",
+      CLAUDE_CODE_SUBAGENT_MODEL: "k3[1m]",
+    });
+  });
+
+  it("pins both context knobs to 1M", () => {
+    const env = (kimiK3!.settingsConfig as any).env;
+    expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("1048576");
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("1048576");
+  });
+});
+
 describe("Codex Provider Preset", () => {
   const codex = providerPresets.find((p) => p.name === "Codex");
 

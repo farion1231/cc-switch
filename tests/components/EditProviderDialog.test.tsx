@@ -159,6 +159,159 @@ describe("EditProviderDialog", () => {
     });
   });
 
+  it.each([
+    ["256K", { ANTHROPIC_MODEL: "kimi-for-coding" }, "262144"],
+    ["K3 1M", { ANTHROPIC_MODEL: "k3[1m]" }, "1048576"],
+    [
+      "mixed-route",
+      {
+        ANTHROPIC_MODEL: "k3[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "k2.7-code",
+      },
+      "262144",
+    ],
+  ])(
+    "Claude 编辑器不把仅存在于 live 的 Kimi %s 上下文默认值固化进数据库",
+    async (_case, modelEnv, injectedDefault) => {
+      const provider: Provider = {
+        id: "kimi",
+        name: "Kimi",
+        category: "cn_official",
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://api.kimi.com/coding/",
+            ...modelEnv,
+          },
+        },
+      };
+      const liveSettings = {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.kimi.com/coding/",
+          ...modelEnv,
+          CLAUDE_CODE_MAX_CONTEXT_TOKENS: injectedDefault,
+          CLAUDE_CODE_AUTO_COMPACT_WINDOW: injectedDefault,
+        },
+      };
+      const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+      apiMocks.getCurrent.mockResolvedValue(provider.id);
+      apiMocks.getLiveProviderSettings.mockResolvedValue(liveSettings);
+
+      render(
+        <EditProviderDialog
+          open
+          provider={provider}
+          onOpenChange={vi.fn()}
+          onSubmit={handleSubmit}
+          appId="claude"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(
+          JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+        ).toEqual(provider.settingsConfig);
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+      await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+      expect(handleSubmit.mock.calls[0][0].provider.settingsConfig).toEqual(
+        provider.settingsConfig,
+      );
+    },
+  );
+
+  it("Claude 编辑器保留数据库未存储的 Kimi live 手动上下文值", async () => {
+    const provider: Provider = {
+      id: "kimi",
+      name: "Kimi",
+      category: "cn_official",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.kimi.com/coding/",
+          ANTHROPIC_MODEL: "k3[1m]",
+        },
+      },
+    };
+    const liveSettings = {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.kimi.com/coding/",
+        ANTHROPIC_MODEL: "k3[1m]",
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "900000",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "880000",
+      },
+    };
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+    apiMocks.getCurrent.mockResolvedValue(provider.id);
+    apiMocks.getLiveProviderSettings.mockResolvedValue(liveSettings);
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={handleSubmit}
+        appId="claude"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual(liveSettings);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+    expect(handleSubmit.mock.calls[0][0].provider.settingsConfig).toEqual(
+      liveSettings,
+    );
+  });
+
+  it("Claude 编辑器保留与数据库显式值不同的 Kimi live 手动上下文值", async () => {
+    const provider: Provider = {
+      id: "kimi",
+      name: "Kimi",
+      category: "cn_official",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.kimi.com/coding/",
+          ANTHROPIC_MODEL: "k3[1m]",
+          CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1048576",
+          CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1048576",
+        },
+      },
+    };
+    const liveSettings = {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.kimi.com/coding/",
+        ANTHROPIC_MODEL: "k3[1m]",
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "900000",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "880000",
+      },
+    };
+
+    apiMocks.getCurrent.mockResolvedValue(provider.id);
+    apiMocks.getLiveProviderSettings.mockResolvedValue(liveSettings);
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="claude"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual(liveSettings);
+    });
+  });
+
   it("代理接管中编辑 Codex 供应商时展示数据库配置而不是读取 live 代理配置", async () => {
     const provider: Provider = {
       id: "deepseek",

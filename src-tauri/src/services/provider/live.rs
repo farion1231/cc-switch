@@ -29,13 +29,13 @@ use super::normalize_claude_models_in_value;
 /// usable context.
 const CODEX_OAUTH_CLAUDE_MAX_CONTEXT_TOKENS: &str = "372000";
 const CODEX_OAUTH_CLAUDE_AUTO_COMPACT_WINDOW: &str = "372000";
-const KIMI_FOR_CODING_CONTEXT_TOKENS: &str = "262144";
+const KIMI_FOR_CODING_256K_CONTEXT_TOKENS: &str = "262144";
+const KIMI_K3_1M_CONTEXT_TOKENS: &str = "1048576";
 
-/// Model env keys Claude Code may route requests through. The defaults above
-/// are calibrated against gpt-5.6's Codex catalog, so every configured model
-/// must belong to that family before they are injected — gpt-5.5's upstream
-/// catalog oscillates between 272K and 372K and must not inherit them.
-const CODEX_OAUTH_MODEL_ENV_KEYS: [&str; 6] = [
+/// Model env keys Claude Code may route requests through. Context-window envs
+/// are global, so every configured route must support a model-specific default
+/// before that default may be injected.
+const CLAUDE_MODEL_ENV_KEYS: [&str; 6] = [
     "ANTHROPIC_MODEL",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -49,7 +49,7 @@ fn provider_env_targets_gpt56(provider_env: Option<&serde_json::Map<String, Valu
         return false;
     };
     let mut saw_model = false;
-    for key in CODEX_OAUTH_MODEL_ENV_KEYS {
+    for key in CLAUDE_MODEL_ENV_KEYS {
         let Some(value) = env.get(key) else {
             continue;
         };
@@ -76,6 +76,43 @@ fn is_kimi_for_coding_provider(provider: &Provider) -> bool {
         .map(str::trim)
         .map(|url| url.trim_end_matches('/'))
         == Some("https://api.kimi.com/coding")
+}
+
+fn kimi_for_coding_context_tokens(provider: &Provider) -> Option<&'static str> {
+    if !is_kimi_for_coding_provider(provider) {
+        return None;
+    }
+
+    let provider_env = provider
+        .settings_config
+        .get("env")
+        .and_then(Value::as_object);
+    let all_routes_target_k3_1m = provider_env.is_some_and(|env| {
+        let mut saw_model = false;
+        for key in CLAUDE_MODEL_ENV_KEYS {
+            let Some(value) = env.get(key) else {
+                continue;
+            };
+            let Some(model) = value.as_str() else {
+                return false;
+            };
+            let model = model.trim();
+            if model.is_empty() {
+                continue;
+            }
+            saw_model = true;
+            if !model.eq_ignore_ascii_case("k3[1m]") {
+                return false;
+            }
+        }
+        saw_model
+    });
+
+    Some(if all_routes_target_k3_1m {
+        KIMI_K3_1M_CONTEXT_TOKENS
+    } else {
+        KIMI_FOR_CODING_256K_CONTEXT_TOKENS
+    })
 }
 
 /// Claude Code assigns unknown non-Claude model ids a 200K context window.
@@ -133,15 +170,15 @@ fn apply_codex_oauth_claude_context_defaults(settings: &mut Value, provider: &Pr
     }
 }
 
-/// Kimi For Coding serves a 256K window, but Claude Code caps unknown models at
-/// 200K unless `CLAUDE_CODE_MAX_CONTEXT_TOKENS` is set — and that env is ignored
-/// for `claude-`-prefixed ids, so these defaults only bite when the provider also
-/// routes the endpoint's `kimi-for-coding` alias (the preset does). Keep the
-/// defaults provider-owned so an old shared snippet cannot override them.
+/// Kimi's coding endpoint serves models with different windows: K2.7 Code and
+/// K3-256K use 256K, while Claude Code's explicit `k3[1m]` selector uses 1M.
+/// Claude Code caps unknown models at 200K unless MAX_CONTEXT_TOKENS is set, so
+/// derive the default from the provider-owned model id. Explicit provider env
+/// values still win, and an old shared snippet cannot override them.
 fn apply_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provider) {
-    if !is_kimi_for_coding_provider(provider) {
+    let Some(context_tokens) = kimi_for_coding_context_tokens(provider) else {
         return;
-    }
+    };
 
     let provider_env = provider
         .settings_config
@@ -158,7 +195,7 @@ fn apply_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provi
         let value = provider_env
             .and_then(|provider_env| provider_env.get(key))
             .cloned()
-            .unwrap_or_else(|| Value::String(KIMI_FOR_CODING_CONTEXT_TOKENS.to_string()));
+            .unwrap_or_else(|| Value::String(context_tokens.to_string()));
         env.insert(key.to_string(), value);
     }
 }
@@ -799,9 +836,9 @@ fn strip_injected_codex_oauth_context_defaults(settings: &mut Value, provider: &
 }
 
 fn strip_injected_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provider) {
-    if !is_kimi_for_coding_provider(provider) {
+    let Some(context_tokens) = kimi_for_coding_context_tokens(provider) else {
         return;
-    }
+    };
     let provider_env = provider
         .settings_config
         .get("env")
@@ -816,7 +853,7 @@ fn strip_injected_kimi_for_coding_context_defaults(settings: &mut Value, provide
         if provider_env.is_some_and(|provider_env| provider_env.contains_key(key)) {
             continue;
         }
-        if env.get(key).and_then(Value::as_str) == Some(KIMI_FOR_CODING_CONTEXT_TOKENS) {
+        if env.get(key).and_then(Value::as_str) == Some(context_tokens) {
             env.remove(key);
         }
     }
@@ -2008,6 +2045,63 @@ mod tests {
     }
 
     #[test]
+    fn kimi_k3_1m_effective_settings_use_model_specific_context() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "kimi-k3-1m".to_string(),
+            "Kimi K3 1M".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
+                    "ANTHROPIC_MODEL": "k3[1M]"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("1048576")
+        );
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("1048576")
+        );
+    }
+
+    #[test]
+    fn kimi_k3_1m_default_requires_every_configured_route_to_support_1m() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "kimi-k3-mixed".to_string(),
+            "Kimi K3 Mixed".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
+                    "ANTHROPIC_MODEL": "k3[1M]",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "kimi-for-coding"
+                }
+            }),
+            None,
+        );
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"],
+            json!("262144")
+        );
+        assert_eq!(
+            effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("262144")
+        );
+    }
+
+    #[test]
     fn kimi_for_coding_context_defaults_preserve_user_overrides() {
         let db = Database::memory().expect("create memory db");
         let provider = Provider::with_id(
@@ -2062,6 +2156,33 @@ mod tests {
             backfilled["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
             json!("262144")
         );
+    }
+
+    #[test]
+    fn kimi_k3_1m_backfill_strips_model_specific_injected_defaults() {
+        let db = Database::memory().expect("create memory db");
+        let provider = Provider::with_id(
+            "kimi-k3-1m".to_string(),
+            "Kimi K3 1M".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
+                    "ANTHROPIC_MODEL": "k3[1M]"
+                }
+            }),
+            None,
+        );
+
+        let live = build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+            .expect("build effective settings");
+        let backfilled =
+            strip_common_config_from_live_settings(&db, &AppType::Claude, &provider, live);
+        assert!(backfilled["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        assert!(backfilled["env"]
+            .get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            .is_none());
     }
 
     #[test]
