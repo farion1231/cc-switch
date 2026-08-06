@@ -69,6 +69,9 @@ describe("HermesFormFields", () => {
       "font-normal",
       "text-muted-foreground",
     );
+    expect(contextLength.closest("div.border-l")).toHaveClass(
+      "sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.25rem]",
+    );
     expect(screen.getByText(/第一个模型/)).toBeInTheDocument();
   });
 

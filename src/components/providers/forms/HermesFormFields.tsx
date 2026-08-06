@@ -442,7 +442,7 @@ export function HermesFormFields({
                   </div>
 
                   {isExpanded && (
-                    <div className="ml-9 grid gap-3 border-l border-border-default pl-4 sm:grid-cols-2">
+                    <div className="ml-9 grid gap-3 border-l border-border-default pl-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.25rem]">
                       <div className="space-y-1">
                         <Label
                           htmlFor={`hermes-model-context-${modelKey}`}
