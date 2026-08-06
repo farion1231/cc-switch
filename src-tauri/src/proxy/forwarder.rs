@@ -1418,7 +1418,7 @@ impl RequestForwarder {
         // selectable through apply_codex_upstream_model, while an unknown stale
         // client model falls back to the target provider's configured model.
         let native_responses_model =
-            apply_codex_native_responses_model(app_type, provider, &mut mapped_body);
+            apply_codex_native_responses_model(app_type, provider, endpoint, &mut mapped_body);
 
         // 记录映射后的出站模型名（此时 mapped_body 已完成接管映射 / [1m] 剥离 /
         // Copilot 归一化）。格式转换后若 body 仍带 model 字段会在下方刷新覆盖；
@@ -2726,9 +2726,11 @@ impl RequestForwarder {
 fn apply_codex_native_responses_model(
     app_type: &AppType,
     provider: &Provider,
+    endpoint: &str,
     body: &mut Value,
 ) -> Option<String> {
     if !matches!(app_type, AppType::Codex)
+        || !is_codex_responses_endpoint(endpoint)
         || super::providers::is_codex_official_provider(provider)
         || super::providers::should_convert_codex_responses_to_chat(provider, "/responses")
         || super::providers::should_convert_codex_responses_to_anthropic(provider, "/responses")
@@ -2737,6 +2739,17 @@ fn apply_codex_native_responses_model(
     }
 
     super::providers::apply_codex_upstream_model(provider, body)
+}
+
+fn is_codex_responses_endpoint(endpoint: &str) -> bool {
+    let path = endpoint
+        .split_once('?')
+        .map_or(endpoint, |(path, _query)| path);
+
+    matches!(
+        path,
+        "/responses" | "/v1/responses" | "/responses/compact" | "/v1/responses/compact"
+    )
 }
 
 /// 从 ProxyError 中提取错误消息
@@ -3735,7 +3748,7 @@ wire_api = "responses"
         });
 
         let upstream_model =
-            apply_codex_native_responses_model(&AppType::Codex, &provider, &mut body);
+            apply_codex_native_responses_model(&AppType::Codex, &provider, "/responses", &mut body);
 
         assert_eq!(upstream_model.as_deref(), Some("gpt-5.6-sol-medium"));
         assert_eq!(body["model"], "gpt-5.6-sol-medium");
@@ -3747,10 +3760,33 @@ wire_api = "responses"
             "model": "gpt-5.5",
             "input": "hello"
         });
-        let catalog_model =
-            apply_codex_native_responses_model(&AppType::Codex, &provider, &mut catalog_body);
+        let catalog_model = apply_codex_native_responses_model(
+            &AppType::Codex,
+            &provider,
+            "/responses",
+            &mut catalog_body,
+        );
         assert_eq!(catalog_model.as_deref(), Some("gpt-5.5"));
         assert_eq!(catalog_body["model"], "gpt-5.5");
+    }
+
+    #[test]
+    fn native_codex_responses_do_not_rewrite_chat_completions_model() {
+        let provider = test_provider_with_type(None);
+        let mut body = json!({
+            "model": "client-model",
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+
+        let upstream_model = apply_codex_native_responses_model(
+            &AppType::Codex,
+            &provider,
+            "/chat/completions",
+            &mut body,
+        );
+
+        assert!(upstream_model.is_none());
+        assert_eq!(body["model"], "client-model");
     }
 
     #[test]
@@ -3765,7 +3801,7 @@ wire_api = "responses"
         });
 
         let upstream_model =
-            apply_codex_native_responses_model(&AppType::Codex, &provider, &mut body);
+            apply_codex_native_responses_model(&AppType::Codex, &provider, "/responses", &mut body);
 
         assert!(upstream_model.is_none());
         assert_eq!(body["model"], "client-model");
