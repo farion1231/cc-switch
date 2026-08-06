@@ -255,7 +255,7 @@ export function OpenClawFormFields({
       />
 
       {/* User-Agent */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between border-l border-border-default pl-3">
         <div className="space-y-0.5">
           <FormLabel>
             {t("openclaw.userAgent", { defaultValue: "发送 User-Agent" })}
