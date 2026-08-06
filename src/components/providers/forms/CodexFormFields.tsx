@@ -26,7 +26,12 @@ import {
   Trash2,
 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
-import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
+import {
+  ApiKeySection,
+  EndpointField,
+  ModelDropdown,
+  ModelInputWithFetch,
+} from "./shared";
 import { XaiOAuthSection } from "./XaiOAuthSection";
 import {
   fetchCodexOfficialModels,
@@ -519,10 +524,14 @@ export function CodexFormFields({
             ? {
                 ...r,
                 upstreamModel: model,
-                // 菜单显示名始终读目标供应商目录中该模型的显示名
-                displayName: match?.displayName?.trim() || "",
-                // 上下文窗口只读继承自供应商模型目录，不由用户手填
-                contextWindow: match?.contextWindow ?? "",
+                // 命中目录时自动补显示名/上下文；目录外（自由输入）保留旧值，
+                // 避免把已派生的显示名/上下文清空。
+                displayName: match
+                  ? match.displayName?.trim() || r.displayName || ""
+                  : r.displayName,
+                contextWindow: match
+                  ? match.contextWindow ?? r.contextWindow ?? ""
+                  : r.contextWindow,
               }
             : r,
         );
@@ -1098,31 +1107,28 @@ export function CodexFormFields({
                           {row.displayName?.trim() || row.model || "—"}
                         </span>
                       </div>
-                      <Select
+                      <ModelInputWithFetch
+                        id={`custom-upstream-${index}`}
                         value={row.upstreamModel ?? row.model}
-                        onValueChange={(value) =>
-                          handleCustomModelChange(index, value)
-                        }
+                        onChange={(value) => handleCustomModelChange(index, value)}
+                        placeholder={t("codexConfig.catalogColumnModel", {
+                          defaultValue: "实际请求模型",
+                        })}
+                        ariaLabel={t("codexConfig.catalogColumnModel", {
+                          defaultValue: "实际请求模型",
+                        })}
+                        fetchedModels={(customCatalogByProvider[row.providerId] ?? []).map(
+                          (model) => ({
+                            id: model.model,
+                            ownedBy:
+                              codexProviders.find(
+                                (p) => p.id === row.providerId,
+                              )?.name ?? "Catalog",
+                          }),
+                        )}
+                        isLoading={false}
                         disabled={!row.providerId}
-                      >
-                        <SelectTrigger
-                          className="min-w-0 select-fade-value"
-                          aria-label={t("codexConfig.catalogColumnModel", {
-                            defaultValue: "实际请求模型",
-                          })}
-                        >
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {(customCatalogByProvider[row.providerId] ?? []).map(
-                            (model) => (
-                              <SelectItem key={model.model} value={model.model}>
-                                {model.model}
-                              </SelectItem>
-                            ),
-                          )}
-                        </SelectContent>
-                      </Select>
+                      />
                       <div
                         className="flex h-9 min-w-0 items-center rounded-md border border-transparent px-3 text-sm text-muted-foreground"
                         aria-label={t("codexConfig.catalogColumnContext", {

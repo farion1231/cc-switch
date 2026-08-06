@@ -814,6 +814,7 @@ pub(crate) fn codex_custom_model_entries(settings: &Value) -> Vec<CodexCustomMod
             .map(str::trim)
             .filter(|model| !model.is_empty())
         else {
+            log::warn!("[codex] 忽略缺失/空 model 的自定义模型条目: {item}");
             continue;
         };
         let Some(provider_id) = item
@@ -823,9 +824,14 @@ pub(crate) fn codex_custom_model_entries(settings: &Value) -> Vec<CodexCustomMod
             .map(str::trim)
             .filter(|id| !id.is_empty())
         else {
+            log::warn!("[codex] 忽略缺失 providerId 的自定义模型条目: {item}");
             continue;
         };
-        if !seen.insert(model.to_string()) {
+        // 去重 key 与路由匹配一致：剥离 `[1M]` 上下文后缀后再判重，避免
+        // `foo` 与 `foo[1M]` 并存导致带后缀请求被路由到错误的供应商。
+        let dedup_key = crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(model).to_string();
+        if !seen.insert(dedup_key) {
+            log::warn!("[codex] 忽略重复的自定义模型插槽 `{model}`（首个条目生效）");
             continue;
         }
         entries.push(CodexCustomModelEntry {
@@ -6444,6 +6450,10 @@ model_catalog_json = "cc-switch-model-catalog.json"
                     "model": "snake-case",
                     "provider_id": "prov-4",
                     "upstream_model": "deepseek-reasoner"
+                },
+                {
+                    "model": "my-deepseek[1M]",
+                    "providerId": "prov-5"
                 }
             ]
         });
@@ -6451,7 +6461,7 @@ model_catalog_json = "cc-switch-model-catalog.json"
         assert_eq!(
             entries.len(),
             2,
-            "duplicate and empty model ids are skipped"
+            "duplicate (including [1M]-suffixed) and empty model ids are skipped"
         );
         assert_eq!(entries[0].model, "my-deepseek");
         assert_eq!(entries[0].provider_id, "prov-1");

@@ -90,29 +90,42 @@ fn codex_cache_refresher_action(db: &Database) -> CodexCacheRefresherAction {
     }
 }
 
-fn refresh_codex_models_cache_once(
+async fn refresh_codex_models_cache_once(
     db: &Arc<Database>,
     switch_locks: &SwitchLockManager,
 ) -> Result<bool, crate::error::AppError> {
-    let _guard = futures::executor::block_on(switch_locks.lock_for_app(AppType::Codex.as_str()));
+    let _guard = switch_locks.lock_for_app(AppType::Codex.as_str()).await;
     if !codex_cache_refresh_enabled(db) {
         return Ok(false);
     }
-
-    let Some(current_id) = crate::settings::get_effective_current_provider(db, &AppType::Codex)?
-    else {
-        return Ok(false);
-    };
-    let Some(provider) = db.get_provider_by_id(&current_id, AppType::Codex.as_str())? else {
-        return Ok(false);
-    };
-    let config_text = provider
-        .settings_config
-        .get("config")
-        .and_then(|value| value.as_str())
-        .unwrap_or("");
-    crate::codex_config::write_codex_models_cache_for_provider(&provider, config_text)?;
-    Ok(true)
+    let db = Arc::clone(db);
+    // DB 读取与缓存写入（含探测 codex CLI 版本等子进程）是阻塞工作，挪到
+    // spawn_blocking，避免长时间占用 tokio worker 线程。
+    tokio::task::spawn_blocking(move || {
+        let Some(current_id) = crate::settings::get_effective_current_provider(&db, &AppType::Codex)?
+        else {
+            return Ok(false);
+        };
+        let Some(provider) = db.get_provider_by_id(&current_id, AppType::Codex.as_str())? else {
+            return Ok(false);
+        };
+        // 优先读 live config.toml，与 /v1/models 聚合目录保持同一来源，保证
+        // context_window 一致；官方供应商 settings 里的 config 可能是空种子。
+        // 读不到时回退到供应商自己保存的 config。
+        let config_text = match crate::codex_config::read_codex_config_text() {
+            Ok(live) if !live.trim().is_empty() => live,
+            _ => provider
+                .settings_config
+                .get("config")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .to_string(),
+        };
+        crate::codex_config::write_codex_models_cache_for_provider(&provider, &config_text)?;
+        Ok(true)
+    })
+    .await
+    .map_err(|e| crate::error::AppError::Message(format!("Codex 缓存刷新任务失败: {e}")))?
 }
 
 impl ProxyService {
@@ -666,32 +679,32 @@ impl ProxyService {
     /// 供应商都生效：官方登录恢复/合并 clean baseline，聚合模式/普通供应商
     /// 各自重建（见 `write_codex_models_cache_for_provider`）。
     ///
-    /// 线程通过代际计数绑定服务器生命周期：`generation` 变化即停止代理或
-    /// 再次启动过，本线程在下一轮醒来后退出，不随启停累积。
+    /// 任务通过代际计数绑定服务器生命周期：`generation` 变化即停止代理或
+    /// 再次启动过，本任务在下一轮醒来后退出，不随启停累积。
     fn spawn_codex_models_cache_refresher(
         db: Arc<Database>,
         switch_locks: SwitchLockManager,
         generation: Arc<AtomicU64>,
         my_generation: u64,
     ) {
-        // 仅持有 Weak：刷新线程不应阻止 Database 随 ProxyService 释放，否则
-        // 后台线程会长期占用 DB 文件句柄（测试/停机后无法及时释放）。
+        // 仅持有 Weak：刷新任务不应阻止 Database 随 ProxyService 释放，否则
+        // 后台任务会长期占用 DB 文件句柄（测试/停机后无法及时释放）。
         // 每次刷新前短暂 upgrade，ProxyService 销毁后 upgrade 返回 None 即退出。
         let db = Arc::downgrade(&db);
-        std::thread::spawn(move || {
+        tokio::spawn(async move {
             while generation.load(Ordering::Relaxed) == my_generation {
                 {
                     let Some(db) = db.upgrade() else {
                         break;
                     };
                     if codex_cache_refresher_action(&db) == CodexCacheRefresherAction::Refresh {
-                        if let Err(e) = refresh_codex_models_cache_once(&db, &switch_locks) {
+                        if let Err(e) = refresh_codex_models_cache_once(&db, &switch_locks).await {
                             log::warn!("[codex] 定时刷新 models_cache.json 失败: {e}");
                         }
                     }
                 }
 
-                std::thread::sleep(std::time::Duration::from_secs(240));
+                tokio::time::sleep(std::time::Duration::from_secs(240)).await;
                 if generation.load(Ordering::Relaxed) != my_generation {
                     break;
                 }
@@ -3426,12 +3439,13 @@ mod tests {
         );
     }
 
-    #[test]
+    #[tokio::test]
     #[serial]
-    fn codex_cache_publish_rechecks_takeover_before_write() {
+    async fn codex_cache_publish_rechecks_takeover_before_write() {
         let _home = TempHome::new();
         let db = Database::memory().expect("create in-memory database");
         let written = refresh_codex_models_cache_once(&Arc::new(db), &SwitchLockManager::new())
+            .await
             .expect("skip disabled Codex cache publication");
 
         assert!(!written, "disabled Codex takeover must skip publication");
@@ -3443,27 +3457,28 @@ mod tests {
         );
     }
 
-    #[test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[serial]
-    fn codex_cache_publish_rechecks_state_after_waiting_for_switch_lock() {
+    async fn codex_cache_publish_rechecks_state_after_waiting_for_switch_lock() {
         let _home = TempHome::new();
         let db = Arc::new(Database::memory().expect("create in-memory database"));
         db.set_proxy_flags_sync(AppType::Codex.as_str(), true, false)
             .expect("enable Codex takeover");
         let switch_locks = SwitchLockManager::new();
-        let guard = futures::executor::block_on(switch_locks.lock_for_app(AppType::Codex.as_str()));
+        let guard = switch_locks.lock_for_app(AppType::Codex.as_str()).await;
 
         let worker_db = db.clone();
         let worker_locks = switch_locks.clone();
-        let worker =
-            std::thread::spawn(move || refresh_codex_models_cache_once(&worker_db, &worker_locks));
+        let worker = tokio::spawn(async move {
+            refresh_codex_models_cache_once(&worker_db, &worker_locks).await
+        });
 
         db.set_proxy_flags_sync(AppType::Codex.as_str(), false, false)
             .expect("disable Codex while publication waits");
         drop(guard);
 
         let written = worker
-            .join()
+            .await
             .expect("join refresh worker")
             .expect("refresh after lock release");
         assert!(
@@ -3478,9 +3493,9 @@ mod tests {
         );
     }
 
-    #[test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[serial]
-    fn codex_cache_publish_reads_current_provider_after_switch_lock() {
+    async fn codex_cache_publish_reads_current_provider_after_switch_lock() {
         let _home = TempHome::new();
         let db = Arc::new(Database::memory().expect("create in-memory database"));
         let provider_a = Provider::with_id(
@@ -3507,11 +3522,21 @@ mod tests {
             .expect("enable Codex takeover");
 
         let switch_locks = SwitchLockManager::new();
-        let guard = futures::executor::block_on(switch_locks.lock_for_app(AppType::Codex.as_str()));
+        let guard = switch_locks.lock_for_app(AppType::Codex.as_str()).await;
+        // 无 codex CLI 的环境下，写缓存依赖既有缓存的 client_version 回退：
+        // 预置一个带 client_version 的 models_cache.json，避免测试依赖真实 CLI。
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        std::fs::create_dir_all(&codex_dir).expect("create temp codex dir");
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            r#"{"client_version": "0.1.0"}"#,
+        )
+        .expect("seed codex models cache with client_version");
         let worker_db = db.clone();
         let worker_locks = switch_locks.clone();
-        let worker =
-            std::thread::spawn(move || refresh_codex_models_cache_once(&worker_db, &worker_locks));
+        let worker = tokio::spawn(async move {
+            refresh_codex_models_cache_once(&worker_db, &worker_locks).await
+        });
 
         db.set_current_provider(AppType::Codex.as_str(), "b")
             .expect("switch database provider while publication waits");
@@ -3521,7 +3546,7 @@ mod tests {
 
         assert!(
             worker
-                .join()
+                .await
                 .expect("join refresh worker")
                 .expect("refresh after provider switch"),
             "enabled publication should write the current provider"

@@ -19,8 +19,12 @@ interface ModelInputWithFetchProps {
   placeholder?: string;
   fetchedModels: FetchedModel[];
   isLoading: boolean;
-  /** 传入时显示获取按钮；不传时只在有数据后显示下拉 */
+  /** 传入时显示获取按钮（即使已有模型数据也保留，供刷新） */
   onFetch?: () => void;
+  /** 禁用输入与下拉（例如尚未选择目标供应商时） */
+  disabled?: boolean;
+  /** 输入框的无障碍标签；缺省用 placeholder */
+  ariaLabel?: string;
 }
 
 export function ModelInputWithFetch({
@@ -31,10 +35,12 @@ export function ModelInputWithFetch({
   fetchedModels,
   isLoading,
   onFetch,
+  disabled,
+  ariaLabel,
 }: ModelInputWithFetchProps) {
   const { t } = useTranslation();
 
-  // 有模型数据: Input + DropdownMenu
+  // 有模型数据: Input + DropdownMenu（同时传了 onFetch 时保留获取按钮）
   if (fetchedModels.length > 0) {
     const grouped: Record<string, FetchedModel[]> = {};
     for (const model of fetchedModels) {
@@ -48,16 +54,23 @@ export function ModelInputWithFetch({
       <div className="flex gap-1">
         <Input
           id={id}
+          aria-label={ariaLabel}
           type="text"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           autoComplete="off"
           className="flex-1"
+          disabled={disabled}
         />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="icon" className="shrink-0">
+            <Button
+              variant="outline"
+              size="icon"
+              className="shrink-0"
+              disabled={disabled}
+            >
               <ChevronDown className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
@@ -81,6 +94,19 @@ export function ModelInputWithFetch({
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+        {onFetch && (
+          <Button
+            variant="outline"
+            size="icon"
+            className="shrink-0"
+            type="button"
+            onClick={onFetch}
+            disabled={disabled}
+            title={t("providerForm.fetchModels")}
+          >
+            <Download className="h-4 w-4" />
+          </Button>
+        )}
       </div>
     );
   }
@@ -91,12 +117,14 @@ export function ModelInputWithFetch({
       <div className="flex gap-1">
         <Input
           id={id}
+          aria-label={ariaLabel}
           type="text"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           autoComplete="off"
           className="flex-1"
+          disabled={disabled}
         />
         <Button variant="outline" size="icon" className="shrink-0" disabled>
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -111,12 +139,14 @@ export function ModelInputWithFetch({
       <div className="flex gap-1">
         <Input
           id={id}
+          aria-label={ariaLabel}
           type="text"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           autoComplete="off"
           className="flex-1"
+          disabled={disabled}
         />
         <Button
           variant="outline"
@@ -124,6 +154,7 @@ export function ModelInputWithFetch({
           className="shrink-0"
           type="button"
           onClick={onFetch}
+          disabled={disabled}
           title={t("providerForm.fetchModels")}
         >
           <Download className="h-4 w-4" />
@@ -136,11 +167,13 @@ export function ModelInputWithFetch({
   return (
     <Input
       id={id}
+      aria-label={ariaLabel}
       type="text"
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       autoComplete="off"
+      disabled={disabled}
     />
   );
 }

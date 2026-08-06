@@ -61,6 +61,7 @@ import {
   hasApiKeyField,
 } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
+import { CODEX_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import {
   codexApiFormatFromWireApi,
   extractCodexWireApi,
@@ -180,6 +181,43 @@ export const normalizeCodexCatalogModelsForSave = (
 
   return normalized;
 };
+
+/**
+ * 归一化官方 Codex 供应商的自定义模型条目，供保存落库。
+ *
+ * - trim 各字符串字段，缺省字段不落库。
+ * - 聚合模式（官方登录关闭）下，官方供应商无自有凭据，路由到它会拿
+ *   Bearer PROXY_MANAGED 被官方校验拒绝，因此过滤掉绑定官方供应商的行。
+ *   官方登录开启时保留（官方供应商作为目标供应商是合法的）。
+ */
+export const normalizeCodexCustomModelsForSave = (
+  models: CodexCustomModel[],
+  opts: { officialLogin: boolean },
+): CodexCustomModel[] =>
+  models
+    .map((item) => ({
+      model: item.model.trim(),
+      providerId: item.providerId.trim(),
+      upstreamModel: item.upstreamModel?.trim() || undefined,
+      displayName: item.displayName?.trim() || undefined,
+      contextWindow:
+        typeof item.contextWindow === "string" && item.contextWindow.trim()
+          ? Number(item.contextWindow)
+          : typeof item.contextWindow === "number"
+            ? item.contextWindow
+            : undefined,
+      ...(item.supportsParallelToolCalls !== undefined
+        ? { supportsParallelToolCalls: item.supportsParallelToolCalls }
+        : {}),
+      ...(item.inputModalities ? { inputModalities: item.inputModalities } : {}),
+      ...(item.baseInstructions ? { baseInstructions: item.baseInstructions } : {}),
+    }))
+    .filter(
+      (item) =>
+        item.model &&
+        item.providerId &&
+        !(opts.officialLogin === false && item.providerId === CODEX_OFFICIAL_PROVIDER_ID),
+    );
 
 const normalizeCodexChatReasoningForSave = (
   value?: CodexChatReasoning,
@@ -1433,33 +1471,9 @@ function ProviderFormFull({
           : true;
         const normalizedCustomModels =
           category === "official"
-            ? effectiveCustomModels
-                .map((item) => ({
-                  model: item.model.trim(),
-                  providerId: item.providerId.trim(),
-                  upstreamModel: item.upstreamModel?.trim() || undefined,
-                  displayName: item.displayName?.trim() || undefined,
-                  contextWindow:
-                    typeof item.contextWindow === "string" &&
-                    item.contextWindow.trim()
-                      ? Number(item.contextWindow)
-                      : typeof item.contextWindow === "number"
-                        ? item.contextWindow
-                        : undefined,
-                  ...(item.supportsParallelToolCalls !== undefined
-                    ? {
-                        supportsParallelToolCalls:
-                          item.supportsParallelToolCalls,
-                      }
-                    : {}),
-                  ...(item.inputModalities
-                    ? { inputModalities: item.inputModalities }
-                    : {}),
-                  ...(item.baseInstructions
-                    ? { baseInstructions: item.baseInstructions }
-                    : {}),
-                }))
-                .filter((item) => item.model && item.providerId)
+            ? normalizeCodexCustomModelsForSave(effectiveCustomModels, {
+                officialLogin: effectiveOfficialLogin,
+              })
             : [];
         const configObj = {
           auth: authJson,

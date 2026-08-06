@@ -93,12 +93,18 @@ pub async fn handle_models(
             .unwrap_or(false)
     );
     if let Some(official) = resolve_codex_official_provider(&state) {
+        // 聚合/合并目录的 context_window 取自真实 live config.toml，与
+        // models_cache.json 保持一致；读取失败时回退为空串。
+        let config_text = crate::codex_config::read_codex_config_text().unwrap_or_default();
         if crate::codex_config::codex_official_login_enabled(&official.settings_config) {
-            return forward_codex_official_models(&official, &headers, uri.query()).await;
+            return forward_codex_official_models(&official, &headers, uri.query(), &config_text)
+                .await;
         }
         // 未启用官方登录：聚合模式，目录只包含下方配置的供应商模型
-        let models =
-            crate::codex_config::codex_custom_catalog_entries(&official.settings_config, "");
+        let models = crate::codex_config::codex_custom_catalog_entries(
+            &official.settings_config,
+            &config_text,
+        );
         return Ok(Json(json!({ "models": models })).into_response());
     }
 
@@ -150,6 +156,7 @@ async fn forward_codex_official_models(
     official: &crate::provider::Provider,
     headers: &axum::http::HeaderMap,
     query: Option<&str>,
+    config_text: &str,
 ) -> Result<axum::response::Response, ProxyError> {
     use std::time::Duration;
 
@@ -208,7 +215,7 @@ async fn forward_codex_official_models(
     let mut catalog: Value =
         serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({ "models": [] }));
     let custom_entries =
-        crate::codex_config::codex_custom_catalog_entries(&official.settings_config, "");
+        crate::codex_config::codex_custom_catalog_entries(&official.settings_config, config_text);
     if !custom_entries.is_empty() {
         // 上游 /models 响应的数组键可能是 `models` 或 `data`：优先合并到
         // 已存在的那个数组，都不存在时落到 `models`，避免自定义模型合并静默失效。

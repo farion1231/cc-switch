@@ -241,21 +241,26 @@ pub fn resolve_codex_custom_model_provider(
     model: &str,
 ) -> Result<Option<Provider>, AppError> {
     let entries = crate::codex_config::codex_custom_model_entries(&official.settings_config);
+    // 客户端可能带 `[1M]` 上下文后缀（如 claude-sonnet-4-6[1M]）；对两侧都剥离
+    // 后再比较，避免带后缀的请求被误判为未映射而在聚合模式被 400 拒绝。
+    let request_model = crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(model);
     // 优先按对外模型名（slug）精确匹配；聚合模式没有官方模型，未精确命中时
     // 才回退到旧会话保存的 upstreamModel。官方登录模式禁用该回退，否则
     // upstreamModel 恰好是官方 slug 时会劫持真正的官方模型。
     // 否则某条目的 upstreamModel 等于另一条目的 model 时，靠前的兼容匹配会
     // 抢先于靠后的精确匹配，导致请求被路由到错误的供应商。
-    let exact = entries.iter().find(|entry| entry.model == model);
+    let exact = entries.iter().find(|entry| {
+        crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(&entry.model) == request_model
+    });
     let legacy_alias =
         if crate::codex_config::codex_official_login_enabled(&official.settings_config) {
             None
         } else {
             entries.iter().find(|entry| {
-                entry
-                    .upstream_model
-                    .as_deref()
-                    .is_some_and(|upstream| upstream == model)
+                entry.upstream_model.as_deref().is_some_and(|upstream| {
+                    crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(upstream)
+                        == request_model
+                })
             })
         };
     let Some(entry) = exact.or(legacy_alias) else {
