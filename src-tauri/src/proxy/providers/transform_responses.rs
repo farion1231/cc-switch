@@ -328,8 +328,12 @@ pub fn anthropic_to_responses(
     }
 
     // max_tokens → max_output_tokens (Responses API uses max_output_tokens for all models)
+    // Clamp: >= 16 (OpenAI minimum) and <= model's known output-token cap.
     if let Some(v) = body.get("max_tokens") {
-        result["max_output_tokens"] = v.clone();
+        let model = body.get("model").and_then(|m| m.as_str()).unwrap_or("");
+        let clamped = super::transform::clamp_max_tokens(model, v);
+        let clamped = clamped.as_i64().map(|n| n.max(16)).map(|n| json!(n)).unwrap_or(clamped);
+        result["max_output_tokens"] = clamped;
     }
 
     // 直接透传的参数
@@ -989,6 +993,27 @@ mod tests {
         assert_eq!(result["input"][0]["content"][0]["text"], "Hello");
         // stop_sequences should not appear
         assert!(result.get("stop_sequences").is_none());
+    }
+
+    #[test]
+    fn test_max_output_tokens_clamped_to_minimum() {
+        // Claude Code sends max_tokens=1 as a probe; OpenAI requires >= 16.
+        let input = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["max_output_tokens"], 16);
+
+        // Normal values pass through unchanged.
+        let input2 = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        let result2 = anthropic_to_responses(input2, None, false, false).unwrap();
+        assert_eq!(result2["max_output_tokens"], 1024);
     }
 
     #[test]
