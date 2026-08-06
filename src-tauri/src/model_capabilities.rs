@@ -74,6 +74,9 @@ pub(crate) fn is_confirmed_text_only_model(model: &str) -> bool {
         "deepseek-chat",
         "deepseek-reasoner",
         "deepseek-v4-flash",
+        // OpenRouter's dated alias for the 2026-07-31 Flash release. Keep this
+        // exact: a future `-vision` / `-vl` sibling must fail open.
+        "deepseek-v4-flash-0731",
         "deepseek-v4-pro",
         "glm-5.1",
         // Exact rather than prefix matching: GLM visual models use a `v`
@@ -216,6 +219,9 @@ mod tests {
     #[test]
     fn confirmed_text_only_registry_normalizes_namespaces_and_context_markers() {
         assert!(is_confirmed_text_only_model("deepseek/deepseek-v4-pro"));
+        assert!(is_confirmed_text_only_model(
+            "deepseek/deepseek-v4-flash-0731"
+        ));
         assert!(is_confirmed_text_only_model("GLM-5.2[1M]"));
         assert!(is_confirmed_text_only_model("qwen/qwen3-coder-plus"));
         assert!(is_confirmed_text_only_model(
@@ -229,6 +235,7 @@ mod tests {
     #[test]
     fn unconfirmed_family_suffixes_fail_open() {
         for model in [
+            "deepseek-v4-flash-vision",
             "minimax-m2.7-vision",
             "qwen3-coder-ultra",
             "qwen3-coder-vl",

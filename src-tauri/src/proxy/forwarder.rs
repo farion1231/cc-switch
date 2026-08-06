@@ -4937,6 +4937,21 @@ mod tests {
     }
 
     #[test]
+    fn reactive_triggers_for_openrouter_no_image_endpoint_404() {
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+        let body = body_with_codex_input_image("deepseek/deepseek-v4-flash-0731");
+        let error = ProxyError::UpstreamError {
+            status: 404,
+            body: Some(
+                r#"{"error":{"message":"No endpoints found that support image input"}}"#
+                    .to_string(),
+            ),
+        };
+
+        assert!(fwd.media_retry_should_trigger("Codex", false, &body, &error));
+    }
+
+    #[test]
     fn reactive_triggers_for_structured_and_stringified_codex_tool_images() {
         let fwd = forwarder_with_rectifier(RectifierConfig::default());
 
