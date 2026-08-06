@@ -1308,10 +1308,19 @@ function App() {
                   <ProfileSwitcher activeApp={activeApp} />
                 </div>
               )}
-            <div
-              className="toolbar-x-scroll flex flex-1 min-w-0 items-center py-4 pr-2"
-              style={{ WebkitAppRegion: "no-drag" } as any}
-            >
+            {/* 弹性中段：空间不足时由 AppSwitcher 自行收纳溢出应用；
+                justify-end + overflow-hidden 只裁剪 resize 瞬间的过渡帧 */}
+            <div className="flex flex-1 min-w-0 items-center justify-end overflow-hidden py-4">
+              {currentView === "providers" && (
+                <AppSwitcher
+                  activeApp={activeApp}
+                  onSwitch={setActiveApp}
+                  visibleApps={visibleApps}
+                />
+              )}
+            </div>
+            {/* 固定右端：主操作（添加供应商等）shrink-0，任何配置下不被挤出 */}
+            <div className="flex shrink-0 items-center py-4">
               <div
                 className="flex shrink-0 items-center gap-1.5"
                 style={{ WebkitAppRegion: "no-drag" } as any}
@@ -1620,25 +1629,18 @@ function App() {
                         </motion.div>
                       </AnimatePresence>
                     </div>
+                    <Button
+                      onClick={() => setIsAddOpen(true)}
+                      size="icon"
+                      className={`ml-2 ${addActionButtonClass}`}
+                      title={t("header.addProvider")}
+                    >
+                      <Plus className="w-5 h-5" />
+                    </Button>
                   </>
                 )}
               </div>
             </div>
-            {currentView === "providers" && (
-              <div
-                className="flex shrink-0 items-center"
-                style={{ WebkitAppRegion: "no-drag" } as any}
-              >
-                <Button
-                  onClick={() => setIsAddOpen(true)}
-                  size="icon"
-                  className={addActionButtonClass}
-                  title={t("header.addProvider")}
-                >
-                  <Plus className="w-5 h-5" />
-                </Button>
-              </div>
-            )}
           </div>
         </div>
       </header>
