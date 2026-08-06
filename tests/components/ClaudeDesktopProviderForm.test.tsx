@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -51,13 +52,66 @@ describe("ClaudeDesktopProviderForm", () => {
         },
       });
 
-      const modelMappingToggle = screen.getByRole("switch", {
-        name: "需要模型映射",
+      const modelModePicker = screen.getByRole("combobox", {
+        name: "接入方式",
       });
-      expect(modelMappingToggle).toBeChecked();
-      expect(modelMappingToggle).toBeDisabled();
+      expect(modelModePicker).toHaveTextContent("模型映射");
+      expect(modelModePicker).toBeDisabled();
     },
   );
+
+  it("新建自定义供应商默认使用直连并显示模型列表", () => {
+    renderForm(undefined);
+
+    expect(
+      screen.getByRole("combobox", { name: "接入方式" }),
+    ).toHaveTextContent("直连");
+    expect(screen.getByText("模型列表")).toBeInTheDocument();
+    expect(screen.queryByText("模型角色")).not.toBeInTheDocument();
+  });
+
+  it("直连与模型映射分别保留自己的模型列表", async () => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const user = userEvent.setup();
+    renderForm({
+      name: "Proxy Provider",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.example.com",
+          ANTHROPIC_AUTH_TOKEN: "sk-test",
+        },
+      },
+      meta: {
+        claudeDesktopMode: "proxy",
+        claudeDesktopModelRoutes: {
+          "claude-sonnet-5": {
+            model: "upstream-sonnet",
+          },
+        },
+      },
+    });
+
+    expect(screen.getByDisplayValue("upstream-sonnet")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("combobox", { name: "接入方式" }));
+    await user.click(await screen.findByRole("option", { name: "直连" }));
+
+    expect(screen.getByText("模型列表")).toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText("claude-sonnet-4-6"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByDisplayValue("claude-sonnet-5"),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("combobox", { name: "接入方式" }));
+    await user.click(await screen.findByRole("option", { name: "模型映射" }));
+
+    expect(screen.getByDisplayValue("upstream-sonnet")).toBeInTheDocument();
+  });
 
   it("编辑模型映射的菜单显示名时保持输入框焦点", () => {
     renderForm({
