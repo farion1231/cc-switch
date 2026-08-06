@@ -13,6 +13,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 /// 使用量汇总
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -370,24 +371,17 @@ pub(crate) fn should_skip_session_insert(
 }
 
 fn proxy_request_id_exists(conn: &Connection, request_id: &str) -> Result<bool, AppError> {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM proxy_request_logs WHERE request_id = ?1)",
-        params![request_id],
-        |row| row.get::<_, bool>(0),
-    )
-    .map_err(|e| AppError::Database(format!("查询 request_id 失败: {e}")))
+    conn.prepare_cached("SELECT EXISTS(SELECT 1 FROM proxy_request_logs WHERE request_id = ?1)")
+        .and_then(|mut stmt| stmt.query_row(params![request_id], |row| row.get::<_, bool>(0)))
+        .map_err(|e| AppError::Database(format!("查询 request_id 失败: {e}")))
 }
 
-pub(crate) fn has_matching_proxy_usage_log(
-    conn: &Connection,
-    key: &DedupKey,
-) -> Result<bool, AppError> {
-    let allow_missing_cache_creation =
-        matches!(key.app_type, "codex" | "gemini" | "opencode") && key.cache_creation_tokens == 0;
-
+// 会话重导每个 token 事件都要跑一次这条查询；SQL 文本静态化让
+// prepare_cached 稳定命中，也省掉每行的 format! 分配。
+static MATCHING_PROXY_USAGE_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
     let l_data_source = data_source_expr("l");
     let app_type_match = dedup_app_type_match_sql("l.app_type", "?1");
-    let sql = format!(
+    format!(
         "SELECT EXISTS (
             SELECT 1
             FROM proxy_request_logs l
@@ -406,24 +400,34 @@ pub(crate) fn has_matching_proxy_usage_log(
                   OR LOWER(?2) = 'unknown'
               )
         )"
-    );
-
-    conn.query_row(
-        &sql,
-        params![
-            key.app_type,
-            key.model,
-            key.input_tokens as i64,
-            key.output_tokens as i64,
-            key.cache_read_tokens as i64,
-            key.cache_creation_tokens as i64,
-            key.created_at,
-            SESSION_PROXY_DEDUP_WINDOW_SECONDS,
-            allow_missing_cache_creation as i64,
-        ],
-        |row| row.get::<_, bool>(0),
     )
-    .map_err(|e| AppError::Database(format!("查询重复代理用量日志失败: {e}")))
+});
+
+pub(crate) fn has_matching_proxy_usage_log(
+    conn: &Connection,
+    key: &DedupKey,
+) -> Result<bool, AppError> {
+    let allow_missing_cache_creation =
+        matches!(key.app_type, "codex" | "gemini" | "opencode") && key.cache_creation_tokens == 0;
+
+    conn.prepare_cached(&MATCHING_PROXY_USAGE_LOG_SQL)
+        .and_then(|mut stmt| {
+            stmt.query_row(
+                params![
+                    key.app_type,
+                    key.model,
+                    key.input_tokens as i64,
+                    key.output_tokens as i64,
+                    key.cache_read_tokens as i64,
+                    key.cache_creation_tokens as i64,
+                    key.created_at,
+                    SESSION_PROXY_DEDUP_WINDOW_SECONDS,
+                    allow_missing_cache_creation as i64,
+                ],
+                |row| row.get::<_, bool>(0),
+            )
+        })
+        .map_err(|e| AppError::Database(format!("查询重复代理用量日志失败: {e}")))
 }
 
 /// grokbuild 会话导入的接管活动守卫：给定时刻 ±窗口内存在任何 grokbuild
@@ -460,13 +464,9 @@ pub(crate) fn has_recent_grokbuild_proxy_activity(
     .map_err(|e| AppError::Database(format!("查询 Grok 接管活动失败: {e}")))
 }
 
-pub(crate) fn has_suspected_codex_session_duplicate(
-    conn: &Connection,
-    request_id: &str,
-    key: &DedupKey,
-) -> Result<bool, AppError> {
+static SUSPECTED_CODEX_DUPLICATE_SQL: LazyLock<String> = LazyLock::new(|| {
     let data_source = data_source_expr("l");
-    let sql = format!(
+    format!(
         "SELECT EXISTS (
             SELECT 1
             FROM proxy_request_logs l
@@ -479,21 +479,30 @@ pub(crate) fn has_suspected_codex_session_duplicate(
               AND l.cache_read_tokens = ?5
               AND l.created_at BETWEEN ?6 - ?7 AND ?6 + ?7
         )"
-    );
-    conn.query_row(
-        &sql,
-        params![
-            request_id,
-            key.model,
-            key.input_tokens as i64,
-            key.output_tokens as i64,
-            key.cache_read_tokens as i64,
-            key.created_at,
-            SESSION_PROXY_DEDUP_WINDOW_SECONDS,
-        ],
-        |row| row.get::<_, bool>(0),
     )
-    .map_err(|error| AppError::Database(format!("查询疑似重复 Codex 会话用量失败: {error}")))
+});
+
+pub(crate) fn has_suspected_codex_session_duplicate(
+    conn: &Connection,
+    request_id: &str,
+    key: &DedupKey,
+) -> Result<bool, AppError> {
+    conn.prepare_cached(&SUSPECTED_CODEX_DUPLICATE_SQL)
+        .and_then(|mut stmt| {
+            stmt.query_row(
+                params![
+                    request_id,
+                    key.model,
+                    key.input_tokens as i64,
+                    key.output_tokens as i64,
+                    key.cache_read_tokens as i64,
+                    key.created_at,
+                    SESSION_PROXY_DEDUP_WINDOW_SECONDS,
+                ],
+                |row| row.get::<_, bool>(0),
+            )
+        })
+        .map_err(|error| AppError::Database(format!("查询疑似重复 Codex 会话用量失败: {error}")))
 }
 
 #[derive(Debug, Clone, Default)]
