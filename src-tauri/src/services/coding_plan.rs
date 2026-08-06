@@ -406,26 +406,53 @@ fn zhipu_quota_from_body(body: &serde_json::Value) -> SubscriptionQuota {
 }
 
 // ── MiniMax ─────────────────────────────────────────────────
+//
+// 历史上 MiniMax 只有个人版老端点 `/coding_plan/remains`(返回 `model_remains[]`)。
+// 后续上线团队版新端点 `/charge/token_plan/usage`(返回 `members[0].quotas[]`),
+// 老端点对团队用户不再可用。
+//
+// 为兼容两种账号类型,采用"个人版优先 + 团队版兜底"策略:
+// 1. 先调个人版老端点 — 绝大多数用户仍是个人版,无任何回归
+// 2. 若响应非成功 / tiers 为空(典型情况:团队用户命中老端点会拿到
+//    HTTP 200 + 空 tiers 或 404),自动 fallback 到团队版新端点
+// 3. parser 的 auto-detect 同时认两种响应结构,免去分支判断
 
 async fn query_minimax(api_key: &str, is_cn: bool) -> Result<SubscriptionQuota, String> {
     let client = crate::proxy::http_client::get();
-
     let api_domain = if is_cn {
         "api.minimaxi.com"
     } else {
         "api.minimax.io"
     };
-    let url = format!("https://{api_domain}/v1/api/openplatform/coding_plan/remains");
 
-    let resp = client
-        .get(&url)
+    // 个人版老端点(向后兼容绝大多数个人用户)
+    let personal_url = format!("https://{api_domain}/v1/api/openplatform/coding_plan/remains");
+    match query_minimax_endpoint(&client, &personal_url, api_key).await {
+        Ok(result) if result.success && !result.tiers.is_empty() => return Ok(result),
+        Err(e) => return Err(e),
+        _ => {}
+    }
+
+    // 团队版新端点(team-seat 用户兜底)
+    let team_url = format!("https://{api_domain}/v1/api/openplatform/charge/token_plan/usage");
+    query_minimax_endpoint(&client, &team_url, api_key).await
+}
+
+/// 调单个 MiniMax endpoint 并解析。返回的 `Result<SubscriptionQuota, String>` 中 `Ok` 值可能 `success=false`
+/// 或 `tiers` 为空,交给调用方决定是否 fallback 到下一个 URL。
+async fn query_minimax_endpoint(
+    client: &reqwest::Client,
+    url: &str,
+    api_key: &str,
+) -> Result<SubscriptionQuota, String> {
+    let resp = match client
+        .get(url)
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Content-Type", "application/json")
         .timeout(std::time::Duration::from_secs(15))
         .send()
-        .await;
-
-    let resp = match resp {
+        .await
+    {
         Ok(r) => r,
         Err(e) => return Err(format!("Network error: {e}")),
     };
@@ -628,15 +655,96 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> Result<SubscriptionQuota
     })
 }
 
-/// 从 `/coding_plan/remains` 响应中解析 MiniMax 编程套餐的额度 tier。
+/// 从 MiniMax 余额查询响应中解析编程套餐的额度 tier。
 ///
-/// 新接口语义:`current_*_remaining_percent` 是"剩余百分比"(0-100),
-/// `model_remains` 数组里有 `general`(编程套餐)和 `video` 等其他模型,
-/// 这里只取 `general`,跳过 video。
+/// 支持两种响应结构:
+/// - 团队版(`/charge/token_plan/usage`):`members[0].quotas[]` 嵌套,带 seat_id/combo_name
+/// - 个人版(`/coding_plan/remains`):`model_remains[]` 顶层扁平数组
+///
+/// 字段语义一致:`current_*_remaining_percent` 是"剩余百分比"(0-100),
+/// 反转为已用百分比;`model_name == "general"` 是编程套餐,跳过 video 等其他模型。
 ///
 /// 5h 桶始终存在;周桶并非所有套餐都有,靠 `current_weekly_status == 1`
 /// 判定激活(无周限额套餐该字段为 3,`remaining_percent` 恒为 100,不应展示)。
 fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
+    // 1. 优先尝试团队版新结构 members[0].quotas[]
+    if let Some(tiers) = parse_minimax_team_tiers(body) {
+        if !tiers.is_empty() {
+            return tiers;
+        }
+    }
+    // 2. 兜底个人版老结构 model_remains[]
+    parse_minimax_flat_tiers(body)
+}
+
+/// 团队版响应解析:`members[0].quotas[]` 嵌套结构。
+///
+/// 返回 `Some(vec)` 表示已识别为团队版响应(可能为空,例如成员无 general 桶);
+/// 返回 `None` 表示响应里找不到 `members` 顶层 key,让外层走老 flat 解析。
+fn parse_minimax_team_tiers(body: &serde_json::Value) -> Option<Vec<QuotaTier>> {
+    let members = body.get("members")?.as_array()?;
+    let member = members.first()?;
+    let quotas = member.get("quotas")?.as_array()?;
+
+    // 只取 model_name == "general" 的条目,跳过 video 等非编程模型
+    let item = quotas.iter().find(|q| {
+        q.get("model_name")
+            .and_then(|v| v.as_str())
+            .map(|s| s == "general")
+            .unwrap_or(false)
+    });
+
+    let Some(item) = item else {
+        return Some(Vec::new());
+    };
+
+    let mut tiers = Vec::new();
+
+    // 5h 桶:剩余百分比 → 已用百分比
+    if let Some(remain_pct) = item
+        .get("current_interval_remaining_percent")
+        .and_then(|v| v.as_f64())
+    {
+        let resets_at = item
+            .get("end_time")
+            .and_then(|v| v.as_i64())
+            .and_then(millis_to_iso8601);
+        tiers.push(QuotaTier {
+            name: TIER_FIVE_HOUR.to_string(),
+            utilization: 100.0 - remain_pct,
+            resets_at,
+            used_value_usd: None,
+            max_value_usd: None,
+        });
+    }
+
+    // 周桶:仅当 status=1 时激活;status=3 等表示该套餐无周限额,跳过
+    if item.get("current_weekly_status").and_then(|v| v.as_i64()) == Some(1) {
+        if let Some(remain_pct) = item
+            .get("current_weekly_remaining_percent")
+            .and_then(|v| v.as_f64())
+        {
+            let resets_at = item
+                .get("weekly_end_time")
+                .and_then(|v| v.as_i64())
+                .and_then(millis_to_iso8601);
+            tiers.push(QuotaTier {
+                name: TIER_WEEKLY_LIMIT.to_string(),
+                utilization: 100.0 - remain_pct,
+                resets_at,
+                used_value_usd: None,
+                max_value_usd: None,
+            });
+        }
+    }
+
+    Some(tiers)
+}
+
+/// 个人版老接口响应解析:`model_remains[]` 顶层扁平数组。
+///
+/// 保留 `43ae1e5f` 实现的字段语义,作为团队版解析的兜底。
+fn parse_minimax_flat_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
     let mut tiers = Vec::new();
 
     let Some(model_remains) = body.get("model_remains").and_then(|v| v.as_array()) else {
@@ -1338,9 +1446,9 @@ pub async fn get_coding_plan_quota(
 mod tests {
     use super::{
         parse_afp_tiers, parse_coding_plan_tiers, parse_minimax_tiers, parse_zhipu_token_tiers,
-        query_zhipu_team_at, volcengine_canonical_query, volcengine_is_auth_error_code,
-        volcengine_region, volcengine_response_error, volcengine_sign, zhipu_quota_base,
-        TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
+        query_minimax_endpoint, query_zhipu_team_at, volcengine_canonical_query,
+        volcengine_is_auth_error_code, volcengine_region, volcengine_response_error,
+        volcengine_sign, zhipu_quota_base, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
 
@@ -1730,6 +1838,209 @@ mod tests {
         assert_eq!(tiers.len(), 1);
         assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
         assert_eq!(tiers[0].utilization, 20.0);
+    }
+
+    #[test]
+    fn minimax_team_seat_two_tiers_from_remaining_percent() {
+        // 团队版主路径:members[0].quotas[] 嵌套,general 桶 5h 剩 79% / weekly 剩 97%
+        // → 已用 21% / 3%。quota 顺序不限,video 也允许存在
+        let body = json!({
+            "members": [
+                {
+                    "seat_id": "2070384758327615595",
+                    "global_uid": "504342257235419141",
+                    "user_name": "team_member",
+                    "combo_name": "TokenPlanMax-月度会员-团队版",
+                    "role": 1,
+                    "quotas": [
+                        {
+                            "model_name": "video",
+                            "current_interval_total_count": 3,
+                            "current_interval_usage_count": 3,
+                            "current_interval_remaining_percent": 100,
+                            "current_interval_status": 1,
+                            "current_weekly_total_count": 21,
+                            "current_weekly_usage_count": 21,
+                            "current_weekly_remaining_percent": 100,
+                            "current_weekly_status": 1,
+                            "end_time": 1_782_738_400_000_i64,
+                            "weekly_end_time": 1_783_267_200_000_i64
+                        },
+                        {
+                            "model_name": "general",
+                            "current_interval_total_count": 9_917_000,
+                            "current_interval_usage_count": 7_868_654,
+                            "current_interval_remaining_percent": 79,
+                            "current_interval_status": 1,
+                            "end_time": 1_782_734_400_000_i64,
+                            "remains_time": 7_069_417,
+                            "current_weekly_total_count": 99_170_000,
+                            "current_weekly_usage_count": 97_109_397,
+                            "current_weekly_remaining_percent": 97,
+                            "current_weekly_status": 1,
+                            "weekly_start_time": 1_782_662_400_000_i64,
+                            "weekly_end_time": 1_783_267_200_000_i64,
+                            "weekly_remains_time": 539_869_417
+                        }
+                    ],
+                    "total": 1,
+                    "total_page": 1
+                }
+            ],
+            "total": 1,
+            "total_page": 1,
+            "summary": { "total_purchased": 1, "total_assigned": 1, "total_unassigned": 0 },
+            "base_resp": { "status_code": 0, "status_msg": "success" }
+        });
+        let tiers = parse_minimax_tiers(&body);
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization, 21.0); // 100 - 79
+        assert!(tiers[0].resets_at.is_some());
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(tiers[1].utilization, 3.0); // 100 - 97
+        assert!(tiers[1].resets_at.is_some());
+    }
+
+    #[test]
+    fn minimax_team_seat_weekly_status_3_skips_weekly_tier() {
+        // 团队版无周限额套餐:current_weekly_status=3 应跳过 weekly tier
+        let body = json!({
+            "members": [{
+                "quotas": [{
+                    "model_name": "general",
+                    "current_interval_remaining_percent": 50,
+                    "current_interval_status": 1,
+                    "current_weekly_status": 3,
+                    "current_weekly_remaining_percent": 100
+                }]
+            }],
+            "base_resp": { "status_code": 0, "status_msg": "success" }
+        });
+        let tiers = parse_minimax_tiers(&body);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization, 50.0);
+    }
+
+    #[test]
+    fn minimax_team_seat_no_members_falls_back_to_flat() {
+        // 防御性:members 数组为空,不应被识别为团队版,走老 flat 解析
+        // (但 flat 也找不到 general → 返回空 tiers,不崩溃)
+        let body = json!({ "members": [] });
+        let tiers = parse_minimax_tiers(&body);
+        assert!(tiers.is_empty());
+    }
+
+    #[test]
+    fn minimax_team_seat_no_general_quota_falls_back_to_flat() {
+        // 防御性:members 存在但 quotas 里没有 general(如只有 video)
+        // → 团队版解析返回空 tiers → 外层走老 flat 兜底 → 老 flat 也找不到 → 返回空
+        let body = json!({
+            "members": [{
+                "quotas": [{
+                    "model_name": "video",
+                    "current_interval_remaining_percent": 100,
+                    "current_interval_status": 1
+                }]
+            }]
+        });
+        let tiers = parse_minimax_tiers(&body);
+        assert!(tiers.is_empty());
+    }
+
+    // ── query_minimax_endpoint 瞬时/确定性通道回归 ──
+    //
+    // 瞬时错误（connection refused / 连接中断 / 读体截断）必须走 Err 通道，
+    // 让调用方 reject 后重试并保持旧额度不变。确定性的 HTTP 响应（含认证失败、
+    // 状态码错误、空响应）必须走 Ok(SubscriptionQuota { success: false }) 通道。
+    // 参考 SaladDay review: https://github.com/farion1231/cc-switch/pull/4797
+
+    fn spawn_local_server(response: Option<String>) -> (String, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("local addr").port();
+        let handle = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                if let Some(resp) = response {
+                    let _ = stream.write_all(resp.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+        (format!("http://127.0.0.1:{port}/"), handle)
+    }
+
+    #[tokio::test]
+    async fn minimax_endpoint_transient_connection_refused_returns_err() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("local addr").port();
+        drop(listener);
+        let client = reqwest::Client::new();
+        let url = format!("http://127.0.0.1:{port}/");
+        let result = query_minimax_endpoint(&client, &url, "sk-test").await;
+        let err = result.expect_err("connection refused must return Err");
+        assert!(err.contains("Network error"), "err={err}");
+    }
+
+    #[tokio::test]
+    async fn minimax_endpoint_transient_closed_before_response_returns_err() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("local addr").port();
+        let handle = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                // 不写响应直接关闭 → 连接重置（瞬时错误必须走 Err）
+                drop(stream);
+            }
+        });
+        let client = reqwest::Client::new();
+        let url = format!("http://127.0.0.1:{port}/");
+        let result = query_minimax_endpoint(&client, &url, "sk-test").await;
+        let err = result.expect_err("closed before response must return Err");
+        assert!(
+            err.contains("Network error") || err.contains("connection"),
+            "err={err}"
+        );
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn minimax_endpoint_valid_response_returns_ok_with_tiers() {
+        let body = json!({
+            "model_remains": [{
+                "model_name": "general",
+                "current_interval_remaining_percent": 80.0,
+                "current_weekly_remaining_percent": 70.0,
+                "current_interval_status": 1,
+                "current_weekly_status": 1,
+                "end_time": 1_780_329_600_000_i64,
+                "weekly_end_time": 1_780_848_000_000_i64
+            }],
+            "base_resp": { "status_code": 0, "status_msg": "success" }
+        });
+        let body_str = body.to_string();
+        let response = format!(
+            "HTTP/1.1 200 OK
+content-type: application/json
+content-length: {}
+connection: close
+
+{}",
+            body_str.len(),
+            body_str
+        );
+        let (url, handle) = spawn_local_server(Some(response));
+        let client = reqwest::Client::new();
+        let result = query_minimax_endpoint(&client, &url, "sk-test").await;
+        let quota = result.expect("valid response must return Ok");
+        assert!(quota.success, "quota should be success");
+        assert_eq!(quota.tiers.len(), 2);
+        assert_eq!(quota.tiers[0].utilization, 20.0);
+        assert_eq!(quota.tiers[1].utilization, 30.0);
+        handle.join().expect("server thread");
     }
 
     #[test]
