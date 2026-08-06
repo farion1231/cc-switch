@@ -5,11 +5,16 @@
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::ModelPricing;
+use crate::services::session_usage_hermes::{
+    aggregate_cost_string, query_hermes_aggregate, query_hermes_deltas, HermesAggregate,
+    HermesDeltaRow, HermesUsageFilters, HERMES_AGGREGATE_EXPLANATION, HERMES_APP_TYPE,
+};
 use crate::services::sql_helpers::{
     fresh_input_sql, INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL,
 };
 use chrono::{Local, NaiveDate, TimeZone, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -25,7 +30,11 @@ pub struct UsageSummary {
     pub total_output_tokens: u64,
     pub total_cache_creation_tokens: u64,
     pub total_cache_read_tokens: u64,
+    pub total_cache_write_tokens: u64,
+    pub total_reasoning_tokens: u64,
     pub success_rate: f32,
+    /// False when the selected aggregate source does not expose request status.
+    pub status_available: bool,
     /// input + output + cache_creation + cache_read — the total tokens
     /// actually processed by the model (including cache hits). Used as the
     /// headline "real consumption" number in the usage hero.
@@ -61,6 +70,162 @@ fn derive_real_total_and_hit_rate(
     (real_total, hit_rate)
 }
 
+fn hermes_has_data(aggregate: &HermesAggregate) -> bool {
+    aggregate.request_count > 0
+        || aggregate.input_tokens > 0
+        || aggregate.output_tokens > 0
+        || aggregate.cache_read_tokens > 0
+        || aggregate.cache_write_tokens > 0
+        || aggregate.reasoning_tokens > 0
+        || aggregate.cost_usd != Decimal::ZERO
+}
+
+fn hermes_total_tokens(aggregate: &HermesAggregate) -> u64 {
+    aggregate
+        .input_tokens
+        .saturating_add(aggregate.output_tokens)
+        .saturating_add(aggregate.cache_read_tokens)
+        .saturating_add(aggregate.cache_write_tokens)
+        .saturating_add(aggregate.reasoning_tokens)
+}
+
+fn hermes_filters<'a>(
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    app_type: Option<&str>,
+    provider_name: Option<&'a str>,
+    model: Option<&'a str>,
+    profile_name: Option<&'a str>,
+    task: Option<&'a str>,
+) -> Option<HermesUsageFilters<'a>> {
+    if app_type.is_some_and(|value| value != HERMES_APP_TYPE && value != "all") {
+        return None;
+    }
+    Some(HermesUsageFilters {
+        start_date,
+        end_date,
+        provider: provider_name,
+        model,
+        profile_name,
+        task,
+    })
+}
+
+/// Apply the dashboard app filter to legacy proxy/rollup sources.
+///
+/// Hermes is intentionally kept out of those queries and merged from its
+/// dedicated delta table exactly once below. `all` is the frontend sentinel
+/// for the same no-app-filter behavior as `None`.
+fn push_dashboard_app_filter(
+    conditions: &mut Vec<String>,
+    params: &mut Vec<Box<dyn rusqlite::ToSql>>,
+    alias: &str,
+    app_type: Option<&str>,
+) {
+    match app_type {
+        Some(HERMES_APP_TYPE) => conditions.push("1 = 0".to_string()),
+        None | Some("all") => conditions.push(format!("{alias}.app_type <> 'hermes'")),
+        Some(app_type) => {
+            let column = format!("{alias}.app_type");
+            conditions.push(format!("{} = ?", folded_app_type_sql(&column)));
+            params.push(Box::new(app_type.to_string()));
+        }
+    }
+}
+
+fn recompute_summary_rates(summary: &mut UsageSummary) {
+    summary.real_total_tokens = summary
+        .total_input_tokens
+        .saturating_add(summary.total_output_tokens)
+        .saturating_add(summary.total_cache_creation_tokens)
+        .saturating_add(summary.total_cache_read_tokens)
+        .saturating_add(summary.total_cache_write_tokens)
+        .saturating_add(summary.total_reasoning_tokens);
+    let cacheable_input = summary
+        .total_input_tokens
+        .saturating_add(summary.total_cache_creation_tokens)
+        .saturating_add(summary.total_cache_write_tokens)
+        .saturating_add(summary.total_cache_read_tokens);
+    summary.cache_hit_rate = if cacheable_input > 0 {
+        summary.total_cache_read_tokens as f64 / cacheable_input as f64
+    } else {
+        0.0
+    };
+}
+
+fn merge_hermes_summary(summary: &mut UsageSummary, aggregate: &HermesAggregate) {
+    if !hermes_has_data(aggregate) {
+        return;
+    }
+    summary.total_requests = summary
+        .total_requests
+        .saturating_add(aggregate.request_count);
+    summary.total_input_tokens = summary
+        .total_input_tokens
+        .saturating_add(aggregate.input_tokens);
+    summary.total_output_tokens = summary
+        .total_output_tokens
+        .saturating_add(aggregate.output_tokens);
+    summary.total_cache_read_tokens = summary
+        .total_cache_read_tokens
+        .saturating_add(aggregate.cache_read_tokens);
+    summary.total_cache_write_tokens = summary
+        .total_cache_write_tokens
+        .saturating_add(aggregate.cache_write_tokens);
+    summary.total_reasoning_tokens = summary
+        .total_reasoning_tokens
+        .saturating_add(aggregate.reasoning_tokens);
+    let existing_cost = Decimal::from_str(&summary.total_cost).unwrap_or(Decimal::ZERO);
+    summary.total_cost = format!("{:.6}", existing_cost + aggregate.cost_usd);
+    // Hermes does not expose request status. Keep the legacy numeric field for
+    // wire compatibility but mark it unavailable so the UI renders an em dash.
+    summary.status_available = false;
+    recompute_summary_rates(summary);
+}
+
+fn hermes_summary(aggregate: HermesAggregate) -> UsageSummary {
+    let mut summary = UsageSummary {
+        total_requests: aggregate.request_count,
+        total_cost: format!("{:.6}", aggregate.cost_usd),
+        total_input_tokens: aggregate.input_tokens,
+        total_output_tokens: aggregate.output_tokens,
+        total_cache_creation_tokens: 0,
+        total_cache_read_tokens: aggregate.cache_read_tokens,
+        total_cache_write_tokens: aggregate.cache_write_tokens,
+        total_reasoning_tokens: aggregate.reasoning_tokens,
+        success_rate: 0.0,
+        status_available: false,
+        real_total_tokens: 0,
+        cache_hit_rate: 0.0,
+    };
+    recompute_summary_rates(&mut summary);
+    summary
+}
+
+fn add_hermes_daily_stat(stat: &mut DailyStats, row: &HermesDeltaRow) {
+    stat.request_count = stat.request_count.saturating_add(row.api_call_count);
+    let existing_cost = Decimal::from_str(&stat.total_cost).unwrap_or(Decimal::ZERO);
+    stat.total_cost = aggregate_cost_string(&(existing_cost + row.cost_usd));
+    stat.total_input_tokens = stat.total_input_tokens.saturating_add(row.input_tokens);
+    stat.total_output_tokens = stat.total_output_tokens.saturating_add(row.output_tokens);
+    stat.total_cache_read_tokens = stat
+        .total_cache_read_tokens
+        .saturating_add(row.cache_read_tokens);
+    stat.total_cache_write_tokens = stat
+        .total_cache_write_tokens
+        .saturating_add(row.cache_write_tokens);
+    stat.total_reasoning_tokens = stat
+        .total_reasoning_tokens
+        .saturating_add(row.reasoning_tokens);
+    stat.total_tokens = stat
+        .total_tokens
+        .saturating_add(row.input_tokens)
+        .saturating_add(row.output_tokens)
+        .saturating_add(row.cache_read_tokens)
+        .saturating_add(row.cache_write_tokens)
+        .saturating_add(row.reasoning_tokens);
+}
+
 /// 每日统计
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,6 +238,8 @@ pub struct DailyStats {
     pub total_output_tokens: u64,
     pub total_cache_creation_tokens: u64,
     pub total_cache_read_tokens: u64,
+    pub total_cache_write_tokens: u64,
+    pub total_reasoning_tokens: u64,
 }
 
 /// Provider 统计
@@ -83,9 +250,17 @@ pub struct ProviderStats {
     pub provider_name: String,
     pub request_count: u64,
     pub total_tokens: u64,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_cache_creation_tokens: u64,
+    pub total_cache_read_tokens: u64,
+    pub total_cache_write_tokens: u64,
+    pub total_reasoning_tokens: u64,
     pub total_cost: String,
     pub success_rate: f32,
+    pub status_available: bool,
     pub avg_latency_ms: u64,
+    pub latency_available: bool,
 }
 
 /// 模型统计
@@ -95,8 +270,25 @@ pub struct ModelStats {
     pub model: String,
     pub request_count: u64,
     pub total_tokens: u64,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_cache_creation_tokens: u64,
+    pub total_cache_read_tokens: u64,
+    pub total_cache_write_tokens: u64,
+    pub total_reasoning_tokens: u64,
     pub total_cost: String,
     pub avg_cost_per_request: String,
+}
+
+/// Dimensions and precision metadata for the Hermes aggregate source.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HermesUsageMetadata {
+    pub data_source: String,
+    pub precision: String,
+    pub explanation: String,
+    pub profiles: Vec<String>,
+    pub tasks: Vec<String>,
 }
 
 /// 请求日志过滤器
@@ -605,6 +797,29 @@ impl Database {
         provider_name: Option<&str>,
         model: Option<&str>,
     ) -> Result<UsageSummary, AppError> {
+        self.get_usage_summary_with_hermes_filters(
+            start_date,
+            end_date,
+            app_type,
+            provider_name,
+            model,
+            None,
+            None,
+        )
+    }
+
+    /// 获取使用量汇总，并可按 Hermes Profile/task 过滤其聚合 delta。
+    #[allow(clippy::too_many_arguments)]
+    pub fn get_usage_summary_with_hermes_filters(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        app_type: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        profile_name: Option<&str>,
+        task: Option<&str>,
+    ) -> Result<UsageSummary, AppError> {
         let conn = lock_conn!(self.conn);
 
         // Build detail WHERE clause
@@ -619,10 +834,7 @@ impl Database {
             conditions.push("l.created_at <= ?".to_string());
             params_vec.push(Box::new(end));
         }
-        if let Some(at) = app_type {
-            conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
-            params_vec.push(Box::new(at.to_string()));
-        }
+        push_dashboard_app_filter(&mut conditions, &mut params_vec, "l", app_type);
         push_provider_model_filters(
             &mut conditions,
             &mut params_vec,
@@ -654,10 +866,7 @@ impl Database {
             "r.date",
             &rollup_bounds,
         );
-        if let Some(at) = app_type {
-            rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
-            rollup_params.push(Box::new(at.to_string()));
-        }
+        push_dashboard_app_filter(&mut rollup_conditions, &mut rollup_params, "r", app_type);
         push_provider_model_filters(
             &mut rollup_conditions,
             &mut rollup_params,
@@ -715,7 +924,7 @@ impl Database {
         all_params.extend(rollup_params);
         let param_refs: Vec<&dyn rusqlite::ToSql> = all_params.iter().map(|p| p.as_ref()).collect();
 
-        let result = conn.query_row(&sql, param_refs.as_slice(), |row| {
+        let mut result = conn.query_row(&sql, param_refs.as_slice(), |row| {
             let total_requests: i64 = row.get(0)?;
             let total_cost: f64 = row.get(1)?;
             let total_input_tokens: i64 = row.get(2)?;
@@ -744,11 +953,27 @@ impl Database {
                 total_output_tokens: total_output_tokens as u64,
                 total_cache_creation_tokens: total_cache_creation_tokens as u64,
                 total_cache_read_tokens: total_cache_read_tokens as u64,
+                total_cache_write_tokens: 0,
+                total_reasoning_tokens: 0,
                 success_rate,
+                status_available: true,
                 real_total_tokens,
                 cache_hit_rate,
             })
         })?;
+
+        if let Some(filters) = hermes_filters(
+            start_date,
+            end_date,
+            app_type,
+            provider_name,
+            model,
+            profile_name,
+            task,
+        ) {
+            let aggregate = query_hermes_aggregate(&conn, filters)?;
+            merge_hermes_summary(&mut result, &aggregate);
+        }
 
         Ok(result)
     }
@@ -765,6 +990,26 @@ impl Database {
         provider_name: Option<&str>,
         model: Option<&str>,
     ) -> Result<Vec<UsageSummaryByApp>, AppError> {
+        self.get_usage_summary_by_app_with_hermes_filters(
+            start_date,
+            end_date,
+            provider_name,
+            model,
+            None,
+            None,
+        )
+    }
+
+    /// 按 app_type 维度拆分汇总，并可过滤 Hermes Profile/task。
+    pub fn get_usage_summary_by_app_with_hermes_filters(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        profile_name: Option<&str>,
+        task: Option<&str>,
+    ) -> Result<Vec<UsageSummaryByApp>, AppError> {
         let conn = lock_conn!(self.conn);
 
         let mut detail_conditions = vec![effective_usage_log_filter("l")];
@@ -777,6 +1022,7 @@ impl Database {
             detail_conditions.push("l.created_at <= ?".to_string());
             detail_params.push(Box::new(end));
         }
+        push_dashboard_app_filter(&mut detail_conditions, &mut detail_params, "l", None);
         push_provider_model_filters(
             &mut detail_conditions,
             &mut detail_params,
@@ -801,6 +1047,7 @@ impl Database {
             "r.date",
             &rollup_bounds,
         );
+        push_dashboard_app_filter(&mut rollup_conditions, &mut rollup_params, "r", None);
         push_provider_model_filters(
             &mut rollup_conditions,
             &mut rollup_params,
@@ -897,7 +1144,10 @@ impl Database {
                     total_output_tokens: total_output_tokens as u64,
                     total_cache_creation_tokens: total_cache_creation_tokens as u64,
                     total_cache_read_tokens: total_cache_read_tokens as u64,
+                    total_cache_write_tokens: 0,
+                    total_reasoning_tokens: 0,
                     success_rate,
+                    status_available: true,
                     real_total_tokens,
                     cache_hit_rate,
                 },
@@ -911,6 +1161,25 @@ impl Database {
                 continue;
             }
             summaries.push(item);
+        }
+        drop(stmt);
+
+        if let Some(filters) = hermes_filters(
+            start_date,
+            end_date,
+            None,
+            provider_name,
+            model,
+            profile_name,
+            task,
+        ) {
+            let aggregate = query_hermes_aggregate(&conn, filters)?;
+            if hermes_has_data(&aggregate) {
+                summaries.push(UsageSummaryByApp {
+                    app_type: HERMES_APP_TYPE.to_string(),
+                    summary: hermes_summary(aggregate),
+                });
+            }
         }
         summaries.sort_by(|a, b| {
             b.summary
@@ -928,6 +1197,29 @@ impl Database {
         app_type: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
+    ) -> Result<Vec<DailyStats>, AppError> {
+        self.get_daily_trends_with_hermes_filters(
+            start_date,
+            end_date,
+            app_type,
+            provider_name,
+            model,
+            None,
+            None,
+        )
+    }
+
+    /// 获取每日/每小时趋势，并可按 Hermes Profile/task 过滤其 delta。
+    #[allow(clippy::too_many_arguments)]
+    pub fn get_daily_trends_with_hermes_filters(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        app_type: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        profile_name: Option<&str>,
+        task: Option<&str>,
     ) -> Result<Vec<DailyStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
@@ -953,10 +1245,7 @@ impl Database {
 
             let mut extra_conditions: Vec<String> = Vec::new();
             let mut extra_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-            if let Some(at) = app_type {
-                extra_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
-                extra_params.push(Box::new(at.to_string()));
-            }
+            push_dashboard_app_filter(&mut extra_conditions, &mut extra_params, "l", app_type);
             push_provider_model_filters(
                 &mut extra_conditions,
                 &mut extra_params,
@@ -1008,6 +1297,8 @@ impl Database {
                         total_output_tokens: row.get::<_, i64>(5)? as u64,
                         total_cache_creation_tokens: row.get::<_, i64>(6)? as u64,
                         total_cache_read_tokens: row.get::<_, i64>(7)? as u64,
+                        total_cache_write_tokens: 0,
+                        total_reasoning_tokens: 0,
                     },
                 ))
             };
@@ -1033,6 +1324,36 @@ impl Database {
                 }
                 map.insert(bucket_idx, stat);
             }
+            drop(stmt);
+
+            if let Some(filters) = hermes_filters(
+                Some(start_ts),
+                Some(end_ts),
+                app_type,
+                provider_name,
+                model,
+                profile_name,
+                task,
+            ) {
+                for row in query_hermes_deltas(&conn, filters)? {
+                    let bucket_ts = row.sync_window_end.max(start_ts).min(end_ts);
+                    let bucket_idx =
+                        ((bucket_ts - start_ts) / bucket_seconds).clamp(0, bucket_count - 1);
+                    let entry = map.entry(bucket_idx).or_insert_with(|| DailyStats {
+                        date: String::new(),
+                        request_count: 0,
+                        total_cost: "0.000000".to_string(),
+                        total_tokens: 0,
+                        total_input_tokens: 0,
+                        total_output_tokens: 0,
+                        total_cache_creation_tokens: 0,
+                        total_cache_read_tokens: 0,
+                        total_cache_write_tokens: 0,
+                        total_reasoning_tokens: 0,
+                    });
+                    add_hermes_daily_stat(entry, &row);
+                }
+            }
 
             let mut stats = Vec::with_capacity(bucket_count as usize);
             for i in 0..bucket_count {
@@ -1053,6 +1374,8 @@ impl Database {
                         total_output_tokens: 0,
                         total_cache_creation_tokens: 0,
                         total_cache_read_tokens: 0,
+                        total_cache_write_tokens: 0,
+                        total_reasoning_tokens: 0,
                     });
                 }
             }
@@ -1066,10 +1389,7 @@ impl Database {
 
         let mut extra_conditions: Vec<String> = Vec::new();
         let mut extra_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        if let Some(at) = app_type {
-            extra_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
-            extra_params.push(Box::new(at.to_string()));
-        }
+        push_dashboard_app_filter(&mut extra_conditions, &mut extra_params, "l", app_type);
         push_provider_model_filters(
             &mut extra_conditions,
             &mut extra_params,
@@ -1121,6 +1441,8 @@ impl Database {
                     total_output_tokens: row.get::<_, i64>(5)? as u64,
                     total_cache_creation_tokens: row.get::<_, i64>(6)? as u64,
                     total_cache_read_tokens: row.get::<_, i64>(7)? as u64,
+                    total_cache_write_tokens: 0,
+                    total_reasoning_tokens: 0,
                 },
             ))
         };
@@ -1149,10 +1471,7 @@ impl Database {
             "r.date",
             &rollup_bounds,
         );
-        if let Some(at) = app_type {
-            rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
-            rollup_params.push(Box::new(at.to_string()));
-        }
+        push_dashboard_app_filter(&mut rollup_conditions, &mut rollup_params, "r", app_type);
         push_provider_model_filters(
             &mut rollup_conditions,
             &mut rollup_params,
@@ -1222,6 +1541,8 @@ impl Database {
                 total_output_tokens: 0,
                 total_cache_creation_tokens: 0,
                 total_cache_read_tokens: 0,
+                total_cache_write_tokens: 0,
+                total_reasoning_tokens: 0,
             });
             entry.request_count += req;
             let existing_cost: f64 = entry.total_cost.parse().unwrap_or(0.0);
@@ -1231,6 +1552,35 @@ impl Database {
             entry.total_output_tokens += out;
             entry.total_cache_creation_tokens += cc;
             entry.total_cache_read_tokens += cr;
+        }
+        drop(rollup_stmt);
+
+        if let Some(filters) = hermes_filters(
+            Some(start_ts),
+            Some(end_ts),
+            app_type,
+            provider_name,
+            model,
+            profile_name,
+            task,
+        ) {
+            for row in query_hermes_deltas(&conn, filters)? {
+                let bucket_ts = row.sync_window_end.max(start_ts).min(end_ts);
+                let bucket_date = local_datetime_from_timestamp(bucket_ts)?.date_naive();
+                let entry = map.entry(bucket_date).or_insert_with(|| DailyStats {
+                    date: String::new(),
+                    request_count: 0,
+                    total_cost: "0.000000".to_string(),
+                    total_tokens: 0,
+                    total_input_tokens: 0,
+                    total_output_tokens: 0,
+                    total_cache_creation_tokens: 0,
+                    total_cache_read_tokens: 0,
+                    total_cache_write_tokens: 0,
+                    total_reasoning_tokens: 0,
+                });
+                add_hermes_daily_stat(entry, &row);
+            }
         }
 
         let mut stats = Vec::with_capacity(bucket_count);
@@ -1251,6 +1601,8 @@ impl Database {
                     total_output_tokens: 0,
                     total_cache_creation_tokens: 0,
                     total_cache_read_tokens: 0,
+                    total_cache_write_tokens: 0,
+                    total_reasoning_tokens: 0,
                 });
             }
 
@@ -1269,6 +1621,29 @@ impl Database {
         provider_name: Option<&str>,
         model: Option<&str>,
     ) -> Result<Vec<ProviderStats>, AppError> {
+        self.get_provider_stats_with_hermes_filters(
+            start_date,
+            end_date,
+            app_type,
+            provider_name,
+            model,
+            None,
+            None,
+        )
+    }
+
+    /// 获取 Provider 统计，并可按 Hermes Profile/task 过滤其 delta。
+    #[allow(clippy::too_many_arguments)]
+    pub fn get_provider_stats_with_hermes_filters(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        app_type: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        profile_name: Option<&str>,
+        task: Option<&str>,
+    ) -> Result<Vec<ProviderStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
         let mut detail_conditions = vec![effective_usage_log_filter("l")];
@@ -1281,10 +1656,7 @@ impl Database {
             detail_conditions.push("l.created_at <= ?".to_string());
             detail_params.push(Box::new(end));
         }
-        if let Some(at) = app_type {
-            detail_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
-            detail_params.push(Box::new(at.to_string()));
-        }
+        push_dashboard_app_filter(&mut detail_conditions, &mut detail_params, "l", app_type);
         push_provider_model_filters(
             &mut detail_conditions,
             &mut detail_params,
@@ -1308,10 +1680,7 @@ impl Database {
             "r.date",
             &rollup_bounds,
         );
-        if let Some(at) = app_type {
-            rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
-            rollup_params.push(Box::new(at.to_string()));
-        }
+        push_dashboard_app_filter(&mut rollup_conditions, &mut rollup_params, "r", app_type);
         push_provider_model_filters(
             &mut rollup_conditions,
             &mut rollup_params,
@@ -1388,9 +1757,17 @@ impl Database {
                 provider_name: row.get(2)?,
                 request_count: request_count as u64,
                 total_tokens: row.get::<_, i64>(4)? as u64,
+                total_input_tokens: 0,
+                total_output_tokens: 0,
+                total_cache_creation_tokens: 0,
+                total_cache_read_tokens: 0,
+                total_cache_write_tokens: 0,
+                total_reasoning_tokens: 0,
                 total_cost: format!("{:.6}", row.get::<_, f64>(5)?),
                 success_rate,
+                status_available: true,
                 avg_latency_ms: row.get::<_, f64>(7)? as u64,
+                latency_available: true,
             })
         };
 
@@ -1399,6 +1776,52 @@ impl Database {
         let mut stats = Vec::new();
         for row in rows {
             stats.push(row?);
+        }
+
+        drop(stmt);
+        if let Some(filters) = hermes_filters(
+            start_date,
+            end_date,
+            app_type,
+            provider_name,
+            model,
+            profile_name,
+            task,
+        ) {
+            let mut by_provider: HashMap<String, HermesAggregate> = HashMap::new();
+            for row in query_hermes_deltas(&conn, filters)? {
+                by_provider
+                    .entry(row.provider.clone())
+                    .or_default()
+                    .add_row(&row)?;
+            }
+            for (provider, aggregate) in by_provider {
+                if !hermes_has_data(&aggregate) {
+                    continue;
+                }
+                stats.push(ProviderStats {
+                    provider_id: format!("hermes:{provider}"),
+                    provider_name: provider,
+                    request_count: aggregate.request_count,
+                    total_tokens: hermes_total_tokens(&aggregate),
+                    total_input_tokens: aggregate.input_tokens,
+                    total_output_tokens: aggregate.output_tokens,
+                    total_cache_creation_tokens: 0,
+                    total_cache_read_tokens: aggregate.cache_read_tokens,
+                    total_cache_write_tokens: aggregate.cache_write_tokens,
+                    total_reasoning_tokens: aggregate.reasoning_tokens,
+                    total_cost: aggregate_cost_string(&aggregate.cost_usd),
+                    success_rate: 0.0,
+                    status_available: false,
+                    avg_latency_ms: 0,
+                    latency_available: false,
+                });
+            }
+            stats.sort_by(|left, right| {
+                Decimal::from_str(&right.total_cost)
+                    .unwrap_or(Decimal::ZERO)
+                    .cmp(&Decimal::from_str(&left.total_cost).unwrap_or(Decimal::ZERO))
+            });
         }
 
         Ok(stats)
@@ -1413,6 +1836,29 @@ impl Database {
         provider_name: Option<&str>,
         model: Option<&str>,
     ) -> Result<Vec<ModelStats>, AppError> {
+        self.get_model_stats_with_hermes_filters(
+            start_date,
+            end_date,
+            app_type,
+            provider_name,
+            model,
+            None,
+            None,
+        )
+    }
+
+    /// 获取模型统计，并可按 Hermes Profile/task 过滤其 delta。
+    #[allow(clippy::too_many_arguments)]
+    pub fn get_model_stats_with_hermes_filters(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        app_type: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        profile_name: Option<&str>,
+        task: Option<&str>,
+    ) -> Result<Vec<ModelStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
         let mut detail_conditions = vec![effective_usage_log_filter("l")];
@@ -1425,10 +1871,7 @@ impl Database {
             detail_conditions.push("l.created_at <= ?".to_string());
             detail_params.push(Box::new(end));
         }
-        if let Some(at) = app_type {
-            detail_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
-            detail_params.push(Box::new(at.to_string()));
-        }
+        push_dashboard_app_filter(&mut detail_conditions, &mut detail_params, "l", app_type);
         push_provider_model_filters(
             &mut detail_conditions,
             &mut detail_params,
@@ -1457,10 +1900,7 @@ impl Database {
             "r.date",
             &rollup_bounds,
         );
-        if let Some(at) = app_type {
-            rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
-            rollup_params.push(Box::new(at.to_string()));
-        }
+        push_dashboard_app_filter(&mut rollup_conditions, &mut rollup_params, "r", app_type);
         push_provider_model_filters(
             &mut rollup_conditions,
             &mut rollup_params,
@@ -1495,11 +1935,23 @@ impl Database {
                 model,
                 SUM(request_count) as request_count,
                 SUM(total_tokens) as total_tokens,
+                SUM(total_input_tokens) as total_input_tokens,
+                SUM(total_output_tokens) as total_output_tokens,
+                SUM(total_cache_creation_tokens) as total_cache_creation_tokens,
+                SUM(total_cache_read_tokens) as total_cache_read_tokens,
+                SUM(total_cache_write_tokens) as total_cache_write_tokens,
+                SUM(total_reasoning_tokens) as total_reasoning_tokens,
                 SUM(total_cost) as total_cost
             FROM (
                 SELECT {detail_model} as model,
                     COUNT(*) as request_count,
                     COALESCE(SUM({fresh_input_detail} + l.output_tokens), 0) as total_tokens,
+                    COALESCE(SUM({fresh_input_detail}), 0) as total_input_tokens,
+                    COALESCE(SUM(l.output_tokens), 0) as total_output_tokens,
+                    COALESCE(SUM(l.cache_creation_tokens), 0) as total_cache_creation_tokens,
+                    COALESCE(SUM(l.cache_read_tokens), 0) as total_cache_read_tokens,
+                    0 as total_cache_write_tokens,
+                    0 as total_reasoning_tokens,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost
                 FROM proxy_request_logs l
                 {detail_join}
@@ -1509,6 +1961,12 @@ impl Database {
                 SELECT {rollup_model},
                     COALESCE(SUM(r.request_count), 0),
                     COALESCE(SUM({fresh_input_rollup} + r.output_tokens), 0),
+                    COALESCE(SUM({fresh_input_rollup}), 0),
+                    COALESCE(SUM(r.output_tokens), 0),
+                    COALESCE(SUM(r.cache_creation_tokens), 0),
+                    COALESCE(SUM(r.cache_read_tokens), 0),
+                    0,
+                    0,
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0)
                 FROM usage_daily_rollups r
                 {rollup_join}
@@ -1525,7 +1983,7 @@ impl Database {
         let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let row_mapper = |row: &rusqlite::Row| {
             let request_count: i64 = row.get(1)?;
-            let total_cost: f64 = row.get(3)?;
+            let total_cost: f64 = row.get(9)?;
             let avg_cost = if request_count > 0 {
                 total_cost / request_count as f64
             } else {
@@ -1536,6 +1994,12 @@ impl Database {
                 model: row.get(0)?,
                 request_count: request_count as u64,
                 total_tokens: row.get::<_, i64>(2)? as u64,
+                total_input_tokens: row.get::<_, i64>(3)? as u64,
+                total_output_tokens: row.get::<_, i64>(4)? as u64,
+                total_cache_creation_tokens: row.get::<_, i64>(5)? as u64,
+                total_cache_read_tokens: row.get::<_, i64>(6)? as u64,
+                total_cache_write_tokens: row.get::<_, i64>(7)? as u64,
+                total_reasoning_tokens: row.get::<_, i64>(8)? as u64,
                 total_cost: format!("{total_cost:.6}"),
                 avg_cost_per_request: format!("{avg_cost:.6}"),
             })
@@ -1548,7 +2012,122 @@ impl Database {
             stats.push(row?);
         }
 
+        drop(stmt);
+        if let Some(filters) = hermes_filters(
+            start_date,
+            end_date,
+            app_type,
+            provider_name,
+            model,
+            profile_name,
+            task,
+        ) {
+            let mut by_model: HashMap<String, HermesAggregate> = HashMap::new();
+            for row in query_hermes_deltas(&conn, filters)? {
+                by_model
+                    .entry(row.model.clone())
+                    .or_default()
+                    .add_row(&row)?;
+            }
+            for (model_name, aggregate) in by_model {
+                if !hermes_has_data(&aggregate) {
+                    continue;
+                }
+                if let Some(stat) = stats.iter_mut().find(|stat| stat.model == model_name) {
+                    stat.request_count = stat.request_count.saturating_add(aggregate.request_count);
+                    stat.total_tokens = stat
+                        .total_tokens
+                        .saturating_add(hermes_total_tokens(&aggregate));
+                    stat.total_input_tokens = stat
+                        .total_input_tokens
+                        .saturating_add(aggregate.input_tokens);
+                    stat.total_output_tokens = stat
+                        .total_output_tokens
+                        .saturating_add(aggregate.output_tokens);
+                    stat.total_cache_read_tokens = stat
+                        .total_cache_read_tokens
+                        .saturating_add(aggregate.cache_read_tokens);
+                    stat.total_cache_write_tokens = stat
+                        .total_cache_write_tokens
+                        .saturating_add(aggregate.cache_write_tokens);
+                    stat.total_reasoning_tokens = stat
+                        .total_reasoning_tokens
+                        .saturating_add(aggregate.reasoning_tokens);
+                    let existing_cost =
+                        Decimal::from_str(&stat.total_cost).unwrap_or(Decimal::ZERO);
+                    let merged_cost = existing_cost + aggregate.cost_usd;
+                    stat.total_cost = aggregate_cost_string(&merged_cost);
+                    let avg_cost = if stat.request_count > 0 {
+                        merged_cost / Decimal::from(stat.request_count)
+                    } else {
+                        Decimal::ZERO
+                    };
+                    stat.avg_cost_per_request = aggregate_cost_string(&avg_cost);
+                } else {
+                    let avg_cost = if aggregate.request_count > 0 {
+                        aggregate.cost_usd / Decimal::from(aggregate.request_count)
+                    } else {
+                        Decimal::ZERO
+                    };
+                    stats.push(ModelStats {
+                        model: model_name,
+                        request_count: aggregate.request_count,
+                        total_tokens: hermes_total_tokens(&aggregate),
+                        total_input_tokens: aggregate.input_tokens,
+                        total_output_tokens: aggregate.output_tokens,
+                        total_cache_creation_tokens: 0,
+                        total_cache_read_tokens: aggregate.cache_read_tokens,
+                        total_cache_write_tokens: aggregate.cache_write_tokens,
+                        total_reasoning_tokens: aggregate.reasoning_tokens,
+                        total_cost: aggregate_cost_string(&aggregate.cost_usd),
+                        avg_cost_per_request: aggregate_cost_string(&avg_cost),
+                    });
+                }
+            }
+            stats.sort_by(|left, right| {
+                Decimal::from_str(&right.total_cost)
+                    .unwrap_or(Decimal::ZERO)
+                    .cmp(&Decimal::from_str(&left.total_cost).unwrap_or(Decimal::ZERO))
+                    .then_with(|| left.model.cmp(&right.model))
+            });
+        }
+
         Ok(stats)
+    }
+
+    /// 返回 Hermes 聚合数据可用的 Profile/task 维度和精度说明。
+    pub fn get_hermes_usage_metadata(&self) -> Result<HermesUsageMetadata, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut profiles = conn
+            .prepare(
+                "SELECT DISTINCT profile_name
+                 FROM hermes_usage_deltas
+                 WHERE data_source = 'hermes_session'
+                   AND precision = 'aggregate_delta'
+                 ORDER BY profile_name",
+            )?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut tasks = conn
+            .prepare(
+                "SELECT DISTINCT task
+                 FROM hermes_usage_deltas
+                 WHERE data_source = 'hermes_session'
+                   AND precision = 'aggregate_delta'
+                 ORDER BY task",
+            )?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        profiles.retain(|value| !value.is_empty());
+        tasks.retain(|value| !value.is_empty());
+
+        Ok(HermesUsageMetadata {
+            data_source: "hermes_session".to_string(),
+            precision: "aggregate_delta".to_string(),
+            explanation: HERMES_AGGREGATE_EXPLANATION.to_string(),
+            profiles,
+            tasks,
+        })
     }
 
     /// 获取请求日志列表（分页）
@@ -1560,14 +2139,26 @@ impl Database {
     ) -> Result<PaginatedLogs, AppError> {
         let conn = lock_conn!(self.conn);
 
-        let mut conditions = vec![effective_usage_log_filter("l")];
+        // Hermes aggregates live in hermes_usage_deltas and are intentionally
+        // not request-detail rows. Keep this endpoint closed to any accidental
+        // or future Hermes proxy rows as well.
+        let mut conditions = vec![
+            effective_usage_log_filter("l"),
+            "l.app_type <> 'hermes'".to_string(),
+        ];
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         if let Some(ref app_type) = filters.app_type {
-            // 仅过滤口径折叠 claude-desktop→claude；行投影仍返回原始 app_type，
-            // 详情面板据此展示真实入口（路由接管账单审计需要）。
-            conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
-            params.push(Box::new(app_type.clone()));
+            match app_type.as_str() {
+                HERMES_APP_TYPE => conditions.push("1 = 0".to_string()),
+                "all" => {}
+                _ => {
+                    // 仅过滤口径折叠 claude-desktop→claude；行投影仍返回原始 app_type，
+                    // 详情面板据此展示真实入口（路由接管账单审计需要）。
+                    conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
+                    params.push(Box::new(app_type.clone()));
+                }
+            }
         }
         // 与 Dashboard 顶部下拉筛选同口径：Provider 按展示名精确匹配（会话占位
         // 行如 "Claude (Session)" 也能命中），模型按有效计价模型匹配。
@@ -1662,14 +2253,14 @@ impl Database {
         let detail_sql = format!(
             "SELECT l.request_id, l.provider_id, {detail_pname} as provider_name, l.app_type, l.model,
                     l.request_model, l.cost_multiplier,
-                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
-                    is_streaming, latency_ms, first_token_ms, duration_ms,
-                    status_code, error_message, created_at, l.data_source, l.pricing_model,
+                    l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
+                    l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
+                    l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
+                    l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model,
                     l.input_token_semantics
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
-             WHERE l.request_id = ?"
+             WHERE l.request_id = ? AND l.app_type <> 'hermes'"
         );
         let result = conn.query_row(&detail_sql, [request_id], row_to_request_log_detail);
 
@@ -2366,6 +2957,66 @@ fn should_try_pricing_prefix_match(model_id: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn signed_cost_adjustment_counts_as_hermes_data_without_counters() {
+        let aggregate = HermesAggregate {
+            cost_usd: Decimal::NEGATIVE_ONE,
+            ..HermesAggregate::default()
+        };
+
+        assert!(hermes_has_data(&aggregate));
+    }
+
+    #[test]
+    fn negative_cost_only_delta_survives_summary_and_trends() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_hermes_delta(
+                &conn,
+                "negative-only",
+                "default",
+                "openrouter",
+                "model-a",
+                "task-a",
+                1000,
+                1100,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                "-1.000000",
+            )?;
+            conn.execute(
+                "UPDATE hermes_usage_deltas
+                 SET cost_delta_kind = 'reconciliation'
+                 WHERE row_key = 'negative-only'",
+                [],
+            )?;
+            let persisted_kind: String = conn.query_row(
+                "SELECT cost_delta_kind FROM hermes_usage_deltas
+                 WHERE row_key = 'negative-only'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(persisted_kind, "reconciliation");
+        }
+
+        let summary = db.get_usage_summary(None, None, Some("hermes"), None, None)?;
+        assert_eq!(summary.total_requests, 0);
+        assert_eq!(summary.real_total_tokens, 0);
+        assert_eq!(summary.total_cost, "-1.000000");
+
+        let trends = db.get_daily_trends(Some(900), Some(2000), Some("hermes"), None, None)?;
+        assert_eq!(trends.len(), 1);
+        assert_eq!(trends[0].request_count, 0);
+        assert_eq!(trends[0].total_tokens, 0);
+        assert_eq!(trends[0].total_cost, "-1.000000");
+        Ok(())
+    }
+
     fn local_ts(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> i64 {
         match Local.with_ymd_and_hms(year, month, day, hour, minute, second) {
             chrono::LocalResult::Single(dt) => dt.timestamp(),
@@ -2411,6 +3062,56 @@ mod tests {
                 status_code,
                 created_at,
                 data_source
+            ],
+        )?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_hermes_delta(
+        conn: &Connection,
+        row_key: &str,
+        profile_name: &str,
+        provider: &str,
+        model: &str,
+        task: &str,
+        sync_window_start: i64,
+        sync_window_end: i64,
+        api_call_count: i64,
+        input_tokens: i64,
+        output_tokens: i64,
+        cache_read_tokens: i64,
+        cache_write_tokens: i64,
+        reasoning_tokens: i64,
+        cost_usd: &str,
+    ) -> Result<(), AppError> {
+        conn.execute(
+            "INSERT INTO hermes_usage_deltas (
+                source_id, source_incarnation, profile_name, row_key, session_id,
+                provider, model, billing_base_url_digest, billing_mode, task,
+                sync_window_start, sync_window_end, api_call_count, input_tokens,
+                output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
+                cost_usd, cost_kind, data_source, precision
+            ) VALUES (
+                'test-source', 'test-incarnation', ?, ?, 'test-session', ?, ?,
+                'test-digest', 'test-mode', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                'estimated', 'hermes_session', 'aggregate_delta'
+            )",
+            params![
+                profile_name,
+                row_key,
+                provider,
+                model,
+                task,
+                sync_window_start,
+                sync_window_end,
+                api_call_count,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
+                reasoning_tokens,
+                cost_usd,
             ],
         )?;
         Ok(())
@@ -4354,6 +5055,551 @@ mod tests {
         let result = find_model_pricing_row(&conn, "unknown-model-123")?;
         assert!(result.is_none(), "不应该匹配不存在的模型");
 
+        Ok(())
+    }
+
+    #[test]
+    fn usage_summary_merges_hermes_and_legacy_without_double_counting() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "legacy-request",
+                "claude",
+                "legacy-provider",
+                "legacy-model",
+                "proxy",
+                1000,
+                100,
+                10,
+                0,
+                0,
+                200,
+                "1.000000",
+            )?;
+            insert_hermes_delta(
+                &conn,
+                "hermes-row",
+                "default",
+                "openrouter",
+                "model-a",
+                "task-a",
+                1000,
+                1100,
+                3,
+                100,
+                50,
+                20,
+                10,
+                7,
+                "0.125000",
+            )?;
+        }
+
+        let all = db.get_usage_summary(None, None, None, None, None)?;
+        assert_eq!(all.total_requests, 4);
+        assert_eq!(all.total_input_tokens, 200);
+        assert_eq!(all.total_output_tokens, 60);
+        assert_eq!(all.total_cache_read_tokens, 20);
+        assert_eq!(all.total_cache_write_tokens, 10);
+        assert_eq!(all.total_reasoning_tokens, 7);
+        assert_eq!(all.total_cost, "1.125000");
+        assert_eq!(all.real_total_tokens, 297);
+        assert!(!all.status_available);
+
+        let hermes = db.get_usage_summary(None, None, Some("hermes"), None, None)?;
+        assert_eq!(hermes.total_requests, 3);
+        assert_eq!(hermes.total_input_tokens, 100);
+        assert_eq!(hermes.total_cache_creation_tokens, 0);
+        assert_eq!(hermes.total_cache_write_tokens, 10);
+        assert_eq!(hermes.total_reasoning_tokens, 7);
+        assert_eq!(hermes.total_cost, "0.125000");
+        Ok(())
+    }
+
+    #[test]
+    fn usage_trends_include_only_hermes_deltas_in_the_requested_window() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_hermes_delta(
+                &conn,
+                "inside",
+                "default",
+                "openrouter",
+                "model-a",
+                "task-a",
+                1000,
+                1100,
+                3,
+                100,
+                50,
+                20,
+                10,
+                7,
+                "0.125000",
+            )?;
+            insert_hermes_delta(
+                &conn,
+                "outside",
+                "default",
+                "openrouter",
+                "model-a",
+                "task-a",
+                4000,
+                4100,
+                9,
+                900,
+                90,
+                0,
+                0,
+                0,
+                "9.000000",
+            )?;
+        }
+
+        let trends = db.get_daily_trends(Some(900), Some(2000), Some("hermes"), None, None)?;
+        assert_eq!(trends.len(), 1);
+        assert_eq!(trends[0].request_count, 3);
+        assert_eq!(trends[0].total_input_tokens, 100);
+        assert_eq!(trends[0].total_output_tokens, 50);
+        assert_eq!(trends[0].total_cache_read_tokens, 20);
+        assert_eq!(trends[0].total_cost, "0.125000");
+        Ok(())
+    }
+
+    #[test]
+    fn provider_stats_include_hermes_billing_providers() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_hermes_delta(
+                &conn,
+                "provider-a-row",
+                "default",
+                "provider-a",
+                "model-a",
+                "task-a",
+                1000,
+                1100,
+                2,
+                20,
+                10,
+                3,
+                1,
+                0,
+                "0.200000",
+            )?;
+            insert_hermes_delta(
+                &conn,
+                "provider-b-row",
+                "default",
+                "provider-b",
+                "model-b",
+                "task-b",
+                1000,
+                1100,
+                1,
+                30,
+                5,
+                0,
+                0,
+                0,
+                "0.300000",
+            )?;
+        }
+
+        let stats = db.get_provider_stats(None, None, Some("hermes"), None, None)?;
+        assert_eq!(stats.len(), 2);
+        let provider_a = stats
+            .iter()
+            .find(|stat| stat.provider_id == "hermes:provider-a")
+            .expect("provider-a Hermes statistic");
+        assert_eq!(provider_a.provider_name, "provider-a");
+        assert_eq!(provider_a.request_count, 2);
+        assert_eq!(provider_a.total_tokens, 34);
+        assert_eq!(provider_a.total_cost, "0.200000");
+        assert_eq!(provider_a.success_rate, 0.0);
+        assert_eq!(provider_a.avg_latency_ms, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn model_stats_include_hermes_models_and_average_cost() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_hermes_delta(
+                &conn,
+                "model-a-row",
+                "default",
+                "provider-a",
+                "model-a",
+                "task-a",
+                1000,
+                1100,
+                2,
+                20,
+                10,
+                3,
+                1,
+                0,
+                "0.200000",
+            )?;
+            insert_hermes_delta(
+                &conn,
+                "model-b-row",
+                "default",
+                "provider-a",
+                "model-b",
+                "task-a",
+                1000,
+                1100,
+                1,
+                30,
+                5,
+                0,
+                0,
+                0,
+                "0.300000",
+            )?;
+        }
+
+        let stats = db.get_model_stats(None, None, Some("hermes"), None, None)?;
+        assert_eq!(stats.len(), 2);
+        let model_a = stats
+            .iter()
+            .find(|stat| stat.model == "model-a")
+            .expect("model-a Hermes statistic");
+        assert_eq!(model_a.request_count, 2);
+        assert_eq!(model_a.total_tokens, 34);
+        assert_eq!(model_a.total_cost, "0.200000");
+        assert_eq!(model_a.avg_cost_per_request, "0.100000");
+        Ok(())
+    }
+
+    #[test]
+    fn summary_by_app_contains_one_hermes_bucket_without_proxy_rows() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_hermes_delta(
+                &conn,
+                "summary-row",
+                "default",
+                "provider-a",
+                "model-a",
+                "task-a",
+                1000,
+                1100,
+                3,
+                100,
+                50,
+                20,
+                10,
+                7,
+                "0.125000",
+            )?;
+            let proxy_rows: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs WHERE app_type = 'hermes'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(proxy_rows, 0);
+        }
+
+        let by_app = db.get_usage_summary_by_app(None, None, None, None)?;
+        assert_eq!(by_app.len(), 1);
+        assert_eq!(by_app[0].app_type, "hermes");
+        assert_eq!(by_app[0].summary.total_requests, 3);
+        assert_eq!(by_app[0].summary.total_cache_write_tokens, 10);
+        assert_eq!(by_app[0].summary.total_reasoning_tokens, 7);
+        assert!(!by_app[0].summary.status_available);
+        Ok(())
+    }
+
+    #[test]
+    fn hermes_profile_task_filters_and_metadata_are_consistent() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_hermes_delta(
+                &conn,
+                "default-build",
+                "default",
+                "provider-a",
+                "model-a",
+                "build",
+                1000,
+                1100,
+                2,
+                20,
+                10,
+                3,
+                1,
+                0,
+                "0.200000",
+            )?;
+            insert_hermes_delta(
+                &conn,
+                "named-review",
+                "named",
+                "provider-b",
+                "model-b",
+                "review",
+                1000,
+                1100,
+                5,
+                50,
+                25,
+                0,
+                0,
+                0,
+                "0.500000",
+            )?;
+            insert_hermes_delta(
+                &conn,
+                "named-build",
+                "named",
+                "provider-c",
+                "model-c",
+                "build",
+                1000,
+                1100,
+                3,
+                30,
+                15,
+                0,
+                0,
+                0,
+                "0.300000",
+            )?;
+        }
+
+        let summary = db.get_usage_summary_with_hermes_filters(
+            None,
+            None,
+            Some("hermes"),
+            None,
+            None,
+            Some("named"),
+            Some("review"),
+        )?;
+        assert_eq!(summary.total_requests, 5);
+
+        let trends = db.get_daily_trends_with_hermes_filters(
+            Some(900),
+            Some(2000),
+            Some("hermes"),
+            None,
+            None,
+            Some("named"),
+            Some("build"),
+        )?;
+        assert_eq!(trends.iter().map(|stat| stat.request_count).sum::<u64>(), 3);
+
+        let providers = db.get_provider_stats_with_hermes_filters(
+            None,
+            None,
+            Some("hermes"),
+            None,
+            None,
+            Some("named"),
+            Some("build"),
+        )?;
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].provider_id, "hermes:provider-c");
+
+        let models = db.get_model_stats_with_hermes_filters(
+            None,
+            None,
+            Some("hermes"),
+            None,
+            None,
+            Some("named"),
+            Some("review"),
+        )?;
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].model, "model-b");
+
+        let by_app = db.get_usage_summary_by_app_with_hermes_filters(
+            None,
+            None,
+            None,
+            None,
+            Some("named"),
+            Some("review"),
+        )?;
+        assert_eq!(by_app.len(), 1);
+        assert_eq!(by_app[0].summary.total_requests, 5);
+
+        let metadata = db.get_hermes_usage_metadata()?;
+        assert_eq!(metadata.data_source, "hermes_session");
+        assert_eq!(metadata.precision, "aggregate_delta");
+        assert_eq!(
+            metadata.profiles,
+            vec!["default".to_string(), "named".to_string()]
+        );
+        assert_eq!(
+            metadata.tasks,
+            vec!["build".to_string(), "review".to_string()]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn model_stats_merge_legacy_and_hermes_rows_by_model() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "legacy-model-collision",
+                "claude",
+                "legacy-provider",
+                "shared-model",
+                "proxy",
+                1000,
+                100,
+                20,
+                5,
+                2,
+                200,
+                "1.250000",
+            )?;
+            insert_hermes_delta(
+                &conn,
+                "hermes-model-collision",
+                "default",
+                "billing-provider",
+                "shared-model",
+                "task-a",
+                900,
+                1100,
+                3,
+                300,
+                40,
+                7,
+                11,
+                13,
+                "2.750000",
+            )?;
+        }
+
+        let stats =
+            db.get_model_stats_with_hermes_filters(None, None, None, None, None, None, None)?;
+        assert_eq!(stats.len(), 1);
+        let stat = &stats[0];
+        assert_eq!(stat.model, "shared-model");
+        assert_eq!(stat.request_count, 4);
+        assert_eq!(stat.total_tokens, 491);
+        assert_eq!(stat.total_input_tokens, 400);
+        assert_eq!(stat.total_output_tokens, 60);
+        assert_eq!(stat.total_cache_creation_tokens, 2);
+        assert_eq!(stat.total_cache_read_tokens, 12);
+        assert_eq!(stat.total_cache_write_tokens, 11);
+        assert_eq!(stat.total_reasoning_tokens, 13);
+        assert_eq!(stat.total_cost, "4.000000");
+        assert_eq!(stat.avg_cost_per_request, "1.000000");
+        Ok(())
+    }
+
+    #[test]
+    fn provider_stats_keep_source_identity_for_matching_display_names() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config)
+                 VALUES ('legacy-provider', 'claude', 'Shared Provider', '{}')",
+                [],
+            )?;
+            insert_usage_log(
+                &conn,
+                "legacy-provider-row",
+                "claude",
+                "legacy-provider",
+                "model-a",
+                "proxy",
+                1000,
+                10,
+                5,
+                0,
+                0,
+                200,
+                "0.500000",
+            )?;
+            insert_hermes_delta(
+                &conn,
+                "hermes-provider-row",
+                "default",
+                "Shared Provider",
+                "model-a",
+                "task-a",
+                900,
+                1100,
+                2,
+                20,
+                10,
+                3,
+                1,
+                0,
+                "0.250000",
+            )?;
+        }
+
+        let stats = db.get_provider_stats(None, None, None, None, None)?;
+        assert_eq!(stats.len(), 2);
+        let legacy = stats
+            .iter()
+            .find(|stat| stat.provider_id == "legacy-provider")
+            .expect("legacy provider statistic");
+        assert_eq!(legacy.provider_name, "Shared Provider");
+        let hermes = stats
+            .iter()
+            .find(|stat| stat.provider_id == "hermes:Shared Provider")
+            .expect("Hermes provider statistic");
+        assert_eq!(hermes.provider_name, "Shared Provider");
+        Ok(())
+    }
+
+    #[test]
+    fn request_detail_queries_never_return_hermes_aggregate_rows() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_hermes_delta(
+                &conn,
+                "aggregate-row",
+                "default",
+                "provider-a",
+                "model-a",
+                "task-a",
+                1000,
+                1100,
+                3,
+                100,
+                50,
+                20,
+                10,
+                7,
+                "0.125000",
+            )?;
+            let proxy_rows: i64 =
+                conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
+                    row.get(0)
+                })?;
+            assert_eq!(proxy_rows, 0);
+        }
+
+        let all_logs = db.get_request_logs(&LogFilters::default(), 0, 20)?;
+        assert_eq!(all_logs.total, 0);
+        assert!(all_logs.data.is_empty());
+        assert!(db.get_request_detail("aggregate-row")?.is_none());
+        assert!(db
+            .get_request_detail("hermes:provider-a:model-a")?
+            .is_none());
         Ok(())
     }
 }

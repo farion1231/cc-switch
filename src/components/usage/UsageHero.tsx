@@ -11,6 +11,7 @@ import {
   ArrowDownToLine,
   ArrowUpFromLine,
   Database,
+  BrainCircuit,
   Info,
   Loader2,
   Sparkles,
@@ -35,6 +36,8 @@ interface UsageHeroProps {
   appType?: string;
   providerName?: string;
   model?: string;
+  profileName?: string;
+  task?: string;
   refreshIntervalMs: number;
 }
 
@@ -69,7 +72,17 @@ const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
     accent: "text-purple-600 dark:text-purple-400",
     iconBg: "bg-purple-500/10",
   },
+  hermes: {
+    accent: "text-violet-600 dark:text-violet-400",
+    iconBg: "bg-violet-500/10",
+  },
 };
+
+function countLabelKey(appType?: string): string {
+  if (appType === "hermes") return "usage.countLabel.hermesApiCalls";
+  if (!appType || appType === "all") return "usage.countLabel.mixedActivity";
+  return "usage.countLabel.requests";
+}
 
 /**
  * Combine per-app summaries into a single rolled-up summary.
@@ -87,6 +100,13 @@ function aggregateSummaries(items: UsageSummary[]): UsageSummary {
   let output = 0;
   let cacheCreation = 0;
   let cacheRead = 0;
+  let cacheWrite = 0;
+  let reasoning = 0;
+  let realTotal = 0;
+  let hasCacheWrite = false;
+  let hasReasoning = false;
+  let hasStatusAvailability = false;
+  let statusAvailable = true;
 
   for (const s of items) {
     totalRequests += s.totalRequests;
@@ -96,10 +116,23 @@ function aggregateSummaries(items: UsageSummary[]): UsageSummary {
     output += s.totalOutputTokens;
     cacheCreation += s.totalCacheCreationTokens;
     cacheRead += s.totalCacheReadTokens;
+    realTotal += s.realTotalTokens;
+    if (s.totalCacheWriteTokens != null) {
+      cacheWrite += s.totalCacheWriteTokens;
+      hasCacheWrite = true;
+    }
+    if (s.totalReasoningTokens != null) {
+      reasoning += s.totalReasoningTokens;
+      hasReasoning = true;
+    }
+    if (s.statusAvailable != null) {
+      hasStatusAvailability = true;
+      statusAvailable = statusAvailable && s.statusAvailable;
+    }
   }
 
-  const cacheableInput = input + cacheCreation + cacheRead;
-  return {
+  const cacheableInput = input + cacheCreation + cacheWrite + cacheRead;
+  const aggregate: UsageSummary = {
     totalRequests,
     totalCost: totalCostNum.toFixed(6),
     totalInputTokens: input,
@@ -107,9 +140,13 @@ function aggregateSummaries(items: UsageSummary[]): UsageSummary {
     totalCacheCreationTokens: cacheCreation,
     totalCacheReadTokens: cacheRead,
     successRate: totalRequests > 0 ? (successCount / totalRequests) * 100 : 0,
-    realTotalTokens: input + output + cacheCreation + cacheRead,
+    realTotalTokens: realTotal,
     cacheHitRate: cacheableInput > 0 ? cacheRead / cacheableInput : 0,
   };
+  if (hasCacheWrite) aggregate.totalCacheWriteTokens = cacheWrite;
+  if (hasReasoning) aggregate.totalReasoningTokens = reasoning;
+  if (hasStatusAvailability) aggregate.statusAvailable = statusAvailable;
+  return aggregate;
 }
 
 function pickSummary(
@@ -167,6 +204,8 @@ export function UsageHero({
   appType,
   providerName,
   model,
+  profileName,
+  task,
   refreshIntervalMs,
 }: UsageHeroProps) {
   const { t, i18n } = useTranslation();
@@ -174,7 +213,7 @@ export function UsageHero({
 
   const { data, isLoading } = useUsageSummaryByApp(
     range,
-    { providerName, model },
+    { providerName, model, profileName, task },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },
@@ -196,27 +235,75 @@ export function UsageHero({
   const cacheWriteState = deriveCacheWriteState(
     appType ? [appType] : allApps.map((a) => a.appType),
   );
+  const includesHermes =
+    appType === "hermes" ||
+    (appType == null && allApps.some((app) => app.appType === "hermes"));
 
   const input = summary?.totalInputTokens ?? 0;
   const output = summary?.totalOutputTokens ?? 0;
-  const cacheWrite = summary?.totalCacheCreationTokens ?? 0;
+  const legacyCacheCreation =
+    appType == null
+      ? allApps.reduce(
+          (total, app) =>
+            app.appType === "hermes"
+              ? total
+              : total + app.summary.totalCacheCreationTokens,
+          0,
+        )
+      : summary?.totalCacheCreationTokens;
+  const hermesApps =
+    appType == null ? allApps.filter((app) => app.appType === "hermes") : [];
+  const isMixedHermesSummary =
+    appType == null &&
+    hermesApps.length > 0 &&
+    allApps.some((app) => app.appType !== "hermes");
+  const hasMissingHermesCacheWrite =
+    isMixedHermesSummary &&
+    hermesApps.some((app) => app.summary.totalCacheWriteTokens == null);
+  const hasReportedHermesCacheWrite = hermesApps.some(
+    (app) => app.summary.totalCacheWriteTokens != null,
+  );
+  const reportedHermesCacheWrite =
+    appType == null
+      ? hermesApps.reduce(
+          (total, app) => total + (app.summary.totalCacheWriteTokens ?? 0),
+          0,
+        )
+      : summary?.totalCacheWriteTokens;
+  const cacheWrite = includesHermes
+    ? (appType == null ? (legacyCacheCreation ?? 0) : 0) +
+      (reportedHermesCacheWrite ?? 0)
+    : legacyCacheCreation;
+  const cacheWriteAvailable = includesHermes
+    ? appType == null
+      ? isMixedHermesSummary || hasReportedHermesCacheWrite
+      : summary?.totalCacheWriteTokens != null
+    : true;
   const cacheRead = summary?.totalCacheReadTokens ?? 0;
+  const reasoningTokens = summary?.totalReasoningTokens;
   const realTotal = summary?.realTotalTokens ?? 0;
   const hitRate = summary?.cacheHitRate ?? 0;
   const totalCost = parseFiniteNumber(summary?.totalCost);
   const requests = summary?.totalRequests ?? 0;
+  const countLabel = t(countLabelKey(appType));
 
   const cacheWriteDisplay = {
-    value:
-      cacheWriteState === "na" ? "N/A" : formatTokensShort(cacheWrite, lang),
-    muted: cacheWriteState === "na",
+    value: !cacheWriteAvailable
+      ? t("usage.hermes.notAvailable")
+      : cacheWriteState === "na"
+        ? "N/A"
+        : formatTokensShort(cacheWrite ?? 0, lang),
+    muted:
+      cacheWriteState === "na" ||
+      !cacheWriteAvailable ||
+      hasMissingHermesCacheWrite,
     tooltip:
       cacheWriteState === "na"
         ? t(
             "usage.cacheWriteNotReported",
             "OpenAI 协议不区分缓存写入，仅上报缓存命中",
           )
-        : cacheWriteState === "partial"
+        : cacheWriteState === "partial" || hasMissingHermesCacheWrite
           ? t(
               "usage.cacheWritePartial",
               "部分协议（如 OpenAI）不上报缓存写入，数值可能偏低",
@@ -288,7 +375,7 @@ export function UsageHero({
               <div className="flex items-center gap-5 bg-background/50 px-4 py-2.5 rounded-xl border border-border/40 shadow-sm">
                 <div className="flex flex-col">
                   <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
-                    {t("usage.totalRequests")}
+                    {countLabel}
                   </span>
                   <span className="font-semibold flex items-center gap-1.5 text-sm tabular-nums">
                     <Activity className="h-3.5 w-3.5 text-blue-500" />
@@ -308,7 +395,7 @@ export function UsageHero({
             </div>
 
             {/* Bottom row: Breakdown and Hit Rate */}
-            <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
               <MiniStat
                 icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
                 label={t("usage.freshInput", "新增输入")}
@@ -335,6 +422,14 @@ export function UsageHero({
                 value={formatTokensShort(cacheRead, lang)}
                 accent="text-emerald-500"
               />
+              {includesHermes && reasoningTokens != null && (
+                <MiniStat
+                  icon={<BrainCircuit className="h-3.5 w-3.5" />}
+                  label={t("usage.hermes.reasoningTokens")}
+                  value={formatTokensShort(reasoningTokens, lang)}
+                  accent="text-cyan-500"
+                />
+              )}
 
               <div className="col-span-2 lg:col-span-1 flex flex-col justify-center rounded-xl border border-border/40 bg-background/40 p-3 shadow-sm">
                 <div className="flex items-center justify-between text-[11px] mb-2">

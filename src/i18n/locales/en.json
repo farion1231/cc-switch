@@ -1508,13 +1508,35 @@
     "source": "Source",
     "requestsLabel": "requests",
     "costLabel": "total cost",
+    "countLabel": {
+      "requests": "Requests",
+      "hermesApiCalls": "Aggregate API calls",
+      "mixedActivity": "Counted activity"
+    },
+    "averageCostLabel": {
+      "perRequest": "Average Cost",
+      "perApiCall": "Average cost per API call",
+      "perActivity": "Average cost per counted activity"
+    },
     "appFilter": {
       "all": "All",
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "grokbuild": "Grok Build"
+      "grokbuild": "Grok Build",
+      "hermes": "Hermes"
+    },
+    "hermes": {
+      "profile": "Profile",
+      "profilePlaceholder": "All Profiles",
+      "task": "Task",
+      "taskPlaceholder": "All Tasks",
+      "precisionNotice": "The count is a delta of Hermes's cumulative api_call_count; it is not an exact physical HTTP request, retry, or fallback count.",
+      "syncWindowNotice": "Trend timestamps mark synchronization windows rather than exact request times.",
+      "requestDetailsUnavailable": "Hermes aggregate data has no per-request details, status codes, or latency facts.",
+      "reasoningTokens": "Reasoning",
+      "notAvailable": "Not reported"
     },
     "rawInputLabel": "Raw",
     "rebuildCodex": {
