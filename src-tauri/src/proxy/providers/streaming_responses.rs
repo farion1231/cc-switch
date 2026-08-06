@@ -837,6 +837,12 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                     tool_had_delta.insert(index);
 
                                     if tool_name_by_index.get(&index).map(String::as_str) == Some("Read") {
+                                        // Read arguments are buffered until `.done` so empty `pages`
+                                        // values can be removed before they reach Claude Code. Keep
+                                        // the downstream Anthropic stream alive while that buffering
+                                        // is in progress; otherwise a long but active upstream tool
+                                        // call looks idle to the client and trips its stream watchdog.
+                                        yield Ok(anthropic_sse("ping", &json!({"type":"ping"})));
                                         continue;
                                     }
 
@@ -1799,6 +1805,34 @@ mod tests {
         assert!(merged.contains("\"name\":\"Read\""));
         assert!(merged.contains("\"partial_json\":\"{\\\"file_path\\\":\\\"/tmp/demo.py\\\",\\\"limit\\\":2000,\\\"offset\\\":0}"));
         assert!(!merged.contains("\\\"pages\\\":\\\"\\\""));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_read_tool_emits_keepalive_while_buffering_args() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_read\",\"model\":\"gpt-5.5\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"fc_read\",\"type\":\"function_call\",\"call_id\":\"call_read\",\"name\":\"Read\"}}\n\n",
+            "event: response.function_call_arguments.delta\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_read\",\"delta\":\"{\\\"file_path\\\":\"}\n\n",
+            "event: response.function_call_arguments.delta\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_read\",\"delta\":\"\\\"/tmp/demo.py\\\"}\"}\n\n"
+        );
+
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(input))]);
+        let merged = create_anthropic_sse_stream_from_responses(upstream)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
+            .collect::<String>();
+
+        assert_eq!(merged.matches("event: ping").count(), 2);
+        assert_eq!(merged.matches("\"type\":\"ping\"").count(), 2);
+        assert!(!merged.contains("\"type\":\"input_json_delta\""));
+        assert!(merged.contains("event: error"));
+        assert!(merged.contains("stream_truncated"));
     }
 
     #[tokio::test]
