@@ -251,7 +251,6 @@ impl ProxyService {
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
             "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
             CLAUDE_TAKEOVER_HAIKU_MODEL,
-            false,
             haiku_model,
         );
         Self::push_claude_takeover_role_fields(
@@ -260,7 +259,6 @@ impl ProxyService {
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
             "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
             CLAUDE_TAKEOVER_SONNET_MODEL,
-            true,
             sonnet_model,
         );
         Self::push_claude_takeover_role_fields(
@@ -269,7 +267,6 @@ impl ProxyService {
             "ANTHROPIC_DEFAULT_OPUS_MODEL",
             "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
             CLAUDE_TAKEOVER_OPUS_MODEL,
-            true,
             opus_model,
         );
         Self::push_claude_takeover_role_fields(
@@ -278,7 +275,6 @@ impl ProxyService {
             "ANTHROPIC_DEFAULT_FABLE_MODEL",
             "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
             CLAUDE_TAKEOVER_FABLE_MODEL,
-            true,
             fable_model,
         );
         if let Some(subagent_model) = subagent_model {
@@ -293,7 +289,6 @@ impl ProxyService {
         model_key: &'static str,
         name_key: &'static str,
         takeover_model: &'static str,
-        supports_one_m: bool,
         upstream_model: Option<&str>,
     ) {
         let Some(upstream_model) = upstream_model else {
@@ -301,7 +296,7 @@ impl ProxyService {
         };
 
         let mut client_model = takeover_model.to_string();
-        if supports_one_m && Self::has_claude_one_m_marker(upstream_model) {
+        if Self::has_claude_one_m_marker(upstream_model) {
             client_model.push_str(CLAUDE_ONE_M_MARKER_FOR_CLIENT);
         }
         fields.push((model_key, client_model));
@@ -3433,6 +3428,52 @@ mod tests {
         );
         assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
         assert_env_str(env, "ANTHROPIC_API_KEY", None);
+    }
+
+    #[test]
+    fn claude_takeover_propagates_haiku_one_m_declaration() {
+        // Haiku 与其余档一致：上游模型带 [1M] 时，写给 Claude Code 的接管别名
+        // 也必须带上标记，否则该档仍按 200K 处理、表单上的勾选形同虚设。
+        let provider = Provider::with_id(
+            "gateway".to_string(),
+            "Gateway".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://gateway.example.com",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-5.2[1M]",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "GLM 5.2",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.2[1M]",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.2"
+                }
+            }),
+            None,
+        );
+
+        let mut live_config = provider.settings_config.clone();
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(|value| value.as_object())
+            .expect("env should exist");
+        assert_env_str(
+            env,
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            Some("claude-haiku-4-5[1M]"),
+        );
+        assert_env_str(env, "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME", Some("GLM 5.2"));
+        assert_env_str(
+            env,
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            Some("claude-sonnet-4-6[1M]"),
+        );
+        // 未声明 1M 的档不得被牵连。
+        assert_env_str(env, "ANTHROPIC_DEFAULT_OPUS_MODEL", Some("claude-opus-4-8"));
+        assert_env_str(env, "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME", Some("glm-5.2"));
     }
 
     #[test]
