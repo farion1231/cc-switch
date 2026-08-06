@@ -27,7 +27,9 @@ use super::{
         },
         streaming_codex_chat::create_responses_sse_stream_from_chat_with_context,
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
-        streaming_responses::create_anthropic_sse_stream_from_responses,
+        streaming_retry::{
+            create_resilient_anthropic_sse_stream_from_responses, StreamReconnector,
+        },
         transform, transform_codex_anthropic, transform_codex_chat,
         transform_codex_responses_namespace, transform_gemini, transform_responses,
     },
@@ -220,6 +222,7 @@ async fn handle_messages_for_app(
     };
 
     let connection_guard = result.connection_guard.take();
+    let stream_reconnect = result.stream_reconnect.take();
     ctx.outbound_model = result.outbound_model.take();
     ctx.provider = result.provider;
     let api_format = result
@@ -243,6 +246,7 @@ async fn handle_messages_for_app(
             is_stream,
             &api_format,
             connection_guard,
+            stream_reconnect,
         )
         .await;
     }
@@ -372,6 +376,7 @@ fn spawn_claude_usage_log(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_claude_transform(
     response: super::hyper_client::ProxyResponse,
     ctx: &RequestContext,
@@ -380,6 +385,7 @@ async fn handle_claude_transform(
     is_stream: bool,
     api_format: &str,
     connection_guard: Option<ActiveConnectionGuard>,
+    stream_reconnect: Option<StreamReconnector>,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
     let is_codex_oauth = ctx
@@ -414,7 +420,14 @@ async fn handle_claude_transform(
         let sse_stream: Box<
             dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin,
         > = if api_format == "openai_responses" {
-            Box::new(Box::pin(create_anthropic_sse_stream_from_responses(stream)))
+            // Responses 上游会在提交后中途掐断 SSE；带重连工厂的包装器在下游
+            // 尚未收到实质内容时自动重试（上限 5 次），其余场景行为不变。
+            Box::new(Box::pin(
+                create_resilient_anthropic_sse_stream_from_responses(
+                    Box::pin(stream),
+                    stream_reconnect,
+                ),
+            ))
         } else if api_format == "gemini_native" {
             Box::new(Box::pin(create_anthropic_sse_stream_from_gemini(
                 stream,

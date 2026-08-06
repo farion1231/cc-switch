@@ -119,3 +119,4 @@ strip = "symbols"
 [dev-dependencies]
 serial_test = "3"
 tempfile = "3"
+tokio = { version = "1", features = ["test-util"] }

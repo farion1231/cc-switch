@@ -24,7 +24,7 @@ fn response_object_from_event(data: &Value) -> &Value {
     data.get("response").unwrap_or(data)
 }
 
-fn anthropic_sse(event_name: &str, payload: &Value) -> Bytes {
+pub(crate) fn anthropic_sse(event_name: &str, payload: &Value) -> Bytes {
     Bytes::from(format!(
         "event: {event_name}\ndata: {}\n\n",
         serde_json::to_string(payload).unwrap_or_default()
@@ -50,7 +50,7 @@ fn responses_error_details(data: &Value, fallback: &str) -> (String, String) {
     (message, error_type)
 }
 
-fn anthropic_error_sse(message: &str, error_type: &str) -> Bytes {
+pub(crate) fn anthropic_error_sse(message: &str, error_type: &str) -> Bytes {
     anthropic_sse(
         "error",
         &json!({
@@ -58,6 +58,25 @@ fn anthropic_error_sse(message: &str, error_type: &str) -> Bytes {
             "error": {"type": error_type, "message": message}
         }),
     )
+}
+
+/// SSE 注释行标记：仅由本转换器在可安全重发整个请求的两种中断场景
+/// （传输层错误、无终止事件的过早 EOF）下随错误事件一起发出。
+///
+/// streaming_retry 依据该标记判定可重试。不能依据 error.type 判定：上游
+/// 语义性失败的 type 取自上游可控字段（见 `responses_error_details`），
+/// 恰好叫 "stream_error" 时会被误当成传输中断而错误地重试。
+/// SSE 规范规定以冒号开头的行是注释，客户端解析器会忽略。
+pub(crate) const RETRYABLE_STREAM_MARKER: &str = ": cc-switch-retryable-stream-interruption";
+
+/// 带 [`RETRYABLE_STREAM_MARKER`] 注释行的错误事件。
+pub(crate) fn retryable_stream_error_sse(message: &str, error_type: &str) -> Bytes {
+    let event = anthropic_error_sse(message, error_type);
+    let mut bytes = Vec::with_capacity(RETRYABLE_STREAM_MARKER.len() + 1 + event.len());
+    bytes.extend_from_slice(RETRYABLE_STREAM_MARKER.as_bytes());
+    bytes.push(b'\n');
+    bytes.extend_from_slice(&event);
+    Bytes::from(bytes)
 }
 
 /// Convert a compatible gateway's non-streaming Responses JSON into a complete
@@ -1461,17 +1480,12 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                     }
                 }
                 Err(e) => {
-                    log::error!("Responses stream error: {e}");
-                    let error_event = json!({
-                        "type": "error",
-                        "error": {
-                            "type": "stream_error",
-                            "message": format!("Stream error: {e}")
-                        }
-                    });
-                    let sse = format!("event: error\ndata: {}\n\n",
-                        serde_json::to_string(&error_event).unwrap_or_default());
-                    yield Ok(Bytes::from(sse));
+                    let chain = crate::proxy::error::error_chain_message(&e);
+                    log::error!("Responses stream error: {chain}");
+                    yield Ok(retryable_stream_error_sse(
+                        &format!("Stream error: {chain}"),
+                        "stream_error",
+                    ));
                     terminated = true;
                     break;
                 }
@@ -1526,7 +1540,7 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
             } else {
                 // A truncated tool/reasoning block cannot be safely finalized: tool
                 // JSON may be partial and thinking may be missing its signature.
-                yield Ok(anthropic_error_sse(
+                yield Ok(retryable_stream_error_sse(
                     "Responses upstream stream ended before a terminal event",
                     "stream_truncated",
                 ));

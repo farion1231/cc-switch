@@ -396,6 +396,9 @@ pub fn anthropic_to_responses(
     // - store: 必须显式为 false（ChatGPT 消费级后端不允许服务端持久化）
     // - include: 必须包含 "reasoning.encrypted_content"，
     //   否则多轮 reasoning 中间态会丢失（无服务端状态 + 无加密回传 = 上下文断链）
+    // - reasoning.summary: 已有 reasoning 对象（客户端开启 thinking）时兜底为
+    //   "auto"。不请求摘要时推理模型隐藏思考全程零 SSE 事件，长思考会被下游
+    //   空闲计时器误判为断流；摘要增量同时让客户端实时看到思考状态
     // - max_output_tokens / temperature / top_p: 必须删除
     //   （codex-rs 结构体根本没有这三个字段，OpenAI 自己的客户端不发它们）
     // - instructions / tools / parallel_tool_calls: 必填字段，缺则兜底默认值
@@ -423,6 +426,21 @@ pub fn anthropic_to_responses(
             includes.push(json!(REASONING_MARKER));
         }
         result["include"] = json!(includes);
+
+        // —— reasoning.summary: 请求推理摘要，让隐藏思考期间有事件可转发 ——
+        // 不请求 summary 时，推理模型思考期间 Responses SSE 没有任何应用事件，
+        // 一次困难问题的思考可静默数分钟；下游各级空闲计时器（本代理
+        // `create_logged_passthrough_stream` 的 120s 超时、Claude Code 的字节级
+        // stream watchdog）会把这种静默误判为断流并掐断请求。请求 "auto" 后
+        // 摘要增量由转换器映射为 thinking_delta，既保持字节流动又让客户端
+        // 实时显示思考状态。该字段在 codex-rs `Reasoning { effort, summary }`
+        // 协议契约内，ChatGPT 后端对 GPT-5 系推理模型均接受
+        // （官方模型目录 `supports_reasoning_summary_parameter` 默认为 true）。
+        if let Some(reasoning) = result.get_mut("reasoning").and_then(Value::as_object_mut) {
+            reasoning
+                .entry("summary".to_string())
+                .or_insert(json!("auto"));
+        }
 
         if let Some(obj) = result.as_object_mut() {
             // —— 删除 ChatGPT 反代不接受的字段 ——
@@ -2002,6 +2020,54 @@ mod tests {
 
         // include 必须包含 reasoning.encrypted_content（无服务端状态下保持多轮 reasoning）
         assert_eq!(result["include"], json!(["reasoning.encrypted_content"]));
+    }
+
+    #[test]
+    fn test_codex_oauth_requests_reasoning_summary() {
+        // 思考开启时必须请求 reasoning.summary："auto" 让隐藏思考期间有摘要
+        // 增量流下来，否则上游整段静默，下游空闲计时器会把长思考误判为断流。
+        let input = json!({
+            "model": "gpt-5.6",
+            "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, true, false).unwrap();
+
+        assert_eq!(result["reasoning"]["effort"], "xhigh");
+        assert_eq!(result["reasoning"]["summary"], "auto");
+    }
+
+    #[test]
+    fn test_codex_oauth_thinking_disabled_omits_reasoning_entirely() {
+        // thinking 未开启 → 不注入 reasoning 对象，自然也没有 summary。
+        let input = json!({
+            "model": "gpt-5.6",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, true, false).unwrap();
+
+        assert!(result.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn test_non_codex_omits_reasoning_summary() {
+        // 回归护栏：通用 Responses 供应商不注入 summary——部分后端（或未通过
+        // 组织验证的 OpenAI 账号）会拒绝该参数，维持今日行为。
+        let input = json!({
+            "model": "gpt-5.6",
+            "max_tokens": 1024,
+            "thinking": {"type": "adaptive"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+
+        assert_eq!(result["reasoning"]["effort"], "xhigh");
+        assert!(result["reasoning"].get("summary").is_none());
     }
 
     #[test]
