@@ -1600,12 +1600,15 @@ fn codex_cli_candidates() -> Vec<PathBuf> {
         push_codex_cli_candidate(&mut candidates, &mut seen, PathBuf::from(candidate));
     }
 
+    // 桌面自带 codex 二进制的候选始终记录（与 PATH 候选一致，不要求此刻存在）：
+    // 消费方对无法启动的候选会跳过，存在性在运行时判断。若按存在性过滤，
+    // 干净环境/CI 上就会漏掉这条路径，检测不到桌面版自带的 Codex。
     #[cfg(target_os = "macos")]
     for candidate in [
         "/Applications/ChatGPT.app/Contents/Resources/codex",
         "/Applications/ChatGPT Classic.app/Contents/Resources/codex",
     ] {
-        push_existing_codex_cli_candidate(&mut candidates, &mut seen, PathBuf::from(candidate));
+        push_codex_cli_candidate(&mut candidates, &mut seen, PathBuf::from(candidate));
     }
 
     push_env_codex_cli_candidates(&mut candidates, &mut seen);
