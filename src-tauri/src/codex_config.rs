@@ -554,11 +554,16 @@ fn codex_catalog_model_entry(
     priority: usize,
     profile: CodexCatalogToolProfile,
     default_context_window: u64,
+    multi_agent_v2: bool,
 ) -> Value {
     let mut entry = template.clone();
     let Some(entry_obj) = entry.as_object_mut() else {
         return json!({});
     };
+
+    // The bundled/template entry is not an authority for provider capability.
+    // Clear any stale marker before applying the explicit opt-in below.
+    entry_obj.remove("multi_agent_version");
 
     let display_name = spec.display_name.as_deref().unwrap_or(&spec.model);
     let context_window = spec.context_window.unwrap_or(default_context_window);
@@ -572,6 +577,13 @@ fn codex_catalog_model_entry(
     entry_obj.insert("service_tiers".to_string(), json!([]));
     entry_obj.insert("availability_nux".to_string(), Value::Null);
     entry_obj.insert("upgrade".to_string(), Value::Null);
+
+    // V2 is an opt-in provider capability. A ProxyChat wire format alone does
+    // not prove that the upstream accepts the V2 tool/event contract, so the
+    // default stays compatible with ordinary third-party Chat gateways.
+    if multi_agent_v2 && profile == CodexCatalogToolProfile::ProxyChat {
+        entry_obj.insert("multi_agent_version".to_string(), json!("v2"));
+    }
 
     // Image support is a model capability, not a tool-profile capability.
     // Trust hidden preset metadata first, then the confirmed text-only registry;
@@ -1183,15 +1195,49 @@ fn codex_model_catalog_from_specs(
     profile: CodexCatalogToolProfile,
     default_context_window: u64,
 ) -> Value {
+    codex_model_catalog_from_specs_with_capabilities(
+        specs,
+        template,
+        profile,
+        default_context_window,
+        false,
+    )
+}
+
+fn codex_model_catalog_from_specs_with_capabilities(
+    specs: &[CodexCatalogModelSpec],
+    template: &Value,
+    profile: CodexCatalogToolProfile,
+    default_context_window: u64,
+    multi_agent_v2: bool,
+) -> Value {
     let entries: Vec<Value> = specs
         .iter()
         .enumerate()
         .map(|(index, spec)| {
-            codex_catalog_model_entry(template, spec, index, profile, default_context_window)
+            codex_catalog_model_entry(
+                template,
+                spec,
+                index,
+                profile,
+                default_context_window,
+                multi_agent_v2,
+            )
         })
         .collect();
 
     json!({ "models": entries })
+}
+
+fn codex_catalog_multi_agent_v2_enabled(
+    settings: &Value,
+    profile: CodexCatalogToolProfile,
+) -> bool {
+    profile == CodexCatalogToolProfile::ProxyChat
+        && settings
+            .get("codexMultiAgentVersion")
+            .and_then(Value::as_str)
+            == Some("v2")
 }
 
 fn codex_model_catalog_from_settings(
@@ -1230,11 +1276,12 @@ fn codex_model_catalog_from_settings(
         }
         CodexCatalogToolProfile::ProxyChat => load_codex_model_catalog_template()?,
     };
-    Ok(Some(codex_model_catalog_from_specs(
+    Ok(Some(codex_model_catalog_from_specs_with_capabilities(
         &specs,
         &template,
         profile,
         default_context_window,
+        codex_catalog_multi_agent_v2_enabled(settings, profile),
     )))
 }
 
@@ -1301,6 +1348,13 @@ fn set_codex_native_web_search_field(config_text: &str, disable: bool) -> Result
 
 /// Generate Codex `model_catalog_json` from provider settings and inject/remove
 /// the top-level TOML field that points Codex to the generated file.
+/// The V2 multi-agent protocol is opt-in through the provider setting
+/// `codexMultiAgentVersion = "v2"`; ordinary ProxyChat providers stay on the
+/// compatible catalog shape until their upstream is verified end to end.
+///
+/// Codex reads this catalog when it starts a new task. Existing or resumed
+/// tasks may retain the multi-agent protocol recorded in their session history;
+/// this path deliberately does not rewrite session files or force a migration.
 pub fn prepare_codex_config_text_with_model_catalog(
     settings: &Value,
     config_text: &str,
@@ -2362,6 +2416,99 @@ mod tests {
     }
 
     #[test]
+    fn proxy_chat_multi_agent_v2_requires_explicit_provider_capability() {
+        assert!(!codex_catalog_multi_agent_v2_enabled(
+            &json!({"apiFormat": "openai_chat"}),
+            CodexCatalogToolProfile::ProxyChat
+        ));
+        assert!(codex_catalog_multi_agent_v2_enabled(
+            &json!({
+                "apiFormat": "openai_chat",
+                "codexMultiAgentVersion": "v2"
+            }),
+            CodexCatalogToolProfile::ProxyChat
+        ));
+        assert!(!codex_catalog_multi_agent_v2_enabled(
+            &json!({"codexMultiAgentVersion": "v2"}),
+            CodexCatalogToolProfile::NativeResponses
+        ));
+        assert!(!codex_catalog_multi_agent_v2_enabled(
+            &json!({"codexMultiAgentVersion": "v2"}),
+            CodexCatalogToolProfile::Anthropic
+        ));
+    }
+
+    #[test]
+    fn multi_agent_version_template_marker_is_removed_before_capability_insert() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [{ "model": "LongCat-2.0", "displayName": "LongCat-2.0" }]
+            }
+        });
+        let specs = codex_catalog_model_specs(&settings);
+        let template = json!({
+            "slug": "gpt-5.5",
+            "multi_agent_version": "v2"
+        });
+
+        let proxy_default = codex_model_catalog_from_specs_with_capabilities(
+            &specs,
+            &template,
+            CodexCatalogToolProfile::ProxyChat,
+            128_000,
+            false,
+        );
+        assert!(proxy_default["models"][0]
+            .get("multi_agent_version")
+            .is_none());
+
+        let proxy_enabled = codex_model_catalog_from_specs_with_capabilities(
+            &specs,
+            &template,
+            CodexCatalogToolProfile::ProxyChat,
+            128_000,
+            true,
+        );
+        assert_eq!(
+            proxy_enabled["models"][0]["multi_agent_version"],
+            json!("v2")
+        );
+
+        for profile in [
+            CodexCatalogToolProfile::NativeResponses,
+            CodexCatalogToolProfile::Anthropic,
+        ] {
+            let catalog = codex_model_catalog_from_specs_with_capabilities(
+                &specs, &template, profile, 128_000, true,
+            );
+            assert!(
+                catalog["models"][0].get("multi_agent_version").is_none(),
+                "{profile:?} must remove a stale template marker"
+            );
+        }
+    }
+
+    #[test]
+    fn provider_roundtrip_preserves_codex_multi_agent_capability() {
+        let provider = crate::provider::Provider::with_id(
+            "longcat".to_string(),
+            "LongCat".to_string(),
+            json!({
+                "apiFormat": "openai_chat",
+                "codexMultiAgentVersion": "v2"
+            }),
+            None,
+        );
+        let encoded = serde_json::to_vec(&provider).expect("serialize provider");
+        let decoded: crate::provider::Provider =
+            serde_json::from_slice(&encoded).expect("deserialize provider");
+        assert_eq!(
+            decoded.settings_config["codexMultiAgentVersion"],
+            json!("v2")
+        );
+    }
+
+    #[test]
     fn unified_session_bucket_injects_for_empty_official_config() {
         let injected = inject_codex_unified_session_bucket("").expect("inject");
         let doc: toml::Table = toml::from_str(&injected).expect("parse injected config");
@@ -3240,6 +3387,7 @@ base_url = "https://production.api/v1"
                     "personality_pragmatic": ""
                 }
             },
+            "multi_agent_version": "v2",
             "additional_speed_tiers": ["fast"],
             "service_tiers": [
                 {
@@ -3317,6 +3465,13 @@ base_url = "https://production.api/v1"
             "custom catalog entries should keep the gpt-5.5 agent template"
         );
         assert_eq!(
+            models[0]
+                .get("multi_agent_version")
+                .and_then(|value| value.as_str()),
+            None,
+            "proxy-chat catalogs must keep v2 disabled until the provider proves support"
+        );
+        assert_eq!(
             models[0].get("additional_speed_tiers"),
             Some(&json!([])),
             "generated third-party entries should not inherit OpenAI speed tiers"
@@ -3327,6 +3482,122 @@ base_url = "https://production.api/v1"
                 .is_some_and(|value| value.is_null()),
             "generated third-party entries should not inherit GPT-5.5 launch messaging"
         );
+    }
+
+    #[test]
+    fn proxy_chat_catalog_v2_is_scoped_to_openai_chat_provider_path() {
+        let settings = json!({
+            "apiFormat": "openai_chat",
+            "codexMultiAgentVersion": "v2",
+            "modelCatalog": {
+                "models": [
+                    { "model": "LongCat-2.0", "displayName": "LongCat-2.0" },
+                    { "model": "LongCat-2.0-fast", "displayName": "LongCat-2.0 Fast" }
+                ]
+            }
+        });
+        let provider = crate::provider::Provider::with_id(
+            "longcat".to_string(),
+            "LongCat".to_string(),
+            settings.clone(),
+            None,
+        );
+        let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(&provider);
+        assert_eq!(
+            profile,
+            CodexCatalogToolProfile::ProxyChat,
+            "openai_chat providers must use the proxy-chat catalog path"
+        );
+
+        let proxy_catalog = codex_model_catalog_from_settings(&settings, "", profile)
+            .expect("openai_chat catalog generation should not error")
+            .expect("non-empty LongCat modelCatalog must yield a catalog");
+        let proxy_models = proxy_catalog["models"]
+            .as_array()
+            .expect("proxy models array");
+        assert_eq!(proxy_models.len(), 2);
+        assert!(proxy_models.iter().all(|entry| {
+            entry.get("multi_agent_version").and_then(Value::as_str) == Some("v2")
+        }));
+
+        for native_profile in [
+            CodexCatalogToolProfile::NativeResponses,
+            CodexCatalogToolProfile::Anthropic,
+        ] {
+            let catalog = codex_model_catalog_from_settings(&settings, "", native_profile)
+                .expect("non-proxy catalog generation should not error")
+                .expect("non-empty modelCatalog must yield a catalog");
+            let models = catalog["models"].as_array().expect("models array");
+            assert!(
+                models
+                    .iter()
+                    .all(|entry| entry.get("multi_agent_version").is_none()),
+                "{native_profile:?} must not inherit the ProxyChat-only v2 marker"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn proxy_chat_catalog_writes_v2_to_isolated_codex_home() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        let temp_home = tempfile::tempdir().expect("create isolated Codex home");
+        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp_home.path());
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let codex_dir = temp_home.path().join(".codex");
+            std::fs::create_dir_all(&codex_dir).expect("create isolated .codex directory");
+
+            // Seed a sanitized template so this test never invokes the real Codex CLI
+            // and never needs the user's auth.json.
+            let template = load_codex_model_template_static().expect("static Codex template");
+            std::fs::write(
+                codex_dir.join("models_cache.json"),
+                serde_json::to_vec(&json!({ "models": [template] }))
+                    .expect("serialize isolated model cache"),
+            )
+            .expect("write isolated model cache");
+
+            let settings = json!({
+                "apiFormat": "openai_chat",
+                "codexMultiAgentVersion": "v2",
+                "modelCatalog": {
+                    "models": [{ "model": "LongCat-2.0", "displayName": "LongCat-2.0" }]
+                }
+            });
+            let config_text = prepare_codex_config_text_with_model_catalog(
+                &settings,
+                "model_provider = \"custom\"\n",
+                CodexCatalogToolProfile::ProxyChat,
+            )
+            .expect("generate isolated ProxyChat config");
+
+            let catalog_path = codex_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+            let catalog: Value = serde_json::from_slice(
+                &std::fs::read(&catalog_path).expect("read generated isolated catalog"),
+            )
+            .expect("parse generated isolated catalog");
+            let model = &catalog["models"][0];
+            assert_eq!(
+                model["slug"].as_str(),
+                Some("LongCat-2.0"),
+                "isolated catalog must contain the LongCat model"
+            );
+            assert_eq!(
+                model["multi_agent_version"].as_str(),
+                Some("v2"),
+                "isolated ProxyChat catalog must persist the UI-compatible v2 marker"
+            );
+            assert!(config_text.contains("model_catalog_json = \"cc-switch-model-catalog.json\""));
+        }));
+
+        match old_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        result.expect("isolated catalog test");
     }
 
     #[test]

@@ -18,6 +18,9 @@ doctest = false
 [features]
 default = []
 test-hooks = []
+# The repository release flow invokes `pnpm tauri build`, which enables this
+# feature so the production frontend is embedded in the packaged binary.
+custom-protocol = ["tauri/custom-protocol"]
 
 [build-dependencies]
 tauri-build = { version = "2.4.0", features = [] }

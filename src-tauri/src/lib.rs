@@ -1,3 +1,7 @@
+#[cfg(all(test, target_os = "windows"))]
+#[link(name = "resource", kind = "static")]
+extern "C" {}
+
 mod app_config;
 mod app_store;
 mod auto_launch;
