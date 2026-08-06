@@ -53,6 +53,10 @@ pub struct RequestContext {
     /// usage 归因的兜底顺序：上游响应回显 → outbound_model → request_model。
     /// 不能直接用 request_model 兜底：接管场景下它是映射前的客户端别名。
     pub outbound_model: Option<String>,
+    /// 最终出站请求携带的思考强度。由 forwarder 在请求体定稿后回传，供使用统计展示。
+    pub outbound_reasoning_effort: Option<String>,
+    /// 模型路由命中前的显式思考强度。用于使用统计显示映射关系。
+    pub outbound_reasoning_effort_source: Option<String>,
     /// 日志标签（如 "Claude"、"Codex"、"Gemini"）
     pub tag: &'static str,
     /// 应用类型字符串（如 "claude"、"codex"、"gemini"）
@@ -165,6 +169,8 @@ impl RequestContext {
             current_provider_id,
             request_model,
             outbound_model: None,
+            outbound_reasoning_effort: None,
+            outbound_reasoning_effort_source: None,
             tag,
             app_type_str,
             app_type,

@@ -14,6 +14,10 @@ export interface RequestLog {
   appType: string;
   model: string;
   requestModel?: string;
+  /** 最终出站请求携带的思考强度。 */
+  reasoningEffort?: string;
+  /** 模型路由命中前的思考强度；存在时日志显示映射关系。 */
+  reasoningEffortSource?: string;
   /** 写入时实际用于计价的模型名；路由接管 + request 计价模式下可能与 model 不同 */
   pricingModel?: string;
   costMultiplier: string;

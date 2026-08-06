@@ -21,6 +21,9 @@ import type {
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
+  ClaudeChatReasoning,
+  ClaudeChatReasoningSourceEffort,
+  ClaudeChatReasoningTargetEffort,
   PromptCacheRoutingMode,
   ClaudeApiKeyField,
 } from "@/types";
@@ -214,6 +217,50 @@ const normalizeCodexChatReasoningForSave = (
   };
 };
 
+const CLAUDE_CHAT_REASONING_SOURCE_EFFORTS =
+  new Set<ClaudeChatReasoningSourceEffort>([
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+  ]);
+
+const CLAUDE_CHAT_REASONING_TARGET_EFFORTS =
+  new Set<ClaudeChatReasoningTargetEffort>([
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "ultra",
+  ]);
+
+export const normalizeClaudeChatReasoningForSave = (
+  value?: ClaudeChatReasoning,
+): ClaudeChatReasoning | undefined => {
+  const effortMap: NonNullable<ClaudeChatReasoning["effortMap"]> = {};
+
+  for (const [source, target] of Object.entries(value?.effortMap ?? {})) {
+    if (
+      !CLAUDE_CHAT_REASONING_SOURCE_EFFORTS.has(
+        source as ClaudeChatReasoningSourceEffort,
+      ) ||
+      typeof target !== "string" ||
+      !CLAUDE_CHAT_REASONING_TARGET_EFFORTS.has(
+        target as ClaudeChatReasoningTargetEffort,
+      )
+    ) {
+      continue;
+    }
+
+    effortMap[source as ClaudeChatReasoningSourceEffort] =
+      target as ClaudeChatReasoningTargetEffort;
+  }
+
+  return Object.keys(effortMap).length > 0 ? { effortMap } : undefined;
+};
+
 type LocalProxyRequestOverridesBuildResult = ReturnType<
   typeof buildLocalProxyRequestOverrides
 >;
@@ -363,6 +410,7 @@ function ProviderFormFull({
       ),
     });
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
+    setClaudeChatReasoning(initialData?.meta?.claudeChatReasoning ?? {});
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
     setLocalProxyHeadersOverride(
@@ -547,6 +595,10 @@ function ProviderFormFull({
   const [codexChatReasoning, setCodexChatReasoning] =
     useState<CodexChatReasoning>(
       () => initialData?.meta?.codexChatReasoning ?? {},
+    );
+  const [claudeChatReasoning, setClaudeChatReasoning] =
+    useState<ClaudeChatReasoning>(
+      () => initialData?.meta?.claudeChatReasoning ?? {},
     );
   const [promptCacheRouting, setPromptCacheRouting] =
     useState<PromptCacheRoutingMode>(
@@ -1588,6 +1640,13 @@ function ProviderFormFull({
         localCodexApiFormat === "openai_chat"
           ? normalizeCodexChatReasoningForSave(codexChatReasoning)
           : undefined,
+      claudeChatReasoning:
+        appId === "claude" &&
+        category !== "official" &&
+        (localApiFormat === "openai_chat" ||
+          localApiFormat === "openai_responses")
+          ? normalizeClaudeChatReasoningForSave(claudeChatReasoning)
+          : undefined,
       promptCacheRouting:
         appId === "codex" &&
         category !== "official" &&
@@ -1774,6 +1833,9 @@ function ProviderFormFull({
             "openai_responses",
         );
       }
+      if (appId === "claude") {
+        setClaudeChatReasoning({});
+      }
       if (appId === "gemini") {
         resetGeminiConfig({}, {});
       }
@@ -1927,6 +1989,8 @@ function ProviderFormFull({
     } else {
       setLocalApiFormat("anthropic");
     }
+
+    setClaudeChatReasoning({});
 
     setLocalApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
     setLocalIsFullUrl(false);
@@ -2263,6 +2327,8 @@ function ProviderFormFull({
               speedTestEndpoints={speedTestEndpoints}
               apiFormat={localApiFormat}
               onApiFormatChange={handleApiFormatChange}
+              claudeChatReasoning={claudeChatReasoning}
+              onClaudeChatReasoningChange={setClaudeChatReasoning}
               apiKeyField={localApiKeyField}
               onApiKeyFieldChange={handleApiKeyFieldChange}
               isFullUrl={localIsFullUrl}

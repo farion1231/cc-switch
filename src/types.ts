@@ -151,6 +151,28 @@ export type CodexChatReasoningOutputFormat =
   | "reasoning_details"
   | "think_tags";
 
+export type ClaudeChatReasoningSourceEffort =
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max";
+
+export type ClaudeChatReasoningTargetEffort =
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max"
+  | "ultra";
+
+/** Claude Messages -> OpenAI-compatible reasoning-effort overrides. */
+export interface ClaudeChatReasoning {
+  effortMap?: Partial<
+    Record<ClaudeChatReasoningSourceEffort, ClaudeChatReasoningTargetEffort>
+  >;
+}
+
 export interface CodexChatReasoning {
   supportsThinking?: boolean;
   supportsEffort?: boolean;
@@ -215,6 +237,8 @@ export interface ProviderMeta {
   codexFastMode?: boolean;
   // Codex Responses -> Chat Completions reasoning capability metadata
   codexChatReasoning?: CodexChatReasoning;
+  // Claude Messages -> OpenAI-compatible reasoning-effort overrides
+  claudeChatReasoning?: ClaudeChatReasoning;
   // Codex → Anthropic path: emulate the Claude Code client (disabled by default; only an explicit true enables it)
   impersonateClaudeCode?: boolean;
   // Codex → Anthropic path: override the Anthropic max_tokens (output ceiling).

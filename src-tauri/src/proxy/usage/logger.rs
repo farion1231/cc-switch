@@ -16,6 +16,8 @@ struct UsageSemantic {
     app_type: String,
     provider_id: String,
     model: String,
+    reasoning_effort: Option<String>,
+    reasoning_effort_source: Option<String>,
     input_token_semantics: i64,
     input_tokens: u32,
     output_tokens: u32,
@@ -30,6 +32,8 @@ impl UsageSemantic {
             app_type: log.app_type.clone(),
             provider_id: log.provider_id.clone(),
             model: log.model.clone(),
+            reasoning_effort: log.reasoning_effort.clone(),
+            reasoning_effort_source: log.reasoning_effort_source.clone(),
             input_token_semantics,
             input_tokens: log.usage.input_tokens,
             output_tokens: log.usage.output_tokens,
@@ -44,6 +48,8 @@ impl UsageSemantic {
             &self.app_type,
             &self.provider_id,
             &self.model,
+            &self.reasoning_effort,
+            &self.reasoning_effort_source,
             self.input_token_semantics,
             self.input_tokens,
             self.output_tokens,
@@ -72,6 +78,10 @@ pub struct RequestLog {
     /// 用 model/request_model 猜——路由接管下三者可能各不相同。
     /// 错误行（未计价）为空字符串。
     pub pricing_model: String,
+    /// 最终出站请求携带的思考强度；不存在时保持 NULL，以兼容历史/非推理请求。
+    pub reasoning_effort: Option<String>,
+    /// 模型路由命中前的思考强度；仅用于显示 `来源 -> 最终值`。
+    pub reasoning_effort_source: Option<String>,
     pub usage: TokenUsage,
     pub cost: Option<CostBreakdown>,
     pub latency_ms: u64,
@@ -168,13 +178,13 @@ impl<'a> UsageLogger<'a> {
         };
         let sql = format!(
             "{insert_verb} INTO proxy_request_logs (
-                request_id, provider_id, app_type, model, request_model, pricing_model,
+                request_id, provider_id, app_type, model, request_model, pricing_model, reasoning_effort, reasoning_effort_source,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                 input_token_semantics,
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                 latency_ms, first_token_ms, status_code, error_message, session_id,
                 provider_type, is_streaming, cost_multiplier, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)"
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)"
         );
         let affected_rows = conn
             .execute(
@@ -186,6 +196,8 @@ impl<'a> UsageLogger<'a> {
                     log.model,
                     log.request_model,
                     log.pricing_model,
+                    log.reasoning_effort,
+                    log.reasoning_effort_source,
                     log.usage.input_tokens,
                     log.usage.output_tokens,
                     log.usage.cache_read_tokens,
@@ -227,7 +239,7 @@ impl<'a> UsageLogger<'a> {
         request_id: &str,
     ) -> Result<Option<(Option<String>, UsageSemantic)>, AppError> {
         conn.query_row(
-            "SELECT data_source, app_type, provider_id, model, input_token_semantics,
+            "SELECT data_source, app_type, provider_id, model, reasoning_effort, reasoning_effort_source, input_token_semantics,
                     input_tokens, output_tokens, cache_read_tokens,
                     cache_creation_tokens, status_code
              FROM proxy_request_logs WHERE request_id = ?1",
@@ -239,12 +251,14 @@ impl<'a> UsageLogger<'a> {
                         app_type: row.get(1)?,
                         provider_id: row.get(2)?,
                         model: row.get(3)?,
-                        input_token_semantics: row.get(4)?,
-                        input_tokens: row.get::<_, i64>(5)? as u32,
-                        output_tokens: row.get::<_, i64>(6)? as u32,
-                        cache_read_tokens: row.get::<_, i64>(7)? as u32,
-                        cache_creation_tokens: row.get::<_, i64>(8)? as u32,
-                        status_code: row.get::<_, i64>(9)? as u16,
+                        reasoning_effort: row.get(4)?,
+                        reasoning_effort_source: row.get(5)?,
+                        input_token_semantics: row.get(6)?,
+                        input_tokens: row.get::<_, i64>(7)? as u32,
+                        output_tokens: row.get::<_, i64>(8)? as u32,
+                        cache_read_tokens: row.get::<_, i64>(9)? as u32,
+                        cache_creation_tokens: row.get::<_, i64>(10)? as u32,
+                        status_code: row.get::<_, i64>(11)? as u16,
                     },
                 ))
             },
@@ -276,6 +290,8 @@ impl<'a> UsageLogger<'a> {
             request_model,
             // 错误行未经过计价，留空（回填的 has_usage 闸门也不会碰全 0 行）
             pricing_model: String::new(),
+            reasoning_effort: None,
+            reasoning_effort_source: None,
             usage: TokenUsage::default(),
             cost: None,
             latency_ms,
@@ -317,6 +333,8 @@ impl<'a> UsageLogger<'a> {
             request_model,
             // 错误行未经过计价，留空（回填的 has_usage 闸门也不会碰全 0 行）
             pricing_model: String::new(),
+            reasoning_effort: None,
+            reasoning_effort_source: None,
             usage: TokenUsage::default(),
             cost: None,
             latency_ms,
@@ -451,6 +469,8 @@ impl<'a> UsageLogger<'a> {
         model: String,
         request_model: String,
         pricing_model: String,
+        reasoning_effort: Option<String>,
+        reasoning_effort_source: Option<String>,
         usage: TokenUsage,
         cost_multiplier: Decimal,
         latency_ms: u64,
@@ -485,6 +505,8 @@ impl<'a> UsageLogger<'a> {
             model,
             request_model,
             pricing_model,
+            reasoning_effort,
+            reasoning_effort_source,
             usage,
             cost,
             latency_ms,
@@ -513,6 +535,8 @@ mod tests {
             model: "gpt-5.6".to_string(),
             request_model: "gpt-5.6".to_string(),
             pricing_model: "gpt-5.6".to_string(),
+            reasoning_effort: None,
+            reasoning_effort_source: None,
             usage: TokenUsage {
                 input_tokens,
                 output_tokens: 5,
@@ -534,7 +558,7 @@ mod tests {
     }
 
     #[test]
-    fn test_log_request() -> Result<(), AppError> {
+    fn test_log_request_persists_reasoning_effort() -> Result<(), AppError> {
         let db = Database::memory()?;
 
         // 插入测试定价
@@ -566,6 +590,8 @@ mod tests {
             "test-model".to_string(),
             "req-model".to_string(),
             "test-model".to_string(),
+            Some("xhigh".to_string()),
+            Some("max".to_string()),
             usage,
             Decimal::from(1),
             100,
@@ -578,15 +604,23 @@ mod tests {
 
         // 验证记录已插入
         let conn = crate::database::lock_conn!(db.conn);
-        let (count, request_model): (i64, String) = conn
+        let (count, request_model, reasoning_effort, reasoning_effort_source): (
+            i64,
+            String,
+            Option<String>,
+            Option<String>,
+        ) = conn
             .query_row(
-                "SELECT COUNT(*), request_model FROM proxy_request_logs WHERE request_id = 'req-123'",
+                "SELECT COUNT(*), request_model, reasoning_effort, reasoning_effort_source
+                 FROM proxy_request_logs WHERE request_id = 'req-123'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .unwrap();
         assert_eq!(count, 1);
         assert_eq!(request_model, "req-model");
+        assert_eq!(reasoning_effort.as_deref(), Some("xhigh"));
+        assert_eq!(reasoning_effort_source.as_deref(), Some("max"));
         Ok(())
     }
 
@@ -778,6 +812,8 @@ mod tests {
             model: "grok-4.5".to_string(),
             request_model: "grok-4.5".to_string(),
             pricing_model: String::new(),
+            reasoning_effort: None,
+            reasoning_effort_source: None,
             usage: TokenUsage::default(),
             cost: None,
             latency_ms: 1,
