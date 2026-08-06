@@ -444,7 +444,10 @@ export function HermesFormFields({
                   {isExpanded && (
                     <div className="ml-9 grid gap-3 border-l border-border-default pl-4 sm:grid-cols-2">
                       <div className="space-y-1">
-                        <Label htmlFor={`hermes-model-context-${modelKey}`}>
+                        <Label
+                          htmlFor={`hermes-model-context-${modelKey}`}
+                          className="text-xs font-normal text-muted-foreground"
+                        >
                           {t("hermes.form.contextLength", {
                             defaultValue: "上下文长度",
                           })}

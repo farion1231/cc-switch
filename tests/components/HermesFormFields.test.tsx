@@ -65,9 +65,9 @@ describe("HermesFormFields", () => {
     expect(contextLength).toHaveAttribute("type", "text");
     expect(contextLength).toHaveAttribute("inputmode", "numeric");
     expect(screen.getByText("上下文长度")).toHaveClass(
-      "text-sm",
-      "font-medium",
-      "leading-none",
+      "text-xs",
+      "font-normal",
+      "text-muted-foreground",
     );
     expect(screen.getByText(/第一个模型/)).toBeInTheDocument();
   });
