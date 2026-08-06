@@ -2,6 +2,7 @@
 
 use crate::app_config::AppType;
 use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
+use crate::provider::Provider;
 use crate::services::ProviderService;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -3324,10 +3325,30 @@ fn wsl_distro_from_path(path: &Path) -> Option<String> {
     }
 }
 
+const CLAUDE_PROVIDER_TERMINAL_REQUIRES_ROUTING: &str = "CLAUDE_PROVIDER_TERMINAL_REQUIRES_ROUTING";
+
+fn supports_provider_specific_terminal(app_type: &AppType, provider: &Provider) -> bool {
+    if *app_type != AppType::Claude || provider.category.as_deref() == Some("official") {
+        return true;
+    }
+
+    let requires_routing = provider.uses_managed_account_auth()
+        || provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.is_full_url)
+            .unwrap_or(false)
+        || crate::proxy::providers::claude_api_format_needs_transform(
+            crate::proxy::providers::get_claude_api_format(provider),
+        );
+
+    !requires_routing
+}
+
 /// 打开指定提供商的终端
 ///
 /// 根据提供商配置的环境变量启动一个带有该提供商特定设置的终端
-/// 无需检查是否为当前激活的提供商，任何提供商都可以打开终端
+/// 直连提供商无需成为当前激活项；必须经本地路由的 Claude 提供商会被拒绝
 #[allow(non_snake_case)]
 #[tauri::command]
 pub async fn open_provider_terminal(
@@ -3346,6 +3367,13 @@ pub async fn open_provider_terminal(
     let provider = providers
         .get(&providerId)
         .ok_or_else(|| format!("提供商 {providerId} 不存在"))?;
+
+    // A provider-specific terminal writes a standalone Claude settings file and therefore
+    // bypasses the local proxy. Refuse configurations that can only work through routing
+    // instead of launching a terminal that is guaranteed to fail or request a second login.
+    if !supports_provider_specific_terminal(&app_type, provider) {
+        return Err(CLAUDE_PROVIDER_TERMINAL_REQUIRES_ROUTING.to_string());
+    }
 
     // 从提供商配置中提取环境变量
     let config = &provider.settings_config;
@@ -4268,7 +4296,78 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::ProviderMeta;
     use std::path::{Path, PathBuf};
+
+    fn claude_terminal_provider(settings_config: serde_json::Value) -> Provider {
+        Provider::with_id(String::default(), String::default(), settings_config, None)
+    }
+
+    #[test]
+    fn provider_specific_terminal_blocks_managed_claude_accounts() {
+        let mut provider = claude_terminal_provider(serde_json::Value::Object(Default::default()));
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("codex_oauth".into()),
+            ..Default::default()
+        });
+
+        assert!(!supports_provider_specific_terminal(
+            &AppType::Claude,
+            &provider
+        ));
+    }
+
+    #[test]
+    fn provider_specific_terminal_blocks_claude_format_transformation() {
+        let mut provider = claude_terminal_provider(serde_json::Value::Object(Default::default()));
+        provider.meta = Some(ProviderMeta {
+            api_format: Some("openai_responses".into()),
+            ..Default::default()
+        });
+
+        assert!(!supports_provider_specific_terminal(
+            &AppType::Claude,
+            &provider
+        ));
+    }
+
+    #[test]
+    fn provider_specific_terminal_blocks_full_url_but_keeps_direct_behavior() {
+        let direct = claude_terminal_provider(serde_json::Value::Object(Default::default()));
+        assert!(supports_provider_specific_terminal(
+            &AppType::Claude,
+            &direct
+        ));
+
+        let mut full_url = direct.clone();
+        full_url.meta = Some(ProviderMeta {
+            is_full_url: Some(true),
+            ..Default::default()
+        });
+        assert!(!supports_provider_specific_terminal(
+            &AppType::Claude,
+            &full_url
+        ));
+        assert!(supports_provider_specific_terminal(
+            &AppType::Codex,
+            &full_url
+        ));
+    }
+
+    #[test]
+    fn provider_specific_terminal_keeps_official_claude_behavior() {
+        let mut provider = claude_terminal_provider(serde_json::Value::Object(Default::default()));
+        provider.category = Some("official".into());
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("codex_oauth".into()),
+            ..Default::default()
+        });
+
+        assert!(supports_provider_specific_terminal(
+            &AppType::Claude,
+            &provider
+        ));
+    }
 
     #[cfg(target_os = "windows")]
     #[test]

@@ -151,6 +151,7 @@
     "openTerminal": "打开终端",
     "terminalOpened": "终端已打开",
     "terminalOpenFailed": "打开终端失败",
+    "terminalRequiresRouting": "此供应商必须通过 Claude Code 本地路由使用。请启用代理接管并切换到该供应商，然后在常规终端中运行 claude。",
     "name": "供应商名称",
     "namePlaceholder": "例如：Claude 官方",
     "websiteUrl": "官网链接",

@@ -151,6 +151,7 @@
     "openTerminal": "ターミナルを開く",
     "terminalOpened": "ターミナルを開きました",
     "terminalOpenFailed": "ターミナルを開けませんでした",
+    "terminalRequiresRouting": "このプロバイダーには Claude Code のローカルルーティングが必要です。プロキシ引き継ぎを有効にしてこのプロバイダーへ切り替えた後、通常のターミナルで claude を実行してください。",
     "name": "プロバイダー名",
     "namePlaceholder": "例: Claude Official",
     "websiteUrl": "Web サイト URL",

@@ -9,6 +9,44 @@ import {
 
 export const CODEX_OFFICIAL_PROVIDER_ID = "codex-official";
 export const GROKBUILD_OFFICIAL_PROVIDER_ID = "grokbuild-official";
+const CLAUDE_TRANSFORM_API_FORMATS = new Set([
+  "openai_chat",
+  "openai_responses",
+  "gemini_native",
+]);
+
+function providerUsesManagedAccountAuth(provider: Provider): boolean {
+  if (isOAuthProviderType(provider.meta?.providerType)) return true;
+
+  const baseUrl = provider.settingsConfig?.env?.ANTHROPIC_BASE_URL;
+  return (
+    typeof baseUrl === "string" &&
+    (baseUrl.includes("chatgpt.com/backend-api/codex") ||
+      baseUrl.includes("githubcopilot.com"))
+  );
+}
+
+function claudeApiFormatNeedsTransform(provider: Provider): boolean {
+  const metaFormat = provider.meta?.apiFormat;
+  if (typeof metaFormat === "string") {
+    return CLAUDE_TRANSFORM_API_FORMATS.has(metaFormat);
+  }
+
+  const legacyFormat = provider.settingsConfig?.api_format;
+  if (typeof legacyFormat === "string") {
+    return CLAUDE_TRANSFORM_API_FORMATS.has(legacyFormat);
+  }
+
+  const legacyCompatMode = provider.settingsConfig?.openrouter_compat_mode;
+  if (typeof legacyCompatMode === "boolean") return legacyCompatMode;
+  if (typeof legacyCompatMode === "number") return legacyCompatMode !== 0;
+  if (typeof legacyCompatMode === "string") {
+    const normalized = legacyCompatMode.trim().toLowerCase();
+    return normalized === "true" || normalized === "1";
+  }
+
+  return false;
+}
 
 /** Keep the UI capability rule aligned with the Rust takeover policy. */
 export function supportsOfficialProxyTakeover(
@@ -25,7 +63,7 @@ export function supportsOfficialProxyTakeover(
 /**
  * 供应商在指定应用下是否必须开启路由接管才能正常工作（badge 与切换警告共用的权威谓词）。
  *
- * 权威信号是 `providerType`：托管 OAuth 供应商的凭据由本地代理按请求注入
+ * 权威信号是 `providerType`（旧数据兼容已知托管端点）：托管 OAuth 供应商的凭据由本地代理按请求注入
  * （见 `forwarder.rs`，注入发生在转发路径上，请求必须经过代理 = 接管当前应用），
  * 且后端按 providerType 强制托管认证/格式而**无视 apiFormat**。因此 apiFormat
  * 只是可能被用户改动或旧数据缺省的次要信号，OAuth 供应商一律以 providerType 判定。
@@ -41,11 +79,13 @@ export function providerNeedsRouting(
 ): boolean {
   if (provider.category === "official") return false;
 
-  const isManagedOAuth = isOAuthProviderType(provider.meta?.providerType);
+  const usesManagedAccountAuth = providerUsesManagedAccountAuth(provider);
 
   // Desktop 普通供应商由表单模式决定；托管 OAuth 的 token 只能由代理注入。
   if (appId === "claude-desktop") {
-    return isManagedOAuth || provider.meta?.claudeDesktopMode === "proxy";
+    return (
+      usesManagedAccountAuth || provider.meta?.claudeDesktopMode === "proxy"
+    );
   }
 
   if (appId !== "claude" && appId !== "codex" && appId !== "grokbuild") {
@@ -53,12 +93,14 @@ export function providerNeedsRouting(
   }
 
   // 托管 OAuth：凭据由代理注入，与 apiFormat 无关，必须接管。
-  if (isManagedOAuth) return true;
+  if (usesManagedAccountAuth) return true;
 
   if (appId === "claude") {
-    const fmt = provider.meta?.apiFormat;
     // Claude 原生是 Anthropic 格式，任何非 anthropic 格式都需要代理转换。
-    return provider.meta?.isFullUrl === true || (!!fmt && fmt !== "anthropic");
+    return (
+      provider.meta?.isFullUrl === true ||
+      claudeApiFormatNeedsTransform(provider)
+    );
   }
 
   if (appId === "codex" || appId === "grokbuild") {
@@ -79,4 +121,12 @@ export function providerNeedsRouting(
   }
 
   return false;
+}
+
+/** Provider-specific Claude settings bypass the local router and only support direct providers. */
+export function supportsProviderSpecificTerminal(
+  appId: AppId,
+  provider: Provider,
+): boolean {
+  return appId !== "claude" || !providerNeedsRouting(appId, provider);
 }

@@ -151,6 +151,7 @@
     "openTerminal": "開啟終端機",
     "terminalOpened": "終端機已開啟",
     "terminalOpenFailed": "開啟終端機失敗",
+    "terminalRequiresRouting": "此供應商必須透過 Claude Code 本機路由使用。請啟用代理接管並切換至該供應商，然後在一般終端機中執行 claude。",
     "name": "供應商名稱",
     "namePlaceholder": "例如：Claude 官方",
     "websiteUrl": "官網連結",

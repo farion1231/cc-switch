@@ -151,6 +151,7 @@
     "openTerminal": "Open Terminal",
     "terminalOpened": "Terminal opened",
     "terminalOpenFailed": "Failed to open terminal",
+    "terminalRequiresRouting": "This provider requires Claude Code local routing. Enable proxy takeover, switch to this provider, then run claude from a regular terminal.",
     "name": "Provider Name",
     "namePlaceholder": "e.g., Claude Official",
     "websiteUrl": "Website URL",
