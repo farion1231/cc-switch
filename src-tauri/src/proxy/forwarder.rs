@@ -1530,6 +1530,28 @@ impl RequestForwarder {
             mapped_body
         };
 
+        // Codex may replay message items produced by an older CC Switch
+        // Chat/Anthropic conversion. Those versions generated IDs such as
+        // `resp_*_msg`, but strict Responses upstreams require message item IDs
+        // to start with `msg_`. Normalize known legacy IDs so paired reasoning
+        // items remain valid; remove only unknown invalid message IDs.
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+        {
+            let sanitized =
+                super::providers::codex_message_items::sanitize_invalid_message_item_ids(
+                    &mut request_body,
+                );
+            if sanitized > 0 {
+                log::debug!(
+                    "[Codex] Sanitized {sanitized} invalid replayed message item ID(s) \
+                     before native Responses passthrough (provider={})",
+                    provider.id
+                );
+            }
+        }
+
         // Native Responses passthrough to a strict third-party gateway (xAI):
         // flatten Codex's private `namespace`/plugin tool declarations into
         // top-level function tools so the upstream's strict serde parser does
