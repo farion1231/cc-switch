@@ -145,4 +145,150 @@ describe("useModelState", () => {
       "deepseek-v4-pro[1M]",
     );
   });
+
+  describe("handleBatchModelChange", () => {
+    it("批量更新多个模型字段，只触发一次 onConfigChange", () => {
+      let latestConfig = JSON.stringify({
+        env: {
+          ANTHROPIC_MODEL: "old-fallback",
+          ANTHROPIC_DEFAULT_SONNET_MODEL: "old-sonnet",
+        },
+      });
+      const onConfigChange = vi.fn((config: string) => {
+        latestConfig = config;
+      });
+
+      const { result } = renderHook(() =>
+        useModelState({
+          settingsConfig: latestConfig,
+          onConfigChange,
+        }),
+      );
+
+      // 先清空调用记录（初始化可能触发过）
+      onConfigChange.mockClear();
+
+      act(() => {
+        result.current.handleBatchModelChange([
+          ["ANTHROPIC_MODEL", "new-fallback"],
+          ["ANTHROPIC_DEFAULT_SONNET_MODEL", "new-sonnet[1M]"],
+          ["ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", "New Sonnet"],
+        ]);
+      });
+
+      // 只触发一次 onConfigChange（而非逐字段的 3 次）
+      expect(onConfigChange).toHaveBeenCalledTimes(1);
+
+      const env = JSON.parse(latestConfig).env;
+      expect(env.ANTHROPIC_MODEL).toBe("new-fallback");
+      expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("new-sonnet[1M]");
+      expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME).toBe("New Sonnet");
+    });
+
+    it("批量更新时空值字段从配置中删除", () => {
+      let latestConfig = JSON.stringify({
+        env: {
+          ANTHROPIC_MODEL: "fallback",
+          ANTHROPIC_DEFAULT_SONNET_MODEL: "sonnet",
+        },
+      });
+      const onConfigChange = vi.fn((config: string) => {
+        latestConfig = config;
+      });
+
+      const { result } = renderHook(() =>
+        useModelState({
+          settingsConfig: latestConfig,
+          onConfigChange,
+        }),
+      );
+
+      onConfigChange.mockClear();
+
+      act(() => {
+        result.current.handleBatchModelChange([
+          ["ANTHROPIC_DEFAULT_SONNET_MODEL", ""],
+        ]);
+      });
+
+      const env = JSON.parse(latestConfig).env;
+      expect(env.ANTHROPIC_MODEL).toBe("fallback");
+      expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+    });
+
+    it("空数组不触发 onConfigChange", () => {
+      const onConfigChange = vi.fn();
+      const { result } = renderHook(() =>
+        useModelState({
+          settingsConfig: JSON.stringify({ env: { ANTHROPIC_MODEL: "m" } }),
+          onConfigChange,
+        }),
+      );
+
+      onConfigChange.mockClear();
+
+      act(() => {
+        result.current.handleBatchModelChange([]);
+      });
+
+      expect(onConfigChange).not.toHaveBeenCalled();
+    });
+
+    it("批量更新删除旧键 ANTHROPIC_SMALL_FAST_MODEL", () => {
+      let latestConfig = JSON.stringify({
+        env: {
+          ANTHROPIC_SMALL_FAST_MODEL: "legacy-small",
+          ANTHROPIC_MODEL: "fallback",
+        },
+      });
+      const onConfigChange = vi.fn((config: string) => {
+        latestConfig = config;
+      });
+
+      const { result } = renderHook(() =>
+        useModelState({
+          settingsConfig: latestConfig,
+          onConfigChange,
+        }),
+      );
+
+      onConfigChange.mockClear();
+
+      act(() => {
+        result.current.handleBatchModelChange([
+          ["ANTHROPIC_DEFAULT_HAIKU_MODEL", "new-haiku"],
+        ]);
+      });
+
+      const env = JSON.parse(latestConfig).env;
+      expect(env.ANTHROPIC_SMALL_FAST_MODEL).toBeUndefined();
+      expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe("new-haiku");
+    });
+  });
+
+  it("不因 settingsConfig 无变化而触发冗余 setState", () => {
+    const config = JSON.stringify({
+      env: {
+        ANTHROPIC_MODEL: "stable-model",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "stable-sonnet",
+      },
+    });
+
+    // React 的 setState 若返回同一值不会触发重渲染，
+    // 这里验证 hook 在相同 settingsConfig 传入时不会抛错
+    const { result, rerender } = renderHook(
+      ({ cfg }: { cfg: string }) =>
+        useModelState({
+          settingsConfig: cfg,
+          onConfigChange: vi.fn(),
+        }),
+      { initialProps: { cfg: config } },
+    );
+
+    expect(result.current.claudeModel).toBe("stable-model");
+
+    // 用同一 config 重新渲染，不应报错
+    rerender({ cfg: config });
+    expect(result.current.claudeModel).toBe("stable-model");
+  });
 });

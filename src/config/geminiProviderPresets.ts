@@ -481,6 +481,24 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     description: "自定义 Gemini API 端点",
     category: "custom",
   },
+  {
+    name: "Tokenhub",
+    nameKey: "providerForm.presets.tokenhub",
+    websiteUrl: "https://aigw.telecomjs.com",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://aigw.telecomjs.com",
+        GEMINI_MODEL: "gemini-3.6-flash",
+      },
+    },
+    baseURL: "https://aigw.telecomjs.com",
+    model: "gemini-3.6-flash",
+    description: "Tokenhub (Jiangsu Telecom)",
+    category: "cn_official",
+    endpointCandidates: ["https://aigw.telecomjs.com"],
+    icon: "tokenhub",
+    iconColor: "#0078D4",
+  },
 ];
 
 export function getGeminiPresetByName(
