@@ -1,9 +1,7 @@
 //! Read-only Pi provider membership and global default reference.
 
 use crate::error::AppError;
-use crate::pi_config::{
-    read_pi_native_defaults, read_pi_native_providers, validate_managed_provider,
-};
+use crate::pi_config::{read_pi_native_defaults, read_pi_native_providers};
 use crate::store::AppState;
 use serde::Serialize;
 
@@ -22,11 +20,7 @@ impl PiStateService {
     pub(crate) fn current(state: &AppState) -> Result<PiCurrentState, AppError> {
         let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(PI_APP));
         let native = read_pi_native_providers()?;
-        let enabled_provider_ids = native
-            .iter()
-            .filter(|(id, config)| validate_managed_provider(id, config).is_ok())
-            .map(|(id, _)| id.clone())
-            .collect::<Vec<_>>();
+        let enabled_provider_ids = native.keys().cloned().collect::<Vec<_>>();
         let default_provider_id = match read_pi_native_defaults() {
             Ok(defaults) => defaults.default_provider,
             Err(error) => {
@@ -52,7 +46,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn state_exposes_only_supported_custom_provider_membership() {
+    fn state_exposes_every_explicit_provider_node() {
         let _agent = TestAgentDir::new();
         let state = AppState::new(Arc::new(
             Database::memory().expect("create in-memory database"),
@@ -76,9 +70,9 @@ mod tests {
                         "api": "openai-completions",
                         "models": [{ "id": "model-b" }]
                     },
+                    "anthropic": {},
                     "unsupported": {
-                        "baseUrl": "https://api.example.com/v1",
-                        "api": "openai-completions"
+                        "futureField": true
                     }
                 }
             }"#,
@@ -94,7 +88,12 @@ mod tests {
         let current = PiStateService::current(&state).expect("read state");
         assert_eq!(
             current.enabled_provider_ids,
-            vec!["cc-switch-managed".to_string()]
+            vec![
+                "cc-switch-managed".to_string(),
+                "native-oauth".to_string(),
+                "anthropic".to_string(),
+                "unsupported".to_string(),
+            ]
         );
         assert_eq!(
             current.default_provider_id.as_deref(),

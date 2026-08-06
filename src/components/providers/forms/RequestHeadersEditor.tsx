@@ -11,7 +11,6 @@ interface RequestHeadersEditorProps {
   headers: Record<string, string>;
   onHeadersChange: (headers: Record<string, string>) => void;
   className?: string;
-  compact?: boolean;
 }
 
 function HeaderNameInput({
@@ -68,7 +67,6 @@ export function RequestHeadersEditor({
   headers,
   onHeadersChange,
   className,
-  compact = false,
 }: RequestHeadersEditorProps) {
   const { t } = useTranslation();
 
@@ -109,34 +107,17 @@ export function RequestHeadersEditor({
 
   return (
     <div
-      className={cn(
-        "space-y-2",
-        !compact && "border-l border-border-default pl-3",
-        className,
-      )}
+      className={cn("space-y-2 border-l border-border-default pl-3", className)}
     >
-      <div
-        className={cn(
-          "flex justify-between gap-3",
-          compact ? "items-center" : "items-start",
-        )}
-      >
+      <div className="flex items-start justify-between gap-3">
         <div className="max-w-3xl space-y-1">
-          {compact ? (
-            <h3 className="text-sm font-normal leading-5">
-              {t("opencode.headers", { defaultValue: "Headers" })}
-            </h3>
-          ) : (
-            <Label>{t("opencode.headers", { defaultValue: "Headers" })}</Label>
-          )}
-          {!compact && (
-            <p className="text-xs text-muted-foreground">
-              {t("opencode.headersHint", {
-                defaultValue:
-                  "Optional HTTP headers sent with provider requests, such as HTTP-Referer or X-Title.",
-              })}
-            </p>
-          )}
+          <Label>{t("opencode.headers", { defaultValue: "Headers" })}</Label>
+          <p className="text-xs text-muted-foreground">
+            {t("opencode.headersHint", {
+              defaultValue:
+                "Optional HTTP headers sent with provider requests, such as HTTP-Referer or X-Title.",
+            })}
+          </p>
         </div>
         <Button
           type="button"
@@ -153,66 +134,64 @@ export function RequestHeadersEditor({
         </Button>
       </div>
 
-      {(Object.keys(headers).length > 0 || !compact) && (
-        <div className="max-w-3xl" aria-live="polite">
-          {Object.keys(headers).length === 0 ? (
-            <p className="py-1 text-sm text-muted-foreground">
-              {t("opencode.noHeaders", {
-                defaultValue: "No custom headers configured",
-              })}
-            </p>
-          ) : (
-            <div className="space-y-2">
-              <div className="mb-1 flex items-center gap-2 px-1 text-xs text-muted-foreground">
-                <span className="flex-1">
-                  {t("opencode.headerName", { defaultValue: "Header" })}
-                </span>
-                <span className="flex-1">
-                  {t("opencode.headerValue", { defaultValue: "Value" })}
-                </span>
-                <span className="w-9" />
-              </div>
-              {Object.entries(headers).map(([key, value]) => (
-                <div key={key} className="flex items-center gap-2">
-                  <HeaderNameInput
-                    headerName={key}
-                    onChange={(newKey) => renameHeader(key, newKey)}
-                    ariaLabel={t("opencode.headerName", {
-                      defaultValue: "Header",
-                    })}
-                    placeholder={t("opencode.headerNamePlaceholder", {
-                      defaultValue: "X-Title",
-                    })}
-                  />
-                  <Input
-                    value={value}
-                    onChange={(event) => updateHeader(key, event.target.value)}
-                    aria-label={t("opencode.headerValue", {
-                      defaultValue: "Value",
-                    })}
-                    placeholder={t("opencode.headerValuePlaceholder", {
-                      defaultValue: "CC Switch",
-                    })}
-                    className="min-w-0 flex-1"
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => removeHeader(key)}
-                    aria-label={t("opencode.removeHeader", {
-                      defaultValue: "Remove header",
-                    })}
-                    className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              ))}
+      <div className="max-w-3xl" aria-live="polite">
+        {Object.keys(headers).length === 0 ? (
+          <p className="py-1 text-sm text-muted-foreground">
+            {t("opencode.noHeaders", {
+              defaultValue: "No custom headers configured",
+            })}
+          </p>
+        ) : (
+          <div className="space-y-2">
+            <div className="mb-1 flex items-center gap-2 px-1 text-xs text-muted-foreground">
+              <span className="flex-1">
+                {t("opencode.headerName", { defaultValue: "Header" })}
+              </span>
+              <span className="flex-1">
+                {t("opencode.headerValue", { defaultValue: "Value" })}
+              </span>
+              <span className="w-9" />
             </div>
-          )}
-        </div>
-      )}
+            {Object.entries(headers).map(([key, value]) => (
+              <div key={key} className="flex items-center gap-2">
+                <HeaderNameInput
+                  headerName={key}
+                  onChange={(newKey) => renameHeader(key, newKey)}
+                  ariaLabel={t("opencode.headerName", {
+                    defaultValue: "Header",
+                  })}
+                  placeholder={t("opencode.headerNamePlaceholder", {
+                    defaultValue: "X-Title",
+                  })}
+                />
+                <Input
+                  value={value}
+                  onChange={(event) => updateHeader(key, event.target.value)}
+                  aria-label={t("opencode.headerValue", {
+                    defaultValue: "Value",
+                  })}
+                  placeholder={t("opencode.headerValuePlaceholder", {
+                    defaultValue: "CC Switch",
+                  })}
+                  className="min-w-0 flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => removeHeader(key)}
+                  aria-label={t("opencode.removeHeader", {
+                    defaultValue: "Remove header",
+                  })}
+                  className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

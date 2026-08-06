@@ -180,7 +180,7 @@ function PiInstructionFileEditor({
           </>
         }
       >
-        <div className="mx-auto w-full max-w-4xl space-y-5">
+        <div className="glass w-full space-y-6 rounded-xl border border-white/10 p-6">
           {file.kind === "system_override" && (
             <div className="flex gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm">
               <AlertTriangle
@@ -365,14 +365,9 @@ export function PiSystemPromptFiles() {
 
   return (
     <section>
-      <div className="mb-4">
-        <h3 className="text-sm font-semibold">
-          {t("pi.prompts.systemFilesTitle")}
-        </h3>
-        <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">
-          {t("pi.prompts.systemFilesDescription")}
-        </p>
-      </div>
+      <p className="mb-4 max-w-3xl text-xs leading-relaxed text-muted-foreground">
+        {t("pi.prompts.systemFilesDescription")}
+      </p>
 
       <div className="grid grid-cols-1 gap-3">
         {EDITABLE_FILES.map((file) => (
@@ -471,7 +466,7 @@ function PiPromptTemplateEditor({
           </Button>
         }
       >
-        <div className="mx-auto w-full max-w-4xl space-y-5">
+        <div className="glass w-full space-y-6 rounded-xl border border-white/10 p-6">
           <div>
             <Label htmlFor="pi-template-slug">
               {t("pi.prompts.templateCommand")}
@@ -641,12 +636,9 @@ export const PiPromptTemplates = forwardRef<PiPromptTemplatesHandle>(
 
     return (
       <section className="flex h-full min-h-0 flex-col">
-        <div className="mb-4 shrink-0">
-          <h3 className="text-sm font-semibold">{t("pi.prompts.templates")}</h3>
-          <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">
-            {t("pi.prompts.templatesDescription")}
-          </p>
-        </div>
+        <p className="mb-4 max-w-3xl shrink-0 text-xs leading-relaxed text-muted-foreground">
+          {t("pi.prompts.templatesDescription")}
+        </p>
 
         {!templates.isLoading && !templates.isError && (
           <ManagementListSearch

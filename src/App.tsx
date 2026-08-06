@@ -706,17 +706,11 @@ function App() {
   const handleEditProvider = async ({
     provider,
     originalId,
-    expectedSettingsConfig,
   }: {
     provider: Provider;
     originalId?: string;
-    expectedSettingsConfig?: Provider["settingsConfig"];
   }) => {
-    if (expectedSettingsConfig) {
-      await updateProvider(provider, originalId, expectedSettingsConfig);
-    } else {
-      await updateProvider(provider, originalId);
-    }
+    await updateProvider(provider, originalId);
     setEditingProvider(null);
   };
 

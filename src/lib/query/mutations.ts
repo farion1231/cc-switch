@@ -183,22 +183,11 @@ export const useUpdateProviderMutation = (appId: AppId) => {
     mutationFn: async ({
       provider,
       originalId,
-      expectedSettingsConfig,
     }: {
       provider: Provider;
       originalId?: string;
-      expectedSettingsConfig?: Provider["settingsConfig"];
     }) => {
-      if (expectedSettingsConfig) {
-        await providersApi.update(
-          provider,
-          appId,
-          originalId,
-          expectedSettingsConfig,
-        );
-      } else {
-        await providersApi.update(provider, appId, originalId);
-      }
+      await providersApi.update(provider, appId, originalId);
       return provider;
     },
     onSuccess: async (provider, variables) => {

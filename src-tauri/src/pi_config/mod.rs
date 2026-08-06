@@ -1,7 +1,7 @@
 //! Thin adapter for Pi's native files.
 //!
 //! Pi owns account login and the active provider/model in `settings.json`.
-//! CC Switch only manages explicit custom entries in `models.json`.
+//! CC Switch only manages explicit provider entries in `models.json`.
 
 use crate::config::{atomic_write_private, get_home_dir};
 use crate::error::AppError;
@@ -9,59 +9,14 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex, MutexGuard};
-use url::Url;
 
 const MAX_PI_FILE_BYTES: u64 = 1024 * 1024;
 const MISSING_MODELS_REVISION: &str = "missing";
 static MODELS_FILE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-
-// Provider ids compiled into the pinned Pi release. They remain Pi-owned even
-// when an entry with the same key appears in models.json.
-const PI_BUILTIN_PROVIDER_KEYS: &[&str] = &[
-    "amazon-bedrock",
-    "ant-ling",
-    "anthropic",
-    "azure-openai-responses",
-    "cerebras",
-    "cloudflare-ai-gateway",
-    "cloudflare-workers-ai",
-    "deepseek",
-    "fireworks",
-    "github-copilot",
-    "google",
-    "google-vertex",
-    "groq",
-    "huggingface",
-    "kimi-coding",
-    "minimax",
-    "minimax-cn",
-    "mistral",
-    "moonshotai",
-    "moonshotai-cn",
-    "nvidia",
-    "openai",
-    "openai-codex",
-    "opencode",
-    "opencode-go",
-    "openrouter",
-    "qwen-token-plan",
-    "qwen-token-plan-cn",
-    "radius",
-    "together",
-    "vercel-ai-gateway",
-    "xai",
-    "xiaomi",
-    "xiaomi-token-plan-ams",
-    "xiaomi-token-plan-cn",
-    "xiaomi-token-plan-sgp",
-    "zai",
-    "zai-coding-cn",
-];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -141,7 +96,7 @@ pub(crate) fn pi_provider_exists(provider_key: &str) -> Result<bool, AppError> {
 }
 
 pub(crate) fn insert_pi_provider(provider_key: &str, config: &Value) -> Result<bool, AppError> {
-    validate_managed_provider(provider_key, config)?;
+    validate_provider_node(provider_key, config)?;
     let _guard = lock_models_file()?;
     let path = get_pi_models_path()?;
     let (mut document, expected_revision) = read_models_document_with_revision(&path)?;
@@ -167,7 +122,7 @@ pub(crate) fn replace_pi_provider(
     expected: &Value,
     replacement: &Value,
 ) -> Result<(), AppError> {
-    validate_managed_provider(provider_key, replacement)?;
+    validate_provider_node(provider_key, replacement)?;
     let _guard = lock_models_file()?;
     let path = get_pi_models_path()?;
     let (mut document, expected_revision) = read_models_document_with_revision(&path)?;
@@ -187,6 +142,26 @@ pub(crate) fn replace_pi_provider(
     }
     providers.insert(provider_key.to_string(), replacement.clone());
     write_models_document(&path, &document, &expected_revision)
+}
+
+pub(crate) fn replace_pi_provider_if_present(
+    provider_key: &str,
+    replacement: &Value,
+) -> Result<Option<Value>, AppError> {
+    validate_provider_node(provider_key, replacement)?;
+    let _guard = lock_models_file()?;
+    let path = get_pi_models_path()?;
+    let (mut document, expected_revision) = read_models_document_with_revision(&path)?;
+    let providers = providers_mut(&mut document, &path)?;
+    let Some(current) = providers.get(provider_key).cloned() else {
+        return Ok(None);
+    };
+    if current == *replacement {
+        return Ok(Some(current));
+    }
+    providers.insert(provider_key.to_string(), replacement.clone());
+    write_models_document(&path, &document, &expected_revision)?;
+    Ok(Some(current))
 }
 
 pub(crate) fn remove_pi_provider(provider_key: &str) -> Result<Option<Value>, AppError> {
@@ -211,16 +186,6 @@ fn remove_pi_provider_inner(
     let Some(current) = providers.get(provider_key).cloned() else {
         return Ok(None);
     };
-    if is_pi_owned_provider(provider_key, &current) {
-        return Err(AppError::Conflict(format!(
-            "Pi provider '{provider_key}' is managed by Pi and cannot be removed by CC Switch"
-        )));
-    }
-    if let Err(error) = validate_managed_provider(provider_key, &current) {
-        return Err(AppError::Conflict(format!(
-            "Pi provider '{provider_key}' changed outside CC Switch and is no longer supported: {error}"
-        )));
-    }
     if expected.is_some_and(|expected| current != *expected) {
         return Err(AppError::Conflict(format!(
             "Pi provider '{provider_key}' changed outside CC Switch"
@@ -251,104 +216,21 @@ pub(crate) fn restore_pi_provider_if_missing(
     }
 }
 
-pub(crate) fn is_pi_builtin_provider_key(provider_key: &str) -> bool {
-    PI_BUILTIN_PROVIDER_KEYS.contains(&provider_key)
-}
-
-pub(crate) fn is_pi_owned_provider(provider_key: &str, config: &Value) -> bool {
-    is_pi_builtin_provider_key(provider_key)
-        || config
-            .as_object()
-            .is_some_and(|object| object.contains_key("oauth"))
-}
-
-pub(crate) fn validate_managed_provider(
-    provider_key: &str,
-    config: &Value,
-) -> Result<(), AppError> {
+/// Validate the shape CC Switch can persist as one
+/// `models.json.providers.<provider_key>` node.
+///
+/// Provider ownership is intentionally source-based: every explicit object in
+/// `models.json.providers` is manageable, including keys also built into Pi.
+/// Pi's `/login` credentials live in `auth.json` and are never read here.
+pub(crate) fn validate_provider_node(provider_key: &str, config: &Value) -> Result<(), AppError> {
     if provider_key.trim().is_empty() {
         return Err(AppError::InvalidInput(
             "Pi provider key cannot be empty".to_string(),
         ));
     }
-    if is_pi_builtin_provider_key(provider_key) {
-        return Err(AppError::InvalidInput(format!(
-            "Pi built-in provider '{provider_key}' is managed by Pi"
-        )));
-    }
-
-    let provider = config.as_object().ok_or_else(|| {
+    config.as_object().ok_or_else(|| {
         AppError::InvalidInput("Pi provider configuration must be an object".to_string())
     })?;
-    if provider.contains_key("oauth") {
-        return Err(AppError::InvalidInput(
-            "Pi OAuth providers are managed by Pi /login".to_string(),
-        ));
-    }
-    validate_optional_string(provider, "name")?;
-    validate_optional_string(provider, "apiKey")?;
-    validate_headers(provider.get("headers"), "provider headers")?;
-
-    let models = provider
-        .get("models")
-        .and_then(Value::as_array)
-        .ok_or_else(|| {
-            AppError::InvalidInput("Pi provider must contain a non-empty models array".to_string())
-        })?;
-    if models.is_empty() {
-        return Err(AppError::InvalidInput(
-            "Pi provider must contain at least one model".to_string(),
-        ));
-    }
-
-    let provider_api = nonempty_string(provider.get("api"));
-    let provider_url = nonempty_string(provider.get("baseUrl"));
-    if let Some(provider_url) = provider_url {
-        validate_http_url(provider_url, "provider baseUrl")?;
-    }
-
-    let mut model_ids = HashSet::with_capacity(models.len());
-    for (index, model) in models.iter().enumerate() {
-        let model = model.as_object().ok_or_else(|| {
-            AppError::InvalidInput(format!("Pi model at index {index} must be an object"))
-        })?;
-        let id = nonempty_string(model.get("id")).ok_or_else(|| {
-            AppError::InvalidInput(format!(
-                "Pi model at index {index} must have a non-empty id"
-            ))
-        })?;
-        if !model_ids.insert(id) {
-            return Err(AppError::InvalidInput(format!(
-                "Pi provider contains duplicate model id '{id}'"
-            )));
-        }
-        validate_optional_string(model, "name")?;
-        validate_optional_bool(model, "reasoning")?;
-        validate_positive_number(model, "contextWindow", id)?;
-        validate_positive_number(model, "maxTokens", id)?;
-        nonempty_string(model.get("api"))
-            .or(provider_api)
-            .ok_or_else(|| {
-                AppError::InvalidInput(format!("Pi model '{id}' has no effective interface format"))
-            })?;
-        let model_url = nonempty_string(model.get("baseUrl"))
-            .or(provider_url)
-            .ok_or_else(|| {
-                AppError::InvalidInput(format!("Pi model '{id}' has no effective request URL"))
-            })?;
-        validate_http_url(model_url, &format!("model '{id}' baseUrl"))?;
-
-        if let Some(input) = model.get("input") {
-            let valid = input
-                .as_array()
-                .is_some_and(|values| !values.is_empty() && values.iter().all(Value::is_string));
-            if !valid {
-                return Err(AppError::InvalidInput(format!(
-                    "Pi model '{id}' input must be a non-empty string array"
-                )));
-            }
-        }
-    }
     Ok(())
 }
 
@@ -369,17 +251,6 @@ pub(crate) fn provider_base_url(config: &Value) -> Result<String, AppError> {
         })
         .map(str::to_string)
         .ok_or_else(|| AppError::InvalidInput("Pi provider has no request URL".to_string()))
-}
-
-pub(crate) fn provider_contains_model(config: &Value, model_id: &str) -> bool {
-    config
-        .get("models")
-        .and_then(Value::as_array)
-        .is_some_and(|models| {
-            models
-                .iter()
-                .any(|model| model.get("id").and_then(Value::as_str) == Some(model_id))
-        })
 }
 
 fn lock_models_file() -> Result<MutexGuard<'static, ()>, AppError> {
@@ -571,67 +442,10 @@ fn optional_string(
     }
 }
 
-fn validate_optional_string(object: &Map<String, Value>, key: &str) -> Result<(), AppError> {
-    match object.get(key) {
-        None => Ok(()),
-        Some(Value::String(value)) if !value.is_empty() => Ok(()),
-        Some(Value::String(_)) => Err(AppError::InvalidInput(format!(
-            "Pi provider field '{key}' cannot be empty"
-        ))),
-        Some(_) => Err(AppError::InvalidInput(format!(
-            "Pi provider field '{key}' must be a string"
-        ))),
-    }
-}
-
-fn validate_optional_bool(object: &Map<String, Value>, key: &str) -> Result<(), AppError> {
-    match object.get(key) {
-        None | Some(Value::Bool(_)) => Ok(()),
-        Some(_) => Err(AppError::InvalidInput(format!(
-            "Pi provider field '{key}' must be a boolean"
-        ))),
-    }
-}
-
-fn validate_headers(value: Option<&Value>, label: &str) -> Result<(), AppError> {
-    match value {
-        None => Ok(()),
-        Some(Value::Object(headers)) if headers.values().all(Value::is_string) => Ok(()),
-        Some(_) => Err(AppError::InvalidInput(format!(
-            "Pi {label} must be an object with string values"
-        ))),
-    }
-}
-
-fn validate_positive_number(
-    model: &Map<String, Value>,
-    field: &str,
-    model_id: &str,
-) -> Result<(), AppError> {
-    match model.get(field) {
-        None => Ok(()),
-        Some(Value::Number(value)) if value.as_f64().is_some_and(|value| value > 0.0) => Ok(()),
-        Some(_) => Err(AppError::InvalidInput(format!(
-            "Pi model '{model_id}' field '{field}' must be a positive number"
-        ))),
-    }
-}
-
 fn nonempty_string(value: Option<&Value>) -> Option<&str> {
     value
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
-}
-
-fn validate_http_url(value: &str, label: &str) -> Result<(), AppError> {
-    let parsed = Url::parse(value)
-        .map_err(|error| AppError::InvalidInput(format!("Pi {label} is invalid: {error}")))?;
-    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
-        return Err(AppError::InvalidInput(format!(
-            "Pi {label} must be an absolute HTTP(S) URL"
-        )));
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -683,36 +497,23 @@ mod tests {
     }
 
     #[test]
-    fn managed_provider_keeps_unknown_native_fields() {
+    fn provider_node_accepts_unknown_native_fields() {
         let mut value = provider();
         value["sdkOption"] = json!({"timeout": 30});
         value["models"][0]["compat"] = json!({"supportsDeveloperRole": true});
-        validate_managed_provider("cc-switch-example", &value).expect("valid provider");
+        validate_provider_node("cc-switch-example", &value).expect("valid provider");
     }
 
     #[test]
-    fn managed_provider_rejects_oauth_and_invalid_effective_models() {
+    fn provider_node_ownership_depends_on_models_json_membership() {
         let mut oauth = provider();
         oauth["oauth"] = json!("anthropic");
-        assert!(validate_managed_provider("cc-switch-example", &oauth).is_err());
-        assert!(validate_managed_provider("anthropic", &provider()).is_err());
-
-        let mut missing_api = provider();
-        missing_api.as_object_mut().expect("object").remove("api");
-        assert!(validate_managed_provider("cc-switch-example", &missing_api).is_err());
-
-        missing_api["models"][0]["api"] = json!("openai-completions");
-        missing_api["models"][0]["baseUrl"] = json!("https://model.example.com/v1");
-        missing_api
-            .as_object_mut()
-            .expect("object")
-            .remove("baseUrl");
-        validate_managed_provider("cc-switch-example", &missing_api)
-            .expect("per-model native overrides supply the effective values");
-        assert_eq!(
-            provider_base_url(&missing_api).expect("resolve model-level request URL"),
-            "https://model.example.com/v1"
-        );
+        validate_provider_node("cc-switch-example", &oauth)
+            .expect("an explicit models.json node stays manageable");
+        validate_provider_node("anthropic", &json!({}))
+            .expect("a built-in provider key may be explicitly configured");
+        assert!(validate_provider_node("", &json!({})).is_err());
+        assert!(validate_provider_node("anthropic", &json!("invalid")).is_err());
     }
 
     #[test]

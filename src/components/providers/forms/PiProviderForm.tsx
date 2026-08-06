@@ -1,13 +1,32 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronRight, Download, Loader2, Plus, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Download,
+  Loader2,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Form } from "@/components/ui/form";
+import {
+  Form,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -21,6 +40,7 @@ import JsonEditor from "@/components/JsonEditor";
 import { BasicFormFields } from "./BasicFormFields";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
+import { StructuredOptionsEditor } from "./StructuredOptionsEditor";
 import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
 import {
   findRequestHeaderValue,
@@ -32,20 +52,20 @@ import {
   type PiProviderPreset,
 } from "@/config/piProviderPresets";
 import {
+  isPiThinkingLevelMap,
+  PI_THINKING_LEVELS,
+  type PiThinkingLevel,
+  type PiThinkingLevelMap,
+} from "@/config/piThinkingProfiles";
+import {
   fetchModelsForConfig,
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
-import type { ModelsDevResponse } from "@/lib/modelsDevPricing";
-import { loadModelsDevCatalog } from "@/lib/query/modelsDev";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type { ProviderCategory } from "@/types";
 import { translatePiProviderMutationError } from "@/utils/errorUtils";
-import {
-  resolvePiModelMetadata,
-  type PiModelMetadata,
-} from "@/utils/piModelMetadata";
 
 const PI_API_FORMATS = [
   { value: "openai-completions", label: "OpenAI Chat Completions" },
@@ -61,6 +81,7 @@ const ROOT_CONTROLLED_KEYS = new Set([
   "api",
   "apiKey",
   "headers",
+  "compat",
   "models",
 ]);
 const MODEL_CONTROLLED_KEYS = new Set([
@@ -70,40 +91,20 @@ const MODEL_CONTROLLED_KEYS = new Set([
   "input",
   "contextWindow",
   "maxTokens",
+  "thinkingLevelMap",
 ]);
 
 interface PiModelDraft {
   key: string;
   id: string;
   name: string;
-  reasoning: unknown;
+  reasoning: boolean;
   input: unknown;
   contextWindow: string;
   maxTokens: string;
+  thinkingLevelMap: unknown;
+  hasThinkingLevelMap: boolean;
   passthrough: Record<string, unknown>;
-  preferredMetadataProvider: string | null;
-  autoMetadata: PiModelMetadata | null;
-  persistAutoMetadata: boolean;
-  overrides: PiModelOverrides;
-}
-
-type PiModelOverrideField =
-  | "name"
-  | "reasoning"
-  | "imageInput"
-  | "contextWindow"
-  | "maxTokens";
-
-type PiModelOverrides = Record<PiModelOverrideField, boolean>;
-
-function emptyModelOverrides(): PiModelOverrides {
-  return {
-    name: false,
-    reasoning: false,
-    imageInput: false,
-    contextWindow: false,
-    maxTokens: false,
-  };
 }
 
 class PiFormValidationError extends Error {
@@ -148,6 +149,17 @@ function asObject(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function parseJsonObject(value: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function optionalText(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
@@ -160,6 +172,38 @@ function optionalNumberText(value: unknown): string {
 
 function hasOwn(value: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function jsonValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return (
+      left.length === right.length &&
+      left.every((value, index) => jsonValuesEqual(value, right[index]))
+    );
+  }
+  if (
+    left &&
+    right &&
+    typeof left === "object" &&
+    typeof right === "object" &&
+    !Array.isArray(left) &&
+    !Array.isArray(right)
+  ) {
+    const leftObject = left as Record<string, unknown>;
+    const rightObject = right as Record<string, unknown>;
+    const leftKeys = Object.keys(leftObject);
+    const rightKeys = Object.keys(rightObject);
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every(
+        (key) =>
+          hasOwn(rightObject, key) &&
+          jsonValuesEqual(leftObject[key], rightObject[key]),
+      )
+    );
+  }
+  return false;
 }
 
 function stringRecord(value: Record<string, unknown>): Record<string, string> {
@@ -182,14 +226,13 @@ function validateAbsoluteHttpUrl(value: string, errorMessage: string): void {
   }
 }
 
-function optionalPositiveNumber(
+function positiveNumber(
   value: string,
   errorMessage: string,
   fieldSelector: string,
-): number | undefined {
-  if (value.trim() === "") return undefined;
+): number {
   const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
+  if (value.trim() === "" || !Number.isFinite(parsed) || parsed <= 0) {
     throw new PiFormValidationError(errorMessage, fieldSelector, true);
   }
   return parsed;
@@ -213,59 +256,25 @@ function withImageInput(value: unknown, enabled: boolean): string[] {
   ];
 }
 
-function applyModelAutofill(
-  model: PiModelDraft,
-  metadata?: PiModelMetadata,
-): PiModelDraft {
-  return {
-    ...model,
-    name: model.overrides.name ? model.name : (metadata?.name ?? model.id),
-    reasoning: model.overrides.reasoning
-      ? model.reasoning
-      : metadata?.reasoning,
-    input: model.overrides.imageInput
-      ? model.input
-      : metadata?.imageInput === undefined
-        ? undefined
-        : withImageInput(undefined, metadata.imageInput),
-    contextWindow: model.overrides.contextWindow
-      ? model.contextWindow
-      : optionalNumberText(metadata?.contextWindow),
-    maxTokens: model.overrides.maxTokens
-      ? model.maxTokens
-      : optionalNumberText(metadata?.maxTokens),
-    autoMetadata: metadata ?? null,
-  };
-}
-
 function modelDraft(
   value: unknown,
-  options: { auto?: boolean; metadata?: PiModelMetadata } = {},
+  options: {
+    key?: string;
+  } = {},
 ): PiModelDraft {
   const model = asObject(value);
-  const draft: PiModelDraft = {
-    key: crypto.randomUUID(),
+  return {
+    key: options.key ?? crypto.randomUUID(),
     id: optionalText(model.id),
     name: optionalText(model.name),
-    reasoning: model.reasoning,
-    input: model.input,
+    reasoning: model.reasoning === true,
+    input: Array.isArray(model.input) ? model.input : ["text"],
     contextWindow: optionalNumberText(model.contextWindow),
     maxTokens: optionalNumberText(model.maxTokens),
+    thinkingLevelMap: model.thinkingLevelMap,
+    hasThinkingLevelMap: hasOwn(model, "thinkingLevelMap"),
     passthrough: objectWithout(model, MODEL_CONTROLLED_KEYS),
-    preferredMetadataProvider: null,
-    autoMetadata: options.metadata ?? null,
-    persistAutoMetadata: options.auto ?? false,
-    overrides: options.auto
-      ? emptyModelOverrides()
-      : {
-          name: hasOwn(model, "name"),
-          reasoning: hasOwn(model, "reasoning"),
-          imageInput: hasOwn(model, "input"),
-          contextWindow: hasOwn(model, "contextWindow"),
-          maxTokens: hasOwn(model, "maxTokens"),
-        },
   };
-  return options.auto ? applyModelAutofill(draft, options.metadata) : draft;
 }
 
 function newModel(): PiModelDraft {
@@ -273,45 +282,24 @@ function newModel(): PiModelDraft {
     key: crypto.randomUUID(),
     id: "",
     name: "",
-    reasoning: undefined,
-    input: undefined,
+    reasoning: false,
+    input: ["text"],
     contextWindow: "",
     maxTokens: "",
-    // Unknown models stay id-only until an exact preset/catalog match or a
-    // manual override supplies capability metadata.
+    thinkingLevelMap: undefined,
+    hasThinkingLevelMap: false,
     passthrough: {},
-    preferredMetadataProvider: null,
-    autoMetadata: null,
-    persistAutoMetadata: false,
-    overrides: emptyModelOverrides(),
   };
 }
 
-function hasAnyModelOverrides(model: PiModelDraft): boolean {
-  return Object.values(model.overrides).some(Boolean);
-}
+type PiThinkingLevelMode = "default" | "unsupported" | "value";
 
-function shouldPersistModelField(
-  model: PiModelDraft,
-  field: PiModelOverrideField,
-): boolean {
-  return model.overrides[field] || model.persistAutoMetadata;
-}
-
-function modelMetadataStatusKey(
-  model: PiModelDraft,
-  isLoading: boolean,
-  lookupComplete: boolean,
-): string | null {
-  const hasOverrides = hasAnyModelOverrides(model);
-  if (model.autoMetadata && hasOverrides) {
-    return "pi.form.modelMetadataOverridden";
-  }
-  if (model.autoMetadata) return null;
-  if (hasOverrides) return "pi.form.modelMetadataManual";
-  if (model.id && isLoading) return "pi.form.modelMetadataLoading";
-  if (model.id && lookupComplete) return "pi.form.modelMetadataUnknown";
-  return "pi.form.modelMetadataHint";
+function thinkingLevelMode(
+  map: PiThinkingLevelMap,
+  level: PiThinkingLevel,
+): PiThinkingLevelMode {
+  if (!hasOwn(map, level)) return "default";
+  return map[level] === null ? "unsupported" : "value";
 }
 
 function modelPreview(model: PiModelDraft): Record<string, unknown> {
@@ -327,25 +315,13 @@ function modelPreview(model: PiModelDraft): Record<string, unknown> {
   return {
     ...model.passthrough,
     id: model.id,
-    ...(displayName &&
-    (model.overrides.name ||
-      (model.persistAutoMetadata && displayName !== model.id))
-      ? { name: displayName }
-      : {}),
-    ...(model.reasoning !== undefined &&
-    shouldPersistModelField(model, "reasoning")
-      ? { reasoning: model.reasoning }
-      : {}),
-    ...(model.input !== undefined &&
-    shouldPersistModelField(model, "imageInput")
-      ? { input: model.input }
-      : {}),
-    ...(contextWindow !== undefined &&
-    shouldPersistModelField(model, "contextWindow")
-      ? { contextWindow }
-      : {}),
-    ...(maxTokens !== undefined && shouldPersistModelField(model, "maxTokens")
-      ? { maxTokens }
+    name: displayName,
+    reasoning: model.reasoning,
+    input: withImageInput(model.input, supportsImageInput(model.input)),
+    ...(contextWindow !== undefined ? { contextWindow } : {}),
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(model.hasThinkingLevelMap
+      ? { thinkingLevelMap: model.thinkingLevelMap }
       : {}),
   };
 }
@@ -358,7 +334,10 @@ function buildPiSettingsConfig({
   includeApi,
   apiKey,
   headers,
+  compat,
+  includeCompat,
   models,
+  includeModels,
 }: {
   passthrough: Record<string, unknown>;
   nativeName?: string;
@@ -367,7 +346,10 @@ function buildPiSettingsConfig({
   includeApi: boolean;
   apiKey: string;
   headers: Record<string, string>;
+  compat: Record<string, unknown>;
+  includeCompat: boolean;
   models: Record<string, unknown>[];
+  includeModels: boolean;
 }): Record<string, unknown> {
   return {
     ...passthrough,
@@ -376,7 +358,8 @@ function buildPiSettingsConfig({
     ...(includeApi && api.trim() ? { api: api.trim() } : {}),
     ...(apiKey ? { apiKey } : {}),
     ...(Object.keys(headers).length > 0 ? { headers } : {}),
-    models,
+    ...(includeCompat ? { compat } : {}),
+    ...(includeModels ? { models } : {}),
   };
 }
 
@@ -400,21 +383,41 @@ export function PiProviderForm({
   const initialNativeName = optionalText(initialConfig.name);
   const initialDisplayName = initialData?.name ?? initialNativeName;
   const initialConfigHasNativeName = hasOwn(initialConfig, "name");
+  const [nativeNameFollowsDisplay, setNativeNameFollowsDisplay] = useState(
+    () =>
+      !isEdit ||
+      (initialConfigHasNativeName &&
+        initialNativeName === initialDisplayName.trim()),
+  );
+  const [nativeNameOverride, setNativeNameOverride] = useState<
+    string | undefined
+  >(() => (initialConfigHasNativeName ? initialNativeName : undefined));
+  const displayNameBaselineRef = useRef(initialDisplayName.trim());
   const resolveNativeName = useCallback(
     (displayName: string): string | undefined => {
-      const nextName = displayName.trim();
-      if (!isEdit || nextName !== initialDisplayName.trim()) {
-        return nextName;
-      }
-      return initialConfigHasNativeName ? initialNativeName : undefined;
+      return nativeNameFollowsDisplay ? displayName.trim() : nativeNameOverride;
     },
-    [initialConfigHasNativeName, initialDisplayName, initialNativeName, isEdit],
+    [nativeNameFollowsDisplay, nativeNameOverride],
   );
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
     isEdit ? null : "custom",
   );
+  const initialPreset = useMemo(() => {
+    if (!providerId) return null;
+    const preset =
+      piProviderPresets.find(
+        (candidate) => candidate.providerKey === providerId,
+      ) ?? null;
+    if (!preset || !isEdit) return preset;
+
+    return optionalText(initialConfig.baseUrl) ===
+      preset.settingsConfig.baseUrl &&
+      optionalText(initialConfig.api) === preset.settingsConfig.api
+      ? preset
+      : null;
+  }, [initialConfig.api, initialConfig.baseUrl, isEdit, providerId]);
   const [selectedPreset, setSelectedPreset] = useState<PiProviderPreset | null>(
-    null,
+    initialPreset,
   );
   const [category, setCategory] = useState<ProviderCategory>(
     initialData?.category ?? "custom",
@@ -427,6 +430,7 @@ export function PiProviderForm({
   const [includeApi, setIncludeApi] = useState(
     () => !isEdit || hasOwn(initialConfig, "api"),
   );
+  const includeModelsRef = useRef(!isEdit || hasOwn(initialConfig, "models"));
   const [apiKey, setApiKey] = useState(optionalText(initialConfig.apiKey));
   const initialHeaders = useMemo(
     () => asObject(initialConfig.headers),
@@ -435,15 +439,16 @@ export function PiProviderForm({
   const [providerHeaders, setProviderHeaders] = useState<
     Record<string, string>
   >(() => stringRecord(initialHeaders));
+  const [providerCompat, setProviderCompat] = useState<Record<string, unknown>>(
+    () => asObject(initialConfig.compat),
+  );
+  const includeCompatRef = useRef(hasOwn(initialConfig, "compat"));
   const [providerPassthrough, setProviderPassthrough] = useState<
     Record<string, unknown>
   >(() => objectWithout(initialConfig, ROOT_CONTROLLED_KEYS));
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
-  const modelsDevCatalogRef = useRef<ModelsDevResponse | null>(null);
-  const [isModelMetadataLoading, setIsModelMetadataLoading] = useState(false);
-  const [modelMetadataLookupComplete, setModelMetadataLookupComplete] =
-    useState(false);
+  const modelFetchGenerationRef = useRef(0);
   const [formError, setFormError] = useState<string | null>(null);
   const initialModels = useMemo<PiModelDraft[]>(() => {
     const configured = Array.isArray(initialConfig.models)
@@ -451,28 +456,283 @@ export function PiProviderForm({
       : [];
     return configured.map((model) => modelDraft(model));
   }, [initialConfig.models]);
-  const [models, setModels] = useState<PiModelDraft[]>(initialModels);
+  const [models, setModelsState] = useState<PiModelDraft[]>(initialModels);
+  const modelsRef = useRef(initialModels);
   const [expandedModelKeys, setExpandedModelKeys] = useState<Set<string>>(
     () => new Set(),
+  );
+  const [expandedThinkingMapKeys, setExpandedThinkingMapKeys] = useState<
+    Set<string>
+  >(() => new Set());
+  const [editingThinkingLevel, setEditingThinkingLevel] = useState<{
+    modelKey: string;
+    level: PiThinkingLevel;
+  } | null>(null);
+  const initialSettingsConfigText = useMemo(
+    () =>
+      JSON.stringify(
+        isEdit
+          ? {
+              ...initialConfig,
+              ...(Array.isArray(initialConfig.models)
+                ? { models: initialModels.map(modelPreview) }
+                : {}),
+            }
+          : buildPiSettingsConfig({
+              passthrough: {},
+              nativeName: initialDisplayName.trim(),
+              baseUrl: "",
+              api: "openai-completions",
+              includeApi: true,
+              apiKey: "",
+              headers: {},
+              compat: {},
+              includeCompat: false,
+              models: [],
+              includeModels: true,
+            }),
+        null,
+        2,
+      ),
+    [initialConfig, initialDisplayName, initialModels, isEdit],
   );
   const identityDefaults = useMemo<ProviderFormData>(
     () => ({
       name: initialData?.name ?? optionalText(initialConfig.name),
       websiteUrl: initialData?.websiteUrl ?? "",
       notes: initialData?.notes ?? "",
-      settingsConfig: "{}",
+      settingsConfig: initialSettingsConfigText,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
-    [initialConfig, initialData],
+    [initialConfig, initialData, initialSettingsConfigText],
   );
   const form = useForm<ProviderFormData>({
     resolver: zodResolver(providerSchema),
     defaultValues: identityDefaults,
     mode: "onSubmit",
   });
+  const lastValidSettingsConfigRef = useRef<Record<string, unknown>>(
+    parseJsonObject(initialSettingsConfigText) ?? {},
+  );
+  const settingsConfigText = form.watch("settingsConfig");
+  const displayName = form.watch("name");
   const hasConfigurationSelection = isEdit || selectedPresetId !== null;
   const isSubmitReady = hasConfigurationSelection;
+
+  const replaceModelsState = useCallback((nextModels: PiModelDraft[]) => {
+    modelsRef.current = nextModels;
+    setModelsState(nextModels);
+  }, []);
+
+  const invalidateFetchedModels = useCallback(() => {
+    modelFetchGenerationRef.current += 1;
+    setFetchedModels([]);
+    setIsFetchingModels(false);
+  }, []);
+
+  useEffect(
+    () => () => {
+      modelFetchGenerationRef.current += 1;
+    },
+    [],
+  );
+
+  const updateSettingsConfig = useCallback(
+    (update: (config: Record<string, unknown>) => void) => {
+      const config = parseJsonObject(form.getValues("settingsConfig"));
+      if (!config) return false;
+      update(config);
+      lastValidSettingsConfigRef.current = config;
+      form.setValue("settingsConfig", JSON.stringify(config, null, 2), {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+      return true;
+    },
+    [form],
+  );
+
+  const syncModelsToSettingsConfig = useCallback(
+    (nextModels: PiModelDraft[]) => {
+      return updateSettingsConfig((config) => {
+        if (includeModelsRef.current || nextModels.length > 0) {
+          config.models = nextModels.map(modelPreview);
+        } else {
+          delete config.models;
+        }
+      });
+    },
+    [updateSettingsConfig],
+  );
+
+  const commitModels = useCallback(
+    (nextModels: PiModelDraft[]) => {
+      if (!syncModelsToSettingsConfig(nextModels)) return false;
+      replaceModelsState(nextModels);
+      return true;
+    },
+    [replaceModelsState, syncModelsToSettingsConfig],
+  );
+
+  const applySettingsConfig = useCallback(
+    (
+      config: Record<string, unknown>,
+      previousConfig: Record<string, unknown> | null,
+    ) => {
+      const currentDisplayName = form.getValues("name").trim();
+      const hasNativeName =
+        hasOwn(config, "name") && typeof config.name === "string";
+      const nextNativeName = hasNativeName
+        ? (config.name as string)
+        : undefined;
+
+      setNativeNameOverride(nextNativeName);
+      setNativeNameFollowsDisplay(
+        hasNativeName && nextNativeName === currentDisplayName,
+      );
+      setBaseUrl(optionalText(config.baseUrl));
+      const nextApi = optionalText(config.api) || "openai-completions";
+      setApi(nextApi);
+      setIncludeApi(hasOwn(config, "api"));
+      setApiKey(optionalText(config.apiKey));
+      setProviderHeaders(stringRecord(asObject(config.headers)));
+      setProviderCompat(asObject(config.compat));
+      includeCompatRef.current = hasOwn(config, "compat");
+      setProviderPassthrough(objectWithout(config, ROOT_CONTROLLED_KEYS));
+      includeModelsRef.current = hasOwn(config, "models");
+
+      const requestConfigChanged =
+        !previousConfig ||
+        optionalText(previousConfig.baseUrl) !== optionalText(config.baseUrl) ||
+        (optionalText(previousConfig.api) || "openai-completions") !==
+          (optionalText(config.api) || "openai-completions") ||
+        optionalText(previousConfig.apiKey) !== optionalText(config.apiKey) ||
+        !jsonValuesEqual(
+          stringRecord(asObject(previousConfig.headers)),
+          stringRecord(asObject(config.headers)),
+        );
+      if (requestConfigChanged) invalidateFetchedModels();
+
+      const previousModelValues =
+        previousConfig && Array.isArray(previousConfig.models)
+          ? previousConfig.models
+          : [];
+      const previousDrafts = modelsRef.current;
+      const configModels = Array.isArray(config.models) ? config.models : [];
+      const reservedPreviousIndexes = new Set<number>();
+      const exactPreviousIndexes = configModels.map((model) => {
+        const id = optionalText(asObject(model).id);
+        const previousIndex = previousDrafts.findIndex(
+          (candidate, candidateIndex) =>
+            !reservedPreviousIndexes.has(candidateIndex) && candidate.id === id,
+        );
+        if (previousIndex >= 0) reservedPreviousIndexes.add(previousIndex);
+        return previousIndex;
+      });
+      const usedPreviousIndexes = new Set(reservedPreviousIndexes);
+      const canUsePositionalFallback =
+        configModels.length === previousModelValues.length &&
+        previousDrafts.length === previousModelValues.length;
+      const nextModels = configModels.map((model, index) => {
+        let previousIndex = exactPreviousIndexes[index];
+        if (
+          previousIndex < 0 &&
+          canUsePositionalFallback &&
+          previousDrafts[index] &&
+          !usedPreviousIndexes.has(index)
+        ) {
+          previousIndex = index;
+          usedPreviousIndexes.add(index);
+        }
+
+        const previousDraft =
+          previousIndex >= 0 ? previousDrafts[previousIndex] : undefined;
+        return modelDraft(model, { key: previousDraft?.key });
+      });
+      replaceModelsState(nextModels);
+      const nextKeys = new Set(nextModels.map((model) => model.key));
+      setExpandedModelKeys(
+        (current) => new Set([...current].filter((key) => nextKeys.has(key))),
+      );
+
+      if (
+        Array.isArray(config.models) &&
+        !jsonValuesEqual(config.models, nextModels.map(modelPreview))
+      ) {
+        const normalizedConfig = {
+          ...config,
+          models: nextModels.map(modelPreview),
+        };
+        lastValidSettingsConfigRef.current = normalizedConfig;
+        form.setValue(
+          "settingsConfig",
+          JSON.stringify(normalizedConfig, null, 2),
+          {
+            shouldDirty: true,
+            shouldValidate: true,
+          },
+        );
+      } else {
+        lastValidSettingsConfigRef.current = config;
+      }
+    },
+    [form, invalidateFetchedModels, replaceModelsState],
+  );
+
+  const handleSettingsConfigChange = useCallback(
+    (value: string) => {
+      // JsonEditor also emits when an external value is written into its
+      // document. Structured controls already own that update, so applying it
+      // again would recreate model row keys and collapse their details.
+      if (value === form.getValues("settingsConfig")) return;
+
+      const previousConfig =
+        parseJsonObject(form.getValues("settingsConfig")) ??
+        lastValidSettingsConfigRef.current;
+      form.setValue("settingsConfig", value, {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+
+      const config = parseJsonObject(value);
+      if (!config) {
+        try {
+          JSON.parse(value);
+          form.setError("settingsConfig", {
+            type: "validate",
+            message: t("jsonEditor.mustBeObject"),
+          });
+        } catch {
+          // providerSchema reports syntax errors without replacing the draft.
+        }
+        return;
+      }
+
+      form.clearErrors("settingsConfig");
+      applySettingsConfig(config, previousConfig);
+    },
+    [applySettingsConfig, form, t],
+  );
+
+  useEffect(() => {
+    const nextDisplayName = displayName.trim();
+    if (displayNameBaselineRef.current === nextDisplayName) return;
+    if (!nativeNameFollowsDisplay) {
+      displayNameBaselineRef.current = nextDisplayName;
+      return;
+    }
+
+    const applied = updateSettingsConfig((config) => {
+      config.name = nextDisplayName;
+    });
+    if (!applied) {
+      form.setValue("name", displayNameBaselineRef.current);
+      return;
+    }
+    displayNameBaselineRef.current = nextDisplayName;
+    setNativeNameOverride(nextDisplayName);
+  }, [displayName, form, nativeNameFollowsDisplay, updateSettingsConfig]);
 
   useEffect(() => {
     onSubmitReadyChange?.(isSubmitReady);
@@ -490,149 +750,156 @@ export function PiProviderForm({
   const selectPreset = (id: string) => {
     setFormError(null);
     setSelectedPresetId(id);
+    invalidateFetchedModels();
     if (id === "custom") {
       setSelectedPreset(null);
       setCategory("custom");
       setProviderKey("");
+      setNativeNameFollowsDisplay(true);
+      setNativeNameOverride(identityDefaults.name.trim());
+      displayNameBaselineRef.current = identityDefaults.name.trim();
+      lastValidSettingsConfigRef.current =
+        parseJsonObject(identityDefaults.settingsConfig) ?? {};
       form.reset(identityDefaults);
       setBaseUrl("");
       setApi("openai-completions");
       setIncludeApi(true);
+      includeModelsRef.current = true;
       setApiKey("");
       setProviderHeaders({});
+      setProviderCompat({});
+      includeCompatRef.current = false;
       setProviderPassthrough({});
-      setFetchedModels([]);
-      setModels([]);
+      replaceModelsState([]);
       setExpandedModelKeys(new Set());
+      setExpandedThinkingMapKeys(new Set());
       return;
     }
     const entry = presetEntries.find((candidate) => candidate.id === id);
     if (!entry) return;
     const preset = entry.preset;
+    const presetConfig = asObject(preset.settingsConfig);
+    const nextModels = preset.settingsConfig.models.map((model) =>
+      modelDraft(model),
+    );
     setSelectedPreset(preset);
     setCategory(preset.category ?? "custom");
     setProviderKey(preset.providerKey);
+    setNativeNameFollowsDisplay(true);
+    setNativeNameOverride(preset.settingsConfig.name);
+    displayNameBaselineRef.current = preset.settingsConfig.name.trim();
+    lastValidSettingsConfigRef.current = presetConfig;
     form.reset({
       name: preset.settingsConfig.name,
       websiteUrl: preset.websiteUrl,
       notes: "",
-      settingsConfig: "{}",
+      settingsConfig: JSON.stringify(presetConfig, null, 2),
       icon: preset.icon ?? "",
       iconColor: preset.iconColor ?? "",
     });
     setBaseUrl(preset.settingsConfig.baseUrl);
     setApi(preset.settingsConfig.api);
     setIncludeApi(true);
+    includeModelsRef.current = true;
     setApiKey("");
-    const presetConfig = asObject(preset.settingsConfig);
     setProviderHeaders(stringRecord(asObject(presetConfig.headers)));
+    setProviderCompat(asObject(presetConfig.compat));
+    includeCompatRef.current = hasOwn(presetConfig, "compat");
     setProviderPassthrough(objectWithout(presetConfig, ROOT_CONTROLLED_KEYS));
-    setFetchedModels([]);
-    const nextModels = preset.settingsConfig.models.map((model) =>
-      modelDraft(model, {
-        auto: true,
-        metadata: resolvePiModelMetadata(model.id, {
-          selectedPreset: preset,
-          modelsDevCatalog: modelsDevCatalogRef.current,
-        }),
-      }),
-    );
-    setModels(nextModels);
+    replaceModelsState(nextModels);
     setExpandedModelKeys(new Set());
+    setExpandedThinkingMapKeys(new Set());
   };
-
-  const resolveMetadataForModel = useCallback(
-    (
-      model: Pick<PiModelDraft, "id" | "preferredMetadataProvider">,
-      catalog: ModelsDevResponse | null = modelsDevCatalogRef.current,
-    ) =>
-      resolvePiModelMetadata(model.id, {
-        selectedPreset,
-        modelsDevCatalog: catalog,
-        preferredProvider: model.preferredMetadataProvider,
-      }),
-    [selectedPreset],
-  );
 
   const updateModelOverride = (
     key: string,
-    field: PiModelOverrideField,
-    update: Partial<Omit<PiModelDraft, "key" | "overrides">>,
+    update: Partial<Omit<PiModelDraft, "key">>,
   ) => {
-    setModels((current) =>
-      current.map((model) =>
+    commitModels(
+      modelsRef.current.map((model) =>
+        model.key === key ? { ...model, ...update } : model,
+      ),
+    );
+  };
+
+  const changeModelId = (key: string, id: string) => {
+    commitModels(
+      modelsRef.current.map((model) =>
         model.key === key
           ? {
               ...model,
-              ...update,
-              overrides: { ...model.overrides, [field]: true },
+              id,
+              name:
+                model.name.length === 0 || model.name === model.id
+                  ? id
+                  : model.name,
             }
           : model,
       ),
     );
   };
 
-  const changeModelId = (
+  const updateThinkingLevelMap = (
     key: string,
-    id: string,
-    options: {
-      preferredProvider?: string | null;
-      resetOverrides?: boolean;
-    } = {},
+    update: (map: PiThinkingLevelMap) => PiThinkingLevelMap,
   ) => {
-    setModels((current) =>
-      current.map((model) => {
+    commitModels(
+      modelsRef.current.map((model) => {
         if (model.key !== key) return model;
-        const nextModel: PiModelDraft = {
+        const current = isPiThinkingLevelMap(model.thinkingLevelMap)
+          ? { ...model.thinkingLevelMap }
+          : {};
+        return {
           ...model,
-          id,
-          persistAutoMetadata: model.persistAutoMetadata || id !== model.id,
-          preferredMetadataProvider:
-            "preferredProvider" in options
-              ? (options.preferredProvider ?? null)
-              : model.preferredMetadataProvider,
-          overrides: options.resetOverrides
-            ? emptyModelOverrides()
-            : model.overrides,
+          thinkingLevelMap: update(current),
+          hasThinkingLevelMap: true,
         };
-        return applyModelAutofill(
-          nextModel,
-          resolveMetadataForModel(nextModel),
-        );
       }),
     );
   };
 
-  const restoreModelAutofill = (key: string) => {
-    setModels((current) =>
-      current.map((model) => {
-        if (model.key !== key) return model;
-        const nextModel = {
-          ...model,
-          persistAutoMetadata: true,
-          overrides: emptyModelOverrides(),
-        };
-        return applyModelAutofill(
-          nextModel,
-          resolveMetadataForModel(nextModel),
-        );
-      }),
-    );
+  const updateThinkingLevelMode = (
+    key: string,
+    level: PiThinkingLevel,
+    mode: PiThinkingLevelMode,
+  ) => {
+    updateThinkingLevelMap(key, (map) => {
+      if (mode === "default") {
+        delete map[level];
+      } else if (mode === "unsupported") {
+        map[level] = null;
+      } else if (typeof map[level] !== "string") {
+        map[level] = level;
+      }
+      return map;
+    });
   };
 
   const addModel = () => {
     const model = newModel();
-    setModels((current) => [...current, model]);
+    const previouslyIncluded = includeModelsRef.current;
+    includeModelsRef.current = true;
+    if (!commitModels([...modelsRef.current, model])) {
+      includeModelsRef.current = previouslyIncluded;
+    }
   };
 
   const removeModel = (key: string) => {
-    const nextModels = models.filter((model) => model.key !== key);
-    setModels(nextModels);
+    const nextModels = modelsRef.current.filter((model) => model.key !== key);
+    commitModels(nextModels);
     setExpandedModelKeys((current) => {
       const next = new Set(current);
       next.delete(key);
       return next;
     });
+    setExpandedThinkingMapKeys((current) => {
+      const next = new Set(current);
+      next.delete(key);
+      return next;
+    });
+    setEditingThinkingLevel((current) =>
+      current?.modelKey === key ? null : current,
+    );
   };
 
   const toggleModelDetails = (key: string) => {
@@ -643,40 +910,6 @@ export function PiProviderForm({
       return next;
     });
   };
-
-  const hasModelId = models.some((model) => model.id.length > 0);
-  useEffect(() => {
-    if (!hasModelId) return;
-    let cancelled = false;
-    setIsModelMetadataLoading(true);
-    void loadModelsDevCatalog()
-      .then((catalog) => {
-        modelsDevCatalogRef.current = catalog;
-        if (cancelled) return;
-        setModels((current) =>
-          current.map((model) =>
-            applyModelAutofill(
-              model,
-              resolvePiModelMetadata(model.id, {
-                selectedPreset,
-                modelsDevCatalog: catalog,
-                preferredProvider: model.preferredMetadataProvider,
-              }),
-            ),
-          ),
-        );
-        setModelMetadataLookupComplete(true);
-      })
-      .catch(() => {
-        if (!cancelled) setModelMetadataLookupComplete(true);
-      })
-      .finally(() => {
-        if (!cancelled) setIsModelMetadataLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [hasModelId, selectedPreset]);
 
   const handleFetchModels = useCallback(() => {
     const endpoint = baseUrl.trim();
@@ -696,27 +929,8 @@ export function PiProviderForm({
       "user-agent",
     );
 
-    // Warm the shared public catalog while the upstream model list loads.
-    // This enrichment is optional and must not affect the fetch result.
-    void loadModelsDevCatalog()
-      .then((catalog) => {
-        modelsDevCatalogRef.current = catalog;
-        setModels((current) =>
-          current.map((model) =>
-            applyModelAutofill(
-              model,
-              resolvePiModelMetadata(model.id, {
-                selectedPreset,
-                modelsDevCatalog: catalog,
-                preferredProvider: model.preferredMetadataProvider,
-              }),
-            ),
-          ),
-        );
-        setModelMetadataLookupComplete(true);
-      })
-      .catch(() => undefined);
-
+    const requestGeneration = ++modelFetchGenerationRef.current;
+    setFetchedModels([]);
     setIsFetchingModels(true);
     fetchModelsForConfig(
       endpoint,
@@ -730,6 +944,7 @@ export function PiProviderForm({
       },
     )
       .then((result) => {
+        if (modelFetchGenerationRef.current !== requestGeneration) return;
         setFetchedModels(result);
         if (result.length === 0) {
           toast.info(t("providerForm.fetchModelsEmpty"));
@@ -740,11 +955,89 @@ export function PiProviderForm({
         }
       })
       .catch((error) => {
+        if (modelFetchGenerationRef.current !== requestGeneration) return;
         console.warn("[ModelFetch] Failed:", error);
         showFetchModelsError(error, t);
       })
-      .finally(() => setIsFetchingModels(false));
-  }, [api, apiKey, baseUrl, providerHeaders, selectedPreset, t]);
+      .finally(() => {
+        if (modelFetchGenerationRef.current === requestGeneration) {
+          setIsFetchingModels(false);
+        }
+      });
+  }, [api, apiKey, baseUrl, providerHeaders, t]);
+
+  const handleApiChange = useCallback(
+    (value: string) => {
+      const applied = updateSettingsConfig((config) => {
+        config.api = value;
+      });
+      if (!applied) return;
+      invalidateFetchedModels();
+      setApi(value);
+      setIncludeApi(true);
+    },
+    [invalidateFetchedModels, updateSettingsConfig],
+  );
+
+  const handleApiKeyChange = useCallback(
+    (value: string) => {
+      const applied = updateSettingsConfig((config) => {
+        if (value) config.apiKey = value;
+        else delete config.apiKey;
+      });
+      if (!applied) return;
+      invalidateFetchedModels();
+      setApiKey(value);
+    },
+    [invalidateFetchedModels, updateSettingsConfig],
+  );
+
+  const handleBaseUrlChange = useCallback(
+    (value: string) => {
+      const applied = updateSettingsConfig((config) => {
+        const trimmed = value.trim();
+        if (trimmed) config.baseUrl = trimmed;
+        else delete config.baseUrl;
+      });
+      if (!applied) return;
+      invalidateFetchedModels();
+      setBaseUrl(value);
+    },
+    [invalidateFetchedModels, updateSettingsConfig],
+  );
+
+  const handleProviderHeadersChange = useCallback(
+    (value: Record<string, string>) => {
+      const applied = updateSettingsConfig((config) => {
+        const normalized = normalizeRequestHeaders(value);
+        if (Object.keys(normalized).length > 0) config.headers = normalized;
+        else delete config.headers;
+      });
+      if (!applied) return;
+      invalidateFetchedModels();
+      setProviderHeaders(value);
+    },
+    [invalidateFetchedModels, updateSettingsConfig],
+  );
+
+  const handleProviderCompatChange = useCallback(
+    (value: Record<string, unknown>) => {
+      const includeCompat = Object.keys(value).length > 0;
+      const applied = updateSettingsConfig((config) => {
+        if (includeCompat) config.compat = value;
+        else delete config.compat;
+      });
+      if (!applied) return;
+      includeCompatRef.current = includeCompat;
+      setProviderCompat(value);
+    },
+    [updateSettingsConfig],
+  );
+
+  const handleProviderKeyChange = useCallback((value: string) => {
+    const normalized = value.toLowerCase().replace(/[^a-z0-9-]/g, "");
+    setProviderKey(normalized);
+  }, []);
 
   const submit = async (identity: ProviderFormData) => {
     onSubmittingChange?.(true);
@@ -752,6 +1045,12 @@ export function PiProviderForm({
     try {
       if (!isEdit && selectedPresetId === null) {
         throw new PiFormValidationError(t("pi.form.selectPresetRequired"));
+      }
+      if (!parseJsonObject(identity.settingsConfig)) {
+        throw new PiFormValidationError(
+          t("jsonEditor.mustBeObject"),
+          "#pi-settings-config",
+        );
       }
       const trimmedName = identity.name.trim();
       const trimmedKey = providerKey.trim();
@@ -767,13 +1066,13 @@ export function PiProviderForm({
           "#pi-provider-key",
         );
       }
-      if (selectedPreset && apiKey.length === 0) {
+      if (!isEdit && selectedPreset && apiKey.length === 0) {
         throw new PiFormValidationError(
           t("pi.form.credentialRequired"),
           "#pi-api-key",
         );
       }
-      if (models.length === 0) {
+      if (!isEdit && models.length === 0) {
         throw new PiFormValidationError(
           t("pi.form.modelRequired"),
           "#pi-add-model",
@@ -784,9 +1083,8 @@ export function PiProviderForm({
       const headers = normalizeRequestHeaders(providerHeaders);
       const seen = new Set<string>();
       const normalizedModels = models.map((model, index) => {
-        // Pinned Pi treats model IDs as opaque, exact strings. In particular,
-        // its schema accepts whitespace-only and edge-whitespace IDs; trimming
-        // here would silently rename an imported model.
+        // Pi treats model IDs as opaque strings. Trimming would rename an
+        // imported model.
         const id = model.id;
         if (id.length === 0) {
           throw new PiFormValidationError(
@@ -803,20 +1101,38 @@ export function PiProviderForm({
           );
         }
         seen.add(id);
-        const contextWindow = optionalPositiveNumber(
+        const displayName = model.name.trim();
+        if (!displayName) {
+          throw new PiFormValidationError(
+            t("pi.form.modelNameRequired", { index: index + 1 }),
+            `#pi-model-name-${model.key}`,
+            true,
+          );
+        }
+        const contextWindow = positiveNumber(
           model.contextWindow,
           t("pi.form.positiveNumberRequired", {
             label: t("pi.form.contextWindow"),
           }),
           `#pi-model-context-window-${model.key}`,
         );
-        const maxTokens = optionalPositiveNumber(
+        const maxTokens = positiveNumber(
           model.maxTokens,
           t("pi.form.positiveNumberRequired", {
             label: t("pi.form.maxTokens"),
           }),
           `#pi-model-max-tokens-${model.key}`,
         );
+        if (
+          model.hasThinkingLevelMap &&
+          !isPiThinkingLevelMap(model.thinkingLevelMap)
+        ) {
+          throw new PiFormValidationError(
+            t("pi.form.thinkingLevelMapInvalid"),
+            `#pi-model-thinking-levels-${model.key}`,
+            true,
+          );
+        }
         // Pi's schema supports rare per-model api/baseUrl overrides. Keep
         // imported values losslessly, but use the provider-level format and
         // endpoint as the normal product model.
@@ -828,7 +1144,10 @@ export function PiProviderForm({
           typeof model.passthrough.baseUrl === "string"
             ? model.passthrough.baseUrl.trim()
             : "";
-        if (!modelApi && !api.trim()) {
+        // Existing explicit nodes may be partial overrides of a Pi built-in
+        // provider. Pi inherits the built-in transport in that case, so only
+        // require a complete transport when CC Switch creates a new provider.
+        if (!isEdit && !modelApi && !api.trim()) {
           throw new PiFormValidationError(
             t("pi.form.effectiveApiRequired", { id }),
             "#pi-provider-api-select",
@@ -836,36 +1155,22 @@ export function PiProviderForm({
           );
         }
         const effectiveUrl = modelBaseUrl || baseUrl.trim();
-        if (!effectiveUrl) {
+        if (!isEdit && !effectiveUrl) {
           throw new PiFormValidationError(
             t("pi.form.effectiveBaseUrlRequired", { id }),
             "#pi-provider-base-url",
           );
         }
-        const displayName = model.name.trim();
         return {
           ...model.passthrough,
           id,
-          ...(displayName &&
-          (model.overrides.name ||
-            (model.persistAutoMetadata && displayName !== model.id))
-            ? { name: displayName }
-            : {}),
-          ...(model.reasoning !== undefined &&
-          shouldPersistModelField(model, "reasoning")
-            ? { reasoning: model.reasoning }
-            : {}),
-          ...(model.input !== undefined &&
-          shouldPersistModelField(model, "imageInput")
-            ? { input: model.input }
-            : {}),
-          ...(contextWindow !== undefined &&
-          shouldPersistModelField(model, "contextWindow")
-            ? { contextWindow }
-            : {}),
-          ...(maxTokens !== undefined &&
-          shouldPersistModelField(model, "maxTokens")
-            ? { maxTokens }
+          name: displayName,
+          reasoning: model.reasoning,
+          input: withImageInput(model.input, supportsImageInput(model.input)),
+          contextWindow,
+          maxTokens,
+          ...(model.hasThinkingLevelMap
+            ? { thinkingLevelMap: model.thinkingLevelMap }
             : {}),
         };
       });
@@ -875,7 +1180,7 @@ export function PiProviderForm({
             validateAbsoluteHttpUrl(
               baseUrl.trim(),
               t("pi.form.absoluteHttpUrlRequired", {
-                label: t("providerForm.apiEndpoint"),
+                label: t("opencode.baseUrl", { defaultValue: "Base URL" }),
               }),
             ),
           "#pi-provider-base-url",
@@ -891,7 +1196,10 @@ export function PiProviderForm({
         includeApi,
         apiKey,
         headers,
+        compat: providerCompat,
+        includeCompat: includeCompatRef.current,
         models: normalizedModels,
+        includeModels: includeModelsRef.current,
       });
       const values: ProviderFormValues = {
         name: trimmedName,
@@ -904,7 +1212,6 @@ export function PiProviderForm({
         presetId: selectedPresetId ?? undefined,
         presetCategory: category,
         meta: initialData?.meta,
-        ...(isEdit ? { expectedSettingsConfig: initialConfig } : {}),
       };
       await onSubmit(values);
     } catch (error) {
@@ -916,7 +1223,7 @@ export function PiProviderForm({
       setFormError(message);
       if (error instanceof PiFormValidationError) {
         const modelDetailsMatch = error.fieldSelector?.match(
-          /^#pi-model-(?:context-window|max-tokens)-(.+)$/,
+          /^#pi-model-(?:context-window|max-tokens|thinking-levels)-(.+)$/,
         );
         if (modelDetailsMatch) {
           setExpandedModelKeys((current) => {
@@ -924,6 +1231,13 @@ export function PiProviderForm({
             next.add(modelDetailsMatch[1]);
             return next;
           });
+          if (error.fieldSelector?.includes("thinking-levels")) {
+            setExpandedThinkingMapKeys((current) => {
+              const next = new Set(current);
+              next.add(modelDetailsMatch[1]);
+              return next;
+            });
+          }
         }
         if (error.fieldSelector) {
           requestAnimationFrame(() => {
@@ -950,41 +1264,13 @@ export function PiProviderForm({
   const isKnownApiFormat = PI_API_FORMATS.some(
     (format) => format.value === api,
   );
-  const previewName = form.watch("name");
-  const settingsConfigPreview = useMemo(
-    () =>
-      JSON.stringify(
-        buildPiSettingsConfig({
-          passthrough: providerPassthrough,
-          nativeName: resolveNativeName(previewName),
-          baseUrl,
-          api,
-          includeApi,
-          apiKey,
-          headers: normalizeRequestHeaders(providerHeaders),
-          models: models.map(modelPreview),
-        }),
-        null,
-        2,
-      ),
-    [
-      api,
-      apiKey,
-      baseUrl,
-      includeApi,
-      models,
-      previewName,
-      providerHeaders,
-      providerPassthrough,
-      resolveNativeName,
-    ],
-  );
 
   return (
     <Form {...form}>
       <form
         id="provider-form"
         onSubmit={form.handleSubmit(submit)}
+        noValidate
         onChangeCapture={() => {
           if (formError) setFormError(null);
         }}
@@ -1019,65 +1305,46 @@ export function PiProviderForm({
                   <div className="space-y-2">
                     <Label htmlFor="pi-provider-key">
                       {t("pi.form.providerKey")}
-                      <span className="text-destructive ml-1">*</span>
+                      <span
+                        aria-hidden="true"
+                        className="text-destructive ml-1"
+                      >
+                        *
+                      </span>
                     </Label>
                     <Input
                       id="pi-provider-key"
                       value={providerKey}
                       onChange={(event) =>
-                        setProviderKey(
-                          event.target.value
-                            .toLowerCase()
-                            .replace(/[^a-z0-9-]/g, ""),
-                        )
+                        handleProviderKeyChange(event.target.value)
                       }
                       disabled={isEdit}
                       placeholder="my-provider"
                       autoComplete="off"
                     />
                     <p className="text-xs text-muted-foreground">
-                      {t("pi.form.providerKeyHint")}
+                      {isEdit
+                        ? t("opencode.providerKeyLockedHint", {
+                            defaultValue:
+                              "该供应商已添加到应用配置中，供应商标识不可修改",
+                          })
+                        : t("opencode.providerKeyHint", {
+                            defaultValue:
+                              "配置文件中的唯一标识符，只能使用小写字母、数字和连字符",
+                          })}
                     </p>
                   </div>
                 ) : undefined
               }
             />
 
-            <ApiKeySection
-              id="pi-api-key"
-              label={t("pi.form.credential")}
-              value={apiKey}
-              onChange={setApiKey}
-              category={category}
-              shouldShowLink={Boolean(selectedPreset?.apiKeyUrl)}
-              websiteUrl={selectedPreset?.apiKeyUrl ?? ""}
-              isPartner={selectedPreset?.isPartner}
-              partnerPromotionKey={selectedPreset?.partnerPromotionKey}
-              placeholder={{
-                official: t("pi.form.apiKeyPlaceholder"),
-                thirdParty: t("pi.form.apiKeyPlaceholder"),
-              }}
-            />
-
-            <EndpointField
-              id="pi-provider-base-url"
-              label={t("providerForm.apiEndpoint")}
-              value={baseUrl}
-              onChange={setBaseUrl}
-              placeholder="https://api.example.com/v1"
-            />
-
             <Field
-              label={t("pi.form.apiFormat", { defaultValue: "接口格式" })}
+              label={t("opencode.npmPackage", {
+                defaultValue: "接口格式",
+              })}
               htmlFor="pi-provider-api-select"
             >
-              <Select
-                value={api}
-                onValueChange={(value) => {
-                  setApi(value);
-                  setIncludeApi(true);
-                }}
-              >
+              <Select value={api} onValueChange={handleApiChange}>
                 <SelectTrigger id="pi-provider-api-select" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
@@ -1093,22 +1360,68 @@ export function PiProviderForm({
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                {t("pi.form.apiFormatHint", {
-                  defaultValue:
-                    "默认使用 OpenAI Chat Completions；预设通常无需修改。",
+                {t("opencode.npmPackageHint", {
+                  defaultValue: "选择 AI 服务的 API 接口格式",
                 })}
               </p>
             </Field>
 
+            <ApiKeySection
+              id="pi-api-key"
+              label={t("pi.form.credential")}
+              value={apiKey}
+              onChange={handleApiKeyChange}
+              category={category}
+              shouldShowLink={Boolean(selectedPreset?.apiKeyUrl)}
+              websiteUrl={selectedPreset?.apiKeyUrl ?? ""}
+              isPartner={selectedPreset?.isPartner}
+              partnerPromotionKey={selectedPreset?.partnerPromotionKey}
+            />
+
+            <div className="space-y-2">
+              <EndpointField
+                id="pi-provider-base-url"
+                label={t("opencode.baseUrl", { defaultValue: "Base URL" })}
+                value={baseUrl}
+                onChange={handleBaseUrlChange}
+                placeholder="https://api.example.com/v1"
+              />
+              <p className="text-xs text-muted-foreground">
+                {t("opencode.baseUrlHint", {
+                  defaultValue: "自定义 API 端点地址",
+                })}
+              </p>
+            </div>
+
+            <RequestHeadersEditor
+              headers={providerHeaders}
+              onHeadersChange={handleProviderHeadersChange}
+            />
+
+            <StructuredOptionsEditor
+              id="pi-provider-compat"
+              title={t("pi.form.compatibility")}
+              hint={t("pi.form.compatibilityHint")}
+              addLabel={t("pi.form.addCompatibilityOption")}
+              emptyLabel={t("pi.form.noCompatibilityOptions")}
+              keyLabel={t("pi.form.optionKey")}
+              valueLabel={t("pi.form.optionValue")}
+              keyPlaceholder="supportsDeveloperRole"
+              valuePlaceholder="false"
+              removeLabel={t("pi.form.removeCompatibilityOption")}
+              options={providerCompat}
+              onOptionsChange={handleProviderCompatChange}
+            />
+
             <div
               id="pi-models-section"
               tabIndex={-1}
-              className="space-y-3 outline-none"
+              className="space-y-3 border-l border-border-default pl-3 outline-none"
             >
               <div className="flex items-center justify-between gap-3">
-                <h3 className="text-sm font-normal leading-5">
-                  {t("pi.form.models", { defaultValue: "模型配置" })}
-                </h3>
+                <FormLabel>
+                  {t("opencode.models", { defaultValue: "模型配置" })}
+                </FormLabel>
                 <div className="flex gap-1">
                   <Button
                     type="button"
@@ -1149,22 +1462,39 @@ export function PiProviderForm({
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
                     <span className="w-9" />
-                    <span className="flex-1">{t("pi.form.modelId")}</span>
-                    <span className="flex-1">{t("pi.form.modelName")}</span>
+                    <span className="flex-1">
+                      {t("pi.form.modelId")}
+                      <span
+                        aria-hidden="true"
+                        className="ml-1 text-destructive"
+                      >
+                        *
+                      </span>
+                    </span>
+                    <span className="flex-1">
+                      {t("pi.form.modelName")}
+                      <span
+                        aria-hidden="true"
+                        className="ml-1 text-destructive"
+                      >
+                        *
+                      </span>
+                    </span>
                     <span className="w-9" />
                   </div>
                   {models.map((model) => {
-                    const metadataStatusKey = modelMetadataStatusKey(
-                      model,
-                      isModelMetadataLoading,
-                      modelMetadataLookupComplete,
-                    );
-                    const metadataStatusId = metadataStatusKey
-                      ? `pi-model-metadata-status-${model.key}`
+                    const isExpanded = expandedModelKeys.has(model.key);
+                    const validThinkingLevelMap = isPiThinkingLevelMap(
+                      model.thinkingLevelMap,
+                    )
+                      ? model.thinkingLevelMap
                       : undefined;
-                    const canRestoreAutofill =
-                      Boolean(model.autoMetadata) &&
-                      hasAnyModelOverrides(model);
+                    const editableThinkingLevelMap =
+                      validThinkingLevelMap ??
+                      (!model.hasThinkingLevelMap ? {} : undefined);
+                    const thinkingMapIsExpanded = expandedThinkingMapKeys.has(
+                      model.key,
+                    );
                     return (
                       <div key={model.key} className="space-y-2">
                         <div className="flex items-center gap-2">
@@ -1180,9 +1510,7 @@ export function PiProviderForm({
                           >
                             <ChevronRight
                               className={`h-4 w-4 transition-transform motion-reduce:transition-none ${
-                                expandedModelKeys.has(model.key)
-                                  ? "rotate-90"
-                                  : ""
+                                isExpanded ? "rotate-90" : ""
                               }`}
                             />
                           </Button>
@@ -1195,21 +1523,13 @@ export function PiProviderForm({
                               }
                               placeholder="model-id"
                               aria-label={t("pi.form.modelId")}
+                              required
                               className="min-w-0 flex-1"
                             />
                             {fetchedModels.length > 0 && (
                               <ModelDropdown
                                 models={fetchedModels}
-                                onSelect={(id) => {
-                                  const fetchedModel = fetchedModels.find(
-                                    (candidate) => candidate.id === id,
-                                  );
-                                  changeModelId(model.key, id, {
-                                    preferredProvider:
-                                      fetchedModel?.ownedBy ?? null,
-                                    resetOverrides: true,
-                                  });
-                                }}
+                                onSelect={(id) => changeModelId(model.key, id)}
                               />
                             )}
                           </div>
@@ -1217,12 +1537,13 @@ export function PiProviderForm({
                             id={`pi-model-name-${model.key}`}
                             value={model.name}
                             onChange={(event) =>
-                              updateModelOverride(model.key, "name", {
+                              updateModelOverride(model.key, {
                                 name: event.target.value,
                               })
                             }
                             placeholder={t("pi.form.modelNamePlaceholder")}
                             aria-label={t("pi.form.modelName")}
+                            required
                             className="min-w-0 flex-1"
                           />
                           <Button
@@ -1237,8 +1558,8 @@ export function PiProviderForm({
                           </Button>
                         </div>
 
-                        {expandedModelKeys.has(model.key) && (
-                          <div className="ml-9 grid gap-3 border-l border-border-default pl-4 sm:grid-cols-2">
+                        {isExpanded && (
+                          <div className="ml-9 grid gap-3 border-l-2 border-muted pl-4 sm:grid-cols-2">
                             <div className="flex min-h-9 flex-wrap items-center gap-x-8 gap-y-2 sm:col-span-2">
                               <div className="flex items-center gap-2.5">
                                 <Label
@@ -1251,15 +1572,10 @@ export function PiProviderForm({
                                   id={`pi-model-reasoning-${model.key}`}
                                   checked={model.reasoning === true}
                                   onCheckedChange={(checked) =>
-                                    updateModelOverride(
-                                      model.key,
-                                      "reasoning",
-                                      {
-                                        reasoning: checked,
-                                      },
-                                    )
+                                    updateModelOverride(model.key, {
+                                      reasoning: checked,
+                                    })
                                   }
-                                  aria-describedby={metadataStatusId}
                                 />
                               </div>
                               <div className="flex items-center gap-2.5">
@@ -1273,86 +1589,324 @@ export function PiProviderForm({
                                   id={`pi-model-image-input-${model.key}`}
                                   checked={supportsImageInput(model.input)}
                                   onCheckedChange={(checked) =>
-                                    updateModelOverride(
-                                      model.key,
-                                      "imageInput",
-                                      {
-                                        input: withImageInput(
-                                          model.input,
-                                          checked,
-                                        ),
-                                      },
-                                    )
+                                    updateModelOverride(model.key, {
+                                      input: withImageInput(
+                                        model.input,
+                                        checked,
+                                      ),
+                                    })
                                   }
-                                  aria-describedby={metadataStatusId}
                                 />
                               </div>
-                              {metadataStatusKey && (
-                                <div className="ml-auto flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                                  {isModelMetadataLoading &&
-                                    !model.autoMetadata &&
-                                    model.id && (
-                                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-                                    )}
-                                  <span id={metadataStatusId}>
-                                    {t(metadataStatusKey)}
-                                  </span>
-                                  {canRestoreAutofill && (
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() =>
-                                        restoreModelAutofill(model.key)
-                                      }
-                                      className="h-7 shrink-0 px-2 text-xs"
-                                    >
-                                      {t("pi.form.restoreModelAutofill")}
-                                    </Button>
-                                  )}
-                                </div>
-                              )}
                             </div>
                             <Field
-                              label={t("pi.form.contextWindow")}
+                              label={
+                                <>
+                                  {t("pi.form.contextWindow")}
+                                  <span
+                                    aria-hidden="true"
+                                    className="ml-1 text-destructive"
+                                  >
+                                    *
+                                  </span>
+                                </>
+                              }
                               htmlFor={`pi-model-context-window-${model.key}`}
                             >
                               <Input
                                 id={`pi-model-context-window-${model.key}`}
+                                aria-label={t("pi.form.contextWindow")}
                                 type="number"
                                 step="any"
+                                min="1"
                                 inputMode="decimal"
+                                required
                                 value={model.contextWindow}
                                 onChange={(event) =>
-                                  updateModelOverride(
-                                    model.key,
-                                    "contextWindow",
-                                    {
-                                      contextWindow: event.target.value,
-                                    },
-                                  )
+                                  updateModelOverride(model.key, {
+                                    contextWindow: event.target.value,
+                                  })
                                 }
                                 placeholder="128000"
                               />
                             </Field>
                             <Field
-                              label={t("pi.form.maxTokens")}
+                              label={
+                                <>
+                                  {t("pi.form.maxTokens")}
+                                  <span
+                                    aria-hidden="true"
+                                    className="ml-1 text-destructive"
+                                  >
+                                    *
+                                  </span>
+                                </>
+                              }
                               htmlFor={`pi-model-max-tokens-${model.key}`}
                             >
                               <Input
                                 id={`pi-model-max-tokens-${model.key}`}
+                                aria-label={t("pi.form.maxTokens")}
                                 type="number"
                                 step="any"
+                                min="1"
                                 inputMode="decimal"
+                                required
                                 value={model.maxTokens}
                                 onChange={(event) =>
-                                  updateModelOverride(model.key, "maxTokens", {
+                                  updateModelOverride(model.key, {
                                     maxTokens: event.target.value,
                                   })
                                 }
                                 placeholder="16384"
                               />
                             </Field>
+                            {model.reasoning === true && (
+                              <div
+                                id={`pi-model-thinking-levels-${model.key}`}
+                                tabIndex={-1}
+                                className="w-full space-y-2 sm:col-span-2"
+                              >
+                                <div className="flex min-h-9 items-center">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() =>
+                                      setExpandedThinkingMapKeys((current) => {
+                                        const next = new Set(current);
+                                        if (next.has(model.key)) {
+                                          next.delete(model.key);
+                                          setEditingThinkingLevel((editing) =>
+                                            editing?.modelKey === model.key
+                                              ? null
+                                              : editing,
+                                          );
+                                        } else {
+                                          next.add(model.key);
+                                        }
+                                        return next;
+                                      })
+                                    }
+                                    aria-label={
+                                      thinkingMapIsExpanded
+                                        ? t("common.collapse")
+                                        : t("pi.form.customizeThinkingLevels")
+                                    }
+                                    aria-expanded={thinkingMapIsExpanded}
+                                    className="-ml-2 h-8 gap-1.5 px-2 text-foreground"
+                                  >
+                                    <span>
+                                      {t("pi.form.thinkingLevelsLabel")}
+                                    </span>
+                                    <ChevronDown
+                                      className={`h-4 w-4 transition-transform motion-reduce:transition-none ${
+                                        thinkingMapIsExpanded
+                                          ? "rotate-180"
+                                          : ""
+                                      }`}
+                                    />
+                                  </Button>
+                                </div>
+
+                                {thinkingMapIsExpanded &&
+                                  editableThinkingLevelMap && (
+                                    <div className="overflow-hidden rounded-lg border border-border/70 bg-background/30">
+                                      {PI_THINKING_LEVELS.map((level) => {
+                                        const mode = thinkingLevelMode(
+                                          editableThinkingLevelMap,
+                                          level,
+                                        );
+                                        const mappedValue =
+                                          editableThinkingLevelMap[level];
+                                        const popoverOpen =
+                                          editingThinkingLevel?.modelKey ===
+                                            model.key &&
+                                          editingThinkingLevel.level === level;
+                                        return (
+                                          <Popover
+                                            key={level}
+                                            open={popoverOpen}
+                                            onOpenChange={(open) =>
+                                              setEditingThinkingLevel(
+                                                open
+                                                  ? {
+                                                      modelKey: model.key,
+                                                      level,
+                                                    }
+                                                  : null,
+                                              )
+                                            }
+                                          >
+                                            <PopoverTrigger asChild>
+                                              <button
+                                                type="button"
+                                                aria-label={t(
+                                                  "pi.form.editThinkingLevel",
+                                                  {
+                                                    level: t(
+                                                      `pi.form.thinkingLevels.${level}`,
+                                                    ),
+                                                  },
+                                                )}
+                                                className="group flex h-[42px] w-full items-center gap-3 border-b border-border/40 px-4 text-left text-sm transition-colors last:border-b-0 hover:bg-muted/40"
+                                              >
+                                                <span className="flex-1">
+                                                  {t(
+                                                    `pi.form.thinkingLevels.${level}`,
+                                                  )}
+                                                </span>
+                                                <span
+                                                  className={
+                                                    mode === "value"
+                                                      ? "max-w-[18rem] truncate text-right font-mono text-xs text-foreground"
+                                                      : "text-xs text-muted-foreground"
+                                                  }
+                                                >
+                                                  {mode === "default"
+                                                    ? t(
+                                                        "pi.form.thinkingLevelDefault",
+                                                      )
+                                                    : mode === "unsupported"
+                                                      ? t(
+                                                          "pi.form.thinkingLevelUnsupported",
+                                                        )
+                                                      : mappedValue}
+                                                </span>
+                                                <PopoverAnchor asChild>
+                                                  <span
+                                                    className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-[color,background-color,transform] duration-200 ${
+                                                      popoverOpen
+                                                        ? "translate-x-0.5 bg-primary/10 text-primary"
+                                                        : "text-muted-foreground/50 group-hover:translate-x-0.5 group-hover:text-muted-foreground"
+                                                    }`}
+                                                  >
+                                                    <ChevronRight className="h-3.5 w-3.5" />
+                                                  </span>
+                                                </PopoverAnchor>
+                                              </button>
+                                            </PopoverTrigger>
+                                            <PopoverContent
+                                              side="left"
+                                              align="center"
+                                              sideOffset={10}
+                                              collisionPadding={24}
+                                              sticky="always"
+                                              className="pi-thinking-popover z-[1000] w-72 space-y-3 p-4 shadow-xl"
+                                            >
+                                              <p className="text-sm font-medium">
+                                                {t(
+                                                  `pi.form.thinkingLevels.${level}`,
+                                                )}
+                                              </p>
+                                              <label className="flex cursor-pointer items-center gap-2.5 text-sm">
+                                                <input
+                                                  type="radio"
+                                                  name={`pi-thinking-level-mode-${model.key}-${level}`}
+                                                  checked={mode === "default"}
+                                                  onChange={() =>
+                                                    updateThinkingLevelMode(
+                                                      model.key,
+                                                      level,
+                                                      "default",
+                                                    )
+                                                  }
+                                                  className="h-4 w-4 accent-primary"
+                                                />
+                                                {t(
+                                                  "pi.form.thinkingLevelFollowDefault",
+                                                )}
+                                              </label>
+                                              <div className="flex items-center gap-2.5 text-sm">
+                                                <input
+                                                  id={`pi-thinking-level-value-${model.key}-${level}`}
+                                                  type="radio"
+                                                  name={`pi-thinking-level-mode-${model.key}-${level}`}
+                                                  checked={mode === "value"}
+                                                  aria-label={t(
+                                                    "pi.form.thinkingLevelMapTo",
+                                                  )}
+                                                  onChange={() =>
+                                                    updateThinkingLevelMode(
+                                                      model.key,
+                                                      level,
+                                                      "value",
+                                                    )
+                                                  }
+                                                  className="h-4 w-4 accent-primary"
+                                                />
+                                                <label
+                                                  htmlFor={`pi-thinking-level-value-${model.key}-${level}`}
+                                                  className="shrink-0 cursor-pointer"
+                                                >
+                                                  {t(
+                                                    "pi.form.thinkingLevelMapTo",
+                                                  )}
+                                                </label>
+                                                <Input
+                                                  value={
+                                                    typeof mappedValue ===
+                                                    "string"
+                                                      ? mappedValue
+                                                      : level
+                                                  }
+                                                  onChange={(event) =>
+                                                    updateThinkingLevelMap(
+                                                      model.key,
+                                                      (map) => ({
+                                                        ...map,
+                                                        [level]:
+                                                          event.target.value,
+                                                      }),
+                                                    )
+                                                  }
+                                                  onFocus={() =>
+                                                    mode !== "value" &&
+                                                    updateThinkingLevelMode(
+                                                      model.key,
+                                                      level,
+                                                      "value",
+                                                    )
+                                                  }
+                                                  aria-label={t(
+                                                    "pi.form.thinkingLevelValue",
+                                                    {
+                                                      level: t(
+                                                        `pi.form.thinkingLevels.${level}`,
+                                                      ),
+                                                    },
+                                                  )}
+                                                  className="h-8 min-w-0 flex-1 font-mono text-xs"
+                                                />
+                                              </div>
+                                              <label className="flex cursor-pointer items-center gap-2.5 text-sm">
+                                                <input
+                                                  type="radio"
+                                                  name={`pi-thinking-level-mode-${model.key}-${level}`}
+                                                  checked={
+                                                    mode === "unsupported"
+                                                  }
+                                                  onChange={() =>
+                                                    updateThinkingLevelMode(
+                                                      model.key,
+                                                      level,
+                                                      "unsupported",
+                                                    )
+                                                  }
+                                                  className="h-4 w-4 accent-primary"
+                                                />
+                                                {t(
+                                                  "pi.form.thinkingLevelMarkUnavailable",
+                                                )}
+                                              </label>
+                                            </PopoverContent>
+                                          </Popover>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1362,33 +1916,37 @@ export function PiProviderForm({
               )}
 
               <p className="text-xs text-muted-foreground">
-                {t("pi.form.modelEditorHint", {
+                {t("opencode.modelsHint", {
                   defaultValue: "配置可用的模型及其显示名称。",
                 })}
               </p>
             </div>
 
-            <RequestHeadersEditor
-              headers={providerHeaders}
-              onHeadersChange={setProviderHeaders}
-              compact
+            <FormField
+              control={form.control}
+              name="settingsConfig"
+              render={() => (
+                <FormItem className="space-y-2">
+                  <Label htmlFor="pi-settings-config">
+                    {t("provider.configJson")}
+                  </Label>
+                  <JsonEditor
+                    id="pi-settings-config"
+                    ariaLabel={t("provider.configJson")}
+                    value={settingsConfigText}
+                    onChange={handleSettingsConfigChange}
+                    height={
+                      Math.max(1, settingsConfigText.split("\n").length) * 20 +
+                      20
+                    }
+                    showValidation={true}
+                    language="json"
+                    darkMode={isDarkMode}
+                  />
+                  <FormMessage />
+                </FormItem>
+              )}
             />
-
-            <div className="space-y-2">
-              <Label htmlFor="pi-config-preview">
-                {t("provider.configJson")}
-              </Label>
-              <JsonEditor
-                id="pi-config-preview"
-                value={settingsConfigPreview}
-                onChange={() => {}}
-                height={settingsConfigPreview.split("\n").length * 20 + 20}
-                showValidation={false}
-                language="json"
-                darkMode={isDarkMode}
-                readOnly
-              />
-            </div>
           </>
         )}
 
@@ -1412,12 +1970,12 @@ function Field({
   htmlFor,
   children,
 }: {
-  label: string;
+  label: React.ReactNode;
   htmlFor: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       <Label htmlFor={htmlFor}>{label}</Label>
       {children}
     </div>

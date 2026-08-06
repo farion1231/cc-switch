@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import {
+  getPiModelCatalogReference,
+  piModelCatalog,
+} from "@/config/piModelCatalog";
 import { piProviderPresets } from "@/config/piProviderPresets";
 
 describe("Pi provider presets", () => {
@@ -26,16 +30,30 @@ describe("Pi provider presets", () => {
       expect(preset.settingsConfig.baseUrl).toMatch(/^https?:\/\//);
       expect(preset.settingsConfig.api).not.toBe("");
       expect(preset.settingsConfig.apiKey).toBe("");
+      expect(preset.settingsConfig.models.length).toBeGreaterThan(0);
       const modelIds = preset.settingsConfig.models.map((model) => model.id);
       expect(new Set(modelIds).size).toBe(modelIds.length);
       for (const model of preset.settingsConfig.models) {
         expect(model.id).not.toBe("");
         expect(model.name).not.toBe("");
+        expect(typeof model.reasoning).toBe("boolean");
+        expect(model.input.length).toBeGreaterThan(0);
+        expect(model.input.every((input) => ["text", "image"].includes(input)));
+        expect(model.contextWindow).toBeGreaterThan(0);
+        expect(model.maxTokens).toBeGreaterThan(0);
+        const reference = getPiModelCatalogReference(model);
+        if (!reference) {
+          throw new Error(`${preset.name}/${model.id} has no catalog profile`);
+        }
+        expect(piModelCatalog).toHaveProperty(reference.catalogKey);
+        expect(JSON.parse(JSON.stringify(model))).not.toHaveProperty(
+          "catalogKey",
+        );
       }
     }
   });
 
-  it("uses Anthropic roots that produce the pinned Pi request paths", () => {
+  it("uses Anthropic roots that produce Pi request paths", () => {
     const requestUrls = Object.fromEntries(
       piProviderPresets
         .filter((preset) => preset.settingsConfig.api === "anthropic-messages")
@@ -69,5 +87,18 @@ describe("Pi provider presets", () => {
       RightCode: "openai-responses",
       "AWS Bedrock": "bedrock-converse-stream",
     });
+  });
+
+  it("uses Pi's 272K context value for every GPT-5.6 Sol preset", () => {
+    const models = piProviderPresets.flatMap((preset) =>
+      preset.settingsConfig.models.filter(
+        (model) => model.id === "gpt-5.6-sol",
+      ),
+    );
+
+    expect(models.length).toBeGreaterThan(0);
+    expect(models.every((model) => model.contextWindow === 272_000)).toBe(
+      true,
+    );
   });
 });

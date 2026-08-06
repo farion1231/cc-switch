@@ -2617,7 +2617,7 @@ impl ProviderService {
         provider: Provider,
     ) -> Result<bool, AppError> {
         if app_type == AppType::Pi {
-            return pi::update(state, original_id, provider, None);
+            return pi::update(state, original_id, provider);
         }
 
         let mut provider = provider;
@@ -2838,15 +2838,6 @@ impl ProviderService {
         }
 
         Ok(true)
-    }
-
-    pub(crate) fn update_pi_with_expected(
-        state: &AppState,
-        original_id: Option<&str>,
-        provider: Provider,
-        expected_settings_config: Option<&Value>,
-    ) -> Result<bool, AppError> {
-        pi::update(state, original_id, provider, expected_settings_config)
     }
 
     pub(crate) fn update_pi_usage_script(
@@ -4316,10 +4307,7 @@ impl ProviderService {
                 }
             }
             AppType::Pi => {
-                crate::pi_config::validate_managed_provider(
-                    &provider.id,
-                    &provider.settings_config,
-                )?;
+                crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
         }
 

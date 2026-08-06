@@ -1,5 +1,15 @@
 import type { ProviderCategory } from "@/types";
 import type { PresetTheme } from "./claudeProviderPresets";
+import {
+  getPiModelCatalogReference,
+  piModel,
+  type PiCatalogModel,
+} from "./piModelCatalog";
+import {
+  getPiThinkingProfile,
+  resolvePiThinkingProfile,
+  type PiThinkingLevelMap,
+} from "./piThinkingProfiles";
 
 export type PiApiFormat =
   | "openai-completions"
@@ -8,14 +18,10 @@ export type PiApiFormat =
   | "google-generative-ai"
   | "bedrock-converse-stream";
 
-export interface PiPresetModel {
-  id: string;
-  name?: string;
-  reasoning?: boolean;
-  input?: Array<"text" | "image">;
-  contextWindow?: number;
-  maxTokens?: number;
-}
+export type PiPresetModel = PiCatalogModel & {
+  thinkingLevelMap?: PiThinkingLevelMap;
+  compat?: Record<string, unknown>;
+};
 
 export interface PiProviderPreset {
   name: string;
@@ -29,6 +35,7 @@ export interface PiProviderPreset {
     api: PiApiFormat;
     apiKey: string;
     headers?: Record<string, string>;
+    compat?: Record<string, unknown>;
     models: PiPresetModel[];
   };
   category?: ProviderCategory;
@@ -48,7 +55,7 @@ export interface PiProviderPreset {
  * aligned with the OpenCode catalog, but Pi does not import or derive from
  * another application's presets at runtime.
  */
-export const piProviderPresets: PiProviderPreset[] = [
+const piProviderPresetDefinitions: PiProviderPreset[] = [
   {
     name: "Kimi",
     providerKey: "cc-switch-kimi",
@@ -60,20 +67,14 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("moonshotai/kimi-k2.7-code", {
           id: "kimi-k2.7-code",
-          name: "Kimi K2.7 Code",
-          reasoning: true,
-          input: ["text", "image"],
-        },
-        {
+          thinkingProfile: "offUnsupported",
+        }),
+        piModel("moonshotai/kimi-k3", {
           id: "kimi-k3",
-          name: "Kimi K3",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1048576,
-          maxTokens: 131072,
-        },
+          thinkingProfile: "kimi3",
+        }),
       ],
     },
     category: "cn_official",
@@ -93,12 +94,11 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        {
+        piModel("moonshotai/kimi-k2.7-code", {
           id: "kimi-for-coding",
           name: "Kimi For Coding",
-          reasoning: true,
-          input: ["text", "image"],
-        },
+          maxTokens: 32768,
+        }),
       ],
     },
     category: "cn_official",
@@ -117,20 +117,12 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-sonnet-5", {
           id: "claude-sonnet-5",
-          name: "Claude Sonnet 5",
-          reasoning: true,
-          input: ["text", "image"],
-        },
-        {
+        }),
+        piModel("anthropic/claude-opus-5", {
           id: "claude-opus-5",
-          name: "Claude Opus 5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
+        }),
       ],
     },
     category: "third_party",
@@ -149,12 +141,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          reasoning: true,
-          input: ["text", "image"],
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -173,12 +162,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          reasoning: true,
-          input: ["text", "image"],
-        },
+        }),
       ],
     },
     category: "third_party",
@@ -197,20 +183,12 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-sonnet-5", {
           id: "claude-sonnet-5",
-          name: "Claude Sonnet 5",
-          reasoning: true,
-          input: ["text", "image"],
-        },
-        {
+        }),
+        piModel("anthropic/claude-opus-5", {
           id: "claude-opus-5",
-          name: "Claude Opus 5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
+        }),
       ],
     },
     category: "third_party",
@@ -231,12 +209,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          reasoning: true,
-          input: ["text", "image"],
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -255,24 +230,15 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-sonnet-5", {
           id: "claude-sonnet-5",
-          name: "Claude Sonnet 5",
-          reasoning: true,
-          input: ["text", "image"],
-        },
-        {
+        }),
+        piModel("anthropic/claude-opus-5", {
           id: "claude-opus-5",
-          name: "Claude Opus 5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
-        {
+        }),
+        piModel("anthropic/claude-haiku-4.5", {
           id: "claude-haiku-4-5",
-          name: "Claude Haiku 4.5",
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -292,16 +258,12 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-opus-5", {
           id: "anthropic/claude-opus-5",
-          name: "Claude Opus 5",
-          reasoning: true,
-          input: ["text", "image"],
-        },
-        {
+        }),
+        piModel("anthropic/claude-sonnet-5", {
           id: "anthropic/claude-sonnet-5",
-          name: "Claude Sonnet 5",
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -320,20 +282,12 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-sonnet-5", {
           id: "claude-sonnet-5",
-          name: "Claude Sonnet 5",
-          reasoning: true,
-          input: ["text", "image"],
-        },
-        {
+        }),
+        piModel("anthropic/claude-opus-5", {
           id: "claude-opus-5",
-          name: "Claude Opus 5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
+        }),
       ],
     },
     category: "third_party",
@@ -354,12 +308,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          reasoning: true,
-          input: ["text", "image"],
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -378,20 +329,12 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-sonnet-5", {
           id: "claude-sonnet-5",
-          name: "Claude Sonnet 5",
-          reasoning: true,
-          input: ["text", "image"],
-        },
-        {
+        }),
+        piModel("anthropic/claude-opus-5", {
           id: "claude-opus-5",
-          name: "Claude Opus 5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
+        }),
       ],
     },
     category: "third_party",
@@ -411,12 +354,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          reasoning: true,
-          input: ["text", "image"],
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -435,24 +375,15 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-opus-5", {
           id: "claude-opus-5",
-          name: "Claude Opus 5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
-        {
+        }),
+        piModel("anthropic/claude-sonnet-5", {
           id: "claude-sonnet-5",
-          name: "Claude Sonnet 5",
-          reasoning: true,
-          input: ["text", "image"],
-        },
-        {
+        }),
+        piModel("anthropic/claude-haiku-4.5", {
           id: "claude-haiku-4-5",
-          name: "Claude Haiku 4.5",
-        },
+        }),
       ],
     },
     category: "third_party",
@@ -471,12 +402,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          reasoning: true,
-          input: ["text", "image"],
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -496,12 +424,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          reasoning: true,
-          input: ["text", "image"],
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -520,24 +445,15 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-sonnet-5", {
           id: "claude-sonnet-5",
-          name: "Claude Sonnet 5",
-          reasoning: true,
-          input: ["text", "image"],
-        },
-        {
+        }),
+        piModel("anthropic/claude-opus-5", {
           id: "claude-opus-5",
-          name: "Claude Opus 5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
-        {
+        }),
+        piModel("anthropic/claude-haiku-4.5", {
           id: "claude-haiku-4-5",
-          name: "Claude Haiku 4.5",
-        },
+        }),
       ],
     },
     category: "third_party",
@@ -558,10 +474,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("volcengine/ark-code-latest", {
           id: "ark-code-latest",
-          name: "Ark Code Latest",
-        },
+        }),
       ],
     },
     category: "cn_official",
@@ -583,10 +498,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("volcengine/ark-code-latest", {
           id: "ark-code-latest",
-          name: "Ark Code Latest",
-        },
+        }),
       ],
     },
     category: "cn_official",
@@ -608,10 +522,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("volcengine/doubao-seed-2.1-pro", {
           id: "doubao-seed-2-1-pro-260628",
-          name: "Doubao Seed 2.1 Pro",
-        },
+        }),
       ],
     },
     category: "cn_official",
@@ -631,12 +544,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          reasoning: true,
-          input: ["text", "image"],
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -655,10 +565,10 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("zai/glm-5.1", {
           id: "zai-org/glm-5.1",
           name: "GLM 5.1",
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -677,12 +587,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          reasoning: true,
-          input: ["text", "image"],
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -701,20 +608,12 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-sonnet-5", {
           id: "claude-sonnet-5",
-          name: "Claude Sonnet 5",
-          reasoning: true,
-          input: ["text", "image"],
-        },
-        {
+        }),
+        piModel("anthropic/claude-opus-5", {
           id: "claude-opus-5",
-          name: "Claude Opus 5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
+        }),
       ],
     },
     category: "third_party",
@@ -734,20 +633,12 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-opus-5", {
           id: "claude-opus-5",
-          name: "Claude Opus 5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
-        {
+        }),
+        piModel("anthropic/claude-sonnet-5", {
           id: "claude-sonnet-5",
-          name: "Claude Sonnet 5",
-          reasoning: true,
-          input: ["text", "image"],
-        },
+        }),
       ],
     },
     category: "third_party",
@@ -767,14 +658,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-responses",
       apiKey: "",
       models: [
-        {
+        piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 400000,
-          maxTokens: 128000,
-        },
+        }),
       ],
     },
     category: "third_party",
@@ -794,20 +680,12 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-opus-5", {
           id: "claude-opus-5",
-          name: "Claude Opus 5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
-        {
+        }),
+        piModel("anthropic/claude-sonnet-5", {
           id: "claude-sonnet-5",
-          name: "Claude Sonnet 5",
-          reasoning: true,
-          input: ["text", "image"],
-        },
+        }),
       ],
     },
     category: "third_party",
@@ -827,20 +705,12 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-sonnet-5", {
           id: "claude-sonnet-5",
-          name: "Claude Sonnet 5",
-          reasoning: true,
-          input: ["text", "image"],
-        },
-        {
+        }),
+        piModel("anthropic/claude-opus-5", {
           id: "claude-opus-5",
-          name: "Claude Opus 5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
+        }),
       ],
     },
     category: "third_party",
@@ -860,20 +730,12 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-sonnet-5", {
           id: "claude-sonnet-5",
-          name: "Claude Sonnet 5",
-          reasoning: true,
-          input: ["text", "image"],
-        },
-        {
+        }),
+        piModel("anthropic/claude-opus-5", {
           id: "claude-opus-5",
-          name: "Claude Opus 5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
+        }),
       ],
     },
     category: "third_party",
@@ -893,20 +755,12 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-sonnet-5", {
           id: "claude-sonnet-5",
-          name: "Claude Sonnet 5",
-          reasoning: true,
-          input: ["text", "image"],
-        },
-        {
+        }),
+        piModel("anthropic/claude-opus-5", {
           id: "claude-opus-5",
-          name: "Claude Opus 5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -925,14 +779,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-responses",
       apiKey: "",
       models: [
-        {
+        piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 400000,
-          maxTokens: 128000,
-        },
+        }),
       ],
     },
     category: "third_party",
@@ -951,14 +800,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-responses",
       apiKey: "",
       models: [
-        {
+        piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 400000,
-          maxTokens: 128000,
-        },
+        }),
       ],
     },
     category: "third_party",
@@ -976,12 +820,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("openai/gpt-5.6-sol", {
           id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          reasoning: true,
-          input: ["text", "image"],
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -998,18 +839,14 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("deepseek/deepseek-v4-pro", {
           id: "deepseek-v4-pro",
-          name: "DeepSeek V4 Pro",
-          reasoning: true,
-          input: ["text"],
-        },
-        {
+          thinkingProfile: "deepseekV4",
+        }),
+        piModel("deepseek/deepseek-v4-flash", {
           id: "deepseek-v4-flash",
-          name: "DeepSeek V4 Flash",
-          reasoning: true,
-          input: ["text"],
-        },
+          thinkingProfile: "deepseekV4",
+        }),
       ],
     },
     category: "cn_official",
@@ -1027,13 +864,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("zai/glm-5.1", {
           id: "glm-5.1",
-          name: "GLM-5.1",
-          input: ["text"],
-          contextWindow: 204800,
-          maxTokens: 131072,
-        },
+        }),
       ],
     },
     category: "cn_official",
@@ -1051,13 +884,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("zai/glm-5.1", {
           id: "glm-5.1",
-          name: "GLM-5.1",
-          input: ["text"],
-          contextWindow: 204800,
-          maxTokens: 131072,
-        },
+        }),
       ],
     },
     category: "cn_official",
@@ -1074,7 +903,11 @@ export const piProviderPresets: PiProviderPreset[] = [
       baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
       api: "openai-completions",
       apiKey: "",
-      models: [],
+      models: [
+        piModel("qwen/qwen3-coder-plus", {
+          id: "qwen3-coder-plus",
+        }),
+      ],
     },
     category: "cn_official",
     icon: "bailian",
@@ -1091,16 +924,13 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("stepfun/step-3.5-flash", {
           id: "step-3.5-flash-2603",
           name: "Step 3.5 Flash 2603",
-          contextWindow: 262144,
-        },
-        {
+        }),
+        piModel("stepfun/step-3.5-flash", {
           id: "step-3.5-flash",
-          name: "Step 3.5 Flash",
-          contextWindow: 262144,
-        },
+        }),
       ],
     },
     category: "cn_official",
@@ -1118,16 +948,13 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("stepfun/step-3.5-flash", {
           id: "step-3.5-flash-2603",
           name: "Step 3.5 Flash 2603",
-          contextWindow: 262144,
-        },
-        {
+        }),
+        piModel("stepfun/step-3.5-flash", {
           id: "step-3.5-flash",
-          name: "Step 3.5 Flash",
-          contextWindow: 262144,
-        },
+        }),
       ],
     },
     category: "cn_official",
@@ -1145,11 +972,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("stepfun/step-3.5-flash", {
           id: "step-3.5-flash",
-          name: "Step 3.5 Flash",
-          contextWindow: 262144,
-        },
+        }),
       ],
     },
     category: "cn_official",
@@ -1167,10 +992,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("zai/glm-5.1", {
           id: "ZhipuAI/GLM-5.1",
-          name: "GLM-5.1",
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -1189,10 +1013,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("streamlake/kat-coder-pro", {
           id: "KAT-Coder-Pro",
-          name: "KAT-Coder Pro",
-        },
+        }),
       ],
     },
     category: "cn_official",
@@ -1209,10 +1032,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("longcat/longcat-2.0", {
           id: "LongCat-2.0",
-          name: "LongCat 2.0",
-        },
+        }),
       ],
     },
     category: "cn_official",
@@ -1230,13 +1052,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("minimax/minimax-m2.7", {
           id: "MiniMax-M2.7",
-          name: "MiniMax M2.7",
-          input: ["text"],
-          contextWindow: 204800,
-          maxTokens: 131072,
-        },
+        }),
       ],
     },
     category: "cn_official",
@@ -1259,13 +1077,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("minimax/minimax-m2.7", {
           id: "MiniMax-M2.7",
-          name: "MiniMax M2.7",
-          input: ["text"],
-          contextWindow: 204800,
-          maxTokens: 131072,
-        },
+        }),
       ],
     },
     category: "cn_official",
@@ -1287,10 +1101,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("inclusionai/ling-2.5-1t", {
           id: "Ling-2.5-1T",
-          name: "Ling 2.5-1T",
-        },
+        }),
       ],
     },
     category: "cn_official",
@@ -1306,20 +1119,12 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("xiaomi/mimo-v2.5-pro", {
           id: "mimo-v2.5-pro",
-          name: "MiMo V2.5 Pro",
-          input: ["text"],
-          contextWindow: 1048576,
-          maxTokens: 131072,
-        },
-        {
+        }),
+        piModel("xiaomi/mimo-v2.5", {
           id: "mimo-v2.5",
-          name: "MiMo V2.5",
-          input: ["text", "image"],
-          contextWindow: 1048576,
-          maxTokens: 131072,
-        },
+        }),
       ],
     },
     category: "cn_official",
@@ -1337,20 +1142,12 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("xiaomi/mimo-v2.5-pro", {
           id: "mimo-v2.5-pro",
-          name: "MiMo V2.5 Pro",
-          input: ["text"],
-          contextWindow: 1048576,
-          maxTokens: 131072,
-        },
-        {
+        }),
+        piModel("xiaomi/mimo-v2.5", {
           id: "mimo-v2.5",
-          name: "MiMo V2.5",
-          input: ["text", "image"],
-          contextWindow: 1048576,
-          maxTokens: 131072,
-        },
+        }),
       ],
     },
     category: "cn_official",
@@ -1368,32 +1165,25 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("zai/glm-5.2", {
           id: "glm-5.2",
           name: "GLM 5.2",
-        },
-        {
+          thinkingProfile: "openCodeGoGlm52",
+        }),
+        piModel("moonshotai/kimi-k2.7-code", {
           id: "kimi-k2.7-code",
-          name: "Kimi K2.7 Code",
-          reasoning: true,
-          input: ["text", "image"],
-        },
-        {
+        }),
+        piModel("deepseek/deepseek-v4-pro", {
           id: "deepseek-v4-pro",
-          name: "DeepSeek V4 Pro",
-          reasoning: true,
-          input: ["text"],
-        },
-        {
+          thinkingProfile: "deepseekV4",
+        }),
+        piModel("deepseek/deepseek-v4-flash", {
           id: "deepseek-v4-flash",
-          name: "DeepSeek V4 Flash",
-          reasoning: true,
-          input: ["text"],
-        },
-        {
+          thinkingProfile: "deepseekV4",
+        }),
+        piModel("xiaomi/mimo-v2.5-pro", {
           id: "mimo-v2.5-pro",
-          name: "MiMo V2.5 Pro",
-        },
+        }),
       ],
     },
     category: "third_party",
@@ -1412,20 +1202,12 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-sonnet-5", {
           id: "claude-sonnet-5",
-          name: "Claude Sonnet 5",
-          reasoning: true,
-          input: ["text", "image"],
-        },
-        {
+        }),
+        piModel("anthropic/claude-opus-5", {
           id: "claude-opus-5",
-          name: "Claude Opus 5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -1443,16 +1225,12 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-sonnet-5", {
           id: "anthropic/claude-sonnet-5",
-          name: "Claude Sonnet 5",
-        },
-        {
+        }),
+        piModel("anthropic/claude-opus-5", {
           id: "anthropic/claude-opus-5",
-          name: "Claude Opus 5",
-          reasoning: true,
-          input: ["text", "image"],
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -1469,16 +1247,12 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-sonnet-5", {
           id: "anthropic/claude-sonnet-5",
-          name: "Claude Sonnet 5",
-        },
-        {
+        }),
+        piModel("anthropic/claude-opus-5", {
           id: "anthropic/claude-opus-5",
-          name: "Claude Opus 5",
-          reasoning: true,
-          input: ["text", "image"],
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -1496,26 +1270,21 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-sonnet-5", {
           id: "anthropic/claude-sonnet-5",
-          name: "Claude Sonnet 5",
-        },
-        {
+        }),
+        piModel("openai/gpt-5.3-codex", {
           id: "openai/gpt-5.3-codex",
-          name: "GPT-5.3 Codex",
-        },
-        {
+        }),
+        piModel("openai/gpt-5.2", {
           id: "openai/gpt-5.2",
-          name: "GPT-5.2",
-        },
-        {
+        }),
+        piModel("google/gemini-3.6-flash", {
           id: "google/gemini-3.6-flash",
-          name: "Gemini 3.6 Flash",
-        },
-        {
+        }),
+        piModel("qwen/qwen3-coder-480b", {
           id: "qwen/qwen3-coder-480b",
-          name: "Qwen3 Coder 480B",
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -1531,10 +1300,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("zai/glm-5.1", {
           id: "zai-org/glm-5.1",
-          name: "GLM-5.1",
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -1552,10 +1320,9 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        {
+        piModel("moonshotai/kimi-k2.5", {
           id: "moonshotai/kimi-k2.5",
-          name: "Kimi K2.5",
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -1573,27 +1340,18 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "anthropic-messages",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-opus-5", {
           id: "claude-opus-5",
           name: "claude-opus-5",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
-        {
+        }),
+        piModel("anthropic/claude-sonnet-5", {
           id: "claude-sonnet-5",
           name: "claude-sonnet-5",
-          reasoning: true,
-          input: ["text", "image"],
-        },
-        {
+        }),
+        piModel("anthropic/claude-haiku-4.5-20251001", {
           id: "claude-haiku-4-5-20251001",
           name: "claude-haiku-4-5-20251001",
-          input: ["text", "image"],
-          contextWindow: 200000,
-          maxTokens: 64000,
-        },
+        }),
       ],
     },
     category: "aggregator",
@@ -1610,14 +1368,14 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "openai-responses",
       apiKey: "",
       models: [
-        {
+        piModel("openai/gpt-5.2-codex", {
           id: "gpt-5.2-codex",
           name: "gpt-5.2-codex",
-        },
-        {
+        }),
+        piModel("openai/gpt-5.3-codex", {
           id: "gpt-5.3-codex",
           name: "gpt-5.3-codex",
-        },
+        }),
       ],
     },
     category: "third_party",
@@ -1634,48 +1392,26 @@ export const piProviderPresets: PiProviderPreset[] = [
       api: "bedrock-converse-stream",
       apiKey: "",
       models: [
-        {
+        piModel("anthropic/claude-opus-5", {
           id: "global.anthropic.claude-opus-5",
-          name: "Claude Opus 5",
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 128000,
-        },
-        {
+          thinkingProfile: "xhighAndMax",
+        }),
+        piModel("anthropic/claude-sonnet-5", {
           id: "global.anthropic.claude-sonnet-5",
-          name: "Claude Sonnet 5",
-          input: ["text", "image"],
-          contextWindow: 1000000,
-          maxTokens: 64000,
-        },
-        {
+          thinkingProfile: "xhighAndMax",
+        }),
+        piModel("anthropic/claude-haiku-4.5-20251001", {
           id: "global.anthropic.claude-haiku-4-5-20251001-v1:0",
-          name: "Claude Haiku 4.5",
-          input: ["text", "image"],
-          contextWindow: 200000,
-          maxTokens: 64000,
-        },
-        {
+        }),
+        piModel("amazon/nova-pro", {
           id: "us.amazon.nova-pro-v1:0",
-          name: "Amazon Nova Pro",
-          input: ["text", "image"],
-          contextWindow: 300000,
-          maxTokens: 5000,
-        },
-        {
+        }),
+        piModel("meta/llama-4-maverick", {
           id: "us.meta.llama4-maverick-17b-instruct-v1:0",
-          name: "Meta Llama 4 Maverick",
-          input: ["text"],
-          contextWindow: 131072,
-          maxTokens: 131072,
-        },
-        {
+        }),
+        piModel("deepseek/deepseek-r1", {
           id: "us.deepseek.r1-v1:0",
-          name: "DeepSeek R1",
-          input: ["text"],
-          contextWindow: 131072,
-          maxTokens: 131072,
-        },
+        }),
       ],
     },
     category: "cloud_provider",
@@ -1683,3 +1419,40 @@ export const piProviderPresets: PiProviderPreset[] = [
     iconColor: "#FF9900",
   },
 ];
+
+function materializeVerifiedThinkingProfiles(
+  preset: PiProviderPreset,
+): PiProviderPreset {
+  return {
+    ...preset,
+    settingsConfig: {
+      ...preset.settingsConfig,
+      models: preset.settingsConfig.models.map((model) => {
+        const reference = getPiModelCatalogReference(model);
+        if (!reference) return model;
+        const resolved = reference.presetThinkingProfileId
+          ? getPiThinkingProfile(reference.presetThinkingProfileId)
+          : resolvePiThinkingProfile({
+              catalogKey: reference.catalogKey,
+              api: preset.settingsConfig.api,
+            });
+        return {
+          ...model,
+          ...(model.reasoning ? { thinkingLevelMap: resolved?.map ?? {} } : {}),
+          ...(resolved?.modelCompat
+            ? {
+                compat: {
+                  ...model.compat,
+                  ...resolved.modelCompat,
+                },
+              }
+            : {}),
+        };
+      }),
+    },
+  };
+}
+
+export const piProviderPresets = piProviderPresetDefinitions.map(
+  materializeVerifiedThinkingProfiles,
+);

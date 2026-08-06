@@ -17,7 +17,6 @@ interface EditProviderDialogProps {
   onSubmit: (payload: {
     provider: Provider;
     originalId?: string;
-    expectedSettingsConfig?: Provider["settingsConfig"];
   }) => Promise<void> | void;
   appId: AppId;
   isProxyTakeover?: boolean; // 代理接管模式下不读取 live（避免显示被接管后的代理配置）
@@ -219,9 +218,6 @@ export function EditProviderDialog({
       await onSubmit({
         provider: updatedProvider,
         originalId: provider.id,
-        ...(appId === "pi" && values.expectedSettingsConfig
-          ? { expectedSettingsConfig: values.expectedSettingsConfig }
-          : {}),
       });
       onOpenChange(false);
     },

@@ -43,21 +43,8 @@ export const translatePiProviderMutationError = (
 ): string => {
   if (!message) return "";
 
-  if (message.includes("managed by Pi")) {
-    return t("pi.provider.managedByPi");
-  }
-  const currentModel = message.match(
-    /Pi is currently using model '(.*)'; choose another model in Pi before removing it$/,
-  );
-  if (currentModel) {
-    return t("pi.form.currentModelMustRemain", { model: currentModel[1] });
-  }
-  if (
-    message.includes("changed outside CC Switch") ||
-    message.includes("models.json changed") ||
-    message.includes("no longer present in models.json")
-  ) {
-    return t("pi.provider.configChanged");
+  if (message.includes("models.json changed")) {
+    return t("pi.provider.writeConflict");
   }
 
   return "";

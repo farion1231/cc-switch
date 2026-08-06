@@ -147,15 +147,10 @@ export function useProviderActions(
 
   // 更新供应商
   const updateProvider = useCallback(
-    async (
-      provider: Provider,
-      originalId?: string,
-      expectedSettingsConfig?: Provider["settingsConfig"],
-    ) => {
+    async (provider: Provider, originalId?: string) => {
       await updateProviderMutation.mutateAsync({
         provider,
         originalId,
-        ...(expectedSettingsConfig ? { expectedSettingsConfig } : {}),
       });
 
       // 更新托盘菜单（失败不影响主操作）

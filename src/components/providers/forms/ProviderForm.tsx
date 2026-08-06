@@ -2702,6 +2702,5 @@ export type ProviderFormValues = ProviderFormData & {
   isPartner?: boolean;
   meta?: ProviderMeta;
   providerKey?: string; // OpenCode/OpenClaw: user-defined provider key
-  expectedSettingsConfig?: Record<string, unknown>; // Pi: edit-open snapshot for optimistic concurrency
   suggestedDefaults?: OpenClawSuggestedDefaults; // OpenClaw: suggested default model configuration
 };

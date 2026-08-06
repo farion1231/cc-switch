@@ -9,19 +9,14 @@ describe("error utilities", () => {
     expect(extractErrorMessage("backend failed")).toBe("backend failed");
   });
 
-  it.each([
-    ["Pi provider 'anthropic' is managed by Pi", "pi.provider.managedByPi"],
-    [
-      "无效输入: Pi is currently using model 'model-a'; choose another model in Pi before removing it",
-      "pi.form.currentModelMustRemain",
-    ],
-    [
-      "Pi provider 'custom' changed outside CC Switch",
-      "pi.provider.configChanged",
-    ],
-  ])("maps Pi provider conflicts to %s", (message, expectedKey) => {
+  it("maps a simultaneous models.json write to a concise error", () => {
     const t = vi.fn((key: string) => key);
 
-    expect(translatePiProviderMutationError(message, t)).toBe(expectedKey);
+    expect(
+      translatePiProviderMutationError(
+        "Pi models.json changed outside CC Switch",
+        t,
+      ),
+    ).toBe("pi.provider.writeConflict");
   });
 });
