@@ -1692,6 +1692,11 @@ fn set_codex_experimental_bearer_token(config_text: &str, token: &str) -> Result
             .and_then(|item| item.as_table_mut())
         {
             provider_table["experimental_bearer_token"] = toml_edit::value(token);
+            // A provider-scoped bearer token is the authentication source for
+            // this third-party live route. Codex 0.144+ otherwise interprets
+            // requires_openai_auth = true as an explicit request to use the
+            // preserved ChatGPT login instead of the selected provider.
+            provider_table["requires_openai_auth"] = toml_edit::value(false);
             return Ok(doc.to_string());
         }
     }
@@ -2178,7 +2183,17 @@ pub fn restore_codex_provider_token_for_backfill(
         return Ok(());
     };
 
+    // Strip live-only projection state that prepare_codex_provider_live_config
+    // may have written: the bearer token itself, and the requires_openai_auth =
+    // false flip that keeps Codex 0.144+ from selecting preserved ChatGPT auth.
     let cleaned_config = remove_codex_experimental_bearer_token(&config_text)?;
+    let cleaned_config = restore_codex_requires_openai_auth_from_template(
+        &cleaned_config,
+        template_settings
+            .get("config")
+            .and_then(|value| value.as_str())
+            .unwrap_or(""),
+    )?;
 
     if let Some(obj) = settings.as_object_mut() {
         obj.insert("config".to_string(), Value::String(cleaned_config));
@@ -2195,6 +2210,62 @@ pub fn restore_codex_provider_token_for_backfill(
     }
 
     Ok(())
+}
+
+/// Restore `requires_openai_auth` on the active provider table from the stored
+/// template, undoing the live-only `false` written alongside a projected bearer
+/// token. If the template has no explicit value, drop the live-projected flag
+/// so stored provider config does not keep a synthetic default.
+fn restore_codex_requires_openai_auth_from_template(
+    live_config: &str,
+    template_config: &str,
+) -> Result<String, AppError> {
+    if live_config.trim().is_empty() {
+        return Ok(live_config.to_string());
+    }
+
+    let mut live_doc = live_config
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+
+    let Some(provider_id) = active_codex_model_provider_id(&live_doc) else {
+        return Ok(live_config.to_string());
+    };
+    if !is_custom_codex_model_provider_id(&provider_id) {
+        return Ok(live_config.to_string());
+    }
+
+    let template_flag = template_config
+        .parse::<DocumentMut>()
+        .ok()
+        .and_then(|doc| {
+            doc.get("model_providers")
+                .and_then(|item| item.as_table())
+                .and_then(|table| table.get(provider_id.as_str()))
+                .and_then(|item| item.as_table())
+                .and_then(|table| table.get("requires_openai_auth"))
+                .and_then(|item| item.as_bool())
+        });
+
+    let Some(provider_table) = live_doc
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_mut())
+        .and_then(|table| table.get_mut(provider_id.as_str()))
+        .and_then(|item| item.as_table_mut())
+    else {
+        return Ok(live_config.to_string());
+    };
+
+    match template_flag {
+        Some(flag) => {
+            provider_table["requires_openai_auth"] = toml_edit::value(flag);
+        }
+        None => {
+            provider_table.remove("requires_openai_auth");
+        }
+    }
+
+    Ok(live_doc.to_string())
 }
 
 pub fn restore_codex_settings_for_backfill(
@@ -2662,6 +2733,41 @@ base_url = "https://single.example.com/v1"
     }
 
     #[test]
+    fn prepare_provider_live_config_disables_openai_auth_for_custom_provider() {
+        let input = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Third Party"
+base_url = "https://third-party.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+
+        let output =
+            prepare_codex_provider_live_config(&json!({"OPENAI_API_KEY": "sk-test"}), input)
+                .expect("prepare live config");
+        let parsed: toml::Value = toml::from_str(&output).expect("parse output");
+        let provider = parsed
+            .get("model_providers")
+            .and_then(|value| value.get("custom"))
+            .expect("custom provider");
+
+        assert_eq!(
+            provider
+                .get("experimental_bearer_token")
+                .and_then(|value| value.as_str()),
+            Some("sk-test")
+        );
+        assert_eq!(
+            provider
+                .get("requires_openai_auth")
+                .and_then(|value| value.as_bool()),
+            Some(false),
+            "third-party bearer auth must not fall back to the preserved ChatGPT login"
+        );
+    }
+
+    #[test]
     fn prepare_provider_live_config_uses_top_level_token_for_reserved_provider() {
         let input = r#"model_provider = "openai"
 model = "gpt-5"
@@ -2696,6 +2802,64 @@ experimental_bearer_token = "stale-table-key"
         assert_eq!(
             extract_codex_experimental_bearer_token(input).as_deref(),
             Some("top-level-key")
+        );
+    }
+
+    #[test]
+    fn restore_provider_token_restores_requires_openai_auth_from_template() {
+        let mut settings = json!({
+            "auth": {
+                "OPENAI_API_KEY": null,
+                "tokens": {"access_token": "oauth"}
+            },
+            "config": r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Third Party"
+base_url = "https://third-party.example/v1"
+wire_api = "responses"
+requires_openai_auth = false
+experimental_bearer_token = "sk-live"
+"#
+        });
+        let template = json!({
+            "auth": {"OPENAI_API_KEY": "sk-stored"},
+            "config": r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Third Party"
+base_url = "https://third-party.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+        });
+
+        restore_codex_provider_token_for_backfill(&mut settings, &template)
+            .expect("restore provider token");
+
+        assert_eq!(
+            settings
+                .pointer("/auth/OPENAI_API_KEY")
+                .and_then(|v| v.as_str()),
+            Some("sk-live")
+        );
+        let restored_config = settings
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("config string");
+        assert!(
+            !restored_config.contains("experimental_bearer_token"),
+            "live bearer token must not leak into stored provider config"
+        );
+        let parsed: toml::Value = toml::from_str(restored_config).expect("parse restored config");
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("custom"))
+                .and_then(|v| v.get("requires_openai_auth"))
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "stored template requires_openai_auth must survive live projection backfill"
         );
     }
 
