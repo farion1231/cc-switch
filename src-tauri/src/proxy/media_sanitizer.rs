@@ -4,7 +4,8 @@ use crate::model_capabilities::{image_input_capability_from_settings, ImageInput
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
 use crate::proxy::tool_media::{
-    strip_media_from_tool_value, tool_output_contains_media, ToolMediaScope,
+    chat_media_part_from_tool_part, strip_media_from_tool_value, tool_output_contains_media,
+    ToolMediaScope,
 };
 use serde_json::{json, Value};
 
@@ -158,6 +159,14 @@ fn replace_images_in_message(message: &mut Value) -> usize {
         // including Anthropic cache_control on the replacement text block.
         // The shared traversal then handles JSON strings, MCP wrappers, and
         // loose data-URL shapes that the legacy recursion does not recognize.
+        //
+        // Only a root object that IS a media block gets whole-object
+        // replacement by the shared traversal. A wrapper object (e.g.
+        // {"content":[...], "status":"ok"}) keeps its shape with nested media
+        // replaced, so wrapping it into an array would put a non-block object
+        // into the content array. Detect that before recursing.
+        let root_was_media = content.is_object()
+            && chat_media_part_from_tool_part(content, ToolMediaScope::ImagesOnly).is_some();
         let mut replaced = replace_images_in_content(content);
         let replacement_block = json!({
             "type":"text",
@@ -171,7 +180,9 @@ fn replace_images_in_message(message: &mut Value) -> usize {
             &replacement_block,
             UNSUPPORTED_IMAGE_MARKER,
         );
-        wrap_object_content_after_replacement(content, replaced);
+        if root_was_media {
+            wrap_object_content_after_replacement(content, replaced);
+        }
         replaced
     } else {
         replace_images_in_content(content)
@@ -180,12 +191,12 @@ fn replace_images_in_message(message: &mut Value) -> usize {
 
 /// Anthropic 协议要求 message / tool_result 的 content 必须是字符串或 block 数组。
 ///
-/// `strip_media_from_tool_value` 会把裸 image 对象（MCP / 自定义工具直接以
-/// `{"type":"image",...}` 对象作为 tool_result content 输出）整体替换成 text
-/// 对象——若 content 本身就是该对象，替换后 content 会变成非法对象结构，
-/// 被 SenseNova 等严格网关以 "The content field is a required field" 拒绝
-/// （issue #6170）。这里把替换后的对象包装成单元素数组，恢复合法的
-/// Anthropic 结构。非对象 content（字符串 / 数组）不受影响。
+/// 仅在根对象本身是 media block 且被 `strip_media_from_tool_value` 整体替换成
+/// text 对象后调用（MCP / 自定义工具直接以 `{"type":"image",...}` 对象作为
+/// tool_result content 输出）：把替换后的对象包装成单元素数组，恢复合法的
+/// Anthropic 结构（issue #6170）。包装对象（含嵌套 media、根对象自身不是
+/// media block）不经过此函数——它的对象形态是上游原始结构，不属于媒体替换
+/// 引入的回归。非对象 content（字符串 / 数组）不受影响。
 fn wrap_object_content_after_replacement(content: &mut Value, replaced: usize) {
     if replaced > 0 && content.is_object() {
         let wrapped = std::mem::take(content);
@@ -218,6 +229,16 @@ fn replace_images_in_content_with_text_type(content: &mut Value, text_type: &str
                 // payload-aware traversal. This makes replacement a superset
                 // of detection and preserves cache_control on Anthropic image
                 // blocks, while the second pass covers alternate tool shapes.
+                //
+                // Only a root object that IS a media block gets whole-object
+                // replacement; a wrapper object keeps its shape, so wrapping
+                // it into an array would put a non-block object into content.
+                let root_was_media = nested_content.is_object()
+                    && chat_media_part_from_tool_part(
+                        nested_content,
+                        ToolMediaScope::ImagesOnly,
+                    )
+                    .is_some();
                 replaced += replace_images_in_content_with_text_type(nested_content, text_type);
                 let replacement_block = json!({
                     "type":text_type,
@@ -235,7 +256,9 @@ fn replace_images_in_content_with_text_type(content: &mut Value, text_type: &str
                 // MCP / 自定义工具可能把图片作为裸对象输出（tool_result.content
                 // 为对象而非数组/字符串）。strip 将其替换成 text 对象后必须包装成
                 // 数组，保证 Anthropic content 结构合法（issue #6170）。
-                wrap_object_content_after_replacement(nested_content, nested_replaced);
+                if root_was_media {
+                    wrap_object_content_after_replacement(nested_content, nested_replaced);
+                }
             } else {
                 replaced += replace_images_in_content_with_text_type(nested_content, text_type);
             }
@@ -398,6 +421,14 @@ fn replace_images_in_responses_input_item(item: &mut Value) -> usize {
     if let Some(output) = item.get_mut("output") {
         // The image-capability fallback deliberately strips images only.
         // Tool-output files/audio remain a known unsupported-modality gap.
+        //
+        // Only an output that IS a bare media object becomes the string
+        // marker (Responses function_call_output.output must be a string).
+        // A wrapper object containing nested media keeps its object shape
+        // with the nested images replaced, preserving captions and any
+        // non-image results (see detects_and_replaces_responses_function_output_images).
+        let root_was_media = output.is_object()
+            && chat_media_part_from_tool_part(output, ToolMediaScope::ImagesOnly).is_some();
         let replacement_block = json!({
             "type": "input_text",
             "text": UNSUPPORTED_IMAGE_MARKER
@@ -411,9 +442,7 @@ fn replace_images_in_responses_input_item(item: &mut Value) -> usize {
             UNSUPPORTED_IMAGE_MARKER,
         );
         replaced += output_replaced;
-        // Responses function_call_output.output 必须是字符串。裸 image 对象被
-        // 替换成对象后需还原为字符串标记，避免向严格网关发送对象结构。
-        if output_replaced > 0 && output.is_object() {
+        if root_was_media && output_replaced > 0 {
             *output = Value::String(UNSUPPORTED_IMAGE_MARKER.to_string());
         }
     }
@@ -1340,6 +1369,71 @@ mod tests {
             body["input"][0]["output"],
             Value::String(UNSUPPORTED_IMAGE_MARKER.to_string())
         );
+    }
+
+    #[test]
+    fn wrapper_object_tool_result_content_keeps_object_shape() {
+        // review 反馈：包装对象（根对象自身不是 media block，如
+        // {"content":[...], "status":"ok"}）只替换嵌套 media，不应被包装成
+        // 数组——数组元素不是合法 Anthropic content block。
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_1",
+                    "content": {
+                        "status": "ok",
+                        "content": [
+                            { "type": "image", "data": "WRAP_TOOL_IMG", "mimeType": "image/png" }
+                        ]
+                    }
+                }]
+            }]
+        });
+
+        assert!(contains_image_blocks(&body));
+        let count = replace_image_blocks_with_marker(&mut body);
+
+        assert_eq!(count, 1);
+        let content = &body["messages"][0]["content"][0]["content"];
+        assert!(content.is_object(), "包装对象应保持对象结构，实际: {content}");
+        assert_eq!(content["status"], "ok");
+        assert_eq!(content["content"][0]["type"], "text");
+        assert_eq!(content["content"][0]["text"], UNSUPPORTED_IMAGE_MARKER);
+        assert!(!body.to_string().contains("WRAP_TOOL_IMG"));
+    }
+
+    #[test]
+    fn wrapper_object_responses_output_keeps_object_shape() {
+        // review 反馈：Responses output 是包装对象时保留对象结构（含 caption
+        // 等非图片内容），只替换嵌套 media，而不是整体丢弃为单个标记。
+        let mut body = json!({
+            "model": "text-model",
+            "input": [{
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": {
+                    "status": "ok",
+                    "content": [
+                        { "type": "input_text", "text": "caption" },
+                        { "type": "input_image", "image_url": "data:image/png;base64,WRAP_OUT" }
+                    ]
+                }
+            }]
+        });
+
+        assert!(contains_image_blocks(&body));
+        let replaced = replace_image_blocks_with_marker(&mut body);
+
+        assert_eq!(replaced, 1);
+        let output = &body["input"][0]["output"];
+        assert!(output.is_object(), "包装对象 output 应保持对象结构，实际: {output}");
+        assert_eq!(output["status"], "ok");
+        assert_eq!(output["content"][0]["text"], "caption");
+        assert_eq!(output["content"][1]["type"], "input_text");
+        assert_eq!(output["content"][1]["text"], UNSUPPORTED_IMAGE_MARKER);
     }
 
     #[test]
