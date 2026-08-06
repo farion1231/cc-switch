@@ -19,6 +19,7 @@ use super::{
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
+    tool_strict_rectifier::{rectify_tool_strict, should_rectify_tool_strict},
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
@@ -542,14 +543,103 @@ impl RequestForwarder {
                         connection_guard: None,
                     });
                 }
-                Err(e) => {
-                    // 检测是否需要触发整流器（仅 Claude/ClaudeAuth 供应商）
-                    let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
-                    let is_anthropic_provider = matches!(
-                        provider_type,
-                        ProviderType::Claude | ProviderType::ClaudeAuth
-                    );
+                Err(mut e) => {
+                    // Anthropic-native requests include Claude providers and the
+                    // Codex/GrokBuild Responses -> Anthropic bridge.
+                    let is_anthropic_provider =
+                        uses_anthropic_request_format(app_type, provider, endpoint);
                     let mut signature_rectifier_non_retryable_client_error = false;
+
+                    if is_anthropic_provider && should_rectify_tool_strict(&e) {
+                        let removed = rectify_tool_strict(&mut provider_body);
+                        if removed > 0 {
+                            log::info!(
+                                "[{app_type_str}] [ToolStrict] Upstream rejected tool strict; retrying provider={} without {removed} strict field(s)",
+                                provider.id
+                            );
+
+                            match self
+                                .forward(
+                                    app_type,
+                                    &method,
+                                    provider,
+                                    endpoint,
+                                    &provider_body,
+                                    &headers,
+                                    &extensions,
+                                    adapter.as_ref(),
+                                )
+                                .await
+                            {
+                                Ok((response, claude_api_format, outbound_model)) => {
+                                    log::info!(
+                                        "[{app_type_str}] [ToolStrict] Compatibility retry succeeded"
+                                    );
+                                    self.record_success_result(
+                                        &provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
+
+                                    {
+                                        let mut current_providers =
+                                            self.current_providers.write().await;
+                                        current_providers.insert(
+                                            app_type_str.to_string(),
+                                            (provider.id.clone(), provider.name.clone()),
+                                        );
+                                    }
+
+                                    {
+                                        let mut status = self.status.write().await;
+                                        status.success_requests += 1;
+                                        status.last_error = None;
+                                        let should_switch =
+                                            self.current_provider_id_at_start.as_str()
+                                                != provider.id.as_str();
+                                        if should_switch {
+                                            status.failover_count += 1;
+                                            let fm = self.failover_manager.clone();
+                                            let ah = self.app_handle.clone();
+                                            let pid = provider.id.clone();
+                                            let pname = provider.name.clone();
+                                            let at = app_type_str.to_string();
+
+                                            tokio::spawn(async move {
+                                                let _ = fm
+                                                    .try_switch(ah.as_ref(), &at, &pid, &pname)
+                                                    .await;
+                                            });
+                                        }
+                                        if status.total_requests > 0 {
+                                            status.success_rate = (status.success_requests as f32
+                                                / status.total_requests as f32)
+                                                * 100.0;
+                                        }
+                                    }
+
+                                    return Ok(ForwardResult {
+                                        response,
+                                        provider: provider.clone(),
+                                        claude_api_format,
+                                        outbound_model,
+                                        connection_guard: None,
+                                    });
+                                }
+                                Err(retry_err) => {
+                                    log::warn!(
+                                        "[{app_type_str}] [ToolStrict] Compatibility retry still failed: {retry_err}"
+                                    );
+                                    // Continue through the other rectifiers with the
+                                    // stripped request and the latest error. A request
+                                    // may need both this Bedrock compatibility fallback
+                                    // and an existing thinking/media repair.
+                                    e = retry_err;
+                                }
+                            }
+                        }
+                    }
 
                     if self.media_retry_should_trigger(
                         adapter.name(),
@@ -2719,6 +2809,14 @@ fn extract_error_message(error: &ProxyError) -> Option<String> {
     }
 }
 
+fn uses_anthropic_request_format(app_type: &AppType, provider: &Provider, endpoint: &str) -> bool {
+    matches!(
+        ProviderType::from_app_type_and_config(app_type, provider),
+        ProviderType::Claude | ProviderType::ClaudeAuth
+    ) || (matches!(app_type, AppType::Codex | AppType::GrokBuild)
+        && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint))
+}
+
 /// 检测 Provider 是否为 Bedrock（通过 CLAUDE_CODE_USE_BEDROCK 环境变量判断）
 fn is_bedrock_provider(provider: &Provider) -> bool {
     provider
@@ -3615,6 +3713,33 @@ mod tests {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    #[test]
+    fn anthropic_rectifiers_cover_codex_responses_bridge() {
+        let mut provider = test_provider_with_type(None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("anthropic".to_string()),
+            ..Default::default()
+        });
+
+        assert!(uses_anthropic_request_format(
+            &AppType::Codex,
+            &provider,
+            "/responses"
+        ));
+        assert!(!uses_anthropic_request_format(
+            &AppType::Codex,
+            &provider,
+            "/chat/completions"
+        ));
+
+        provider.meta.as_mut().unwrap().api_format = Some("openai_responses".to_string());
+        assert!(!uses_anthropic_request_format(
+            &AppType::Codex,
+            &provider,
+            "/responses"
+        ));
     }
 
     fn test_forwarder(

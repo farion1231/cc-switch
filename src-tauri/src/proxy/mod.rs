@@ -32,6 +32,7 @@ pub mod thinking_budget_rectifier;
 pub mod thinking_optimizer;
 pub mod thinking_rectifier;
 pub(crate) mod tool_media;
+pub mod tool_strict_rectifier;
 pub(crate) mod types;
 pub mod usage;
 
