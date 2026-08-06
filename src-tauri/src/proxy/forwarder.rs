@@ -191,7 +191,8 @@ impl RequestForwarder {
             && self.rectifier_config.request_media_fallback
             && !already_retried
             && super::media_sanitizer::contains_image_blocks(provider_body)
-            && super::media_sanitizer::is_unsupported_image_error(error)
+            && (super::media_sanitizer::is_unsupported_image_error(error)
+                || matches!(error, ProxyError::UpstreamError { status: 413, .. }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -557,23 +558,65 @@ impl RequestForwarder {
                         &provider_body,
                         &e,
                     ) {
-                        let mut media_body = provider_body.clone();
-                        let replaced_images =
-                            super::media_sanitizer::replace_image_blocks_with_marker(
-                                &mut media_body,
-                            );
+                        let is_payload_too_large =
+                            matches!(e, ProxyError::UpstreamError { status: 413, .. });
+                        let (media_body, adjusted_images, retry_description) =
+                            if is_payload_too_large {
+                                let mut retry_body = provider_body.clone();
+                                let compression = tokio::task::spawn_blocking(move || {
+                                    let stats =
+                                        super::media_sanitizer::compress_inline_images_for_retry(
+                                            &mut retry_body,
+                                        );
+                                    (retry_body, stats)
+                                })
+                                .await;
+                                let (retry_body, stats) = match compression {
+                                    Ok(result) => result,
+                                    Err(error) => {
+                                        log::warn!(
+                                            "[{app_type_str}] [Media] Inline image compression task failed: {error}"
+                                        );
+                                        (
+                                            provider_body.clone(),
+                                            super::media_sanitizer::InlineImageCompressionStats::default(),
+                                        )
+                                    }
+                                };
+                                (
+                                    retry_body,
+                                    stats.images_compressed,
+                                    format!(
+                                        "compressed inline images by {} bytes",
+                                        stats.saved_bytes()
+                                    ),
+                                )
+                            } else {
+                                let mut retry_body = provider_body.clone();
+                                let replaced =
+                                    super::media_sanitizer::replace_image_blocks_with_marker(
+                                        &mut retry_body,
+                                    );
+                                (
+                                    retry_body,
+                                    replaced,
+                                    format!(
+                                        "replaced images with {}",
+                                        super::media_sanitizer::UNSUPPORTED_IMAGE_MARKER
+                                    ),
+                                )
+                            };
 
-                        if replaced_images > 0 {
+                        if adjusted_images > 0 {
                             let _ = std::mem::replace(&mut media_rectifier_retried, true);
                             let model = media_body
                                 .get("model")
                                 .and_then(Value::as_str)
                                 .unwrap_or("");
                             log::info!(
-                                "[{app_type_str}] [Media] Upstream rejected image input; retrying provider={} model={} with {replaced_images} image block(s) replaced by {}",
+                                "[{app_type_str}] [Media] Upstream rejected request; retrying provider={} model={} after adjusting {adjusted_images} image block(s): {retry_description}",
                                 provider.id,
-                                model,
-                                super::media_sanitizer::UNSUPPORTED_IMAGE_MARKER
+                                model
                             );
 
                             match self
@@ -4842,6 +4885,14 @@ mod tests {
             ),
         }
     }
+
+    fn payload_too_large_error() -> ProxyError {
+        ProxyError::UpstreamError {
+            status: 413,
+            body: Some("Payload Too Large".to_string()),
+        }
+    }
+
     #[test]
     fn prevention_replaces_when_all_switches_on_and_model_in_heuristic_list() {
         let fwd = forwarder_with_rectifier(RectifierConfig::default());
@@ -4934,6 +4985,27 @@ mod tests {
         };
 
         assert!(fwd.media_retry_should_trigger("Codex", false, &body, &error));
+    }
+
+    #[test]
+    fn reactive_triggers_once_for_codex_image_payload_too_large() {
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+        let body = body_with_codex_input_image("gpt-5.6-sol");
+        let error = payload_too_large_error();
+
+        assert!(fwd.media_retry_should_trigger("Codex", false, &body, &error));
+        assert!(!fwd.media_retry_should_trigger("Codex", true, &body, &error));
+    }
+
+    #[test]
+    fn reactive_does_not_treat_text_only_payload_too_large_as_media_error() {
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+        let body = json!({
+            "model": "gpt-5.6-sol",
+            "input": [{"role": "user", "content": "large text"}]
+        });
+
+        assert!(!fwd.media_retry_should_trigger("Codex", false, &body, &payload_too_large_error()));
     }
 
     #[test]
