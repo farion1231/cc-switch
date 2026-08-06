@@ -234,11 +234,8 @@ fn replace_images_in_content_with_text_type(content: &mut Value, text_type: &str
                 // replacement; a wrapper object keeps its shape, so wrapping
                 // it into an array would put a non-block object into content.
                 let root_was_media = nested_content.is_object()
-                    && chat_media_part_from_tool_part(
-                        nested_content,
-                        ToolMediaScope::ImagesOnly,
-                    )
-                    .is_some();
+                    && chat_media_part_from_tool_part(nested_content, ToolMediaScope::ImagesOnly)
+                        .is_some();
                 replaced += replace_images_in_content_with_text_type(nested_content, text_type);
                 let replacement_block = json!({
                     "type":text_type,
@@ -1312,7 +1309,10 @@ mod tests {
 
         assert_eq!(count, 1);
         let content = &body["messages"][0]["content"][0]["content"];
-        assert!(content.is_array(), "tool_result.content 必须是数组，实际: {content}");
+        assert!(
+            content.is_array(),
+            "tool_result.content 必须是数组，实际: {content}"
+        );
         assert_eq!(content[0]["type"], "text");
         assert_eq!(content[0]["text"], UNSUPPORTED_IMAGE_MARKER);
         assert!(!body.to_string().contains("MCP_IMG_SENTINEL"));
@@ -1339,7 +1339,10 @@ mod tests {
 
         assert_eq!(count, 1);
         let content = &body["messages"][0]["content"];
-        assert!(content.is_array(), "tool 消息 content 必须是数组，实际: {content}");
+        assert!(
+            content.is_array(),
+            "tool 消息 content 必须是数组，实际: {content}"
+        );
         assert_eq!(content[0]["type"], "text");
         assert_eq!(content[0]["text"], UNSUPPORTED_IMAGE_MARKER);
     }
@@ -1398,7 +1401,10 @@ mod tests {
 
         assert_eq!(count, 1);
         let content = &body["messages"][0]["content"][0]["content"];
-        assert!(content.is_object(), "包装对象应保持对象结构，实际: {content}");
+        assert!(
+            content.is_object(),
+            "包装对象应保持对象结构，实际: {content}"
+        );
         assert_eq!(content["status"], "ok");
         assert_eq!(content["content"][0]["type"], "text");
         assert_eq!(content["content"][0]["text"], UNSUPPORTED_IMAGE_MARKER);
@@ -1429,7 +1435,10 @@ mod tests {
 
         assert_eq!(replaced, 1);
         let output = &body["input"][0]["output"];
-        assert!(output.is_object(), "包装对象 output 应保持对象结构，实际: {output}");
+        assert!(
+            output.is_object(),
+            "包装对象 output 应保持对象结构，实际: {output}"
+        );
         assert_eq!(output["status"], "ok");
         assert_eq!(output["content"][0]["text"], "caption");
         assert_eq!(output["content"][1]["type"], "input_text");
