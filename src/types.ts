@@ -142,7 +142,9 @@ export type CodexChatEffortValueMode =
   | "low_high"
   | "deepseek"
   // OpenRouter effort 枚举 xhigh|high|medium|low|minimal（无 max，max 钳到 xhigh）
-  | "openrouter";
+  | "openrouter"
+  // OpenCode Zen 网关枚举 low|medium|high|max（minimal 并入 low，xhigh 钳到 max）
+  | "zen";
 
 export type CodexChatReasoningOutputFormat =
   | "auto"
@@ -269,6 +271,11 @@ export interface CodexCatalogModel {
   // Codex requires this field in every catalog entry; when omitted the backend
   // falls back to a neutral default. e.g. MiMo "developed by Xiaomi".
   baseInstructions?: string;
+  // 网关侧逐模型合法 reasoning effort 档位（镜像 models.dev reasoning_options
+  // 的 effort values；供 OpenCode Zen 等聚合网关的代理转换层逐模型钳制）。
+  // 缺省 = 该模型未声明 effort 控制（toggle/budget 型），转换层将不发
+  // reasoning_effort，避免给严格校验的网关送非法档位。
+  effortLevels?: string[];
 }
 
 // Claude 认证字段类型

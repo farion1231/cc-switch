@@ -424,7 +424,11 @@ fn apply_reasoning_options(
     let Some(effort) = body.pointer("/reasoning/effort").and_then(|v| v.as_str()) else {
         return;
     };
-    let Some(mapped) = map_reasoning_effort(effort, config.effort_value_mode.as_deref()) else {
+    let Some(mapped) = map_reasoning_effort(
+        effort,
+        config.effort_value_mode.as_deref(),
+        config.effort_levels.as_deref(),
+    ) else {
         return;
     };
 
@@ -455,7 +459,11 @@ fn reasoning_requested(body: &Value) -> Option<bool> {
     body.get("reasoning").map(|value| !value.is_null())
 }
 
-fn map_reasoning_effort(effort: &str, mode: Option<&str>) -> Option<&'static str> {
+fn map_reasoning_effort<'a>(
+    effort: &str,
+    mode: Option<&str>,
+    effort_levels: Option<&'a [String]>,
+) -> Option<&'a str> {
     let effort = effort.trim().to_ascii_lowercase();
     if matches!(effort.as_str(), "none" | "off" | "disabled") {
         return None;
@@ -482,6 +490,30 @@ fn map_reasoning_effort(effort: &str, mode: Option<&str>) -> Option<&'static str
             "minimal" => Some("minimal"),
             _ => None,
         },
+        // OpenCode Zen：合法档位逐模型（models.dev 的 reasoning_options——glm-5.2
+        // 仅 high|max、deepseek-v4-flash 为 low|high|max、kimi-k3 仅 max），opencode
+        // 客户端也严格按模型声明发值，故不能用统一并集映射。无表（模型未收录目录、
+        // 或为 toggle/budget 型未声明 effort）→ None，完全不发 reasoning_effort；
+        // 有表 → 钳到「不小于请求的最近合法档」，请求超出最高档则取最高合法档；
+        // 请求值本身无法识别 → None（同其他模式的未知值丢弃策略）。
+        "zen" => {
+            let levels = effort_levels?;
+            let requested = zen_effort_rank(&effort)?;
+            levels
+                .iter()
+                .filter_map(|level| zen_effort_rank(level).map(|rank| (rank, level.as_str())))
+                .filter(|(rank, _)| *rank >= requested)
+                .min_by_key(|(rank, _)| *rank)
+                .or_else(|| {
+                    levels
+                        .iter()
+                        .filter_map(|level| {
+                            zen_effort_rank(level).map(|rank| (rank, level.as_str()))
+                        })
+                        .max_by_key(|(rank, _)| *rank)
+                })
+                .map(|(_, level)| level)
+        }
         _ => match effort.as_str() {
             "minimal" => Some("minimal"),
             "low" => Some("low"),
@@ -491,6 +523,20 @@ fn map_reasoning_effort(effort: &str, mode: Option<&str>) -> Option<&'static str
             "max" => Some("max"),
             _ => None,
         },
+    }
+}
+
+/// Codex 规范档位序（minimal < low < medium < high < xhigh < max），供 zen 逐模型
+/// 钳制做大小比较；目录里的非法/扩展值（如 "none"）返回 None，查表时被滤掉。
+fn zen_effort_rank(effort: &str) -> Option<u8> {
+    match effort.trim().to_ascii_lowercase().as_str() {
+        "minimal" => Some(0),
+        "low" => Some(1),
+        "medium" => Some(2),
+        "high" => Some(3),
+        "xhigh" => Some(4),
+        "max" => Some(5),
+        _ => None,
     }
 }
 
@@ -2495,6 +2541,7 @@ mod tests {
             effort_param: Some("reasoning_effort".to_string()),
             effort_value_mode: Some("deepseek".to_string()),
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
         };
 
         let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
@@ -2514,6 +2561,7 @@ mod tests {
             effort_param: Some("reasoning.effort".to_string()),
             effort_value_mode: Some("openrouter".to_string()),
             output_format: Some("auto".to_string()),
+            effort_levels: None,
         };
 
         // max 不在 OpenRouter 枚举内（见 openclaw#77350），必须钳成 xhigh，
@@ -2544,6 +2592,137 @@ mod tests {
     }
 
     #[test]
+    fn responses_request_to_chat_clamps_zen_effort_to_model_declared_levels() {
+        // OpenCode Zen 平台形态 + 逐模型档位钳制（表数据镜像 models.dev：glm-5.2
+        // 仅声明 high|max）。review 锁定：统一并集映射会把 Codex 默认的 medium 发给
+        // 只声明 high|max 的 glm-5.2（恰好是预设默认模型），严格校验的网关会报错；
+        // 低档一律上钳到最近合法档。
+        let config = CodexChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("zen".to_string()),
+            output_format: Some("reasoning_content".to_string()),
+            effort_levels: Some(vec!["high".to_string(), "max".to_string()]),
+        };
+
+        for (input_effort, expected) in [
+            ("minimal", "high"),
+            ("low", "high"),
+            ("medium", "high"),
+            ("high", "high"),
+            ("xhigh", "max"),
+            ("max", "max"),
+        ] {
+            let input = json!({
+                "model": "glm-5.2",
+                "input": "hello",
+                "reasoning": {"effort": input_effort}
+            });
+            let result =
+                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+            assert_eq!(
+                result["reasoning_effort"], expected,
+                "effort={input_effort}"
+            );
+            // 写成顶层 reasoning_effort；不发任何 thinking 字段
+            // （网关只认平台归一参数，不认厂商 thinking 形状）。
+            assert!(result.get("thinking").is_none());
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_zen_preserves_low_when_model_declares_it() {
+        // deepseek-v4-flash 声明 low|high|max：low 合法原样透传，medium 上钳 high，
+        // xhigh 上钳 max——回归锁：本 PR 之前 deepseek 厂商分支把非 max 一律归 high，
+        // 逐模型钳制不得比那更差，也不得发出声明外的值。
+        let config = CodexChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("zen".to_string()),
+            output_format: Some("reasoning_content".to_string()),
+            effort_levels: Some(vec![
+                "low".to_string(),
+                "high".to_string(),
+                "max".to_string(),
+            ]),
+        };
+
+        for (input_effort, expected) in [
+            ("minimal", "low"),
+            ("low", "low"),
+            ("medium", "high"),
+            ("xhigh", "max"),
+        ] {
+            let input = json!({
+                "model": "deepseek-v4-flash",
+                "input": "hello",
+                "reasoning": {"effort": input_effort}
+            });
+            let result =
+                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+            assert_eq!(
+                result["reasoning_effort"], expected,
+                "effort={input_effort}"
+            );
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_zen_single_level_model_clamps_everything_to_max() {
+        // kimi-k3 仅声明 max（全模型交集不存在，统一映射覆盖不了它——必须逐模型）：
+        // 任何请求档都钳到 max。
+        let config = CodexChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("zen".to_string()),
+            output_format: Some("reasoning_content".to_string()),
+            effort_levels: Some(vec!["max".to_string()]),
+        };
+
+        for input_effort in ["minimal", "medium", "high", "max"] {
+            let input = json!({
+                "model": "kimi-k3",
+                "input": "hello",
+                "reasoning": {"effort": input_effort}
+            });
+            let result =
+                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+            assert_eq!(result["reasoning_effort"], "max", "effort={input_effort}");
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_omits_zen_effort_without_model_levels() {
+        // 模型未在目录声明 effort（toggle/budget 型如 glm-5.1、qwen 系，或目录未收录）
+        // → 完全不发 reasoning_effort，避免给严格校验的网关送无法核实的值。
+        let config = CodexChatReasoningConfig {
+            supports_thinking: Some(true),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("zen".to_string()),
+            output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
+        };
+
+        let input = json!({
+            "model": "glm-5.1",
+            "input": "hello",
+            "reasoning": {"effort": "medium"}
+        });
+        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+
+        assert!(result.get("reasoning_effort").is_none());
+        assert!(result.get("thinking").is_none());
+    }
+
+    #[test]
     fn responses_request_to_chat_passes_explicit_none_through_for_openrouter() {
         // OpenRouter 原生 reasoning 对象支持显式关闭：effort=none 应忠实转发为
         // {"reasoning":{"effort":"none"}}，而非被吞掉——否则默认开思考的模型无法关闭，
@@ -2555,6 +2734,7 @@ mod tests {
             effort_param: Some("reasoning.effort".to_string()),
             effort_value_mode: Some("openrouter".to_string()),
             output_format: Some("auto".to_string()),
+            effort_levels: None,
         };
 
         let input = json!({
@@ -2582,6 +2762,7 @@ mod tests {
             effort_param: Some("reasoning_effort".to_string()),
             effort_value_mode: Some("deepseek".to_string()),
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
         };
 
         let input = json!({
@@ -2611,6 +2792,7 @@ mod tests {
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
         };
 
         let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
@@ -2633,6 +2815,7 @@ mod tests {
             effort_param: Some("none".to_string()),
             effort_value_mode: None,
             output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
         };
 
         let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();

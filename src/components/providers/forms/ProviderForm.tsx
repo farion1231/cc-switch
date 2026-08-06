@@ -161,6 +161,10 @@ export const normalizeCodexCatalogModelsForSave = (
 
     const baseInstructions = item.baseInstructions?.trim();
 
+    const effortLevels = item.effortLevels?.filter(
+      (l) => typeof l === "string" && l.trim(),
+    );
+
     normalized.push({
       model,
       ...(displayName ? { displayName } : {}),
@@ -173,6 +177,8 @@ export const normalizeCodexCatalogModelsForSave = (
         ? { inputModalities }
         : {}),
       ...(baseInstructions ? { baseInstructions } : {}),
+      // 网关逐模型合法 effort 档位（zen 钳制用），编辑保存时不得丢。
+      ...(effortLevels && effortLevels.length > 0 ? { effortLevels } : {}),
     });
   }
 

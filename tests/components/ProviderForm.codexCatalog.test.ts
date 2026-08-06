@@ -49,4 +49,16 @@ describe("ProviderForm Codex catalog helpers", () => {
       { model: "mimo-v2.5-pro", supportsParallelToolCalls: false },
     ]);
   });
+
+  it("preserves per-model effortLevels and drops empty ones", () => {
+    expect(
+      normalizeCodexCatalogModelsForSave([
+        { model: "glm-5.2", effortLevels: ["high", "max"] },
+        { model: "glm-5.1", effortLevels: [] },
+      ]),
+    ).toEqual([
+      { model: "glm-5.2", effortLevels: ["high", "max"] },
+      { model: "glm-5.1" },
+    ]);
+  });
 });
