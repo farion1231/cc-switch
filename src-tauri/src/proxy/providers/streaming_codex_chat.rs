@@ -59,6 +59,7 @@ struct ToolCallState {
     name: String,
     arguments: String,
     reasoning_content: String,
+    thought_signature: Option<String>,
     added: bool,
     done: bool,
 }
@@ -82,6 +83,11 @@ struct ChatToResponsesState {
     tool_context: CodexToolContext,
     /// 本回合因缺少合法函数名而被丢弃的工具调用数（见 `finalize_tools`）。
     dropped_tool_calls: usize,
+    shadow_ctx: Option<(
+        std::sync::Arc<super::gemini_shadow::GeminiShadowStore>,
+        String,
+        String,
+    )>,
 }
 
 impl Default for ChatToResponsesState {
@@ -103,14 +109,23 @@ impl Default for ChatToResponsesState {
             finish_reason: None,
             tool_context: CodexToolContext::default(),
             dropped_tool_calls: 0,
+            shadow_ctx: None,
         }
     }
 }
 
 impl ChatToResponsesState {
-    fn with_tool_context(tool_context: CodexToolContext) -> Self {
+    fn with_tool_context(
+        tool_context: CodexToolContext,
+        shadow_ctx: Option<(
+            std::sync::Arc<super::gemini_shadow::GeminiShadowStore>,
+            String,
+            String,
+        )>,
+    ) -> Self {
         Self {
             tool_context,
+            shadow_ctx,
             ..Self::default()
         }
     }
@@ -386,6 +401,12 @@ impl ChatToResponsesState {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        let sig_delta = tool_call
+            .get("extra_content")
+            .and_then(|v| v.get("google"))
+            .and_then(|v| v.get("thought_signature"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
 
         let mut output_index = None;
         let mut item_id = String::new();
@@ -410,6 +431,11 @@ impl ChatToResponsesState {
                 if let Some(reasoning) = reasoning.map(str::trim).filter(|value| !value.is_empty())
                 {
                     state.reasoning_content = reasoning.to_string();
+                }
+            }
+            if let Some(ref sig) = sig_delta {
+                if !sig.is_empty() {
+                    state.thought_signature = Some(sig.clone());
                 }
             }
 
@@ -724,6 +750,23 @@ impl ChatToResponsesState {
             events.push(sse::output_item_done(output_index, &item));
         }
 
+        let mut shadow_metas = Vec::new();
+        for state in self.tools.values() {
+            if let Some(sig) = &state.thought_signature {
+                shadow_metas.push(super::gemini_shadow::GeminiToolCallMeta::new(
+                    Some(&state.call_id),
+                    &state.name,
+                    json!({}),
+                    Some(sig),
+                ));
+            }
+        }
+        if !shadow_metas.is_empty() {
+            if let Some((store, provider_id, session_id)) = &self.shadow_ctx {
+                store.record_assistant_turn(provider_id, session_id, Value::Null, shadow_metas);
+            }
+        }
+
         events
     }
 
@@ -807,7 +850,7 @@ fn leading_think_prefix_decision(buffer: &str) -> ThinkPrefixDecision {
 pub fn create_responses_sse_stream_from_chat<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
-    create_responses_sse_stream_from_chat_with_context(stream, CodexToolContext::default())
+    create_responses_sse_stream_from_chat_with_context(stream, CodexToolContext::default(), None)
 }
 
 /// Create a stream that converts Chat Completions SSE chunks into Responses SSE
@@ -815,11 +858,16 @@ pub fn create_responses_sse_stream_from_chat<E: std::error::Error + Send + 'stat
 pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
     tool_context: CodexToolContext,
+    shadow_ctx: Option<(
+        std::sync::Arc<super::gemini_shadow::GeminiShadowStore>,
+        String,
+        String,
+    )>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
         let mut utf8_remainder: Vec<u8> = Vec::new();
-        let mut state = ChatToResponsesState::with_tool_context(tool_context);
+        let mut state = ChatToResponsesState::with_tool_context(tool_context, shadow_ctx);
         let mut stream_failed = false;
 
         tokio::pin!(stream);
@@ -946,7 +994,8 @@ mod tests {
             .map(|chunk| Ok(Bytes::copy_from_slice(chunk.as_bytes())))
             .collect();
         let upstream = stream::iter(chunks);
-        let converted = create_responses_sse_stream_from_chat_with_context(upstream, tool_context);
+        let converted =
+            create_responses_sse_stream_from_chat_with_context(upstream, tool_context, None);
         let bytes: Vec<Bytes> = converted.map(|item| item.unwrap()).collect().await;
         String::from_utf8(bytes.concat()).unwrap()
     }
