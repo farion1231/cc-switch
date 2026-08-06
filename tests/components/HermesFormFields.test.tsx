@@ -64,6 +64,11 @@ describe("HermesFormFields", () => {
     const contextLength = screen.getByLabelText("上下文长度");
     expect(contextLength).toHaveAttribute("type", "text");
     expect(contextLength).toHaveAttribute("inputmode", "numeric");
+    expect(screen.getByText("上下文长度")).toHaveClass(
+      "text-sm",
+      "font-medium",
+      "leading-none",
+    );
     expect(screen.getByText(/第一个模型/)).toBeInTheDocument();
   });
 
@@ -73,6 +78,11 @@ describe("HermesFormFields", () => {
 
     const input = screen.getByLabelText("请求间隔（秒）");
     expect(input).toHaveValue(0.5);
+    expect(screen.getByText("请求间隔（秒）")).toHaveClass(
+      "text-sm",
+      "font-medium",
+      "leading-none",
+    );
     expect(input.closest("div.border-l")).toHaveClass(
       "border-border-default",
       "pl-3",

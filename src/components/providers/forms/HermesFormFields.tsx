@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useState, useRef, useCallback, useMemo } from "react";
 import { FormLabel } from "@/components/ui/form";
+import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -443,11 +444,11 @@ export function HermesFormFields({
                   {isExpanded && (
                     <div className="ml-9 grid gap-3 border-l border-border-default pl-4 sm:grid-cols-2">
                       <div className="space-y-1">
-                        <FormLabel htmlFor={`hermes-model-context-${modelKey}`}>
+                        <Label htmlFor={`hermes-model-context-${modelKey}`}>
                           {t("hermes.form.contextLength", {
                             defaultValue: "上下文长度",
                           })}
-                        </FormLabel>
+                        </Label>
                         <Input
                           id={`hermes-model-context-${modelKey}`}
                           type="text"
@@ -482,11 +483,11 @@ export function HermesFormFields({
       </div>
 
       <div className="space-y-2 border-l border-border-default pl-3">
-        <FormLabel htmlFor="hermes-rate-limit-delay">
+        <Label htmlFor="hermes-rate-limit-delay">
           {t("hermes.form.rateLimitDelay", {
             defaultValue: "请求间隔（秒）",
           })}
-        </FormLabel>
+        </Label>
         <Input
           id="hermes-rate-limit-delay"
           type="number"
