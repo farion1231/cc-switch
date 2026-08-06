@@ -927,15 +927,23 @@ fn pick_latest_version(
     Some(best)
 }
 
-/// 拉取 npm 包的完整 dist-tags(单次请求即含 latest/next/beta/...)。
+/// 拉取 npm 包的 dist-tags（latest/next/beta/...）。
+///
+/// 走 registry 的轻量端点 `/-/package/{package}/dist-tags`，只返回 dist-tags
+/// 一个对象（几 KB）。替代完整 packument（`registry.npmjs.org/{package}`，
+/// 同样的 dist-tags 也要几 MB，opencode-ai 全量约 24 MB），「关于」页一次
+/// 全量刷新从约 55 MB 降到约 3 KB。
 async fn fetch_npm_dist_tags(
     client: &reqwest::Client,
     package: &str,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
-    let url = format!("https://registry.npmjs.org/{package}");
+    let url = format!("https://registry.npmjs.org/-/package/{package}/dist-tags");
     let resp = client.get(&url).send().await.ok()?;
-    let json = resp.json::<serde_json::Value>().await.ok()?;
-    json.get("dist-tags")?.as_object().cloned()
+    // 该端点响应本身就是 dist-tags 对象（无外层外壳），与
+    // `pick_latest_version` 的入参形状一致，直接解析即可。
+    resp.json::<serde_json::Map<String, serde_json::Value>>()
+        .await
+        .ok()
 }
 
 /// 查询某 npm 工具要展示的"最新版本":取 `latest`,并在本地版本领先时按工具的
