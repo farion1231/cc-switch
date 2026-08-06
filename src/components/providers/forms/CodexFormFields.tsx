@@ -132,6 +132,9 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
       ? { supportsParallelToolCalls: seed.supportsParallelToolCalls }
       : {}),
     ...(seed?.inputModalities ? { inputModalities: seed.inputModalities } : {}),
+    ...(seed?.supportedReasoningLevels
+      ? { supportedReasoningLevels: seed.supportedReasoningLevels }
+      : {}),
     ...(seed?.baseInstructions
       ? { baseInstructions: seed.baseInstructions }
       : {}),
@@ -157,6 +160,8 @@ function catalogRowsMatchModels(
       (row.supportsParallelToolCalls ?? null) ===
         (incoming.supportsParallelToolCalls ?? null) &&
       (row.baseInstructions ?? "") === (incoming.baseInstructions ?? "") &&
+      JSON.stringify(row.supportedReasoningLevels ?? []) ===
+        JSON.stringify(incoming.supportedReasoningLevels ?? []) &&
       JSON.stringify(row.inputModalities ?? []) ===
         JSON.stringify(incoming.inputModalities ?? [])
     );
