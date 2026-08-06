@@ -9,13 +9,10 @@ export interface PiCurrentState {
 export type PiSessionDiscovery =
   | {
       status: "available";
-      root: string;
-      source: "environment" | "settings" | "default";
     }
   | {
       status: "requires_project_context";
       configuredPath: string;
-      source: "environment" | "settings";
     }
   | {
       status: "unavailable";

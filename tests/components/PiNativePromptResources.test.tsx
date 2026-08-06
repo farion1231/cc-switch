@@ -102,11 +102,6 @@ describe("Pi native prompt resources", () => {
     vi.restoreAllMocks();
     vi.spyOn(promptsApi, "getPiPromptFile").mockImplementation(
       async (kind: PiPromptFileKind) => ({
-        kind,
-        path:
-          kind === "system_override"
-            ? "/agent/SYSTEM.md"
-            : "/agent/APPEND_SYSTEM.md",
         exists: kind === "system_append",
         revision: kind === "system_append" ? "append-revision" : "missing",
         content: kind === "system_append" ? "append" : "",
@@ -125,12 +120,7 @@ describe("Pi native prompt resources", () => {
       revision: "created-revision",
     });
     vi.spyOn(promptsApi, "replacePiPromptFile").mockImplementation(
-      async (kind, _revision, content) => ({
-        kind,
-        path:
-          kind === "system_override"
-            ? "/agent/SYSTEM.md"
-            : "/agent/APPEND_SYSTEM.md",
+      async (_kind, _revision, content) => ({
         exists: true,
         revision: "saved-revision",
         content,
@@ -178,8 +168,6 @@ describe("Pi native prompt resources", () => {
 
     act(() => {
       queryClient.setQueryData(["pi", "promptFile", "system_append"], {
-        kind: "system_append",
-        path: "/agent/APPEND_SYSTEM.md",
         exists: true,
         revision: "external-revision",
         content: "external edit",
@@ -363,11 +351,6 @@ describe("Pi native prompt resources", () => {
   it("removes the global SYSTEM.md file through the native file API", async () => {
     vi.spyOn(promptsApi, "getPiPromptFile").mockImplementation(
       async (kind: PiPromptFileKind) => ({
-        kind,
-        path:
-          kind === "system_override"
-            ? "/agent/SYSTEM.md"
-            : "/agent/APPEND_SYSTEM.md",
         exists: kind === "system_override",
         revision: kind === "system_override" ? "system-revision" : "missing",
         content: kind === "system_override" ? "custom system prompt" : "",

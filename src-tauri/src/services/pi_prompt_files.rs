@@ -98,8 +98,6 @@ impl PiPromptFileKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PiPromptFileSnapshot {
-    pub kind: PiPromptFileKind,
-    pub path: String,
     pub exists: bool,
     pub revision: String,
     pub content: String,
@@ -271,8 +269,6 @@ fn read_prompt_file(root: &Path, kind: PiPromptFileKind) -> Result<PiPromptFileS
         Err(error) => return Err(AppError::io(&path, error)),
     };
     Ok(PiPromptFileSnapshot {
-        kind,
-        path: path.to_string_lossy().into_owned(),
         exists,
         revision: file_revision,
         content,

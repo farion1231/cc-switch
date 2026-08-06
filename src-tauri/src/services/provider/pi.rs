@@ -281,10 +281,6 @@ fn strip_unsupported_pi_metadata(provider: &mut Provider) {
         usage_script: meta.usage_script,
         is_partner: meta.is_partner,
         partner_promotion_key: meta.partner_promotion_key,
-        cost_multiplier: meta.cost_multiplier,
-        pricing_model_source: meta.pricing_model_source,
-        limit_daily_usd: meta.limit_daily_usd,
-        limit_monthly_usd: meta.limit_monthly_usd,
         ..ProviderMeta::default()
     });
 }

@@ -27,12 +27,10 @@ enum SessionLayout {
 enum SessionRootResolution {
     Available {
         root: PathBuf,
-        source: &'static str,
         layout: SessionLayout,
     },
     RequiresProjectContext {
         configured_path: String,
-        source: &'static str,
     },
     Unavailable {
         reason: String,
@@ -42,14 +40,10 @@ enum SessionRootResolution {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum PiSessionDiscovery {
-    Available {
-        root: String,
-        source: &'static str,
-    },
+    Available,
     RequiresProjectContext {
         #[serde(rename = "configuredPath")]
         configured_path: String,
-        source: &'static str,
     },
     Unavailable {
         reason: String,
@@ -93,17 +87,10 @@ pub fn session_roots() -> Vec<PathBuf> {
 
 pub fn session_discovery() -> PiSessionDiscovery {
     match resolve_session_root() {
-        SessionRootResolution::Available { root, source, .. } => PiSessionDiscovery::Available {
-            root: root.to_string_lossy().into_owned(),
-            source,
-        },
-        SessionRootResolution::RequiresProjectContext {
-            configured_path,
-            source,
-        } => PiSessionDiscovery::RequiresProjectContext {
-            configured_path,
-            source,
-        },
+        SessionRootResolution::Available { .. } => PiSessionDiscovery::Available,
+        SessionRootResolution::RequiresProjectContext { configured_path } => {
+            PiSessionDiscovery::RequiresProjectContext { configured_path }
+        }
         SessionRootResolution::Unavailable { reason } => PiSessionDiscovery::Unavailable { reason },
     }
 }
@@ -136,7 +123,6 @@ fn resolve_session_root() -> SessionRootResolution {
     match crate::pi_config::get_pi_agent_dir() {
         Ok(agent_dir) => SessionRootResolution::Available {
             root: agent_dir.join("sessions"),
-            source: "default",
             layout: SessionLayout::ProjectDirectories,
         },
         Err(error) => SessionRootResolution::Unavailable {
@@ -161,7 +147,6 @@ fn classify_configured_session_dir(
             Ok(_) => match fs::read_dir(&root) {
                 Ok(_) => SessionRootResolution::Available {
                     root,
-                    source,
                     layout: SessionLayout::Flat,
                 },
                 Err(error) => SessionRootResolution::Unavailable {
@@ -180,7 +165,6 @@ fn classify_configured_session_dir(
         },
         None => SessionRootResolution::RequiresProjectContext {
             configured_path: value.to_string(),
-            source,
         },
     }
 }
@@ -817,7 +801,6 @@ mod tests {
             classify_configured_session_dir(".pi/sessions", Path::new("/home/pi"), "settings"),
             SessionRootResolution::RequiresProjectContext {
                 configured_path: ".pi/sessions".to_string(),
-                source: "settings",
             }
         );
     }

@@ -37,7 +37,6 @@ const piKeysOutsideNamespace = new Set([
   "settings.browsePlaceholderPi",
   "settings.piConfigDir",
   "settings.piConfigDirDescription",
-  "usage.appFilter.pi",
 ]);
 const piReference = new Map(
   [...reference].filter(

@@ -226,7 +226,6 @@ describe("SessionManagerPage", () => {
     const discovery = vi.spyOn(piApi, "getSessionDiscovery").mockResolvedValue({
       status: "requires_project_context",
       configuredPath: ".pi/sessions",
-      source: "settings",
     });
 
     renderPage("pi");

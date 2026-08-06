@@ -34,7 +34,7 @@ import { toast } from "sonner";
 import { proxyApi } from "@/lib/api/proxy";
 import { ModelsDevAutoSyncPanel } from "./ModelsDevAutoSyncPanel";
 
-const PRICING_APPS = ["claude", "codex", "gemini", "grokbuild", "pi"] as const;
+const PRICING_APPS = ["claude", "codex", "gemini", "grokbuild"] as const;
 type PricingApp = (typeof PRICING_APPS)[number];
 type PricingModelSource = "request" | "response";
 
@@ -59,7 +59,6 @@ export function PricingConfigPanel() {
     codex: { multiplier: "1", source: "response" },
     gemini: { multiplier: "1", source: "response" },
     grokbuild: { multiplier: "1", source: "response" },
-    pi: { multiplier: "1", source: "response" },
   });
   const [originalConfigs, setOriginalConfigs] = useState<AppConfigState | null>(
     null,
@@ -106,7 +105,6 @@ export function PricingConfigPanel() {
           codex: { multiplier: "1", source: "response" },
           gemini: { multiplier: "1", source: "response" },
           grokbuild: { multiplier: "1", source: "response" },
-          pi: { multiplier: "1", source: "response" },
         };
         for (const result of results) {
           newState[result.app] = {

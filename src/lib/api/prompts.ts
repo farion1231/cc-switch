@@ -14,8 +14,6 @@ export interface Prompt {
 export type PiPromptFileKind = "system_override" | "system_append";
 
 export interface PiPromptFileSnapshot {
-  kind: PiPromptFileKind;
-  path: string;
   exists: boolean;
   revision: string;
   content: string;

@@ -535,16 +535,6 @@ export const piModelCatalog = {
 
 export type PiModelCatalogKey = keyof typeof piModelCatalog;
 
-export function getPiModelCapabilities(
-  catalogKey: PiModelCatalogKey,
-): PiModelCapabilities {
-  const capabilities = piModelCatalog[catalogKey].capabilities;
-  return {
-    ...capabilities,
-    input: [...capabilities.input],
-  };
-}
-
 export const PI_MODEL_CATALOG_REFERENCE: unique symbol = Symbol(
   "piModelCatalogReference",
 );
