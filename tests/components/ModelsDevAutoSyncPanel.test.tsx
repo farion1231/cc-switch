@@ -8,12 +8,14 @@ const {
   getModelPricing,
   openAppConfigFolder,
   syncModelsDevPricing,
+  fetchModelsDevPricing,
 } = vi.hoisted(() => ({
   getModelsDevSyncConfig: vi.fn(),
   saveModelsDevSyncConfig: vi.fn(),
   getModelPricing: vi.fn(),
   openAppConfigFolder: vi.fn(),
   syncModelsDevPricing: vi.fn(),
+  fetchModelsDevPricing: vi.fn(),
 }));
 
 vi.mock("react-i18next", () => ({
@@ -43,6 +45,13 @@ vi.mock("@/lib/api/settings", () => ({
 vi.mock("@/lib/modelsDevAutoSync", () => ({
   MODELS_DEV_SYNC_CONFIG_QUERY_KEY: ["models-dev-sync-config"],
   syncModelsDevPricing,
+}));
+
+// fetchModelsDevPricing 已改为走 invoke（Rust 命令拉取），UI 测试直接
+// mock 数据源，聚焦面板交互本身。
+vi.mock("@/lib/modelsDevPricing", async (importOriginal) => ({
+  ...(await importOriginal()),
+  fetchModelsDevPricing,
 }));
 
 import { ModelsDevAutoSyncPanel } from "@/components/usage/ModelsDevAutoSyncPanel";
@@ -84,34 +93,28 @@ describe("ModelsDevAutoSyncPanel", () => {
       changed: 1,
       syncedAt: Date.now(),
     });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          openai: {
-            name: "OpenAI",
-            models: {
-              "gpt-5": {
-                name: "GPT-5",
-                release_date: "2025-08-01",
-                cost: { input: 1, output: 2 },
-              },
-            },
+    fetchModelsDevPricing.mockResolvedValue({
+      openai: {
+        name: "OpenAI",
+        models: {
+          "gpt-5": {
+            name: "GPT-5",
+            release_date: "2025-08-01",
+            cost: { input: 1, output: 2 },
           },
-          deepseek: {
-            name: "DeepSeek",
-            models: {
-              "deepseek-chat": {
-                name: "DeepSeek Chat",
-                release_date: "2025-12-01",
-                cost: { input: 0.3, output: 1.2 },
-              },
-            },
+        },
+      },
+      deepseek: {
+        name: "DeepSeek",
+        models: {
+          "deepseek-chat": {
+            name: "DeepSeek Chat",
+            release_date: "2025-12-01",
+            cost: { input: 0.3, output: 1.2 },
           },
-        }),
-      }),
-    );
+        },
+      },
+    });
   });
 
   it("loads automatic sync as disabled by default", async () => {

@@ -40,6 +40,9 @@ dirs = "5.0"
 toml = "0.8"
 toml_edit = "0.22"
 reqwest = { version = "0.12", features = ["rustls-tls", "json", "stream", "socks"] }
+# 仅用于 feature 合并：tauri-plugin-updater 依赖 reqwest 0.13 且未开 socks，
+# 而应用全局代理支持 socks5/socks5h，更新走代理时需要。此依赖不直接使用。
+reqwest_socks = { package = "reqwest", version = "0.13", default-features = false, features = ["socks"] }
 arboard = "3.6"
 flate2 = "1"
 brotli = "7"

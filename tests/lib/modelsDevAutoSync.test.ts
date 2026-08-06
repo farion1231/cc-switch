@@ -4,10 +4,12 @@ const {
   getModelsDevSyncConfig,
   updateModelPricingBatch,
   recordModelsDevSyncResult,
+  fetchModelsDevPricing,
 } = vi.hoisted(() => ({
   getModelsDevSyncConfig: vi.fn(),
   updateModelPricingBatch: vi.fn(),
   recordModelsDevSyncResult: vi.fn(),
+  fetchModelsDevPricing: vi.fn(),
 }));
 
 vi.mock("@/lib/api/usage", () => ({
@@ -16,6 +18,13 @@ vi.mock("@/lib/api/usage", () => ({
     updateModelPricingBatch,
     recordModelsDevSyncResult,
   },
+}));
+
+// fetchModelsDevPricing 已改为走 invoke（Rust 命令拉取），测试只关心
+// syncModelsDevPricing 的编排逻辑，直接 mock 数据源即可。
+vi.mock("@/lib/modelsDevPricing", async (importOriginal) => ({
+  ...(await importOriginal()),
+  fetchModelsDevPricing,
 }));
 
 import {
@@ -40,32 +49,26 @@ describe("syncModelsDevPricing", () => {
     vi.clearAllMocks();
     updateModelPricingBatch.mockResolvedValue(2);
     recordModelsDevSyncResult.mockResolvedValue(undefined);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          openai: {
-            models: {
-              "gpt-5": {
-                name: "GPT-5",
-                release_date: "2025-08-01",
-                cost: { input: 1, output: 2 },
-              },
-            },
+    fetchModelsDevPricing.mockResolvedValue({
+      openai: {
+        models: {
+          "gpt-5": {
+            name: "GPT-5",
+            release_date: "2025-08-01",
+            cost: { input: 1, output: 2 },
           },
-          relay: {
-            models: {
-              "custom-model": {
-                name: "Custom Model",
-                release_date: "2025-07-01",
-                cost: { input: 0.5, output: 1 },
-              },
-            },
+        },
+      },
+      relay: {
+        models: {
+          "custom-model": {
+            name: "Custom Model",
+            release_date: "2025-07-01",
+            cost: { input: 0.5, output: 1 },
           },
-        }),
-      }),
-    );
+        },
+      },
+    });
   });
 
   it("skips network access when automatic sync is disabled", async () => {
@@ -77,7 +80,7 @@ describe("syncModelsDevPricing", () => {
     const result = await syncModelsDevPricing();
 
     expect(result.skipped).toBe(true);
-    expect(fetch).not.toHaveBeenCalled();
+    expect(fetchModelsDevPricing).not.toHaveBeenCalled();
     expect(updateModelPricingBatch).not.toHaveBeenCalled();
   });
 
@@ -100,7 +103,7 @@ describe("syncModelsDevPricing", () => {
       changed: 0,
       syncedAt: lastSyncAt,
     });
-    expect(fetch).not.toHaveBeenCalled();
+    expect(fetchModelsDevPricing).not.toHaveBeenCalled();
     expect(updateModelPricingBatch).not.toHaveBeenCalled();
   });
 
@@ -127,9 +130,6 @@ describe("syncModelsDevPricing", () => {
       expect.any(Number),
       null,
     );
-    const fetchOptions = vi.mocked(fetch).mock.calls[0]?.[1];
-    expect(fetchOptions).toEqual({ signal: expect.any(AbortSignal) });
-    expect(fetchOptions).not.toHaveProperty("cache");
   });
 
   it("stops a startup sync when automatic sync is disabled during download", async () => {
@@ -191,7 +191,7 @@ describe("syncModelsDevPricing", () => {
   it("persists the last error without replacing the previous success time", async () => {
     const previous = { ...state, config: { ...state.config, lastSyncAt: 123 } };
     getModelsDevSyncConfig.mockResolvedValue(previous);
-    vi.mocked(fetch).mockRejectedValueOnce(new Error("offline"));
+    vi.mocked(fetchModelsDevPricing).mockRejectedValueOnce(new Error("offline"));
 
     await expect(syncModelsDevPricing()).rejects.toThrow("offline");
     expect(recordModelsDevSyncResult).toHaveBeenCalledWith(null, "offline");

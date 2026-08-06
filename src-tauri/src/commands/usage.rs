@@ -228,6 +228,41 @@ pub fn record_models_dev_sync_result(
     crate::services::model_pricing::record_models_dev_sync_result(&state.db, synced_at, error)
 }
 
+/// 通过全局 HTTP 客户端（已配置全局出站代理）拉取 models.dev 定价数据。
+///
+/// 不能在 WebView 里用原生 fetch：那只会走系统代理，读不到 cc-switch 应用内的
+/// 全局代理设置。这里走 Rust 侧统一客户端，与订阅额度、版本检查等外部请求保持
+/// 同一条代理链路。
+#[tauri::command]
+pub async fn fetch_models_dev_pricing() -> Result<serde_json::Value, AppError> {
+    const URL: &str = "https://models.dev/api.json";
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+    let client = crate::proxy::http_client::get();
+    let resp = client
+        .get(URL)
+        .timeout(TIMEOUT)
+        .send()
+        .await
+        .map_err(|e| AppError::Message(format!("拉取 models.dev 数据失败: {e}")))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(AppError::Message(format!(
+            "拉取 models.dev 数据失败: HTTP {status}: {body}"
+        )));
+    }
+
+    // 先 bytes() 再解析：读体失败（超时/连接中断）与 JSON 解析失败能分开报错。
+    let raw = resp
+        .bytes()
+        .await
+        .map_err(|e| AppError::Message(format!("读取 models.dev 响应失败: {e}")))?;
+    serde_json::from_slice(&raw)
+        .map_err(|e| AppError::Message(format!("解析 models.dev 响应失败: {e}")))
+}
+
 /// 检查 Provider 使用限额
 #[tauri::command]
 pub fn check_provider_limits(
