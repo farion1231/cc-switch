@@ -623,6 +623,7 @@ where
 }
 
 /// Escape a value for safe use inside single quotes in a POSIX shell.
+#[cfg(any(target_os = "windows", test))]
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
@@ -1049,11 +1050,11 @@ fn find_science_runtime() -> Result<ScienceRuntime, String> {
             ),
             _ => "No WSL distro with claude-science was detected.".to_string(),
         };
-        return Err(format!(
+        Err(format!(
             "Claude Science CLI was not found. Searched:\n{searched}\n\n{wsl_hint}\n\
              Install claude-science, point the config directory at a WSL path, or set the \
              {CLAUDE_SCIENCE_BIN_ENV} environment variable."
-        ));
+        ))
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -1232,11 +1233,6 @@ fn find_claude_science_binary_wsl(distro: &str) -> Result<Option<String>, String
     Ok(Some(line))
 }
 
-#[cfg(not(target_os = "windows"))]
-fn find_claude_science_binary_wsl(_distro: &str) -> Result<Option<String>, String> {
-    Ok(None)
-}
-
 /// A registered WSL distro with its version and default flag.
 #[cfg(target_os = "windows")]
 #[derive(Debug, Clone)]
@@ -1306,30 +1302,11 @@ fn registered_wsl_distros_verbose() -> Option<Vec<WslDistroInfo>> {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
-fn registered_wsl_distros_verbose() -> Option<Vec<WslDistroInfo>> {
-    None
-}
-
-/// Non-Windows placeholder type so the verbose stub compiles.
-#[cfg(not(target_os = "windows"))]
-#[derive(Debug, Clone)]
-struct WslDistroInfo {
-    name: String,
-    version: u8,
-    is_default: bool,
-}
-
 /// List registered WSL distro names (Windows only).
 #[cfg(target_os = "windows")]
 fn registered_wsl_distros() -> Option<Vec<String>> {
     registered_wsl_distros_verbose()
         .map(|list| list.into_iter().map(|distro| distro.name).collect())
-}
-
-#[cfg(not(target_os = "windows"))]
-fn registered_wsl_distros() -> Option<Vec<String>> {
-    None
 }
 
 /// Look up the WSL version (1 or 2) for a distro name.
@@ -1367,11 +1344,6 @@ fn decode_wsl_text_output(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).to_string()
 }
 
-#[cfg(not(target_os = "windows"))]
-fn decode_wsl_text_output(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).to_string()
-}
-
 /// Check whether a WSL distro is registered (Windows only).
 /// This uses a direct `wsl.exe -d <distro> -- echo ok` probe instead of parsing
 /// `wsl.exe --list`, so it is immune to list-output encoding quirks.
@@ -1387,11 +1359,6 @@ fn wsl_distro_exists(distro: &str) -> bool {
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
-}
-
-#[cfg(not(target_os = "windows"))]
-fn wsl_distro_exists(_distro: &str) -> bool {
-    false
 }
 
 #[allow(dead_code)]
