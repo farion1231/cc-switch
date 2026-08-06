@@ -680,6 +680,8 @@
     "autoLaunchFailed": "自動起動の設定に失敗しました",
     "minimizeToTray": "閉じるときトレイへ最小化",
     "minimizeToTrayDescription": "チェックすると閉じるボタンでトレイに隠し、オフならアプリを終了します。",
+    "enableFloatingUsage": "用量フローティングウィンドウを有効化",
+    "enableFloatingUsageDescription": "今日の使用量と費用をデスクトップ上に常に最前面で表示し、ドラッグ可能です。",
     "useAppWindowControls": "アプリ内ウィンドウボタンを有効化",
     "useAppWindowControlsDescription": "有効にすると、アプリヘッダーに最小化・最大化/復元・閉じるボタンを表示します。",
     "enableClaudePluginIntegration": "Claude Code 拡張に適用",

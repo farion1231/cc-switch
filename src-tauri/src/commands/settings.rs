@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::UpdaterExt;
 
 /// 应用更新下载进度（通过 `update-download-progress` 事件发给前端）。
@@ -57,18 +57,105 @@ pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
     Ok(crate::settings::get_settings_for_frontend())
 }
 
+/// 显示或隐藏桌面用量悬浮窗
+pub fn set_floating_usage_window_visible(app: &AppHandle, visible: bool) {
+    if let Some(floating_window) = app.get_webview_window("floating_usage") {
+        if visible {
+            let _ = floating_window.show();
+        } else {
+            crate::save_window_state_before_exit(app);
+            let _ = floating_window.hide();
+        }
+    } else if visible {
+        log::warn!("floating_usage window not found, unable to show");
+    }
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn resizeFloatingUsageWindow(
+    app: AppHandle,
+    width: f64,
+    height: f64,
+) -> Result<bool, String> {
+    if let Some(window) = app.get_webview_window("floating_usage") {
+        #[cfg(target_os = "windows")]
+        {
+            // tao 的 set_size 对 resizable:false 窗口不可靠：
+            // 内部走 SWP_ASYNCWINDOWPOS（异步），且 set_resizable 的样式切换是
+            // 通过 PostMessage 异步应用的——两个异步叠加会与“先开 resizable、再改
+            // 尺寸、再关 resizable”的时序产生竞态，导致窗口经常停在比内容更大的
+            // 高度上，透明区就把下方点击挡住（即悬浮窗底部“一块不可点击的区域”）。
+            // 这里直接在主线程上用原生 Win32 SetWindowPos 同步改尺寸，无论窗口
+            // resizable 与否都能可靠地精确贴合内容高度。
+            let hwnd_raw = window
+                .hwnd()
+                .map_err(|e| format!("failed to get floating window hwnd: {e}"))?
+                .0 as isize;
+            let scale = window.scale_factor().map_err(|e| e.to_string())?;
+            let (w, h) = (
+                (width * scale).round() as i32,
+                (height * scale).round() as i32,
+            );
+
+            app.run_on_main_thread(move || unsafe {
+                use windows_sys::Win32::UI::WindowsAndMessaging::*;
+
+                // HWND 是 *mut c_void 的类型别名，直接用转换即可。
+                let hwnd: *mut core::ffi::c_void = hwnd_raw as *mut core::ffi::c_void;
+                // 临时加上 WS_THICKFRAME 解除 Win32 对非 resizable 窗口的 min/max
+                // 锁定，SetWindowPos 同步完成后立刻还原，外观与行为不受影响。
+                let old_style = GetWindowLongW(hwnd, GWL_STYLE);
+                SetWindowLongW(hwnd, GWL_STYLE, old_style | WS_SIZEBOX as i32);
+                SetWindowPos(
+                    hwnd,
+                    core::ptr::null_mut(),
+                    0,
+                    0,
+                    w,
+                    h,
+                    SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE,
+                );
+                SetWindowLongW(hwnd, GWL_STYLE, old_style);
+                SetWindowPos(
+                    hwnd,
+                    core::ptr::null_mut(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                );
+            })
+            .map_err(|e| format!("failed to resize floating window on main thread: {e}"))?;
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            window
+                .set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)))
+                .map_err(|e| format!("Failed to resize floating window: {e}"))?;
+        }
+
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
 /// 保存设置
 #[tauri::command]
 pub async fn save_settings(
+    app: AppHandle,
     state: tauri::State<'_, crate::store::AppState>,
     settings: crate::settings::AppSettings,
 ) -> Result<bool, String> {
     let existing = crate::settings::get_settings();
     let merged = merge_settings_for_save(settings, &existing);
+    let enable_floating_changed = merged.enable_floating_usage != existing.enable_floating_usage;
     let unify_codex_changed =
         merged.unify_codex_session_history != existing.unify_codex_session_history;
     let unify_codex_enabled = merged.unify_codex_session_history;
-    crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
+    crate::settings::update_settings(merged.clone()).map_err(|e| e.to_string())?;
 
     // 统一会话开关变更时立即重写当前官方 Codex 供应商的 live 配置，
     // 不必等下一次切换才生效。
@@ -122,6 +209,10 @@ pub async fn save_settings(
                 log::warn!("清除统一会话迁移意愿失败: {err}");
             }
         }
+    }
+
+    if enable_floating_changed {
+        set_floating_usage_window_visible(&app, merged.enable_floating_usage);
     }
     Ok(true)
 }

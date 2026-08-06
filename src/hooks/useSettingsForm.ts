@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSettingsQuery } from "@/lib/query";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { queryClient, useSettingsQuery } from "@/lib/query";
 import type { Settings } from "@/types";
 
 type Language = "zh" | "zh-TW" | "en" | "ja";
@@ -73,6 +74,29 @@ export function useSettingsForm(): UseSettingsFormResult {
   const { i18n } = useTranslation();
   const { data, isLoading } = useSettingsQuery();
 
+  // 监听后端设置更新事件（如悬浮窗关闭触发设置变更），保证前端 Query 缓存与后端同步
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    let disposed = false;
+
+    (async () => {
+      const off = await listen("settings-updated", () => {
+        queryClient.invalidateQueries({ queryKey: ["settings"] });
+      });
+
+      if (disposed) {
+        off();
+      } else {
+        unlisten = off;
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   const [settingsState, setSettingsState] = useState<SettingsFormState | null>(
     null,
   );
@@ -114,6 +138,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       useAppWindowControls: data.useAppWindowControls ?? false,
       enableClaudePluginIntegration:
         data.enableClaudePluginIntegration ?? false,
+      enableFloatingUsage: data.enableFloatingUsage ?? false,
       silentStartup: data.silentStartup ?? false,
       skipClaudeOnboarding: data.skipClaudeOnboarding ?? false,
       preserveCodexOfficialAuthOnSwitch:
@@ -143,6 +168,7 @@ export function useSettingsForm(): UseSettingsFormResult {
             minimizeToTrayOnClose: true,
             useAppWindowControls: false,
             enableClaudePluginIntegration: false,
+            enableFloatingUsage: false,
             skipClaudeOnboarding: false,
             preserveCodexOfficialAuthOnSwitch: false,
             unifyCodexSessionHistory: false,
@@ -181,6 +207,7 @@ export function useSettingsForm(): UseSettingsFormResult {
         useAppWindowControls: serverData.useAppWindowControls ?? false,
         enableClaudePluginIntegration:
           serverData.enableClaudePluginIntegration ?? false,
+        enableFloatingUsage: serverData.enableFloatingUsage ?? false,
         silentStartup: serverData.silentStartup ?? false,
         skipClaudeOnboarding: serverData.skipClaudeOnboarding ?? false,
         preserveCodexOfficialAuthOnSwitch:

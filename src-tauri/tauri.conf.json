@@ -23,6 +23,20 @@
         "resizable": true,
         "fullscreen": false,
         "center": true
+      },
+      {
+        "label": "floating_usage",
+        "title": "Floating Usage",
+        "width": 220,
+        "height": 64,
+        "resizable": false,
+        "maximizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "transparent": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "shadow": false
       }
     ],
     "security": {

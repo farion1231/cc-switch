@@ -374,6 +374,19 @@ pub fn run() {
         // 拦截窗口关闭：根据设置决定是否最小化到托盘
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "floating_usage" {
+                    api.prevent_close();
+                    crate::save_window_state_before_exit(window.app_handle());
+                    let _ = window.hide();
+                    let mut settings = crate::settings::get_settings();
+                    settings.enable_floating_usage = false;
+                    if let Err(e) = crate::settings::update_settings(settings) {
+                        log::error!("Failed to update settings on floating window close: {e}");
+                    }
+                    let _ = window.app_handle().emit("settings-updated", ());
+                    return;
+                }
+
                 // 数据库版本过新的恢复模式下没有托盘可唤回，关闭即退出，避免应用隐身后台
                 let in_db_recovery = crate::init_status::get_init_error()
                     .map(|p| p.kind.as_deref() == Some("db_version_too_new"))
@@ -410,6 +423,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(window_state_flags())
+                .with_denylist(&["floating_usage"])
                 .build(),
         )
         .setup(|app| {
@@ -1312,7 +1326,6 @@ pub fn run() {
                 }
             }
 
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1351,6 +1364,7 @@ pub fn run() {
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
+            commands::resizeFloatingUsageWindow,
             commands::has_codex_unify_history_backup,
             commands::restore_codex_unified_history,
             commands::get_rectifier_config,
