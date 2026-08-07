@@ -49,4 +49,31 @@ describe("ProviderForm Codex catalog helpers", () => {
       { model: "mimo-v2.5-pro", supportsParallelToolCalls: false },
     ]);
   });
+
+  it("preserves per-model reasoning levels and default level", () => {
+    expect(
+      normalizeCodexCatalogModelsForSave([
+        {
+          model: "deepseek-v4-flash",
+          displayName: "DeepSeek V4 Flash",
+          reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+          defaultReasoningLevel: " xhigh ",
+        },
+        // empty levels / whitespace default are dropped
+        {
+          model: "plain-model",
+          reasoningLevels: [],
+          defaultReasoningLevel: "   ",
+        },
+      ]),
+    ).toEqual([
+      {
+        model: "deepseek-v4-flash",
+        displayName: "DeepSeek V4 Flash",
+        reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
+        defaultReasoningLevel: "xhigh",
+      },
+      { model: "plain-model" },
+    ]);
+  });
 });

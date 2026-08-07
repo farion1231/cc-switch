@@ -12,14 +12,29 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { toast } from "sonner";
 import {
+  Check,
   ChevronDown,
   ChevronRight,
+  ChevronsUpDown,
   Download,
   Loader2,
   Plus,
@@ -135,6 +150,12 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
     ...(seed?.baseInstructions
       ? { baseInstructions: seed.baseInstructions }
       : {}),
+    ...(seed?.reasoningLevels && seed.reasoningLevels.length > 0
+      ? { reasoningLevels: seed.reasoningLevels }
+      : {}),
+    ...(seed?.defaultReasoningLevel
+      ? { defaultReasoningLevel: seed.defaultReasoningLevel }
+      : {}),
   };
 }
 
@@ -158,9 +179,155 @@ function catalogRowsMatchModels(
         (incoming.supportsParallelToolCalls ?? null) &&
       (row.baseInstructions ?? "") === (incoming.baseInstructions ?? "") &&
       JSON.stringify(row.inputModalities ?? []) ===
-        JSON.stringify(incoming.inputModalities ?? [])
+        JSON.stringify(incoming.inputModalities ?? []) &&
+      JSON.stringify(row.reasoningLevels ?? []) ===
+        JSON.stringify(incoming.reasoningLevels ?? []) &&
+      (row.defaultReasoningLevel ?? "") ===
+        (incoming.defaultReasoningLevel ?? "")
     );
   });
+}
+
+// Reasoning effort levels Codex understands, in ascending depth order. The
+// backend drops unknown values, so the UI only offers canonical ones.
+const CODEX_REASONING_LEVELS = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+] as const;
+
+function ReasoningLevelsEditor({
+  levels,
+  defaultLevel,
+  onLevelsChange,
+  onDefaultLevelChange,
+}: {
+  levels?: string[];
+  defaultLevel?: string;
+  onLevelsChange: (levels: string[] | undefined) => void;
+  onDefaultLevelChange: (level: string | undefined) => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const selected = (levels ?? []).filter((level) =>
+    (CODEX_REASONING_LEVELS as readonly string[]).includes(level),
+  );
+
+  const toggleLevel = (level: string) => {
+    const next = selected.includes(level)
+      ? selected.filter((item) => item !== level)
+      : [...selected, level];
+    onLevelsChange(next.length > 0 ? next : undefined);
+    if (defaultLevel && !next.includes(defaultLevel)) {
+      onDefaultLevelChange(undefined);
+    }
+  };
+
+  const triggerLabel =
+    selected.length > 0
+      ? selected.join(", ")
+      : t("codexConfig.reasoningLevelsNotSet", {
+          defaultValue: "Not set",
+        });
+
+  return (
+    <Popover modal open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          role="combobox"
+          aria-expanded={open}
+          className="flex h-9 w-full items-center justify-between gap-1 rounded-md border border-border-default bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus-visible:outline-none focus:border-border-default focus-visible:border-border-default focus:ring-0 focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <span
+            className={cn(
+              "truncate",
+              selected.length === 0 && "text-muted-foreground",
+            )}
+          >
+            {triggerLabel}
+          </span>
+          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="bottom"
+        align="start"
+        sideOffset={6}
+        avoidCollisions
+        collisionPadding={8}
+        className="z-[1000] w-[var(--radix-popover-trigger-width)] p-0 border-border-default"
+      >
+        <Command>
+          <CommandInput
+            placeholder={t("codexConfig.reasoningLevelsSearch", {
+              defaultValue: "Search reasoning levels...",
+            })}
+          />
+          <CommandList>
+            <CommandEmpty>
+              {t("codexConfig.reasoningLevelsEmpty", {
+                defaultValue: "No levels",
+              })}
+            </CommandEmpty>
+            <CommandGroup>
+              {CODEX_REASONING_LEVELS.map((level) => (
+                <CommandItem
+                  key={level}
+                  value={level}
+                  onSelect={() => toggleLevel(level)}
+                >
+                  <Check
+                    className={cn(
+                      "mr-2 h-4 w-4",
+                      selected.includes(level) ? "opacity-100" : "opacity-0",
+                    )}
+                  />
+                  <span className="flex-1">{level}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+        {selected.length > 0 && (
+          <div className="border-t border-border-default p-2">
+            <span className="text-xs text-muted-foreground">
+              {t("codexConfig.defaultReasoningLevelLabel", {
+                defaultValue: "Default level",
+              })}
+            </span>
+            <Select
+              value={defaultLevel ?? ""}
+              onValueChange={(value) =>
+                onDefaultLevelChange(value || undefined)
+              }
+            >
+              <SelectTrigger className="mt-1 h-8 w-full">
+                <SelectValue
+                  placeholder={t(
+                    "codexConfig.defaultReasoningLevelPlaceholder",
+                    { defaultValue: "Auto (highest selected)" },
+                  )}
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {selected.map((level) => (
+                  <SelectItem key={level} value={level}>
+                    {level}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 export function CodexFormFields({
@@ -945,7 +1112,7 @@ export function CodexFormFields({
                 {catalogRows.length > 0 && (
                   <div className="space-y-2">
                     {/* 列头：md+ 显示 */}
-                    <div className="hidden grid-cols-[1fr_1fr_140px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+                    <div className="hidden grid-cols-[1fr_1fr_140px_1fr_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
                       <span>
                         {t("codexConfig.catalogColumnDisplay", {
                           defaultValue: "菜单显示名",
@@ -961,13 +1128,18 @@ export function CodexFormFields({
                           defaultValue: "上下文窗口",
                         })}
                       </span>
+                      <span>
+                        {t("codexConfig.catalogColumnReasoning", {
+                          defaultValue: "思考等级",
+                        })}
+                      </span>
                       <span />
                     </div>
 
                     {catalogRows.map((row, index) => (
                       <div
                         key={row.rowId}
-                        className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_140px_36px]"
+                        className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_140px_1fr_36px]"
                       >
                         <Input
                           value={row.displayName ?? ""}
@@ -1041,6 +1213,20 @@ export function CodexFormFields({
                           aria-label={t("codexConfig.catalogColumnContext", {
                             defaultValue: "上下文窗口",
                           })}
+                        />
+                        <ReasoningLevelsEditor
+                          levels={row.reasoningLevels}
+                          defaultLevel={row.defaultReasoningLevel}
+                          onLevelsChange={(levels) =>
+                            handleUpdateCatalogRow(index, {
+                              reasoningLevels: levels,
+                            })
+                          }
+                          onDefaultLevelChange={(level) =>
+                            handleUpdateCatalogRow(index, {
+                              defaultReasoningLevel: level,
+                            })
+                          }
                         />
                         <Button
                           type="button"
