@@ -6,14 +6,16 @@
 //! may omit the action from an in-progress `web_search_call`. Strict Responses
 //! clients reject those shapes before they can consume the model output.
 //!
-//! Keep this compatibility pass narrowly gated to the official OpenCode Go
-//! origin. Other Responses providers retain byte-for-byte passthrough.
+//! Keep this compatibility pass narrowly gated to Grok Build requests using
+//! the official OpenCode Go origin. Other clients and Responses providers
+//! retain byte-for-byte passthrough.
 
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
 
 use super::{CodexAdapter, ProviderAdapter};
+use crate::app_config::AppType;
 use crate::provider::Provider;
 use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
 
@@ -21,8 +23,16 @@ const OPENCODE_HOST: &str = "opencode.ai";
 const OPENCODE_GO_PATH: &str = "/zen/go";
 const RESPONSE_EXTENSION_FIELDS: &[&str] = &["cost", "moderation"];
 
-/// Whether this provider is the official OpenCode Go Responses endpoint.
-pub(crate) fn provider_needs_opencode_go_responses_rectifier(provider: &Provider) -> bool {
+/// Whether this request belongs to the narrowly scoped Grok Build compatibility
+/// path for the official OpenCode Go Responses endpoint.
+pub(crate) fn should_rectify_opencode_go_responses(
+    app_type: &AppType,
+    provider: &Provider,
+) -> bool {
+    if !matches!(app_type, AppType::GrokBuild) {
+        return false;
+    }
+
     let Ok(base_url) = CodexAdapter::new().extract_base_url(provider) else {
         return false;
     };
@@ -300,17 +310,25 @@ mod tests {
     }
 
     #[test]
-    fn provider_gate_matches_only_official_opencode_go_path() {
-        assert!(provider_needs_opencode_go_responses_rectifier(
+    fn rectifier_gate_requires_grokbuild_and_official_opencode_go_path() {
+        assert!(should_rectify_opencode_go_responses(
+            &AppType::GrokBuild,
             &provider_with_base_url("https://opencode.ai/zen/go/v1")
         ));
-        assert!(provider_needs_opencode_go_responses_rectifier(
+        assert!(should_rectify_opencode_go_responses(
+            &AppType::GrokBuild,
             &provider_with_base_url("https://OPENCODE.AI/zen/go/v1/responses")
         ));
-        assert!(!provider_needs_opencode_go_responses_rectifier(
+        assert!(!should_rectify_opencode_go_responses(
+            &AppType::Codex,
+            &provider_with_base_url("https://opencode.ai/zen/go/v1")
+        ));
+        assert!(!should_rectify_opencode_go_responses(
+            &AppType::GrokBuild,
             &provider_with_base_url("https://opencode.ai/v1")
         ));
-        assert!(!provider_needs_opencode_go_responses_rectifier(
+        assert!(!should_rectify_opencode_go_responses(
+            &AppType::GrokBuild,
             &provider_with_base_url("https://opencode.ai.attacker.example/zen/go/v1")
         ));
     }

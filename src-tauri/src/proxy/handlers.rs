@@ -19,7 +19,7 @@ use super::{
     providers::{
         codex_chat_common::extract_reasoning_field_text,
         codex_chat_history::record_responses_sse_stream,
-        get_adapter, get_claude_api_format,
+        get_adapter, get_claude_api_format, opencode_go_responses_rectifier,
         streaming::create_anthropic_sse_stream,
         streaming_codex_anthropic::{
             create_responses_sse_stream_from_anthropic_with_context,
@@ -29,8 +29,7 @@ use super::{
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
         streaming_responses::create_anthropic_sse_stream_from_responses,
         transform, transform_codex_anthropic, transform_codex_chat,
-        transform_codex_responses_namespace, transform_codex_responses_opencode_go,
-        transform_gemini, transform_responses,
+        transform_codex_responses_namespace, transform_gemini, transform_responses,
     },
     response_processor::{
         create_logged_passthrough_stream, create_usage_collector, process_response,
@@ -875,7 +874,8 @@ async fn handle_responses_for_app(
         .await;
     }
 
-    if transform_codex_responses_opencode_go::provider_needs_opencode_go_responses_rectifier(
+    if opencode_go_responses_rectifier::should_rectify_opencode_go_responses(
+        &app_type,
         &ctx.provider,
     ) {
         return handle_opencode_go_responses_rectifier(response, &ctx, &state, connection_guard)
@@ -1016,7 +1016,8 @@ async fn handle_responses_compact_for_app(
         .await;
     }
 
-    if transform_codex_responses_opencode_go::provider_needs_opencode_go_responses_rectifier(
+    if opencode_go_responses_rectifier::should_rectify_opencode_go_responses(
+        &app_type,
         &ctx.provider,
     ) {
         return handle_opencode_go_responses_rectifier(response, &ctx, &state, connection_guard)
@@ -1062,10 +1063,9 @@ async fn handle_opencode_go_responses_rectifier(
 
     if response.is_sse() {
         let headers = response.headers().clone();
-        let stream =
-            transform_codex_responses_opencode_go::create_opencode_go_responses_rectifier_stream(
-                response.bytes_stream(),
-            );
+        let stream = opencode_go_responses_rectifier::create_opencode_go_responses_rectifier_stream(
+            response.bytes_stream(),
+        );
         let response = super::hyper_client::ProxyResponse::streamed(status, headers, stream);
         return process_response(response, ctx, state, &CODEX_PARSER_CONFIG, connection_guard)
             .await;
@@ -1081,7 +1081,7 @@ async fn handle_opencode_go_responses_rectifier(
         read_decoded_body(response, ctx.tag, body_timeout).await?;
     let rectified_bytes = match serde_json::from_slice::<Value>(&body_bytes) {
         Ok(mut value) => {
-            if transform_codex_responses_opencode_go::rectify_opencode_go_response(&mut value) {
+            if opencode_go_responses_rectifier::rectify_opencode_go_response(&mut value) {
                 strip_entity_headers_for_rebuilt_body(&mut headers);
                 serde_json::to_vec(&value)
                     .map(Bytes::from)
