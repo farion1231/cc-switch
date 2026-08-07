@@ -52,14 +52,17 @@ describe("Codex Provider Preset", () => {
 describe("OpenCode Go Provider Preset", () => {
   const openCodeGo = providerPresets.find((p) => p.name === "OpenCode Go");
 
-  it("should use the Anthropic endpoint with x-api-key auth", () => {
+  it("should use an Anthropic-compatible model with x-api-key auth", () => {
     expect(openCodeGo).toBeDefined();
 
     const env = (openCodeGo!.settingsConfig as any).env;
     expect(env).toMatchObject({
       ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
       ANTHROPIC_API_KEY: "",
-      ANTHROPIC_MODEL: "deepseek-v4-flash",
+      ANTHROPIC_MODEL: "minimax-m3",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "minimax-m3",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "minimax-m3",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "minimax-m3",
     });
     expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
     expect(openCodeGo!.apiFormat).toBe("anthropic");
