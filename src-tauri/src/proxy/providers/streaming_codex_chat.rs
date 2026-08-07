@@ -282,28 +282,10 @@ impl ChatToResponsesState {
     }
 
     fn push_reasoning_delta(&mut self, delta: &str) -> Vec<Bytes> {
-        let mut events = Vec::new();
-
-        if !self.reasoning.added {
-            let output_index = self.next_output_index();
-            let item_id = format!("rs_{}", self.response_id);
-            self.reasoning.output_index = Some(output_index);
-            self.reasoning.item_id = item_id.clone();
-            self.reasoning.added = true;
-
-            events.push(sse::reasoning_item_added(output_index, &item_id));
-            events.push(sse::reasoning_summary_part_added(output_index, &item_id));
-        }
-
+        // Keep reasoning for same-provider tool-call continuation, but do not
+        // expose a synthetic Responses item whose ID was never persisted.
         self.reasoning.text.push_str(delta);
-        let output_index = self.reasoning.output_index.unwrap_or(0);
-        events.push(sse::reasoning_summary_text_delta(
-            output_index,
-            &self.reasoning.item_id,
-            delta,
-        ));
-
-        events
+        Vec::new()
     }
 
     fn push_text_delta(&mut self, delta: &str) -> Vec<Bytes> {
@@ -978,7 +960,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn converts_reasoning_content_chat_sse_to_responses_reasoning_events() {
+    async fn omits_unpersisted_reasoning_items_from_chat_sse() {
         let output = collect(vec![
             "data: {\"id\":\"chatcmpl_reason\",\"created\":123,\"model\":\"deepseek-reasoner\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Need context. \"}}]}\n\n",
             "data: {\"id\":\"chatcmpl_reason\",\"created\":123,\"model\":\"deepseek-reasoner\",\"choices\":[{\"delta\":{\"reasoning\":\"Now answer. \"}}]}\n\n",
@@ -987,17 +969,11 @@ mod tests {
         ])
         .await;
 
-        assert!(output.contains("event: response.reasoning_summary_part.added"));
-        assert!(output.contains("event: response.reasoning_summary_text.delta"));
-        assert!(output.contains("event: response.reasoning_summary_text.done"));
-        assert!(output.contains("Need context. Now answer. "));
-        assert!(output.contains("\"type\":\"reasoning\""));
+        assert!(!output.contains("event: response.reasoning_summary_part.added"));
+        assert!(!output.contains("event: response.reasoning_summary_text.delta"));
+        assert!(!output.contains("\"type\":\"reasoning\""));
         assert!(output.contains("\"text\":\"Done\""));
         assert!(output.contains("\"reasoning_tokens\":3"));
-
-        let reasoning_pos = output.find("\"type\":\"reasoning\"").unwrap();
-        let message_pos = output.find("\"type\":\"message\"").unwrap();
-        assert!(reasoning_pos < message_pos);
     }
 
     #[tokio::test]
@@ -1009,8 +985,7 @@ mod tests {
         ])
         .await;
 
-        assert!(output.contains("event: response.reasoning_summary_text.delta"));
-        assert!(output.contains("Need context."));
+        assert!(!output.contains("event: response.reasoning_summary_text.delta"));
         assert!(output.contains("\"text\":\"pong\""));
         assert!(output.contains("\"reasoning_tokens\":3"));
         assert!(!output.contains("<think>"));
