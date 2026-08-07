@@ -194,12 +194,17 @@ pub async fn run_tool_lifecycle_action(
         ToolLifecycleAction::Update => "tool_update",
     };
     let proxy_url = crate::proxy::http_client::get_current_proxy_url();
+    let forward_proxy_to_wsl = should_forward_tool_proxy_to_wsl(proxy_url.as_deref());
 
     // build 阶段含锚定探测（对每个工具跑 `--version` 定位命令行实际命中那处），
     // 与执行一并放进 blocking 线程，避免阻塞 async runtime。
     tokio::task::spawn_blocking(move || {
-        let command_line =
-            build_tool_lifecycle_command(&requested, action, wsl_shell_by_tool.as_ref())?;
+        let command_line = build_tool_lifecycle_command(
+            &requested,
+            action,
+            wsl_shell_by_tool.as_ref(),
+            forward_proxy_to_wsl,
+        )?;
         run_tool_lifecycle_silently(&command_line, label, proxy_url.as_deref())
     })
     .await
@@ -214,6 +219,37 @@ const TOOL_PROXY_ENV_KEYS: [&str; 6] = [
     "https_proxy",
     "all_proxy",
 ];
+const TOOL_PROXY_BYPASS_ENV_KEYS: [&str; 2] = ["NO_PROXY", "no_proxy"];
+
+fn proxy_url_uses_loopback(proxy_url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(proxy_url) else {
+        return false;
+    };
+    match parsed.host() {
+        Some(url::Host::Domain(host)) => {
+            let host = host.trim_end_matches('.');
+            host.eq_ignore_ascii_case("localhost")
+                || host
+                    .to_ascii_lowercase()
+                    .strip_suffix(".localhost")
+                    .is_some_and(|prefix| !prefix.is_empty())
+        }
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => {
+            address.is_loopback()
+                || address
+                    .to_ipv4_mapped()
+                    .is_some_and(|mapped| mapped.is_loopback())
+        }
+        None => false,
+    }
+}
+
+fn should_forward_tool_proxy_to_wsl(proxy_url: Option<&str>) -> bool {
+    proxy_url
+        .filter(|url| !url.trim().is_empty())
+        .is_some_and(|url| !proxy_url_uses_loopback(url))
+}
 
 /// 将 CC Switch 当前显式配置的全局代理传给 CLI 安装/升级子进程。
 /// 未配置时不改写环境，让工具继续使用自身配置、系统代理或继承的环境变量。
@@ -225,18 +261,24 @@ fn apply_tool_proxy_env(command: &mut std::process::Command, proxy_url: Option<&
     for key in TOOL_PROXY_ENV_KEYS {
         command.env(key, proxy_url);
     }
+    for key in TOOL_PROXY_BYPASS_ENV_KEYS {
+        command.env(key, "");
+    }
 
     #[cfg(target_os = "windows")]
     command.env(
         "WSLENV",
-        merge_tool_proxy_wslenv(std::env::var("WSLENV").ok().as_deref()),
+        merge_tool_proxy_wslenv(
+            std::env::var("WSLENV").ok().as_deref(),
+            should_forward_tool_proxy_to_wsl(Some(proxy_url)),
+        ),
     );
 }
 
-/// WSL 只转发 `WSLENV` 声明的 Windows 环境变量。保留用户原有条目，
-/// 并把代理变量统一改成仅 Windows -> WSL，避免旧 `/w` 标记阻止传入 WSL。
+/// WSL 只转发 `WSLENV` 声明的 Windows 环境变量。保留用户原有条目；
+/// 非回环代理统一使用 Windows -> WSL 的 `/u` 标记，回环代理则不跨边界传递。
 #[cfg(target_os = "windows")]
-fn merge_tool_proxy_wslenv(existing: Option<&str>) -> String {
+fn merge_tool_proxy_wslenv(existing: Option<&str>, forward_proxy: bool) -> String {
     let mut entries = existing
         .into_iter()
         .flat_map(|value| value.split(':'))
@@ -245,14 +287,18 @@ fn merge_tool_proxy_wslenv(existing: Option<&str>) -> String {
             let name = entry.split('/').next().unwrap_or(entry);
             !TOOL_PROXY_ENV_KEYS
                 .iter()
+                .chain(TOOL_PROXY_BYPASS_ENV_KEYS.iter())
                 .any(|key| key.eq_ignore_ascii_case(name))
         })
         .map(str::to_string)
         .collect::<Vec<_>>();
 
-    // Windows 环境变量名不区分大小写但会保留既有名称，WSLENV 则区分大小写。
-    // 同时声明两套名称，确保实际保留下来的那一套能够进入 WSL。
-    entries.extend(TOOL_PROXY_ENV_KEYS.map(|key| format!("{key}/u")));
+    if forward_proxy {
+        // Windows 环境变量名不区分大小写但会保留既有名称，WSLENV 则区分大小写。
+        // 同时声明两套名称，确保实际保留下来的那一套能够进入 WSL。
+        entries.extend(TOOL_PROXY_ENV_KEYS.map(|key| format!("{key}/u")));
+        entries.extend(TOOL_PROXY_BYPASS_ENV_KEYS.map(|key| format!("{key}/u")));
+    }
     entries.join(":")
 }
 
@@ -444,6 +490,7 @@ fn build_tool_lifecycle_command(
     tools: &[&str],
     action: ToolLifecycleAction,
     wsl_shell_by_tool: Option<&HashMap<String, WslShellPreferenceInput>>,
+    forward_proxy_to_wsl: bool,
 ) -> Result<String, String> {
     let mut lines = Vec::new();
 
@@ -469,6 +516,7 @@ fn build_tool_lifecycle_command(
             action,
             pref.and_then(|p| p.wsl_shell.as_deref()),
             pref.and_then(|p| p.wsl_shell_flag.as_deref()),
+            forward_proxy_to_wsl,
         )?;
         lines.push(line);
 
@@ -695,6 +743,7 @@ fn build_tool_action_line(
     action: ToolLifecycleAction,
     wsl_shell: Option<&str>,
     wsl_shell_flag: Option<&str>,
+    forward_proxy_to_wsl: bool,
 ) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
@@ -708,7 +757,13 @@ fn build_tool_action_line(
         if let Some(distro) = wsl_distro_for_tool(tool) {
             let command = wsl_tool_action_shell_command(tool, action)
                 .ok_or_else(|| format!("Unsupported tool action target: {tool}"))?;
-            return build_wsl_tool_action_line(&distro, &command, wsl_shell, wsl_shell_flag);
+            return build_wsl_tool_action_line(
+                &distro,
+                &command,
+                wsl_shell,
+                wsl_shell_flag,
+                forward_proxy_to_wsl,
+            );
         }
         // ② Windows 原生 update 锚定;install 走静态(install.sh 是 bash 脚本,Windows
         //    无意义)。**`enumerate_tool_installations` 在这里 per-tool 重做、与前端
@@ -738,7 +793,7 @@ fn build_tool_action_line(
 
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (wsl_shell, wsl_shell_flag);
+        let _ = (wsl_shell, wsl_shell_flag, forward_proxy_to_wsl);
         // update 锚定到命令行实际命中的那处（写回同一个 node / brew / 原生安装器），
         // 而非裸 `npm` 落到 PATH 第一个 npm；install 走「上游推荐 || npm 兜底」短路链
         // （有 native installer 的工具如 claude/opencode/hermes），其余仍裸 npm。
@@ -763,6 +818,7 @@ fn build_wsl_tool_action_line(
     command: &str,
     force_shell: Option<&str>,
     force_shell_flag: Option<&str>,
+    clear_proxy_bypass: bool,
 ) -> Result<String, String> {
     if !is_valid_wsl_distro_name(distro) {
         return Err(format!("Invalid WSL distro name: {distro}"));
@@ -784,9 +840,15 @@ fn build_wsl_tool_action_line(
         default_flag_for_shell(shell)
     };
 
+    let command = if clear_proxy_bypass {
+        format!("unset NO_PROXY no_proxy; {command}")
+    } else {
+        command.to_string()
+    };
+
     Ok(format!(
         "wsl.exe -d {distro} -- {shell} {flag} {}",
-        windows_cmd_double_quote_arg(command)
+        windows_cmd_double_quote_arg(&command)
     ))
 }
 
@@ -4354,6 +4416,9 @@ mod tests {
         for key in TOOL_PROXY_ENV_KEYS {
             command.env(key, "http://old.invalid:8080");
         }
+        for key in TOOL_PROXY_BYPASS_ENV_KEYS {
+            command.env(key, "*");
+        }
 
         apply_tool_proxy_env(&mut command, Some(proxy));
 
@@ -4367,6 +4432,10 @@ mod tests {
         for key in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"] {
             assert_eq!(command_env_value(&command, key).as_deref(), Some(proxy));
         }
+
+        for key in TOOL_PROXY_BYPASS_ENV_KEYS {
+            assert_eq!(command_env_value(&command, key).as_deref(), Some(""));
+        }
     }
 
     #[test]
@@ -4378,6 +4447,7 @@ mod tests {
 
         assert!(TOOL_PROXY_ENV_KEYS
             .iter()
+            .chain(TOOL_PROXY_BYPASS_ENV_KEYS.iter())
             .all(|key| command_env_value(&command, key).is_none()));
     }
 
@@ -4392,7 +4462,7 @@ mod tests {
                 "/D",
                 "/S",
                 "/C",
-                "if not \"%HTTP_PROXY%\"==\"http://127.0.0.1:17897\" exit /b 11 & if not \"%HTTPS_PROXY%\"==\"http://127.0.0.1:17897\" exit /b 12 & if not \"%ALL_PROXY%\"==\"http://127.0.0.1:17897\" exit /b 13",
+                "if not \"%HTTP_PROXY%\"==\"http://127.0.0.1:17897\" exit /b 11 & if not \"%HTTPS_PROXY%\"==\"http://127.0.0.1:17897\" exit /b 12 & if not \"%ALL_PROXY%\"==\"http://127.0.0.1:17897\" exit /b 13 & if not \"%NO_PROXY%\"==\"\" exit /b 14",
             ]);
             command
         };
@@ -4402,13 +4472,16 @@ mod tests {
             let mut command = std::process::Command::new("sh");
             command.args([
                 "-c",
-                "test \"$HTTP_PROXY\" = 'http://127.0.0.1:17897' && test \"$HTTPS_PROXY\" = 'http://127.0.0.1:17897' && test \"$ALL_PROXY\" = 'http://127.0.0.1:17897'",
+                "test \"$HTTP_PROXY\" = 'http://127.0.0.1:17897' && test \"$HTTPS_PROXY\" = 'http://127.0.0.1:17897' && test \"$ALL_PROXY\" = 'http://127.0.0.1:17897' && test -z \"$NO_PROXY\" && test -z \"$no_proxy\"",
             ]);
             command
         };
 
         for key in TOOL_PROXY_ENV_KEYS {
             command.env(key, "http://old.invalid:8080");
+        }
+        for key in TOOL_PROXY_BYPASS_ENV_KEYS {
+            command.env(key, "*");
         }
         apply_tool_proxy_env(&mut command, Some(proxy));
 
@@ -4419,13 +4492,49 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn tool_proxy_wslenv_preserves_user_entries_and_replaces_wrong_direction_flags() {
-        let merged =
-            merge_tool_proxy_wslenv(Some("GOPATH/p:HTTP_PROXY/u:https_proxy:USER_SETTING/w"));
+        let merged = merge_tool_proxy_wslenv(
+            Some("GOPATH/p:HTTP_PROXY/u:https_proxy:NO_PROXY:USER_SETTING/w"),
+            true,
+        );
 
         assert_eq!(
             merged,
-            "GOPATH/p:USER_SETTING/w:HTTP_PROXY/u:HTTPS_PROXY/u:ALL_PROXY/u:http_proxy/u:https_proxy/u:all_proxy/u"
+            "GOPATH/p:USER_SETTING/w:HTTP_PROXY/u:HTTPS_PROXY/u:ALL_PROXY/u:http_proxy/u:https_proxy/u:all_proxy/u:NO_PROXY/u:no_proxy/u"
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn tool_proxy_wslenv_omits_loopback_proxy_and_bypass_overrides() {
+        let merged = merge_tool_proxy_wslenv(
+            Some("GOPATH/p:HTTP_PROXY/u:NO_PROXY/u:USER_SETTING/w"),
+            false,
+        );
+
+        assert_eq!(merged, "GOPATH/p:USER_SETTING/w");
+    }
+
+    #[test]
+    fn tool_proxy_wsl_forwarding_rejects_loopback_urls() {
+        for proxy in [
+            "http://127.0.0.1:7890",
+            "http://127.12.34.56:7890",
+            "http://user:password@localhost:7890",
+            "http://proxy.localhost.:7890",
+            "http://[::1]:7890",
+            "http://[::ffff:127.0.0.1]:7890",
+        ] {
+            assert!(proxy_url_uses_loopback(proxy), "expected loopback: {proxy}");
+            assert!(!should_forward_tool_proxy_to_wsl(Some(proxy)));
+        }
+
+        for proxy in ["http://192.168.1.2:7890", "https://proxy.example.com"] {
+            assert!(
+                !proxy_url_uses_loopback(proxy),
+                "unexpected loopback: {proxy}"
+            );
+            assert!(should_forward_tool_proxy_to_wsl(Some(proxy)));
+        }
     }
 
     #[cfg(target_os = "windows")]
@@ -5209,13 +5318,18 @@ mod tests {
 
         #[test]
         fn wsl_hermes_install_line_does_not_depend_on_outer_pipefail() {
-            let line = build_wsl_tool_action_line("Ubuntu", HERMES_INSTALL_UNIX, None, None)
+            let line = build_wsl_tool_action_line("Ubuntu", HERMES_INSTALL_UNIX, None, None, false)
                 .expect("valid WSL command line");
             assert!(line.starts_with("wsl.exe -d Ubuntu -- sh -c "));
             assert!(
                 !line.contains("| bash") && line.contains(" -o $tmp && bash $tmp"),
                 "WSL 子 shell 内不能出现 curl 管道安装器: {line}"
             );
+
+            let proxied =
+                build_wsl_tool_action_line("Ubuntu", HERMES_INSTALL_UNIX, None, None, true)
+                    .expect("valid proxied WSL command line");
+            assert!(proxied.contains("unset NO_PROXY no_proxy; bash -c"));
         }
 
         #[test]
