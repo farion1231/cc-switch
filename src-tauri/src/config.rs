@@ -386,7 +386,9 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
-        use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
+        use windows_sys::Win32::{
+            Foundation::ERROR_NOT_SUPPORTED, Storage::FileSystem::ReplaceFileW,
+        };
 
         let replaced: Vec<u16> = path
             .as_os_str()
@@ -420,9 +422,24 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
             }
 
             let replace_error = std::io::Error::last_os_error();
-            if replace_error.kind() != std::io::ErrorKind::NotFound {
+            // WSL UNC paths reject ReplaceFileW with ERROR_NOT_SUPPORTED (50).
+            // Fall back to the pre-v3.19.2 remove-then-rename behavior there.
+            let replace_not_supported =
+                replace_error.raw_os_error() == Some(ERROR_NOT_SUPPORTED as i32);
+            if replace_error.kind() != std::io::ErrorKind::NotFound && !replace_not_supported {
                 last_error = Some(replace_error);
                 break;
+            }
+
+            if replace_not_supported {
+                match fs::remove_file(path) {
+                    Ok(()) => {}
+                    Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(source) => {
+                        last_error = Some(source);
+                        break;
+                    }
+                }
             }
 
             match fs::rename(&tmp, path) {
