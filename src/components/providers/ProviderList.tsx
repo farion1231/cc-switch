@@ -17,7 +17,7 @@ import { AlertTriangle, Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import type { Provider } from "@/types";
+import type { OpenClawProviderConfig, Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -139,9 +139,15 @@ export function ProviderList({
   );
 
   const isProviderDefaultModel = useCallback(
-    (providerId: string): boolean => {
+    (provider: Provider): boolean => {
       if (appId !== "openclaw" || !openclawDefaultModel?.primary) return false;
-      return openclawDefaultModel.primary.startsWith(providerId + "/");
+
+      const config = provider.settingsConfig as OpenClawProviderConfig;
+      return (config.models ?? []).some(
+        (model) =>
+          Boolean(model.id) &&
+          openclawDefaultModel.primary === `${provider.id}/${model.id}`,
+      );
     },
     [appId, openclawDefaultModel],
   );
@@ -435,7 +441,7 @@ export function ProviderList({
                 isDefaultModel={
                   appId === "hermes"
                     ? isHermesCurrent
-                    : isProviderDefaultModel(provider.id)
+                    : isProviderDefaultModel(provider)
                 }
                 onSetAsDefault={
                   onSetAsDefault ? () => onSetAsDefault(provider) : undefined

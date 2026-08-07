@@ -7,10 +7,17 @@ import { ProviderList } from "@/components/providers/ProviderList";
 
 const useDragSortMock = vi.fn();
 const useSortableMock = vi.fn();
+const useOpenClawDefaultModelMock = vi.fn();
 const providerCardRenderSpy = vi.fn();
 
 vi.mock("@/hooks/useDragSort", () => ({
   useDragSort: (...args: unknown[]) => useDragSortMock(...args),
+}));
+
+vi.mock("@/hooks/useOpenClaw", () => ({
+  useOpenClawLiveProviderIds: () => ({ data: [] }),
+  useOpenClawDefaultModel: (...args: unknown[]) =>
+    useOpenClawDefaultModelMock(...args),
 }));
 
 vi.mock("@/components/providers/ProviderCard", () => ({
@@ -59,6 +66,9 @@ vi.mock("@/components/providers/ProviderCard", () => ({
         </button>
         <span data-testid={`is-current-${provider.id}`}>
           {props.isCurrent ? "current" : "inactive"}
+        </span>
+        <span data-testid={`is-default-${provider.id}`}>
+          {props.isDefaultModel ? "default" : "not-default"}
         </span>
         <span data-testid={`drag-attr-${provider.id}`}>
           {props.dragHandleProps?.attributes?.["data-dnd-id"] ?? "none"}
@@ -123,7 +133,10 @@ function renderWithQueryClient(ui: ReactElement) {
 beforeEach(() => {
   useDragSortMock.mockReset();
   useSortableMock.mockReset();
+  useOpenClawDefaultModelMock.mockReset();
   providerCardRenderSpy.mockClear();
+
+  useOpenClawDefaultModelMock.mockReturnValue({ data: undefined });
 
   useSortableMock.mockImplementation(({ id }: { id: string }) => ({
     setNodeRef: vi.fn(),
@@ -235,12 +248,12 @@ describe("ProviderList Component", () => {
     // Drag attributes from useSortable
     expect(
       providerCardRenderSpy.mock.calls[0][0].dragHandleProps?.attributes[
-      "data-dnd-id"
+        "data-dnd-id"
       ],
     ).toBe("b");
     expect(
       providerCardRenderSpy.mock.calls[1][0].dragHandleProps?.attributes[
-      "data-dnd-id"
+        "data-dnd-id"
       ],
     ).toBe("a");
 
@@ -306,4 +319,74 @@ describe("ProviderList Component", () => {
       screen.getByText("No providers match your search."),
     ).toBeInTheDocument();
   });
+
+  it.each([
+    {
+      name: "the primary model changed",
+      defaultModel: {
+        primary: "provider-1/gpt-5.6-luna",
+        fallbacks: ["provider-1/gpt-5.6-mini"],
+      },
+      expected: "not-default",
+    },
+    {
+      name: "the complete model selection matches",
+      defaultModel: {
+        primary: "provider-1/gpt-5.6-terra",
+        fallbacks: ["provider-1/gpt-5.6-mini"],
+      },
+      expected: "default",
+    },
+    {
+      name: "another configured model is primary",
+      defaultModel: {
+        primary: "provider-1/gpt-5.6-mini",
+        fallbacks: [],
+      },
+      expected: "default",
+    },
+    {
+      name: "custom fallback models are configured",
+      defaultModel: {
+        primary: "provider-1/gpt-5.6-terra",
+        fallbacks: ["provider-1/gpt-5.6-nano"],
+      },
+      expected: "default",
+    },
+  ])(
+    "compares the OpenClaw primary model when $name",
+    ({ defaultModel, expected }) => {
+      const provider = createProvider({
+        id: "provider-1",
+        settingsConfig: {
+          models: [{ id: "gpt-5.6-terra" }, { id: "gpt-5.6-mini" }],
+        },
+      });
+
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [provider],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      useOpenClawDefaultModelMock.mockReturnValue({ data: defaultModel });
+
+      renderWithQueryClient(
+        <ProviderList
+          providers={{ "provider-1": provider }}
+          currentProviderId=""
+          appId="openclaw"
+          onSwitch={vi.fn()}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onOpenWebsite={vi.fn()}
+          onSetAsDefault={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByTestId("is-default-provider-1").textContent).toBe(
+        expected,
+      );
+    },
+  );
 });
