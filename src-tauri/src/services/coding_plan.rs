@@ -17,8 +17,9 @@ enum CodingPlanProvider {
     MiniMaxCn,
     MiniMaxEn,
     ZenMux,
-    /// 火山方舟 Agent Plan / Coding Plan（base_url 形如
-    /// `https://ark.cn-beijing.volces.com/api/coding[/v3]`）。
+    /// 火山方舟 Coding Plan（base_url 形如
+    /// `https://ark.cn-beijing.volces.com/api/coding[/v3]`）与 Agent Plan
+    /// （`.../api/plan[/v3]`）。
     Volcengine,
 }
 
@@ -36,9 +37,9 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         Some(CodingPlanProvider::MiniMaxEn)
     } else if url.contains("zenmux") {
         Some(CodingPlanProvider::ZenMux)
-    } else if url.contains("volces.com/api/coding") {
-        // 仅匹配 Coding/Agent Plan 入口；DouBaoSeed 按量付费走 /api/v3 与
-        // /api/compatible，没有套餐额度，不在此命中。
+    } else if url.contains("volces.com/api/coding") || url.contains("volces.com/api/plan") {
+        // Coding Plan 走 /api/coding[/v3]，Agent Plan 走 /api/plan[/v3]；DouBaoSeed
+        // 按量付费走 /api/v3 与 /api/compatible，没有套餐额度，不在此命中。
         Some(CodingPlanProvider::Volcengine)
     } else {
         None
@@ -705,8 +706,10 @@ fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
 // 里另填火山账号的 AccessKey ID + Secret（与推理 Key 是两套凭据）。两个 plan 用
 // 同一份 AK/SK，故鉴权类错误直接停、不再试另一个 plan。
 //
-// 自动探测：先调 `GetAFPUsage`（Agent Plan，回绝对额度 Quota/Used），未订阅再调
-// `GetCodingPlanUsage`（Coding Plan，回百分比）。
+// 路由：按 base_url 的 `/api/plan[/v3]` -> Agent Plan（`GetAFPUsage`，回绝对额度
+// Quota/Used）、`/api/coding[/v3]` -> Coding Plan（`GetCodingPlanUsage`，回百分比）
+// 各调各的接口，不再顺序探测--两个 plan 都开通时，用户配哪个 base_url 就查哪个，
+// 避免先命中 Agent Plan 抢走 Coding Plan 用户的结果。
 
 /// 控制面 OpenAPI 统一网关（区别于数据面推理域名 ark.cn-beijing.volces.com）。
 const VOLCENGINE_OPENAPI_HOST: &str = "open.volcengineapi.com";
@@ -743,6 +746,29 @@ fn volcengine_region(base_url: &str) -> String {
         .find(|p| p.starts_with("cn-") || p.starts_with("ap-"))
         .map(|p| p.to_string())
         .unwrap_or_else(|| VOLCENGINE_DEFAULT_REGION.to_string())
+}
+
+/// 单次查询的 plan 种类，由 base_url 路由决定（而非顺序探测）。
+enum VolcPlanKind {
+    /// Agent Plan：base_url 含 `/api/plan`，查 `GetAFPUsage`。
+    Agent,
+    /// Coding Plan：base_url 含 `/api/coding`，查 `GetCodingPlanUsage`。
+    Coding,
+}
+
+/// 按 base_url 路由到对应 plan 的查询接口：`/api/plan[/v3]` -> Agent Plan
+/// （`GetAFPUsage`），`/api/coding[/v3]` -> Coding Plan（`GetCodingPlanUsage`）。
+///
+/// 与 `detect_provider` 的子串判断同源--能进 `query_volcengine` 的 base_url 必含
+/// 二者之一，故 plan 未命中时不再 fallback 试另一个：base_url 即意图声明，查不到
+/// 即如实报错（提示 base_url 与实际订阅不匹配）。
+fn volcengine_plan_kind(base_url: &str) -> VolcPlanKind {
+    let url = base_url.to_lowercase();
+    if url.contains("volces.com/api/plan") {
+        VolcPlanKind::Agent
+    } else {
+        VolcPlanKind::Coding
+    }
 }
 
 /// 判断 OpenAPI 错误码是否属于鉴权类（需要硬停并提示换 AK/SK）。
@@ -1100,72 +1126,51 @@ async fn query_volcengine(
     secret_access_key: &str,
 ) -> Result<SubscriptionQuota, String> {
     let region = volcengine_region(base_url);
-    let mut soft_errors: Vec<String> = Vec::new();
-    // 2xx + 无 Error 信封但解析不出额度时，截断原始响应用于诊断（区分"真没订阅"
-    // 与"字段名/包裹层猜错"）。签名若不通会走 Auth/Soft 分支，到不了这里。
-    let mut empty_responses: Vec<String> = Vec::new();
-    let summarize = |action: &str, body: &serde_json::Value| -> String {
-        let raw: String = body.to_string().chars().take(700).collect();
-        format!("{action}={raw}")
+    let kind = volcengine_plan_kind(base_url);
+    let action = match kind {
+        VolcPlanKind::Agent => "GetAFPUsage",
+        VolcPlanKind::Coding => "GetCodingPlanUsage",
     };
 
-    // 1) Agent Plan：GetAFPUsage
-    match volcengine_openapi_call(&region, access_key_id, secret_access_key, "GetAFPUsage").await {
-        VolcCall::Auth(detail) => return Ok(volcengine_auth_error(detail)),
-        VolcCall::Transient(detail) => return Err(format!("GetAFPUsage: {detail}")),
-        VolcCall::Soft(detail) => soft_errors.push(format!("GetAFPUsage: {detail}")),
+    // 按 base_url 路由，只调对应那一个接口，不再顺序 fallback 试另一个 plan。
+    match volcengine_openapi_call(&region, access_key_id, secret_access_key, action).await {
+        VolcCall::Auth(detail) => Ok(volcengine_auth_error(detail)),
+        VolcCall::Transient(detail) => Err(format!("{action}: {detail}")),
+        VolcCall::Soft(detail) => Ok(make_error(detail)),
         VolcCall::Body(body) => {
             let result = body.get("Result").unwrap_or(&body);
-            let tiers = parse_afp_tiers(result);
+            let (tiers, plan) = match kind {
+                VolcPlanKind::Agent => {
+                    let tiers = parse_afp_tiers(result);
+                    let plan = result
+                        .get("PlanType")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(|s| format!("Agent Plan {s}"));
+                    (tiers, plan)
+                }
+                VolcPlanKind::Coding => (
+                    parse_coding_plan_tiers(result),
+                    Some("Coding Plan".to_string()),
+                ),
+            };
             if !tiers.is_empty() {
-                let plan = result
-                    .get("PlanType")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(|s| format!("Agent Plan {s}"));
-                return Ok(volcengine_success(tiers, plan));
+                Ok(volcengine_success(tiers, plan))
+            } else {
+                // 签名已通过、请求到达业务层，但响应里没有可解析的额度。带上原始响应，
+                // 便于核对真实字段名/包裹层，或确认确实未订阅。按 base_url 路由后不再
+                // fallback 试另一个 plan--base_url 即意图声明，查不到即如实报错。
+                let kind_label = match kind {
+                    VolcPlanKind::Agent => "Agent Plan",
+                    VolcPlanKind::Coding => "Coding Plan",
+                };
+                let raw: String = body.to_string().chars().take(700).collect();
+                Ok(make_error(format!(
+                    "No active {kind_label} subscription found (signature OK). Raw: {action}={raw}",
+                )))
             }
-            empty_responses.push(summarize("GetAFPUsage", &body));
         }
-    }
-
-    // 2) Coding Plan：GetCodingPlanUsage
-    match volcengine_openapi_call(
-        &region,
-        access_key_id,
-        secret_access_key,
-        "GetCodingPlanUsage",
-    )
-    .await
-    {
-        VolcCall::Auth(detail) => return Ok(volcengine_auth_error(detail)),
-        VolcCall::Transient(detail) => return Err(format!("GetCodingPlanUsage: {detail}")),
-        VolcCall::Soft(detail) => soft_errors.push(format!("GetCodingPlanUsage: {detail}")),
-        VolcCall::Body(body) => {
-            let result = body.get("Result").unwrap_or(&body);
-            let tiers = parse_coding_plan_tiers(result);
-            if !tiers.is_empty() {
-                return Ok(volcengine_success(tiers, Some("Coding Plan".to_string())));
-            }
-            empty_responses.push(summarize("GetCodingPlanUsage", &body));
-        }
-    }
-
-    if !soft_errors.is_empty() {
-        Ok(make_error(soft_errors.join("; ")))
-    } else if !empty_responses.is_empty() {
-        // 签名已通过、请求到达业务层，但响应里没有可解析的额度。带上原始响应，
-        // 便于核对真实字段名/包裹层，或确认确实未订阅。
-        Ok(make_error(format!(
-            "No active subscription found (signature OK). Raw: {}",
-            empty_responses.join(" || ")
-        )))
-    } else {
-        Ok(make_error(
-            "No active Agent Plan or Coding Plan subscription found for this credential"
-                .to_string(),
-        ))
     }
 }
 
@@ -1879,6 +1884,60 @@ mod tests {
             volcengine_region("https://example.com/api/coding"),
             "cn-beijing"
         );
+    }
+
+    #[test]
+    fn volcengine_detect_coding_plan_and_agent_plan_urls() {
+        use super::{detect_provider, CodingPlanProvider};
+        // Coding Plan 入口
+        assert!(matches!(
+            detect_provider("https://ark.cn-beijing.volces.com/api/coding"),
+            Some(CodingPlanProvider::Volcengine)
+        ));
+        assert!(matches!(
+            detect_provider("https://ark.cn-beijing.volces.com/api/coding/v3"),
+            Some(CodingPlanProvider::Volcengine)
+        ));
+        // Agent Plan 入口（/api/plan[/v3]）
+        assert!(matches!(
+            detect_provider("https://ark.cn-beijing.volces.com/api/plan"),
+            Some(CodingPlanProvider::Volcengine)
+        ));
+        assert!(matches!(
+            detect_provider("https://ark.cn-beijing.volces.com/api/plan/v3"),
+            Some(CodingPlanProvider::Volcengine)
+        ));
+        // DouBaoSeed 按量付费不命中
+        assert!(detect_provider("https://ark.cn-beijing.volces.com/api/v3").is_none());
+        assert!(detect_provider("https://ark.cn-beijing.volces.com/api/compatible").is_none());
+    }
+
+    #[test]
+    fn volcengine_plan_kind_routes_by_base_url() {
+        use super::{volcengine_plan_kind, VolcPlanKind};
+        // Agent Plan 入口（/api/plan[/v3]）
+        assert!(matches!(
+            volcengine_plan_kind("https://ark.cn-beijing.volces.com/api/plan"),
+            VolcPlanKind::Agent
+        ));
+        assert!(matches!(
+            volcengine_plan_kind("https://ark.cn-beijing.volces.com/api/plan/v3"),
+            VolcPlanKind::Agent
+        ));
+        // Coding Plan 入口（/api/coding[/v3]）
+        assert!(matches!(
+            volcengine_plan_kind("https://ark.cn-beijing.volces.com/api/coding"),
+            VolcPlanKind::Coding
+        ));
+        assert!(matches!(
+            volcengine_plan_kind("https://ark.cn-beijing.volces.com/api/coding/v3"),
+            VolcPlanKind::Coding
+        ));
+        // 大小写不敏感（与 detect_provider 保持一致）
+        assert!(matches!(
+            volcengine_plan_kind("HTTPS://ARK.CN-BEIJING.VOLCES.COM/API/PLAN/V3"),
+            VolcPlanKind::Agent
+        ));
     }
 
     #[test]
