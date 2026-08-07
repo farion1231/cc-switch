@@ -87,7 +87,7 @@ pub async fn set_auto_failover_enabled(
     );
 
     // 读取当前配置
-    let mut config = state
+    let config = state
         .db
         .get_proxy_config_for_app(&app_type)
         .await
@@ -151,13 +151,10 @@ pub async fn set_auto_failover_enabled(
         }
     }
 
-    // 更新 auto_failover_enabled 字段
-    config.auto_failover_enabled = enabled;
-
-    // 写回数据库
+    // 只更新开关字段，避免覆盖同时保存的重试、超时和熔断器配置。
     state
         .db
-        .update_proxy_config_for_app(config)
+        .set_auto_failover_enabled(&app_type, enabled)
         .await
         .map_err(|e| e.to_string())?;
 

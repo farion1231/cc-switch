@@ -341,6 +341,85 @@ impl Database {
         Ok(())
     }
 
+    /// 更新配置面板负责的字段，并保留代理接管与故障转移开关的当前值。
+    pub async fn update_proxy_config_details_for_app(
+        &self,
+        config: AppProxyConfig,
+    ) -> Result<(), AppError> {
+        if config.retry_rules.len() > 20
+            || config.retry_rules.iter().any(|rule| {
+                rule.retry_count > 10
+                    || rule
+                        .status_codes
+                        .iter()
+                        .any(|code| !(100..=599).contains(code))
+                    || rule
+                        .message_contains
+                        .as_deref()
+                        .is_some_and(|message| message.len() > 500)
+                    || rule.error_codes.iter().any(|code| code.len() > 100)
+                    || (rule.status_codes.is_empty()
+                        && rule.error_codes.is_empty()
+                        && rule
+                            .message_contains
+                            .as_deref()
+                            .is_none_or(|message| message.trim().is_empty()))
+            })
+        {
+            return Err(AppError::Config("Invalid retry rules".to_string()));
+        }
+
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE proxy_config SET
+                max_retries = ?2,
+                retry_rules_json = ?3,
+                streaming_first_byte_timeout = ?4,
+                streaming_idle_timeout = ?5,
+                non_streaming_timeout = ?6,
+                circuit_failure_threshold = ?7,
+                circuit_success_threshold = ?8,
+                circuit_timeout_seconds = ?9,
+                circuit_error_rate_threshold = ?10,
+                circuit_min_requests = ?11,
+                updated_at = datetime('now')
+             WHERE app_type = ?1",
+            rusqlite::params![
+                config.app_type,
+                config.max_retries as i32,
+                serde_json::to_string(&config.retry_rules)
+                    .map_err(|e| AppError::Config(format!("Invalid retry rules: {e}")))?,
+                config.streaming_first_byte_timeout as i32,
+                config.streaming_idle_timeout as i32,
+                config.non_streaming_timeout as i32,
+                config.circuit_failure_threshold as i32,
+                config.circuit_success_threshold as i32,
+                config.circuit_timeout_seconds as i32,
+                config.circuit_error_rate_threshold,
+                config.circuit_min_requests as i32,
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// 仅更新自动故障转移开关，避免覆盖同时保存的其他应用配置。
+    pub async fn set_auto_failover_enabled(
+        &self,
+        app_type: &str,
+        enabled: bool,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE proxy_config SET auto_failover_enabled = ?2, updated_at = datetime('now') WHERE app_type = ?1",
+            rusqlite::params![app_type, if enabled { 1 } else { 0 }],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
     /// 确保指定 app_type 的 proxy_config 行存在（同步版本，用于 set_* 函数）
     ///
     /// 使用与 schema.rs seed 相同的 per-app 默认值
@@ -1004,6 +1083,33 @@ mod tests {
                 ..
             }
         ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_proxy_detail_and_failover_updates_preserve_unrelated_fields(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let mut config = db.get_proxy_config_for_app("claude").await?;
+
+        db.set_proxy_flags_sync("claude", true, true)?;
+        config.max_retries = 9;
+        config.streaming_idle_timeout = 321;
+        db.update_proxy_config_details_for_app(config).await?;
+
+        let updated = db.get_proxy_config_for_app("claude").await?;
+        assert!(updated.enabled);
+        assert!(updated.auto_failover_enabled);
+        assert_eq!(updated.max_retries, 9);
+        assert_eq!(updated.streaming_idle_timeout, 321);
+
+        db.set_auto_failover_enabled("claude", false).await?;
+        let toggled = db.get_proxy_config_for_app("claude").await?;
+        assert!(toggled.enabled);
+        assert!(!toggled.auto_failover_enabled);
+        assert_eq!(toggled.max_retries, 9);
+        assert_eq!(toggled.streaming_idle_timeout, 321);
 
         Ok(())
     }

@@ -2,17 +2,67 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Save, Loader2, Info } from "lucide-react";
+import { Save, Loader2, Info, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useAppProxyConfig, useUpdateAppProxyConfig } from "@/lib/query/proxy";
+import type { AppProxyConfig, ProxyRetryRule } from "@/types/proxy";
 
 export interface AutoFailoverConfigPanelProps {
   appType: string;
   disabled?: boolean;
 }
+
+interface RetryRuleDraft {
+  id: number;
+  enabled: boolean;
+  statusCodes: string;
+  errorCodes: string;
+  messageContains: string;
+  retryCount: string;
+}
+
+let nextRetryRuleId = 0;
+
+const emptyRetryRule = (): RetryRuleDraft => ({
+  id: nextRetryRuleId++,
+  enabled: true,
+  statusCodes: "",
+  errorCodes: "",
+  messageContains: "",
+  retryCount: "3",
+});
+
+const toRetryRuleDraft = (rule: ProxyRetryRule): RetryRuleDraft => ({
+  id: nextRetryRuleId++,
+  enabled: rule.enabled,
+  statusCodes: rule.statusCodes.join(", "),
+  errorCodes: rule.errorCodes.join(", "),
+  messageContains: rule.messageContains ?? "",
+  retryCount: String(rule.retryCount),
+});
+
+const createFormData = (config?: AppProxyConfig) => ({
+  maxRetries: String(config?.maxRetries ?? 3),
+  retryRules: (config?.retryRules ?? []).map(toRetryRuleDraft),
+  streamingFirstByteTimeout: String(config?.streamingFirstByteTimeout ?? 60),
+  streamingIdleTimeout: String(config?.streamingIdleTimeout ?? 120),
+  nonStreamingTimeout: String(config?.nonStreamingTimeout ?? 600),
+  circuitFailureThreshold: String(config?.circuitFailureThreshold ?? 5),
+  circuitSuccessThreshold: String(config?.circuitSuccessThreshold ?? 2),
+  circuitTimeoutSeconds: String(config?.circuitTimeoutSeconds ?? 60),
+  circuitErrorRateThreshold: String(
+    Math.round((config?.circuitErrorRateThreshold ?? 0.5) * 100),
+  ),
+  circuitMinRequests: String(config?.circuitMinRequests ?? 10),
+});
+
+const splitValues = (value: string) =>
+  [...new Set(value.split(/[\s,，;；]+/).map((item) => item.trim()))].filter(
+    Boolean,
+  );
 
 export function AutoFailoverConfigPanel({
   appType,
@@ -23,39 +73,22 @@ export function AutoFailoverConfigPanel({
   const updateConfig = useUpdateAppProxyConfig();
 
   // 使用字符串状态以支持完全清空数字输入框
-  const [formData, setFormData] = useState({
-    autoFailoverEnabled: false,
-    maxRetries: "3",
-    retryRulesJson: "[]",
-    streamingFirstByteTimeout: "60",
-    streamingIdleTimeout: "120",
-    nonStreamingTimeout: "600",
-    circuitFailureThreshold: "5",
-    circuitSuccessThreshold: "2",
-    circuitTimeoutSeconds: "60",
-    circuitErrorRateThreshold: "50", // 存储百分比值
-    circuitMinRequests: "10",
-  });
+  const [formData, setFormData] = useState(createFormData);
 
   useEffect(() => {
     if (config) {
-      setFormData({
-        autoFailoverEnabled: config.autoFailoverEnabled,
-        maxRetries: String(config.maxRetries),
-        retryRulesJson: JSON.stringify(config.retryRules ?? [], null, 2),
-        streamingFirstByteTimeout: String(config.streamingFirstByteTimeout),
-        streamingIdleTimeout: String(config.streamingIdleTimeout),
-        nonStreamingTimeout: String(config.nonStreamingTimeout),
-        circuitFailureThreshold: String(config.circuitFailureThreshold),
-        circuitSuccessThreshold: String(config.circuitSuccessThreshold),
-        circuitTimeoutSeconds: String(config.circuitTimeoutSeconds),
-        circuitErrorRateThreshold: String(
-          Math.round(config.circuitErrorRateThreshold * 100),
-        ),
-        circuitMinRequests: String(config.circuitMinRequests),
-      });
+      setFormData(createFormData(config));
     }
   }, [config]);
+
+  const updateRetryRule = (index: number, changes: Partial<RetryRuleDraft>) => {
+    setFormData((current) => ({
+      ...current,
+      retryRules: current.retryRules.map((rule, ruleIndex) =>
+        ruleIndex === index ? { ...rule, ...changes } : rule,
+      ),
+    }));
+  };
 
   const handleSave = async () => {
     if (!config) return;
@@ -95,38 +128,45 @@ export function AutoFailoverConfigPanel({
 
     // 校验是否超出范围（NaN 也视为无效）
     const errors: string[] = [];
-    let retryRules = config.retryRules ?? [];
-    try {
-      retryRules = JSON.parse(formData.retryRulesJson);
-      if (!Array.isArray(retryRules)) throw new Error("not an array");
-      for (const rule of retryRules) {
-        const hasCondition =
-          (Array.isArray(rule.statusCodes) && rule.statusCodes.length > 0) ||
-          (Array.isArray(rule.errorCodes) && rule.errorCodes.length > 0) ||
-          (typeof rule.messageContains === "string" &&
-            rule.messageContains.trim().length > 0);
-        if (
-          typeof rule.enabled !== "boolean" ||
-          !Array.isArray(rule.statusCodes) ||
-          !rule.statusCodes.every(
-            (code: unknown) =>
-              Number.isInteger(code) &&
-              Number(code) >= 100 &&
-              Number(code) <= 599,
-          ) ||
-          !Array.isArray(rule.errorCodes) ||
-          !rule.errorCodes.every((code: unknown) => typeof code === "string") ||
-          !Number.isInteger(rule.retryCount) ||
-          rule.retryCount < 0 ||
-          rule.retryCount > 10 ||
-          !hasCondition
-        ) {
-          throw new Error("invalid rule");
-        }
+    const retryRules: ProxyRetryRule[] = [];
+    formData.retryRules.forEach((rule, index) => {
+      const statusCodeValues = splitValues(rule.statusCodes);
+      const statusCodes = statusCodeValues.map(Number);
+      const errorCodes = splitValues(rule.errorCodes);
+      const messageContains = rule.messageContains.trim();
+      const retryCount = parseNum(rule.retryCount);
+      const isValid =
+        statusCodeValues.every((code) => /^\d+$/.test(code)) &&
+        statusCodes.every(
+          (code) => Number.isInteger(code) && code >= 100 && code <= 599,
+        ) &&
+        errorCodes.every((code) => code.length <= 100) &&
+        messageContains.length <= 500 &&
+        Number.isInteger(retryCount) &&
+        retryCount >= 0 &&
+        retryCount <= 10 &&
+        (statusCodes.length > 0 ||
+          errorCodes.length > 0 ||
+          messageContains.length > 0);
+
+      if (!isValid) {
+        errors.push(
+          t("proxy.autoFailover.retryRuleInvalid", {
+            index: index + 1,
+            defaultValue: `重试规则 ${index + 1}`,
+          }),
+        );
+        return;
       }
-    } catch {
-      errors.push(t("proxy.autoFailover.retryRules", "特定错误重试规则"));
-    }
+
+      retryRules.push({
+        enabled: rule.enabled,
+        statusCodes,
+        errorCodes,
+        messageContains: messageContains || null,
+        retryCount,
+      });
+    });
     const checkRange = (
       value: number,
       range: { min: number; max: number },
@@ -197,7 +237,8 @@ export function AutoFailoverConfigPanel({
       await updateConfig.mutateAsync({
         appType,
         enabled: config.enabled,
-        autoFailoverEnabled: formData.autoFailoverEnabled,
+        // 后端详细配置更新会保留当前开关值，避免覆盖相邻组件的修改。
+        autoFailoverEnabled: config.autoFailoverEnabled,
         maxRetries: raw.maxRetries,
         retryRules,
         streamingFirstByteTimeout: raw.streamingFirstByteTimeout,
@@ -209,34 +250,14 @@ export function AutoFailoverConfigPanel({
         circuitErrorRateThreshold: raw.circuitErrorRateThreshold / 100,
         circuitMinRequests: raw.circuitMinRequests,
       });
-      toast.success(
-        t("proxy.autoFailover.configSaved", "自动故障转移配置已保存"),
-        { closeButton: true },
-      );
-    } catch (e) {
-      toast.error(
-        t("proxy.autoFailover.configSaveFailed", "保存失败") + ": " + String(e),
-      );
+    } catch {
+      // Mutation hook 统一展示保存失败提示。
     }
   };
 
   const handleReset = () => {
     if (config) {
-      setFormData({
-        autoFailoverEnabled: config.autoFailoverEnabled,
-        maxRetries: String(config.maxRetries),
-        retryRulesJson: JSON.stringify(config.retryRules ?? [], null, 2),
-        streamingFirstByteTimeout: String(config.streamingFirstByteTimeout),
-        streamingIdleTimeout: String(config.streamingIdleTimeout),
-        nonStreamingTimeout: String(config.nonStreamingTimeout),
-        circuitFailureThreshold: String(config.circuitFailureThreshold),
-        circuitSuccessThreshold: String(config.circuitSuccessThreshold),
-        circuitTimeoutSeconds: String(config.circuitTimeoutSeconds),
-        circuitErrorRateThreshold: String(
-          Math.round(config.circuitErrorRateThreshold * 100),
-        ),
-        circuitMinRequests: String(config.circuitMinRequests),
-      });
+      setFormData(createFormData(config));
     }
   };
 
@@ -326,26 +347,194 @@ export function AutoFailoverConfigPanel({
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor={`retryRules-${appType}`}>
-              {t("proxy.autoFailover.retryRules", "特定错误重试规则")}
-            </Label>
-            <Textarea
-              id={`retryRules-${appType}`}
-              className="min-h-48 font-mono text-xs"
-              value={formData.retryRulesJson}
-              onChange={(e) =>
-                setFormData({ ...formData, retryRulesJson: e.target.value })
-              }
-              disabled={isDisabled}
-              spellCheck={false}
-            />
-            <p className="text-xs text-muted-foreground whitespace-pre-line">
-              {t(
-                "proxy.autoFailover.retryRulesHint",
-                "JSON 数组；同一规则中已填写的条件按 AND 匹配。用多条规则分别匹配 HTTP 503 和 Responses 错误码。",
-              )}
-            </p>
+          <div className="space-y-3">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <Label>
+                  {t("proxy.autoFailover.retryRules", "特定错误重试规则")}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {t(
+                    "proxy.autoFailover.retryRulesHint",
+                    "同一规则中填写的条件按 AND 匹配；如需匹配任一错误，请分别添加多条规则。",
+                  )}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setFormData((current) => ({
+                    ...current,
+                    retryRules: [...current.retryRules, emptyRetryRule()],
+                  }))
+                }
+                disabled={isDisabled || formData.retryRules.length >= 20}
+              >
+                <Plus className="mr-1.5 h-4 w-4" />
+                {t("proxy.autoFailover.addRetryRule", "添加规则")}
+              </Button>
+            </div>
+
+            {formData.retryRules.length === 0 ? (
+              <div className="rounded-md border border-dashed border-border p-5 text-center text-sm text-muted-foreground">
+                {t("proxy.autoFailover.noRetryRules", "暂无特定错误重试规则。")}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {formData.retryRules.map((rule, index) => (
+                  <div
+                    key={rule.id}
+                    className="space-y-3 rounded-md border border-border bg-background/60 p-3"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <Switch
+                          aria-label={t("proxy.autoFailover.ruleEnabled", {
+                            index: index + 1,
+                            defaultValue: `启用重试规则 ${index + 1}`,
+                          })}
+                          checked={rule.enabled}
+                          onCheckedChange={(enabled) =>
+                            updateRetryRule(index, { enabled })
+                          }
+                          disabled={isDisabled}
+                        />
+                        <span className="text-sm font-medium">
+                          {t("proxy.autoFailover.retryRuleTitle", {
+                            index: index + 1,
+                            defaultValue: `规则 ${index + 1}`,
+                          })}
+                        </span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                        onClick={() =>
+                          setFormData((current) => ({
+                            ...current,
+                            retryRules: current.retryRules.filter(
+                              (_, ruleIndex) => ruleIndex !== index,
+                            ),
+                          }))
+                        }
+                        disabled={isDisabled}
+                        aria-label={t("proxy.autoFailover.deleteRetryRule", {
+                          index: index + 1,
+                          defaultValue: `删除重试规则 ${index + 1}`,
+                        })}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label htmlFor={`retry-status-${appType}-${index}`}>
+                          {t("proxy.autoFailover.statusCodes", "HTTP 状态码")}
+                        </Label>
+                        <Input
+                          id={`retry-status-${appType}-${index}`}
+                          value={rule.statusCodes}
+                          onChange={(event) =>
+                            updateRetryRule(index, {
+                              statusCodes: event.target.value,
+                            })
+                          }
+                          onBlur={() =>
+                            updateRetryRule(index, {
+                              statusCodes: splitValues(rule.statusCodes).join(
+                                ", ",
+                              ),
+                            })
+                          }
+                          placeholder={t(
+                            "proxy.autoFailover.statusCodesPlaceholder",
+                            "例如：429, 503",
+                          )}
+                          disabled={isDisabled}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor={`retry-error-${appType}-${index}`}>
+                          {t("proxy.autoFailover.errorCodes", "错误码")}
+                        </Label>
+                        <Input
+                          id={`retry-error-${appType}-${index}`}
+                          value={rule.errorCodes}
+                          onChange={(event) =>
+                            updateRetryRule(index, {
+                              errorCodes: event.target.value,
+                            })
+                          }
+                          onBlur={() =>
+                            updateRetryRule(index, {
+                              errorCodes: splitValues(rule.errorCodes).join(
+                                ", ",
+                              ),
+                            })
+                          }
+                          placeholder={t(
+                            "proxy.autoFailover.errorCodesPlaceholder",
+                            "例如：server_is_overloaded, slow_down",
+                          )}
+                          disabled={isDisabled}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor={`retry-message-${appType}-${index}`}>
+                          {t("proxy.autoFailover.messageContains", "消息包含")}
+                        </Label>
+                        <Input
+                          id={`retry-message-${appType}-${index}`}
+                          value={rule.messageContains}
+                          onChange={(event) =>
+                            updateRetryRule(index, {
+                              messageContains: event.target.value,
+                            })
+                          }
+                          placeholder={t(
+                            "proxy.autoFailover.messageContainsPlaceholder",
+                            "例如：temporarily unavailable",
+                          )}
+                          disabled={isDisabled}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor={`retry-count-${appType}-${index}`}>
+                          {t(
+                            "proxy.autoFailover.ruleRetryCount",
+                            "额外重试次数",
+                          )}
+                        </Label>
+                        <Input
+                          id={`retry-count-${appType}-${index}`}
+                          type="number"
+                          min="0"
+                          max="10"
+                          value={rule.retryCount}
+                          onChange={(event) =>
+                            updateRetryRule(index, {
+                              retryCount: event.target.value,
+                            })
+                          }
+                          disabled={isDisabled}
+                        />
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {t(
+                        "proxy.autoFailover.retryRuleConditionHint",
+                        "至少填写一个条件。多个状态码或错误码可用逗号、空格或分号分隔。",
+                      )}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
