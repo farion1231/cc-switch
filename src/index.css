@@ -145,6 +145,35 @@ html.dark {
   color-scheme: dark;
 }
 
+.status-heartbeat {
+  opacity: 1;
+  transition-property: color, opacity;
+  transition-duration: 150ms, 300ms;
+  transition-timing-function: ease, ease-out;
+}
+
+html[data-window-active="true"][data-status-heartbeat="true"]
+  .status-heartbeat {
+  opacity: 0.5;
+}
+
+html[data-window-active="false"] .status-heartbeat {
+  opacity: 1;
+  transition-duration: 0s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-heartbeat {
+    opacity: 1;
+    transition-property: color;
+  }
+
+  html[data-window-active="true"][data-status-heartbeat="true"]
+    .status-heartbeat {
+    opacity: 1;
+  }
+}
+
 ::-webkit-scrollbar {
   display: none;
 }

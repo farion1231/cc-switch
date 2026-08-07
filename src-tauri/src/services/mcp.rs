@@ -75,15 +75,13 @@ impl McpService {
         app: AppType,
         enabled: bool,
     ) -> Result<(), AppError> {
-        let mut servers = state.db.get_all_mcp_servers()?;
-
-        if let Some(server) = servers.get_mut(server_id) {
-            server.apps.set_enabled_for(&app, enabled);
-            state.db.save_mcp_server(server)?;
-
+        if let Some(server) = state
+            .db
+            .update_mcp_server_app_enabled(server_id, &app, enabled)?
+        {
             // 同步到对应应用
             if enabled {
-                Self::sync_server_to_app(state, server, &app)?;
+                Self::sync_server_to_app(state, &server, &app)?;
             } else {
                 Self::remove_server_from_app(state, server_id, &app)?;
             }

@@ -125,6 +125,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       ],
     },
     category: "cn_official",
+    partnerPromotionKey: "kimi",
     icon: "kimi",
     iconColor: "#6366F1",
     templateValues: {
@@ -430,43 +431,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "Unity2.ai",
-    websiteUrl: "https://unity2.ai",
-    apiKeyUrl: "https://unity2.ai/register?source=ccs",
-    settingsConfig: {
-      baseUrl: "https://api.unity2.ai/v1",
-      apiKey: "",
-      api: "openai-completions",
-      models: [
-        {
-          id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          contextWindow: 400000,
-          cost: { input: 5, output: 15 },
-        },
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "unity2",
-    icon: "unity2",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "unity2/gpt-5.6-sol",
-      },
-      modelCatalog: {
-        "unity2/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
-      },
-    },
-  },
-  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
@@ -555,6 +519,43 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       modelCatalog: {
         "aigocode/claude-opus-5": { alias: "Opus" },
         "aigocode/claude-sonnet-5": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
+    name: "Qiniu",
+    nameKey: "providerForm.presets.qiniu",
+    websiteUrl: "https://s.qiniu.com/nMvAvy",
+    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
+    settingsConfig: {
+      baseUrl: "https://api.qnaigc.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          contextWindow: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "qiniu",
+    icon: "qiniu",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "qiniu/gpt-5.6-sol",
+      },
+      modelCatalog: {
+        "qiniu/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
       },
     },
   },
@@ -991,42 +992,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       model: { primary: "siliconflow-en/MiniMaxAI/MiniMax-M2.7" },
       modelCatalog: {
         "siliconflow-en/MiniMaxAI/MiniMax-M2.7": { alias: "MiniMax" },
-      },
-    },
-  },
-  {
-    name: "NekoCode",
-    websiteUrl: "https://nekocode.ai",
-    apiKeyUrl: "https://nekocode.ai?aff=CCSWITCH",
-    settingsConfig: {
-      baseUrl: "https://nekocode.ai/v1",
-      apiKey: "",
-      api: "openai-completions",
-      models: [
-        {
-          id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          contextWindow: 400000,
-        },
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "nekocode",
-    icon: "nekocode",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "nekocode/gpt-5.6-sol",
-      },
-      modelCatalog: {
-        "nekocode/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
       },
     },
   },
@@ -1516,43 +1481,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       modelCatalog: {
         "dmxapi/claude-opus-5": { alias: "Opus" },
         "dmxapi/claude-sonnet-5": { alias: "Sonnet" },
-      },
-    },
-  },
-  {
-    name: "Qiniu",
-    nameKey: "providerForm.presets.qiniu",
-    websiteUrl: "https://s.qiniu.com/nMvAvy",
-    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
-    settingsConfig: {
-      baseUrl: "https://api.qnaigc.com/v1",
-      apiKey: "",
-      api: "openai-completions",
-      models: [
-        {
-          id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          contextWindow: 400000,
-        },
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "qiniu",
-    icon: "qiniu",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "qiniu/gpt-5.6-sol",
-      },
-      modelCatalog: {
-        "qiniu/gpt-5.6-sol": { alias: "GPT-5.6 Sol" },
       },
     },
   },
