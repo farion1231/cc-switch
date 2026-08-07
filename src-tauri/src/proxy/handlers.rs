@@ -29,7 +29,8 @@ use super::{
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
         streaming_responses::create_anthropic_sse_stream_from_responses,
         transform, transform_codex_anthropic, transform_codex_chat,
-        transform_codex_responses_namespace, transform_gemini, transform_responses,
+        transform_codex_responses_namespace, transform_codex_responses_opencode_go,
+        transform_gemini, transform_responses,
     },
     response_processor::{
         create_logged_passthrough_stream, create_usage_collector, process_response,
@@ -874,6 +875,13 @@ async fn handle_responses_for_app(
         .await;
     }
 
+    if transform_codex_responses_opencode_go::provider_needs_opencode_go_responses_rectifier(
+        &ctx.provider,
+    ) {
+        return handle_opencode_go_responses_rectifier(response, &ctx, &state, connection_guard)
+            .await;
+    }
+
     // Native Responses passthrough to a strict gateway (xAI): the request-side
     // flatten (in the forwarder) turned Codex `namespace` tools into flat
     // function tools, so the upstream returns flat function-call names. Restore
@@ -1008,6 +1016,13 @@ async fn handle_responses_compact_for_app(
         .await;
     }
 
+    if transform_codex_responses_opencode_go::provider_needs_opencode_go_responses_rectifier(
+        &ctx.provider,
+    ) {
+        return handle_opencode_go_responses_rectifier(response, &ctx, &state, connection_guard)
+            .await;
+    }
+
     if super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)
         && !namespace_restore_map.is_empty()
     {
@@ -1029,6 +1044,57 @@ async fn handle_responses_compact_for_app(
         connection_guard,
     )
     .await
+}
+
+/// Normalize OpenCode Go's Responses extensions while preserving the shared
+/// passthrough logging, timeout, usage, and connection-lifetime behavior.
+async fn handle_opencode_go_responses_rectifier(
+    response: super::hyper_client::ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    connection_guard: Option<ActiveConnectionGuard>,
+) -> Result<axum::response::Response, ProxyError> {
+    let status = response.status();
+    if !status.is_success() {
+        return process_response(response, ctx, state, &CODEX_PARSER_CONFIG, connection_guard)
+            .await;
+    }
+
+    if response.is_sse() {
+        let headers = response.headers().clone();
+        let stream =
+            transform_codex_responses_opencode_go::create_opencode_go_responses_rectifier_stream(
+                response.bytes_stream(),
+            );
+        let response = super::hyper_client::ProxyResponse::streamed(status, headers, stream);
+        return process_response(response, ctx, state, &CODEX_PARSER_CONFIG, connection_guard)
+            .await;
+    }
+
+    let body_timeout =
+        if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
+            std::time::Duration::from_secs(ctx.app_config.non_streaming_timeout as u64)
+        } else {
+            std::time::Duration::ZERO
+        };
+    let (mut headers, status, body_bytes) =
+        read_decoded_body(response, ctx.tag, body_timeout).await?;
+    let rectified_bytes = match serde_json::from_slice::<Value>(&body_bytes) {
+        Ok(mut value) => {
+            if transform_codex_responses_opencode_go::rectify_opencode_go_response(&mut value) {
+                strip_entity_headers_for_rebuilt_body(&mut headers);
+                serde_json::to_vec(&value)
+                    .map(Bytes::from)
+                    .unwrap_or(body_bytes)
+            } else {
+                body_bytes
+            }
+        }
+        Err(_) => body_bytes,
+    };
+
+    let response = super::hyper_client::ProxyResponse::buffered(status, headers, rectified_bytes);
+    process_response(response, ctx, state, &CODEX_PARSER_CONFIG, connection_guard).await
 }
 
 /// Response handler for the native Responses passthrough to a strict gateway

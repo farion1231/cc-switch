@@ -1572,6 +1572,24 @@ impl RequestForwarder {
             );
         }
 
+        // OpenCode Go speaks Responses natively but replays hosted-search
+        // history with a non-standard plural `action.queries`. Convert only
+        // that field on the official OpenCode Go passthrough; standard tool
+        // declarations and every other provider remain unchanged.
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+            && super::providers::transform_codex_responses_opencode_go::provider_needs_opencode_go_responses_rectifier(provider)
+            && super::providers::transform_codex_responses_opencode_go::rectify_opencode_go_responses_request(
+                &mut request_body,
+            )
+        {
+            log::debug!(
+                "[Codex] Rectified OpenCode Go Responses search history (provider={})",
+                provider.id
+            );
+        }
+
         if matches!(app_type, AppType::Codex | AppType::GrokBuild) {
             self.apply_media_prevention(&mut request_body, provider);
         }
