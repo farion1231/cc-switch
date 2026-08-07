@@ -1572,6 +1572,27 @@ impl RequestForwarder {
             );
         }
 
+        // Native Responses passthrough: strip `namespace` from `input[]` items.
+        // Codex 0.142+ sends `namespace` on `function_call` items in the `input`
+        // history when the client is configured with a custom `model_provider`.
+        // The official ChatGPT backend (`chatgpt.com/backend-api/codex`) rejects
+        // this redundant field with `unknown_parameter: input[N].namespace`.
+        // xAI is excluded because its namespace flatten (above) already rewrites
+        // namespace-qualified calls, removing the `namespace` field.
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+            && !super::providers::provider_needs_responses_namespace_flatten(provider)
+            && super::providers::transform_codex_responses_namespace::strip_namespace_from_input_items(
+                &mut request_body,
+            )
+        {
+            log::debug!(
+                "[Codex] Stripped namespace from input items for native Responses upstream (provider={})",
+                provider.id
+            );
+        }
+
         if matches!(app_type, AppType::Codex | AppType::GrokBuild) {
             self.apply_media_prevention(&mut request_body, provider);
         }
