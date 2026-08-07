@@ -836,16 +836,15 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
         ANTHROPIC_API_KEY: "",
-        ANTHROPIC_MODEL: "minimax-m3",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "minimax-m3",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "minimax-m3",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "minimax-m3",
+        ANTHROPIC_MODEL: "deepseek-v4-flash",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-flash",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-flash",
       },
     },
     category: "third_party",
-    // OpenCode Go exposes MiniMax M3 through its Anthropic Messages endpoint.
-    // DeepSeek V4 Flash is only available through Chat Completions and would
-    // still require local routing in Claude Code.
+    // OpenCode Go accepts Anthropic Messages requests and translates them to
+    // the format used by the selected model's upstream provider.
     apiKeyField: "ANTHROPIC_API_KEY",
     apiFormat: "anthropic",
     endpointCandidates: ["https://opencode.ai/zen/go"],
