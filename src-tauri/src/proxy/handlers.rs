@@ -73,14 +73,41 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// GET /v1/models — Codex model list (reachability check)
 ///
 /// Codex CLI probes this endpoint at startup and deserializes the response as a
-/// catalog with a top-level `models` field.  Return the cc-switch–managed model
-/// catalog file directly so the format always matches what the current version
-/// of Codex expects.
+/// catalog with a top-level `models` field.
 ///
-/// Only serves the catalog when the live config.toml still references the
-/// cc-switch–owned `model_catalog_json`, using the same path ownership rules as
-/// Codex live-setting import.
-pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
+/// 官方 Codex 路由：转发到 ChatGPT 后端，保留真实的登录门禁——未登录时 401
+/// 原样回传，Codex 会正常要求登录；登录成功后把官方模型列表与自定义模型
+/// 条目合并返回。其他供应商只在实时 config.toml 仍引用
+/// cc-switch 所有的 `model_catalog_json` 时返回模型目录。
+pub async fn handle_models(
+    State(state): State<ProxyState>,
+    headers: axum::http::HeaderMap,
+    uri: axum::http::Uri,
+) -> Result<axum::response::Response, ProxyError> {
+    log::info!(
+        "[models] GET {} auth={}",
+        uri.path_and_query().map(|pq| pq.as_str()).unwrap_or(""),
+        headers
+            .get(axum::http::header::AUTHORIZATION)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+    );
+    if let Some(official) = resolve_codex_official_provider(&state) {
+        // 聚合/合并目录的 context_window 取自真实 live config.toml，与
+        // models_cache.json 保持一致；读取失败时回退为空串。
+        let config_text = crate::codex_config::read_codex_config_text().unwrap_or_default();
+        if crate::codex_config::codex_official_login_enabled(&official.settings_config) {
+            return forward_codex_official_models(&official, &headers, uri.query(), &config_text)
+                .await;
+        }
+        // 未启用官方登录：聚合模式，目录只包含下方配置的供应商模型
+        let models = crate::codex_config::codex_custom_catalog_entries(
+            &official.settings_config,
+            &config_text,
+        );
+        return Ok(Json(json!({ "models": models })).into_response());
+    }
+
     let config_dir = crate::codex_config::get_codex_config_dir();
     let active_catalog_path = match crate::codex_config::read_codex_config_text() {
         Ok(config_text) => {
@@ -107,7 +134,157 @@ pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
         }
         json!({"models": []})
     };
-    Ok(Json(catalog))
+    Ok(Json(catalog).into_response())
+}
+
+/// 当前 Codex 供应商是内置官方供应商时返回它。
+fn resolve_codex_official_provider(state: &ProxyState) -> Option<crate::provider::Provider> {
+    let current_id = crate::settings::get_effective_current_provider(&state.db, &AppType::Codex)
+        .ok()
+        .flatten()
+        .or_else(|| state.db.get_current_provider("codex").ok().flatten())?;
+    let provider = state
+        .db
+        .get_provider_by_id(&current_id, "codex")
+        .ok()
+        .flatten()?;
+    crate::proxy::providers::is_codex_official_provider(&provider).then_some(provider)
+}
+
+/// 转发官方 Codex 的 /models 到 ChatGPT 后端；登录成功后在响应里合并自定义模型。
+async fn forward_codex_official_models(
+    official: &crate::provider::Provider,
+    headers: &axum::http::HeaderMap,
+    query: Option<&str>,
+    config_text: &str,
+) -> Result<axum::response::Response, ProxyError> {
+    use std::time::Duration;
+
+    let client = crate::proxy::http_client::get();
+    // 上游 /models 要求 `client_version` 查询参数（Codex 客户端通常会带）。
+    // 原样保留请求版本；缺失时探测当前 Codex，探测不到才复用可信缓存版本。
+    // 不得写死版本，否则升级后请求与缓存都会因版本不匹配而失效。
+    let mut url = format!("{}/models", super::providers::CHATGPT_CODEX_BASE_URL);
+    let effective_query = match codex_models_query(query, None) {
+        Ok(query) => query,
+        Err(_) => {
+            let version =
+                tokio::task::spawn_blocking(crate::codex_config::resolve_codex_client_version)
+                    .await
+                    .map_err(|e| ProxyError::Internal(format!("探测 Codex 版本失败: {e}")))?;
+            codex_models_query(query, version.as_deref())?
+        }
+    };
+    url.push('?');
+    url.push_str(&effective_query);
+    let mut builder = client.get(&url).timeout(Duration::from_secs(30));
+    if let Some(auth) = headers.get(axum::http::header::AUTHORIZATION) {
+        builder = builder.header(axum::http::header::AUTHORIZATION, auth);
+    }
+    // ChatGPT 多账号/workspace 需要 ChatGPT-Account-Id 才能拿到正确的模型目录，
+    // 与正常 /responses 转发一致透传，否则官方登录聚合会返回 401/403 或错误账号目录。
+    if let Some(account_id) = headers.get("chatgpt-account-id") {
+        builder = builder.header("chatgpt-account-id", account_id);
+    }
+    let upstream = builder
+        .send()
+        .await
+        .map_err(|e| ProxyError::ForwardFailed(format!("转发 /models 到 ChatGPT 后端失败: {e}")))?;
+    let status = upstream.status();
+    log::info!("[models] forward chatgpt.com status={status} url={url}");
+    let content_type = upstream
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .cloned();
+    let bytes = upstream
+        .bytes()
+        .await
+        .map_err(|e| ProxyError::ForwardFailed(format!("读取 ChatGPT /models 响应失败: {e}")))?;
+
+    if !status.is_success() {
+        // 原样回传（401 → Codex 正常要求登录）
+        let mut builder = axum::response::Response::builder().status(status);
+        if let Some(ct) = content_type {
+            builder = builder.header(axum::http::header::CONTENT_TYPE, ct);
+        }
+        return builder
+            .body(axum::body::Body::from(bytes))
+            .map_err(|e| ProxyError::Internal(e.to_string()));
+    }
+
+    let mut catalog: Value =
+        serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({ "models": [] }));
+    let custom_entries =
+        crate::codex_config::codex_custom_catalog_entries(&official.settings_config, config_text);
+    if !custom_entries.is_empty() {
+        // 上游 /models 响应的数组键可能是 `models` 或 `data`：优先合并到
+        // 已存在的那个数组，都不存在时落到 `models`，避免自定义模型合并静默失效。
+        let key = if catalog.get("models").is_some() {
+            "models"
+        } else if catalog.get("data").is_some() {
+            "data"
+        } else {
+            "models"
+        };
+        if catalog.get(key).is_none() {
+            catalog[key] = json!([]);
+        }
+        if let Some(models) = catalog.get_mut(key).and_then(|m| m.as_array_mut()) {
+            for entry in custom_entries {
+                let Some(slug) = entry.get("slug").and_then(|s| s.as_str()) else {
+                    continue;
+                };
+                // 自定义条目使用官方插槽名（如 gpt-5.4-mini）：同名官方条目被
+                // 自定义条目覆盖（显示名换成绑定的供应商模型）；不在官方列表的
+                // 插槽则追加。否则绑定到官方已存在插槽的模型永远显示不出来。
+                if let Some(existing) = models
+                    .iter_mut()
+                    .find(|m| m.get("slug").and_then(|s| s.as_str()) == Some(slug))
+                {
+                    *existing = entry;
+                } else {
+                    models.push(entry);
+                }
+            }
+        }
+    }
+    Ok(Json(catalog).into_response())
+}
+
+fn codex_models_query(
+    query: Option<&str>,
+    fallback_client_version: Option<&str>,
+) -> Result<String, ProxyError> {
+    let query = query.unwrap_or("");
+    let has_client_version = query.split('&').any(|part| {
+        part.split_once('=')
+            .is_some_and(|(key, value)| key == "client_version" && !value.trim().is_empty())
+    });
+    if has_client_version {
+        return Ok(query.to_string());
+    }
+
+    let version = fallback_client_version
+        .map(str::trim)
+        .filter(|version| !version.is_empty())
+        .ok_or_else(|| {
+            ProxyError::InvalidRequest(
+                "缺少 client_version，且无法检测当前 Codex 客户端版本".to_string(),
+            )
+        })?;
+    let mut parts = query
+        .split('&')
+        .filter(|part| {
+            !part.is_empty()
+                && part
+                    .split_once('=')
+                    .map(|(key, _)| key != "client_version")
+                    .unwrap_or(true)
+        })
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    parts.push(format!("client_version={version}"));
+    Ok(parts.join("&"))
 }
 
 // ============================================================================
@@ -2663,10 +2840,24 @@ async fn log_usage(
 mod tests {
     use super::{
         body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
-        codex_proxy_error_json, responses_sse_to_response_value,
+        codex_models_query, codex_proxy_error_json, responses_sse_to_response_value,
         should_use_claude_transform_streaming, transform, upstream_body_parse_error,
     };
     use crate::proxy::ProxyError;
+
+    #[test]
+    fn codex_models_query_preserves_client_version_or_uses_verified_fallback() {
+        assert_eq!(
+            codex_models_query(Some("client_version=0.147.3&foo=bar"), None)
+                .expect("preserve query version"),
+            "client_version=0.147.3&foo=bar"
+        );
+        assert_eq!(
+            codex_models_query(Some("foo=bar"), Some("0.148.1")).expect("append detected version"),
+            "foo=bar&client_version=0.148.1"
+        );
+        assert!(codex_models_query(None, None).is_err());
+    }
 
     #[test]
     fn body_looks_like_sse_detects_unlabeled_sse_prefixes() {

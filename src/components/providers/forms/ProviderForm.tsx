@@ -21,9 +21,11 @@ import type {
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
+  CodexCustomModel,
   PromptCacheRoutingMode,
   ClaudeApiKeyField,
 } from "@/types";
+import type { Provider } from "@/types";
 import {
   providerPresets,
   type ProviderPreset,
@@ -59,6 +61,7 @@ import {
   hasApiKeyField,
 } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
+import { CODEX_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import {
   codexApiFormatFromWireApi,
   extractCodexWireApi,
@@ -178,6 +181,50 @@ export const normalizeCodexCatalogModelsForSave = (
 
   return normalized;
 };
+
+/**
+ * 归一化官方 Codex 供应商的自定义模型条目，供保存落库。
+ *
+ * - trim 各字符串字段，缺省字段不落库。
+ * - 聚合模式（官方登录关闭）下，官方供应商无自有凭据，路由到它会拿
+ *   Bearer PROXY_MANAGED 被官方校验拒绝，因此过滤掉绑定官方供应商的行。
+ *   官方登录开启时保留（官方供应商作为目标供应商是合法的）。
+ */
+export const normalizeCodexCustomModelsForSave = (
+  models: CodexCustomModel[],
+  opts: { officialLogin: boolean },
+): CodexCustomModel[] =>
+  models
+    .map((item) => ({
+      model: item.model.trim(),
+      providerId: item.providerId.trim(),
+      upstreamModel: item.upstreamModel?.trim() || undefined,
+      displayName: item.displayName?.trim() || undefined,
+      contextWindow:
+        typeof item.contextWindow === "string" && item.contextWindow.trim()
+          ? Number(item.contextWindow)
+          : typeof item.contextWindow === "number"
+            ? item.contextWindow
+            : undefined,
+      ...(item.supportsParallelToolCalls !== undefined
+        ? { supportsParallelToolCalls: item.supportsParallelToolCalls }
+        : {}),
+      ...(item.inputModalities
+        ? { inputModalities: item.inputModalities }
+        : {}),
+      ...(item.baseInstructions
+        ? { baseInstructions: item.baseInstructions }
+        : {}),
+    }))
+    .filter(
+      (item) =>
+        item.model &&
+        item.providerId &&
+        !(
+          opts.officialLogin === false &&
+          item.providerId === CODEX_OFFICIAL_PROVIDER_ID
+        ),
+    );
 
 const normalizeCodexChatReasoningForSave = (
   value?: CodexChatReasoning,
@@ -575,10 +622,16 @@ function ProviderFormFull({
     codexBaseUrl,
     codexModel,
     codexCatalogModels,
+    codexCustomModels,
+    codexEnableOfficialLogin,
+    codexAggregationEnabled,
     codexAuthError,
     setCodexAuth,
     setCodexConfig,
     setCodexCatalogModels,
+    setCodexCustomModels,
+    setCodexEnableOfficialLogin,
+    setCodexAggregationEnabled,
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelChange,
@@ -653,11 +706,30 @@ function ProviderFormFull({
   useEffect(() => {
     if (appId === "codex" && !initialData && selectedPresetId === "custom") {
       const template = getCodexCustomTemplate();
-      resetCodexConfig(template.auth, template.config);
+      resetCodexConfig(template.auth, template.config, [], []);
       setCodexChatReasoning({});
       setPromptCacheRouting("auto");
     }
   }, [appId, initialData, selectedPresetId, resetCodexConfig]);
+
+  // 官方 Codex 供应商的「自定义模型」下拉需要可选供应商列表
+  const [codexProviders, setCodexProviders] = useState<Provider[]>([]);
+  useEffect(() => {
+    if (appId !== "codex") return;
+    let cancelled = false;
+    providersApi
+      .getAll("codex")
+      .then((providerMap) => {
+        if (cancelled) return;
+        setCodexProviders(Object.values(providerMap));
+      })
+      .catch(() => {
+        // 下拉拿不到列表时仅隐藏目标供应商选择（不阻断表单保存）
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [appId]);
 
   useEffect(() => {
     form.reset(defaultValues);
@@ -1394,6 +1466,38 @@ function ProviderFormFull({
             normalizedCatalogModels[0].model,
           );
         }
+        // 官方供应商的自定义模型：对外 ID -> 绑定供应商（仅官方场景持久化）
+        // 模型聚合关闭时：按普通官方登录处理，不保存自定义模型。
+        const effectiveAggregation =
+          category === "official" && codexAggregationEnabled;
+        const effectiveCustomModels = effectiveAggregation
+          ? codexCustomModels
+          : [];
+        const effectiveOfficialLogin = effectiveAggregation
+          ? codexEnableOfficialLogin
+          : true;
+        const normalizedCustomModels =
+          category === "official"
+            ? normalizeCodexCustomModelsForSave(effectiveCustomModels, {
+                officialLogin: effectiveOfficialLogin,
+              })
+            : [];
+        // 聚合模式 + 关闭官方登录但没有任何有效模型映射：会写出空聚合缓存，
+        // RequestContext 拒绝所有模型，Codex 完全不可用。硬性阻止保存。
+        if (
+          category === "official" &&
+          effectiveAggregation &&
+          !effectiveOfficialLogin &&
+          normalizedCustomModels.length === 0
+        ) {
+          toast.error(
+            t("codexConfig.aggregationNoMappingError", {
+              defaultValue:
+                "聚合模式下关闭官方登录至少需要一条有效模型映射，请添加模型或保持官方登录开启",
+            }),
+          );
+          return;
+        }
         const configObj = {
           auth: authJson,
           config: normalizedCodexConfig,
@@ -1401,9 +1505,19 @@ function ProviderFormFull({
           auth: unknown;
           config: string;
           modelCatalog?: { models: CodexCatalogModel[] };
+          codexCustomModels?: CodexCustomModel[];
+          enableOfficialLogin?: boolean;
+          codexAggregationEnabled?: boolean;
         };
         if (normalizedCatalogModels.length > 0) {
           configObj.modelCatalog = { models: normalizedCatalogModels };
+        }
+        if (normalizedCustomModels.length > 0) {
+          configObj.codexCustomModels = normalizedCustomModels;
+        }
+        if (category === "official") {
+          configObj.enableOfficialLogin = effectiveOfficialLogin;
+          configObj.codexAggregationEnabled = effectiveAggregation;
         }
         settingsConfig = JSON.stringify(configObj);
       } catch (err) {
@@ -1808,7 +1922,7 @@ function ProviderFormFull({
       const auth = preset.auth ?? {};
       const config = preset.config ?? "";
 
-      resetCodexConfig(auth, config, preset.modelCatalog ?? []);
+      resetCodexConfig(auth, config, preset.modelCatalog ?? [], []);
       setCodexChatReasoning(preset.codexChatReasoning ?? {});
       setPromptCacheRouting(preset.promptCacheRouting ?? "auto");
       setLocalCodexApiFormat(
@@ -2321,6 +2435,13 @@ function ProviderFormFull({
               onPromptCacheRoutingChange={setPromptCacheRouting}
               catalogModels={codexCatalogModels}
               onCatalogModelsChange={setCodexCatalogModels}
+              codexCustomModels={codexCustomModels}
+              onCodexCustomModelsChange={setCodexCustomModels}
+              codexProviders={codexProviders}
+              enableOfficialLogin={codexEnableOfficialLogin}
+              onEnableOfficialLoginChange={setCodexEnableOfficialLogin}
+              codexAggregationEnabled={codexAggregationEnabled}
+              onCodexAggregationEnabledChange={setCodexAggregationEnabled}
               speedTestEndpoints={speedTestEndpoints}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}

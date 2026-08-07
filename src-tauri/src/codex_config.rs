@@ -7,6 +7,7 @@ use crate::config::{
 };
 use crate::error::AppError;
 use crate::model_capabilities::{image_input_capability_from_modalities, ImageInputCapability};
+use crate::provider::Provider;
 use once_cell::sync::OnceCell;
 use serde_json::{json, Value};
 use std::fs;
@@ -20,6 +21,19 @@ pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 /// cleaned up without mistaking a user's own local provider for takeover.
 pub const CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID: &str = "cc-switch-official";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
+const CC_SWITCH_CODEX_OFFICIAL_MODELS_CACHE_FILENAME: &str = "cc-switch-official-models-cache.json";
+const CODEX_OFFICIAL_BASELINE_STATE_KEY: &str = "cc_switch_state";
+const CODEX_OFFICIAL_BASELINE_AWAITING_REFRESH: &str = "awaiting_official_refresh";
+const CODEX_OFFICIAL_BASELINE_CAPTURED_AT_KEY: &str = "cc_switch_captured_at";
+const CODEX_OFFICIAL_BASELINE_TTL_SECONDS: i64 = 300;
+const CODEX_OFFICIAL_BASELINE_CLOCK_SKEW_SECONDS: i64 = 60;
+/// 官方 Codex 供应商 settings_config 里存放「自定义模型」的 key。
+/// 每条包含：model（对外展示给 Codex 的 ID）、providerId（绑定的 cc-switch
+/// 供应商）、upstreamModel（可选，发往上游的真实模型名）等。
+pub(crate) const CODEX_CUSTOM_MODELS_KEY: &str = "codexCustomModels";
+/// 官方 Codex 供应商「启用官方登录」开关。关闭时进入聚合模式：
+/// 不要求 ChatGPT 登录，模型列表来自下方配置的多个供应商，按模型路由。
+pub(crate) const CODEX_OFFICIAL_LOGIN_KEY: &str = "enableOfficialLogin";
 const CODEX_PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
 
 #[cfg(target_os = "windows")]
@@ -178,6 +192,38 @@ pub fn get_codex_config_dir() -> PathBuf {
 /// 获取 Codex auth.json 路径
 pub fn get_codex_auth_path() -> PathBuf {
     get_codex_config_dir().join("auth.json")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CodexAuthCredentials {
+    pub access_token: String,
+    pub account_id: Option<String>,
+}
+
+fn codex_auth_credentials_from_value(value: &Value) -> Option<CodexAuthCredentials> {
+    let tokens = value.get("tokens")?;
+    let access_token = tokens
+        .get("access_token")?
+        .as_str()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())?
+        .to_string();
+    let account_id = tokens
+        .get("account_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string);
+    Some(CodexAuthCredentials {
+        access_token,
+        account_id,
+    })
+}
+
+/// 读取 `auth.json` 里的 ChatGPT access token 与账号 ID，用于拉取官方 Codex 模型列表。
+pub(crate) fn read_codex_auth_credentials() -> Option<CodexAuthCredentials> {
+    let value: Value = read_json_file(&get_codex_auth_path()).ok()?;
+    codex_auth_credentials_from_value(&value)
 }
 
 /// 获取 Codex config.toml 路径
@@ -470,6 +516,11 @@ pub fn codex_live_auth_is_stale_third_party_residue(live_auth: &Value) -> bool {
 /// third-party API key, so Codex shows its login screen instead of sending
 /// the wrong key to the official endpoint (401 with no way to re-login).
 ///
+/// 关闭官方登录（聚合模式）时跳过：该模式下 Codex 根本不走 ChatGPT 登录，
+/// 模型全部由本地代理按模型路由到各个供应商，删除 auth.json 只会让 Codex
+/// 误以为未登录而弹出登录页。保留现有文件（哪怕只是第三方 key）也不影响
+/// 路由，代理会为每个请求使用绑定供应商自己的凭据。
+///
 /// Deleting the file — not writing `{}` — is deliberate: Codex resolves an
 /// empty object to ChatGPT mode without tokens and errors at bootstrap,
 /// while a missing file yields NotAuthenticated and the login screen,
@@ -485,8 +536,12 @@ pub fn codex_live_auth_is_stale_third_party_residue(live_auth: &Value) -> bool {
 ///
 /// Returns Ok(true) when the file was deleted.
 pub fn clear_stale_codex_live_auth_after_official_switch(
+    settings: &Value,
     db_auth: &Value,
 ) -> Result<bool, AppError> {
+    if !codex_official_login_enabled(settings) {
+        return Ok(false);
+    }
     if codex_auth_has_login_material(db_auth) {
         // A material-carrying official provider gets a full auth write;
         // nothing stale can remain.
@@ -724,6 +779,649 @@ fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
     specs
 }
 
+/// 一条 Codex 自定义模型（官方登录场景下对外展示的“额外模型”）。
+/// 存放在官方 Codex 供应商的 `settings_config.codexCustomModels`。
+#[derive(Debug, Clone)]
+pub(crate) struct CodexCustomModelEntry {
+    /// 展示给 Codex 的对外模型 ID（目录 slug / 请求 body.model）
+    pub model: String,
+    /// 绑定的 cc-switch Codex 供应商 ID
+    pub provider_id: String,
+    /// 实际发往上游的模型名（缺省用目标供应商配置的 model）
+    pub upstream_model: Option<String>,
+    pub display_name: Option<String>,
+    pub context_window: Option<u64>,
+    pub supports_parallel_tool_calls: Option<bool>,
+    pub input_modalities: Option<Vec<String>>,
+    pub base_instructions: Option<String>,
+}
+
+/// 解析 `settings_config[CODEX_CUSTOM_MODELS_KEY]`，容忍 snake_case 双格式。
+pub(crate) fn codex_custom_model_entries(settings: &Value) -> Vec<CodexCustomModelEntry> {
+    let Some(items) = settings
+        .get(CODEX_CUSTOM_MODELS_KEY)
+        .and_then(|items| items.as_array())
+    else {
+        return Vec::new();
+    };
+
+    let mut entries = Vec::new();
+    let mut seen = HashSet::new();
+    for item in items {
+        let Some(model) = item
+            .get("model")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+        else {
+            log::warn!("[codex] 忽略缺失/空 model 的自定义模型条目: {item}");
+            continue;
+        };
+        let Some(provider_id) = item
+            .get("providerId")
+            .or_else(|| item.get("provider_id"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        else {
+            log::warn!("[codex] 忽略缺失 providerId 的自定义模型条目: {item}");
+            continue;
+        };
+        // 去重 key 与路由匹配一致：剥离 `[1M]` 上下文后缀后再判重，避免
+        // `foo` 与 `foo[1M]` 并存导致带后缀请求被路由到错误的供应商。
+        let dedup_key =
+            crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(model).to_string();
+        if !seen.insert(dedup_key) {
+            log::warn!("[codex] 忽略重复的自定义模型插槽 `{model}`（首个条目生效）");
+            continue;
+        }
+        entries.push(CodexCustomModelEntry {
+            model: model.to_string(),
+            provider_id: provider_id.to_string(),
+            upstream_model: item
+                .get("upstreamModel")
+                .or_else(|| item.get("upstream_model"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|m| !m.is_empty())
+                .map(str::to_string),
+            display_name: item
+                .get("displayName")
+                .or_else(|| item.get("display_name"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_string),
+            context_window: parse_codex_positive_u64(
+                item.get("contextWindow")
+                    .or_else(|| item.get("context_window")),
+            ),
+            supports_parallel_tool_calls: item
+                .get("supportsParallelToolCalls")
+                .or_else(|| item.get("supports_parallel_tool_calls"))
+                .and_then(|value| value.as_bool()),
+            input_modalities: item
+                .get("inputModalities")
+                .or_else(|| item.get("input_modalities"))
+                .and_then(|value| value.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .filter(|items| !items.is_empty()),
+            base_instructions: item
+                .get("baseInstructions")
+                .or_else(|| item.get("base_instructions"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_string),
+        });
+    }
+    entries
+}
+
+pub(crate) fn codex_custom_models_nonempty(settings: &Value) -> bool {
+    !codex_custom_model_entries(settings).is_empty()
+}
+
+/// 官方 Codex 供应商是否启用官方登录（缺省开启，保持既有行为）。
+pub(crate) fn codex_official_login_enabled(settings: &Value) -> bool {
+    settings
+        .get(CODEX_OFFICIAL_LOGIN_KEY)
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true)
+}
+
+/// 官方 Codex 供应商（未启用官方登录）接管时刷新 `models_cache.json`。
+///
+/// Codex 桌面端（app-server）的模型列表流程不走本地代理的 `/v1/models`：
+/// 它先读 `~/.codex/models_cache.json`（300 秒 TTL），失效后才尝试从
+/// `chatgpt.com/backend-api` 远程拉取（未登录时 401，最终回退到内置静态
+/// 模型列表）。因此聚合模式下必须主动把自定义模型写入这份缓存，并刷新
+/// `fetched_at`，否则桌面端永远只显示官方内置模型。
+///
+/// 聚合模式（官方登录关闭）只包含映射到供应商的自定义模型：官方模型请求
+/// 会被本地代理拒绝（`RequestContext`），把它们留在缓存里只会显示成可选
+/// 却实际不可用。因此不再克隆旧缓存里的官方/残留条目，仅从当前
+/// `codexCustomModels` 映射重建。
+fn write_codex_models_cache_for_aggregate_at(
+    codex_dir: PathBuf,
+    settings: &Value,
+    config_text: &str,
+) -> Result<(), AppError> {
+    if codex_official_login_enabled(settings) {
+        return Ok(());
+    }
+
+    let mut models: Vec<Value> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for entry in codex_custom_catalog_entries(settings, config_text) {
+        let Some(slug) = entry.get("slug").and_then(|slug| slug.as_str()) else {
+            continue;
+        };
+        if seen.insert(slug.to_string()) {
+            models.push(entry);
+        } else if let Some(existing) = models
+            .iter_mut()
+            .find(|model| model.get("slug").and_then(|s| s.as_str()) == Some(slug))
+        {
+            *existing = entry;
+        }
+    }
+
+    write_models_cache_json(&codex_dir, models)?;
+    log::info!("[codex] models_cache.json refreshed for aggregate mode");
+    Ok(())
+}
+
+/// 官方登录 + 自定义模型时刷新 `models_cache.json`。
+///
+/// 桌面端读这份缓存展示模型列表，跳过写入会让自定义模型在官方登录模式下
+/// 不可见。合并保留缓存中已有的官方模型条目（官方登录下可路由），再追加/
+/// 覆盖当前配置的自定义条目（同名时自定义优先）。
+///
+/// 仅在现有缓存里有可靠官方基线时写入：缓存缺失/为空/还是聚合模式写的
+/// （cc-switch 生成的 etag）时删除 live 缓存，让 Codex 桌面端立即拉官方模型。
+/// 否则把一个没有官方模型的缓存标成 fresh（300s TTL），会阻断桌面端恢复
+/// 真实官方目录，自定义模型也会一直排挤掉官方模型。
+fn write_codex_models_cache_for_official_login_at(
+    codex_dir: PathBuf,
+    settings: &Value,
+    config_text: &str,
+) -> Result<(), AppError> {
+    let live_cache: Value = fs::read_to_string(codex_dir.join("models_cache.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| json!({ "models": [] }));
+
+    let Some(cache) = prepare_codex_official_models_baseline(&codex_dir, &live_cache)? else {
+        log::info!("[codex] official-login aggregation: 等待 Codex 重新拉取官方基线");
+        return Ok(());
+    };
+
+    let mut models: Vec<Value> = cache
+        .get("models")
+        .and_then(|models| models.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut seen: HashSet<String> = models
+        .iter()
+        .filter_map(|model| model.get("slug").and_then(|slug| slug.as_str()))
+        .map(str::to_string)
+        .collect();
+
+    for entry in codex_custom_catalog_entries(settings, config_text) {
+        let Some(slug) = entry.get("slug").and_then(|slug| slug.as_str()) else {
+            continue;
+        };
+        if seen.insert(slug.to_string()) {
+            models.push(entry);
+        } else if let Some(existing) = models
+            .iter_mut()
+            .find(|model| model.get("slug").and_then(|s| s.as_str()) == Some(slug))
+        {
+            *existing = entry;
+        }
+    }
+
+    write_models_cache_json(&codex_dir, models)?;
+    log::info!("[codex] models_cache.json refreshed for official-login aggregation");
+    Ok(())
+}
+
+/// 该缓存是否为 cc-switch 自己生成的（聚合模式/无官方基线时写入），而非
+/// Codex 桌面端从官方后端拉取后落盘的。区分两种来源用于判断官方基线可靠性。
+fn codex_cache_has_cc_switch_etag(cache: &Value) -> bool {
+    cache
+        .get("etag")
+        .and_then(|value| value.as_str())
+        .is_some_and(|etag| etag.starts_with("W/\"cc-switch-"))
+}
+
+fn codex_cache_is_reliable_official_baseline(cache: &Value) -> bool {
+    cache
+        .get("models")
+        .and_then(|models| models.as_array())
+        .is_some_and(|models| !models.is_empty())
+        && !codex_cache_has_cc_switch_etag(cache)
+}
+
+#[derive(Debug)]
+enum CodexOfficialBaseline {
+    Ready(Value),
+    AwaitingRefresh,
+}
+
+fn prepare_codex_official_models_baseline(
+    codex_dir: &Path,
+    live_cache: &Value,
+) -> Result<Option<Value>, AppError> {
+    match load_or_capture_codex_official_models_baseline(codex_dir, live_cache)? {
+        CodexOfficialBaseline::Ready(cache) => Ok(Some(cache)),
+        CodexOfficialBaseline::AwaitingRefresh => {
+            let live_path = codex_dir.join("models_cache.json");
+            if live_path.exists() {
+                fs::remove_file(&live_path).map_err(|e| AppError::io(&live_path, e))?;
+            }
+            Ok(None)
+        }
+    }
+}
+
+pub(crate) fn restore_or_clear_codex_official_models_cache(codex_dir: &Path) -> Result<(), AppError> {
+    let live_path = codex_dir.join("models_cache.json");
+    let live_cache: Value = fs::read_to_string(&live_path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| json!({ "models": [] }));
+
+    if let Some(baseline) = prepare_codex_official_models_baseline(codex_dir, &live_cache)? {
+        if !codex_cache_is_reliable_official_baseline(&live_cache) {
+            crate::config::write_json_file(&live_path, &baseline)?;
+        }
+    }
+    Ok(())
+}
+
+fn codex_official_cache_fingerprint(cache: &Value) -> Value {
+    json!({
+        "etag": cache.get("etag").cloned().unwrap_or(Value::Null),
+        "fetched_at": cache.get("fetched_at").cloned().unwrap_or(Value::Null),
+    })
+}
+
+fn codex_official_baseline_payload(cache: &Value) -> Value {
+    let mut payload = cache.clone();
+    if let Some(object) = payload.as_object_mut() {
+        object.remove(CODEX_OFFICIAL_BASELINE_CAPTURED_AT_KEY);
+    }
+    payload
+}
+
+fn codex_official_baseline_with_capture_time(
+    cache: &Value,
+    captured_at: chrono::DateTime<chrono::Utc>,
+) -> Value {
+    let mut saved = codex_official_baseline_payload(cache);
+    if let Some(object) = saved.as_object_mut() {
+        object.insert(
+            CODEX_OFFICIAL_BASELINE_CAPTURED_AT_KEY.to_string(),
+            Value::String(captured_at.to_rfc3339()),
+        );
+    }
+    saved
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexOfficialBaselineCaptureState {
+    Missing,
+    Fresh,
+    Expired,
+    Invalid,
+}
+
+fn codex_official_baseline_capture_state(
+    cache: &Value,
+    now: chrono::DateTime<chrono::Utc>,
+) -> CodexOfficialBaselineCaptureState {
+    let Some(raw) = cache.get(CODEX_OFFICIAL_BASELINE_CAPTURED_AT_KEY) else {
+        return CodexOfficialBaselineCaptureState::Missing;
+    };
+    let Some(raw) = raw.as_str() else {
+        return CodexOfficialBaselineCaptureState::Invalid;
+    };
+    let Ok(captured_at) = chrono::DateTime::parse_from_rfc3339(raw) else {
+        return CodexOfficialBaselineCaptureState::Invalid;
+    };
+    let age = now
+        .signed_duration_since(captured_at.with_timezone(&chrono::Utc))
+        .num_seconds();
+    if age < -CODEX_OFFICIAL_BASELINE_CLOCK_SKEW_SECONDS {
+        CodexOfficialBaselineCaptureState::Invalid
+    } else if age >= CODEX_OFFICIAL_BASELINE_TTL_SECONDS {
+        CodexOfficialBaselineCaptureState::Expired
+    } else {
+        CodexOfficialBaselineCaptureState::Fresh
+    }
+}
+
+fn codex_awaiting_official_refresh(cache: &Value) -> Value {
+    json!({
+        CODEX_OFFICIAL_BASELINE_STATE_KEY: CODEX_OFFICIAL_BASELINE_AWAITING_REFRESH,
+        "rejected_fingerprint": codex_official_cache_fingerprint(cache),
+    })
+}
+
+fn load_or_capture_codex_official_models_baseline(
+    codex_dir: &Path,
+    live_cache: &Value,
+) -> Result<CodexOfficialBaseline, AppError> {
+    let baseline_path = codex_dir.join(CC_SWITCH_CODEX_OFFICIAL_MODELS_CACHE_FILENAME);
+    let saved: Option<Value> = fs::read_to_string(&baseline_path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok());
+
+    let now = chrono::Utc::now();
+    if let Some(saved) = saved.as_ref() {
+        if codex_cache_is_reliable_official_baseline(saved) {
+            let live_is_official = codex_cache_is_reliable_official_baseline(live_cache);
+            let live_is_new_snapshot = live_is_official
+                && codex_official_cache_fingerprint(saved)
+                    != codex_official_cache_fingerprint(live_cache);
+            if live_is_new_snapshot {
+                let captured = codex_official_baseline_with_capture_time(live_cache, now);
+                crate::config::write_json_file(&baseline_path, &captured)?;
+                return Ok(CodexOfficialBaseline::Ready(live_cache.clone()));
+            }
+            match codex_official_baseline_capture_state(saved, now) {
+                CodexOfficialBaselineCaptureState::Expired
+                | CodexOfficialBaselineCaptureState::Invalid => {
+                    let awaiting = codex_awaiting_official_refresh(saved);
+                    crate::config::write_json_file(&baseline_path, &awaiting)?;
+                    return Ok(CodexOfficialBaseline::AwaitingRefresh);
+                }
+                CodexOfficialBaselineCaptureState::Missing => {
+                    let captured = codex_official_baseline_with_capture_time(saved, now);
+                    crate::config::write_json_file(&baseline_path, &captured)?;
+                }
+                CodexOfficialBaselineCaptureState::Fresh => {}
+            }
+            return Ok(CodexOfficialBaseline::Ready(
+                codex_official_baseline_payload(saved),
+            ));
+        }
+
+        if saved
+            .get(CODEX_OFFICIAL_BASELINE_STATE_KEY)
+            .and_then(Value::as_str)
+            == Some(CODEX_OFFICIAL_BASELINE_AWAITING_REFRESH)
+        {
+            if codex_cache_is_reliable_official_baseline(live_cache)
+                && saved.get("rejected_fingerprint")
+                    != Some(&codex_official_cache_fingerprint(live_cache))
+            {
+                let captured = codex_official_baseline_with_capture_time(live_cache, now);
+                crate::config::write_json_file(&baseline_path, &captured)?;
+                return Ok(CodexOfficialBaseline::Ready(live_cache.clone()));
+            }
+            return Ok(CodexOfficialBaseline::AwaitingRefresh);
+        }
+    }
+
+    if codex_cache_is_reliable_official_baseline(live_cache) {
+        let awaiting = codex_awaiting_official_refresh(live_cache);
+        crate::config::write_json_file(&baseline_path, &awaiting)?;
+    }
+    Ok(CodexOfficialBaseline::AwaitingRefresh)
+}
+
+/// 写 `models_cache.json`：优先使用当前 Codex CLI 版本，探测失败时才复用
+/// 既有 `client_version`（Codex 按该版本号校验缓存有效性）；无可验证版本时
+/// 拒绝写入。仅刷新 `fetched_at` 与 `etag`，使缓存落在 300 秒 TTL 窗口内。
+fn write_models_cache_json(codex_dir: &Path, models: Vec<Value>) -> Result<(), AppError> {
+    let detected_client_version = detect_codex_cli_client_version();
+    write_models_cache_json_with_client_version(
+        codex_dir,
+        models,
+        detected_client_version.as_deref(),
+    )
+}
+
+fn parse_codex_cli_client_version(output: &str) -> Option<String> {
+    output.split_whitespace().find_map(|token| {
+        let version = token.trim_start_matches('v').split(['-', '+']).next()?;
+        let mut parts = version.split('.');
+        let major = parts.next()?;
+        let minor = parts.next()?;
+        let patch = parts.next()?;
+        if parts.next().is_some()
+            || [major, minor, patch]
+                .iter()
+                .any(|part| part.is_empty() || !part.chars().all(|ch| ch.is_ascii_digit()))
+        {
+            return None;
+        }
+        Some(format!("{major}.{minor}.{patch}"))
+    })
+}
+
+fn codex_version_command(candidate: &Path) -> Command {
+    let mut command = Command::new(candidate);
+    command.arg("--version").stdin(Stdio::null());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    command
+}
+
+fn detect_codex_cli_client_version() -> Option<String> {
+    for candidate in codex_cli_candidates() {
+        let candidate_label = candidate.to_string_lossy();
+        let output = match codex_version_command(&candidate).output() {
+            Ok(output) => output,
+            Err(error) => {
+                log::debug!("failed to run `{candidate_label} --version`: {error}");
+                continue;
+            }
+        };
+        if !output.status.success() {
+            log::debug!(
+                "`{candidate_label} --version` exited with {}",
+                output.status
+            );
+            continue;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Some(version) = parse_codex_cli_client_version(&stdout) {
+            return Some(version);
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if let Some(version) = parse_codex_cli_client_version(&stderr) {
+            return Some(version);
+        }
+        log::debug!("failed to parse Codex version from `{candidate_label} --version`");
+    }
+    None
+}
+
+/// Resolve the client version used by Codex to validate `models_cache.json`.
+/// Prefer a live CLI/Desktop binary; an existing cache is only a fallback for
+/// installations whose executable cannot be launched from CC Switch.
+pub(crate) fn resolve_codex_client_version() -> Option<String> {
+    detect_codex_cli_client_version().or_else(|| {
+        fs::read_to_string(get_codex_config_dir().join("models_cache.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .and_then(|cache| {
+                cache
+                    .get("client_version")
+                    .and_then(Value::as_str)
+                    .and_then(parse_codex_cli_client_version)
+            })
+    })
+}
+
+fn write_models_cache_json_with_client_version(
+    codex_dir: &Path,
+    models: Vec<Value>,
+    detected_client_version: Option<&str>,
+) -> Result<(), AppError> {
+    let path = codex_dir.join("models_cache.json");
+    let existing: Value = fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| json!({ "models": [] }));
+    let client_version = detected_client_version
+        .and_then(parse_codex_cli_client_version)
+        .or_else(|| {
+            existing
+                .get("client_version")
+                .and_then(Value::as_str)
+                .and_then(parse_codex_cli_client_version)
+        })
+        .ok_or_else(|| {
+            AppError::Message(
+                "Cannot write Codex models cache without a verified Codex client version"
+                    .to_string(),
+            )
+        })?;
+    let _ = load_or_capture_codex_official_models_baseline(codex_dir, &existing)?;
+
+    let now = chrono::Utc::now();
+    let fetched_at = now
+        .to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+        .to_string();
+    let etag = format!("W/\"cc-switch-{}\"", now.timestamp());
+
+    let updated = json!({
+        "fetched_at": fetched_at,
+        "etag": etag,
+        "client_version": client_version,
+        "models": models,
+    });
+
+    crate::config::write_json_file(&path, &updated)?;
+    Ok(())
+}
+
+/// 切换/接管任意 Codex 供应商后重建 `models_cache.json`（桌面端模型列表的
+/// 来源），使列表始终反映当前供应商而不是残留的旧条目。
+///
+/// - 官方供应商 + 启用官方登录：无自定义模型时恢复 clean sidecar，或删除
+///   cc-switch 残留以触发 ChatGPT 后端拉取；有自定义模型时合并官方模型 + 自定义条目
+///   （见 [`write_codex_models_cache_for_official_login_at`]）；
+/// - 官方供应商 + 关闭官方登录（聚合模式）：仅用当前 `codexCustomModels`
+///   映射重建，清掉残留的官方/旧条目（见 [`write_codex_models_cache_for_aggregate_at`]）；
+/// - 其他供应商：直接用当前供应商自己的模型目录重建，清掉残留的官方/旧条目。
+pub fn write_codex_models_cache_for_provider(
+    provider: &Provider,
+    config_text: &str,
+) -> Result<(), AppError> {
+    write_codex_models_cache_for_provider_at(get_codex_config_dir(), provider, config_text)
+}
+
+fn write_codex_models_cache_for_provider_at(
+    codex_dir: PathBuf,
+    provider: &Provider,
+    config_text: &str,
+) -> Result<(), AppError> {
+    let settings = &provider.settings_config;
+
+    if crate::proxy::providers::is_codex_official_provider(provider) {
+        if codex_official_login_enabled(settings) {
+            // 官方登录 + 自定义模型：桌面端读 models_cache.json，需合并写入
+            // 官方与自定义模型，否则自定义模型不可见。
+            if codex_custom_models_nonempty(settings) {
+                return write_codex_models_cache_for_official_login_at(
+                    codex_dir,
+                    settings,
+                    config_text,
+                );
+            }
+            return restore_or_clear_codex_official_models_cache(&codex_dir);
+        }
+        return write_codex_models_cache_for_aggregate_at(codex_dir, settings, config_text);
+    }
+
+    let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
+    let catalog = codex_model_catalog_from_settings(settings, config_text, profile)?;
+    match catalog {
+        Some(catalog) => {
+            let models: Vec<Value> = catalog
+                .get("models")
+                .and_then(|models| models.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let model_count = models.len();
+            write_models_cache_json(&codex_dir, models)?;
+            log::info!(
+                "[codex] models_cache.json rebuilt for provider `{}`: {} models",
+                provider.name,
+                model_count
+            );
+        }
+        None => {
+            // 无 modelCatalog（只有顶层 model，如仓库自带的自定义供应商模板）：
+            // 从配置的 model 派生单条缓存，桌面端至少能发现默认模型；连 model
+            // 都没有则跳过，避免把空列表标成 fresh 阻断桌面端发现模型。
+            let Some(model) = codex_top_level_model(config_text) else {
+                return Ok(());
+            };
+            let Some(entry) = codex_single_model_cache_entry(&model, profile, config_text) else {
+                return Ok(());
+            };
+            write_models_cache_json(&codex_dir, vec![entry])?;
+            log::info!(
+                "[codex] models_cache.json rebuilt for provider `{}`: 1 model from config",
+                provider.name
+            );
+        }
+    }
+    Ok(())
+}
+
+/// 无 `modelCatalog` 时从配置顶层 `model` 派生单条缓存条目。
+fn codex_single_model_cache_entry(
+    model: &str,
+    profile: CodexCatalogToolProfile,
+    config_text: &str,
+) -> Option<Value> {
+    let template = match profile {
+        CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
+            load_codex_native_responses_template()
+        }
+        CodexCatalogToolProfile::ProxyChat => load_codex_model_catalog_template().ok()?,
+    };
+    let spec = CodexCatalogModelSpec {
+        model: model.to_string(),
+        display_name: None,
+        context_window: None,
+        supports_parallel_tool_calls: None,
+        input_modalities: None,
+        base_instructions: None,
+    };
+    let default_context_window =
+        extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
+    Some(codex_catalog_model_entry(
+        &template,
+        &spec,
+        0,
+        profile,
+        default_context_window,
+    ))
+}
+
+/// 加载 Codex 内置的完整官方模型目录（`models_cache.json`，Codex 连接
+/// OpenAI 后自行写入），用于在保留官方模型选择的同时合并自定义模型条目。
+/// 缓存缺失时回退到内置 gpt-5.5 模板（降级：只展示这一个官方模型）。
 fn find_codex_model_template(catalog: &Value) -> Option<Value> {
     catalog
         .get("models")
@@ -899,6 +1597,17 @@ fn codex_cli_candidates() -> Vec<PathBuf> {
     let mut seen = HashSet::new();
 
     for candidate in CODEX_CLI_FIXED_CANDIDATES {
+        push_codex_cli_candidate(&mut candidates, &mut seen, PathBuf::from(candidate));
+    }
+
+    // 桌面自带 codex 二进制的候选始终记录（与 PATH 候选一致，不要求此刻存在）：
+    // 消费方对无法启动的候选会跳过，存在性在运行时判断。若按存在性过滤，
+    // 干净环境/CI 上就会漏掉这条路径，检测不到桌面版自带的 Codex。
+    #[cfg(target_os = "macos")]
+    for candidate in [
+        "/Applications/ChatGPT.app/Contents/Resources/codex",
+        "/Applications/ChatGPT Classic.app/Contents/Resources/codex",
+    ] {
         push_codex_cli_candidate(&mut candidates, &mut seen, PathBuf::from(candidate));
     }
 
@@ -1194,11 +1903,58 @@ fn codex_model_catalog_from_specs(
     json!({ "models": entries })
 }
 
+/// 为 Codex 自定义模型构建原生 Responses 目录条目（官方供应商场景）。
+pub(crate) fn codex_custom_catalog_entries(settings: &Value, config_text: &str) -> Vec<Value> {
+    let entries = codex_custom_model_entries(settings);
+    if entries.is_empty() {
+        return Vec::new();
+    }
+    let template = load_codex_native_responses_template();
+    let default_context_window =
+        extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
+    entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let spec = CodexCatalogModelSpec {
+                model: entry.model.clone(),
+                display_name: entry.display_name.clone(),
+                context_window: entry.context_window,
+                supports_parallel_tool_calls: entry.supports_parallel_tool_calls,
+                input_modalities: entry.input_modalities.clone(),
+                base_instructions: entry.base_instructions.clone(),
+            };
+            codex_catalog_model_entry(
+                &template,
+                &spec,
+                index,
+                CodexCatalogToolProfile::NativeResponses,
+                default_context_window,
+            )
+        })
+        .collect()
+}
+
 fn codex_model_catalog_from_settings(
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Result<Option<Value>, AppError> {
+    // 官方 Codex 供应商带自定义模型。
+    if codex_custom_models_nonempty(settings) {
+        // 未启用官方登录：聚合模式，目录只包含下方配置的供应商模型（多供应商切换）。
+        if !codex_official_login_enabled(settings) {
+            return Ok(Some(json!({
+                "models": codex_custom_catalog_entries(settings, config_text)
+            })));
+        }
+        // 官方登录模式：不写 model_catalog_json，让 Codex 直接走 /v1/models，
+        // 由本地代理把官方模型与自定义模型合并返回。合并目录文件依赖
+        // models_cache.json 拿官方模型，而登录模式下该缓存不可靠，容易写出
+        // 只有自定义模型、缺官方模型的错误目录。
+        return Ok(None);
+    }
+
     let specs = codex_catalog_model_specs(settings);
     if specs.is_empty() {
         return Ok(None);
@@ -1601,7 +2357,7 @@ pub fn prepare_codex_live_config_text_with_optional_catalog(
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Result<String, AppError> {
-    if settings.get("modelCatalog").is_some() {
+    if settings.get("modelCatalog").is_some() || codex_custom_models_nonempty(settings) {
         prepare_codex_config_text_with_model_catalog(settings, config_text, profile)
     } else {
         Ok(config_text.to_string())
@@ -1780,10 +2536,11 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
 fn codex_official_provider_table(
     base_url: Option<&str>,
     supports_websockets: bool,
+    requires_openai_auth: bool,
 ) -> toml_edit::Table {
     let mut table = toml_edit::Table::new();
     table["name"] = toml_edit::value("OpenAI");
-    table["requires_openai_auth"] = toml_edit::value(true);
+    table["requires_openai_auth"] = toml_edit::value(requires_openai_auth);
     table["supports_websockets"] = toml_edit::value(supports_websockets);
     table["wire_api"] = toml_edit::value("responses");
     if let Some(base_url) = base_url {
@@ -1793,7 +2550,7 @@ fn codex_official_provider_table(
 }
 
 fn codex_unified_official_provider_table() -> toml_edit::Table {
-    codex_official_provider_table(None, true)
+    codex_official_provider_table(None, true, true)
 }
 
 fn remove_codex_proxy_placeholders_from_providers(providers: &mut toml_edit::Table) {
@@ -1824,9 +2581,21 @@ fn remove_codex_proxy_placeholders_from_providers(providers: &mut toml_edit::Tab
 /// The resulting custom provider explicitly opts into OpenAI authentication,
 /// so Codex forwards its existing ChatGPT login to the local `/responses`
 /// endpoint.  No API key or bearer placeholder is written to `auth.json`.
+#[cfg(test)]
 pub fn apply_codex_official_proxy_route(
     config_text: &str,
     proxy_base_url: &str,
+) -> Result<String, AppError> {
+    apply_codex_official_proxy_route_with_auth(config_text, proxy_base_url, true)
+}
+
+/// 同 [`apply_codex_official_proxy_route`]，但允许关闭 `requires_openai_auth`：
+/// 未启用官方登录（聚合模式）时 Codex 不会要求 OpenAI 登录，模型全部来自
+/// 本地代理按模型路由到各个供应商。
+pub fn apply_codex_official_proxy_route_with_auth(
+    config_text: &str,
+    proxy_base_url: &str,
+    requires_openai_auth: bool,
 ) -> Result<String, AppError> {
     let mut doc = config_text
         .parse::<DocumentMut>()
@@ -1855,7 +2624,14 @@ pub fn apply_codex_official_proxy_route(
     remove_codex_proxy_placeholders_from_providers(&mut providers);
 
     // The local proxy currently exposes HTTP/SSE, not Codex websocket routes.
-    let table = codex_official_provider_table(Some(proxy_base_url), false);
+    let mut table =
+        codex_official_provider_table(Some(proxy_base_url), false, requires_openai_auth);
+    if !requires_openai_auth {
+        // 聚合模式（关闭官方登录）：不给 Codex 任何凭据它会直接弹登录页。
+        // 占位 token 只用于满足客户端的认证检查，实际请求由本地代理按模型
+        // 路由，并把鉴权替换为绑定供应商自己的凭据（不会把占位符发到上游）。
+        table["experimental_bearer_token"] = toml_edit::value(CODEX_PROXY_AUTH_PLACEHOLDER);
+    }
 
     providers.insert(
         CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID,
@@ -2355,6 +3131,7 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
 mod tests {
     use super::*;
     use serde_json::json;
+    use serial_test::serial;
 
     #[test]
     fn catalog_tool_profile_from_api_format() {
@@ -2443,6 +3220,39 @@ command = "example"
             Some(false)
         );
         assert!(codex_config_has_official_proxy_route(&output));
+    }
+
+    #[test]
+    fn official_proxy_route_aggregate_mode_injects_bearer_placeholder() {
+        // 关闭官方登录（聚合模式）：Codex 必须拿到一个占位凭据才不弹登录页。
+        let output =
+            apply_codex_official_proxy_route_with_auth("", "http://127.0.0.1:15721/v1", false)
+                .expect("apply aggregate route");
+        let doc: toml::Value = toml::from_str(&output).expect("parse output");
+
+        assert_eq!(
+            doc.get("model_provider").and_then(toml::Value::as_str),
+            Some(CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID)
+        );
+        let provider = &doc["model_providers"][CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID];
+        assert_eq!(
+            provider
+                .get("requires_openai_auth")
+                .and_then(toml::Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            provider
+                .get("experimental_bearer_token")
+                .and_then(toml::Value::as_str),
+            Some("PROXY_MANAGED")
+        );
+
+        // 移除接管路由时占位 token 一并被清掉，不残留到恢复后的配置。
+        let cleaned = remove_codex_official_proxy_route(&output).expect("clean aggregate route");
+        let cleaned_doc: toml::Value = toml::from_str(&cleaned).expect("parse cleaned");
+        assert!(cleaned_doc.get("model_provider").is_none());
+        assert!(!cleaned.contains("experimental_bearer_token"));
     }
 
     #[test]
@@ -2755,6 +3565,29 @@ experimental_bearer_token = "stale-table-key"
     }
 
     #[test]
+    fn codex_auth_credentials_parse_token_and_optional_account_id() {
+        let credentials = codex_auth_credentials_from_value(&json!({
+            "tokens": {
+                "access_token": "  official-token  ",
+                "account_id": "  workspace-123  "
+            }
+        }))
+        .expect("parse Codex auth credentials");
+
+        assert_eq!(credentials.access_token, "official-token");
+        assert_eq!(credentials.account_id.as_deref(), Some("workspace-123"));
+
+        let personal = codex_auth_credentials_from_value(&json!({
+            "tokens": {
+                "access_token": "personal-token",
+                "account_id": "   "
+            }
+        }))
+        .expect("parse personal-account credentials");
+        assert_eq!(personal.account_id, None);
+    }
+
+    #[test]
     fn stale_third_party_residue_detection() {
         // Shapes a preserve-off third-party switch leaves behind: cleared.
         assert!(codex_live_auth_is_stale_third_party_residue(&json!({
@@ -2786,6 +3619,58 @@ experimental_bearer_token = "stale-table-key"
         assert!(!codex_live_auth_is_stale_third_party_residue(&json!({
             "OPENAI_API_KEY": ""
         })));
+    }
+
+    #[test]
+    #[serial]
+    fn clear_stale_auth_skipped_when_official_login_disabled() {
+        let dir = tempfile::TempDir::new().expect("create temp home");
+        let original_home = std::env::var("HOME").ok();
+        let original_userprofile = std::env::var("USERPROFILE").ok();
+        std::env::set_var("HOME", dir.path());
+        std::env::set_var("USERPROFILE", dir.path());
+        crate::settings::reload_settings().expect("reload settings");
+
+        let codex_dir = get_codex_config_dir();
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        let auth_path = get_codex_auth_path();
+        write_json_file(&auth_path, &json!({ "OPENAI_API_KEY": "sk-third-party" }))
+            .expect("seed stale third-party auth");
+
+        // 聚合模式（关闭官方登录）：不得删除 auth.json，否则 Codex 弹登录。
+        let removed = clear_stale_codex_live_auth_after_official_switch(
+            &json!({ "enableOfficialLogin": false }),
+            &json!({}),
+        )
+        .expect("cleanup must not fail");
+        assert!(!removed, "aggregate mode must not delete auth.json");
+        assert!(
+            auth_path.exists(),
+            "stale auth must be preserved in aggregate mode"
+        );
+
+        // 启用官方登录时仍按原逻辑清理残留的第三方 key。
+        let removed = clear_stale_codex_live_auth_after_official_switch(&json!({}), &json!({}))
+            .expect("cleanup must not fail");
+        assert!(
+            removed,
+            "official login mode still clears stale third-party auth"
+        );
+        assert!(
+            !auth_path.exists(),
+            "stale auth must be deleted for official login mode"
+        );
+
+        match original_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        match original_userprofile {
+            Some(value) => std::env::set_var("USERPROFILE", value),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("reset settings");
     }
 
     #[test]
@@ -4106,6 +4991,17 @@ web_search = "disabled"
         );
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn codex_cli_candidates_include_chatgpt_desktop_binary() {
+        assert!(
+            codex_cli_candidates().iter().any(|candidate| {
+                candidate == Path::new("/Applications/ChatGPT.app/Contents/Resources/codex")
+            }),
+            "fresh desktop-only installs need the bundled Codex version for cache validation"
+        );
+    }
+
     #[test]
     fn codex_bundled_models_command_uses_expected_program_and_args() {
         let command = codex_bundled_models_command(Path::new("codex"));
@@ -4241,6 +5137,1080 @@ web_search = "disabled"
                 "static template must contain key '{key}'"
             );
         }
+    }
+
+    #[test]
+    fn write_codex_models_cache_for_aggregate_refreshes_cache() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        // Pre-existing cache with a stale timestamp and an official model.
+        let stale_cache = json!({
+            "fetched_at": "2026-08-01T00:00:00.000000000Z",
+            "etag": "W/\"old\"",
+            "client_version": "0.146.0",
+            "models": [{
+                "slug": "gpt-5.5",
+                "display_name": "GPT-5.5",
+                "context_window": 400000
+            }]
+        });
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&stale_cache).expect("serialize stale cache"),
+        )
+        .expect("write stale cache");
+
+        // Aggregate provider: official login disabled + custom model row.
+        let settings = json!({
+            "enableOfficialLogin": false,
+            "codexCustomModels": [{
+                "model": "deepseek-v4-flash",
+                "providerId": "deepseek",
+                "displayName": "DeepSeek V4 Flash",
+                "contextWindow": 131072
+            }]
+        });
+
+        write_codex_models_cache_for_aggregate_at(codex_dir.clone(), &settings, "")
+            .expect("aggregate cache write must succeed");
+
+        let written: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("models_cache.json"))
+                .expect("read refreshed cache"),
+        )
+        .expect("parse refreshed cache");
+
+        let fetched_at = written
+            .get("fetched_at")
+            .and_then(|v| v.as_str())
+            .expect("fetched_at must exist");
+        let parsed_fetched_at = chrono::DateTime::parse_from_rfc3339(fetched_at)
+            .expect("fetched_at must be valid RFC3339");
+        let age = chrono::Utc::now().signed_duration_since(parsed_fetched_at);
+        assert!(
+            age.num_seconds().abs() < 60,
+            "fetched_at must be fresh (age {age:?})"
+        );
+
+        let models = written
+            .get("models")
+            .and_then(|v| v.as_array())
+            .expect("models array");
+        let slugs: Vec<&str> = models
+            .iter()
+            .filter_map(|m| m.get("slug").and_then(|s| s.as_str()))
+            .collect();
+        assert!(
+            !slugs.contains(&"gpt-5.5"),
+            "stale official entries must be cleared in aggregate mode: {slugs:?}"
+        );
+        assert!(
+            slugs.contains(&"deepseek-v4-flash"),
+            "custom model must be present: {slugs:?}"
+        );
+        assert_eq!(slugs.len(), 1, "only the mapped custom model should remain");
+        assert!(
+            written
+                .get("etag")
+                .and_then(|value| value.as_str())
+                .is_some_and(|etag| etag.starts_with("W/\"cc-switch-")),
+            "aggregate rewrites must be marked as cc-switch-owned"
+        );
+    }
+
+    #[test]
+    fn models_cache_uses_detected_codex_version_when_cache_is_missing() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        write_models_cache_json_with_client_version(
+            &codex_dir,
+            vec![json!({ "slug": "gpt-5.2" })],
+            Some("codex-cli 0.147.3-alpha.2"),
+        )
+        .expect("write cache with detected Codex version");
+
+        let cache: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("models_cache.json"))
+                .expect("read models cache"),
+        )
+        .expect("parse models cache");
+        assert_eq!(
+            cache.get("client_version").and_then(Value::as_str),
+            Some("0.147.3")
+        );
+    }
+
+    #[test]
+    fn models_cache_prefers_detected_codex_version_after_upgrade() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_vec_pretty(&json!({
+                "client_version": "0.146.0",
+                "models": []
+            }))
+            .expect("serialize old cache"),
+        )
+        .expect("seed old cache");
+
+        write_models_cache_json_with_client_version(
+            &codex_dir,
+            vec![json!({ "slug": "gpt-5.2" })],
+            Some("codex-cli 0.147.0"),
+        )
+        .expect("rewrite cache for upgraded Codex");
+
+        let cache: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("models_cache.json"))
+                .expect("read models cache"),
+        )
+        .expect("parse models cache");
+        assert_eq!(
+            cache.get("client_version").and_then(Value::as_str),
+            Some("0.147.0")
+        );
+    }
+
+    #[test]
+    fn models_cache_refuses_to_invent_client_version() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        let result = write_models_cache_json_with_client_version(
+            &codex_dir,
+            vec![json!({ "slug": "gpt-5.2" })],
+            None,
+        );
+
+        assert!(result.is_err(), "missing client version must fail closed");
+        assert!(
+            !codex_dir.join("models_cache.json").exists(),
+            "an unverifiable cache must not be published"
+        );
+    }
+
+    #[test]
+    fn codex_client_version_parser_rejects_malformed_output() {
+        assert_eq!(
+            parse_codex_cli_client_version("codex-cli 0.147.3-alpha.2"),
+            Some("0.147.3".to_string())
+        );
+        assert_eq!(parse_codex_cli_client_version("codex-cli dev"), None);
+        assert_eq!(parse_codex_cli_client_version("0.147"), None);
+        assert_eq!(parse_codex_cli_client_version(""), None);
+    }
+
+    #[test]
+    fn write_codex_models_cache_for_aggregate_builds_from_custom_mappings_only() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        // 旧缓存残留多个官方/旧供应商条目：聚合模式下不可路由，必须全部清掉，
+        // 只保留当前 codexCustomModels 映射的条目。
+        let stale_cache = json!({
+            "fetched_at": "2026-08-01T00:00:00.000000000Z",
+            "etag": "W/\"old\"",
+            "client_version": "0.146.0",
+            "models": [
+                {"slug": "gpt-5.5", "display_name": "GPT-5.5"},
+                {"slug": "gpt-5.4", "display_name": "GPT-5.4"},
+                {"slug": "deepseek-v4-pro", "display_name": "DeepSeek V4 Pro"}
+            ]
+        });
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&stale_cache).expect("serialize stale cache"),
+        )
+        .expect("write stale cache");
+
+        let settings = json!({
+            "enableOfficialLogin": false,
+            "codexCustomModels": [
+                {
+                    "model": "gpt-5.2",
+                    "providerId": "deepseek",
+                    "upstreamModel": "deepseek-v4-flash",
+                    "displayName": "DeepSeek V4 Flash",
+                    "contextWindow": 131072
+                },
+                {
+                    "model": "gpt-5.5",
+                    "providerId": "glm",
+                    "upstreamModel": "glm-5",
+                    "displayName": "GLM-5",
+                    "contextWindow": 131072
+                }
+            ]
+        });
+
+        write_codex_models_cache_for_aggregate_at(codex_dir.clone(), &settings, "")
+            .expect("aggregate cache write must succeed");
+
+        let written: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("models_cache.json"))
+                .expect("read refreshed cache"),
+        )
+        .expect("parse refreshed cache");
+        let models = written
+            .get("models")
+            .and_then(|v| v.as_array())
+            .expect("models array");
+        let slugs: Vec<&str> = models
+            .iter()
+            .filter_map(|m| m.get("slug").and_then(|s| s.as_str()))
+            .collect();
+        assert_eq!(
+            slugs,
+            vec!["gpt-5.2", "gpt-5.5"],
+            "only mapped carrier slots remain, stale official entries cleared"
+        );
+    }
+
+    #[test]
+    fn aggregate_rewrite_updates_existing_official_baseline_before_overwrite() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        let old_baseline = json!({
+            "fetched_at": "2026-08-01T00:00:00Z",
+            "etag": "W/\"official-old\"",
+            "client_version": "0.146.0",
+            "cc_switch_captured_at": "2026-08-01T00:00:00Z",
+            "models": [{"slug": "gpt-5.4", "display_name": "GPT-5.4"}]
+        });
+        std::fs::write(
+            codex_dir.join("cc-switch-official-models-cache.json"),
+            serde_json::to_string(&old_baseline).expect("serialize old baseline"),
+        )
+        .expect("write old baseline");
+
+        let new_official = json!({
+            "fetched_at": "2026-08-04T00:00:00Z",
+            "etag": "W/\"official-new\"",
+            "client_version": "0.146.0",
+            "models": [{"slug": "gpt-5.5", "display_name": "GPT-5.5"}]
+        });
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&new_official).expect("serialize new official cache"),
+        )
+        .expect("write new official cache");
+
+        let settings = json!({
+            "enableOfficialLogin": false,
+            "codexCustomModels": [{
+                "model": "gpt-5.2",
+                "providerId": "deepseek",
+                "upstreamModel": "deepseek-v4-flash"
+            }]
+        });
+        write_codex_models_cache_for_aggregate_at(codex_dir.clone(), &settings, "")
+            .expect("write aggregate cache");
+
+        let baseline: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("cc-switch-official-models-cache.json"))
+                .expect("read updated baseline"),
+        )
+        .expect("parse updated baseline");
+        assert_eq!(
+            baseline.pointer("/models/0/slug").and_then(Value::as_str),
+            Some("gpt-5.5"),
+            "a clean official cache observed before aggregate rewrite must replace the old baseline"
+        );
+    }
+
+    #[test]
+    fn write_codex_models_cache_for_provider_rebuilds_for_regular_provider() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        // 残留缓存：既有官方模型，又有被覆盖成 DeepSeek 的条目。
+        let stale_cache = json!({
+            "fetched_at": "2026-08-01T00:00:00.000000000Z",
+            "etag": "W/\"old\"",
+            "client_version": "0.146.0",
+            "models": [
+                {"slug": "gpt-5.5", "display_name": "GPT-5.5"},
+                {"slug": "gpt-5.2", "display_name": "DeepSeek V4 Flash"},
+                {"slug": "deepseek-v4-pro", "display_name": "DeepSeek V4 Pro"}
+            ]
+        });
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&stale_cache).expect("serialize stale cache"),
+        )
+        .expect("write stale cache");
+
+        let provider = Provider {
+            id: "deepseek".to_string(),
+            name: "DeepSeek".to_string(),
+            settings_config: json!({
+                "modelCatalog": {
+                    "models": [
+                        {"model": "deepseek-v4-flash", "displayName": "DeepSeek V4 Flash", "contextWindow": 1048576},
+                        {"model": "deepseek-v4-pro", "displayName": "DeepSeek V4 Pro", "contextWindow": 1048576}
+                    ]
+                },
+                "config": "model_provider = \"custom\"\nmodel = \"deepseek-v4-flash\"\n[model_providers.custom]\nbase_url = \"https://api.deepseek.com\"\nwire_api = \"responses\"\n"
+            }),
+            website_url: None,
+            category: Some("codex".to_string()),
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: Some(crate::provider::ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                ..Default::default()
+            }),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, "")
+            .expect("rebuild must succeed");
+
+        let written: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("models_cache.json"))
+                .expect("read rebuilt cache"),
+        )
+        .expect("parse rebuilt cache");
+        let models = written
+            .get("models")
+            .and_then(|v| v.as_array())
+            .expect("models array");
+        let slugs: Vec<&str> = models
+            .iter()
+            .filter_map(|m| m.get("slug").and_then(|s| s.as_str()))
+            .collect();
+        assert_eq!(
+            slugs,
+            vec!["deepseek-v4-flash", "deepseek-v4-pro"],
+            "regular provider cache must contain only its own catalog"
+        );
+        assert!(
+            !slugs.contains(&"gpt-5.5"),
+            "stale official entries must be cleared"
+        );
+        assert!(
+            written
+                .get("etag")
+                .and_then(|value| value.as_str())
+                .is_some_and(|etag| etag.starts_with("W/\"cc-switch-")),
+            "regular-provider rewrites must be marked as cc-switch-owned"
+        );
+    }
+
+    #[test]
+    fn write_codex_models_cache_for_official_login_merges_custom_entries() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        // 缓存已有官方 gpt-5.5（官方登录拉取后 Codex 自行写入）。
+        let stale_cache = json!({
+            "fetched_at": "2026-08-01T00:00:00.000000000Z",
+            "etag": "W/\"old\"",
+            "client_version": "0.146.0",
+            "models": [{"slug": "gpt-5.5", "display_name": "GPT-5.5"}]
+        });
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&stale_cache).expect("serialize stale cache"),
+        )
+        .expect("write stale cache");
+        std::fs::write(
+            codex_dir.join("cc-switch-official-models-cache.json"),
+            serde_json::to_string(&stale_cache).expect("serialize trusted official baseline"),
+        )
+        .expect("write trusted official baseline");
+
+        // 官方登录 + 自定义模型：桌面端读 models_cache.json，需把自定义条目
+        // 合并进去，否则官方登录下看不到聚合模型。
+        let provider = Provider {
+            id: crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            name: "OpenAI Official".to_string(),
+            settings_config: json!({
+                "enableOfficialLogin": true,
+                "codexCustomModels": [{
+                    "model": "gpt-5.2",
+                    "providerId": "deepseek",
+                    "upstreamModel": "deepseek-v4-flash",
+                    "displayName": "DeepSeek V4 Flash"
+                }]
+            }),
+            website_url: None,
+            category: Some("official".to_string()),
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, "")
+            .expect("official-login aggregation write must succeed");
+
+        let written: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("models_cache.json")).expect("read cache"),
+        )
+        .expect("parse cache");
+        let models = written
+            .get("models")
+            .and_then(|v| v.as_array())
+            .expect("models array");
+        let slugs: Vec<&str> = models
+            .iter()
+            .filter_map(|m| m.get("slug").and_then(|s| s.as_str()))
+            .collect();
+        assert!(
+            slugs.contains(&"gpt-5.5"),
+            "official model must be preserved under official login: {slugs:?}"
+        );
+        assert!(
+            slugs.contains(&"gpt-5.2"),
+            "custom model must be merged into the desktop cache: {slugs:?}"
+        );
+        assert!(
+            written
+                .get("etag")
+                .and_then(|value| value.as_str())
+                .is_some_and(|etag| etag.starts_with("W/\"cc-switch-")),
+            "official-login aggregation must mark the rendered cache as cc-switch-owned"
+        );
+
+        let baseline: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("cc-switch-official-models-cache.json"))
+                .expect("read saved official baseline"),
+        )
+        .expect("parse saved official baseline");
+        let baseline_slugs: Vec<&str> = baseline
+            .get("models")
+            .and_then(|value| value.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|model| model.get("slug").and_then(|slug| slug.as_str()))
+            .collect();
+        assert_eq!(
+            baseline_slugs,
+            vec!["gpt-5.5"],
+            "the sidecar must retain the clean official catalog without custom entries"
+        );
+
+        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, "")
+            .expect("repeated official-login aggregation must reuse the saved baseline");
+        let repeated: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("models_cache.json"))
+                .expect("read repeated cache"),
+        )
+        .expect("parse repeated cache");
+        let repeated_slugs: Vec<&str> = repeated
+            .get("models")
+            .and_then(|value| value.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|model| model.get("slug").and_then(|slug| slug.as_str()))
+            .collect();
+        assert!(repeated_slugs.contains(&"gpt-5.5"));
+        assert!(repeated_slugs.contains(&"gpt-5.2"));
+    }
+
+    #[test]
+    fn write_codex_models_cache_for_official_login_preserves_trusted_official_cache() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        let stale_cache = json!({
+            "fetched_at": "2026-08-01T00:00:00.000000000Z",
+            "etag": "W/\"old\"",
+            "client_version": "0.146.0",
+            "models": [{"slug": "gpt-5.5", "display_name": "GPT-5.5"}]
+        });
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&stale_cache).expect("serialize stale cache"),
+        )
+        .expect("write stale cache");
+        std::fs::write(
+            codex_dir.join("cc-switch-official-models-cache.json"),
+            serde_json::to_string(&stale_cache).expect("serialize trusted official baseline"),
+        )
+        .expect("write trusted official baseline");
+
+        // 已建立可信 sidecar 时，官方登录且无自定义模型应保持纯官方缓存。
+        let provider = Provider {
+            id: crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            name: "OpenAI Official".to_string(),
+            settings_config: json!({
+                "enableOfficialLogin": true,
+            }),
+            website_url: None,
+            category: Some("official".to_string()),
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, "")
+            .expect("trusted official cache handling must not error");
+
+        let written: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("models_cache.json")).expect("read cache"),
+        )
+        .expect("parse cache");
+        assert_eq!(
+            written
+                .get("models")
+                .and_then(|v| v.as_array())
+                .map(|m| m.len()),
+            Some(1),
+            "trusted official cache must be preserved without custom models"
+        );
+    }
+
+    #[test]
+    fn official_login_without_custom_models_restores_saved_baseline() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        let rendered_cache = json!({
+            "fetched_at": "2026-08-04T00:00:00Z",
+            "etag": "W/\"cc-switch-1754265600\"",
+            "client_version": "0.146.0",
+            "models": [{"slug": "deepseek-v4", "display_name": "DeepSeek V4"}]
+        });
+        let official_baseline = json!({
+            "fetched_at": "2026-08-03T00:00:00Z",
+            "etag": "W/\"official-clean\"",
+            "client_version": "0.146.0",
+            "models": [{"slug": "gpt-5.5", "display_name": "GPT-5.5"}]
+        });
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&rendered_cache).expect("serialize rendered cache"),
+        )
+        .expect("write rendered cache");
+        std::fs::write(
+            codex_dir.join("cc-switch-official-models-cache.json"),
+            serde_json::to_string(&official_baseline).expect("serialize official baseline"),
+        )
+        .expect("write official baseline");
+
+        let provider = Provider {
+            id: crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            name: "OpenAI Official".to_string(),
+            settings_config: json!({ "enableOfficialLogin": true }),
+            website_url: None,
+            category: Some("official".to_string()),
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, "")
+            .expect("restore official baseline");
+
+        let restored: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("models_cache.json"))
+                .expect("read restored cache"),
+        )
+        .expect("parse restored cache");
+        assert_eq!(
+            restored.pointer("/models/0/slug").and_then(Value::as_str),
+            Some("gpt-5.5"),
+            "switching back to plain official login must replace the fresh rendered cache"
+        );
+        assert_eq!(
+            restored.get("etag").and_then(Value::as_str),
+            Some("W/\"official-clean\"")
+        );
+    }
+
+    #[test]
+    fn write_codex_models_cache_for_provider_aggregate_delegates_to_merge() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        let stale_cache = json!({
+            "fetched_at": "2026-08-01T00:00:00.000000000Z",
+            "etag": "W/\"old\"",
+            "client_version": "0.146.0",
+            "models": [{"slug": "gpt-5.5", "display_name": "GPT-5.5"}]
+        });
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&stale_cache).expect("serialize stale cache"),
+        )
+        .expect("write stale cache");
+
+        // 聚合模式（官方 + 关登录）：只保留映射到供应商的自定义模型，
+        // 旧缓存里的官方/残留条目全部清掉。
+        let provider = Provider {
+            id: crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            name: "OpenAI Official".to_string(),
+            settings_config: json!({
+                "enableOfficialLogin": false,
+                "codexCustomModels": [{
+                    "model": "deepseek-v4-flash",
+                    "providerId": "deepseek",
+                    "displayName": "DeepSeek V4 Flash",
+                    "contextWindow": 131072
+                }]
+            }),
+            website_url: None,
+            category: Some("official".to_string()),
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, "")
+            .expect("aggregate write must succeed");
+
+        let written: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("models_cache.json"))
+                .expect("read refreshed cache"),
+        )
+        .expect("parse refreshed cache");
+        let slugs: Vec<&str> = written
+            .get("models")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|m| m.get("slug").and_then(|s| s.as_str()))
+            .collect();
+        assert!(
+            !slugs.contains(&"gpt-5.5"),
+            "stale official entries must be cleared in aggregate mode: {slugs:?}"
+        );
+        assert!(
+            slugs.contains(&"deepseek-v4-flash"),
+            "custom model must be present in aggregate mode: {slugs:?}"
+        );
+    }
+
+    #[test]
+    fn write_codex_models_cache_for_official_login_clears_without_official_baseline() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        // 空缓存（models 为空数组）：没有可靠官方基线，删除以触发官方拉取。
+        let empty_cache = json!({
+            "fetched_at": "2026-08-01T00:00:00.000000000Z",
+            "etag": "W/\"old\"",
+            "client_version": "0.146.0",
+            "models": []
+        });
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&empty_cache).expect("serialize empty cache"),
+        )
+        .expect("write empty cache");
+
+        let settings = json!({
+            "enableOfficialLogin": true,
+            "codexCustomModels": [{
+                "model": "gpt-5.2",
+                "providerId": "deepseek",
+                "upstreamModel": "deepseek-v4-flash",
+                "displayName": "DeepSeek V4 Flash"
+            }]
+        });
+
+        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "")
+            .expect("clear must not error");
+
+        assert!(
+            !codex_dir.join("models_cache.json").exists(),
+            "an unusable cache must be removed so Codex can fetch an official baseline"
+        );
+    }
+
+    #[test]
+    fn write_codex_models_cache_for_official_login_removes_aggregate_leftover_cache() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        // 缓存是聚合模式（关闭官方登录）写的：etag 是 cc-switch 生成的，
+        // 里面的条目不是官方基线，删除缓存让 Codex 立即拉官方模型。
+        let aggregate_cache = json!({
+            "fetched_at": "2026-08-01T00:00:00.000000000Z",
+            "etag": "W/\"cc-switch-1754000000\"",
+            "client_version": "0.146.0",
+            "models": [{"slug": "gpt-5.2", "display_name": "DeepSeek V4 Flash"}]
+        });
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&aggregate_cache).expect("serialize aggregate cache"),
+        )
+        .expect("write aggregate cache");
+
+        let settings = json!({
+            "enableOfficialLogin": true,
+            "codexCustomModels": [{
+                "model": "gpt-5.5",
+                "providerId": "glm",
+                "upstreamModel": "glm-5",
+                "displayName": "GLM-5"
+            }]
+        });
+
+        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "")
+            .expect("clear must not error");
+
+        assert!(
+            !codex_dir.join("models_cache.json").exists(),
+            "a fresh aggregate cache must be removed so official login refetches immediately"
+        );
+    }
+
+    #[test]
+    fn official_login_quarantines_unmarked_legacy_cache_until_official_refetch() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        let legacy_rendered = json!({
+            "fetched_at": "2026-08-03T17:00:00Z",
+            "etag": "W/\"official-etag-preserved-by-legacy-cc-switch\"",
+            "client_version": "0.146.0",
+            "models": [
+                {"slug": "gpt-5.5", "display_name": "GPT-5.5"},
+                {"slug": "gpt-5.2", "display_name": "DeepSeek V4 Flash"}
+            ]
+        });
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&legacy_rendered).expect("serialize legacy cache"),
+        )
+        .expect("write legacy cache");
+
+        let settings = json!({
+            "enableOfficialLogin": true,
+            "codexCustomModels": [{
+                "model": "gpt-5.2",
+                "providerId": "deepseek",
+                "upstreamModel": "deepseek-v4-flash",
+                "displayName": "DeepSeek V4 Flash"
+            }]
+        });
+        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "")
+            .expect("quarantine legacy cache");
+        assert!(
+            !codex_dir.join("models_cache.json").exists(),
+            "an unmarked pre-sidecar cache must be removed so Codex fetches a clean official catalog"
+        );
+
+        let refetched_official = json!({
+            "fetched_at": "2026-08-04T01:00:00Z",
+            "etag": "W/\"official-refetched\"",
+            "client_version": "0.146.0",
+            "models": [
+                {"slug": "gpt-5.5", "display_name": "GPT-5.5"},
+                {"slug": "gpt-5.2", "display_name": "GPT-5.2"}
+            ]
+        });
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&refetched_official).expect("serialize refetched cache"),
+        )
+        .expect("write refetched cache");
+        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "")
+            .expect("merge after official refetch");
+
+        let baseline: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("cc-switch-official-models-cache.json"))
+                .expect("read clean baseline"),
+        )
+        .expect("parse clean baseline");
+        assert_eq!(
+            baseline
+                .pointer("/models/1/display_name")
+                .and_then(Value::as_str),
+            Some("GPT-5.2"),
+            "the clean sidecar must come from the refetched official catalog"
+        );
+        let rendered: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("models_cache.json"))
+                .expect("read rendered cache"),
+        )
+        .expect("parse rendered cache");
+        assert_eq!(
+            rendered
+                .pointer("/models/1/display_name")
+                .and_then(Value::as_str),
+            Some("DeepSeek V4 Flash"),
+            "the rendered cache must still apply the current custom mapping"
+        );
+    }
+
+    #[test]
+    fn official_login_expires_saved_baseline_instead_of_refreshing_it_forever() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        let rendered_cache = json!({
+            "fetched_at": chrono::Utc::now().to_rfc3339(),
+            "etag": "W/\"cc-switch-recent\"",
+            "client_version": "0.146.0",
+            "models": [{"slug": "gpt-5.5"}, {"slug": "gpt-5.2"}]
+        });
+        let expired_baseline = json!({
+            "fetched_at": "2026-08-01T00:00:00Z",
+            "etag": "W/\"official-old\"",
+            "client_version": "0.146.0",
+            "cc_switch_captured_at": "2026-08-01T00:00:00Z",
+            "models": [{"slug": "gpt-5.5"}]
+        });
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&rendered_cache).expect("serialize rendered cache"),
+        )
+        .expect("write rendered cache");
+        std::fs::write(
+            codex_dir.join("cc-switch-official-models-cache.json"),
+            serde_json::to_string(&expired_baseline).expect("serialize expired baseline"),
+        )
+        .expect("write expired baseline");
+
+        let settings = json!({
+            "enableOfficialLogin": true,
+            "codexCustomModels": [{
+                "model": "gpt-5.2",
+                "providerId": "deepseek",
+                "upstreamModel": "deepseek-v4-flash"
+            }]
+        });
+        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "")
+            .expect("expire official baseline");
+
+        assert!(
+            !codex_dir.join("models_cache.json").exists(),
+            "an expired clean baseline must remove the fresh rendered cache so Codex refetches"
+        );
+        let sidecar: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("cc-switch-official-models-cache.json"))
+                .expect("read awaiting sidecar"),
+        )
+        .expect("parse awaiting sidecar");
+        assert_eq!(
+            sidecar.get("cc_switch_state").and_then(Value::as_str),
+            Some("awaiting_official_refresh"),
+            "the expired baseline must not be reused by the next 240-second refresh"
+        );
+    }
+
+    #[test]
+    fn repeated_same_official_snapshot_does_not_extend_baseline_ttl() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        let official_live = json!({
+            "fetched_at": "2026-08-01T00:00:00Z",
+            "etag": "W/\"official-unchanged\"",
+            "client_version": "0.146.0",
+            "models": [{"slug": "gpt-5.5"}]
+        });
+        let mut expired_sidecar = official_live.clone();
+        expired_sidecar
+            .as_object_mut()
+            .expect("sidecar object")
+            .insert(
+                "cc_switch_captured_at".to_string(),
+                Value::String("2026-08-01T00:00:00Z".to_string()),
+            );
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&official_live).expect("serialize official live cache"),
+        )
+        .expect("write official live cache");
+        std::fs::write(
+            codex_dir.join("cc-switch-official-models-cache.json"),
+            serde_json::to_string(&expired_sidecar).expect("serialize expired sidecar"),
+        )
+        .expect("write expired sidecar");
+
+        restore_or_clear_codex_official_models_cache(&codex_dir)
+            .expect("expire unchanged official snapshot");
+
+        assert!(
+            !codex_dir.join("models_cache.json").exists(),
+            "re-observing the same official fingerprint must not reset its capture time"
+        );
+    }
+
+    #[test]
+    fn invalid_official_baseline_capture_time_forces_refetch() {
+        for (case, captured_at) in [
+            ("malformed", "not-a-timestamp"),
+            ("far-future", "2099-01-01T00:00:00Z"),
+        ] {
+            let temp_home = tempfile::tempdir().expect("create temp home");
+            let codex_dir = temp_home.path().join(".codex");
+            std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+            let rendered_cache = json!({
+                "fetched_at": chrono::Utc::now().to_rfc3339(),
+                "etag": "W/\"cc-switch-recent\"",
+                "models": [{"slug": "gpt-5.5"}]
+            });
+            let sidecar = json!({
+                "fetched_at": "2026-08-04T00:00:00Z",
+                "etag": "W/\"official-stale\"",
+                "cc_switch_captured_at": captured_at,
+                "models": [{"slug": "gpt-5.5"}]
+            });
+            std::fs::write(
+                codex_dir.join("models_cache.json"),
+                serde_json::to_string(&rendered_cache).expect("serialize rendered cache"),
+            )
+            .expect("write rendered cache");
+            std::fs::write(
+                codex_dir.join("cc-switch-official-models-cache.json"),
+                serde_json::to_string(&sidecar).expect("serialize sidecar"),
+            )
+            .expect("write sidecar");
+
+            restore_or_clear_codex_official_models_cache(&codex_dir)
+                .expect("handle invalid capture time");
+
+            assert!(
+                !codex_dir.join("models_cache.json").exists(),
+                "{case} capture time must quarantine the sidecar and force an official refetch"
+            );
+        }
+    }
+
+    #[test]
+    fn official_baseline_capture_state_has_exact_ttl_boundaries() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-08-04T12:00:00Z")
+            .expect("parse fixed now")
+            .with_timezone(&chrono::Utc);
+        let state_for = |captured_at: Value| {
+            codex_official_baseline_capture_state(
+                &json!({ "cc_switch_captured_at": captured_at }),
+                now,
+            )
+        };
+
+        assert_eq!(
+            codex_official_baseline_capture_state(&json!({}), now),
+            CodexOfficialBaselineCaptureState::Missing
+        );
+        assert_eq!(
+            state_for(json!("2026-08-04T11:55:01Z")),
+            CodexOfficialBaselineCaptureState::Fresh,
+            "299 seconds must remain fresh"
+        );
+        assert_eq!(
+            state_for(json!("2026-08-04T11:55:00Z")),
+            CodexOfficialBaselineCaptureState::Expired,
+            "300 seconds is the exact expiry boundary"
+        );
+        assert_eq!(
+            state_for(json!("2026-08-04T11:54:59Z")),
+            CodexOfficialBaselineCaptureState::Expired,
+            "301 seconds must be expired"
+        );
+        assert_eq!(
+            state_for(json!("not-a-timestamp")),
+            CodexOfficialBaselineCaptureState::Invalid
+        );
+        assert_eq!(
+            state_for(json!(42)),
+            CodexOfficialBaselineCaptureState::Invalid
+        );
+        assert_eq!(
+            state_for(json!("2026-08-04T12:01:01Z")),
+            CodexOfficialBaselineCaptureState::Invalid,
+            "capture times beyond the clock-skew allowance must be quarantined"
+        );
+    }
+
+    #[test]
+    fn write_codex_models_cache_derives_single_entry_from_top_level_model() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_vec_pretty(&json!({
+                "client_version": "0.146.0",
+                "models": []
+            }))
+            .expect("serialize cache version fixture"),
+        )
+        .expect("seed cache version fixture");
+
+        // 供应商只有顶层 model、没有 modelCatalog：从配置的 model 派生单条缓存，
+        // 桌面端至少能发现默认模型，而不是写入空列表。
+        let config_text = "model_provider = \"custom\"\nmodel = \"deepseek-v4-flash\"\n[model_providers.custom]\nbase_url = \"https://api.deepseek.com\"\nwire_api = \"responses\"\n";
+        let provider = Provider {
+            id: "deepseek".to_string(),
+            name: "DeepSeek".to_string(),
+            settings_config: json!({}),
+            website_url: None,
+            category: Some("codex".to_string()),
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: Some(crate::provider::ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                ..Default::default()
+            }),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, config_text)
+            .expect("write must succeed");
+
+        let written: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("models_cache.json")).expect("read cache"),
+        )
+        .expect("parse cache");
+        let models = written
+            .get("models")
+            .and_then(|v| v.as_array())
+            .expect("models array");
+        assert_eq!(models.len(), 1, "single entry derived from top-level model");
+        assert_eq!(
+            models[0].get("slug").and_then(|v| v.as_str()),
+            Some("deepseek-v4-flash"),
+            "derived entry carries the configured model slug"
+        );
     }
 
     #[test]
@@ -4457,6 +6427,59 @@ model_catalog_json = "cc-switch-model-catalog.json"
         assert!(
             result.is_err(),
             "file larger than MAX_CODEX_CATALOG_BYTES must be rejected"
+        );
+    }
+
+    #[test]
+    fn custom_model_entries_parse_and_dedupe() {
+        let settings = json!({
+            "codexCustomModels": [
+                {
+                    "model": "my-deepseek",
+                    "providerId": "prov-1",
+                    "upstreamModel": "deepseek-chat",
+                    "displayName": "DeepSeek via cc-switch",
+                    "contextWindow": 128000,
+                    "inputModalities": ["text"]
+                },
+                {
+                    "model": "my-deepseek",
+                    "providerId": "prov-2"
+                },
+                {
+                    "model": "  ",
+                    "providerId": "prov-3"
+                },
+                {
+                    "model": "snake-case",
+                    "provider_id": "prov-4",
+                    "upstream_model": "deepseek-reasoner"
+                },
+                {
+                    "model": "my-deepseek[1M]",
+                    "providerId": "prov-5"
+                }
+            ]
+        });
+        let entries = codex_custom_model_entries(&settings);
+        assert_eq!(
+            entries.len(),
+            2,
+            "duplicate (including [1M]-suffixed) and empty model ids are skipped"
+        );
+        assert_eq!(entries[0].model, "my-deepseek");
+        assert_eq!(entries[0].provider_id, "prov-1");
+        assert_eq!(entries[0].upstream_model.as_deref(), Some("deepseek-chat"));
+        assert_eq!(entries[0].context_window, Some(128_000));
+        assert_eq!(
+            entries[0].input_modalities.as_deref(),
+            Some(&["text".to_string()][..])
+        );
+        assert_eq!(entries[1].model, "snake-case");
+        assert_eq!(entries[1].provider_id, "prov-4");
+        assert_eq!(
+            entries[1].upstream_model.as_deref(),
+            Some("deepseek-reasoner")
         );
     }
 }
