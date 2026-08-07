@@ -318,7 +318,25 @@ pub fn responses_request_to_anthropic(
                 .and_then(codex_effort_to_anthropic)
                 .is_some());
 
-    if !thinking_history_is_valid {
+    // qwen ≥3.8 via the Bailian Messages gateway: thinking is always on and
+    // cannot be disabled (`type:"disabled"` 400s). Effort tiers map to vendor
+    // budget boundaries (≤4096 low, ≤16384 medium, else xhigh); an explicit
+    // disable maps to the low tier. Absent effort → no thinking injection
+    // (vendor default = xhigh). The final `thinking_enabled && !adaptive_model`
+    // block below emits the thinking object from thinking_budget.
+    let is_qwen_reasoning = super::transform::is_qwen_reasoning_effort_model(model);
+
+    if is_qwen_reasoning {
+        if let Some(effort) = reasoning_effort {
+            let tier = super::transform::map_effort_to_qwen_tier(effort); // none → low
+            let budget = super::transform::qwen_tier_to_budget(tier);
+            // Headroom: Anthropic requires max_tokens > budget_tokens. Never
+            // disable thinking (thinking-only model) — a small max_output_tokens
+            // silently downgrades the tier the gateway derives from the budget.
+            thinking_budget = super::transform::clamp_thinking_budget(budget, max_tokens);
+            thinking_enabled = true;
+        }
+    } else if !thinking_history_is_valid {
         if cannot_disable_thinking {
             return Err(ProxyError::InvalidRequest(
                 "Anthropic model requires thinking, but the tool history has no signed thinking block to replay"
@@ -401,22 +419,38 @@ pub fn responses_request_to_anthropic(
                 Some("any" | "tool")
             );
             if thinking_enabled && forced {
-                if cannot_disable_thinking {
+                if is_qwen_reasoning {
+                    // qwen ≥3.8 cannot disable thinking (400s); degrade to the
+                    // low tier and keep the caller's forced tool constraint.
+                    // The budget must be clamped against max_tokens headroom:
+                    // Anthropic 400s on budget_tokens >= max_tokens, so a small
+                    // max_output_tokens (≤ 4096) must not ship the raw low-tier
+                    // budget.
+                    let budget = super::transform::clamp_thinking_budget(
+                        super::transform::qwen_tier_to_budget("low"),
+                        max_tokens,
+                    );
+                    result["thinking"] = json!({
+                        "type": "enabled",
+                        "budget_tokens": budget
+                    });
+                } else if cannot_disable_thinking {
                     return Err(ProxyError::InvalidRequest(
                         "Anthropic model requires adaptive thinking and cannot honor a forced tool_choice"
                             .to_string(),
                     ));
-                }
-                // Anthropic rejects forced tools while thinking is enabled. Preserve
-                // the caller's explicit tool constraint and disable thinking for this
-                // request instead of silently weakening `required`/named selection.
-                result["thinking"] = json!({ "type": "disabled" });
-                result.as_object_mut().unwrap().remove("output_config");
-                if let Some(value) = body.get("temperature") {
-                    result["temperature"] = value.clone();
-                }
-                if let Some(value) = body.get("top_p") {
-                    result["top_p"] = value.clone();
+                } else {
+                    // Anthropic rejects forced tools while thinking is enabled. Preserve
+                    // the caller's explicit tool constraint and disable thinking for this
+                    // request instead of silently weakening `required`/named selection.
+                    result["thinking"] = json!({ "type": "disabled" });
+                    result.as_object_mut().unwrap().remove("output_config");
+                    if let Some(value) = body.get("temperature") {
+                        result["temperature"] = value.clone();
+                    }
+                    if let Some(value) = body.get("top_p") {
+                        result["top_p"] = value.clone();
+                    }
                 }
             }
             result["tool_choice"] = mapped;
@@ -2117,6 +2151,180 @@ mod tests {
 
         let opus = responses_request_to_anthropic(request("claude-opus-4.8"), 4096).unwrap();
         assert!(opus.get("thinking").is_none());
+    }
+
+    // ── qwen ≥3.8 (Bailian Messages gateway): thinking-only, tier budgets ──
+
+    #[test]
+    fn test_qwen38_reasoning_effort_tier_budgets() {
+        for (effort, budget) in [
+            ("minimal", 4096),
+            ("low", 4096),
+            ("medium", 16384),
+            ("high", 262144),
+            ("xhigh", 262144),
+            ("max", 262144),
+        ] {
+            let input = json!({
+                "model": "qwen3.8-max-preview",
+                // Well above 2× the xhigh budget so the headroom cap does not
+                // clamp — this test covers tier mapping.
+                "max_output_tokens": 1_000_000,
+                "temperature": 0.7,
+                "reasoning": { "effort": effort },
+                "input": [{ "role": "user", "content": "hi" }]
+            });
+            let result = responses_request_to_anthropic(input, 4096).unwrap();
+            assert_eq!(result["thinking"]["type"], "enabled", "effort={effort}");
+            assert_eq!(
+                result["thinking"]["budget_tokens"], budget,
+                "effort={effort}"
+            );
+            assert!(result.get("temperature").is_none(), "effort={effort}");
+        }
+    }
+
+    #[test]
+    fn test_qwen38_disable_maps_to_low_never_disabled() {
+        for effort in ["none", "off", "disabled"] {
+            let input = json!({
+                "model": "qwen3.8-max-preview",
+                "max_output_tokens": 20000,
+                "reasoning": { "effort": effort },
+                "input": [{ "role": "user", "content": "hi" }]
+            });
+            let result = responses_request_to_anthropic(input, 4096).unwrap();
+            assert_eq!(result["thinking"]["type"], "enabled", "effort={effort}");
+            assert_eq!(result["thinking"]["budget_tokens"], 4096, "effort={effort}");
+        }
+    }
+
+    #[test]
+    fn test_qwen38_absent_effort_no_thinking_injection() {
+        let input = json!({
+            "model": "qwen3.8-max-preview",
+            "max_output_tokens": 20000,
+            "temperature": 0.7,
+            "input": [{ "role": "user", "content": "hi" }]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        assert!(result.get("thinking").is_none());
+        assert_eq!(result["temperature"], 0.7);
+    }
+
+    #[test]
+    fn test_qwen38_small_max_tokens_downgrades_tier_keeps_enabled() {
+        // max_output_tokens=4096 → ceiling 2048；xhigh 预算 262144 钳到 2048，
+        // 但 thinking 保持 enabled（仅思考模型，永不关闭）。
+        let input = json!({
+            "model": "qwen3.8-max-preview",
+            "max_output_tokens": 4096,
+            "reasoning": { "effort": "xhigh" },
+            "input": [{ "role": "user", "content": "hi" }]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        assert_eq!(result["thinking"]["type"], "enabled");
+        assert_eq!(result["thinking"]["budget_tokens"], 2048);
+    }
+
+    #[test]
+    fn test_qwen38_forced_tool_choice_degrades_to_low_tier() {
+        let input = json!({
+            "model": "qwen3.8-max-preview",
+            "max_output_tokens": 20000,
+            "reasoning": { "effort": "high" },
+            "tools": [{ "type": "function", "name": "x", "parameters": {"type": "object"} }],
+            "tool_choice": "required",
+            "input": [
+                { "role": "user", "content": [{ "type": "input_text", "text": "hi" }] }
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        // 仅思考模型：降级到 low 档而不是关闭 thinking；保留强制 tool_choice。
+        assert_eq!(result["thinking"]["type"], "enabled");
+        assert_eq!(result["thinking"]["budget_tokens"], 4096);
+        assert_eq!(result["tool_choice"], json!({ "type": "any" }));
+    }
+
+    #[test]
+    fn test_qwen38_forced_tool_choice_clamps_budget_below_small_max_tokens() {
+        // 回归审核意见：低档预算 4096 不得裸写——max_output_tokens ≤ 4096 时
+        // budget_tokens >= max_tokens 会违反 Anthropic 约束（上游 400）。
+        let input = json!({
+            "model": "qwen3.8-max-preview",
+            "max_output_tokens": 4096,
+            "reasoning": { "effort": "high" },
+            "tools": [{ "type": "function", "name": "x", "parameters": {"type": "object"} }],
+            "tool_choice": "required",
+            "input": [
+                { "role": "user", "content": [{ "type": "input_text", "text": "hi" }] }
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        assert_eq!(result["thinking"]["type"], "enabled");
+        assert_eq!(result["thinking"]["budget_tokens"], 2048); // ceiling 4096/2
+        assert!(result["thinking"]["budget_tokens"].as_u64().unwrap() < 4096);
+        assert_eq!(result["tool_choice"], json!({ "type": "any" }));
+    }
+
+    #[test]
+    fn test_qwen38_forced_tool_choice_floor_budget_at_tiny_max_tokens() {
+        // max_output_tokens=2048：ceiling 1024 触及 Anthropic 下限，budget 兜底
+        // 在 1024（仍严格小于 max_tokens）。
+        let input = json!({
+            "model": "qwen3.8-max-preview",
+            "max_output_tokens": 2048,
+            "reasoning": { "effort": "high" },
+            "tools": [{ "type": "function", "name": "x", "parameters": {"type": "object"} }],
+            "tool_choice": "required",
+            "input": [
+                { "role": "user", "content": [{ "type": "input_text", "text": "hi" }] }
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        assert_eq!(result["thinking"]["type"], "enabled");
+        assert_eq!(result["thinking"]["budget_tokens"], 1024);
+        assert_eq!(result["tool_choice"], json!({ "type": "any" }));
+    }
+
+    #[test]
+    fn test_qwen38_unsigned_tool_history_keeps_thinking_enabled() {
+        let input = json!({
+            "model": "qwen3.8-max-preview",
+            "max_output_tokens": 1_000_000,
+            "reasoning": { "effort": "high" },
+            "input": [
+                { "type": "function_call", "call_id": "c1", "name": "t", "arguments": "{}" },
+                { "type": "function_call_output", "call_id": "c1", "output": "ok" }
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        assert_eq!(result["thinking"]["type"], "enabled");
+        assert_eq!(result["thinking"]["budget_tokens"], 262144);
+    }
+
+    #[test]
+    fn test_pre_qwen38_keeps_legacy_budget_mapping() {
+        // qwen <3.8 走旧逻辑：effort_to_thinking_budget（high → 16384）。
+        let input = json!({
+            "model": "qwen3.7-max",
+            "max_output_tokens": 40000,
+            "reasoning": { "effort": "high" },
+            "input": [{ "role": "user", "content": "hi" }]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        assert_eq!(result["thinking"]["type"], "enabled");
+        assert_eq!(result["thinking"]["budget_tokens"], 16384);
+
+        // none → thinking disabled（<3.8 可关），行为不变。
+        let input = json!({
+            "model": "qwen3.7-max",
+            "max_output_tokens": 40000,
+            "reasoning": { "effort": "none" },
+            "input": [{ "role": "user", "content": "hi" }]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        assert_eq!(result["thinking"]["type"], "disabled");
     }
 
     #[test]

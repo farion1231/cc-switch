@@ -455,7 +455,11 @@ pub fn transform_claude_request_for_api_format(
             Some(&provider.id),
             session_id,
         ),
-        _ => Ok(body),
+        // Anthropic-format passthrough. qwen ≥3.8 upstreams (Bailian Messages
+        // gateway) are thinking-only: an explicit thinking disable would 400,
+        // so it is rewritten to the low tier. Non-qwen bodies pass through
+        // byte-identical.
+        _ => Ok(super::transform::sanitize_anthropic_body_for_qwen_reasoning(body)),
     }
 }
 
@@ -1792,6 +1796,76 @@ mod tests {
             transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
                 .unwrap();
         assert!(transformed.get("stream_options").is_none());
+    }
+
+    #[test]
+    fn test_transform_claude_request_anthropic_passthrough_qwen_disabled_rewritten() {
+        let provider = create_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://dashscope.aliyuncs.com/apps/anthropic" }
+        }));
+        // qwen ≥3.8 是仅思考模型：thinking disabled 会被供应商拒绝，透传路径
+        // 必须改写为 enabled + low 档预算，而不是原样转发。低档预算 4096 还要
+        // 对 max_tokens 做 headroom 钳制（Anthropic 400s on budget >= max_tokens）：
+        // 此处 max_tokens=128 ⇒ budget 钳到 127。
+        let body = json!({
+            "model": "qwen3.8-max-preview",
+            "thinking": { "type": "disabled" },
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "anthropic", None, None)
+                .unwrap();
+        assert_eq!(transformed["thinking"]["type"], "enabled");
+        assert_eq!(transformed["thinking"]["budget_tokens"], 127);
+        assert!(transformed["thinking"]["budget_tokens"].as_u64().unwrap() < 128);
+        assert!(transformed.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn test_transform_claude_request_anthropic_passthrough_qwen_enabled_untouched() {
+        let provider = create_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://dashscope.aliyuncs.com/apps/anthropic" }
+        }));
+        // enabled thinking 原样透传，由网关把 budget_tokens 映射到内部档位。
+        let body = json!({
+            "model": "qwen3.8-max-preview",
+            "thinking": { "type": "enabled", "budget_tokens": 16384 },
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+        let transformed = transform_claude_request_for_api_format(
+            body.clone(),
+            &provider,
+            "anthropic",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(transformed, body);
+    }
+
+    #[test]
+    fn test_transform_claude_request_anthropic_passthrough_non_qwen_untouched() {
+        let provider = create_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://api.anthropic.com" }
+        }));
+        // 非 qwen 模型透传必须字节级不变（含 thinking disabled）。
+        let body = json!({
+            "model": "claude-sonnet-4-6",
+            "thinking": { "type": "disabled" },
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 128
+        });
+        let transformed = transform_claude_request_for_api_format(
+            body.clone(),
+            &provider,
+            "anthropic",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(transformed, body);
     }
 
     #[test]

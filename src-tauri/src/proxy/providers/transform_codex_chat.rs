@@ -404,6 +404,16 @@ fn apply_reasoning_options(
         .to_ascii_lowercase();
 
     if !reasoning_enabled {
+        // qwen ≥3.8 是仅思考模型：显式关闭（effort none/off/disabled 或
+        // reasoning:null）映射到最低档 low，绝不转发关闭信号（供应商报错）。
+        if config.effort_value_mode.as_deref() == Some("qwen") {
+            if effort_param == "reasoning.effort" {
+                result["reasoning"] = json!({ "effort": "low" });
+            } else {
+                result["reasoning_effort"] = json!("low");
+            }
+            return;
+        }
         // OpenRouter 原生 reasoning.effort 支持显式 "none"（语义：彻底关闭推理）。
         // 上游显式发 effort=none/off/disabled（或 reasoning=null）时 reasoning_enabled 为 false，
         // 直接 return 会丢失关闭意图——OpenRouter 部分模型默认开思考，不带字段无法关闭，
@@ -480,6 +490,15 @@ fn map_reasoning_effort(effort: &str, mode: Option<&str>) -> Option<&'static str
             "medium" => Some("medium"),
             "low" => Some("low"),
             "minimal" => Some("minimal"),
+            _ => None,
+        },
+        // qwen ≥3.8 仅接受 low/medium/xhigh 三档（默认 xhigh）。high/max 向上钳到
+        // xhigh，minimal 归入 low；none/off/disabled 不会到达这里（已在
+        // apply_reasoning_options 的关闭分支映射为 low）。未知值丢弃以免 400。
+        "qwen" => match effort.as_str() {
+            "minimal" | "low" => Some("low"),
+            "medium" => Some("medium"),
+            "high" | "xhigh" | "max" => Some("xhigh"),
             _ => None,
         },
         _ => match effort.as_str() {
@@ -2639,6 +2658,113 @@ mod tests {
 
         assert_eq!(result["enable_thinking"], true);
         assert!(result.get("reasoning_effort").is_none());
+    }
+
+    /// qwen ≥3.8 推断配置（与 codex.rs infer_codex_chat_reasoning_config 一致）：
+    /// 仅思考模型，顶层 reasoning_effort 三档，永不发 enable_thinking。
+    fn qwen_reasoning_config() -> CodexChatReasoningConfig {
+        CodexChatReasoningConfig {
+            supports_thinking: Some(false),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("qwen".to_string()),
+            output_format: Some("reasoning_content".to_string()),
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_qwen38_effort_tiers() {
+        let config = qwen_reasoning_config();
+        for (effort, expected) in [
+            ("minimal", "low"),
+            ("low", "low"),
+            ("medium", "medium"),
+            ("high", "xhigh"),
+            ("xhigh", "xhigh"),
+            ("max", "xhigh"),
+        ] {
+            let input = json!({
+                "model": "qwen3.8-max-preview",
+                "input": "hello",
+                "reasoning": {"effort": effort}
+            });
+            let result =
+                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+            assert_eq!(result["reasoning_effort"], expected, "effort={effort}");
+            // 仅思考模型：绝不发 enable_thinking / thinking
+            assert!(result.get("enable_thinking").is_none(), "effort={effort}");
+            assert!(result.get("thinking").is_none(), "effort={effort}");
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_qwen38_disable_maps_to_low() {
+        let config = qwen_reasoning_config();
+        // 显式关闭信号一律映射为 low 档——转发关闭参数会导致供应商报错。
+        for effort in ["none", "off", "disabled"] {
+            let input = json!({
+                "model": "qwen3.8-max-preview",
+                "input": "hello",
+                "reasoning": {"effort": effort}
+            });
+            let result =
+                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+            assert_eq!(result["reasoning_effort"], "low", "effort={effort}");
+            assert!(result.get("enable_thinking").is_none(), "effort={effort}");
+            assert!(result.get("thinking").is_none(), "effort={effort}");
+        }
+
+        // reasoning: null 同样是显式关闭意图
+        let input = json!({
+            "model": "qwen3.8-max-preview",
+            "input": "hello",
+            "reasoning": null
+        });
+        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        assert_eq!(result["reasoning_effort"], "low");
+        assert!(result.get("enable_thinking").is_none());
+    }
+
+    #[test]
+    fn responses_request_to_chat_qwen38_absent_reasoning_injects_nothing() {
+        let config = qwen_reasoning_config();
+        let input = json!({
+            "model": "qwen3.8-max-preview",
+            "input": "hello"
+        });
+        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        // 无推理信号 → 不注入，供应商默认 xhigh
+        assert!(result.get("reasoning_effort").is_none());
+        assert!(result.get("enable_thinking").is_none());
+        assert!(result.get("thinking").is_none());
+    }
+
+    #[test]
+    fn responses_request_to_chat_qwen38_unknown_effort_dropped() {
+        let config = qwen_reasoning_config();
+        let input = json!({
+            "model": "qwen3.8-max-preview",
+            "input": "hello",
+            "reasoning": {"effort": "garbage"}
+        });
+        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        // 未知值丢弃以免供应商 400
+        assert!(result.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn map_reasoning_effort_qwen_mode_table() {
+        assert_eq!(map_reasoning_effort("minimal", Some("qwen")), Some("low"));
+        assert_eq!(map_reasoning_effort("low", Some("qwen")), Some("low"));
+        assert_eq!(map_reasoning_effort("medium", Some("qwen")), Some("medium"));
+        assert_eq!(map_reasoning_effort("high", Some("qwen")), Some("xhigh"));
+        assert_eq!(map_reasoning_effort("xhigh", Some("qwen")), Some("xhigh"));
+        assert_eq!(map_reasoning_effort("max", Some("qwen")), Some("xhigh"));
+        assert_eq!(map_reasoning_effort("garbage", Some("qwen")), None);
+        // none/off/disabled 在 qwen 模式下不可达（关闭分支已提前处理），
+        // 但函数自身的 early-return 语义保持不变
+        assert_eq!(map_reasoning_effort("none", Some("qwen")), None);
     }
 
     #[test]
