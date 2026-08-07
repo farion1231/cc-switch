@@ -12,8 +12,8 @@ use crate::{
 };
 
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
-    TITLE_MAX_CHARS,
+    extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines,
+    truncate_message_content, truncate_summary, TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "openclaw";
@@ -116,7 +116,11 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 
         let ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
 
-        messages.push(SessionMessage { role, content, ts });
+        messages.push(SessionMessage {
+            role,
+            content: truncate_message_content(content),
+            ts,
+        });
     }
 
     Ok(messages)
