@@ -112,7 +112,9 @@ async function main() {
       const txt = decodeMaybeUTF16(buf);
       reports.push(`${ks}: use_hidden_models replacements=${replaced}, custom models inserted=${customModels.length > 0}, VERIFIED`);
     } else {
-      reports.push(`${ks}: no changes`);
+      const reread = await db.get(key);
+      verifyEvalValue(reread, ks);
+      reports.push(`${ks}: already false`);
     }
   }
 

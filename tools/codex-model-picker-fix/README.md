@@ -10,8 +10,9 @@ This project patches the cached Statsig evaluations in the Codex Desktop
 
 - `use_hidden_models` becomes `false`
 - the cache timestamp is pushed 30 days into the future
-- `ab.chatgpt.com` is blocked in `hosts` so the remote policy cannot be
-  refreshed back over the network
+- the Statsig endpoints (`ab.chatgpt.com`, `statsigapi.net`, `api.statsigcdn.com`,
+  `prodregistryv2.org`, `featureassets.org`) are blocked in `hosts` and added to the
+  system proxy bypass list so the remote policy cannot be refreshed back over the network
 
 No model whitelist is written. With `use_hidden_models=false`, the renderer
 shows every non-hidden model returned by `model/list`, so models added to
@@ -49,11 +50,17 @@ CC Switch later appear automatically after restarting Codex.
 
 - `%LOCALAPPDATA%\Packages\OpenAI.Codex_*\LocalCache\Roaming\Codex\web\Codex\Default\Local Storage\leveldb`
   (a backup is created next to it before patching)
-- `C:\Windows\System32\drivers\etc\hosts` (`127.0.0.1 ab.chatgpt.com`)
+- `C:\Windows\System32\drivers\etc\hosts` (`127.0.0.1 <statsig-domain>` for every
+  Statsig endpoint used by the renderer)
+- `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings\ProxyOverride`
+  (Statsig domains are added when a system proxy is active)
 
 ## Rollback
 
-- Remove the `127.0.0.1 ab.chatgpt.com` line from `hosts`.
+- Remove the `127.0.0.1 <statsig-domain>` lines added by the script from `hosts`.
+- Remove the Statsig domains from `ProxyOverride` in
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings` if you no
+  longer want them bypassed.
 - Replace the patched `leveldb` folder with the `leveldb.bak-<timestamp>`
   backup created by the script.
 
