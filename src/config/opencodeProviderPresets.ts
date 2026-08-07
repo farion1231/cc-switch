@@ -1874,6 +1874,34 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "OrcaRouter",
+    websiteUrl: "https://www.orcarouter.ai",
+    apiKeyUrl: "https://www.orcarouter.ai/console",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "OrcaRouter",
+      options: {
+        baseURL: "https://api.orcarouter.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "anthropic/claude-sonnet-5": { name: "Claude Sonnet 5" },
+        "anthropic/claude-opus-5": { name: "Claude Opus 5" },
+      },
+    },
+    category: "aggregator",
+    icon: "orcarouter",
+    iconColor: "#0160E6",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-orca-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "TheRouter",
     websiteUrl: "https://therouter.ai",
     apiKeyUrl: "https://dashboard.therouter.ai",

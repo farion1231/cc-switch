@@ -453,6 +453,23 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#6566F1",
   },
   {
+    name: "OrcaRouter",
+    websiteUrl: "https://www.orcarouter.ai",
+    apiKeyUrl: "https://www.orcarouter.ai/console",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.orcarouter.ai",
+        GEMINI_MODEL: "google/gemini-3.6-flash",
+      },
+    },
+    baseURL: "https://api.orcarouter.ai",
+    model: "google/gemini-3.6-flash",
+    description: "OrcaRouter",
+    category: "aggregator",
+    icon: "orcarouter",
+    iconColor: "#0160E6",
+  },
+  {
     name: "TheRouter",
     websiteUrl: "https://therouter.ai",
     apiKeyUrl: "https://dashboard.therouter.ai",

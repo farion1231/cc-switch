@@ -1081,6 +1081,23 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#6566F1",
   },
   {
+    name: "OrcaRouter",
+    websiteUrl: "https://www.orcarouter.ai",
+    apiKeyUrl: "https://www.orcarouter.ai/console",
+    category: "aggregator",
+    baseUrl: "https://api.orcarouter.ai",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: mappedRoutes(
+      "anthropic/claude-sonnet-5",
+      "anthropic/claude-opus-5",
+      "anthropic/claude-haiku-4.5",
+      true,
+    ),
+    icon: "orcarouter",
+    iconColor: "#0160E6",
+  },
+  {
     name: "TheRouter",
     websiteUrl: "https://therouter.ai",
     apiKeyUrl: "https://dashboard.therouter.ai",
