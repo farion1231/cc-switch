@@ -202,4 +202,94 @@ describe("EditProviderDialog", () => {
       JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
     ).toEqual(provider.settingsConfig);
   });
+
+  it("延迟挂载表单直到 live 配置解析完成，避免 API Key 字段在打开瞬间用数据库值闪烁 (#4110)", async () => {
+    const provider: Provider = {
+      id: "deepseek",
+      name: "Deepseek",
+      category: "aggregator",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_AUTH_TOKEN: "db-key",
+          ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic",
+        },
+      },
+    };
+    // 用户手动改过 ~/.claude/settings.json，live 里的 key 与数据库不同
+    const liveSettings = {
+      env: {
+        ANTHROPIC_AUTH_TOKEN: "live-key",
+        ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic",
+      },
+    };
+
+    apiMocks.getCurrent.mockResolvedValue(provider.id);
+    // 受控的 live 读取，手动决定何时解析
+    let resolveLive: (value: typeof liveSettings) => void = () => {};
+    apiMocks.getLiveProviderSettings.mockReturnValue(
+      new Promise<typeof liveSettings>((resolve) => {
+        resolveLive = resolve;
+      }),
+    );
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="claude"
+      />,
+    );
+
+    // live 解析前：表单尚未挂载，绝不会先用数据库配置初始化（否则就会闪一下 db-key）
+    await waitFor(() =>
+      expect(apiMocks.getLiveProviderSettings).toHaveBeenCalled(),
+    );
+    expect(screen.queryByTestId("settings-config")).toBeNull();
+
+    // 解析 live 后：表单挂载，且直接使用 live 配置（从未出现过 db-key）
+    resolveLive(liveSettings);
+    await waitFor(() =>
+      expect(screen.getByTestId("settings-config")).toBeTruthy(),
+    );
+    expect(
+      JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+    ).toEqual(liveSettings);
+  });
+
+  it("当前供应商 live 配置为 null 时回退到数据库配置并挂载表单，不会卡在加载态 (#4277 review)", async () => {
+    const provider: Provider = {
+      id: "deepseek",
+      name: "Deepseek",
+      category: "aggregator",
+      settingsConfig: {
+        env: { ANTHROPIC_AUTH_TOKEN: "db-key" },
+      },
+    };
+
+    apiMocks.getCurrent.mockResolvedValue(provider.id);
+    // live 读取成功但返回非对象（settings 文件是 JSON null）
+    apiMocks.getLiveProviderSettings.mockResolvedValue(
+      null as unknown as Record<string, unknown>,
+    );
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="claude"
+      />,
+    );
+
+    // 表单仍会挂载（hasLoadedLive 置位），且使用数据库配置回退
+    await waitFor(() =>
+      expect(screen.getByTestId("settings-config")).toBeTruthy(),
+    );
+    expect(
+      JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+    ).toEqual(provider.settingsConfig);
+  });
 });
