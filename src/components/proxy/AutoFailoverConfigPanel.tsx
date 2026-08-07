@@ -5,7 +5,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Save, Loader2, Info, Plus, Trash2 } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Save, Loader2, Info, Plus, Trash2, CircleHelp } from "lucide-react";
 import { toast } from "sonner";
 import { useAppProxyConfig, useUpdateAppProxyConfig } from "@/lib/query/proxy";
 import type { AppProxyConfig, ProxyRetryRule } from "@/types/proxy";
@@ -292,9 +297,103 @@ export function AutoFailoverConfigPanel({
 
         {/* 重试与超时配置 */}
         <div className="space-y-4 rounded-lg border border-white/10 bg-muted/30 p-4">
-          <h4 className="text-sm font-semibold">
-            {t("proxy.autoFailover.retrySettings", "重试与超时设置")}
-          </h4>
+          <div className="flex items-center gap-1.5">
+            <h4 className="text-sm font-semibold">
+              {t("proxy.autoFailover.retrySettings", "重试与超时设置")}
+            </h4>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                  aria-label={t(
+                    "proxy.autoFailover.retryRelationshipHelp",
+                    "查看重试次数说明",
+                  )}
+                >
+                  <CircleHelp className="h-4 w-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                side="bottom"
+                collisionPadding={12}
+                className="w-[min(26rem,calc(100vw-2rem))] space-y-4 p-4"
+              >
+                <div className="space-y-1">
+                  <h5 className="text-sm font-semibold">
+                    {t(
+                      "proxy.autoFailover.retryRelationshipTitle",
+                      "两类重试如何配合",
+                    )}
+                  </h5>
+                  <p className="text-xs text-muted-foreground">
+                    {t(
+                      "proxy.autoFailover.retryRelationshipIntro",
+                      "它们是嵌套关系，分别控制供应商之间和单个供应商内部的重试。",
+                    )}
+                  </p>
+                </div>
+
+                <div className="space-y-3 text-xs leading-relaxed">
+                  <div>
+                    <p className="font-medium text-foreground">
+                      {t(
+                        "proxy.autoFailover.maxRetriesHelpTitle",
+                        "最大重试次数",
+                      )}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {t(
+                        "proxy.autoFailover.maxRetriesHelpBody",
+                        "控制供应商之间的故障转移。当前供应商最终失败后，最多再尝试多少个供应商；关闭自动故障转移时不生效。",
+                      )}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="font-medium text-foreground">
+                      {t(
+                        "proxy.autoFailover.extraRetriesHelpTitle",
+                        "额外重试次数",
+                      )}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {t(
+                        "proxy.autoFailover.extraRetriesHelpBody",
+                        "控制当前供应商内部的原地重试。只有命中特定错误规则时才执行；即使关闭自动故障转移也可以生效。",
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="rounded-md border border-border bg-muted/40 p-3 text-xs">
+                  <p className="mb-1 font-medium">
+                    {t("proxy.autoFailover.retryOrderTitle", "执行顺序")}
+                  </p>
+                  <p className="text-muted-foreground">
+                    {t(
+                      "proxy.autoFailover.retryOrderBody",
+                      "请求供应商 A → 命中规则后按额外重试次数继续请求 A → 仍失败后按最大重试次数切换到 B、C……",
+                    )}
+                  </p>
+                </div>
+
+                <div className="space-y-1 text-xs">
+                  <p className="font-medium">
+                    {t("proxy.autoFailover.retryExampleTitle", "计算示例")}
+                  </p>
+                  <p className="text-muted-foreground">
+                    {t(
+                      "proxy.autoFailover.retryExampleBody",
+                      "最大重试次数为 2、额外重试次数为 3 时，最多尝试 3 个供应商；若每次都命中规则，每个供应商最多请求 4 次，最坏共请求 12 次。",
+                    )}
+                  </p>
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
@@ -315,7 +414,7 @@ export function AutoFailoverConfigPanel({
               <p className="text-xs text-muted-foreground">
                 {t(
                   "proxy.autoFailover.maxRetriesHint",
-                  "请求失败时的重试次数（0-10）",
+                  "自动故障转移时，最多继续尝试的供应商数量（0-10）",
                 )}
               </p>
             </div>

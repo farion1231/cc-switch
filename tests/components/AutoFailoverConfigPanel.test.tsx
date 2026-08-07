@@ -81,6 +81,18 @@ describe("AutoFailoverConfigPanel", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows the retry relationship explanation on demand", async () => {
+    render(<AutoFailoverConfigPanel appType="claude" />);
+
+    expect(screen.queryByText("两类重试如何配合")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看重试次数说明" }));
+
+    expect(await screen.findByText("两类重试如何配合")).toBeVisible();
+    expect(screen.getByText("执行顺序")).toBeVisible();
+    expect(screen.getByText("计算示例")).toBeVisible();
+    expect(screen.getByText(/最坏共请求 12 次/)).toBeVisible();
+  });
+
   it("adds, normalizes, and saves a retry rule", async () => {
     useAppProxyConfig.mockReturnValue({
       data: { ...baseConfig, retryRules: [] },
