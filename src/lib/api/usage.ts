@@ -35,6 +35,8 @@ export const usageApi = {
     accessToken?: string,
     userId?: string,
     templateType?: TemplateType,
+    accountEmail?: string,
+    accountPassword?: string,
   ): Promise<UsageResult> => {
     return invoke("testUsageScript", {
       providerId,
@@ -46,6 +48,8 @@ export const usageApi = {
       accessToken,
       userId,
       templateType,
+      accountEmail,
+      accountPassword,
     });
   },
 
