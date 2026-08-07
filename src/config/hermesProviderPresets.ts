@@ -1355,18 +1355,23 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "BaiLing",
-    websiteUrl: "https://alipaytbox.yuque.com/sxs0ba/ling/get_started",
+    name: "Ant Ling",
+    websiteUrl: "https://www.ant-ling.com/",
+    apiKeyUrl: "https://chat.ant-ling.com/open",
+    icon: "antling",
     settingsConfig: {
       name: "bailing",
-      base_url: "https://api.tbox.cn/api/anthropic",
+      base_url: "https://api.ant-ling.com/anthropic",
       api_key: "",
       api_mode: "anthropic_messages",
-      models: [{ id: "Ling-2.5-1T", name: "Ling 2.5 1T" }],
+      models: [
+        { id: "Ling-3.0-flash", name: "Ling 3.0 Flash" },
+        { id: "Ring-2.6-1T", name: "Ring 2.6 1T" },
+      ],
     },
     category: "cn_official",
     suggestedDefaults: {
-      model: { default: "Ling-2.5-1T", provider: "bailing" },
+      model: { default: "Ling-3.0-flash", provider: "bailing" },
     },
   },
   {

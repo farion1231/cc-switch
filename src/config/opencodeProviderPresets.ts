@@ -1662,18 +1662,27 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "BaiLing",
-    websiteUrl: "https://alipaytbox.yuque.com/sxs0ba/ling/get_started",
+    name: "Ant Ling",
+    websiteUrl: "https://www.ant-ling.com/",
+    apiKeyUrl: "https://chat.ant-ling.com/open",
+    icon: "antling",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
-      name: "BaiLing",
+      name: "Ant Ling",
       options: {
-        baseURL: "https://api.tbox.cn/v1",
+        baseURL: "https://api.ant-ling.com/v1",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "Ling-2.5-1T": { name: "Ling 2.5-1T" },
+        "Ling-3.0-flash": {
+          name: "Ling 3.0 Flash",
+          reasoning: true,
+        },
+        "Ring-2.6-1T": {
+          name: "Ring 2.6 1T",
+          reasoning: true,
+        },
       },
     },
     category: "cn_official",

@@ -1994,18 +1994,26 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "BaiLing",
-    websiteUrl: "https://alipaytbox.yuque.com/sxs0ba/ling/get_started",
+    name: "Ant Ling",
+    websiteUrl: "https://www.ant-ling.com/",
+    apiKeyUrl: "https://chat.ant-ling.com/open",
+    icon: "antling",
     settingsConfig: {
-      baseUrl: "https://api.tbox.cn/v1",
+      baseUrl: "https://api.ant-ling.com/v1",
       apiKey: "",
       api: "openai-completions",
       models: [
         {
-          id: "Ling-2.5-1T",
-          name: "Ling 2.5 1T",
-          contextWindow: 128000,
-          cost: { input: 0.56, output: 2.24 },
+          id: "Ling-3.0-flash",
+          name: "Ling 3.0 Flash",
+          reasoning: true,
+          contextWindow: 262144,
+        },
+        {
+          id: "Ring-2.6-1T",
+          name: "Ring 2.6 1T",
+          reasoning: true,
+          contextWindow: 262144,
         },
       ],
     },
@@ -2018,8 +2026,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "bailing/Ling-2.5-1T" },
-      modelCatalog: { "bailing/Ling-2.5-1T": { alias: "BaiLing" } },
+      model: { primary: "bailing/Ling-3.0-flash" },
+      modelCatalog: { "bailing/Ling-3.0-flash": { alias: "Ant Ling" } },
     },
   },
   {

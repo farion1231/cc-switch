@@ -1001,13 +1001,19 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#FF6B6B",
   },
   {
-    name: "BaiLing",
-    websiteUrl: "https://alipaytbox.yuque.com/sxs0ba/ling/get_started",
+    name: "Ant Ling",
+    websiteUrl: "https://www.ant-ling.com/",
+    apiKeyUrl: "https://chat.ant-ling.com/open",
+    icon: "antling",
     category: "cn_official",
-    baseUrl: "https://api.tbox.cn/api/anthropic",
+    baseUrl: "https://api.ant-ling.com/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes("Ling-2.5-1T", "Ling-2.5-1T", "Ling-2.5-1T"),
+    modelRoutes: brandedRoutes(
+      "Ling-3.0-flash",
+      "Ling-3.0-flash",
+      "Ling-3.0-flash",
+    ),
   },
   {
     name: "AiHubMix",
