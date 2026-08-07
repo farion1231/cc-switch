@@ -9,7 +9,8 @@ This project patches the cached Statsig evaluations in the Codex Desktop
 `Local Storage` LevelDB so that:
 
 - `use_hidden_models` becomes `false`
-- your custom model IDs are added to `available_models`
+- every model ID from `~/.codex/cc-switch-model-catalog.json` is added to
+  `available_models` (so all models configured in CC Switch are shown)
 - the cache timestamp is pushed 30 days into the future
 - `ab.chatgpt.com` is blocked in `hosts` so the remote allowlist cannot be
   refreshed back over the network
@@ -32,10 +33,12 @@ This project patches the cached Statsig evaluations in the Codex Desktop
 
    The script automatically elevates itself when needed.
 
-3. Relaunch Codex Desktop. The model picker should now show the models from
+3. Relaunch Codex Desktop. The model picker should now show every model from
    your `model_catalog_json`.
 
-To change the model list, pass `-ModelIds`:
+By default the script reads all model IDs from the CC Switch catalog. If you
+add or remove models in CC Switch, just run the script again. To override the
+list manually, pass `-ModelIds`:
 
 ```powershell
 .\fix-codex-model-picker.ps1 -ModelIds "model-a,model-b"
