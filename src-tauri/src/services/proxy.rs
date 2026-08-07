@@ -474,6 +474,19 @@ impl ProxyService {
         }
     }
 
+    /// 关闭 Codex 接管后恢复/清除 `models_cache.json`：接管期间写入的聚合/
+    /// 自定义条目会继续让桌面端显示，但请求已绕过代理，可能把绑定供应商的
+    /// 槽位直发到恢复后的供应商。恢复已捕获的官方基线，否则清除 cc-switch
+    /// 缓存让官方客户端重新拉取。失败只告警，不影响关闭接管。
+    fn refresh_codex_models_cache_after_takeover_disable() {
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        if let Err(e) =
+            crate::codex_config::restore_or_clear_codex_official_models_cache(&codex_dir)
+        {
+            log::warn!("[codex] 关闭接管后恢复 models_cache.json 失败: {e}");
+        }
+    }
+
     pub async fn sync_grok_live_from_provider_while_proxy_active(
         &self,
         provider: &Provider,
@@ -1011,6 +1024,11 @@ impl ProxyService {
         self.restore_live_config_for_app_with_fallback_inner(&app)
             .await?;
 
+        // 1.5) 关闭 Codex 接管：恢复/清除接管期间写入的 models_cache.json
+        if app == AppType::Codex {
+            Self::refresh_codex_models_cache_after_takeover_disable();
+        }
+
         // 2) 删除该 app 的备份（避免长期存储敏感 Token）
         self.db
             .delete_live_backup(app_type_str)
@@ -1070,6 +1088,11 @@ impl ProxyService {
         // 1) 恢复原始 Live 配置（备份 → SSOT → 清理占位符 三层兜底）
         futures::executor::block_on(self.restore_live_config_for_app_with_fallback_inner(app_type))
             .map_err(|e| format!("恢复 {app_type_str} Live 配置失败: {e}"))?;
+
+        // 1.5) 关闭 Codex 接管：恢复/清除接管期间写入的 models_cache.json
+        if *app_type == AppType::Codex {
+            Self::refresh_codex_models_cache_after_takeover_disable();
+        }
 
         // 2) 删除该 app 的备份
         futures::executor::block_on(self.db.delete_live_backup(app_type_str))
@@ -5063,6 +5086,72 @@ wire_api = "responses"
             .set_takeover_for_app("codex", false)
             .await
             .expect("disable Codex takeover");
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("reset settings");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_takeover_disable_clears_cc_switch_models_cache() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        use_ephemeral_proxy_port(&db).await;
+        let state = crate::store::AppState::new(db.clone());
+
+        let original_config = r#"model_provider = "deepseek"
+model = "deepseek-v4-flash"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+experimental_bearer_token = "deepseek-key"
+"#;
+        crate::codex_config::write_codex_live_atomic(&json!({}), Some(original_config))
+            .expect("seed original live config");
+
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": json!({}),
+                "config": original_config
+            }))
+            .expect("serialize original backup"),
+        )
+        .await
+        .expect("seed original live backup");
+        let mut proxy_config = db
+            .get_proxy_config_for_app("codex")
+            .await
+            .expect("get Codex proxy config");
+        proxy_config.enabled = true;
+        db.update_proxy_config_for_app(proxy_config)
+            .await
+            .expect("mark Codex takeover enabled");
+
+        // 模拟接管期间写入的 cc-switch 生成缓存（聚合/自定义条目）。
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        let cache_path = codex_dir.join("models_cache.json");
+        std::fs::write(
+            &cache_path,
+            r#"{"client_version": "0.1.0", "etag": "W/\"cc-switch-1750000000\"", "models": [{"slug": "custom-slot"}]}"#,
+        )
+        .expect("seed cc-switch models cache");
+
+        state
+            .proxy_service
+            .set_takeover_for_app("codex", false)
+            .await
+            .expect("disable Codex takeover");
+
+        assert!(
+            !cache_path.exists(),
+            "disabling takeover should restore/clear the cc-switch models cache"
+        );
+
         crate::settings::update_settings(crate::settings::AppSettings::default())
             .expect("reset settings");
     }

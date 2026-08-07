@@ -1482,6 +1482,22 @@ function ProviderFormFull({
                 officialLogin: effectiveOfficialLogin,
               })
             : [];
+        // 聚合模式 + 关闭官方登录但没有任何有效模型映射：会写出空聚合缓存，
+        // RequestContext 拒绝所有模型，Codex 完全不可用。硬性阻止保存。
+        if (
+          category === "official" &&
+          effectiveAggregation &&
+          !effectiveOfficialLogin &&
+          normalizedCustomModels.length === 0
+        ) {
+          toast.error(
+            t("codexConfig.aggregationNoMappingError", {
+              defaultValue:
+                "聚合模式下关闭官方登录至少需要一条有效模型映射，请添加模型或保持官方登录开启",
+            }),
+          );
+          return;
+        }
         const configObj = {
           auth: authJson,
           config: normalizedCodexConfig,

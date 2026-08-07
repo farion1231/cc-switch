@@ -511,12 +511,13 @@ export function CodexFormFields({
     [codexProviders, providerCatalogModels],
   );
 
-  // 实际请求模型（上游）变化：命中目录时自动补显示名/上下文（仅当用户没手填）
+  // 实际请求模型（上游）变化：显示名/上下文只读派生自目标供应商目录，按新
+  // 模型重新派生；目录外（自由输入）或条目缺字段则清空，让后端按模型名/默认
+  // 值回退，避免残留上一个模型的上下文窗口导致超限。
   const handleCustomModelChange = useCallback(
     (index: number, model: string) => {
       setCustomRows((current) => {
-        const row = current[index];
-        const match = providerCatalogModels(row.providerId).find(
+        const match = providerCatalogModels(current[index].providerId).find(
           (m) => m.model === model,
         );
         return current.map((r, i) =>
@@ -524,14 +525,8 @@ export function CodexFormFields({
             ? {
                 ...r,
                 upstreamModel: model,
-                // 命中目录时自动补显示名/上下文；目录外（自由输入）保留旧值，
-                // 避免把已派生的显示名/上下文清空。
-                displayName: match
-                  ? match.displayName?.trim() || r.displayName || ""
-                  : r.displayName,
-                contextWindow: match
-                  ? (match.contextWindow ?? r.contextWindow ?? "")
-                  : r.contextWindow,
+                displayName: match?.displayName?.trim() || "",
+                contextWindow: match?.contextWindow ?? "",
               }
             : r,
         );

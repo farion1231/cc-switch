@@ -1376,6 +1376,7 @@
     "enableOfficialLoginLabel": "Enable Official Login",
     "enableOfficialLoginHintOn": "Official models use your ChatGPT account login; custom models below still use each provider's own credentials.",
     "enableOfficialLoginHintOff": "No login required: all models come from the providers configured below and requests route by model.",
+    "aggregationNoMappingError": "Aggregation mode with official login disabled requires at least one valid model mapping. Add a model or keep official login enabled.",
     "addCustomModel": "Add Custom Model",
     "customColumnProvider": "Target Provider",
     "customColumnModelName": "Codex slot",

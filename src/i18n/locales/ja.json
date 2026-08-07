@@ -1376,6 +1376,7 @@
     "enableOfficialLoginLabel": "公式ログインを有効化",
     "enableOfficialLoginHintOn": "公式モデルは ChatGPT アカウントログインを使用します。以下のカスタムモデルは各プロバイダーの認証情報を使用します。",
     "enableOfficialLoginHintOff": "ログイン不要：以下のプロバイダー設定に基づくモデルを一覧表示し、モデルごとにルーティングします。",
+    "aggregationNoMappingError": "聚合モードで公式ログインを無効にするには、有効なモデルマッピングが少なくとも1つ必要です。モデルを追加するか、公式ログインを有効にしてください。",
     "addCustomModel": "カスタムモデルを追加",
     "customColumnProvider": "対象プロバイダー",
     "customColumnModelName": "Codex スロット",

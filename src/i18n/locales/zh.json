@@ -1376,6 +1376,7 @@
     "enableOfficialLoginLabel": "启用官方登录",
     "enableOfficialLoginHintOn": "官方模型使用你的 ChatGPT 账号登录；下方自定义模型仍走各自供应商的凭据。",
     "enableOfficialLoginHintOff": "无需登录：Codex 的模型全部来自下方配置的多个供应商，请求按模型路由到对应供应商。",
+    "aggregationNoMappingError": "聚合模式下关闭官方登录至少需要一条有效模型映射，请添加模型或保持官方登录开启",
     "addCustomModel": "添加自定义模型",
     "customColumnProvider": "目标供应商",
     "customColumnModelName": "Codex 插槽",

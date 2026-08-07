@@ -1032,7 +1032,7 @@ fn prepare_codex_official_models_baseline(
     }
 }
 
-fn restore_or_clear_codex_official_models_cache(codex_dir: &Path) -> Result<(), AppError> {
+pub(crate) fn restore_or_clear_codex_official_models_cache(codex_dir: &Path) -> Result<(), AppError> {
     let live_path = codex_dir.join("models_cache.json");
     let live_cache: Value = fs::read_to_string(&live_path)
         .ok()
