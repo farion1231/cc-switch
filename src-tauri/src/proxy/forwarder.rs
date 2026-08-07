@@ -2803,8 +2803,8 @@ fn matching_retry_rule<'a>(
                 || rule.error_codes.iter().any(|expected| {
                     error_code
                         .as_deref()
-                        .is_some_and(|code| expected.eq_ignore_ascii_case(code))
-                        || searchable.contains(&expected.to_lowercase())
+                        .map(|code| expected.eq_ignore_ascii_case(code))
+                        .unwrap_or_else(|| searchable.contains(&expected.to_lowercase()))
                 }))
             && rule
                 .message_contains
@@ -3851,6 +3851,26 @@ mod tests {
         let error = ProxyError::UpstreamError {
             status: 503,
             body: Some(r#"{"error":{"code":"server_is_overloaded"}}"#.to_string()),
+        };
+
+        assert!(matching_retry_rule(&rules, &error).is_none());
+    }
+
+    #[test]
+    fn retry_rule_does_not_fallback_to_text_when_structured_code_exists() {
+        let rules = vec![ProxyRetryRule {
+            enabled: true,
+            status_codes: Vec::new(),
+            error_codes: vec!["slow_down".to_string()],
+            message_contains: None,
+            retry_count: 1,
+        }];
+        let error = ProxyError::UpstreamError {
+            status: 503,
+            body: Some(
+                r#"{"error":{"code":"server_is_overloaded","message":"Not a slow_down error"}}"#
+                    .to_string(),
+            ),
         };
 
         assert!(matching_retry_rule(&rules, &error).is_none());
