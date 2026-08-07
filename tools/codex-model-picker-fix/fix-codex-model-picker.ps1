@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$ModelIds = "deepseek-v4-flash-0731,glm-5.2"
+    [string]$ModelIds = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,18 +18,6 @@ $codexProcess = Get-Process -Name 'codex' -ErrorAction SilentlyContinue
 if ($codexProcess) {
     Write-Host "Codex is still running. Fully quit Codex (including the system tray icon), then run this script again."
     exit 1
-}
-
-$catalogPath = Join-Path $env:USERPROFILE '.codex\cc-switch-model-catalog.json'
-if ([string]::IsNullOrWhiteSpace($ModelIds) -and (Test-Path -LiteralPath $catalogPath)) {
-    $catalog = Get-Content -LiteralPath $catalogPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    $ModelIds = @($catalog.models | ForEach-Object { $_.slug } | Where-Object { $_ }) -join ','
-    if (-not [string]::IsNullOrWhiteSpace($ModelIds)) {
-        Write-Host "Using all models from CC Switch catalog: $ModelIds"
-    }
-}
-if ([string]::IsNullOrWhiteSpace($ModelIds)) {
-    $ModelIds = "deepseek-v4-flash-0731,glm-5.2"
 }
 
 $pkgRoot = Join-Path $env:LOCALAPPDATA 'Packages'

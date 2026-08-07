@@ -4,6 +4,6 @@
   "private": true,
   "description": "Show CC Switch / custom-provider models in the Codex Desktop model picker by patching the Statsig allowlist cache.",
   "dependencies": {
-    "classic-level": "1.4.1"
+    "classic-level": "^1.4.1"
   }
 }
