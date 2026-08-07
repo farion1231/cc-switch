@@ -2551,4 +2551,43 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     icon: "aws",
     iconColor: "#FF9900",
   },
+  {
+    name: "PPIO",
+    websiteUrl: "https://ppio.com",
+    apiKeyUrl: "https://ppio.com/settings/key-management",
+    settingsConfig: {
+      baseUrl: "https://api.ppio.com/openai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "deepseek/deepseek-v4-flash-0731",
+          name: "Deepseek V4 Flash 0731",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 393216,
+          cost: { input: 0.14, output: 0.29, cacheRead: 0.03 },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "ppio",
+    iconColor: "#2874FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "ppio/deepseek/deepseek-v4-flash-0731" },
+      modelCatalog: {
+        "ppio/deepseek/deepseek-v4-flash-0731": {
+          alias: "Deepseek V4 Flash 0731",
+        },
+      },
+    },
+  },
 ];
