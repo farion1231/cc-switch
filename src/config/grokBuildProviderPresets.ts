@@ -9,9 +9,11 @@
  * - 不含官方 / 托管 OAuth 预设：Grok CLI 自带 xAI 订阅登录，官方态走
  *   独立的 "Grok Official" 条目（对应 providers_seed.rs 的 seed，
  *   空 config = 不写自定义模型表）。
- * - 不含国产模型官方直连（cn_official）与纯开源模型托管站
- *   （SiliconFlow / ModelScope / Novita / Nvidia / AtlasCloud / OpenCode Go）：
- *   这些上游没有 Grok 模型，无法在 Grok CLI 中使用。
+ * - 不含国产模型官方直连（cn_official）；纯开源模型托管站
+ *   （SiliconFlow / ModelScope / Novita / Nvidia / AtlasCloud）上游没有
+ *   Grok 模型，无法在 Grok CLI 中使用。
+ * - OpenCode Go 于 2026-08 起提供 Grok 4.5（OpenAI 兼容 chat/completions
+ *   端点），故收录；注意其 Grok 4.5 用量限额较低（每 5 小时约 120 次请求）。
  * - 只收聚合站与第三方中转站，默认模型统一为 grok-4.5；
  *   OpenRouter 系命名空间的路由站用 "x-ai/grok-4.5"。
  *
@@ -63,6 +65,7 @@ function grokPresetConfig(
   providerName: string,
   baseUrl: string,
   model = GROK_BUILD_DEFAULT_MODEL,
+  wireApi = "responses",
 ): string {
   const tomlString = (value: string) => JSON.stringify(value);
 
@@ -72,7 +75,7 @@ model = ${tomlString(model)}
 [model_providers.custom]
 name = ${tomlString(providerName)}
 base_url = ${tomlString(baseUrl)}
-wire_api = "responses"
+wire_api = ${tomlString(wireApi)}
 requires_openai_auth = true`;
 }
 
@@ -559,6 +562,25 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     category: "aggregator",
     icon: "openrouter",
     iconColor: "#6566F1",
+  },
+  {
+    name: "OpenCode Go",
+    websiteUrl: "https://opencode.ai/go",
+    apiKeyUrl: "https://opencode.ai/go?ref=2YTRG2NGTX",
+    auth: grokAuth(),
+    config: grokPresetConfig(
+      "OpenCode Go",
+      "https://opencode.ai/zen/go/v1",
+      GROK_BUILD_DEFAULT_MODEL,
+      "chat",
+    ),
+    endpointCandidates: ["https://opencode.ai/zen/go/v1"],
+    apiFormat: "openai_chat",
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "opencode_go",
+    icon: "opencode",
+    iconColor: "#211E1E",
   },
   {
     name: "TheRouter",
