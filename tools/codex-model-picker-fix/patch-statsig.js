@@ -30,6 +30,24 @@ function encodeUTF16BE(txt) {
   return be16(txt);
 }
 
+function verifyEvalValue(buf, keyName) {
+  const candidates = [];
+  for (const slice of [buf.subarray(0, buf.length - (buf.length % 2)), buf.subarray(1)]) {
+    if (slice.length % 2 === 0) {
+      candidates.push(Buffer.from(slice).swap16().toString('utf16le'));
+      candidates.push(Buffer.from(slice).toString('utf16le'));
+    }
+  }
+  candidates.push(buf.toString('utf8'));
+  const txt = candidates.find((t) => t.includes('statsig') || t.includes('use_hidden_models')) || buf.toString('utf8');
+  const hiddenOk = txt.includes('\\"use_hidden_models\\":false');
+  const modelsOk = customModels.length === 0 || customModels.every((m) => txt.includes(m));
+  if (!hiddenOk || !modelsOk) {
+    throw new Error(`${keyName}: verification failed (hidden_false=${hiddenOk}, models=${modelsOk})`);
+  }
+  return { hiddenOk, modelsOk };
+}
+
 async function main() {
   const db = new ClassicLevel(dbPath, {
     createIfMissing: false,
@@ -89,8 +107,10 @@ async function main() {
 
     if (changed) {
       await db.put(key, buf);
+      const reread = await db.get(key);
+      verifyEvalValue(reread, ks);
       const txt = decodeMaybeUTF16(buf);
-      reports.push(`${ks}: use_hidden_models replacements=${replaced}, custom models inserted=${changed && customModels.length > 0}, json-ish=${txt.includes('use_hidden_models')}`);
+      reports.push(`${ks}: use_hidden_models replacements=${replaced}, custom models inserted=${customModels.length > 0}, VERIFIED`);
     } else {
       reports.push(`${ks}: no changes`);
     }
@@ -132,7 +152,15 @@ async function main() {
       else newBody = Buffer.from(json, 'utf16le');
       if (marker) newBody = Buffer.concat([Buffer.from([0x01]), newBody]);
       await db.put(lmKey, newBody);
-      reports.push(`${lmKeyName}: timestamps bumped to ${future} (${scheme})`);
+      const reread = await db.get(lmKey);
+      const rereadBody = reread.subarray(reread[0] === 0x01 ? 1 : 0);
+      const rereadText = rereadBody.toString('utf8').includes('statsig')
+        ? rereadBody.toString('utf8')
+        : (rereadBody.length % 2 === 0 ? Buffer.from(rereadBody).swap16().toString('utf16le') : '');
+      const rereadObj = JSON.parse(rereadText);
+      const ok = evalKeys.every((ks) => Number(rereadObj[ks.replace(/^_app:\/\/-\u0000\u0001/, '')]) > Date.now());
+      if (!ok) throw new Error(`${lmKeyName}: verification failed`);
+      reports.push(`${lmKeyName}: timestamps bumped to ${future} (${scheme}), VERIFIED`);
     } else {
       reports.push(`${lmKeyName}: skipped (could not parse timestamp entry)`);
     }
