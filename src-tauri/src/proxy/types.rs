@@ -168,6 +168,9 @@ pub struct AppProxyConfig {
     pub auto_failover_enabled: bool,
     /// 最大重试次数
     pub max_retries: u32,
+    /// 命中特定上游错误时，对当前 Provider 原请求重试的规则
+    #[serde(default)]
+    pub retry_rules: Vec<ProxyRetryRule>,
     /// 流式首字超时（秒）
     pub streaming_first_byte_timeout: u32,
     /// 流式静默超时（秒）
@@ -184,6 +187,24 @@ pub struct AppProxyConfig {
     pub circuit_error_rate_threshold: f64,
     /// 计算错误率的最小请求数
     pub circuit_min_requests: u32,
+}
+
+/// 特定上游错误重试规则。
+///
+/// 同一规则中填写的条件按 AND 匹配，各数组内部按 OR 匹配。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyRetryRule {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub status_codes: Vec<u16>,
+    #[serde(default)]
+    pub error_codes: Vec<String>,
+    #[serde(default)]
+    pub message_contains: Option<String>,
+    /// 首次请求失败后的额外重试次数
+    pub retry_count: u32,
 }
 
 /// 整流器配置

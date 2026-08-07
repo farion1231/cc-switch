@@ -138,7 +138,7 @@ pub async fn update_proxy_config_for_app(
     let app_type = config.app_type.clone();
     let circuit_config = CircuitBreakerConfig::from(&config);
 
-    db.update_proxy_config_for_app(config)
+    db.update_proxy_config_details_for_app(config)
         .await
         .map_err(|e| e.to_string())?;
 
