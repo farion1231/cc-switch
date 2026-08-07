@@ -2740,6 +2740,8 @@
       "streamingIdle": "串流閒置逾時",
       "nonStreaming": "非串流逾時",
       "maxRetriesHint": "請求失敗時的重試次數（0-10）",
+      "retryRules": "特定錯誤重試規則",
+      "retryRulesHint": "JSON 陣列；同一規則中已填寫的狀態碼、錯誤碼和訊息條件按 AND 比對，陣列內部按 OR 比對。retryCount 為目前供應商的額外重試次數（0-10）。用多條規則表達 OR，例如分別比對 HTTP 503 和 Responses 串流錯誤碼：[{\"enabled\":true,\"statusCodes\":[503],\"errorCodes\":[],\"messageContains\":null,\"retryCount\":3},{\"enabled\":true,\"statusCodes\":[],\"errorCodes\":[\"server_is_overloaded\",\"slow_down\"],\"messageContains\":null,\"retryCount\":3}]",
       "streamingFirstByteHint": "等待首個資料區塊的最大時間，範圍 1-120 秒，預設 60 秒",
       "streamingIdleHint": "資料區塊之間的最大間隔，範圍 60-600 秒，填 0 停用（防止中途卡住）",
       "nonStreamingHint": "非串流請求的總逾時時間，範圍 60-1200 秒，預設 600 秒（10 分鐘）"

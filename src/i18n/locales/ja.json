@@ -2739,6 +2739,8 @@
       "streamingIdle": "ストリーミングアイドルタイムアウト",
       "nonStreaming": "非ストリーミングタイムアウト",
       "maxRetriesHint": "リクエスト失敗時のリトライ回数（0-10）",
+      "retryRules": "特定エラー再試行ルール",
+      "retryRulesHint": "JSON 配列。同一ルール内の指定済みステータス、エラーコード、メッセージ条件は AND、配列内は OR で照合します。retryCount は現在のプロバイダーへの追加再試行回数（0-10）です。OR は複数ルールで表現します。例：HTTP 503 と Responses ストリームコード：[{\"enabled\":true,\"statusCodes\":[503],\"errorCodes\":[],\"messageContains\":null,\"retryCount\":3},{\"enabled\":true,\"statusCodes\":[],\"errorCodes\":[\"server_is_overloaded\",\"slow_down\"],\"messageContains\":null,\"retryCount\":3}]",
       "streamingFirstByteHint": "最初のデータチャンクを待つ最大時間、範囲 1-120 秒、デフォルト 60 秒",
       "streamingIdleHint": "データチャンク間の最大間隔、範囲 60-600 秒、0 で無効化（途中停止を防止）",
       "nonStreamingHint": "非ストリーミングリクエストの合計タイムアウト、範囲 60-1200 秒、デフォルト 600 秒（10 分）"

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Save, Loader2, Info } from "lucide-react";
@@ -25,6 +26,7 @@ export function AutoFailoverConfigPanel({
   const [formData, setFormData] = useState({
     autoFailoverEnabled: false,
     maxRetries: "3",
+    retryRulesJson: "[]",
     streamingFirstByteTimeout: "60",
     streamingIdleTimeout: "120",
     nonStreamingTimeout: "600",
@@ -40,6 +42,7 @@ export function AutoFailoverConfigPanel({
       setFormData({
         autoFailoverEnabled: config.autoFailoverEnabled,
         maxRetries: String(config.maxRetries),
+        retryRulesJson: JSON.stringify(config.retryRules ?? [], null, 2),
         streamingFirstByteTimeout: String(config.streamingFirstByteTimeout),
         streamingIdleTimeout: String(config.streamingIdleTimeout),
         nonStreamingTimeout: String(config.nonStreamingTimeout),
@@ -92,6 +95,38 @@ export function AutoFailoverConfigPanel({
 
     // 校验是否超出范围（NaN 也视为无效）
     const errors: string[] = [];
+    let retryRules = config.retryRules ?? [];
+    try {
+      retryRules = JSON.parse(formData.retryRulesJson);
+      if (!Array.isArray(retryRules)) throw new Error("not an array");
+      for (const rule of retryRules) {
+        const hasCondition =
+          (Array.isArray(rule.statusCodes) && rule.statusCodes.length > 0) ||
+          (Array.isArray(rule.errorCodes) && rule.errorCodes.length > 0) ||
+          (typeof rule.messageContains === "string" &&
+            rule.messageContains.trim().length > 0);
+        if (
+          typeof rule.enabled !== "boolean" ||
+          !Array.isArray(rule.statusCodes) ||
+          !rule.statusCodes.every(
+            (code: unknown) =>
+              Number.isInteger(code) &&
+              Number(code) >= 100 &&
+              Number(code) <= 599,
+          ) ||
+          !Array.isArray(rule.errorCodes) ||
+          !rule.errorCodes.every((code: unknown) => typeof code === "string") ||
+          !Number.isInteger(rule.retryCount) ||
+          rule.retryCount < 0 ||
+          rule.retryCount > 10 ||
+          !hasCondition
+        ) {
+          throw new Error("invalid rule");
+        }
+      }
+    } catch {
+      errors.push(t("proxy.autoFailover.retryRules", "特定错误重试规则"));
+    }
     const checkRange = (
       value: number,
       range: { min: number; max: number },
@@ -164,6 +199,7 @@ export function AutoFailoverConfigPanel({
         enabled: config.enabled,
         autoFailoverEnabled: formData.autoFailoverEnabled,
         maxRetries: raw.maxRetries,
+        retryRules,
         streamingFirstByteTimeout: raw.streamingFirstByteTimeout,
         streamingIdleTimeout: raw.streamingIdleTimeout,
         nonStreamingTimeout: raw.nonStreamingTimeout,
@@ -189,6 +225,7 @@ export function AutoFailoverConfigPanel({
       setFormData({
         autoFailoverEnabled: config.autoFailoverEnabled,
         maxRetries: String(config.maxRetries),
+        retryRulesJson: JSON.stringify(config.retryRules ?? [], null, 2),
         streamingFirstByteTimeout: String(config.streamingFirstByteTimeout),
         streamingIdleTimeout: String(config.streamingIdleTimeout),
         nonStreamingTimeout: String(config.nonStreamingTimeout),
@@ -287,6 +324,28 @@ export function AutoFailoverConfigPanel({
                 )}
               </p>
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor={`retryRules-${appType}`}>
+              {t("proxy.autoFailover.retryRules", "特定错误重试规则")}
+            </Label>
+            <Textarea
+              id={`retryRules-${appType}`}
+              className="min-h-48 font-mono text-xs"
+              value={formData.retryRulesJson}
+              onChange={(e) =>
+                setFormData({ ...formData, retryRulesJson: e.target.value })
+              }
+              disabled={isDisabled}
+              spellCheck={false}
+            />
+            <p className="text-xs text-muted-foreground whitespace-pre-line">
+              {t(
+                "proxy.autoFailover.retryRulesHint",
+                "JSON 数组；同一规则中已填写的条件按 AND 匹配。用多条规则分别匹配 HTTP 503 和 Responses 错误码。",
+              )}
+            </p>
           </div>
         </div>
 

@@ -19,7 +19,9 @@ use super::{
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
-    types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
+    types::{
+        CopilotOptimizerConfig, OptimizerConfig, ProxyRetryRule, ProxyStatus, RectifierConfig,
+    },
     ProxyError,
 };
 use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
@@ -146,6 +148,8 @@ pub struct RequestForwarder {
     /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
     /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
     max_attempts: usize,
+    /// 命中特定上游错误时，对当前 Provider 的额外尝试规则。
+    retry_rules: Vec<ProxyRetryRule>,
 }
 
 impl RequestForwarder {
@@ -213,6 +217,7 @@ impl RequestForwarder {
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
         max_retries: u32,
+        retry_rules: Vec<ProxyRetryRule>,
     ) -> Self {
         // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
         // saturating_add 防止 u32::MAX + 1 溢出。
@@ -236,6 +241,53 @@ impl RequestForwarder {
                 streaming_first_byte_timeout,
             ),
             max_attempts,
+            retry_rules,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn forward_with_error_retries(
+        &self,
+        app_type: &AppType,
+        method: &http::Method,
+        provider: &Provider,
+        endpoint: &str,
+        body: &Value,
+        headers: &axum::http::HeaderMap,
+        extensions: &Extensions,
+        adapter: &dyn ProviderAdapter,
+    ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+        let mut retry_index = 0u32;
+        loop {
+            match self
+                .forward(
+                    app_type, method, provider, endpoint, body, headers, extensions, adapter,
+                )
+                .await
+            {
+                Ok(result) => return Ok(result),
+                Err(error) => {
+                    let Some(rule) = matching_retry_rule(&self.retry_rules, &error) else {
+                        return Err(error);
+                    };
+                    if retry_index >= rule.retry_count {
+                        return Err(error);
+                    }
+
+                    retry_index += 1;
+                    let delay = retry_delay(retry_index);
+                    log::warn!(
+                        "[{}] 特定错误规则命中，{}ms 后重试当前 Provider {} ({}/{})：{}",
+                        app_type.as_str(),
+                        delay.as_millis(),
+                        provider.name,
+                        retry_index,
+                        rule.retry_count,
+                        error
+                    );
+                    tokio::time::sleep(delay).await;
+                }
+            }
         }
     }
 
@@ -476,9 +528,9 @@ impl RequestForwarder {
                 status.current_provider_id = Some(provider.id.clone());
             }
 
-            // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
+            // 普通情况下每个 Provider 只尝试一次；特定错误规则可在响应提交前原地重试。
             match self
-                .forward(
+                .forward_with_error_retries(
                     app_type,
                     &method,
                     provider,
@@ -1149,6 +1201,13 @@ impl RequestForwarder {
             && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
         let codex_responses_to_anthropic = matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
+        let codex_native_responses = matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+            && endpoint
+                .split('?')
+                .next()
+                .is_some_and(|path| path.ends_with("/responses"));
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
             && super::providers::is_codex_official_provider(provider);
 
@@ -2294,10 +2353,12 @@ impl RequestForwarder {
                 response = self
                     .validate_codex_anthropic_success_response(response)
                     .await?;
-            } else if matches!(
-                resolved_claude_api_format.as_deref(),
-                Some("openai_responses")
-            ) {
+            } else if (codex_native_responses && !self.retry_rules.is_empty())
+                || matches!(
+                    resolved_claude_api_format.as_deref(),
+                    Some("openai_responses")
+                )
+            {
                 if !request_is_streaming || response.is_json() {
                     // Claude→Responses gateways can also return a semantic failure in an
                     // HTTP 2xx Response object. Validate buffered/JSON bodies inside the
@@ -2711,6 +2772,73 @@ impl RequestForwarder {
     }
 }
 
+fn matching_retry_rule<'a>(
+    rules: &'a [ProxyRetryRule],
+    error: &ProxyError,
+) -> Option<&'a ProxyRetryRule> {
+    let (status, body) = match error {
+        ProxyError::UpstreamError { status, body } => (Some(*status), body.as_deref()),
+        _ => (None, None),
+    };
+    let error_code = body.and_then(extract_upstream_error_code);
+    let searchable = body
+        .map(str::to_owned)
+        .unwrap_or_else(|| error.to_string())
+        .to_lowercase();
+
+    rules.iter().find(|rule| {
+        if !rule.enabled || rule.retry_count == 0 {
+            return false;
+        }
+        let has_condition = !rule.status_codes.is_empty()
+            || !rule.error_codes.is_empty()
+            || rule
+                .message_contains
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty());
+        has_condition
+            && (rule.status_codes.is_empty()
+                || status.is_some_and(|status| rule.status_codes.contains(&status)))
+            && (rule.error_codes.is_empty()
+                || rule.error_codes.iter().any(|expected| {
+                    error_code
+                        .as_deref()
+                        .is_some_and(|code| expected.eq_ignore_ascii_case(code))
+                        || searchable.contains(&expected.to_lowercase())
+                }))
+            && rule
+                .message_contains
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none_or(|value| searchable.contains(&value.to_lowercase()))
+    })
+}
+
+fn extract_upstream_error_code(body: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(body).ok()?;
+    value
+        .pointer("/error/code")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("code").and_then(Value::as_str))
+        .or_else(|| {
+            value
+                .pointer("/response/error/code")
+                .and_then(Value::as_str)
+        })
+        .map(str::to_string)
+}
+
+fn retry_delay(retry_index: u32) -> std::time::Duration {
+    let exponent = retry_index.saturating_sub(1).min(5);
+    let base_ms = 250u64.saturating_mul(1u64 << exponent);
+    let jitter_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| u64::from(duration.subsec_nanos() % 101))
+        .unwrap_or(0);
+    std::time::Duration::from_millis(base_ms.saturating_add(jitter_ms))
+}
+
 /// 从 ProxyError 中提取错误消息
 fn extract_error_message(error: &ProxyError) -> Option<String> {
     match error {
@@ -2973,9 +3101,9 @@ fn responses_error_envelope_message(body: &[u8]) -> Option<String> {
 
     let error = value.get("error").unwrap_or(&value);
     let error_type = error
-        .get("type")
+        .get("code")
         .and_then(Value::as_str)
-        .or_else(|| error.get("code").and_then(Value::as_str))
+        .or_else(|| error.get("type").and_then(Value::as_str))
         .unwrap_or_else(|| status.unwrap_or("error"));
     let message = error
         .get("message")
@@ -3058,9 +3186,9 @@ fn inspect_responses_start_event(block: &str) -> Option<Result<(), ProxyError>> 
             .or_else(|| error.as_str())
             .unwrap_or("Responses upstream failed before output");
         let error_type = error
-            .get("type")
+            .get("code")
             .and_then(Value::as_str)
-            .or_else(|| error.get("code").and_then(Value::as_str))
+            .or_else(|| error.get("type").and_then(Value::as_str))
             .or_else(|| response.get("status").and_then(Value::as_str))
             .unwrap_or("upstream_error");
         return Some(Err(ProxyError::TransformError(format!(
@@ -3077,9 +3205,9 @@ fn inspect_responses_start_event(block: &str) -> Option<Result<(), ProxyError>> 
                 .or_else(|| error.as_str())
                 .unwrap_or("Responses upstream emitted an error before output");
             let error_type = error
-                .get("type")
+                .get("code")
                 .and_then(Value::as_str)
-                .or_else(|| error.get("code").and_then(Value::as_str))
+                .or_else(|| error.get("type").and_then(Value::as_str))
                 .unwrap_or("upstream_error");
             Some(Err(ProxyError::TransformError(format!(
                 "Responses upstream {error_type}: {message}"
@@ -3640,6 +3768,7 @@ mod tests {
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
+            retry_rules: Vec::new(),
         }
     }
 
@@ -3669,6 +3798,62 @@ mod tests {
         assert_eq!(code, log_fwd::PROVIDER_FAILED_RETRY);
         assert!(message.contains("继续尝试下一个 (1/3)"));
         assert!(message.contains("请求超时"));
+    }
+
+    #[test]
+    fn retry_rule_matches_status_and_openai_error_code() {
+        let rules = vec![ProxyRetryRule {
+            enabled: true,
+            status_codes: vec![503],
+            error_codes: vec!["server_is_overloaded".to_string(), "slow_down".to_string()],
+            message_contains: None,
+            retry_count: 3,
+        }];
+        let error = ProxyError::UpstreamError {
+            status: 503,
+            body: Some(
+                r#"{"error":{"code":"server_is_overloaded","message":"At capacity"}}"#.to_string(),
+            ),
+        };
+
+        assert_eq!(
+            matching_retry_rule(&rules, &error).map(|rule| rule.retry_count),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn retry_rule_message_match_is_case_insensitive() {
+        let rules = vec![ProxyRetryRule {
+            enabled: true,
+            status_codes: Vec::new(),
+            error_codes: Vec::new(),
+            message_contains: Some("selected MODEL is at capacity".to_string()),
+            retry_count: 2,
+        }];
+        let error = ProxyError::UpstreamError {
+            status: 500,
+            body: Some("Selected model is at capacity. Please try a different model.".to_string()),
+        };
+
+        assert!(matching_retry_rule(&rules, &error).is_some());
+    }
+
+    #[test]
+    fn retry_rule_requires_all_populated_conditions() {
+        let rules = vec![ProxyRetryRule {
+            enabled: true,
+            status_codes: vec![503],
+            error_codes: vec!["slow_down".to_string()],
+            message_contains: None,
+            retry_count: 1,
+        }];
+        let error = ProxyError::UpstreamError {
+            status: 503,
+            body: Some(r#"{"error":{"code":"server_is_overloaded"}}"#.to_string()),
+        };
+
+        assert!(matching_retry_rule(&rules, &error).is_none());
     }
 
     #[test]

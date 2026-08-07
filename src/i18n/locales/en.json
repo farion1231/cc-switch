@@ -2739,6 +2739,8 @@
       "streamingIdle": "Streaming Idle Timeout",
       "nonStreaming": "Non-Streaming Timeout",
       "maxRetriesHint": "Number of retries on request failure (0-10)",
+      "retryRules": "Specific Error Retry Rules",
+      "retryRulesHint": "JSON array. Filled status, error-code, and message conditions in one rule use AND; values inside arrays use OR. retryCount is the number of extra attempts against the current provider (0-10). Use separate rules for OR, for example HTTP 503 and Responses stream codes: [{\"enabled\":true,\"statusCodes\":[503],\"errorCodes\":[],\"messageContains\":null,\"retryCount\":3},{\"enabled\":true,\"statusCodes\":[],\"errorCodes\":[\"server_is_overloaded\",\"slow_down\"],\"messageContains\":null,\"retryCount\":3}]",
       "streamingFirstByteHint": "Max time to wait for first data chunk, range 1-120s, default 60s",
       "streamingIdleHint": "Max interval between data chunks, range 60-600s, 0 to disable (prevents mid-stream stalls)",
       "nonStreamingHint": "Total timeout for non-streaming requests, range 60-1200s, default 600s (10 min)"

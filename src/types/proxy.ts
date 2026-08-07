@@ -130,6 +130,7 @@ export interface AppProxyConfig {
   enabled: boolean;
   autoFailoverEnabled: boolean;
   maxRetries: number;
+  retryRules: ProxyRetryRule[];
   streamingFirstByteTimeout: number;
   streamingIdleTimeout: number;
   nonStreamingTimeout: number;
@@ -138,4 +139,12 @@ export interface AppProxyConfig {
   circuitTimeoutSeconds: number;
   circuitErrorRateThreshold: number;
   circuitMinRequests: number;
+}
+
+export interface ProxyRetryRule {
+  enabled: boolean;
+  statusCodes: number[];
+  errorCodes: string[];
+  messageContains?: string | null;
+  retryCount: number;
 }
