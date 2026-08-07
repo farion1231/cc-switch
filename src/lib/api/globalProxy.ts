@@ -15,12 +15,18 @@ export interface ProxyTestResult {
   error: string | null;
 }
 
+export interface GlobalProxySettings {
+  url: string | null;
+  followSystemProxy: boolean;
+}
+
 /**
  * 出站代理状态
  */
 export interface UpstreamProxyStatus {
   enabled: boolean;
   proxyUrl: string | null;
+  followSystemProxy: boolean;
 }
 
 /**
@@ -41,6 +47,10 @@ export async function getGlobalProxyUrl(): Promise<string | null> {
   return invoke<string | null>("get_global_proxy_url");
 }
 
+export async function getGlobalProxySettings(): Promise<GlobalProxySettings> {
+  return invoke<GlobalProxySettings>("get_global_proxy_settings");
+}
+
 /**
  * 设置全局代理 URL
  *
@@ -52,6 +62,16 @@ export async function setGlobalProxyUrl(url: string): Promise<void> {
     return await invoke("set_global_proxy_url", { url });
   } catch (error) {
     // Tauri invoke 错误可能是字符串
+    throw new Error(typeof error === "string" ? error : String(error));
+  }
+}
+
+export async function setGlobalProxySettings(
+  settings: GlobalProxySettings,
+): Promise<void> {
+  try {
+    return await invoke("set_global_proxy_settings", { settings });
+  } catch (error) {
     throw new Error(typeof error === "string" ? error : String(error));
   }
 }

@@ -139,6 +139,8 @@ impl Database {
 
     /// 全局代理 URL 的存储键名
     const GLOBAL_PROXY_URL_KEY: &'static str = "global_proxy_url";
+    /// 未配置显式代理时，是否跟随系统代理（环境变量）
+    const GLOBAL_PROXY_FOLLOW_SYSTEM_KEY: &'static str = "global_proxy_follow_system";
 
     /// 获取全局出站代理 URL
     ///
@@ -168,6 +170,24 @@ impl Database {
                 Ok(())
             }
         }
+    }
+
+    /// 获取是否跟随系统代理
+    ///
+    /// 默认返回 true，保持历史行为。
+    pub fn get_global_proxy_follow_system(&self) -> Result<bool, AppError> {
+        Ok(self
+            .get_setting(Self::GLOBAL_PROXY_FOLLOW_SYSTEM_KEY)?
+            .map(|value| value == "true")
+            .unwrap_or(true))
+    }
+
+    /// 设置是否跟随系统代理
+    pub fn set_global_proxy_follow_system(&self, follow: bool) -> Result<(), AppError> {
+        self.set_setting(
+            Self::GLOBAL_PROXY_FOLLOW_SYSTEM_KEY,
+            if follow { "true" } else { "false" },
+        )
     }
 
     // --- 代理接管状态管理（已废弃，使用 proxy_config.enabled 替代）---
