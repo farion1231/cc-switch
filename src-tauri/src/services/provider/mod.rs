@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::app_config::AppType;
+use crate::codex_history_migration::sync_codex_sessions_for_provider_switch;
 use crate::database::{validate_cost_multiplier, validate_pricing_source};
 use crate::error::AppError;
 use crate::provider::{Provider, UsageResult};
@@ -3232,6 +3233,34 @@ impl ProviderService {
         // （MCP 投影可自愈：下次切换 / 任一 MCP 启停都会重新投影）。
         if let Err(err) = McpService::sync_enabled_for_app(state, &app_type) {
             log::warn!("切换供应商后重投影 {app_type:?} MCP 失败（将在下次同步时自愈）: {err}");
+        }
+
+        if matches!(app_type, AppType::Codex) {
+            let provider_is_official = provider.category.as_deref() == Some("official");
+            let sync_outcome = sync_codex_sessions_for_provider_switch(provider_is_official);
+            match sync_outcome {
+                Ok(outcome) => {
+                    if outcome.skipped_reason.is_some() {
+                        log::debug!(
+                            "Codex session sync on switch skipped: {:?}",
+                            outcome.skipped_reason
+                        );
+                    } else {
+                        log::info!(
+                            "Codex session sync on switch: {} jsonl files, {} state rows → {}",
+                            outcome.synced_jsonl_files,
+                            outcome.synced_state_rows,
+                            outcome.target_provider
+                        );
+                    }
+                }
+                Err(err) => {
+                    log::warn!("Codex session sync on switch failed: {err}");
+                    result
+                        .warnings
+                        .push(format!("session_sync_failed:{}", provider.id));
+                }
+            }
         }
 
         Ok(result)
