@@ -324,6 +324,14 @@ pub fn write_text_file(path: &Path, data: &str) -> Result<(), AppError> {
 }
 
 /// 原子写入：写入临时文件后 rename 替换，避免半写状态
+#[cfg(windows)]
+fn should_fallback_to_rename(error: &std::io::Error) -> bool {
+    use windows_sys::Win32::Foundation::ERROR_NOT_SUPPORTED;
+
+    error.kind() == std::io::ErrorKind::NotFound
+        || error.raw_os_error() == Some(ERROR_NOT_SUPPORTED as i32)
+}
+
 pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
@@ -420,7 +428,9 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
             }
 
             let replace_error = std::io::Error::last_os_error();
-            if replace_error.kind() != std::io::ErrorKind::NotFound {
+            // WSL UNC paths reject ReplaceFileW with ERROR_NOT_SUPPORTED (50).
+            // std::fs::rename uses MoveFileExW with replace-existing semantics.
+            if !should_fallback_to_rename(&replace_error) {
                 last_error = Some(replace_error);
                 break;
             }
@@ -471,6 +481,22 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn replace_file_fallback_error_filter_is_narrow() {
+        use windows_sys::Win32::Foundation::{
+            ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_NOT_SUPPORTED,
+        };
+
+        let not_supported = std::io::Error::from_raw_os_error(ERROR_NOT_SUPPORTED as i32);
+        let not_found = std::io::Error::from_raw_os_error(ERROR_FILE_NOT_FOUND as i32);
+        let access_denied = std::io::Error::from_raw_os_error(ERROR_ACCESS_DENIED as i32);
+
+        assert!(should_fallback_to_rename(&not_supported));
+        assert!(should_fallback_to_rename(&not_found));
+        assert!(!should_fallback_to_rename(&access_denied));
+    }
 
     #[cfg(windows)]
     #[test]
