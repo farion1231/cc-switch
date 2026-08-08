@@ -913,9 +913,11 @@ pub fn set_model_config(model: &HermesModelConfig) -> Result<HermesWriteOutcome,
 
 /// Apply the top-level `model:` defaults when switching to a Hermes provider.
 ///
-/// `model.provider` is **always** updated to the new provider id — without
-/// this, switching to a provider whose settings lack a `models` list would
-/// leave the runtime routing requests to the previously active provider.
+/// `model.provider` is **always** updated to the new provider's canonical
+/// `custom:<id>` reference — without this, switching to a provider whose
+/// settings lack a `models` list would leave runtime requests routed to the
+/// previously active provider. The prefix also prevents Hermes' static model
+/// detection from replacing the selected custom provider with a built-in one.
 ///
 /// `model.default` is only overwritten when the new provider declares at
 /// least one model; otherwise the previous default is preserved so users
@@ -940,10 +942,18 @@ pub fn apply_switch_defaults(
     let current = get_model_config()?.unwrap_or_default();
     let merged = HermesModelConfig {
         default: first_model_id.or(current.default.clone()),
-        provider: Some(provider_id.to_string()),
+        provider: Some(custom_provider_reference(provider_id)),
         ..current
     };
     set_model_config(&merged)
+}
+
+fn custom_provider_reference(provider_id: &str) -> String {
+    if provider_id.starts_with("custom:") {
+        provider_id.to_string()
+    } else {
+        format!("custom:{provider_id}")
+    }
 }
 
 // ============================================================================
@@ -2023,7 +2033,7 @@ custom_providers:
 
             let model = get_model_config().unwrap().unwrap();
             assert_eq!(model.default.as_deref(), Some("primary-model"));
-            assert_eq!(model.provider.as_deref(), Some("demo"));
+            assert_eq!(model.provider.as_deref(), Some("custom:demo"));
         });
     }
 
@@ -2049,7 +2059,7 @@ custom_providers:
 
             let model = get_model_config().unwrap().unwrap();
             assert_eq!(model.default.as_deref(), Some("new-model"));
-            assert_eq!(model.provider.as_deref(), Some("new-provider"));
+            assert_eq!(model.provider.as_deref(), Some("custom:new-provider"));
             // User-customized fields must survive the switch.
             assert_eq!(
                 model.base_url.as_deref(),
@@ -2082,7 +2092,7 @@ custom_providers:
             apply_switch_defaults("bare", &settings).unwrap();
 
             let model = get_model_config().unwrap().unwrap();
-            assert_eq!(model.provider.as_deref(), Some("bare"));
+            assert_eq!(model.provider.as_deref(), Some("custom:bare"));
             assert_eq!(model.default.as_deref(), Some("legacy-default"));
         });
     }
@@ -2105,10 +2115,24 @@ custom_providers:
 
             let model = get_model_config().unwrap().unwrap();
             // Provider always updates.
-            assert_eq!(model.provider.as_deref(), Some("edge"));
+            assert_eq!(model.provider.as_deref(), Some("custom:edge"));
             // First entry's id is whitespace-only → blank → fall back to old default
             // (we intentionally don't scan past the first entry for a default).
             assert_eq!(model.default.as_deref(), Some("prev-default"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn apply_switch_defaults_does_not_duplicate_custom_prefix() {
+        with_test_home(|| {
+            let settings = serde_json::json!({
+                "models": [{ "id": "primary-model" }]
+            });
+            apply_switch_defaults("custom:demo", &settings).unwrap();
+
+            let model = get_model_config().unwrap().unwrap();
+            assert_eq!(model.provider.as_deref(), Some("custom:demo"));
         });
     }
 

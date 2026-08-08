@@ -8,9 +8,18 @@ import { ProviderList } from "@/components/providers/ProviderList";
 const useDragSortMock = vi.fn();
 const useSortableMock = vi.fn();
 const providerCardRenderSpy = vi.fn();
+const useHermesLiveProviderIdsMock = vi.fn();
+const useHermesModelConfigMock = vi.fn();
 
 vi.mock("@/hooks/useDragSort", () => ({
   useDragSort: (...args: unknown[]) => useDragSortMock(...args),
+}));
+
+vi.mock("@/hooks/useHermes", () => ({
+  useHermesLiveProviderIds: (...args: unknown[]) =>
+    useHermesLiveProviderIdsMock(...args),
+  useHermesModelConfig: (...args: unknown[]) =>
+    useHermesModelConfigMock(...args),
 }));
 
 vi.mock("@/components/providers/ProviderCard", () => ({
@@ -124,6 +133,11 @@ beforeEach(() => {
   useDragSortMock.mockReset();
   useSortableMock.mockReset();
   providerCardRenderSpy.mockClear();
+  useHermesLiveProviderIdsMock.mockReset();
+  useHermesModelConfigMock.mockReset();
+
+  useHermesLiveProviderIdsMock.mockReturnValue({ data: undefined });
+  useHermesModelConfigMock.mockReturnValue({ data: undefined });
 
   useSortableMock.mockImplementation(({ id }: { id: string }) => ({
     setNodeRef: vi.fn(),
@@ -235,12 +249,12 @@ describe("ProviderList Component", () => {
     // Drag attributes from useSortable
     expect(
       providerCardRenderSpy.mock.calls[0][0].dragHandleProps?.attributes[
-      "data-dnd-id"
+        "data-dnd-id"
       ],
     ).toBe("b");
     expect(
       providerCardRenderSpy.mock.calls[1][0].dragHandleProps?.attributes[
-      "data-dnd-id"
+        "data-dnd-id"
       ],
     ).toBe("a");
 
@@ -262,6 +276,38 @@ describe("ProviderList Component", () => {
       { a: providerA, b: providerB },
       "claude",
     );
+  });
+
+  it("marks the canonical Hermes custom provider reference as current", () => {
+    const provider = createProvider({ id: "demo", name: "Demo" });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    useHermesLiveProviderIdsMock.mockReturnValue({ data: ["demo"] });
+    useHermesModelConfigMock.mockReturnValue({
+      data: { provider: "custom:demo", default: "primary-model" },
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ demo: provider }}
+        currentProviderId=""
+        appId="hermes"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        onSetAsDefault={vi.fn()}
+      />,
+    );
+
+    const cardProps = providerCardRenderSpy.mock.calls[0][0];
+    expect(cardProps.isCurrent).toBe(true);
+    expect(cardProps.isDefaultModel).toBe(true);
   });
 
   it("filters providers with the search input", () => {

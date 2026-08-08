@@ -392,7 +392,9 @@ export function ProviderList({
             const isOmoSlimCurrent =
               isOmoSlim && provider.id === (currentOmoSlimId || "");
             const isHermesCurrent =
-              appId === "hermes" && hermesCurrentProviderId === provider.id;
+              appId === "hermes" &&
+              (hermesCurrentProviderId === provider.id ||
+                hermesCurrentProviderId === `custom:${provider.id}`);
             return (
               <SortableProviderCard
                 key={provider.id}
@@ -431,7 +433,7 @@ export function ProviderList({
                   handleToggleFailover(provider.id, enabled)
                 }
                 activeProviderId={activeProviderId}
-                // OpenClaw: default model / Hermes: model.provider === provider.id
+                // OpenClaw: default model / Hermes: canonical or legacy provider reference
                 isDefaultModel={
                   appId === "hermes"
                     ? isHermesCurrent
