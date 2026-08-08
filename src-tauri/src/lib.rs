@@ -1447,6 +1447,7 @@ pub fn run() {
             commands::open_zip_file_dialog,
             commands::create_db_backup,
             commands::list_db_backups,
+            commands::preview_db_backup_restore,
             commands::restore_db_backup,
             commands::rename_db_backup,
             commands::delete_db_backup,

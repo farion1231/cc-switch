@@ -8,7 +8,7 @@ use tauri_plugin_dialog::DialogExt;
 use crate::commands::sync_support::{
     post_sync_warning_from_result, run_post_import_sync, success_payload_with_warning,
 };
-use crate::database::backup::BackupEntry;
+use crate::database::backup::{BackupEntry, RestoreImpactPreview};
 use crate::database::Database;
 use crate::error::AppError;
 use crate::services::provider::ProviderService;
@@ -147,17 +147,45 @@ pub fn list_db_backups() -> Result<Vec<BackupEntry>, String> {
     Database::list_backups().map_err(|e| e.to_string())
 }
 
-/// Restore database from a backup file
+/// Preview category-level changes without returning configuration values.
+#[tauri::command]
+pub async fn preview_db_backup_restore(
+    state: State<'_, AppState>,
+    filename: String,
+) -> Result<RestoreImpactPreview, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || db.preview_restore_from_backup(&filename))
+        .await
+        .map_err(|e| format!("Restore preview failed: {e}"))?
+        .map_err(|e: AppError| e.to_string())
+}
+
+/// Restore database from a backup file.
 #[tauri::command]
 pub async fn restore_db_backup(
     state: State<'_, AppState>,
     filename: String,
-) -> Result<String, String> {
+    restore_token: String,
+    preserve_local_preferences: Option<bool>,
+) -> Result<Value, String> {
     let db = state.db.clone();
-    tauri::async_runtime::spawn_blocking(move || db.restore_from_backup(&filename))
-        .await
-        .map_err(|e| format!("Restore failed: {e}"))?
-        .map_err(|e: AppError| e.to_string())
+    let safety_id = tauri::async_runtime::spawn_blocking(move || {
+        db.restore_from_backup(
+            &filename,
+            &restore_token,
+            preserve_local_preferences.unwrap_or(false),
+        )
+    })
+    .await
+    .map_err(|e| format!("Restore failed: {e}"))?
+    .map_err(|e: AppError| e.to_string())?;
+
+    // Provider selection and proxy takeover/runtime are device-local state. A
+    // database snapshot must not rewrite active Live ownership using another
+    // machine's transient proxy backup.
+    Ok(json!({
+        "safetyBackupId": safety_id
+    }))
 }
 
 /// Rename a database backup file

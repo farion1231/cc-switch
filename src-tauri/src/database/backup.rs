@@ -8,9 +8,12 @@ use crate::error::AppError;
 use chrono::{Local, Utc};
 use rusqlite::backup::Backup;
 use rusqlite::types::ValueRef;
-use rusqlite::Connection;
+use rusqlite::{params, Connection, OptionalExtension};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 use tempfile::NamedTempFile;
 
 const CC_SWITCH_SQL_EXPORT_HEADER: &str = "-- CC Switch SQLite 导出";
@@ -95,6 +98,26 @@ pub struct BackupEntry {
     pub filename: String,
     pub size_bytes: u64,
     pub created_at: String, // ISO 8601
+}
+
+/// Category-level restore impact. Values and keys are intentionally omitted so
+/// previewing an untrusted backup cannot expose credentials or provider details.
+#[derive(Debug, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreImpactPreview {
+    pub providers_changed: bool,
+    pub common_config_changed: bool,
+    pub proxy_config_changed: bool,
+    pub other_data_changed: bool,
+    pub current_provider_count: u64,
+    pub backup_provider_count: u64,
+    pub restore_token: String,
+}
+
+#[derive(Debug, Default)]
+struct LocalRestorePreferences {
+    common_config: BTreeMap<String, Option<String>>,
+    common_config_cleared: BTreeMap<String, Option<String>>,
 }
 
 impl Database {
@@ -371,6 +394,46 @@ impl Database {
         Ok(())
     }
 
+    fn copy_database(source: &Connection, destination: &mut Connection) -> Result<(), AppError> {
+        let backup =
+            Backup::new(source, destination).map_err(|e| AppError::Database(e.to_string()))?;
+        backup
+            .run_to_completion(100, Duration::from_millis(10), None)
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    fn unique_backup_path(backup_dir: &Path) -> PathBuf {
+        let base_id = format!("db_backup_{}", Local::now().format("%Y%m%d_%H%M%S"));
+        for counter in 0.. {
+            let backup_id = if counter == 0 {
+                base_id.clone()
+            } else {
+                format!("{base_id}_{counter}")
+            };
+            let backup_path = backup_dir.join(format!("{backup_id}.db"));
+            if !backup_path.exists() {
+                return backup_path;
+            }
+        }
+        unreachable!("backup filename counter is unbounded")
+    }
+
+    fn persist_backup(source: &Connection, backup_dir: &Path) -> Result<PathBuf, AppError> {
+        let target_path = Self::unique_backup_path(backup_dir);
+        let temp_file = NamedTempFile::new_in(backup_dir).map_err(|e| AppError::IoContext {
+            context: "创建临时备份文件失败".to_string(),
+            source: e,
+        })?;
+        let mut temp_conn =
+            Connection::open(temp_file.path()).map_err(|e| AppError::Database(e.to_string()))?;
+        Self::copy_database(source, &mut temp_conn)?;
+        drop(temp_conn);
+        temp_file
+            .persist_noclobber(&target_path)
+            .map_err(|e| AppError::io(&target_path, e.error))?;
+        Ok(target_path)
+    }
+
     /// 生成一致性快照备份，返回备份文件路径（不存在主库时返回 None）
     pub(crate) fn backup_database_file(&self) -> Result<Option<PathBuf>, AppError> {
         let db_path = get_app_config_dir().join("cc-switch.db");
@@ -378,40 +441,28 @@ impl Database {
             return Ok(None);
         }
 
+        let backup_dir = Self::backup_directory()?;
+        let backup_path = {
+            let conn = lock_conn!(self.conn);
+            Self::persist_backup(&conn, &backup_dir)?
+        };
+        Self::cleanup_db_backups(&backup_dir, None)?;
+        Ok(Some(backup_path))
+    }
+
+    fn backup_directory() -> Result<PathBuf, AppError> {
+        let db_path = get_app_config_dir().join("cc-switch.db");
         let backup_dir = db_path
             .parent()
             .ok_or_else(|| AppError::Config("无效的数据库路径".to_string()))?
             .join("backups");
-
         fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
-
-        let base_id = format!("db_backup_{}", Local::now().format("%Y%m%d_%H%M%S"));
-        let mut backup_id = base_id.clone();
-        let mut backup_path = backup_dir.join(format!("{backup_id}.db"));
-        let mut counter = 1;
-        while backup_path.exists() {
-            backup_id = format!("{base_id}_{counter}");
-            backup_path = backup_dir.join(format!("{backup_id}.db"));
-            counter += 1;
-        }
-
-        {
-            let conn = lock_conn!(self.conn);
-            let mut dest_conn =
-                Connection::open(&backup_path).map_err(|e| AppError::Database(e.to_string()))?;
-            let backup = Backup::new(&conn, &mut dest_conn)
-                .map_err(|e| AppError::Database(e.to_string()))?;
-            backup
-                .step(-1)
-                .map_err(|e| AppError::Database(e.to_string()))?;
-        }
-
-        Self::cleanup_db_backups(&backup_dir)?;
-        Ok(Some(backup_path))
+        Ok(backup_dir)
     }
 
-    /// 清理旧的数据库备份，保留最新的 N 个
-    fn cleanup_db_backups(dir: &Path) -> Result<(), AppError> {
+    /// 清理旧的数据库备份，保留最新的 N 个。
+    /// `protected_path` 用于确保刚创建的恢复安全备份不会被同一轮清理删除。
+    fn cleanup_db_backups(dir: &Path, protected_path: Option<&Path>) -> Result<(), AppError> {
         let retain = crate::settings::effective_backup_retain_count();
         let entries = match fs::read_dir(dir) {
             Ok(iter) => iter
@@ -435,9 +486,18 @@ impl Database {
         let mut sorted = entries;
         sorted.sort_by_key(|entry| entry.metadata().and_then(|m| m.modified()).ok());
 
-        for entry in sorted.into_iter().take(remove_count) {
+        let mut removed = 0;
+        for entry in sorted {
+            if removed >= remove_count {
+                break;
+            }
+            if protected_path.is_some_and(|protected| entry.path() == protected) {
+                continue;
+            }
             if let Err(err) = fs::remove_file(entry.path()) {
                 log::warn!("删除旧数据库备份失败 {}: {}", entry.path().display(), err);
+            } else {
+                removed += 1;
             }
         }
         Ok(())
@@ -676,53 +736,477 @@ impl Database {
         Ok(entries)
     }
 
-    /// Restore database from a backup file. Returns the safety backup ID.
-    pub fn restore_from_backup(&self, filename: &str) -> Result<String, AppError> {
-        // Security: validate filename to prevent path traversal
-        if filename.contains("..")
-            || filename.contains('/')
-            || filename.contains('\\')
+    fn validated_backup_path(filename: &str) -> Result<PathBuf, AppError> {
+        let path = Path::new(filename);
+        if path.components().count() != 1
+            || !matches!(path.components().next(), Some(Component::Normal(_)))
             || !filename.ends_with(".db")
+            || (cfg!(windows) && filename.contains(':'))
         {
             return Err(AppError::InvalidInput(
                 "Invalid backup filename".to_string(),
             ));
         }
 
-        let backup_dir = get_app_config_dir().join("backups");
-        let backup_path = backup_dir.join(filename);
-
+        let backup_path = get_app_config_dir().join("backups").join(path);
         if !backup_path.exists() {
             return Err(AppError::InvalidInput(format!(
                 "Backup file not found: {filename}"
             )));
         }
+        Ok(backup_path)
+    }
 
-        // Step 1: Create safety backup of current database
-        let safety_backup = self.backup_database_file()?;
-        let safety_id = safety_backup
-            .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
-            .unwrap_or_default();
+    fn connection_digest(conn: &Connection) -> Result<String, AppError> {
+        let tables = Self::table_names(conn)?;
+        let mut hasher = Sha256::new();
+        let mut schema_stmt = conn
+            .prepare(
+                "SELECT type, name, tbl_name, COALESCE(sql, '')
+                 FROM sqlite_master
+                 WHERE name NOT LIKE 'sqlite_%'
+                 ORDER BY type, name",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let schema_rows = schema_stmt
+            .query_map([], |row| {
+                Ok(format!(
+                    "{}\u{0}{}\u{0}{}\u{0}{}",
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?
+                ))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        for schema in schema_rows {
+            hasher.update(
+                schema
+                    .map_err(|e| AppError::Database(e.to_string()))?
+                    .as_bytes(),
+            );
+            hasher.update([0]);
+        }
+        for table in tables {
+            hasher.update(table.as_bytes());
+            hasher.update([0]);
+            for row in Self::table_fingerprint_excluding(conn, &table, &[])? {
+                hasher.update(row.as_bytes());
+                hasher.update([0]);
+            }
+        }
+        let user_version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        hasher.update(user_version.to_le_bytes());
+        Ok(format!("{:x}", hasher.finalize()))
+    }
 
-        // Step 2: Open the backup file and restore it to the main database
-        let source_conn =
-            Connection::open(&backup_path).map_err(|e| AppError::Database(e.to_string()))?;
-
-        {
-            let mut main_conn = lock_conn!(self.conn);
-            let backup = Backup::new(&source_conn, &mut main_conn)
-                .map_err(|e| AppError::Database(e.to_string()))?;
-            backup
-                .step(-1)
-                .map_err(|e| AppError::Database(e.to_string()))?;
+    fn table_fingerprint_excluding(
+        conn: &Connection,
+        table: &str,
+        excluded_columns: &[&str],
+    ) -> Result<Vec<String>, AppError> {
+        if !Self::table_exists(conn, table)? {
+            return Ok(Vec::new());
         }
 
-        // Step 3: Run schema migrations (backup may be from an older version)
-        self.create_tables()?;
-        self.apply_schema_migrations()?;
-        self.ensure_model_pricing_seeded()?;
+        let columns = {
+            let mut stmt = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| AppError::Database(e.to_string()))?
+                .into_iter()
+                .filter(|column| !excluded_columns.contains(&column.as_str()))
+                .collect::<Vec<_>>()
+        };
+        if columns.is_empty() {
+            return Ok(Vec::new());
+        }
 
-        log::info!("Database restored from backup: {filename}, safety backup: {safety_id}");
+        let quoted_columns = columns
+            .iter()
+            .map(|column| format!("\"{}\"", column.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut stmt = conn
+            .prepare(&format!("SELECT {quoted_columns} FROM \"{table}\""))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| {
+                let encode_bytes = |value: &[u8]| {
+                    value
+                        .iter()
+                        .map(|byte| format!("{byte:02x}"))
+                        .collect::<String>()
+                };
+                let values = (0..columns.len())
+                    .map(|index| match row.get_ref(index)? {
+                        ValueRef::Null => Ok("null".to_string()),
+                        ValueRef::Integer(value) => Ok(format!("i:{value}")),
+                        ValueRef::Real(value) => Ok(format!("r:{value}")),
+                        ValueRef::Text(value) => Ok(format!("t:{}", encode_bytes(value))),
+                        ValueRef::Blob(value) => Ok(format!("b:{}", encode_bytes(value))),
+                    })
+                    .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+                Ok(values.join("|"))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let mut result = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        result.sort();
+        Ok(result)
+    }
+
+    fn common_config_fingerprint(conn: &Connection) -> Result<Vec<String>, AppError> {
+        if !Self::table_exists(conn, "settings")? {
+            return Ok(Vec::new());
+        }
+        let keys = crate::app_config::AppType::all()
+            .flat_map(|app| {
+                let app_type = app.as_str();
+                [
+                    format!("common_config_{app_type}"),
+                    format!("common_config_{app_type}_cleared"),
+                ]
+            })
+            .collect::<Vec<_>>();
+        let placeholders = std::iter::repeat_n("?", keys.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT key, value FROM settings
+                 WHERE key IN ({placeholders}) ORDER BY key"
+            ))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(&keys), |row| {
+                let key: String = row.get(0)?;
+                let value: Option<String> = row.get(1)?;
+                Ok(format!("{key}\u{0}{}", value.unwrap_or_default()))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    fn provider_count(conn: &Connection) -> Result<u64, AppError> {
+        if !Self::table_exists(conn, "providers")? {
+            return Ok(0);
+        }
+        conn.query_row("SELECT COUNT(*) FROM providers", [], |row| row.get(0))
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    fn table_names(conn: &Connection) -> Result<Vec<String>, AppError> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT name FROM sqlite_master
+                 WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+                 ORDER BY name",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    fn validate_backup_database(conn: &Connection) -> Result<(), AppError> {
+        let integrity: String = conn
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if integrity != "ok" {
+            return Err(AppError::InvalidInput(
+                "Backup database failed integrity check".to_string(),
+            ));
+        }
+        if !Self::table_exists(conn, "providers")? || !Self::table_exists(conn, "settings")? {
+            return Err(AppError::InvalidInput(
+                "Backup is not a valid CC Switch database".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Preview category-level restore impact without returning database values.
+    pub fn preview_restore_from_backup(
+        &self,
+        filename: &str,
+    ) -> Result<RestoreImpactPreview, AppError> {
+        const CATEGORIZED_TABLES: &[&str] = &["providers", "provider_endpoints", "proxy_config"];
+
+        let backup_path = Self::validated_backup_path(filename)?;
+        let backup_conn =
+            Connection::open_with_flags(&backup_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .map_err(|e| AppError::Database(e.to_string()))?;
+        Self::validate_backup_database(&backup_conn)?;
+        let restore_token = Self::connection_digest(&backup_conn)?;
+
+        // Run the same compatibility work as restore so the confirmation dialog
+        // never enables an operation that is known to be incompatible.
+        let preview_file = NamedTempFile::new().map_err(|e| AppError::IoContext {
+            context: "创建预览数据库文件失败".to_string(),
+            source: e,
+        })?;
+        let mut preview_conn =
+            Connection::open(preview_file.path()).map_err(|e| AppError::Database(e.to_string()))?;
+        Self::copy_database(&backup_conn, &mut preview_conn)?;
+        Self::create_tables_on_conn(&preview_conn)?;
+        Self::apply_schema_migrations_on_conn(&preview_conn)?;
+        Self::ensure_model_pricing_seeded_on_conn(&preview_conn)?;
+
+        let current_conn = lock_conn!(self.conn);
+        let current_provider_count = Self::provider_count(&current_conn)?;
+        let backup_provider_count = Self::provider_count(&preview_conn)?;
+        let common_config_changed = Self::common_config_fingerprint(&current_conn)?
+            != Self::common_config_fingerprint(&preview_conn)?;
+        let mut current_for_compare =
+            Connection::open_in_memory().map_err(|e| AppError::Database(e.to_string()))?;
+        Self::copy_database(&current_conn, &mut current_for_compare)?;
+        drop(current_conn);
+        Self::preserve_local_proxy_runtime(&current_for_compare, &preview_conn)?;
+        let local_preferences = Self::capture_local_restore_preferences(&current_for_compare)?;
+        Self::restore_local_preferences(&mut preview_conn, local_preferences)?;
+
+        let mut other_tables = Self::table_names(&current_for_compare)?;
+        other_tables.extend(Self::table_names(&preview_conn)?);
+        other_tables.sort();
+        other_tables.dedup();
+        other_tables.retain(|table| !CATEGORIZED_TABLES.contains(&table.as_str()));
+        // Common config has its own category and is overlaid when preservation is
+        // selected; do not double-report it through the catch-all settings table.
+        current_for_compare.execute("DELETE FROM settings WHERE key LIKE 'common_config_%'", [])?;
+        preview_conn.execute("DELETE FROM settings WHERE key LIKE 'common_config_%'", [])?;
+        let other_data_changed = other_tables
+            .iter()
+            .map(|table| {
+                Ok(
+                    Self::table_fingerprint_excluding(&current_for_compare, table, &[])?
+                        != Self::table_fingerprint_excluding(&preview_conn, table, &[])?,
+                )
+            })
+            .collect::<Result<Vec<bool>, AppError>>()?
+            .into_iter()
+            .any(|changed| changed);
+        Ok(RestoreImpactPreview {
+            providers_changed: Self::table_fingerprint_excluding(
+                &current_for_compare,
+                "providers",
+                &[],
+            )? != Self::table_fingerprint_excluding(
+                &preview_conn,
+                "providers",
+                &[],
+            )? || Self::table_fingerprint_excluding(
+                &current_for_compare,
+                "provider_endpoints",
+                &[],
+            )? != Self::table_fingerprint_excluding(
+                &preview_conn,
+                "provider_endpoints",
+                &[],
+            )?,
+            common_config_changed,
+            proxy_config_changed: Self::table_fingerprint_excluding(
+                &current_for_compare,
+                "proxy_config",
+                &[],
+            )? != Self::table_fingerprint_excluding(
+                &preview_conn,
+                "proxy_config",
+                &[],
+            )?,
+            other_data_changed,
+            current_provider_count,
+            backup_provider_count,
+            restore_token,
+        })
+    }
+
+    fn setting_value(conn: &Connection, key: &str) -> Result<Option<String>, AppError> {
+        conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| {
+            row.get::<_, Option<String>>(0)
+        })
+        .optional()
+        .map(|value| value.flatten())
+        .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    fn capture_local_restore_preferences(
+        conn: &Connection,
+    ) -> Result<LocalRestorePreferences, AppError> {
+        let mut preferences = LocalRestorePreferences::default();
+        if Self::table_exists(conn, "settings")? {
+            for app_type in crate::app_config::AppType::all() {
+                let app_type = app_type.as_str();
+                let config_key = format!("common_config_{app_type}");
+                let cleared_key = format!("common_config_{app_type}_cleared");
+                preferences
+                    .common_config
+                    .insert(config_key.clone(), Self::setting_value(conn, &config_key)?);
+                preferences.common_config_cleared.insert(
+                    cleared_key.clone(),
+                    Self::setting_value(conn, &cleared_key)?,
+                );
+            }
+        }
+        Ok(preferences)
+    }
+
+    fn restore_setting_values(
+        tx: &rusqlite::Transaction<'_>,
+        values: BTreeMap<String, Option<String>>,
+    ) -> Result<(), AppError> {
+        for (key, value) in values {
+            match value {
+                Some(value) => {
+                    tx.execute(
+                        "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+                        params![key, value],
+                    )
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+                }
+                None => {
+                    tx.execute("DELETE FROM settings WHERE key = ?1", [key])
+                        .map_err(|e| AppError::Database(e.to_string()))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn restore_local_preferences(
+        conn: &mut Connection,
+        preferences: LocalRestorePreferences,
+    ) -> Result<(), AppError> {
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Self::restore_setting_values(&tx, preferences.common_config)?;
+        Self::restore_setting_values(&tx, preferences.common_config_cleared)?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    fn preserve_local_proxy_runtime(
+        current: &Connection,
+        staged: &Connection,
+    ) -> Result<(), AppError> {
+        Self::restore_tables(current, staged, &["proxy_live_backup"])?;
+        if !Self::table_exists(current, "proxy_config")?
+            || !Self::table_exists(staged, "proxy_config")?
+        {
+            return Ok(());
+        }
+
+        let mut stmt = current
+            .prepare(
+                "SELECT app_type, proxy_enabled, enabled, listen_address, listen_port
+                 FROM proxy_config",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        for row in rows {
+            let (app_type, proxy_enabled, enabled, listen_address, listen_port) =
+                row.map_err(|e| AppError::Database(e.to_string()))?;
+            staged
+                .execute(
+                    "UPDATE proxy_config
+                     SET proxy_enabled = ?2, enabled = ?3,
+                         listen_address = ?4, listen_port = ?5
+                     WHERE app_type = ?1",
+                    params![
+                        app_type,
+                        proxy_enabled,
+                        enabled,
+                        listen_address,
+                        listen_port
+                    ],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// Restore database from a backup file. Returns the safety backup ID.
+    pub fn restore_from_backup(
+        &self,
+        filename: &str,
+        restore_token: &str,
+        preserve_local_preferences: bool,
+    ) -> Result<String, AppError> {
+        let backup_path = Self::validated_backup_path(filename)?;
+        let source_conn =
+            Connection::open_with_flags(&backup_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .map_err(|e| AppError::Database(e.to_string()))?;
+        Self::validate_backup_database(&source_conn)?;
+        if Self::connection_digest(&source_conn)? != restore_token {
+            return Err(AppError::InvalidInput(
+                "Backup changed after preview. Preview it again before restoring.".to_string(),
+            ));
+        }
+
+        // Prepare and migrate a temporary copy first. The active database is not
+        // touched until every compatibility and preference step succeeds.
+        let temp_file = NamedTempFile::new().map_err(|e| AppError::IoContext {
+            context: "创建临时数据库文件失败".to_string(),
+            source: e,
+        })?;
+        let mut staged_conn =
+            Connection::open(temp_file.path()).map_err(|e| AppError::Database(e.to_string()))?;
+        Self::copy_database(&source_conn, &mut staged_conn)?;
+        Self::create_tables_on_conn(&staged_conn)?;
+        Self::apply_schema_migrations_on_conn(&staged_conn)?;
+        Self::ensure_model_pricing_seeded_on_conn(&staged_conn)?;
+
+        // Re-capture device-local values under the same mutex used for the safety
+        // snapshot and final copy, so a concurrent setting change cannot be lost.
+        let backup_dir = Self::backup_directory()?;
+        let mut main_conn = lock_conn!(self.conn);
+        Self::preserve_local_proxy_runtime(&main_conn, &staged_conn)?;
+        if preserve_local_preferences {
+            let local_preferences = Self::capture_local_restore_preferences(&main_conn)?;
+            Self::restore_local_preferences(&mut staged_conn, local_preferences)?;
+        }
+        // Force the canonical Gemini cleanup to run after restore. That routine
+        // removes any historical credential copies from the snippet, providers,
+        // and the preserved proxy Live backup together.
+        staged_conn
+            .execute(
+                "DELETE FROM settings
+                 WHERE key = 'gemini_common_config_credentials_scrubbed_v1'",
+                [],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let safety_path = Self::persist_backup(&main_conn, &backup_dir)?;
+        let safety_id = safety_path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        Self::copy_database(&staged_conn, &mut main_conn)?;
+        drop(main_conn);
+        Self::cleanup_db_backups(&backup_dir, Some(&safety_path))?;
+
+        log::info!(
+            "Database restored from backup: {filename}, safety backup: {safety_id}, preserve local preferences: {preserve_local_preferences}"
+        );
         Ok(safety_id)
     }
 
@@ -865,6 +1349,203 @@ mod tests {
                 None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
             }
         }
+    }
+
+    fn write_backup_fixture(
+        db: &Database,
+        filename: &str,
+        provider_name: &str,
+        common_config: &str,
+    ) -> Result<(), AppError> {
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO providers
+                 (id, app_type, name, settings_config, meta, is_current)
+                 VALUES ('provider-1', 'claude', ?1, '{}', '{}', 1)",
+                [provider_name],
+            )?;
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('common_config_claude', ?1)",
+                [common_config],
+            )?;
+        }
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        std::fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        let mut destination = Connection::open(backup_dir.join(filename))?;
+        let source = crate::database::lock_conn!(db.conn);
+        let backup = rusqlite::backup::Backup::new(&source, &mut destination)?;
+        backup.step(-1)?;
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn restore_preview_reports_categories_without_values() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let current = Database::memory()?;
+        write_backup_fixture(&current, "preview.db", "Current", r#"{"model":"sonnet"}"#)?;
+        {
+            let conn = crate::database::lock_conn!(current.conn);
+            conn.execute(
+                "UPDATE providers SET name = 'Changed' WHERE id = 'provider-1'",
+                [],
+            )?;
+            conn.execute(
+                "UPDATE settings SET value = ?1 WHERE key = 'common_config_claude'",
+                [r#"{"model":"opus"}"#],
+            )?;
+        }
+
+        let preview = current.preview_restore_from_backup("preview.db")?;
+        assert!(preview.providers_changed);
+        assert!(preview.common_config_changed);
+        assert!(!preview.restore_token.is_empty());
+        assert_eq!(preview.current_provider_count, 1);
+        assert_eq!(preview.backup_provider_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn restore_rejects_backup_changed_after_preview() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let db = Database::init()?;
+        write_backup_fixture(&db, "changed.db", "Backup", r#"{"model":"opus"}"#)?;
+        let backup_path = crate::config::get_app_config_dir()
+            .join("backups")
+            .join("changed.db");
+        let preview = db.preview_restore_from_backup("changed.db")?;
+        {
+            let conn = Connection::open(&backup_path)?;
+            conn.execute(
+                "CREATE TRIGGER unpreviewed AFTER INSERT ON settings
+                 BEGIN DELETE FROM providers; END",
+                [],
+            )?;
+        }
+
+        let result = db.restore_from_backup("changed.db", &preview.restore_token, false);
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn restore_can_preserve_common_config_and_existing_current_provider() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let db = Database::init()?;
+        write_backup_fixture(&db, "preserve.db", "Backup", r#"{"model":"opus"}"#)?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "UPDATE settings SET value = ?1 WHERE key = 'common_config_claude'",
+                [r#"{"model":"sonnet"}"#],
+            )?;
+            conn.execute(
+                "UPDATE providers SET name = 'Current' WHERE id = 'provider-1'",
+                [],
+            )?;
+        }
+
+        let restore_token = {
+            let conn = Connection::open(
+                crate::config::get_app_config_dir()
+                    .join("backups")
+                    .join("preserve.db"),
+            )?;
+            Database::connection_digest(&conn)?
+        };
+        db.restore_from_backup("preserve.db", &restore_token, true)?;
+        let conn = crate::database::lock_conn!(db.conn);
+        let common: String = conn.query_row(
+            "SELECT value FROM settings WHERE key = 'common_config_claude'",
+            [],
+            |row| row.get(0),
+        )?;
+        let provider: (String, bool) = conn.query_row(
+            "SELECT name, is_current FROM providers WHERE id = 'provider-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(common, r#"{"model":"sonnet"}"#);
+        assert_eq!(provider, ("Backup".to_string(), true));
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn full_restore_replaces_common_config() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let db = Database::init()?;
+        write_backup_fixture(&db, "full.db", "Backup", r#"{"model":"opus"}"#)?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "UPDATE settings SET value = ?1 WHERE key = 'common_config_claude'",
+                [r#"{"model":"sonnet"}"#],
+            )?;
+        }
+
+        let restore_token = {
+            let conn = Connection::open(
+                crate::config::get_app_config_dir()
+                    .join("backups")
+                    .join("full.db"),
+            )?;
+            Database::connection_digest(&conn)?
+        };
+        db.restore_from_backup("full.db", &restore_token, false)?;
+        let conn = crate::database::lock_conn!(db.conn);
+        let common: String = conn.query_row(
+            "SELECT value FROM settings WHERE key = 'common_config_claude'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(common, r#"{"model":"opus"}"#);
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn restore_preserves_local_proxy_runtime_state() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let db = Database::init()?;
+        write_backup_fixture(&db, "proxy-local.db", "Backup", r#"{"model":"opus"}"#)?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "UPDATE proxy_config
+                 SET proxy_enabled = 1, enabled = 1,
+                     listen_address = '127.0.0.2', listen_port = 18080
+                 WHERE app_type = 'claude'",
+                [],
+            )?;
+            conn.execute(
+                "INSERT OR REPLACE INTO proxy_live_backup
+                 (app_type, original_config, backed_up_at)
+                 VALUES ('claude', '{\"local\":true}', '2026-08-09')",
+                [],
+            )?;
+        }
+
+        let preview = db.preview_restore_from_backup("proxy-local.db")?;
+        db.restore_from_backup("proxy-local.db", &preview.restore_token, false)?;
+        let conn = crate::database::lock_conn!(db.conn);
+        let runtime: (i64, i64, String, i64) = conn.query_row(
+            "SELECT proxy_enabled, enabled, listen_address, listen_port
+             FROM proxy_config WHERE app_type = 'claude'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(runtime, (1, 1, "127.0.0.2".to_string(), 18080));
+        let live_backup: String = conn.query_row(
+            "SELECT original_config FROM proxy_live_backup WHERE app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(live_backup, r#"{"local":true}"#);
+        Ok(())
     }
 
     #[test]
