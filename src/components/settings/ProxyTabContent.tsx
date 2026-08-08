@@ -25,6 +25,13 @@ interface ProxyTabContentProps {
   onAutoSave: (updates: Partial<SettingsFormState>) => Promise<boolean | void>;
 }
 
+export const FAILOVER_APPS = [
+  { id: "claude", label: "Claude" },
+  { id: "codex", label: "Codex" },
+  { id: "gemini", label: "Gemini" },
+  { id: "grokbuild", label: "Grok Build" },
+] as const;
+
 export function ProxyTabContent({
   settings,
   onAutoSave,
@@ -111,7 +118,7 @@ export function ProxyTabContent({
                 className="gap-1.5 h-6 ml-auto mr-2"
               >
                 <Activity
-                  className={`h-3 w-3 ${isRunning ? "animate-pulse" : ""}`}
+                  className={`h-3 w-3 ${isRunning ? "status-heartbeat" : ""}`}
                 />
                 {isRunning
                   ? t("settings.advanced.proxy.running")
@@ -172,12 +179,14 @@ export function ProxyTabContent({
               )}
 
               <Tabs defaultValue="claude" className="w-full">
-                <TabsList className="grid w-full grid-cols-3">
-                  <TabsTrigger value="claude">Claude</TabsTrigger>
-                  <TabsTrigger value="codex">Codex</TabsTrigger>
-                  <TabsTrigger value="gemini">Gemini</TabsTrigger>
+                <TabsList className="grid w-full grid-cols-4">
+                  {FAILOVER_APPS.map(({ id, label }) => (
+                    <TabsTrigger key={id} value={id}>
+                      {label}
+                    </TabsTrigger>
+                  ))}
                 </TabsList>
-                {(["claude", "codex", "gemini"] as const).map((appType) => {
+                {FAILOVER_APPS.map(({ id: appType }) => {
                   const failoverDisabled =
                     !isRunning || !(takeoverStatus?.[appType] ?? false);
                   return (

@@ -15,6 +15,11 @@ use tempfile::NamedTempFile;
 
 const CC_SWITCH_SQL_EXPORT_HEADER: &str = "-- CC Switch SQLite 导出";
 
+/// Bound combined INSERT batches while still amortizing statement parsing.
+/// A row larger than this cap is emitted alone because it cannot be split.
+const INSERT_BATCH_MAX_ROWS: usize = 200;
+const INSERT_BATCH_MAX_BYTES: usize = 1024 * 1024;
+
 /// `dump_sql` 会写出的 PRAGMA。其余 PRAGMA 一律拒绝——`temp_store_directory`
 /// 能把临时文件重定向到任意目录，`writable_schema` 能绕过 schema 完整性检查。
 const IMPORT_ALLOWED_PRAGMAS: &[&str] = &["foreign_keys", "user_version"];
@@ -237,9 +242,16 @@ impl Database {
         target_conn: &Connection,
         tables: &[&str],
     ) -> Result<(), AppError> {
+        // 整批复原放进一个事务：旧实现每行一条隐式自动提交的 INSERT，
+        // 目标是磁盘上的暂存库，等于每行一次 fsync——2.6 万行实测 119 秒。
+        // 合并成单事务后只剩最后一次提交；中途失败整体回滚，
+        // 也不会留下“半张表”的中间状态。
+        let tx = target_conn
+            .unchecked_transaction()
+            .map_err(|e| AppError::Database(format!("开启恢复事务失败: {e}")))?;
+
         for table in tables {
-            if !Self::table_exists(source_conn, table)? || !Self::table_exists(target_conn, table)?
-            {
+            if !Self::table_exists(source_conn, table)? || !Self::table_exists(&tx, table)? {
                 continue;
             }
 
@@ -248,23 +260,30 @@ impl Database {
                 continue;
             }
 
-            target_conn
-                .execute(&format!("DELETE FROM \"{table}\""), [])
+            let quoted_table = Self::quote_identifier(table);
+            let quoted_columns = columns
+                .iter()
+                .map(|column| Self::quote_identifier(column))
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            tx.execute(&format!("DELETE FROM {quoted_table}"), [])
                 .map_err(|e| AppError::Database(format!("清空表 {table} 失败: {e}")))?;
 
             let placeholders = (1..=columns.len())
                 .map(|idx| format!("?{idx}"))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let cols = columns
-                .iter()
-                .map(|column| format!("\"{column}\""))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let insert_sql = format!("INSERT INTO \"{table}\" ({cols}) VALUES ({placeholders})");
+            let insert_sql =
+                format!("INSERT INTO {quoted_table} ({quoted_columns}) VALUES ({placeholders})");
+
+            // INSERT 语句每表只 prepare 一次，不再逐行重复解析。
+            let mut insert_stmt = tx
+                .prepare(&insert_sql)
+                .map_err(|e| AppError::Database(format!("准备表 {table} 插入语句失败: {e}")))?;
 
             let mut stmt = source_conn
-                .prepare(&format!("SELECT * FROM \"{table}\""))
+                .prepare(&format!("SELECT {quoted_columns} FROM {quoted_table}"))
                 .map_err(|e| AppError::Database(format!("读取表 {table} 失败: {e}")))?;
             let mut rows = stmt
                 .query([])
@@ -279,12 +298,14 @@ impl Database {
                     );
                 }
 
-                target_conn
-                    .execute(&insert_sql, rusqlite::params_from_iter(values.iter()))
+                insert_stmt
+                    .execute(rusqlite::params_from_iter(values.iter()))
                     .map_err(|e| AppError::Database(format!("恢复表 {table} 数据失败: {e}")))?;
             }
         }
 
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("提交恢复事务失败: {e}")))?;
         Ok(())
     }
 
@@ -465,6 +486,7 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let mut tables = Vec::new();
+        let mut triggers = Vec::new();
         let mut rows = stmt
             .query([])
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -478,10 +500,14 @@ impl Database {
                 continue;
             }
 
+            if obj_type == "trigger" {
+                triggers.push(sql);
+                continue;
+            }
+
             output.push_str(&sql);
             output.push_str(";\n");
-
-            if obj_type == "table" && !name.starts_with("sqlite_") {
+            if obj_type == "table" {
                 tables.push(name);
             }
         }
@@ -496,13 +522,28 @@ impl Database {
                 continue;
             }
 
+            // 每行一条 INSERT 是导入慢的根源：恢复侧要为每条语句单独
+            // 解析/准备/收尾，2 万行实测 21 秒（内存库上一样慢，说明是
+            // 纯 CPU 而非 I/O）。合并成多行 VALUES 后同样数据 <100ms。
+            // SQLite 从 3.7.11（2012）起支持多行 VALUES，且导入侧是通用
+            // execute_batch，新旧两种格式都能读——向后兼容无忧。
+            let quoted_table = Self::quote_identifier(&table);
+            let quoted_columns = columns
+                .iter()
+                .map(|column| Self::quote_identifier(column))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let insert_prefix = format!("INSERT INTO {quoted_table} ({quoted_columns}) VALUES ");
+
             let mut stmt = conn
-                .prepare(&format!("SELECT * FROM \"{table}\""))
+                .prepare(&format!("SELECT {quoted_columns} FROM {quoted_table}"))
                 .map_err(|e| AppError::Database(e.to_string()))?;
             let mut rows = stmt
                 .query([])
                 .map_err(|e| AppError::Database(e.to_string()))?;
 
+            let mut pending_rows = 0usize;
+            let mut batch = String::new();
             while let Some(row) = rows.next().map_err(|e| AppError::Database(e.to_string()))? {
                 let mut values = Vec::with_capacity(columns.len());
                 for idx in 0..columns.len() {
@@ -512,26 +553,57 @@ impl Database {
                     values.push(Self::format_sql_value(value)?);
                 }
 
-                let cols = columns
-                    .iter()
-                    .map(|c| format!("\"{c}\""))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                output.push_str(&format!(
-                    "INSERT INTO \"{table}\" ({cols}) VALUES ({});\n",
-                    values.join(", ")
-                ));
+                let row_sql = format!("({})", values.join(", "));
+                let separator_bytes = usize::from(pending_rows > 0);
+                if pending_rows > 0
+                    && batch.len() + separator_bytes + row_sql.len() + 2 > INSERT_BATCH_MAX_BYTES
+                {
+                    batch.push_str(";\n");
+                    output.push_str(&batch);
+                    pending_rows = 0;
+                }
+
+                if pending_rows == 0 {
+                    batch.clear();
+                    batch.push_str(&insert_prefix);
+                } else {
+                    batch.push(',');
+                }
+                batch.push_str(&row_sql);
+                pending_rows += 1;
+
+                if pending_rows >= INSERT_BATCH_MAX_ROWS {
+                    batch.push_str(";\n");
+                    output.push_str(&batch);
+                    pending_rows = 0;
+                }
             }
+            if pending_rows > 0 {
+                batch.push_str(";\n");
+                output.push_str(&batch);
+            }
+        }
+
+        // Triggers must be created after loading table data so they cannot
+        // change dump rows or abandon the remainder of a multi-row INSERT.
+        for sql in triggers {
+            output.push_str(&sql);
+            output.push_str(";\n");
         }
 
         output.push_str("COMMIT;\nPRAGMA foreign_keys=ON;\n");
         Ok(output)
     }
 
+    fn quote_identifier(identifier: &str) -> String {
+        format!("\"{}\"", identifier.replace('"', "\"\""))
+    }
+
     /// 获取表的列名列表
     fn get_table_columns(conn: &Connection, table: &str) -> Result<Vec<String>, AppError> {
+        let quoted_table = Self::quote_identifier(table);
         let mut stmt = conn
-            .prepare(&format!("PRAGMA table_info(\"{table}\")"))
+            .prepare(&format!("PRAGMA table_info({quoted_table})"))
             .map_err(|e| AppError::Database(e.to_string()))?;
         let iter = stmt
             .query_map([], |row| row.get::<_, String>(1))
@@ -748,10 +820,57 @@ mod tests {
     use super::Database;
     use crate::error::AppError;
     use crate::settings::{update_settings, AppSettings};
+    use rusqlite::Connection;
     use serial_test::serial;
 
+    struct TestHomeGuard {
+        previous_test_home: Option<std::ffi::OsString>,
+        temp_dir: tempfile::TempDir,
+    }
+
+    impl TestHomeGuard {
+        fn new() -> Self {
+            let temp_dir = tempfile::tempdir().expect("create isolated test home");
+            let previous_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", temp_dir.path());
+            // Prevent the Windows legacy-HOME fallback without mutating HOME:
+            // an existing default DB keeps get_app_config_dir() anchored under
+            // CC_SWITCH_TEST_HOME and makes import exercise its safety backup.
+            let config_dir = temp_dir.path().join(".cc-switch");
+            std::fs::create_dir_all(&config_dir).expect("create isolated config directory");
+            std::fs::File::create(config_dir.join("cc-switch.db"))
+                .expect("create isolated database sentinel");
+            let guard = Self {
+                previous_test_home,
+                temp_dir,
+            };
+            let resolved = crate::config::get_app_config_dir();
+            assert!(
+                resolved.starts_with(guard.temp_dir.path()),
+                "isolated test home resolved outside its temp directory: {}",
+                resolved.display()
+            );
+            guard
+        }
+
+        fn path(&self) -> &std::path::Path {
+            self.temp_dir.path()
+        }
+    }
+
+    impl Drop for TestHomeGuard {
+        fn drop(&mut self) {
+            match self.previous_test_home.as_ref() {
+                Some(previous) => std::env::set_var("CC_SWITCH_TEST_HOME", previous),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+
     #[test]
+    #[serial]
     fn import_rejects_cross_file_statements_and_leaves_no_file_behind() -> Result<(), AppError> {
+        let test_home = TestHomeGuard::new();
         // `VACUUM INTO` 是关键字扫描方案最容易漏的一条：它不含 "ATTACH" 字样，
         // 却和 ATTACH 一样落到 `AuthAction::Attach`（实测），因此同一条规则挡住两者。
         let cases: [(&str, &str); 2] = [
@@ -760,21 +879,26 @@ mod tests {
         ];
 
         for (label, template) in cases {
-            let target = std::env::temp_dir().join(format!("cc-switch-authorizer-{label}.sqlite"));
-            let _ = std::fs::remove_file(&target);
+            let target = test_home
+                .path()
+                .join(format!("cc-switch-authorizer-{label}.sqlite"));
 
             // 合法的导出头 + 越界语句。头部校验只比前缀，这份输入过得了它，
             // 真正拦下来的必须是 authorizer。
             let malicious = format!(
                 "{}\n{}\n",
                 super::CC_SWITCH_SQL_EXPORT_HEADER,
-                template.replace("{path}", &target.display().to_string())
+                template.replace("{path}", &target.to_string_lossy().replace('\'', "''"))
             );
 
             let db = Database::memory()?;
             let result = db.import_sql_string(&malicious);
 
-            assert!(result.is_err(), "{label} 必须被拒绝");
+            let error = result.expect_err("越界 SQL 必须被拒绝");
+            assert!(
+                error.to_string().to_ascii_lowercase().contains("authoriz"),
+                "{label} 必须由 authorizer 拒绝，实际错误: {error}"
+            );
             // 光报错不够：文件创建发生在 prepare 之后、`validate_basic_state` 之前，
             // 守卫若失效，即便导入整体失败，文件也已经躺在磁盘上了。
             assert!(
@@ -782,14 +906,14 @@ mod tests {
                 "被拒绝的 {label} 不得在磁盘上留下文件: {}",
                 target.display()
             );
-
-            let _ = std::fs::remove_file(&target);
         }
         Ok(())
     }
 
     #[test]
+    #[serial]
     fn import_still_accepts_a_genuine_export() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
         // 白名单收得紧，必须有一条回归防线证明它没误伤自家导出格式——
         // 这条测试红了就说明 dump_sql 写出了白名单没覆盖的语句。
         let source = Database::memory()?;
@@ -817,101 +941,658 @@ mod tests {
     }
 
     #[test]
-    fn sync_import_preserves_local_only_tables() -> Result<(), AppError> {
-        let remote_db = Database::memory()?;
+    #[serial]
+    fn sql_file_api_round_trips_existing_export_behavior() -> Result<(), AppError> {
+        let test_home = TestHomeGuard::new();
+        let source = Database::memory()?;
         {
-            let conn = crate::database::lock_conn!(remote_db.conn);
+            let conn = crate::database::lock_conn!(source.conn);
+            conn.execute_batch(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('file-provider', 'claude', 'File Provider', '{}', '{}');
+                 INSERT INTO proxy_request_logs (
+                     request_id, provider_id, app_type, model,
+                     input_tokens, output_tokens, total_cost_usd,
+                     latency_ms, status_code, created_at
+                 ) VALUES ('file-request', 'file-provider', 'claude', 'claude-file', 5, 3, '0', 10, 200, 1);",
+            )?;
+        }
+
+        let backup_path = test_home.path().join("round-trip.sql");
+        source.export_sql(&backup_path)?;
+
+        let target = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(target.conn);
             conn.execute(
                 "INSERT INTO providers (id, app_type, name, settings_config, meta)
-                 VALUES ('remote-provider', 'claude', 'Remote Provider', '{}', '{}')",
+                 VALUES ('target-sentinel', 'claude', 'Must Be Replaced', '{}', '{}')",
                 [],
             )?;
         }
+        target.import_sql(&backup_path)?;
+
+        let conn = crate::database::lock_conn!(target.conn);
+        let providers = conn
+            .prepare("SELECT id FROM providers ORDER BY id")?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(providers, vec!["file-provider"]);
+        let request_exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM proxy_request_logs WHERE request_id = 'file-request')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(request_exists, "文件 API 必须完整恢复导出数据");
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn failed_sql_import_keeps_the_existing_database_unchanged() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let target = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(target.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('sentinel', 'claude', 'Existing Provider', '{}', '{}')",
+                [],
+            )?;
+        }
+
+        let invalid_sql = format!(
+            "{}\nBEGIN TRANSACTION;\nCREATE TABLE partial (id INTEGER);\nTHIS IS NOT SQL;\n",
+            super::CC_SWITCH_SQL_EXPORT_HEADER
+        );
+        assert!(target.import_sql_string(&invalid_sql).is_err());
+
+        let conn = crate::database::lock_conn!(target.conn);
+        let provider: (i64, String, String) = conn.query_row(
+            "SELECT COUNT(*), MIN(id), MIN(name) FROM providers",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(provider, (1, "sentinel".into(), "Existing Provider".into()));
+        let partial_exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'partial')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(!partial_exists, "失败导入的临时对象不得进入主库");
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn import_still_accepts_legacy_single_row_insert_exports() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        // This schema is copied from the v3.8.3 tag. Its data statements use
+        // the historical one-row-per-INSERT format and omit all newer columns.
+        let legacy = format!(
+            "{}\nPRAGMA foreign_keys=OFF;\nPRAGMA user_version=1;\nBEGIN TRANSACTION;\n{}
+             INSERT INTO providers (
+                 id, app_type, name, settings_config, meta, is_current
+             ) VALUES (
+                 'legacy-provider', 'claude', 'Legacy Provider',
+                 '{{\"anthropicApiKey\":\"sk-old\"}}', '{{}}', 1
+             );
+             INSERT INTO skills (key, installed, installed_at)
+             VALUES ('claude:legacy-skill', 1, 1700000000);
+             COMMIT;\nPRAGMA foreign_keys=ON;\n",
+            super::CC_SWITCH_SQL_EXPORT_HEADER,
+            crate::database::tests::V3_8_SCHEMA_V1_SQL,
+        );
+
+        let target = Database::memory()?;
+        target.import_sql_string(&legacy)?;
+
+        let conn = crate::database::lock_conn!(target.conn);
+        let user_version: i32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        assert_eq!(user_version, crate::database::SCHEMA_VERSION);
+        let provider: (String, String) = conn.query_row(
+            "SELECT name, settings_config FROM providers WHERE id = 'legacy-provider'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(
+            provider,
+            (
+                "Legacy Provider".into(),
+                "{\"anthropicApiKey\":\"sk-old\"}".into()
+            )
+        );
+        let cost_multiplier: String = conn.query_row(
+            "SELECT cost_multiplier FROM providers WHERE id = 'legacy-provider'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(cost_multiplier, "1.0");
+        let skill_snapshot: String = conn.query_row(
+            "SELECT value FROM settings WHERE key = 'skills_ssot_migration_snapshot'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(
+            skill_snapshot.contains("legacy-skill"),
+            "重建 skills 表时必须保留旧数据迁移快照"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn dump_sql_batches_rows_into_multi_row_inserts() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        // 每行一条 INSERT 是导入慢的根源（恢复侧逐条解析，2 万行实测 21s）。
+        // 这条测试钉死批量格式：450 行必须合并成 ceil(450/200) = 3 条语句。
+        // 一旦退回到逐行导出，这里立刻变红。
+        let db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            for i in 0..450 {
+                conn.execute(
+                    "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                     VALUES (?1, 'claude', 'p', '{}', '{}')",
+                    [format!("p{i}")],
+                )?;
+            }
+        }
+
+        let sql = db.export_sql_string()?;
+        let insert_count = sql.matches("INSERT INTO \"providers\"").count();
+        assert_eq!(
+            insert_count, 3,
+            "450 行应合并为 3 条多行 INSERT（每批 200 行），实际 {insert_count} 条"
+        );
+
+        let target = Database::memory()?;
+        target.import_sql_string(&sql)?;
+        let conn = crate::database::lock_conn!(target.conn);
+        let row_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM providers", [], |row| row.get(0))?;
+        assert_eq!(row_count, 450, "批次边界不得漏行或重复行");
+        for boundary in [0, 199, 200, 399, 400, 449] {
+            let exists: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM providers WHERE id = ?1)",
+                [format!("p{boundary}")],
+                |row| row.get(0),
+            )?;
+            assert!(exists, "批次边界行 p{boundary} 必须完整恢复");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn dump_sql_splits_large_rows_by_statement_bytes() -> Result<(), AppError> {
+        let source = Connection::open_in_memory()?;
+        source.execute(
+            "CREATE TABLE large_rows (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)",
+            [],
+        )?;
+
+        // Each row fits below the byte cap, while any pair exceeds it.
+        let payload = "x".repeat(super::INSERT_BATCH_MAX_BYTES / 2 + 1024);
+        for id in 1..=3 {
+            source.execute(
+                "INSERT INTO large_rows (id, payload) VALUES (?1, ?2)",
+                rusqlite::params![id, payload],
+            )?;
+        }
+
+        let sql = Database::dump_sql(&source, &[])?;
+        let inserts = sql
+            .lines()
+            .filter(|line| line.starts_with("INSERT INTO \"large_rows\""))
+            .collect::<Vec<_>>();
+        assert_eq!(inserts.len(), 3, "超大字段应按 SQL 字节数提前切批");
+        assert!(
+            inserts
+                .iter()
+                .all(|statement| statement.len() <= super::INSERT_BATCH_MAX_BYTES),
+            "每条可独立容纳的 INSERT 都应保持在字节上限内"
+        );
+
+        let target = Connection::open_in_memory()?;
+        target.execute_batch(&sql)?;
+        let (count, min_len, max_len): (i64, i64, i64) = target.query_row(
+            "SELECT COUNT(*), MIN(length(payload)), MAX(length(payload)) FROM large_rows",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(count, 3);
+        assert_eq!(min_len, payload.len() as i64);
+        assert_eq!(max_len, payload.len() as i64);
+        Ok(())
+    }
+
+    #[test]
+    fn dump_sql_round_trips_generated_columns_and_quoted_identifiers() -> Result<(), AppError> {
+        let source = Connection::open_in_memory()?;
+        source.execute_batch(
+            r#"
+            CREATE TABLE "generated""values" (
+                "a" TEXT NOT NULL,
+                "computed" TEXT GENERATED ALWAYS AS ("a" || '-generated') STORED,
+                "b""tail" TEXT NOT NULL
+            );
+            INSERT INTO "generated""values" ("a", "b""tail")
+            VALUES ('source', 'ordinary-tail');
+            "#,
+        )?;
+
+        let sql = Database::dump_sql(&source, &[])?;
+        assert!(sql.contains("INSERT INTO \"generated\"\"values\" (\"a\", \"b\"\"tail\") VALUES"));
+
+        let target = Connection::open_in_memory()?;
+        target.execute_batch(&sql)?;
+        let values: (String, String, String) = target.query_row(
+            "SELECT \"a\", \"computed\", \"b\"\"tail\" FROM \"generated\"\"values\"",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(
+            values,
+            (
+                "source".to_string(),
+                "source-generated".to_string(),
+                "ordinary-tail".to_string()
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn restore_tables_reads_only_insertable_columns() -> Result<(), AppError> {
+        let source = Connection::open_in_memory()?;
+        let target = Connection::open_in_memory()?;
+        for conn in [&source, &target] {
+            conn.execute_batch(
+                r#"
+                CREATE TABLE generated_values (
+                    a TEXT NOT NULL,
+                    computed TEXT GENERATED ALWAYS AS (a || '-generated') STORED,
+                    "b""tail" TEXT NOT NULL
+                );
+                "#,
+            )?;
+        }
+        source.execute(
+            "INSERT INTO generated_values (a, \"b\"\"tail\") VALUES ('new', 'new-tail')",
+            [],
+        )?;
+        target.execute(
+            "INSERT INTO generated_values (a, \"b\"\"tail\") VALUES ('old', 'old-tail')",
+            [],
+        )?;
+
+        Database::restore_tables(&source, &target, &["generated_values"])?;
+
+        let values: (String, String, String) = target.query_row(
+            "SELECT a, computed, \"b\"\"tail\" FROM generated_values",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(
+            values,
+            (
+                "new".to_string(),
+                "new-generated".to_string(),
+                "new-tail".to_string()
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn restore_tables_rolls_back_all_tables_on_late_failure() -> Result<(), AppError> {
+        let source = Connection::open_in_memory()?;
+        source.execute_batch(
+            "CREATE TABLE first_table (value TEXT NOT NULL);
+             CREATE TABLE second_table (value INTEGER NOT NULL);
+             INSERT INTO first_table VALUES ('replacement');
+             INSERT INTO second_table VALUES (-1);",
+        )?;
+
+        let target = Connection::open_in_memory()?;
+        target.execute_batch(
+            "CREATE TABLE first_table (value TEXT NOT NULL);
+             CREATE TABLE second_table (value INTEGER NOT NULL CHECK (value >= 0));
+             INSERT INTO first_table VALUES ('sentinel-first');
+             INSERT INTO second_table VALUES (7);",
+        )?;
+
+        let result = Database::restore_tables(&source, &target, &["first_table", "second_table"]);
+        assert!(result.is_err(), "第二张表的约束错误必须终止恢复");
+
+        let first: String =
+            target.query_row("SELECT value FROM first_table", [], |row| row.get(0))?;
+        let second: i64 =
+            target.query_row("SELECT value FROM second_table", [], |row| row.get(0))?;
+        assert_eq!(first, "sentinel-first", "第一张表必须随事务整体回滚");
+        assert_eq!(second, 7, "失败表的 DELETE 也必须回滚");
+        Ok(())
+    }
+
+    #[test]
+    fn dump_sql_loads_rows_before_creating_triggers() -> Result<(), AppError> {
+        let source = Connection::open_in_memory()?;
+        source.execute_batch(
+            "CREATE TABLE triggered_rows (seq INTEGER PRIMARY KEY);
+             INSERT INTO triggered_rows VALUES (1), (2), (3);
+             CREATE TRIGGER ignore_second_row
+             BEFORE INSERT ON triggered_rows
+             WHEN NEW.seq = 2
+             BEGIN
+                 SELECT RAISE(IGNORE);
+             END;",
+        )?;
+
+        let sql = Database::dump_sql(&source, &[])?;
+        let data_pos = sql.find("INSERT INTO \"triggered_rows\"").unwrap();
+        let trigger_pos = sql.find("CREATE TRIGGER ignore_second_row").unwrap();
+        assert!(data_pos < trigger_pos, "触发器必须在数据恢复完成后创建");
+
+        let target = Connection::open_in_memory()?;
+        target.execute_batch(&sql)?;
+        let rows = target
+            .prepare("SELECT seq FROM triggered_rows ORDER BY seq")?
+            .query_map([], |row| row.get::<_, i64>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(rows, vec![1, 2, 3]);
+        let trigger_exists: bool = target.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'ignore_second_row')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(trigger_exists, "触发器本身仍必须随备份恢复");
+        Ok(())
+    }
+
+    #[test]
+    fn dump_sql_preserves_indexes_and_views() -> Result<(), AppError> {
+        let source = Connection::open_in_memory()?;
+        source.execute_batch(
+            "CREATE TABLE indexed_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL);
+             CREATE UNIQUE INDEX indexed_rows_value_idx ON indexed_rows(value);
+             CREATE VIEW indexed_rows_view AS
+                 SELECT id, value FROM indexed_rows WHERE value LIKE 'kept%';
+             CREATE TRIGGER a_insert_indexed_rows_view
+             INSTEAD OF INSERT ON indexed_rows_view
+             BEGIN
+                 INSERT INTO indexed_rows (id, value) VALUES (NEW.id, NEW.value);
+             END;
+             INSERT INTO indexed_rows VALUES (1, 'kept-value'), (2, 'hidden-value');",
+        )?;
+
+        let sql = Database::dump_sql(&source, &[])?;
+        let target = Connection::open_in_memory()?;
+        target.execute_batch(&sql)?;
+
+        for (object_type, object_name) in [
+            ("index", "indexed_rows_value_idx"),
+            ("view", "indexed_rows_view"),
+            ("trigger", "a_insert_indexed_rows_view"),
+        ] {
+            let exists: bool = target.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM sqlite_master WHERE type = ?1 AND name = ?2
+                )",
+                [object_type, object_name],
+                |row| row.get(0),
+            )?;
+            assert!(exists, "{object_type} {object_name} 必须随 SQL dump 恢复");
+        }
+
+        target.execute(
+            "INSERT INTO indexed_rows_view (id, value) VALUES (3, 'kept-via-trigger')",
+            [],
+        )?;
+        let view_rows = target
+            .prepare("SELECT id, value FROM indexed_rows_view ORDER BY id")?
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            view_rows,
+            vec![
+                (1, "kept-value".to_string()),
+                (3, "kept-via-trigger".to_string()),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn multi_row_dump_round_trips_special_values() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        // 多行 VALUES 的转义面比单行宽：单引号、换行、英文逗号（列分隔符）、
+        // 中文、emoji、BLOB、NULL——任何一个处理错都会让整批语法崩掉或数据变形。
+        let source = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(source.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('special', 'claude', ?1, ?2, '{}')",
+                rusqlite::params!["O'Brien,\n第二行 \"quoted\" 😀", "{\"key\": \"it's, ok\"}"],
+            )?;
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('with-blob', 'claude', 'blob', X'00FF10', '{}')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta, category)
+                 VALUES ('with-null', 'claude', 'nullcat', '{}', '{}', NULL)",
+                [],
+            )?;
+        }
+
+        let sql = source.export_sql_string()?;
+        let target = Database::memory()?;
+        target.import_sql_string(&sql)?;
+
+        let conn = crate::database::lock_conn!(target.conn);
+        let name: String = conn.query_row(
+            "SELECT name FROM providers WHERE id = 'special'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(name, "O'Brien,\n第二行 \"quoted\" 😀");
+        let cfg: String = conn.query_row(
+            "SELECT settings_config FROM providers WHERE id = 'special'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(cfg, "{\"key\": \"it's, ok\"}");
+
+        let blob_type: String = conn.query_row(
+            "SELECT typeof(settings_config) FROM providers WHERE id = 'with-blob'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(blob_type, "blob", "BLOB 存储类型必须在往返后保留");
+        let blob: Vec<u8> = conn.query_row(
+            "SELECT settings_config FROM providers WHERE id = 'with-blob'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(blob, vec![0x00, 0xFF, 0x10]);
+
+        let category: Option<String> = conn.query_row(
+            "SELECT category FROM providers WHERE id = 'with-null'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(category, None, "NULL 必须在往返后保留");
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn sync_import_preserves_local_only_tables() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let remote_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(remote_db.conn);
+            conn.execute_batch(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('remote-provider', 'claude', 'Remote Provider', '{}', '{}');
+                 INSERT INTO proxy_request_logs (
+                     request_id, provider_id, app_type, model,
+                     input_tokens, output_tokens, total_cost_usd,
+                     latency_ms, status_code, created_at
+                 ) VALUES ('remote-request', 'remote-provider', 'claude', 'remote-model', 1, 1, '1', 1, 200, 1);
+                 INSERT INTO usage_daily_rollups (
+                     date, app_type, provider_id, model, request_count, success_count,
+                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                     total_cost_usd, avg_latency_ms
+                 ) VALUES ('2099-01-01', 'claude', 'remote-provider', 'remote-model', 1, 1, 1, 1, 0, 0, '1', 1);
+                 INSERT INTO stream_check_logs (
+                     provider_id, provider_name, app_type, status, success, message,
+                     response_time_ms, http_status, model_used, retry_count, tested_at
+                 ) VALUES ('remote-provider', 'Remote Provider', 'claude', 'failed', 0, 'remote', 1, 500, 'remote-model', 0, 1);
+                 INSERT INTO proxy_live_backup (app_type, original_config, backed_up_at)
+                 VALUES ('claude', 'remote-live', '2099-01-01');
+                 INSERT INTO provider_health (
+                     provider_id, app_type, is_healthy, consecutive_failures, updated_at
+                 ) VALUES ('remote-provider', 'claude', 0, 9, '2099-01-01');",
+            )?;
+        }
         let remote_sql = remote_db.export_sql_string_for_sync()?;
+        let exported = Connection::open_in_memory()?;
+        exported.execute_batch(&remote_sql)?;
+        let skipped_counts: (i64, i64, i64, i64, i64) = exported.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM proxy_request_logs),
+                (SELECT COUNT(*) FROM stream_check_logs),
+                (SELECT COUNT(*) FROM provider_health),
+                (SELECT COUNT(*) FROM proxy_live_backup),
+                (SELECT COUNT(*) FROM usage_daily_rollups)",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )?;
+        assert_eq!(skipped_counts, (0, 0, 0, 0, 0));
 
         let local_db = Database::memory()?;
         {
             let conn = crate::database::lock_conn!(local_db.conn);
-            conn.execute(
+            conn.execute_batch(
                 "INSERT INTO providers (id, app_type, name, settings_config, meta)
-                 VALUES ('local-provider', 'claude', 'Local Provider', '{}', '{}')",
-                [],
-            )?;
-            conn.execute(
-                "INSERT INTO proxy_request_logs (
-                    request_id, provider_id, app_type, model,
-                    input_tokens, output_tokens, total_cost_usd,
-                    latency_ms, status_code, created_at
-                ) VALUES ('req-1', 'local-provider', 'claude', 'claude-3', 100, 50, '0.01', 120, 200, 1000)",
-                [],
-            )?;
-            conn.execute(
-                "INSERT INTO usage_daily_rollups (
-                    date, app_type, provider_id, model, request_count, success_count,
-                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                    total_cost_usd, avg_latency_ms
-                ) VALUES ('2026-03-01', 'claude', 'local-provider', 'claude-3', 7, 7, 700, 350, 0, 0, '0.07', 120)",
-                [],
-            )?;
-            conn.execute(
-                "INSERT INTO stream_check_logs (
-                    provider_id, provider_name, app_type, status, success, message,
-                    response_time_ms, http_status, model_used, retry_count, tested_at
-                ) VALUES ('local-provider', 'Local Provider', 'claude', 'operational', 1, 'ok', 42, 200, 'claude-3', 0, 1000)",
-                [],
+                 VALUES ('local-provider', 'claude', 'Local Provider', '{}', '{}');
+                 INSERT INTO proxy_request_logs (
+                     request_id, provider_id, app_type, model,
+                     input_tokens, output_tokens, total_cost_usd,
+                     latency_ms, status_code, created_at
+                 ) VALUES ('req-1', 'local-provider', 'claude', 'claude-3', 100, 50, '0.01', 120, 200, 1000);
+                 INSERT INTO usage_daily_rollups (
+                     date, app_type, provider_id, model, request_count, success_count,
+                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                     total_cost_usd, avg_latency_ms
+                 ) VALUES ('2026-03-01', 'claude', 'local-provider', 'claude-3', 7, 7, 700, 350, 0, 0, '0.07', 120);
+                 INSERT INTO stream_check_logs (
+                     provider_id, provider_name, app_type, status, success, message,
+                     response_time_ms, http_status, model_used, retry_count, tested_at
+                 ) VALUES ('local-provider', 'Local Provider', 'claude', 'operational', 1, 'local-ok', 42, 200, 'claude-3', 0, 1000);
+                 INSERT INTO proxy_live_backup (app_type, original_config, backed_up_at)
+                 VALUES ('claude', '{\"local\":true}', '2026-03-01');
+                 INSERT INTO provider_health (
+                     provider_id, app_type, is_healthy, consecutive_failures, updated_at
+                 ) VALUES ('local-provider', 'claude', 1, 0, '2026-03-01');",
             )?;
         }
 
         local_db.import_sql_string_for_sync(&remote_sql)?;
 
-        let remote_provider_exists: i64 = {
-            let conn = crate::database::lock_conn!(local_db.conn);
-            conn.query_row(
-                "SELECT COUNT(*) FROM providers WHERE id = 'remote-provider' AND app_type = 'claude'",
-                [],
-                |row| row.get(0),
-            )?
-        };
+        let conn = crate::database::lock_conn!(local_db.conn);
+        let providers = conn
+            .prepare("SELECT id FROM providers ORDER BY id")?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(providers, vec!["remote-provider"]);
+
+        let preserved_counts: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM proxy_request_logs),
+                (SELECT COUNT(*) FROM stream_check_logs),
+                (SELECT COUNT(*) FROM proxy_live_backup),
+                (SELECT COUNT(*) FROM usage_daily_rollups)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
         assert_eq!(
-            remote_provider_exists, 1,
-            "remote config should be imported"
+            preserved_counts,
+            (1, 1, 1, 1),
+            "同步导入必须替换配置，同时保留本机日志与 Live 备份"
         );
 
-        let (request_logs, rollups, stream_logs): (i64, i64, i64) = {
-            let conn = crate::database::lock_conn!(local_db.conn);
-            let request_logs =
-                conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
-                    row.get(0)
-                })?;
-            let rollups =
-                conn.query_row("SELECT COUNT(*) FROM usage_daily_rollups", [], |row| {
-                    row.get(0)
-                })?;
-            let stream_logs =
-                conn.query_row("SELECT COUNT(*) FROM stream_check_logs", [], |row| {
-                    row.get(0)
-                })?;
-            (request_logs, rollups, stream_logs)
-        };
-        assert_eq!(request_logs, 1, "local request logs should be preserved");
-        assert_eq!(rollups, 1, "local rollups should be preserved");
+        let preserved_values: (String, String, i64, String, i64, String, i64) = conn.query_row(
+            "SELECT
+                (SELECT request_id FROM proxy_request_logs),
+                (SELECT model FROM proxy_request_logs),
+                (SELECT input_tokens FROM proxy_request_logs),
+                (SELECT date FROM usage_daily_rollups),
+                (SELECT request_count FROM usage_daily_rollups),
+                (SELECT message FROM stream_check_logs),
+                (SELECT response_time_ms FROM stream_check_logs)",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )?;
         assert_eq!(
-            stream_logs, 1,
-            "local stream check logs should be preserved"
+            preserved_values,
+            (
+                "req-1".into(),
+                "claude-3".into(),
+                100,
+                "2026-03-01".into(),
+                7,
+                "local-ok".into(),
+                42,
+            )
         );
 
+        let live_backup: (String, String) = conn.query_row(
+            "SELECT original_config, backed_up_at FROM proxy_live_backup WHERE app_type = 'claude'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(
+            live_backup,
+            ("{\"local\":true}".into(), "2026-03-01".into())
+        );
+        let provider_health_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM provider_health", [], |row| row.get(0))?;
+        assert_eq!(
+            provider_health_count, 0,
+            "同步导入应清除可重建的本地 provider_health 状态"
+        );
         Ok(())
     }
 
     #[test]
     #[serial]
     fn periodic_maintenance_runs_even_when_auto_backup_disabled() -> Result<(), AppError> {
-        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-        let test_home =
-            std::env::temp_dir().join("cc-switch-periodic-maintenance-backup-disabled-test");
-        let _ = std::fs::remove_dir_all(&test_home);
-        std::fs::create_dir_all(&test_home).expect("create test home");
-        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+        let _test_home = TestHomeGuard::new();
 
         let settings = AppSettings {
             backup_interval_hours: Some(0),
@@ -972,10 +1653,262 @@ mod tests {
         );
         assert_eq!(rollups, 1, "old request logs should be rolled up");
 
-        match old_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        Ok(())
+    }
+
+    /// 性能基准（不是回归测试）：用接近重度代理用户的行数测量
+    /// 导出 / 本地文件导入 / 同步导入三条路径的耗时与产物大小。
+    ///
+    /// 手动运行：`cargo test --lib perf_backup -- --ignored --nocapture`
+    #[test]
+    #[ignore = "perf harness, run explicitly"]
+    #[serial]
+    fn perf_backup_export_import_paths() -> Result<(), AppError> {
+        use std::time::Instant;
+
+        const LOG_ROWS: usize = 20_000;
+        const STREAM_ROWS: usize = 5_000;
+        const ROLLUP_ROWS: usize = 1_000;
+
+        let _test_home = TestHomeGuard::new();
+
+        fn populate(
+            db: &Database,
+            log_rows: usize,
+            stream_rows: usize,
+            rollup_rows: usize,
+        ) -> Result<(), AppError> {
+            let mut conn = crate::database::lock_conn!(db.conn);
+            let tx = conn.transaction()?;
+            for i in 0..50 {
+                tx.execute(
+                    "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                     VALUES (?1, 'claude', ?2, '{}', '{}')",
+                    rusqlite::params![format!("p{i}"), format!("Provider {i}")],
+                )?;
+            }
+            for i in 0..log_rows {
+                tx.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model,
+                        input_tokens, output_tokens, total_cost_usd,
+                        latency_ms, status_code, created_at
+                    ) VALUES (?1, 'p1', 'claude', 'claude-3', 100, 50, '0.01', 120, 200, 1000)",
+                    [format!("req-{i}")],
+                )?;
+            }
+            for i in 0..stream_rows {
+                tx.execute(
+                    "INSERT INTO stream_check_logs (
+                        provider_id, provider_name, app_type, status, success, message,
+                        response_time_ms, http_status, model_used, retry_count, tested_at
+                    ) VALUES ('p1', 'Provider 1', 'claude', 'operational', 1, 'ok', 42, 200, 'claude-3', 0, ?1)",
+                    [1000i64 + i as i64],
+                )?;
+            }
+            for i in 0..rollup_rows {
+                // (date, app_type, provider_id, model, request_model, pricing_model)
+                // 上有 UNIQUE 约束，日期必须逐行唯一。
+                let date = format!(
+                    "{:04}-{:02}-{:02}",
+                    2025 + i / 336,
+                    i / 28 % 12 + 1,
+                    i % 28 + 1
+                );
+                tx.execute(
+                    "INSERT INTO usage_daily_rollups (
+                        date, app_type, provider_id, model, request_count, success_count,
+                        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                        total_cost_usd, avg_latency_ms
+                    ) VALUES (?1, 'claude', 'p1', 'claude-3', 7, 7, 700, 350, 0, 0, '0.07', 120)",
+                    [date],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
         }
+
+        let source = Database::memory()?;
+        populate(&source, LOG_ROWS, STREAM_ROWS, ROLLUP_ROWS)?;
+
+        let t = Instant::now();
+        let full_sql = source.export_sql_string()?;
+        println!(
+            "export_sql_string (full): {:?}, {} bytes",
+            t.elapsed(),
+            full_sql.len()
+        );
+
+        let t = Instant::now();
+        let import_target = Database::memory()?;
+        import_target.import_sql_string(&full_sql)?;
+        println!("import_sql_string (local file path): {:?}", t.elapsed());
+        {
+            let conn = crate::database::lock_conn!(import_target.conn);
+            let counts: (i64, i64, i64, i64) = conn.query_row(
+                "SELECT
+                    (SELECT COUNT(*) FROM providers),
+                    (SELECT COUNT(*) FROM proxy_request_logs),
+                    (SELECT COUNT(*) FROM stream_check_logs),
+                    (SELECT COUNT(*) FROM usage_daily_rollups)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?;
+            assert_eq!(
+                counts,
+                (50, LOG_ROWS as i64, STREAM_ROWS as i64, ROLLUP_ROWS as i64)
+            );
+        }
+
+        let sync_sql = source.export_sql_string_for_sync()?;
+        println!("sync payload: {} bytes", sync_sql.len());
+
+        // 同步导入的耗时大头在“保留本机日志表”——本机库必须带同样规模的日志行。
+        let local = Database::memory()?;
+        populate(&local, LOG_ROWS, STREAM_ROWS, ROLLUP_ROWS)?;
+        let t = Instant::now();
+        local.import_sql_string_for_sync(&sync_sql)?;
+        println!(
+            "import_sql_string_for_sync ({} preserved log rows): {:?}",
+            LOG_ROWS + STREAM_ROWS + ROLLUP_ROWS,
+            t.elapsed()
+        );
+        {
+            let conn = crate::database::lock_conn!(local.conn);
+            let counts: (i64, i64, i64) = conn.query_row(
+                "SELECT
+                    (SELECT COUNT(*) FROM proxy_request_logs),
+                    (SELECT COUNT(*) FROM stream_check_logs),
+                    (SELECT COUNT(*) FROM usage_daily_rollups)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            assert_eq!(
+                counts,
+                (LOG_ROWS as i64, STREAM_ROWS as i64, ROLLUP_ROWS as i64)
+            );
+        }
+        Ok(())
+    }
+
+    /// 分阶段拆解 import_sql_string 的耗时，定位慢在哪一步。
+    ///
+    /// 手动运行：`cargo test --lib perf_import_phases -- --ignored --nocapture`
+    #[test]
+    #[ignore = "perf diagnostic, run explicitly"]
+    fn perf_import_phases() -> Result<(), AppError> {
+        use rusqlite::Connection;
+        use std::time::Instant;
+        use tempfile::NamedTempFile;
+
+        const LOG_ROWS: usize = 20_000;
+
+        let source = Database::memory()?;
+        {
+            let mut conn = crate::database::lock_conn!(source.conn);
+            let tx = conn.transaction()?;
+            for i in 0..50 {
+                tx.execute(
+                    "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                     VALUES (?1, 'claude', ?2, '{}', '{}')",
+                    rusqlite::params![format!("p{i}"), format!("Provider {i}")],
+                )?;
+            }
+            for i in 0..LOG_ROWS {
+                tx.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model,
+                        input_tokens, output_tokens, total_cost_usd,
+                        latency_ms, status_code, created_at
+                    ) VALUES (?1, 'p1', 'claude', 'claude-3', 100, 50, '0.01', 120, 200, 1000)",
+                    [format!("req-{i}")],
+                )?;
+            }
+            tx.commit()?;
+        }
+        let sql = source.export_sql_string()?;
+        println!("payload: {} bytes, {LOG_ROWS} log rows", sql.len());
+
+        let temp_file = NamedTempFile::new().expect("temp file");
+        let temp_conn = Connection::open(temp_file.path()).expect("open temp conn");
+
+        let t = Instant::now();
+        temp_conn
+            .execute_batch(&sql)
+            .expect("execute_batch should succeed");
+        println!("phase execute_batch: {:?}", t.elapsed());
+
+        let t = Instant::now();
+        Database::create_tables_on_conn(&temp_conn)?;
+        Database::apply_schema_migrations_on_conn(&temp_conn)?;
+        println!("phase schema+migrations: {:?}", t.elapsed());
+
+        let t = Instant::now();
+        let target = Database::memory()?;
+        {
+            let mut main_conn = crate::database::lock_conn!(target.conn);
+            let backup =
+                rusqlite::backup::Backup::new(&temp_conn, &mut main_conn).expect("backup init");
+            backup.step(-1).expect("backup step");
+        }
+        println!("phase backup-to-main: {:?}", t.elapsed());
+
+        // 对照组：同样的语句但临时库关掉 journal / synchronous。
+        let temp_file2 = NamedTempFile::new().expect("temp file 2");
+        let temp_conn2 = Connection::open(temp_file2.path()).expect("open temp conn 2");
+        temp_conn2
+            .execute_batch("PRAGMA journal_mode=MEMORY; PRAGMA synchronous=OFF;")
+            .expect("pragmas");
+        let t = Instant::now();
+        temp_conn2
+            .execute_batch(&sql)
+            .expect("execute_batch should succeed");
+        println!(
+            "phase execute_batch (journal=MEMORY, sync=OFF): {:?}",
+            t.elapsed()
+        );
+
+        // 对照组 B：同一份脚本跑在内存库上，区分“纯 CPU/解析”还是“文件 I/O”。
+        let mem_conn = Connection::open_in_memory().expect("open mem conn");
+        let t = Instant::now();
+        mem_conn
+            .execute_batch(&sql)
+            .expect("execute_batch mem should succeed");
+        println!("phase execute_batch (in-memory): {:?}", t.elapsed());
+
+        // 对照组 C：同样的数据改成多行 VALUES（每 200 行一条 INSERT），
+        // 验证“每行一条语句”的解析开销占比。
+        let mut batched = String::from("PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\n");
+        batched.push_str(
+            "CREATE TABLE bench_logs (
+                request_id TEXT, provider_id TEXT, app_type TEXT, model TEXT,
+                input_tokens INTEGER, output_tokens INTEGER, total_cost_usd TEXT,
+                latency_ms INTEGER, status_code INTEGER, created_at INTEGER
+            );\n",
+        );
+        const BATCH: usize = 200;
+        for chunk_start in (0..LOG_ROWS).step_by(BATCH) {
+            batched.push_str("INSERT INTO bench_logs VALUES ");
+            for i in chunk_start..(chunk_start + BATCH).min(LOG_ROWS) {
+                if i > chunk_start {
+                    batched.push(',');
+                }
+                batched.push_str(&format!(
+                    "('req-{i}','p1','claude','claude-3',100,50,'0.01',120,200,1000)"
+                ));
+            }
+            batched.push_str(";\n");
+        }
+        batched.push_str("COMMIT;\n");
+        let mem_conn2 = Connection::open_in_memory().expect("open mem conn 2");
+        let t = Instant::now();
+        mem_conn2
+            .execute_batch(&batched)
+            .expect("batched should succeed");
+        println!(
+            "phase execute_batch (in-memory, multi-row VALUES x{BATCH}): {:?}",
+            t.elapsed()
+        );
 
         Ok(())
     }
