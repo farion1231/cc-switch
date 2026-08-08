@@ -220,6 +220,56 @@ describe("useProviderActions", () => {
     expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
   });
 
+  it("blocks aggregate providers until proxy takeover is enabled", async () => {
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: {
+        aggregateRoutes: {
+          fable: { providerId: "kimi", model: "k3" },
+        },
+      },
+    });
+
+    const { result } = renderHook(
+      () => useProviderActions("claude", true, false),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("代理接管"),
+    );
+    expect(switchProviderMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("allows aggregate providers during proxy takeover", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: {
+        aggregateRoutes: {
+          fable: { providerId: "kimi", model: "k3" },
+        },
+      },
+    });
+
+    const { result } = renderHook(
+      () => useProviderActions("claude", true, true),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+  });
+
   it("warns but still switches Codex full URL providers when proxy is not running", async () => {
     switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();

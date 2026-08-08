@@ -8,6 +8,8 @@ import {
   ProviderForm,
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
+import { AggregateProviderForm } from "@/components/providers/forms/AggregateProviderForm";
+import { isAggregateProvider } from "@/utils/aggregateRoutes";
 import { openclawApi, providersApi, vscodeApi, type AppId } from "@/lib/api";
 
 interface EditProviderDialogProps {
@@ -20,6 +22,7 @@ interface EditProviderDialogProps {
   }) => Promise<void> | void;
   appId: AppId;
   isProxyTakeover?: boolean; // 代理接管模式下不读取 live（避免显示被接管后的代理配置）
+  availableProviders?: Provider[];
 }
 
 export function EditProviderDialog({
@@ -29,9 +32,12 @@ export function EditProviderDialog({
   onSubmit,
   appId,
   isProxyTakeover = false,
+  availableProviders = [],
 }: EditProviderDialogProps) {
   const { t } = useTranslation();
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
+  // 聚合供应商使用独立的编辑表单（占位配置，无需读取 live）
+  const isAggregate = provider ? isAggregateProvider(provider) : false;
 
   // 默认使用传入的 provider.settingsConfig，若当前编辑对象是"当前生效供应商"，则尝试读取实时配置替换初始值
   const [liveSettings, setLiveSettings] = useState<Record<
@@ -59,6 +65,15 @@ export function EditProviderDialog({
       // 代理接管模式：Live 配置已被代理改写，读取 live 会导致编辑界面展示代理地址/占位符等内容
       // 因此直接回退到 SSOT（数据库）配置，避免用户困惑与误保存
       if (isProxyTakeover) {
+        if (!cancelled) {
+          setLiveSettings(null);
+          setHasLoadedLive(true);
+        }
+        return;
+      }
+
+      // 聚合供应商只有占位配置，live 读取无意义，直接使用数据库 SSOT
+      if (isAggregate) {
         if (!cancelled) {
           setLiveSettings(null);
           setHasLoadedLive(true);
@@ -129,7 +144,7 @@ export function EditProviderDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, provider?.id, appId, hasLoadedLive, isProxyTakeover]); // 只依赖 provider.id，不依赖整个 provider 对象
+  }, [open, provider?.id, appId, hasLoadedLive, isProxyTakeover, isAggregate]); // 只依赖 provider.id，不依赖整个 provider 对象
 
   const initialSettingsConfig = useMemo(() => {
     const base = (liveSettings ?? provider?.settingsConfig ?? {}) as Record<
@@ -238,17 +253,31 @@ export function EditProviderDialog({
         </Button>
       }
     >
-      <ProviderForm
-        appId={appId}
-        providerId={provider.id}
-        submitLabel={t("common.save")}
-        onSubmit={handleSubmit}
-        onCancel={() => onOpenChange(false)}
-        onSubmittingChange={setIsFormSubmitting}
-        initialData={initialData}
-        showButtons={false}
-        isProxyTakeover={isProxyTakeover}
-      />
+      {isAggregate ? (
+        <AggregateProviderForm
+          appId={appId as "claude" | "claude-desktop" | "codex"}
+          providerId={provider.id}
+          submitLabel={t("common.save")}
+          onSubmit={handleSubmit}
+          onCancel={() => onOpenChange(false)}
+          onSubmittingChange={setIsFormSubmitting}
+          initialData={initialData}
+          showButtons={false}
+          availableProviders={availableProviders}
+        />
+      ) : (
+        <ProviderForm
+          appId={appId}
+          providerId={provider.id}
+          submitLabel={t("common.save")}
+          onSubmit={handleSubmit}
+          onCancel={() => onOpenChange(false)}
+          onSubmittingChange={setIsFormSubmitting}
+          initialData={initialData}
+          showButtons={false}
+          isProxyTakeover={isProxyTakeover}
+        />
+      )}
     </FullScreenPanel>
   );
 }

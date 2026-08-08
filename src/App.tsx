@@ -1657,6 +1657,7 @@ function App() {
         onOpenChange={setIsAddOpen}
         appId={activeApp}
         onSubmit={addProvider}
+        availableProviders={Object.values(providers)}
       />
 
       <EditProviderDialog
@@ -1670,6 +1671,7 @@ function App() {
         onSubmit={handleEditProvider}
         appId={activeApp}
         isProxyTakeover={isCurrentAppTakeoverActive}
+        availableProviders={Object.values(providers)}
       />
 
       {effectiveUsageProvider && (

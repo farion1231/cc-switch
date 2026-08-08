@@ -113,6 +113,36 @@ impl ModelMapping {
     }
 }
 
+/// Claude 模型档位（用于聚合供应商的跨 provider 分层路由）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ClaudeTier {
+    Haiku,
+    Sonnet,
+    Opus,
+    Fable,
+}
+
+/// 按模型名将请求分类到 Claude 档位。
+///
+/// 匹配顺序与 [`ModelMapping::map_model`] 一致：先 fable，再 haiku/opus/sonnet；
+/// 大小写不敏感，天然兼容 `claude-fable-5[1m]` 这类带本地能力标记的形态。
+pub fn classify_claude_tier(model: &str) -> Option<ClaudeTier> {
+    let model_lower = model.to_lowercase();
+    if model_lower.contains("fable") {
+        return Some(ClaudeTier::Fable);
+    }
+    if model_lower.contains("haiku") {
+        return Some(ClaudeTier::Haiku);
+    }
+    if model_lower.contains("opus") {
+        return Some(ClaudeTier::Opus);
+    }
+    if model_lower.contains("sonnet") {
+        return Some(ClaudeTier::Sonnet);
+    }
+    None
+}
+
 /// 对请求体应用模型映射
 ///
 /// 返回 (映射后的请求体, 原始模型名, 映射后模型名)
@@ -424,5 +454,44 @@ mod tests {
         let body = json!({"model": "deepseek-v4-pro"});
         let result = strip_one_m_suffix_for_upstream_from_body(body);
         assert_eq!(result["model"], "deepseek-v4-pro");
+    }
+
+    #[test]
+    fn classify_tier_by_model_name() {
+        assert_eq!(
+            classify_claude_tier("claude-haiku-4-5"),
+            Some(ClaudeTier::Haiku)
+        );
+        assert_eq!(
+            classify_claude_tier("claude-sonnet-4-6"),
+            Some(ClaudeTier::Sonnet)
+        );
+        assert_eq!(
+            classify_claude_tier("claude-opus-4-8"),
+            Some(ClaudeTier::Opus)
+        );
+        assert_eq!(
+            classify_claude_tier("claude-fable-5"),
+            Some(ClaudeTier::Fable)
+        );
+    }
+
+    #[test]
+    fn classify_tier_case_insensitive_and_one_m_suffix() {
+        assert_eq!(
+            classify_claude_tier("Claude-FABLE-5[1m]"),
+            Some(ClaudeTier::Fable)
+        );
+        assert_eq!(
+            classify_claude_tier("CLAUDE-SONNET-4-5"),
+            Some(ClaudeTier::Sonnet)
+        );
+    }
+
+    #[test]
+    fn classify_tier_unknown_model() {
+        assert_eq!(classify_claude_tier("k3"), None);
+        assert_eq!(classify_claude_tier("deepseek-v4-pro"), None);
+        assert_eq!(classify_claude_tier("unknown"), None);
     }
 }
