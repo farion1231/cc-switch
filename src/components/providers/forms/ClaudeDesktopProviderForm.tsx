@@ -273,11 +273,18 @@ export function ClaudeDesktopProviderForm({
     envString(initialData?.settingsConfig, "ANTHROPIC_AUTH_TOKEN") ||
       envString(initialData?.settingsConfig, "ANTHROPIC_API_KEY"),
   );
-  const [apiKeyField, setApiKeyField] = useState<ApiKeyField>(() =>
-    envString(initialData?.settingsConfig, "ANTHROPIC_API_KEY")
+  const [apiKeyField, setApiKeyField] = useState<ApiKeyField>(() => {
+    const fromMeta = initialData?.meta?.apiKeyField;
+    if (
+      fromMeta === "ANTHROPIC_API_KEY" ||
+      fromMeta === "ANTHROPIC_AUTH_TOKEN"
+    ) {
+      return fromMeta;
+    }
+    return envString(initialData?.settingsConfig, "ANTHROPIC_API_KEY")
       ? "ANTHROPIC_API_KEY"
-      : "ANTHROPIC_AUTH_TOKEN",
-  );
+      : "ANTHROPIC_AUTH_TOKEN";
+  });
   const [selectedGitHubAccountId, setSelectedGitHubAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "github_copilot"));
@@ -777,6 +784,7 @@ export function ClaudeDesktopProviderForm({
             : undefined;
     meta.codexFastMode =
       activeProviderType === "codex_oauth" ? codexFastMode : undefined;
+    meta.apiKeyField = apiKeyField;
 
     delete meta.endpointAutoSelect;
     delete meta.isFullUrl;
@@ -879,15 +887,49 @@ export function ClaudeDesktopProviderForm({
                 )}
               </div>
             ) : (
-              <ApiKeySection
-                value={apiKey}
-                onChange={setApiKey}
-                category={apiKeyLinkCategory}
-                shouldShowLink={shouldShowApiKeyLink}
-                websiteUrl={apiKeyLinkWebsiteUrl}
-                isPartner={apiKeyLinkIsPartner}
-                partnerPromotionKey={apiKeyLinkPromotionKey}
-              />
+              <>
+                <div className="space-y-2">
+                  <Label>
+                    {t("providerForm.authField", {
+                      defaultValue: "认证字段",
+                    })}
+                  </Label>
+                  <Select
+                    value={apiKeyField}
+                    onValueChange={(v) => setApiKeyField(v as ApiKeyField)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ANTHROPIC_AUTH_TOKEN">
+                        {t("providerForm.authFieldAuthToken", {
+                          defaultValue: "ANTHROPIC_AUTH_TOKEN（默认）",
+                        })}
+                      </SelectItem>
+                      <SelectItem value="ANTHROPIC_API_KEY">
+                        {t("providerForm.authFieldApiKey", {
+                          defaultValue: "ANTHROPIC_API_KEY",
+                        })}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {t("providerForm.authFieldHint", {
+                      defaultValue: "选择写入配置的认证环境变量名",
+                    })}
+                  </p>
+                </div>
+                <ApiKeySection
+                  value={apiKey}
+                  onChange={setApiKey}
+                  category={apiKeyLinkCategory}
+                  shouldShowLink={shouldShowApiKeyLink}
+                  websiteUrl={apiKeyLinkWebsiteUrl}
+                  isPartner={apiKeyLinkIsPartner}
+                  partnerPromotionKey={apiKeyLinkPromotionKey}
+                />
+              </>
             )}
 
             <EndpointField
