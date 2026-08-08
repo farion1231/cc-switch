@@ -18,14 +18,27 @@ export function useBackupManager() {
     onSuccess: () => refetch(),
   });
 
+  const previewMutation = useMutation({
+    mutationFn: (filename: string) =>
+      backupsApi.previewDbBackupRestore(filename),
+  });
+
   const restoreMutation = useMutation({
-    mutationFn: (filename: string) => backupsApi.restoreDbBackup(filename),
-    onSuccess: async () => {
-      // Invalidate all queries to refresh data from restored database
-      await queryClient.invalidateQueries();
-      // Refetch backup list
-      await refetch();
-    },
+    mutationFn: ({
+      filename,
+      restoreToken,
+      preserveLocalPreferences,
+    }: {
+      filename: string;
+      restoreToken: string;
+      preserveLocalPreferences: boolean;
+    }) =>
+      backupsApi.restoreDbBackup(
+        filename,
+        restoreToken,
+        preserveLocalPreferences,
+      ),
+    onSuccess: () => queryClient.invalidateQueries(),
   });
 
   const renameMutation = useMutation({
@@ -49,6 +62,8 @@ export function useBackupManager() {
     isLoading,
     create: createMutation.mutateAsync,
     isCreating: createMutation.isPending,
+    previewRestore: previewMutation.mutateAsync,
+    isPreviewingRestore: previewMutation.isPending,
     restore: restoreMutation.mutateAsync,
     isRestoring: restoreMutation.isPending,
     rename: renameMutation.mutateAsync,
