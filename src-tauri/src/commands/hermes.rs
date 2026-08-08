@@ -136,7 +136,11 @@ pub async fn open_hermes_web_ui(app: AppHandle, path: Option<String>) -> Result<
 #[tauri::command]
 pub async fn launch_hermes_dashboard() -> Result<(), String> {
     tokio::task::spawn_blocking(|| {
-        crate::commands::misc::launch_terminal_running("hermes dashboard", "hermes_dashboard")
+        crate::commands::misc::launch_terminal_running(
+            "hermes dashboard",
+            "hermes_dashboard",
+            Some("Hermes Dashboard"),
+        )
     })
     .await
     .map_err(|e| format!("launch task join error: {e}"))?
