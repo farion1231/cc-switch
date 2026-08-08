@@ -14,8 +14,14 @@ use crate::services::sync_protocol::{
     io_context_localized, localized, MAX_SYNC_ARTIFACT_BYTES, REMOTE_SKILLS_ZIP,
 };
 
-/// Maximum number of entries allowed in a zip archive.
-const MAX_EXTRACT_ENTRIES: usize = 10_000;
+/// Maximum number of entries allowed in a skills zip archive, enforced
+/// symmetrically on both packing (`zip_skills_ssot`) and extraction
+/// (`restore_skills_zip`).  Large skill collections (e.g. full repos)
+/// can easily exceed 10k files, but 100k keeps a meaningful guard
+/// against zip-bomb-style many-entry archives.  The primary extraction
+/// guard is `MAX_SYNC_ARTIFACT_BYTES` (payload bytes); this caps inode /
+/// disk-space pressure that many zero-byte entries would bypass (#5024).
+const MAX_ENTRIES: usize = 100_000;
 
 pub(crate) struct SkillsBackup {
     _tmp: TempDir,
@@ -45,6 +51,7 @@ pub(crate) fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
     if source.exists() {
         let canonical_root = fs::canonicalize(&source).unwrap_or_else(|_| source.clone());
         let mut visited = HashSet::new();
+        let mut entry_count: usize = 0;
         mark_visited_dir(&canonical_root, &mut visited)?;
         zip_dir_recursive(
             &canonical_root,
@@ -52,6 +59,7 @@ pub(crate) fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
             &mut writer,
             options,
             &mut visited,
+            &mut entry_count,
         )?;
     }
 
@@ -89,19 +97,7 @@ pub(crate) fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
     let extracted = tmp.path().join("skills-extracted");
     fs::create_dir_all(&extracted).map_err(|e| AppError::io(&extracted, e))?;
 
-    if archive.len() > MAX_EXTRACT_ENTRIES {
-        return Err(localized(
-            "webdav.sync.skills_zip_too_many_entries",
-            format!(
-                "skills.zip 条目数过多（{}），上限 {MAX_EXTRACT_ENTRIES}",
-                archive.len()
-            ),
-            format!(
-                "skills.zip has too many entries ({}), limit is {MAX_EXTRACT_ENTRIES}",
-                archive.len()
-            ),
-        ));
-    }
+    ensure_entry_count(archive.len())?;
 
     let mut total_bytes: u64 = 0;
     for idx in 0..archive.len() {
@@ -210,6 +206,7 @@ fn zip_dir_recursive(
     writer: &mut zip::ZipWriter<fs::File>,
     options: SimpleFileOptions,
     visited: &mut HashSet<PathBuf>,
+    entry_count: &mut usize,
 ) -> Result<(), AppError> {
     let mut entries: Vec<_> = fs::read_dir(current)
         .map_err(|e| AppError::io(current, e))?
@@ -250,6 +247,9 @@ fn zip_dir_recursive(
             })?;
         let rel_str = rel.to_string_lossy().replace('\\', "/");
 
+        *entry_count += 1;
+        ensure_entry_count(*entry_count)?;
+
         if real_path.is_dir() {
             if !mark_visited_dir(&real_path, visited)? {
                 log::warn!(
@@ -267,7 +267,7 @@ fn zip_dir_recursive(
                         format!("Failed to write ZIP directory entry: {e}"),
                     )
                 })?;
-            zip_dir_recursive(root, &real_path, writer, options, visited)?;
+            zip_dir_recursive(root, &real_path, writer, options, visited, entry_count)?;
         } else {
             writer.start_file(&rel_str, options).map_err(|e| {
                 localized(
@@ -331,6 +331,17 @@ fn mark_visited_dir(path: &Path, visited: &mut HashSet<PathBuf>) -> Result<bool,
     Ok(visited.insert(canonical))
 }
 
+fn ensure_entry_count(count: usize) -> Result<(), AppError> {
+    if count > MAX_ENTRIES {
+        return Err(localized(
+            "webdav.sync.skills_zip_too_many_entries",
+            format!("skills.zip 条目数过多（{count}），上限 {MAX_ENTRIES}"),
+            format!("skills.zip has too many entries ({count}), limit is {MAX_ENTRIES}"),
+        ));
+    }
+    Ok(())
+}
+
 fn copy_entry_with_total_limit<R: Read, W: Write>(
     reader: &mut R,
     writer: &mut W,
@@ -368,11 +379,70 @@ fn copy_entry_with_total_limit<R: Read, W: Write>(
 
 #[cfg(test)]
 mod tests {
-    use super::{copy_entry_with_total_limit, mark_visited_dir};
+    use super::{copy_entry_with_total_limit, ensure_entry_count, mark_visited_dir, MAX_ENTRIES};
     use std::collections::HashSet;
     use std::io::Cursor;
     use std::path::Path;
     use tempfile::tempdir;
+
+    // 大型 skill 集合可能包含数万个文件，条目数上限必须容纳正常规模（#5024）。
+    #[test]
+    fn ensure_entry_count_allows_large_skill_collections() {
+        assert!(ensure_entry_count(10_001).is_ok());
+        assert!(ensure_entry_count(MAX_ENTRIES).is_ok());
+    }
+
+    #[test]
+    fn ensure_entry_count_rejects_pathological_archives() {
+        let err = ensure_entry_count(MAX_ENTRIES + 1)
+            .expect_err("entry count above the limit should be rejected");
+        assert!(
+            err.to_string().contains("too many entries") || err.to_string().contains("条目数过多"),
+            "unexpected error: {err}"
+        );
+    }
+
+    fn build_zip_with_n_entries(n: usize) -> Vec<u8> {
+        use std::io::Write as _;
+        use zip::write::SimpleFileOptions;
+        let mut buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut buf);
+            let opts =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            for i in 0..n {
+                writer
+                    .start_file(format!("file_{i}.txt"), opts)
+                    .expect("start file");
+                writer.write_all(b"x").expect("write");
+            }
+            writer.finish().expect("finish");
+        }
+        buf.into_inner()
+    }
+
+    #[test]
+    fn restore_rejects_zip_exceeding_entry_limit() {
+        let zip_bytes = build_zip_with_n_entries(MAX_ENTRIES + 1);
+        let cursor = std::io::Cursor::new(&zip_bytes);
+        let archive = zip::ZipArchive::new(cursor).expect("parse zip");
+        assert_eq!(archive.len(), MAX_ENTRIES + 1);
+        let err =
+            ensure_entry_count(archive.len()).expect_err("archive above limit should be rejected");
+        assert!(
+            err.to_string().contains("too many") || err.to_string().contains("条目数"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn restore_accepts_zip_at_entry_limit() {
+        let zip_bytes = build_zip_with_n_entries(MAX_ENTRIES);
+        let cursor = std::io::Cursor::new(&zip_bytes);
+        let archive = zip::ZipArchive::new(cursor).expect("parse zip");
+        assert_eq!(archive.len(), MAX_ENTRIES);
+        ensure_entry_count(archive.len()).expect("archive at limit should be accepted");
+    }
 
     #[test]
     fn mark_visited_dir_tracks_canonical_duplicates() {
