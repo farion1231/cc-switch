@@ -12,8 +12,8 @@ use crate::{
 };
 
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
-    TITLE_MAX_CHARS,
+    extract_text, file_size, parse_timestamp_to_ms, path_basename, read_head_tail_lines,
+    truncate_summary, TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "openclaw";
@@ -294,6 +294,8 @@ fn parse_session(
         project_dir: cwd,
         created_at,
         last_active_at,
+        size_bytes: file_size(path),
+        size_approximate: false,
         source_path: Some(path.to_string_lossy().to_string()),
         resume_command: None, // OpenClaw sessions are gateway-managed, no CLI resume
     })

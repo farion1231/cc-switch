@@ -8,8 +8,8 @@ use crate::config::get_claude_config_dir;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
-    TITLE_MAX_CHARS,
+    extract_text, file_size, parse_timestamp_to_ms, path_basename, path_size, read_head_tail_lines,
+    truncate_summary, TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "claude";
@@ -247,9 +247,21 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         project_dir,
         created_at,
         last_active_at,
+        size_bytes: session_file_size(path),
+        size_approximate: false,
         source_path: Some(path.to_string_lossy().to_string()),
         resume_command: Some(format!("claude --resume {session_id}")),
     })
+}
+
+fn session_file_size(path: &Path) -> Option<u64> {
+    let jsonl_size = file_size(path)?;
+    let sidecar = path
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(path.file_stem().unwrap_or_default());
+    let sidecar_size = path_size(&sidecar).unwrap_or(0);
+    Some(jsonl_size.saturating_add(sidecar_size))
 }
 
 fn is_agent_session(path: &Path) -> bool {
@@ -476,6 +488,29 @@ mod tests {
 
         let meta = parse_session(&path).unwrap();
         assert_eq!(meta.title.as_deref(), Some("请帮我重构这个函数"));
+    }
+
+    #[test]
+    fn parse_session_includes_sidecar_in_size() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-side.jsonl");
+        let sidecar = temp.path().join("session-side");
+        let subagents = sidecar.join("subagents");
+
+        std::fs::create_dir_all(&subagents).expect("create subagents dir");
+        std::fs::write(subagents.join("agent-1.jsonl"), b"x".repeat(50)).expect("write subagent");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"sessionId\":\"session-side\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"hello\"},\"sessionId\":\"session-side\",\"timestamp\":\"2026-03-06T10:01:00Z\"}\n"
+            ),
+        )
+        .expect("write session");
+
+        let meta = parse_session(&path).unwrap();
+        let jsonl_size = std::fs::metadata(&path).unwrap().len();
+        assert_eq!(meta.size_bytes, Some(jsonl_size + 50));
     }
 
     #[test]

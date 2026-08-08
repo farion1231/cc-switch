@@ -8,6 +8,28 @@ use serde_json::Value;
 /// Maximum number of characters for session titles (shared across providers).
 pub const TITLE_MAX_CHARS: usize = 80;
 
+pub fn file_size(path: &Path) -> Option<u64> {
+    std::fs::metadata(path).ok().map(|metadata| metadata.len())
+}
+
+pub fn path_size(path: &Path) -> Option<u64> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if metadata.is_file() || metadata.file_type().is_symlink() {
+        return Some(metadata.len());
+    }
+    if !metadata.is_dir() {
+        return Some(0);
+    }
+
+    let entries = std::fs::read_dir(path).ok()?;
+    Some(
+        entries
+            .flatten()
+            .filter_map(|entry| path_size(&entry.path()))
+            .fold(0_u64, u64::saturating_add),
+    )
+}
+
 /// Read the first `head_n` lines and last `tail_n` lines from a file.
 /// For small files (< 16 KB), reads all lines once to avoid unnecessary seeking.
 pub fn read_head_tail_lines(
@@ -158,6 +180,18 @@ pub fn path_basename(value: &str) -> Option<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use tempfile::tempdir;
+
+    #[test]
+    fn path_size_sums_nested_files() {
+        let temp = tempdir().expect("tempdir");
+        let nested = temp.path().join("nested");
+        std::fs::create_dir(&nested).expect("create nested directory");
+        std::fs::write(temp.path().join("a.txt"), b"1234").expect("write first file");
+        std::fs::write(nested.join("b.txt"), b"123456").expect("write second file");
+
+        assert_eq!(path_size(temp.path()), Some(10));
+    }
 
     #[test]
     fn parse_timestamp_to_ms_supports_integers_and_rfc3339() {

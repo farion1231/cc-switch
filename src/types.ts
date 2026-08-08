@@ -459,6 +459,8 @@ export interface SessionMeta {
   projectDir?: string | null;
   createdAt?: number;
   lastActiveAt?: number;
+  sizeBytes?: number;
+  sizeApproximate?: boolean;
   sourcePath?: string;
   resumeCommand?: string;
 }

@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::utils::{parse_timestamp_to_ms, truncate_summary};
+use super::utils::{file_size, parse_timestamp_to_ms, truncate_summary};
 
 const PROVIDER_ID: &str = "gemini";
 
@@ -168,6 +168,8 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         project_dir: None, // (optionally) populated later
         created_at,
         last_active_at: last_active_at.or(created_at),
+        size_bytes: file_size(path),
+        size_approximate: false,
         source_path: Some(source_path),
         resume_command: Some(format!("gemini --resume {session_id}")),
     })

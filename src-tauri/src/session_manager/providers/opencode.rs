@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
@@ -5,7 +6,7 @@ use serde_json::Value;
 
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::utils::{parse_timestamp_to_ms, path_basename, truncate_summary};
+use super::utils::{file_size, parse_timestamp_to_ms, path_basename, path_size, truncate_summary};
 
 const PROVIDER_ID: &str = "opencode";
 
@@ -106,6 +107,7 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
         Ok(c) => c,
         Err(_) => return Vec::new(),
     };
+    let session_sizes = load_sqlite_session_sizes(&conn);
 
     let mut stmt = match conn.prepare(
         "SELECT id, title, directory, time_created, time_updated FROM session ORDER BY time_updated DESC",
@@ -148,11 +150,50 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
             },
             created_at: Some(created),
             last_active_at: Some(updated),
+            size_bytes: session_sizes
+                .as_ref()
+                .map(|sizes| sizes.get(&session_id).copied().unwrap_or(0)),
+            size_approximate: true,
             source_path: Some(format!("sqlite:{db_display}:{session_id}")),
             resume_command: Some(format!("opencode -s {session_id}")),
         });
     }
     sessions
+}
+
+/// Sums per-session content size across the `message` and `part` tables.
+/// Each table is queried independently so a missing/incompatible table
+/// (e.g. an older OpenCode schema) only drops its own contribution instead
+/// of wiping out sizes derived from the other table.
+fn load_sqlite_session_sizes(conn: &Connection) -> Option<HashMap<String, u64>> {
+    let queries = [
+        "SELECT session_id, COALESCE(SUM(LENGTH(CAST(data AS BLOB))), 0) FROM message GROUP BY session_id",
+        "SELECT session_id, COALESCE(SUM(LENGTH(CAST(data AS BLOB))), 0) FROM part GROUP BY session_id",
+    ];
+
+    let mut sizes = HashMap::<String, u64>::new();
+    let mut any_succeeded = false;
+
+    for query in queries {
+        let Ok(mut stmt) = conn.prepare(query) else {
+            continue;
+        };
+        let Ok(rows) = stmt.query_map([], |row| {
+            let session_id: String = row.get(0)?;
+            let size_bytes: i64 = row.get(1)?;
+            Ok((session_id, size_bytes.max(0) as u64))
+        }) else {
+            continue;
+        };
+
+        any_succeeded = true;
+        for (session_id, size_bytes) in rows.flatten() {
+            let total = sizes.entry(session_id).or_default();
+            *total = total.saturating_add(size_bytes);
+        }
+    }
+
+    any_succeeded.then_some(sizes)
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
@@ -456,6 +497,7 @@ fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
     // Build source_path = message directory for this session
     let msg_dir = storage.join("message").join(&session_id);
     let source_path = msg_dir.to_string_lossy().to_string();
+    let size_bytes = legacy_session_size(storage, &session_id, path, &msg_dir);
 
     // Skip expensive I/O if title already available from session JSON
     let summary = if has_title {
@@ -472,9 +514,56 @@ fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
         project_dir: directory,
         created_at,
         last_active_at: updated_at.or(created_at),
+        size_bytes,
+        size_approximate: false,
         source_path: Some(source_path),
         resume_command: Some(format!("opencode -s {session_id}")),
     })
+}
+
+fn legacy_session_size(
+    storage: &Path,
+    session_id: &str,
+    session_file: &Path,
+    message_dir: &Path,
+) -> Option<u64> {
+    let mut total = 0_u64;
+    let mut found = false;
+
+    if let Some(size) = file_size(session_file) {
+        total = total.saturating_add(size);
+        found = true;
+    }
+    if let Some(size) = path_size(message_dir) {
+        total = total.saturating_add(size);
+        found = true;
+    }
+
+    let session_diff = storage
+        .join("session_diff")
+        .join(format!("{session_id}.json"));
+    if let Some(size) = file_size(&session_diff) {
+        total = total.saturating_add(size);
+        found = true;
+    }
+
+    let mut message_files = Vec::new();
+    collect_json_files(message_dir, &mut message_files);
+    for message_file in message_files {
+        let Some(message_id) = std::fs::read_to_string(message_file)
+            .ok()
+            .and_then(|data| serde_json::from_str::<Value>(&data).ok())
+            .and_then(|value| value.get("id").and_then(Value::as_str).map(str::to_owned))
+        else {
+            continue;
+        };
+        if let Some(size) = path_size(&storage.join("part").join(message_id)) {
+            total = total.saturating_add(size);
+            found = true;
+        }
+    }
+
+    found.then_some(total)
 }
 
 /// Read the first user message's first text part to use as summary.
@@ -667,6 +756,19 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_session_sizes_survive_a_missing_table() {
+        let conn = Connection::open_in_memory().expect("open sqlite database");
+        conn.execute_batch(
+            "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
+             INSERT INTO message (id, session_id, data) VALUES ('m1', 's1', 'hello');",
+        )
+        .expect("create message table only");
+
+        let sizes = load_sqlite_session_sizes(&conn).expect("load session sizes");
+        assert_eq!(sizes.get("s1"), Some(&5));
+    }
+
+    #[test]
     fn delete_session_removes_session_diff_messages_and_parts() {
         let temp = tempdir().expect("tempdir");
         let storage = temp.path();
@@ -803,6 +905,16 @@ mod tests {
             ("ses_2", "Named Session", "/tmp/project-b", 1_771_061_950_000_i64, 1_771_061_955_000_i64),
         )
         .expect("insert session 2");
+        conn.execute(
+            "INSERT INTO message (id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4)",
+            ("msg_size", "ses_1", 1_i64, "你好"),
+        )
+        .expect("insert sized message");
+        conn.execute(
+            "INSERT INTO part (id, session_id, message_id, time_created, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("part_size", "ses_1", "msg_size", 1_i64, "abc"),
+        )
+        .expect("insert sized part");
         drop(conn);
 
         let sessions = scan_sessions_sqlite();
@@ -820,6 +932,8 @@ mod tests {
         assert_eq!(sessions[1].session_id, "ses_1");
         assert_eq!(sessions[1].title.as_deref(), Some("project-a"));
         assert_eq!(sessions[1].project_dir.as_deref(), Some("/tmp/project-a"));
+        assert_eq!(sessions[1].size_bytes, Some(9));
+        assert_eq!(sessions[0].size_bytes, Some(0));
         let expected_source = format!("sqlite:{}:ses_1", db_path.display());
         assert_eq!(
             sessions[1].source_path.as_deref(),

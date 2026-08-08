@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -9,7 +10,8 @@ use crate::hermes_config::get_hermes_dir;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, read_head_tail_lines, truncate_summary, TITLE_MAX_CHARS,
+    extract_text, file_size, parse_timestamp_to_ms, read_head_tail_lines, truncate_summary,
+    TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "hermes";
@@ -94,9 +96,12 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
     };
 
     let db_source = format!("sqlite:{}", db_path.display());
+    let session_sizes = load_sqlite_session_sizes(&conn);
 
     for row_result in rows.flatten() {
-        if let Some(meta) = sqlite_row_to_session_meta(&row_result, &db_source) {
+        if let Some(meta) =
+            sqlite_row_to_session_meta(&row_result, &db_source, session_sizes.as_ref())
+        {
             sessions.push(meta);
         }
     }
@@ -104,7 +109,11 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
     sessions
 }
 
-fn sqlite_row_to_session_meta(row: &Value, db_source: &str) -> Option<SessionMeta> {
+fn sqlite_row_to_session_meta(
+    row: &Value,
+    db_source: &str,
+    session_sizes: Option<&HashMap<String, u64>>,
+) -> Option<SessionMeta> {
     let obj = row.as_object()?;
 
     let session_id = obj.get("id").and_then(Value::as_str)?.to_string();
@@ -133,6 +142,7 @@ fn sqlite_row_to_session_meta(row: &Value, db_source: &str) -> Option<SessionMet
         .and_then(parse_timestamp_to_ms);
 
     let source_path = format!("{}#{}", db_source, session_id);
+    let size_bytes = session_sizes.map(|sizes| sizes.get(&session_id).copied().unwrap_or(0));
 
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
@@ -142,9 +152,29 @@ fn sqlite_row_to_session_meta(row: &Value, db_source: &str) -> Option<SessionMet
         project_dir: cwd,
         created_at: started_at,
         last_active_at: ended_at.or(started_at),
+        size_bytes,
+        size_approximate: true,
         source_path: Some(source_path),
         resume_command: None,
     })
+}
+
+fn load_sqlite_session_sizes(conn: &Connection) -> Option<HashMap<String, u64>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT session_id, COALESCE(SUM(LENGTH(CAST(content AS BLOB))), 0) \
+             FROM messages GROUP BY session_id",
+        )
+        .ok()?;
+    let rows = stmt
+        .query_map([], |row| {
+            let session_id: String = row.get(0)?;
+            let size_bytes: i64 = row.get(1)?;
+            Ok((session_id, size_bytes.max(0) as u64))
+        })
+        .ok()?;
+
+    Some(rows.flatten().collect())
 }
 
 /// Get column names for a table.
@@ -423,6 +453,8 @@ fn parse_jsonl_session(path: &Path) -> Option<SessionMeta> {
         project_dir: cwd,
         created_at: first_ts,
         last_active_at: last_ts.or(first_ts),
+        size_bytes: file_size(path),
+        size_approximate: false,
         source_path: Some(source_path),
         resume_command: None,
     })
@@ -500,6 +532,22 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::tempdir;
+
+    #[test]
+    fn sqlite_session_sizes_count_utf8_content_bytes() {
+        let conn = Connection::open_in_memory().expect("open sqlite database");
+        conn.execute_batch(
+            "CREATE TABLE messages (session_id TEXT NOT NULL, content TEXT NOT NULL);
+             INSERT INTO messages (session_id, content) VALUES ('s1', '你好');
+             INSERT INTO messages (session_id, content) VALUES ('s1', 'abc');
+             INSERT INTO messages (session_id, content) VALUES ('s2', 'x');",
+        )
+        .expect("create messages");
+
+        let sizes = load_sqlite_session_sizes(&conn).expect("load session sizes");
+        assert_eq!(sizes.get("s1"), Some(&9));
+        assert_eq!(sizes.get("s2"), Some(&1));
+    }
 
     #[test]
     fn parse_sqlite_source_valid() {
