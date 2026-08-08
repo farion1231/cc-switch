@@ -62,11 +62,11 @@ const deepMerge = (
         target[key] = [];
       }
       value.forEach((item) => {
-        const exists = target[key].some(
+        const exists = (target[key] as any[]).some(
           (existing: any) =>
             isSubset(existing, item) && isSubset(item, existing),
         );
-        if (!exists) target[key].push(item);
+        if (!exists) (target[key] as any[]).push(item);
       });
     } else if (isPlainObject(value)) {
       if (!isPlainObject(target[key])) {
@@ -92,15 +92,18 @@ const deepRemove = (
     if (!(key in target)) return;
 
     if (Array.isArray(value) && Array.isArray(target[key])) {
-      target[key] = target[key].filter(
-        (item: any) =>
-          !value.some(
-            (sourceItem) =>
-              isSubset(item, sourceItem) && isSubset(sourceItem, item),
-          ),
-      );
-      if (target[key].length === 0) {
+      const arr = [...(target[key] as any[])];
+      for (const sourceItem of value) {
+        const idx = arr.findIndex(
+          (item: any) =>
+            isSubset(item, sourceItem) && isSubset(sourceItem, item),
+        );
+        if (idx !== -1) arr.splice(idx, 1);
+      }
+      if (arr.length === 0) {
         delete target[key];
+      } else {
+        target[key] = arr;
       }
     } else if (isPlainObject(value) && isPlainObject(target[key])) {
       // 只移除完全匹配的嵌套属性
@@ -133,7 +136,9 @@ const isSubset = (target: any, source: any): boolean => {
 
   if (Array.isArray(source)) {
     if (!Array.isArray(target)) return false;
-    // Relocate earlier matches when needed so each source item claims a distinct target.
+    // Bipartite matching with reassignment so each source element claims a
+    // distinct target element. Greedy first-match fails when a broader target
+    // is claimed by an earlier source that could also match a narrower one.
     const matchedSourceByTarget = new Array<number>(target.length).fill(-1);
     const tryMatch = (sourceIndex: number, seen: boolean[]): boolean => {
       for (let targetIndex = 0; targetIndex < target.length; targetIndex += 1) {
@@ -143,7 +148,6 @@ const isSubset = (target: any, source: any): boolean => {
         ) {
           continue;
         }
-
         seen[targetIndex] = true;
         const matchedSource = matchedSourceByTarget[targetIndex];
         if (matchedSource === -1 || tryMatch(matchedSource, seen)) {
@@ -153,7 +157,6 @@ const isSubset = (target: any, source: any): boolean => {
       }
       return false;
     };
-
     return source.every((_, sourceIndex) =>
       tryMatch(sourceIndex, new Array(target.length).fill(false)),
     );
