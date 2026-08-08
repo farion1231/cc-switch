@@ -1528,6 +1528,7 @@ pub fn run() {
             commands::get_usage_summary,
             commands::get_usage_summary_by_app,
             commands::get_usage_trends,
+            commands::get_usage_heatmap,
             commands::get_provider_stats,
             commands::get_model_stats,
             commands::get_request_logs,
