@@ -4,6 +4,9 @@ import { RequestLogTable } from "@/components/usage/RequestLogTable";
 import type { UsageRangeSelection } from "@/types/usage";
 
 const useRequestLogsMock = vi.hoisted(() => vi.fn());
+const copyTextMock = vi.hoisted(() => vi.fn());
+const toastSuccessMock = vi.hoisted(() => vi.fn());
+const toastErrorMock = vi.hoisted(() => vi.fn());
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -22,6 +25,17 @@ vi.mock("react-i18next", () => ({
 
 vi.mock("@/lib/query/usage", () => ({
   useRequestLogs: (args: unknown) => useRequestLogsMock(args),
+}));
+
+vi.mock("@/lib/clipboard", () => ({
+  copyText: (text: string) => copyTextMock(text),
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    success: (msg: string) => toastSuccessMock(msg),
+    error: (msg: string) => toastErrorMock(msg),
+  },
 }));
 
 vi.mock("@/components/ui/button", () => ({
@@ -58,6 +72,10 @@ vi.mock("@/components/ui/table", () => ({
 describe("RequestLogTable", () => {
   beforeEach(() => {
     useRequestLogsMock.mockReset();
+    copyTextMock.mockReset();
+    copyTextMock.mockResolvedValue(undefined);
+    toastSuccessMock.mockReset();
+    toastErrorMock.mockReset();
     useRequestLogsMock.mockImplementation(
       ({ page = 0, pageSize = 20 }: { page?: number; pageSize?: number }) => ({
         data: {
@@ -156,6 +174,65 @@ describe("RequestLogTable", () => {
           range,
         }),
       );
+    });
+  });
+
+  it("exposes the error message via title and copies it when clicked", async () => {
+    const errorLog = {
+      requestId: "req-err-1",
+      providerId: "p1",
+      providerName: "Claude",
+      appType: "claude",
+      model: "claude-sonnet",
+      costMultiplier: "1",
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      inputCostUsd: "0",
+      outputCostUsd: "0",
+      cacheReadCostUsd: "0",
+      cacheCreationCostUsd: "0",
+      totalCostUsd: "0",
+      isStreaming: false,
+      latencyMs: 1200,
+      statusCode: 429,
+      errorMessage: "Rate limit exceeded: retry after 60s",
+      createdAt: 1_710_000_000,
+      dataSource: "proxy",
+    };
+    useRequestLogsMock.mockImplementation(() => ({
+      data: { data: [errorLog], total: 1, page: 0, pageSize: 20 },
+      isLoading: false,
+    }));
+
+    render(
+      <RequestLogTable
+        range={{ preset: "today" }}
+        rangeLabel="Today"
+        appType="all"
+        refreshIntervalMs={0}
+      />,
+    );
+
+    // 报错行状态码渲染为可点击按钮，完整报错信息挂在原生 title 上
+    const statusButton = screen.getByRole("button", {
+      name: "usage.clickToCopy",
+    });
+    expect(statusButton).toHaveTextContent("429");
+    expect(statusButton).toHaveAttribute(
+      "title",
+      "Rate limit exceeded: retry after 60s",
+    );
+
+    // 点击状态码触发复制并弹出成功提示
+    fireEvent.click(statusButton);
+
+    await waitFor(() => {
+      expect(copyTextMock).toHaveBeenCalledWith(
+        "Rate limit exceeded: retry after 60s",
+      );
+      expect(toastSuccessMock).toHaveBeenCalledWith("usage.errorCopied");
     });
   });
 });
