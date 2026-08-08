@@ -186,14 +186,23 @@ export interface UsageRangeSelection {
  * Desktop's full usage. The backend collapses `claude-desktop → claude` in
  * every dashboard query (see `folded_app_type_sql`).
  * `opencode` / `openclaw` / `hermes` have no proxy handler at all — they
- * appear only as managed apps elsewhere.
+ * appear only as managed apps elsewhere. `claude-science` keeps its own
+ * bucket: it is routed through the local proxy (`/claude-science/v1/messages`)
+ * as an independent provider namespace and is not folded into `claude`.
  */
-export type AppType = "claude" | "codex" | "gemini" | "grokbuild" | "opencode";
+export type AppType =
+  | "claude"
+  | "claude-science"
+  | "codex"
+  | "gemini"
+  | "grokbuild"
+  | "opencode";
 
 export type AppTypeFilter = "all" | AppType;
 
 export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "claude",
+  "claude-science",
   "codex",
   "gemini",
   "grokbuild",

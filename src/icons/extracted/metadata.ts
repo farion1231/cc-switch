@@ -229,6 +229,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["claudecn", "claude", "enterprise"],
   },
+  claudescience: {
+    name: "claudescience",
+    displayName: "Claude Science",
+    category: "ai-provider",
+    keywords: ["claude", "science", "dna", "helix"],
+    defaultColor: "#E2711D",
+  },
   cloudflare: {
     name: "cloudflare",
     displayName: "Cloudflare",

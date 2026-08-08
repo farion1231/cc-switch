@@ -278,6 +278,7 @@ export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 export interface VisibleApps {
   claude: boolean;
   "claude-desktop": boolean;
+  "claude-science": boolean;
   codex: boolean;
   gemini: boolean;
   grokbuild: boolean;
@@ -403,12 +404,16 @@ export interface Settings {
   openclawConfigDir?: string;
   // 覆盖 Hermes 配置目录（可选）
   hermesConfigDir?: string;
+  // 覆盖 Claude Science 数据/配置目录（可选，用于 WSL2）
+  claudeScienceConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
   currentProviderClaude?: string;
   // 当前 Claude Desktop 供应商 ID（优先于数据库 is_current）
   currentProviderClaudeDesktop?: string;
+  // 当前 Claude Science 供应商 ID（优先于数据库 is_current）
+  currentProviderClaudeScience?: string;
   // 当前 Codex 供应商 ID（优先于数据库 is_current）
   currentProviderCodex?: string;
   // 当前 Gemini 供应商 ID（优先于数据库 is_current）

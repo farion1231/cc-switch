@@ -142,6 +142,52 @@ pub async fn handle_claude_desktop_messages(
     .await
 }
 
+/// 处理 /claude-science/v1/messages 请求（Claude Science）
+///
+/// Claude Science 与 Claude 同为 Anthropic Messages 协议，但拥有独立的
+/// provider namespace 与故障转移队列（配置在加密 SQLite 中，无 live 文件可写），
+/// 因此复用 Claude 的消息处理器并覆盖 app 命名空间。
+pub async fn handle_claude_science_messages(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_messages_for_app(
+        state,
+        request,
+        AppType::ClaudeScience,
+        "Claude Science",
+        "claude-science",
+        Some("/claude-science"),
+    )
+    .await
+}
+
+/// 处理 /claude-science/v1/models 请求（Claude Science）
+///
+/// Claude Science 前端调用 `GET /claude-science/v1/models`（经
+/// ANTHROPIC_BASE_URL 代理）获取模型列表。与 `/claude-desktop/v1/models` 同形
+/// 式，但不发 gateway token（Science 二进制无此机制），故不校验 Authorization。
+pub async fn handle_claude_science_models(
+    State(state): State<ProxyState>,
+) -> Result<Json<Value>, ProxyError> {
+    let providers = state
+        .provider_router
+        .select_providers("claude-science")
+        .await
+        .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+    let provider = providers.first().ok_or(ProxyError::NoAvailableProvider)?;
+    // Claude Science 供应商通常只有 Claude Code 风格 env 模型配置，没有
+    // Desktop 的 claudeDesktopModelRoutes 路由表；路由解析失败时回退到
+    // env 投影，否则 Science 前端拿不到模型列表，会把会话已存模型（如
+    // claude-opus-5）标记为 unavailable 并中断会话。
+    let routes = crate::claude_desktop_config::resolve_proxy_routes(provider)
+        .or_else(|_| crate::claude_desktop_config::env_model_routes(provider))
+        .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
+    Ok(Json(
+        crate::claude_desktop_config::model_list_response_from_routes(&routes),
+    ))
+}
+
 pub async fn handle_claude_desktop_models(
     State(state): State<ProxyState>,
     headers: axum::http::HeaderMap,

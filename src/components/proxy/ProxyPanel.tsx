@@ -74,6 +74,7 @@ export function ProxyPanel({
   const { data: codexQueue = [] } = useFailoverQueue("codex");
   const { data: geminiQueue = [] } = useFailoverQueue("gemini");
   const { data: grokQueue = [] } = useFailoverQueue("grokbuild");
+  const { data: claudeScienceQueue = [] } = useFailoverQueue("claude-science");
 
   const handleTakeoverChange = async (appType: string, enabled: boolean) => {
     try {
@@ -275,31 +276,41 @@ export function ProxyPanel({
                   })}
                 </p>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                  {(["claude", "codex", "gemini", "grokbuild"] as const).map(
-                    (appType) => {
-                      const isEnabled =
-                        takeoverStatus?.[
-                          appType as keyof typeof takeoverStatus
-                        ] ?? false;
-                      return (
-                        <div
-                          key={appType}
-                          className="flex items-center justify-between rounded-md border border-primary/20 bg-background/60 px-3 py-2"
-                        >
-                          <span className="text-sm font-medium capitalize">
-                            {appType === "grokbuild" ? "Grok Build" : appType}
-                          </span>
-                          <Switch
-                            checked={isEnabled}
-                            onCheckedChange={(checked) =>
-                              handleTakeoverChange(appType, checked)
-                            }
-                            disabled={setTakeoverForApp.isPending}
-                          />
-                        </div>
-                      );
-                    },
-                  )}
+                  {(
+                    [
+                      "claude",
+                      "codex",
+                      "gemini",
+                      "grokbuild",
+                      "claude-science",
+                    ] as const
+                  ).map((appType) => {
+                    const isEnabled =
+                      takeoverStatus?.[
+                        appType as keyof typeof takeoverStatus
+                      ] ?? false;
+                    return (
+                      <div
+                        key={appType}
+                        className="flex items-center justify-between rounded-md border border-primary/20 bg-background/60 px-3 py-2"
+                      >
+                        <span className="text-sm font-medium capitalize">
+                          {appType === "grokbuild"
+                            ? "Grok Build"
+                            : appType === "claude-science"
+                              ? "Claude Science"
+                              : appType}
+                        </span>
+                        <Switch
+                          checked={isEnabled}
+                          onCheckedChange={(checked) =>
+                            handleTakeoverChange(appType, checked)
+                          }
+                          disabled={setTakeoverForApp.isPending}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {t("proxy.takeover.hint", {
@@ -420,7 +431,8 @@ export function ProxyPanel({
               {(claudeQueue.length > 0 ||
                 codexQueue.length > 0 ||
                 geminiQueue.length > 0 ||
-                grokQueue.length > 0) && (
+                grokQueue.length > 0 ||
+                claudeScienceQueue.length > 0) && (
                 <div className="pt-3 border-t border-border space-y-3">
                   <div className="flex items-center gap-2">
                     <ListOrdered className="h-3.5 w-3.5 text-muted-foreground" />
@@ -470,6 +482,18 @@ export function ProxyPanel({
                       appType="grokbuild"
                       appLabel="Grok Build"
                       targets={grokQueue.map((item) => ({
+                        id: item.providerId,
+                        name: item.providerName,
+                      }))}
+                      status={status}
+                    />
+                  )}
+
+                  {claudeScienceQueue.length > 0 && (
+                    <ProviderQueueGroup
+                      appType="claude-science"
+                      appLabel="Claude Science"
+                      targets={claudeScienceQueue.map((item) => ({
                         id: item.providerId,
                         name: item.providerName,
                       }))}

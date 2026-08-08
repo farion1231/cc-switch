@@ -125,6 +125,9 @@ impl ConfigService {
             AppType::ClaudeDesktop => {
                 // Claude Desktop 3P profiles are managed by claude_desktop_config.
             }
+            AppType::ClaudeScience => {
+                // Claude Science 的配置在加密 SQLite 中，无 live 文件可写，跳过。
+            }
             AppType::Gemini => Self::sync_gemini_live(config, &current_id, &provider)?,
             AppType::GrokBuild => crate::grok_config::write_grok_provider_live(&provider)?,
             AppType::OpenCode => {
