@@ -26,6 +26,11 @@ export interface CodexUnifyHistoryRestoreResult {
   skippedReason?: string;
 }
 
+export interface PickDirectoryOptions {
+  defaultPath?: string;
+  title?: string;
+}
+
 export interface WebDavSyncResult {
   status: string;
 }
@@ -73,8 +78,13 @@ export const settingsApi = {
     await invoke("open_config_folder", { app: appId });
   },
 
-  async pickDirectory(defaultPath?: string): Promise<string | null> {
-    return await invoke("pick_directory", { defaultPath });
+  async pickDirectory(
+    options?: string | PickDirectoryOptions,
+  ): Promise<string | null> {
+    const defaultPath =
+      typeof options === "string" ? options : options?.defaultPath;
+    const title = typeof options === "string" ? undefined : options?.title;
+    return await invoke("pick_directory", { defaultPath, title });
   },
 
   async selectConfigDirectory(defaultPath?: string): Promise<string | null> {
