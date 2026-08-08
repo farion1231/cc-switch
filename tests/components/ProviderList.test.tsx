@@ -306,4 +306,54 @@ describe("ProviderList Component", () => {
       screen.getByText("No providers match your search."),
     ).toBeInTheDocument();
   });
+
+  it.each([
+    ["Escape", () => fireEvent.keyDown(window, { key: "Escape" })],
+    [
+      "close button",
+      () =>
+        fireEvent.click(
+          screen.getByRole("button", { name: "Close provider search" }),
+        ),
+    ],
+  ])(
+    "clears the active filter when closing search with %s",
+    (_, closeSearch) => {
+      const providerAlpha = createProvider({ id: "alpha", name: "Alpha Labs" });
+      const providerBeta = createProvider({ id: "beta", name: "Beta Works" });
+
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [providerAlpha, providerBeta],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+
+      renderWithQueryClient(
+        <ProviderList
+          providers={{ alpha: providerAlpha, beta: providerBeta }}
+          currentProviderId=""
+          appId="claude"
+          onSwitch={vi.fn()}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onOpenWebsite={vi.fn()}
+        />,
+      );
+
+      fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+      fireEvent.change(
+        screen.getByPlaceholderText("Search name, notes, or URL..."),
+        { target: { value: "beta" } },
+      );
+      expect(
+        screen.queryByTestId("provider-card-alpha"),
+      ).not.toBeInTheDocument();
+
+      closeSearch();
+
+      expect(screen.getByTestId("provider-card-alpha")).toBeInTheDocument();
+      expect(screen.getByTestId("provider-card-beta")).toBeInTheDocument();
+    },
+  );
 });
