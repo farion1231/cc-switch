@@ -1004,7 +1004,12 @@ fn apply_provider_to_paths_inner(
 
     write_deployment_mode(&paths.normal_config_path, "3p")?;
     write_deployment_mode(&paths.threep_config_path, "3p")?;
-    write_json_file(&paths.profile_path, &profile)?;
+    // Merge with the existing profile instead of overwriting it wholesale, so
+    // non-gateway fields Claude Desktop / the user set (managedMcpServers,
+    // chatTabEnabled, autoModeEnabled, ...) survive a provider switch.
+    let existing = read_json_or_empty(&paths.profile_path)?;
+    let merged = merge_profile(&existing, &profile);
+    write_json_file(&paths.profile_path, &merged)?;
     write_meta(&paths.meta_path, Some(PROFILE_ID))?;
 
     Ok(())
@@ -1043,6 +1048,38 @@ fn build_gateway_profile(
     }
 
     profile
+}
+
+/// Merge a freshly-built gateway profile with whatever is already on disk.
+///
+/// `build_gateway_profile` rebuilds only the gateway-related fields on every
+/// switch. Writing that object directly would discard non-gateway fields that
+/// Claude Desktop or the user relies on -- `managedMcpServers`,
+/// `chatTabEnabled`, `autoModeEnabled`, `inferenceCredentialKind`, and the
+/// like -- which can trigger a Claude Desktop UI/session reset that wipes
+/// plugin marketplaces, skills, and MCP state (issue #3329).
+///
+/// Strategy: start from the existing profile, overwrite every key the new
+/// profile carries (so gateway fields are always refreshed), and preserve any
+/// other key already on disk. `inferenceModels` is gateway-owned but
+/// conditionally written by `build_gateway_profile`; when the new profile
+/// omits it we drop any stale value so the previous provider's model mappings
+/// do not leak across a switch.
+fn merge_profile(existing: &Value, new_profile: &Value) -> Value {
+    let mut merged = existing.clone();
+    let Some(merged_obj) = merged.as_object_mut() else {
+        return new_profile.clone();
+    };
+    let Some(new_obj) = new_profile.as_object() else {
+        return new_profile.clone();
+    };
+    for (key, value) in new_obj {
+        merged_obj.insert(key.clone(), value.clone());
+    }
+    if !new_obj.contains_key("inferenceModels") {
+        merged_obj.remove("inferenceModels");
+    }
+    merged
 }
 
 fn read_json_or_empty(path: &Path) -> Result<Value, AppError> {
@@ -1517,6 +1554,69 @@ mod tests {
             .expect("entries")
             .iter()
             .any(|entry| entry["id"] == json!(PROFILE_ID) && entry["name"] == json!(PROFILE_NAME)));
+    }
+
+    #[test]
+    fn claude_desktop_apply_preserves_non_gateway_profile_fields() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+
+        // Simulate a profile Claude Desktop / the user already wrote, carrying
+        // non-gateway fields that cc-switch does not own.
+        let existing = json!({
+            "inferenceGatewayBaseUrl": "https://old.example.com",
+            "inferenceGatewayApiKey": "old-token",
+            "chatTabEnabled": true,
+            "autoModeEnabled": true,
+            "inferenceCredentialKind": "static",
+            "managedMcpServers": [
+                { "name": "opencli", "url": "http://127.0.0.1:31337/" }
+            ]
+        });
+        write_json_file(&paths.profile_path, &existing).expect("pre-write profile");
+
+        let provider = direct_provider("direct");
+        let db = test_db();
+        apply_provider_to_paths(&db, &provider, &paths).expect("apply provider");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+
+        // Gateway fields are refreshed to the new provider's values.
+        assert_eq!(
+            profile["inferenceGatewayBaseUrl"],
+            json!("https://gateway.example.com")
+        );
+        assert_eq!(profile["inferenceGatewayApiKey"], json!("test-token"));
+        assert_eq!(profile["inferenceProvider"], json!("gateway"));
+
+        // Non-gateway fields are preserved across the switch.
+        assert_eq!(profile["chatTabEnabled"], json!(true));
+        assert_eq!(profile["autoModeEnabled"], json!(true));
+        assert_eq!(profile["inferenceCredentialKind"], json!("static"));
+        assert_eq!(profile["managedMcpServers"][0]["name"], json!("opencli"));
+    }
+
+    #[test]
+    fn claude_desktop_apply_clears_stale_inference_models_when_new_provider_has_none() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+
+        // Previous provider carried model mappings; new provider (direct_provider
+        // with no model routes) must not leak them.
+        let existing = json!({
+            "inferenceGatewayBaseUrl": "https://old.example.com",
+            "inferenceModels": [
+                { "name": "claude-sonnet-4-6", "labelOverride": "old-label" }
+            ]
+        });
+        write_json_file(&paths.profile_path, &existing).expect("pre-write profile");
+
+        let provider = direct_provider("direct");
+        let db = test_db();
+        apply_provider_to_paths(&db, &provider, &paths).expect("apply provider");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert!(profile.get("inferenceModels").is_none());
     }
 
     #[test]
