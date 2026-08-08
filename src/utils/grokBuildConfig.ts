@@ -17,6 +17,12 @@ export interface GrokBuildConfigValues {
   contextWindow: number;
 }
 
+export interface GrokBuildConfigOptions {
+  baseUrlMode?: "model" | "models_endpoint";
+  webSearchModel?: string;
+  supportsBackendSearch?: boolean;
+}
+
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -47,12 +53,15 @@ export function parseGrokBuildConfig(
     const defaultModel = asString(models?.default, GROK_BUILD_DEFAULT_MODEL);
     const modelTables = asRecord(root?.model);
     const selectedModel = asRecord(modelTables?.[defaultModel]);
+    const endpoints = asRecord(root?.endpoints);
     const rawContextWindow = selectedModel?.context_window;
 
     return {
       model: defaultModel,
       upstreamModel: asString(selectedModel?.model, defaultModel),
-      baseUrl: asString(selectedModel?.base_url),
+      baseUrl:
+        asString(selectedModel?.base_url).trim() ||
+        asString(endpoints?.models_base_url),
       name: asString(selectedModel?.name, fallbackName),
       apiKey: asString(selectedModel?.api_key),
       envKey: asString(selectedModel?.env_key),
@@ -72,13 +81,17 @@ export function parseGrokBuildConfig(
   }
 }
 
-export function buildGrokBuildConfig(values: GrokBuildConfigValues): string {
-  return updateGrokBuildConfig(undefined, values);
+export function buildGrokBuildConfig(
+  values: GrokBuildConfigValues,
+  options?: GrokBuildConfigOptions,
+): string {
+  return updateGrokBuildConfig(undefined, values, options);
 }
 
 export function updateGrokBuildConfig(
   configToml: string | undefined,
   values: GrokBuildConfigValues,
+  options: GrokBuildConfigOptions = {},
 ): string {
   const profile = values.model.trim() || GROK_BUILD_DEFAULT_MODEL;
   const upstreamModel = values.upstreamModel?.trim() || profile;
@@ -92,20 +105,35 @@ export function updateGrokBuildConfig(
 
   const existingModels = asRecord(config.models) ?? {};
   const previousProfile = asString(existingModels.default, profile);
-  config.models = { ...existingModels, default: profile };
+  const updatedModels: Record<string, unknown> = {
+    ...existingModels,
+    default: profile,
+  };
+  if (options.webSearchModel !== undefined) {
+    const webSearchModel = options.webSearchModel.trim();
+    if (webSearchModel) updatedModels.web_search = webSearchModel;
+    else delete updatedModels.web_search;
+  }
+  config.models = updatedModels;
 
   const modelTables = asRecord(config.model) ?? {};
   const existingSelected =
     asRecord(modelTables[profile]) ??
     asRecord(modelTables[previousProfile]) ??
     {};
+  const existingEndpoints = asRecord(config.endpoints) ?? {};
+  const baseUrlMode =
+    options.baseUrlMode ??
+    (!asString(existingSelected.base_url).trim() &&
+    asString(existingEndpoints.models_base_url).trim()
+      ? "models_endpoint"
+      : "model");
   const apiKey = values.apiKey.trim();
   const envKey =
     values.envKey?.trim() || asString(existingSelected.env_key).trim();
   const updatedSelected: Record<string, unknown> = {
     ...existingSelected,
     model: upstreamModel,
-    base_url: values.baseUrl.trim(),
     name: values.name.trim(),
     api_backend: values.apiBackend.trim() || GROK_BUILD_DEFAULT_API_BACKEND,
     context_window:
@@ -113,6 +141,18 @@ export function updateGrokBuildConfig(
         ? values.contextWindow
         : GROK_BUILD_DEFAULT_CONTEXT_WINDOW,
   };
+  if (baseUrlMode === "models_endpoint") {
+    delete updatedSelected.base_url;
+    config.endpoints = {
+      ...existingEndpoints,
+      models_base_url: values.baseUrl.trim(),
+    };
+  } else {
+    updatedSelected.base_url = values.baseUrl.trim();
+  }
+  if (options.supportsBackendSearch !== undefined) {
+    updatedSelected.supports_backend_search = options.supportsBackendSearch;
+  }
   if (apiKey) updatedSelected.api_key = apiKey;
   else delete updatedSelected.api_key;
   if (envKey) updatedSelected.env_key = envKey;
@@ -138,8 +178,15 @@ export function validateGrokBuildConfig(configToml: string): string | null {
     const profile = asString(models?.default).trim();
     const selected = asRecord(asRecord(root?.model)?.[profile]);
     if (!profile || !selected) return "Missing [models] default model table";
-    for (const field of ["model", "base_url", "name", "api_backend"]) {
+    for (const field of ["model", "name", "api_backend"]) {
       if (!asString(selected[field]).trim()) return `Missing ${field}`;
+    }
+    const modelBaseUrl = asString(selected.base_url).trim();
+    const modelsBaseUrl = asString(
+      asRecord(root?.endpoints)?.models_base_url,
+    ).trim();
+    if (!modelBaseUrl && !modelsBaseUrl) {
+      return "Missing base_url or endpoints.models_base_url";
     }
     if (
       !asString(selected.api_key).trim() &&

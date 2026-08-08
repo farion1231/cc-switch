@@ -72,4 +72,16 @@ describe("grokBuildProviderPresets", () => {
     expect(grokBuildOfficialPreset.config).toBe("");
     expect(grokBuildOfficialPreset.auth).toEqual({});
   });
+
+  it("uses PackyCode's shared endpoint without backend search", () => {
+    const packy = grokBuildProviderPresets.find(
+      (preset) => preset.name === "PackyCode",
+    );
+
+    expect(packy?.configOptions).toEqual({
+      baseUrlMode: "models_endpoint",
+      webSearchModel: GROK_BUILD_DEFAULT_MODEL,
+      supportsBackendSearch: false,
+    });
+  });
 });
