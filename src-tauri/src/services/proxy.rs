@@ -9,6 +9,7 @@ use crate::provider::Provider;
 use crate::proxy::server::ProxyServer;
 use crate::proxy::switch_lock::SwitchLockManager;
 use crate::proxy::types::*;
+use crate::services::mcp::McpService;
 use crate::services::provider::{
     build_effective_settings_with_common_config, write_live_with_common_config,
 };
@@ -2947,10 +2948,15 @@ impl ProxyService {
             };
             crate::codex_config::write_codex_live_config_atomic(Some(&live_config))
                 .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
-            return Ok(());
+        } else {
+            self.write_codex_live_for_provider(config, provider)?;
         }
 
-        self.write_codex_live_for_provider(config, provider)
+        // Codex takeover rewrites config.toml as a whole. Reproject the MCP
+        // state immediately so restart repair cannot leave DB-enabled servers
+        // missing from the live file (#6265).
+        McpService::sync_enabled_for_app_from_db(self.db.as_ref(), &AppType::Codex)
+            .map_err(|e| format!("重投影 Codex MCP 失败: {e}"))
     }
 
     fn write_codex_live_verbatim(&self, config: &Value) -> Result<(), String> {
@@ -3225,6 +3231,7 @@ impl ProxyService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_config::{McpApps, McpServer};
     use crate::provider::ProviderMeta;
     use serial_test::serial;
     use std::env;
@@ -4637,6 +4644,115 @@ wire_api = "responses"
             "Codex live config should still be detected as taken over"
         );
 
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("reset settings");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_set_takeover_reprojects_enabled_mcp_when_backup_missing() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        crate::settings::update_settings(crate::settings::AppSettings {
+            preserve_codex_official_auth_on_switch: true,
+            ..Default::default()
+        })
+        .expect("enable Codex official auth preservation");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        use_ephemeral_proxy_port(&db).await;
+        let service = ProxyService::new(db.clone());
+        let oauth_auth = json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "id_token": "oauth-id",
+                "access_token": "oauth-access"
+            }
+        });
+        let deepseek_live_config = r#"model_provider = "deepseek"
+model = "deepseek-v4-flash"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+experimental_bearer_token = "deepseek-key"
+"#;
+        crate::codex_config::write_codex_live_atomic(&oauth_auth, Some(deepseek_live_config))
+            .expect("seed Codex live config without MCP projection");
+
+        let provider = Provider::with_id(
+            "deepseek".to_string(),
+            "DeepSeek".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "deepseek-key"
+                },
+                "config": deepseek_live_config
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider)
+            .expect("save DeepSeek provider");
+        db.set_current_provider("codex", "deepseek")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some("deepseek"))
+            .expect("set local current provider");
+        db.save_mcp_server(&McpServer {
+            id: "codegraph".to_string(),
+            name: "codegraph".to_string(),
+            server: json!({
+                "command": "codegraph",
+                "args": ["serve", "--mcp"]
+            }),
+            apps: McpApps {
+                codex: true,
+                ..Default::default()
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        })
+        .expect("save enabled Codex MCP server");
+        assert!(
+            db.get_live_backup("codex")
+                .await
+                .expect("get initial Codex live backup")
+                .is_none(),
+            "startup repair scenario begins without a live backup"
+        );
+
+        let mut proxy_config = db
+            .get_proxy_config_for_app("codex")
+            .await
+            .expect("get Codex proxy config");
+        proxy_config.enabled = true;
+        db.update_proxy_config_for_app(proxy_config)
+            .await
+            .expect("mark Codex takeover enabled before restart repair");
+
+        service
+            .set_takeover_for_app("codex", true)
+            .await
+            .expect("repair Codex takeover after restart");
+
+        let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read repaired Codex live config");
+        let live_toml: toml::Value = toml::from_str(&live_config).expect("parse live config");
+        let codegraph = live_toml
+            .get("mcp_servers")
+            .and_then(|servers| servers.get("codegraph"))
+            .expect("enabled DB MCP must be reprojected after startup takeover repair");
+        assert_eq!(
+            codegraph.get("command").and_then(toml::Value::as_str),
+            Some("codegraph")
+        );
+
+        service
+            .set_takeover_for_app("codex", false)
+            .await
+            .expect("disable Codex takeover");
         crate::settings::update_settings(crate::settings::AppSettings::default())
             .expect("reset settings");
     }
