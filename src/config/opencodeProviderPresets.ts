@@ -784,10 +784,36 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "claude-haiku-4-5": { name: "Claude Haiku 4.5" },
       },
     },
-    category: "third_party",
     isPartner: true,
     partnerPromotionKey: "claudecn",
     icon: "claudecn",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "Kenari",
+    websiteUrl: "https://kenari.id",
+    apiKeyUrl: "https://kenari.id/keys",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Kenari",
+      options: {
+        baseURL: "https://kenari.id/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "glm-5-2": { name: "GLM 5.2" },
+        "kimi-k2-7-code": { name: "Kimi K2.7 Code" },
+      },
+    },
+    category: "aggregator",
+    icon: "kenari",
     templateValues: {
       apiKey: {
         label: "API Key",

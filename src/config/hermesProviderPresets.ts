@@ -528,6 +528,23 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Kenari",
+    websiteUrl: "https://kenari.id",
+    apiKeyUrl: "https://kenari.id/keys",
+    settingsConfig: {
+      name: "kenari",
+      base_url: "https://kenari.id/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [{ id: "glm-5-2", name: "GLM 5.2" }],
+    },
+    category: "aggregator",
+    icon: "kenari",
+    suggestedDefaults: {
+      model: { default: "glm-5-2", provider: "kenari" },
+    },
+  },
+  {
     name: "火山Agentplan",
     websiteUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
