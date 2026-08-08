@@ -19,7 +19,7 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    get_sync_state, metadata_modified_nanos, update_sync_state, SessionSyncResult,
+    metadata_modified_nanos, update_sync_state, update_sync_state_on_conn, SessionSyncResult,
 };
 use crate::services::usage_stats::{
     find_model_pricing, has_suspected_codex_session_duplicate, should_skip_session_insert, DedupKey,
@@ -450,9 +450,58 @@ fn parse_token_signature(info: &serde_json::Value) -> Option<TokenUsageSignature
     (total.is_some() || last.is_some()).then_some(TokenUsageSignature { total, last })
 }
 
-fn get_codex_sync_state(db: &Database, file_path: &Path) -> Result<(i64, i64), AppError> {
+fn token_snapshot_source(payload: &serde_json::Value) -> Option<String> {
+    payload
+        .get("rate_limits")
+        .and_then(|rate_limits| rate_limits.get("limit_id"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+/// 单个同步 pass 的共享状态。
+///
+/// - `cursors`：pass 开始时一次性预载的 `session_log_sync` 快照，替代逐文件
+///   SELECT（尤其是 archived 继承的 `substr` 后缀匹配无法走索引，逐文件跑等于
+///   每 pass 全表扫 N 次）。快照语义：同 pass 内其他文件刚写入的游标对后续
+///   archived 继承不可见——影响仅是多一轮由 request_id 去重兜底的重扫，
+///   不丢数据、不双算。
+/// - `pricing`：模型定价 pass 级缓存。定价表在 pass 进行中被修改时本 pass
+///   仍用旧价，下一个同步 pass 生效。
+struct CodexSyncPass {
+    cursors: HashMap<String, (i64, i64)>,
+    pricing: HashMap<String, Option<ModelPricing>>,
+}
+
+impl CodexSyncPass {
+    fn load(db: &Database) -> Result<Self, AppError> {
+        let conn = lock_conn!(db.conn);
+        let mut stmt = conn
+            .prepare("SELECT file_path, last_modified, last_line_offset FROM session_log_sync")
+            .map_err(|e| AppError::Database(format!("预载同步游标失败: {e}")))?;
+        let cursors = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    (row.get::<_, i64>(1)?, row.get::<_, i64>(2)?),
+                ))
+            })
+            .and_then(|rows| rows.collect::<Result<HashMap<_, _>, _>>())
+            .map_err(|e| AppError::Database(format!("预载同步游标失败: {e}")))?;
+        Ok(Self {
+            cursors,
+            pricing: HashMap::new(),
+        })
+    }
+}
+
+fn get_codex_sync_state(
+    db: &Database,
+    file_path: &Path,
+    cursors: &HashMap<String, (i64, i64)>,
+) -> Result<(i64, i64), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
-    let state = get_sync_state(db, &file_path_str)?;
+    let state = cursors.get(&file_path_str).copied().unwrap_or((0, 0));
     if state != (0, 0)
         || file_path
             .parent()
@@ -468,29 +517,23 @@ fn get_codex_sync_state(db: &Database, file_path: &Path) -> Result<(i64, i64), A
     };
     let slash_suffix = format!("/{file_name}");
     let backslash_suffix = format!("\\{file_name}");
-    let conn = lock_conn!(db.conn);
-    let inherited = conn.query_row(
-        "SELECT last_modified, last_line_offset
-         FROM session_log_sync
-         WHERE file_path <> ?1
-           AND (substr(file_path, -length(?2)) = ?2
-                OR substr(file_path, -length(?3)) = ?3)
-         ORDER BY last_line_offset DESC, last_modified DESC
-         LIMIT 1",
-        rusqlite::params![file_path_str, slash_suffix, backslash_suffix],
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-    );
-    drop(conn);
+    // 与原 SQL 等价：ORDER BY last_line_offset DESC, last_modified DESC LIMIT 1
+    // → 在快照上按 (offset, modified) 取最大。
+    let inherited = cursors
+        .iter()
+        .filter(|(path, _)| {
+            path.as_str() != file_path_str
+                && (path.ends_with(&slash_suffix) || path.ends_with(&backslash_suffix))
+        })
+        .map(|(_, &(modified, offset))| (offset, modified))
+        .max();
 
     match inherited {
-        Ok(inherited) => {
-            update_sync_state(db, &file_path_str, inherited.0, inherited.1)?;
-            Ok(inherited)
+        Some((offset, modified)) => {
+            update_sync_state(db, &file_path_str, modified, offset)?;
+            Ok((modified, offset))
         }
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(state),
-        Err(error) => Err(AppError::Database(format!(
-            "查询 Codex 归档文件同步状态失败: {error}"
-        ))),
+        None => Ok(state),
     }
 }
 
@@ -556,9 +599,26 @@ fn compute_delta(prev: &Option<CumulativeTokens>, current: &CumulativeTokens) ->
     }
 }
 
+fn update_high_water(high_water: &mut CumulativeTokens, current: &CumulativeTokens) {
+    high_water.input = high_water.input.max(current.input);
+    high_water.cached_input = high_water.cached_input.max(current.cached_input);
+    high_water.output = high_water.output.max(current.output);
+}
+
 /// 从 JSON Value 中提取累计 token 用量
 fn parse_cumulative_tokens(total_usage: &serde_json::Value) -> Option<CumulativeTokens> {
-    if total_usage.is_null() || !total_usage.is_object() {
+    let fields = total_usage.as_object()?;
+    if ![
+        "input_tokens",
+        "cached_input_tokens",
+        "cache_read_input_tokens",
+        "output_tokens",
+        "reasoning_output_tokens",
+        "total_tokens",
+    ]
+    .iter()
+    .any(|field| fields.contains_key(*field))
+    {
         return None;
     }
     Some(CumulativeTokens {
@@ -593,6 +653,7 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let codex_dir = get_codex_config_dir();
     let files = collect_codex_session_files(&codex_dir);
     let rollout_index = build_rollout_index(&files);
+    let mut pass = CodexSyncPass::load(db)?;
 
     let mut result = SessionSyncResult {
         imported: 0,
@@ -604,7 +665,7 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     };
 
     for file_path in &files {
-        match sync_single_codex_file(db, file_path, &rollout_index) {
+        match sync_single_codex_file(db, file_path, &rollout_index, &mut pass) {
             Ok(file_result) => {
                 result.imported = result.imported.saturating_add(file_result.imported);
                 result.skipped = result.skipped.saturating_add(file_result.skipped);
@@ -704,7 +765,17 @@ fn parse_codex_file(
     let mut root_timestamp = None;
     let mut parent = ParentResolution::None;
     let mut current_model = "unknown".to_string();
-    let mut prev_total: Option<CumulativeTokens> = None;
+    // `total_token_usage` is session-cumulative, including across model and
+    // rate-limit bucket changes. Divergent snapshots are handled by preferring
+    // exact `last_token_usage`, not by splitting the cumulative baseline.
+    let mut total_high_water = None;
+    // Rate-limit refreshes can re-emit unchanged token info under another
+    // `limit_id`. Same-source repeats are identified by that source's latest
+    // full snapshot; cross-source repeats must match the immediately preceding
+    // token event. Do not compare against other sources' older snapshots:
+    // those stale signatures can legitimately recur after a counter reset.
+    let mut last_signature_by_source: HashMap<Option<String>, TokenUsageSignature> = HashMap::new();
+    let mut previous_token_signature = None;
     let mut event_index = 0u32;
     let mut token_events = Vec::new();
     let mut line_offset = 0i64;
@@ -810,27 +881,52 @@ fn parse_codex_file(
                     current_model = normalize_codex_model(model);
                 }
 
-                let (cumulative, is_total) = if let Some(total) = info.get("total_token_usage") {
-                    (parse_cumulative_tokens(total), true)
-                } else if let Some(last) = info.get("last_token_usage") {
-                    (parse_cumulative_tokens(last), false)
-                } else {
+                let snapshot_source = token_snapshot_source(payload);
+                let total = info
+                    .get("total_token_usage")
+                    .and_then(parse_cumulative_tokens);
+                let last = info
+                    .get("last_token_usage")
+                    .and_then(parse_cumulative_tokens);
+                if total.is_none() && last.is_none() {
                     continue;
-                };
-                let Some(cumulative) = cumulative else {
-                    continue;
-                };
-                let delta = if is_total {
-                    let delta = compute_delta(&prev_total, &cumulative);
-                    prev_total = Some(cumulative);
-                    delta
-                } else {
+                }
+                let has_total_snapshot = total.is_some();
+                let duplicate_snapshot = has_total_snapshot
+                    && (last_signature_by_source.get(&snapshot_source) == Some(&signature)
+                        || previous_token_signature.as_ref() == Some(&signature));
+                if has_total_snapshot {
+                    last_signature_by_source.insert(snapshot_source, signature.clone());
+                }
+                previous_token_signature = Some(signature.clone());
+
+                let delta = if duplicate_snapshot {
                     DeltaTokens {
-                        input: cumulative.input as u32,
-                        cached_input: cumulative.cached_input as u32,
-                        output: cumulative.output as u32,
+                        input: 0,
+                        cached_input: 0,
+                        output: 0,
                     }
+                } else if let Some(last) = last {
+                    // Codex provides the exact per-request usage. Prefer it to
+                    // subtracting cumulative snapshots, which may come from
+                    // multiple independently advancing rate-limit lanes.
+                    DeltaTokens {
+                        input: last.input as u32,
+                        cached_input: last.cached_input as u32,
+                        output: last.output as u32,
+                    }
+                } else if let Some(total) = total.as_ref() {
+                    compute_delta(&total_high_water, total)
+                } else {
+                    continue;
                 };
+                if let Some(total) = total {
+                    if let Some(high_water) = total_high_water.as_mut() {
+                        update_high_water(high_water, &total);
+                    } else {
+                        total_high_water = Some(total);
+                    }
+                }
                 let delta = DeltaTokens {
                     cached_input: delta.cached_input.min(delta.input),
                     ..delta
@@ -1028,11 +1124,17 @@ fn mark_deferred(
     }
 }
 
+/// 单文件批量插入的事务粒度。批内 UI 查询会被连接互斥锁挡住约几毫秒，
+/// 批间释放锁让读侧插队——兼顾吞吐（避免逐行 autocommit 的每行 fsync）
+/// 与大文件重导期间面板的响应性。
+const CODEX_INSERT_BATCH_SIZE: usize = 1000;
+
 /// 同步单个 Codex JSONL 文件。
 fn sync_single_codex_file(
     db: &Database,
     file_path: &Path,
     rollout_index: &RolloutIndex,
+    pass: &mut CodexSyncPass,
 ) -> Result<CodexFileSyncResult, AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
 
@@ -1043,7 +1145,7 @@ fn sync_single_codex_file(
     let file_size = metadata.len();
 
     // 检查同步状态
-    let (last_modified, last_offset) = get_codex_sync_state(db, file_path)?;
+    let (last_modified, last_offset) = get_codex_sync_state(db, file_path, &pass.cursors)?;
 
     // 文件未变化则跳过
     if file_modified <= last_modified {
@@ -1173,6 +1275,7 @@ fn sync_single_codex_file(
     }
 
     let mut result = CodexFileSyncResult::default();
+    let mut to_insert: Vec<(&ParsedTokenEvent, u32)> = Vec::new();
     for (token_offset, event) in parsed.token_events.iter().enumerate() {
         let Some(event_index) = event.event_index else {
             continue;
@@ -1186,31 +1289,67 @@ fn sync_single_codex_file(
         if event.line_offset <= last_offset {
             continue;
         }
-
-        let request_id = format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{root_thread_id}:{event_index}");
-        match insert_codex_session_entry(
-            db,
-            &request_id,
-            &event.delta,
-            &event.model,
-            Some(root_thread_id),
-            event.timestamp.as_deref(),
-            &mut result.suspected_duplicates,
-        ) {
-            Ok(true) => result.imported = result.imported.saturating_add(1),
-            Ok(false) => result.skipped = result.skipped.saturating_add(1),
-            Err(e) => {
-                log::warn!("[CODEX-SYNC] 插入失败 ({request_id}): {e}");
-                result.skipped = result.skipped.saturating_add(1);
-            }
-        }
+        to_insert.push((event, event_index));
     }
 
-    update_sync_state(db, &file_path_str, file_modified, parsed.line_offset)?;
+    // 分批事务写库：逐行 autocommit（journal_mode=delete 下每行一整套
+    // journal 建立/fsync/删除）是全量重导的最大耗时项。批内单条插入失败
+    // 沿用旧行为跳过该条继续；某批 commit 失败则该批整体回滚且游标不推进，
+    // 下一 pass 重扫时由 request_id 主键 + 指纹去重兜底，不会双算。
+    let batch_count = to_insert.len().div_ceil(CODEX_INSERT_BATCH_SIZE);
+    for (batch_index, batch) in to_insert.chunks(CODEX_INSERT_BATCH_SIZE).enumerate() {
+        let is_last_batch = batch_index + 1 == batch_count;
+        let conn = lock_conn!(db.conn);
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| AppError::Database(format!("开启 Codex 会话写入事务失败: {e}")))?;
+
+        let mut batch_imported = 0u32;
+        let mut batch_skipped = 0u32;
+        let mut batch_suspected = 0u32;
+        for (event, event_index) in batch {
+            let request_id =
+                format!("{CODEX_THREAD_REQUEST_ID_PREFIX}:{root_thread_id}:{event_index}");
+            match insert_codex_session_entry_on_conn(
+                &tx,
+                &request_id,
+                &event.delta,
+                &event.model,
+                Some(root_thread_id),
+                event.timestamp.as_deref(),
+                &mut batch_suspected,
+                &mut pass.pricing,
+            ) {
+                Ok(true) => batch_imported += 1,
+                Ok(false) => batch_skipped += 1,
+                Err(e) => {
+                    log::warn!("[CODEX-SYNC] 插入失败 ({request_id}): {e}");
+                    batch_skipped += 1;
+                }
+            }
+        }
+        if is_last_batch {
+            // 游标推进与最后一批数据同事务提交：中途崩溃时两者一起回滚，
+            // 不会出现"游标已推进但数据缺失"的丢数据窗口。
+            update_sync_state_on_conn(&tx, &file_path_str, file_modified, parsed.line_offset)?;
+        }
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("提交 Codex 会话写入事务失败: {e}")))?;
+
+        result.imported = result.imported.saturating_add(batch_imported);
+        result.skipped = result.skipped.saturating_add(batch_skipped);
+        result.suspected_duplicates = result.suspected_duplicates.saturating_add(batch_suspected);
+    }
+
+    if to_insert.is_empty() {
+        update_sync_state(db, &file_path_str, file_modified, parsed.line_offset)?;
+    }
     Ok(result)
 }
 
-/// 插入单条 Codex 会话记录到 proxy_request_logs
+/// 插入单条 Codex 会话记录到 proxy_request_logs（自取锁的便捷包装，测试专用；
+/// 生产路径走 [`insert_codex_session_entry_on_conn`] 以复用批量事务与定价缓存）
+#[cfg(test)]
 fn insert_codex_session_entry(
     db: &Database,
     request_id: &str,
@@ -1221,7 +1360,34 @@ fn insert_codex_session_entry(
     suspected_duplicates: &mut u32,
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
+    insert_codex_session_entry_on_conn(
+        &conn,
+        request_id,
+        delta,
+        model,
+        session_id,
+        timestamp,
+        suspected_duplicates,
+        &mut HashMap::new(),
+    )
+}
 
+/// 插入单条 Codex 会话记录到 proxy_request_logs。
+///
+/// 调用方负责持锁/事务；`pricing_cache` 按原始 model 字符串键控（
+/// `find_codex_pricing` 是纯函数式查找，同串必同结果），全量重导时把
+/// 每事件一次的定价 SELECT 降为每模型一次。
+#[allow(clippy::too_many_arguments)]
+fn insert_codex_session_entry_on_conn(
+    conn: &rusqlite::Connection,
+    request_id: &str,
+    delta: &DeltaTokens,
+    model: &str,
+    session_id: Option<&str>,
+    timestamp: Option<&str>,
+    suspected_duplicates: &mut u32,
+    pricing_cache: &mut HashMap<String, Option<ModelPricing>>,
+) -> Result<bool, AppError> {
     let created_at = timestamp
         .and_then(|ts| {
             chrono::DateTime::parse_from_rfc3339(ts)
@@ -1244,10 +1410,10 @@ fn insert_codex_session_entry(
         cache_creation_tokens: 0,
         created_at,
     };
-    if should_skip_session_insert(&conn, request_id, &dedup_key)? {
+    if should_skip_session_insert(conn, request_id, &dedup_key)? {
         return Ok(false);
     }
-    if has_suspected_codex_session_duplicate(&conn, request_id, &dedup_key)? {
+    if has_suspected_codex_session_duplicate(conn, request_id, &dedup_key)? {
         *suspected_duplicates = suspected_duplicates.saturating_add(1);
         log::warn!(
             "[CODEX-SYNC] 疑似重复会话用量: request_id={request_id}, model={model}, input={}, output={}, cache_read={}",
@@ -1267,12 +1433,14 @@ fn insert_codex_session_entry(
         message_id: None,
     };
 
-    let pricing = find_codex_pricing(&conn, model);
+    let pricing = pricing_cache
+        .entry(model.to_string())
+        .or_insert_with(|| find_codex_pricing(conn, model));
     let multiplier = Decimal::from(1);
     let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) = match pricing
     {
         Some(p) => {
-            let cost = CostCalculator::calculate_for_app("codex", &usage, &p, multiplier);
+            let cost = CostCalculator::calculate_for_app("codex", &usage, p, multiplier);
             (
                 cost.input_cost.to_string(),
                 cost.output_cost.to_string(),
@@ -1291,7 +1459,7 @@ fn insert_codex_session_entry(
     };
 
     let inserted_rows = conn
-        .execute(
+        .prepare_cached(
             "INSERT OR IGNORE INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
@@ -1299,7 +1467,8 @@ fn insert_codex_session_entry(
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
-            rusqlite::params![
+        )
+        .and_then(|mut stmt| stmt.execute(rusqlite::params![
                 request_id,
                 "_codex_session",    // provider_id
                 "codex",             // app_type
@@ -1324,8 +1493,7 @@ fn insert_codex_session_entry(
                 "1.0",               // cost_multiplier
                 created_at,
                 "codex_session",     // data_source
-            ],
-        )
+            ]))
         .map_err(|e| AppError::Database(format!("插入 Codex 会话日志失败: {e}")))?;
 
     Ok(inserted_rows > 0)
@@ -1339,6 +1507,7 @@ fn find_codex_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<Mod
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::session_usage::get_sync_state;
     use tempfile::tempdir;
 
     const PARENT_ID: &str = "00000000-0000-4000-8000-000000000001";
@@ -1390,12 +1559,16 @@ mod tests {
         session_meta_at(thread_id, None, None, "2026-07-10T03:00:00Z")
     }
 
-    fn turn_context_at(timestamp: &str) -> serde_json::Value {
+    fn turn_context_for_model_at(model: &str, timestamp: &str) -> serde_json::Value {
         serde_json::json!({
             "timestamp": timestamp,
             "type": "turn_context",
-            "payload": { "model": "gpt-5.6-sol" }
+            "payload": { "model": model }
         })
+    }
+
+    fn turn_context_at(timestamp: &str) -> serde_json::Value {
+        turn_context_for_model_at("gpt-5.6-sol", timestamp)
     }
 
     fn turn_context() -> serde_json::Value {
@@ -1432,6 +1605,43 @@ mod tests {
         value
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn token_count_with_last_at(
+        total_input: u64,
+        total_cached: u64,
+        total_output: u64,
+        last_input: u64,
+        last_cached: u64,
+        last_output: u64,
+        limit_id: &str,
+        timestamp: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "timestamp": timestamp,
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": total_input,
+                        "cached_input_tokens": total_cached,
+                        "output_tokens": total_output,
+                        "reasoning_output_tokens": 0,
+                        "total_tokens": total_input + total_output
+                    },
+                    "last_token_usage": {
+                        "input_tokens": last_input,
+                        "cached_input_tokens": last_cached,
+                        "output_tokens": last_output,
+                        "reasoning_output_tokens": 0,
+                        "total_tokens": last_input + last_output
+                    }
+                },
+                "rate_limits": { "limit_id": limit_id }
+            }
+        })
+    }
+
     fn sync_test_file(
         db: &Database,
         file: &Path,
@@ -1441,7 +1651,8 @@ mod tests {
             .iter()
             .map(|path| path.to_path_buf())
             .collect::<Vec<_>>();
-        sync_single_codex_file(db, file, &build_rollout_index(&files))
+        let mut pass = CodexSyncPass::load(db)?;
+        sync_single_codex_file(db, file, &build_rollout_index(&files), &mut pass)
     }
 
     #[test]
@@ -1515,6 +1726,430 @@ mod tests {
     }
 
     #[test]
+    fn test_interleaved_counter_lanes_use_exact_last_usage() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let bengal_event = token_count_with_last_at(
+            87_709_262,
+            83_563_008,
+            240_919,
+            151_258,
+            147_200,
+            87,
+            "codex_bengalfox",
+            "2026-07-10T03:00:03Z",
+        );
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_count_with_last_at(
+                    76_780_408,
+                    73_010_432,
+                    243_036,
+                    175_074,
+                    169_728,
+                    6_827,
+                    "codex",
+                    "2026-07-10T03:00:02Z",
+                ),
+                bengal_event.clone(),
+                token_count_with_last_at(
+                    76_962_538,
+                    73_180_160,
+                    243_258,
+                    182_130,
+                    169_728,
+                    222,
+                    "codex",
+                    "2026-07-10T03:00:04Z",
+                ),
+                // Repeated snapshots are notifications, not additional API usage.
+                bengal_event,
+            ],
+        );
+
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        let deltas = parsed
+            .token_events
+            .iter()
+            .filter(|event| !event.delta.is_zero())
+            .map(|event| {
+                (
+                    event.delta.input,
+                    event.delta.cached_input,
+                    event.delta.output,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            deltas,
+            vec![
+                (175_074, 169_728, 6_827),
+                (151_258, 147_200, 87),
+                (182_130, 169_728, 222),
+            ]
+        );
+        assert!(parsed.token_events[3].delta.is_zero());
+        Ok(())
+    }
+
+    #[test]
+    fn test_cross_limit_snapshot_replay_is_not_double_counted() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_count_with_last_at(1_000, 0, 10, 100, 0, 10, "codex", "2026-07-10T03:00:02Z"),
+                token_count_with_last_at(
+                    1_000,
+                    0,
+                    10,
+                    100,
+                    0,
+                    10,
+                    "codex_bengalfox",
+                    "2026-07-10T03:00:03Z",
+                ),
+            ],
+        );
+
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        let deltas = parsed
+            .token_events
+            .iter()
+            .filter(|event| !event.delta.is_zero())
+            .map(|event| event.delta.input)
+            .collect::<Vec<_>>();
+
+        assert_eq!(deltas, vec![100]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_adjacent_replay_burst_across_multiple_sources_is_deduped() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_count_with_last_at(1_000, 0, 10, 100, 0, 10, "codex", "2026-07-10T03:00:02Z"),
+                token_count_with_last_at(
+                    1_000,
+                    0,
+                    10,
+                    100,
+                    0,
+                    10,
+                    "codex_bengalfox",
+                    "2026-07-10T03:00:03Z",
+                ),
+                token_count_with_last_at(
+                    1_000,
+                    0,
+                    10,
+                    100,
+                    0,
+                    10,
+                    "codex_spark",
+                    "2026-07-10T03:00:04Z",
+                ),
+            ],
+        );
+
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        let deltas = parsed
+            .token_events
+            .iter()
+            .filter(|event| !event.delta.is_zero())
+            .map(|event| event.delta.input)
+            .collect::<Vec<_>>();
+
+        assert_eq!(deltas, vec![100]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cross_source_replay_remains_adjacent_across_non_token_events() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_count_with_last_at(1_000, 0, 10, 100, 0, 10, "codex", "2026-07-10T03:00:02Z"),
+                turn_context_for_model_at("gpt-5.6-sol", "2026-07-10T03:00:03Z"),
+                token_count_with_last_at(
+                    1_000,
+                    0,
+                    10,
+                    100,
+                    0,
+                    10,
+                    "codex_bengalfox",
+                    "2026-07-10T03:00:04Z",
+                ),
+            ],
+        );
+
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        let deltas = parsed
+            .token_events
+            .iter()
+            .filter(|event| !event.delta.is_zero())
+            .map(|event| event.delta.input)
+            .collect::<Vec<_>>();
+
+        assert_eq!(deltas, vec![100]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_same_source_repeat_is_deduped_after_another_source_advances() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                token_count_with_last_at(1_000, 0, 10, 100, 0, 10, "codex", "2026-07-10T03:00:02Z"),
+                token_count_with_last_at(
+                    2_000,
+                    0,
+                    20,
+                    100,
+                    0,
+                    10,
+                    "codex_bengalfox",
+                    "2026-07-10T03:00:03Z",
+                ),
+                // `codex` has not advanced since its X snapshot, so this is a
+                // same-source replay even though another source was interleaved.
+                token_count_with_last_at(1_000, 0, 10, 100, 0, 10, "codex", "2026-07-10T03:00:04Z"),
+            ],
+        );
+
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        let deltas = parsed
+            .token_events
+            .iter()
+            .filter(|event| !event.delta.is_zero())
+            .map(|event| event.delta.input)
+            .collect::<Vec<_>>();
+
+        assert_eq!(deltas, vec![100, 100]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_stale_cross_source_signature_does_not_swallow_reset() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                // `codex` emits snapshot X.
+                token_count_with_last_at(1_000, 0, 10, 100, 0, 10, "codex", "2026-07-10T03:00:02Z"),
+                // X is replayed under another rate-limit source.
+                token_count_with_last_at(
+                    1_000,
+                    0,
+                    10,
+                    100,
+                    0,
+                    10,
+                    "codex_bengalfox",
+                    "2026-07-10T03:00:03Z",
+                ),
+                // The original source advances to Y.
+                token_count_with_last_at(2_000, 0, 20, 100, 0, 10, "codex", "2026-07-10T03:00:04Z"),
+                // A genuine reset later reproduces X. The stale copy retained
+                // by `codex_bengalfox` must not classify this as a replay.
+                token_count_with_last_at(1_000, 0, 10, 100, 0, 10, "codex", "2026-07-10T03:00:05Z"),
+            ],
+        );
+
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        let deltas = parsed
+            .token_events
+            .iter()
+            .filter(|event| !event.delta.is_zero())
+            .map(|event| event.delta.input)
+            .collect::<Vec<_>>();
+
+        assert_eq!(deltas, vec![100, 100, 100]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_full_snapshot_dedupe_allows_counter_reset() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let first =
+            token_count_with_last_at(100, 50, 10, 100, 50, 10, "codex", "2026-07-10T03:00:02Z");
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                first.clone(),
+                first,
+                token_count_with_last_at(
+                    200,
+                    100,
+                    20,
+                    100,
+                    50,
+                    10,
+                    "codex",
+                    "2026-07-10T03:00:04Z",
+                ),
+                // A restarted counter may legitimately return to an older
+                // total after another full snapshot has advanced the source.
+                token_count_with_last_at(100, 50, 10, 50, 25, 5, "codex", "2026-07-10T03:00:05Z"),
+            ],
+        );
+
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        let deltas = parsed
+            .token_events
+            .iter()
+            .filter(|event| !event.delta.is_zero())
+            .map(|event| event.delta.input)
+            .collect::<Vec<_>>();
+
+        assert_eq!(deltas, vec![100, 100, 50]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_empty_last_usage_falls_back_to_total() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                serde_json::json!({
+                    "timestamp": "2026-07-10T03:00:02Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "total_token_usage": {
+                                "input_tokens": 100,
+                                "cached_input_tokens": 0,
+                                "output_tokens": 10,
+                                "reasoning_output_tokens": 0,
+                                "total_tokens": 110
+                            },
+                            "last_token_usage": {}
+                        }
+                    }
+                }),
+            ],
+        );
+
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        let deltas = parsed
+            .token_events
+            .iter()
+            .filter(|event| !event.delta.is_zero())
+            .map(|event| event.delta.input)
+            .collect::<Vec<_>>();
+
+        assert_eq!(deltas, vec![100]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_empty_total_does_not_enable_snapshot_deduplication() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        let event = |limit_id: &str, timestamp: &str| {
+            serde_json::json!({
+                "timestamp": timestamp,
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {},
+                        "last_token_usage": {
+                            "input_tokens": 100,
+                            "cached_input_tokens": 0,
+                            "output_tokens": 10,
+                            "reasoning_output_tokens": 0,
+                            "total_tokens": 110
+                        }
+                    },
+                    "rate_limits": { "limit_id": limit_id }
+                }
+            })
+        };
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context(),
+                event("codex", "2026-07-10T03:00:02Z"),
+                // Without a usable cumulative total, identical per-request
+                // usage is not enough evidence that this is a replay.
+                event("codex_bengalfox", "2026-07-10T03:00:03Z"),
+            ],
+        );
+
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        let deltas = parsed
+            .token_events
+            .iter()
+            .filter(|event| !event.delta.is_zero())
+            .map(|event| event.delta.input)
+            .collect::<Vec<_>>();
+
+        assert_eq!(deltas, vec![100, 100]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_total_fallback_uses_session_baseline_across_model_switch() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let file = rollout_path(dir.path(), PARENT_ID);
+        write_jsonl(
+            &file,
+            &[
+                session_meta(PARENT_ID),
+                turn_context_for_model_at("model-a", "2026-07-10T03:00:01Z"),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:02Z"),
+                turn_context_for_model_at("model-b", "2026-07-10T03:00:03Z"),
+                token_count_at(150, 75, 15, "2026-07-10T03:00:04Z"),
+            ],
+        );
+
+        let parsed = parse_codex_file(&file, Some(PARENT_ID.to_string()))?;
+        let deltas = parsed
+            .token_events
+            .iter()
+            .filter(|event| !event.delta.is_zero())
+            .map(|event| event.delta.input)
+            .collect::<Vec<_>>();
+
+        assert_eq!(deltas, vec![100, 50]);
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_cumulative_tokens_valid() {
         let json: serde_json::Value = serde_json::json!({
             "input_tokens": 17934,
@@ -1533,6 +2168,17 @@ mod tests {
     fn test_parse_cumulative_tokens_null() {
         let json = serde_json::Value::Null;
         assert!(parse_cumulative_tokens(&json).is_none());
+    }
+
+    #[test]
+    fn test_parse_cumulative_tokens_rejects_empty_object_but_accepts_explicit_zero() {
+        assert!(parse_cumulative_tokens(&serde_json::json!({})).is_none());
+
+        let tokens = parse_cumulative_tokens(&serde_json::json!({ "input_tokens": 0 }))
+            .expect("an explicit zero is valid usage");
+        assert_eq!(tokens.input, 0);
+        assert_eq!(tokens.cached_input, 0);
+        assert_eq!(tokens.output, 0);
     }
 
     #[test]
@@ -2323,5 +2969,118 @@ mod tests {
         // 实际钳制在调用侧：delta.cached_input.min(delta.input)
         let clamped = delta.cached_input.min(delta.input);
         assert_eq!(clamped, 10);
+    }
+
+    /// 真实语料回放验收 harness（仅手动运行，勿在 CI 跑）。
+    ///
+    /// 把真实 `~/.codex/sessions` 语料在内存库上做一次全量重导，输出计时与
+    /// 结果快照。用于性能改动的行为等价验证：改动前后各跑一次，两侧
+    /// `CODEX_REPLAY_OUT` 文件必须逐字节相同。
+    ///
+    /// ```bash
+    /// CODEX_REPLAY_OUT=/tmp/replay.tsv \
+    ///   cargo test --release replay_real_codex_corpus -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore]
+    fn replay_real_codex_corpus() -> Result<(), AppError> {
+        let Some(real_home) = dirs::home_dir() else {
+            eprintln!("[REPLAY] no home dir, skipping");
+            return Ok(());
+        };
+        let real_sessions = real_home.join(".codex").join("sessions");
+        if !real_sessions.is_dir() {
+            eprintln!("[REPLAY] {} not found, skipping", real_sessions.display());
+            return Ok(());
+        }
+
+        // 临时 HOME 里只放一个指向真实语料的只读 symlink，避免测试
+        // 触碰真实 ~/.cc-switch / ~/.codex 下的任何其他内容。
+        let temp = tempfile::tempdir().expect("create temp home");
+        fs::create_dir_all(temp.path().join(".codex")).expect("mkdir .codex");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real_sessions, temp.path().join(".codex").join("sessions"))
+            .expect("symlink sessions");
+        let previous_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+
+        clear_codex_replay_caches();
+        // CODEX_REPLAY_DISK=1 时用临时 HOME 下的磁盘库：逐行 autocommit 的
+        // 主要成本是磁盘 journal fsync，内存库测不出真实写库开销。
+        let db = if std::env::var("CODEX_REPLAY_DISK").is_ok() {
+            Database::init()?
+        } else {
+            Database::memory()?
+        };
+        let start = std::time::Instant::now();
+        let result = sync_codex_usage(&db)?;
+        let full_elapsed = start.elapsed();
+        eprintln!(
+            "[REPLAY] full reimport: imported={} skipped={} suspected_dup={} deferred={} files={} errors={} elapsed={:.2?}",
+            result.imported,
+            result.skipped,
+            result.suspected_duplicates,
+            result.deferred_files,
+            result.files_scanned,
+            result.errors.len(),
+            full_elapsed
+        );
+
+        let start = std::time::Instant::now();
+        let steady = sync_codex_usage(&db)?;
+        eprintln!(
+            "[REPLAY] steady pass: imported={} deferred={} elapsed={:.2?}",
+            steady.imported,
+            steady.deferred_files,
+            start.elapsed()
+        );
+
+        if let Ok(out_path) = std::env::var("CODEX_REPLAY_OUT") {
+            use std::io::Write;
+            let conn = lock_conn!(db.conn);
+            let mut stmt = conn
+                .prepare(
+                    "SELECT request_id, model, request_model, input_tokens, output_tokens,
+                            cache_read_tokens, cache_creation_tokens,
+                            input_cost_usd, output_cost_usd, cache_read_cost_usd,
+                            cache_creation_cost_usd, total_cost_usd,
+                            session_id, provider_id, provider_type, status_code,
+                            is_streaming, cost_multiplier, created_at, data_source
+                     FROM proxy_request_logs
+                     WHERE data_source = 'codex_session'
+                     ORDER BY request_id",
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            let rows = stmt
+                .query_map([], |row| {
+                    let mut fields = Vec::with_capacity(20);
+                    for idx in 0..20 {
+                        fields.push(match row.get_ref(idx)? {
+                            rusqlite::types::ValueRef::Null => "NULL".to_string(),
+                            rusqlite::types::ValueRef::Integer(v) => v.to_string(),
+                            rusqlite::types::ValueRef::Real(v) => v.to_string(),
+                            rusqlite::types::ValueRef::Text(v) => {
+                                String::from_utf8_lossy(v).into_owned()
+                            }
+                            rusqlite::types::ValueRef::Blob(v) => format!("blob:{}", v.len()),
+                        });
+                    }
+                    Ok(fields.join("\t"))
+                })
+                .map_err(|e| AppError::Database(e.to_string()))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            let mut out = fs::File::create(&out_path).expect("create replay out file");
+            for line in &rows {
+                writeln!(out, "{line}").expect("write replay row");
+            }
+            eprintln!("[REPLAY] wrote {} rows to {out_path}", rows.len());
+        }
+
+        match previous_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        Ok(())
     }
 }
