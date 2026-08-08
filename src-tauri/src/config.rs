@@ -323,7 +323,6 @@ pub fn write_text_file(path: &Path, data: &str) -> Result<(), AppError> {
     atomic_write(path, data.as_bytes())
 }
 
-/// 原子写入：写入临时文件后 rename 替换，避免半写状态
 #[cfg(windows)]
 fn should_fallback_to_rename(error: &std::io::Error) -> bool {
     use windows_sys::Win32::Foundation::ERROR_NOT_SUPPORTED;
@@ -332,6 +331,8 @@ fn should_fallback_to_rename(error: &std::io::Error) -> bool {
         || error.raw_os_error() == Some(ERROR_NOT_SUPPORTED as i32)
 }
 
+/// 原子写入：先写入同目录临时文件，再使用平台对应的原子替换操作，避免半写状态。
+/// Windows 优先使用 `ReplaceFileW`，仅在受支持的错误场景下回退到 `rename`。
 pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
