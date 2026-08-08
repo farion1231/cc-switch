@@ -489,17 +489,8 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // claude-science: Messages 协议，与 claude 相同的重试/超时默认值
-        conn.execute(
-            "INSERT OR IGNORE INTO proxy_config (
-                app_type, max_retries,
-                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
-                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                circuit_error_rate_threshold, circuit_min_requests
-            ) VALUES ('claude-science', 6, 90, 180, 600, 8, 3, 90, 0.7, 15)",
-            [],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        // claude-science 不在此补种：其代理配置以 JSON 存于 settings 表
+        // （v16 proxy_config 的 CHECK 约束不含该 app_type，插入会违反约束）。
 
         Ok(())
     }
