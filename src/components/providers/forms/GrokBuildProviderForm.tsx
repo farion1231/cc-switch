@@ -102,7 +102,9 @@ export function GrokBuildProviderForm({
   const [isPartner, setIsPartner] = useState(
     initialData?.meta?.isPartner ?? false,
   );
-  const [partnerPromotionKey, setPartnerPromotionKey] = useState<string>();
+  const [partnerPromotionKey, setPartnerPromotionKey] = useState(
+    initialData?.meta?.partnerPromotionKey,
+  );
   const [profile, setProfile] = useState(initialConfig.model);
   const [upstreamModel, setUpstreamModel] = useState(
     initialConfig.upstreamModel ?? initialConfig.model,
@@ -161,6 +163,13 @@ export function GrokBuildProviderForm({
   const [presetEndpoints, setPresetEndpoints] = useState<string[]>([]);
   const [draftCustomEndpoints, setDraftCustomEndpoints] = useState<string[]>(
     [],
+  );
+  const configOptions = useMemo(
+    () =>
+      grokBuildProviderPresets.find(
+        (preset) => preset.partnerPromotionKey === partnerPromotionKey,
+      )?.configOptions,
+    [partnerPromotionKey],
   );
 
   const form = useForm<ProviderFormData>({
@@ -226,7 +235,9 @@ export function GrokBuildProviderForm({
       contextWindow: Number.parseInt(contextWindow, 10),
       ...overrides,
     };
-    setRawConfig((current) => updateGrokBuildConfig(current, next));
+    setRawConfig((current) =>
+      updateGrokBuildConfig(current, next, configOptions),
+    );
   };
 
   const handlePresetChange = (presetId: string) => {
@@ -285,15 +296,18 @@ export function GrokBuildProviderForm({
     setApiBackend(presetApiBackend);
     setPresetEndpoints(preset.endpointCandidates ?? []);
     setRawConfig(
-      buildGrokBuildConfig({
-        model: profile,
-        upstreamModel: presetModel,
-        baseUrl: presetBaseUrl,
-        name: presetName,
-        apiKey: presetApiKey,
-        apiBackend: presetApiBackend,
-        contextWindow: Number.parseInt(contextWindow, 10),
-      }),
+      buildGrokBuildConfig(
+        {
+          model: profile,
+          upstreamModel: presetModel,
+          baseUrl: presetBaseUrl,
+          name: presetName,
+          apiKey: presetApiKey,
+          apiBackend: presetApiBackend,
+          contextWindow: Number.parseInt(contextWindow, 10),
+        },
+        preset.configOptions,
+      ),
     );
   };
 
@@ -354,15 +368,19 @@ export function GrokBuildProviderForm({
       return;
     }
 
-    const finalConfig = updateGrokBuildConfig(rawConfig, {
-      model: profile,
-      upstreamModel,
-      baseUrl,
-      name,
-      apiKey,
-      apiBackend,
-      contextWindow: parsedContextWindow,
-    });
+    const finalConfig = updateGrokBuildConfig(
+      rawConfig,
+      {
+        model: profile,
+        upstreamModel,
+        baseUrl,
+        name,
+        apiKey,
+        apiBackend,
+        contextWindow: parsedContextWindow,
+      },
+      configOptions,
+    );
     const configError = validateGrokBuildConfig(finalConfig);
     if (configError) {
       toast.error(

@@ -21,7 +21,10 @@
  */
 import type { ProviderCategory } from "../types";
 import type { CodexApiFormat } from "../types";
-import { GROK_BUILD_DEFAULT_MODEL } from "../utils/grokBuildConfig";
+import {
+  GROK_BUILD_DEFAULT_MODEL,
+  type GrokBuildConfigOptions,
+} from "../utils/grokBuildConfig";
 
 export interface GrokBuildProviderPreset {
   name: string;
@@ -38,6 +41,7 @@ export interface GrokBuildProviderPreset {
   icon?: string;
   iconColor?: string;
   apiFormat?: CodexApiFormat;
+  configOptions?: GrokBuildConfigOptions;
 }
 
 // 官方条目与后端 seed（providers_seed.rs 的 "Grok Official"）对应：
@@ -84,6 +88,11 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     apiKeyUrl: "https://www.packyapi.ai/register?aff=cc-switch",
     auth: grokAuth(),
     config: grokPresetConfig("PackyCode", "https://www.packyapi.ai/v1"),
+    configOptions: {
+      baseUrlMode: "models_endpoint",
+      webSearchModel: GROK_BUILD_DEFAULT_MODEL,
+      supportsBackendSearch: false,
+    },
     endpointCandidates: [
       "https://www.packyapi.ai/v1",
       "https://cf.api.fan/v1",
