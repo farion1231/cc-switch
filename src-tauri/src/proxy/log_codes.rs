@@ -28,6 +28,7 @@ pub mod srv {
     pub const TASK_ERROR: &str = "SRV-004";
     pub const ACCEPT_ERR: &str = "SRV-005";
     pub const CONN_ERR: &str = "SRV-006";
+    pub const PORT_FALLBACK: &str = "SRV-007";
 }
 
 /// 转发器日志码
