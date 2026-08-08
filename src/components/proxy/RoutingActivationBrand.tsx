@@ -22,6 +22,7 @@ const PARTICLES = [
 interface RoutingActivationBrandProps {
   active: boolean;
   contextKey: string;
+  ready: boolean;
 }
 
 /**
@@ -32,19 +33,21 @@ interface RoutingActivationBrandProps {
 export function RoutingActivationBrand({
   active,
   contextKey,
+  ready,
 }: RoutingActivationBrandProps) {
   const prefersReducedMotion = useReducedMotion();
-  const previousState = useRef({ active, contextKey });
+  const previousState = useRef({ active, contextKey, ready });
   const [burstSequence, setBurstSequence] = useState(0);
   const [showBurst, setShowBurst] = useState(false);
 
   useEffect(() => {
     const previous = previousState.current;
     const sameContext = previous.contextKey === contextKey;
-    const justActivated = sameContext && !previous.active && active;
-    previousState.current = { active, contextKey };
+    const justActivated =
+      previous.ready && ready && sameContext && !previous.active && active;
+    previousState.current = { active, contextKey, ready };
 
-    if (!active || prefersReducedMotion) {
+    if (!ready || !sameContext || !active || prefersReducedMotion) {
       setShowBurst(false);
       return;
     }
@@ -58,7 +61,7 @@ export function RoutingActivationBrand({
       BURST_LIFETIME_MS,
     );
     return () => window.clearTimeout(timeoutId);
-  }, [active, contextKey, prefersReducedMotion]);
+  }, [active, contextKey, prefersReducedMotion, ready]);
 
   return (
     <div className="relative isolate inline-flex items-center">

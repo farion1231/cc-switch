@@ -1228,6 +1228,9 @@ function App() {
                 <RoutingActivationBrand
                   active={isProxyRunning && isCurrentAppTakeoverActive}
                   contextKey={activeApp}
+                  ready={
+                    proxyStatus !== undefined && takeoverStatus !== undefined
+                  }
                 />
                 <Button
                   variant="ghost"

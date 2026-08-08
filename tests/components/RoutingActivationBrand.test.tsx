@@ -10,14 +10,14 @@ describe("RoutingActivationBrand", () => {
   it("plays a short particle burst only after the current app activates routing", () => {
     vi.useFakeTimers();
     const { rerender } = render(
-      <RoutingActivationBrand active={false} contextKey="claude" />,
+      <RoutingActivationBrand active={false} contextKey="claude" ready />,
     );
 
     expect(
       screen.queryByTestId("routing-activation-particles"),
     ).not.toBeInTheDocument();
 
-    rerender(<RoutingActivationBrand active contextKey="claude" />);
+    rerender(<RoutingActivationBrand active contextKey="claude" ready />);
 
     expect(
       screen.getByTestId("routing-activation-particles"),
@@ -34,16 +34,34 @@ describe("RoutingActivationBrand", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("does not replay activation particles when switching app context", () => {
+  it("does not play activation particles when initial status resolves active", () => {
     const { rerender } = render(
-      <RoutingActivationBrand active contextKey="claude" />,
+      <RoutingActivationBrand
+        active={false}
+        contextKey="claude"
+        ready={false}
+      />,
     );
+
+    rerender(<RoutingActivationBrand active contextKey="claude" ready />);
 
     expect(
       screen.queryByTestId("routing-activation-particles"),
     ).not.toBeInTheDocument();
+  });
 
-    rerender(<RoutingActivationBrand active contextKey="codex" />);
+  it("clears activation particles when switching app context", () => {
+    const { rerender } = render(
+      <RoutingActivationBrand active={false} contextKey="claude" ready />,
+    );
+
+    rerender(<RoutingActivationBrand active contextKey="claude" ready />);
+
+    expect(
+      screen.getByTestId("routing-activation-particles"),
+    ).toBeInTheDocument();
+
+    rerender(<RoutingActivationBrand active contextKey="codex" ready />);
 
     expect(
       screen.queryByTestId("routing-activation-particles"),
