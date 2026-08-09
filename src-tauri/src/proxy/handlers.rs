@@ -1062,7 +1062,11 @@ async fn handle_opencode_go_responses_rectifier(
     }
 
     if response.is_sse() {
-        let headers = response.headers().clone();
+        let mut headers = response.headers().clone();
+        if !prepare_opencode_go_rectified_sse_headers(&mut headers) {
+            return process_response(response, ctx, state, &CODEX_PARSER_CONFIG, connection_guard)
+                .await;
+        }
         let stream = opencode_go_responses_rectifier::create_opencode_go_responses_rectifier_stream(
             response.bytes_stream(),
         );
@@ -1095,6 +1099,25 @@ async fn handle_opencode_go_responses_rectifier(
 
     let response = super::hyper_client::ProxyResponse::buffered(status, headers, rectified_bytes);
     process_response(response, ctx, state, &CODEX_PARSER_CONFIG, connection_guard).await
+}
+
+/// Prepare headers for a rectified OpenCode Go SSE response.
+///
+/// Returns `false` (and leaves `headers` untouched) when the upstream
+/// compressed the SSE stream: the rectifier parses and re-emits blocks, which
+/// would corrupt a compressed byte stream, and stripping `content-encoding`
+/// would make the client parse gzip bytes as SSE. The caller then forwards the
+/// response unrectified, keeping header and body consistent.
+///
+/// Otherwise strips body-dependent entity headers — the rectifier can delete
+/// keepalives and reserialize JSON events, so the upstream `Content-Length`
+/// no longer matches the forwarded body — and returns `true`.
+fn prepare_opencode_go_rectified_sse_headers(headers: &mut axum::http::HeaderMap) -> bool {
+    if get_content_encoding(headers).is_some() {
+        return false;
+    }
+    strip_entity_headers_for_rebuilt_body(headers);
+    true
 }
 
 /// Response handler for the native Responses passthrough to a strict gateway
@@ -2729,10 +2752,32 @@ async fn log_usage(
 mod tests {
     use super::{
         body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
-        codex_proxy_error_json, responses_sse_to_response_value,
-        should_use_claude_transform_streaming, transform, upstream_body_parse_error,
+        codex_proxy_error_json, prepare_opencode_go_rectified_sse_headers,
+        responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
+        upstream_body_parse_error,
     };
     use crate::proxy::ProxyError;
+
+    #[test]
+    fn opencode_go_rectified_sse_headers_skip_encoded_streams_and_strip_entity_headers() {
+        // Plain SSE: entity headers are stripped because rectification
+        // rewrites/deletes events and the upstream Content-Length is stale.
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("content-type", "text/event-stream".parse().unwrap());
+        headers.insert("content-length", "12345".parse().unwrap());
+        assert!(prepare_opencode_go_rectified_sse_headers(&mut headers));
+        assert!(headers.get("content-length").is_none());
+
+        // Compressed SSE: rectification is skipped entirely and headers are
+        // preserved so the raw gzip stream stays consistent with its header.
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("content-type", "text/event-stream".parse().unwrap());
+        headers.insert("content-encoding", "gzip".parse().unwrap());
+        headers.insert("content-length", "12345".parse().unwrap());
+        assert!(!prepare_opencode_go_rectified_sse_headers(&mut headers));
+        assert!(headers.get("content-encoding").is_some());
+        assert!(headers.get("content-length").is_some());
+    }
 
     #[test]
     fn body_looks_like_sse_detects_unlabeled_sse_prefixes() {

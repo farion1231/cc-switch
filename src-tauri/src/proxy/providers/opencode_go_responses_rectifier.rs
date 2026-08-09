@@ -6,6 +6,12 @@
 //! may omit the action from an in-progress `web_search_call`. Strict Responses
 //! clients reject those shapes before they can consume the model output.
 //!
+//! Provider keepalives (`event: ping`) are not forwarded to the client — strict
+//! clients fail to deserialize them — but they are also not silently dropped:
+//! the rectifier replaces each keepalive with a spec-compliant SSE comment line
+//! (`: keepalive`) so the proxy's streaming timeout layer still observes
+//! upstream activity while clients never see a non-Responses event.
+//!
 //! Keep this compatibility pass narrowly gated to Grok Build requests using
 //! the official OpenCode Go origin. Other clients and Responses providers
 //! retain byte-for-byte passthrough.
@@ -190,8 +196,9 @@ fn preferred_search_query(queries: Option<&Value>) -> Option<String> {
         .map(ToString::to_string)
 }
 
-/// Wrap an OpenCode Go Responses SSE stream, removing provider keepalives and
-/// normalizing each JSON event before it reaches the client.
+/// Wrap an OpenCode Go Responses SSE stream, replacing provider keepalives
+/// with spec-compliant SSE comment lines and normalizing each JSON event
+/// before it reaches the client.
 pub(crate) fn create_opencode_go_responses_rectifier_stream<E>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send
@@ -248,7 +255,10 @@ fn rectify_sse_block(block: &str) -> Option<Bytes> {
     }
 
     if event_name == Some("ping") {
-        return None;
+        // Keepalives must not reach strict clients, but they must still count
+        // as upstream activity for the streaming timeout layer. A comment line
+        // is valid SSE that the client's parser ignores.
+        return Some(Bytes::from(": keepalive\n\n"));
     }
     if data_parts.is_empty() {
         return Some(Bytes::from(format!("{block}\n\n")));
@@ -264,7 +274,8 @@ fn rectify_sse_block(block: &str) -> Option<Bytes> {
         Err(_) => return Some(Bytes::from(format!("{block}\n\n"))),
     };
     if event.get("type").and_then(Value::as_str) == Some("ping") {
-        return None;
+        // Same keepalive handling as the named `event: ping` branch above.
+        return Some(Bytes::from(": keepalive\n\n"));
     }
     if !rectify_opencode_go_sse_event(&mut event) {
         return Some(Bytes::from(format!("{block}\n\n")));
@@ -415,7 +426,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sse_rectifier_filters_ping_and_handles_split_events() {
+    async fn sse_rectifier_replaces_ping_keepalives_and_handles_split_events() {
         let chunks: Vec<Result<Bytes, std::io::Error>> = vec![
             Ok(Bytes::from(concat!(
                 "event: ping\n",
@@ -439,8 +450,12 @@ mod tests {
         }
         let merged = String::from_utf8(merged).unwrap();
 
+        // Ping keepalives never reach the client...
         assert!(!merged.contains("event: ping"));
         assert!(!merged.contains("\"type\":\"ping\""));
+        // ...but are replaced by a comment line so the streaming timeout
+        // layer still observes upstream activity.
+        assert!(merged.contains(": keepalive"));
         assert!(merged.contains("id: event-1"));
         assert!(merged.contains("\"query\":\"\""));
         assert!(merged.contains("\"query\":\"Rust docs\""));
