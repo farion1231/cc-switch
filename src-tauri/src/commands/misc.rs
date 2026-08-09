@@ -6468,7 +6468,11 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(output.status.success(), "where.exe failed: {stderr}");
-        assert_eq!(matches, vec![expected]);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(
+            std::fs::canonicalize(&matches[0]).expect("where.exe match should canonicalize"),
+            std::fs::canonicalize(&expected).expect("expected PATH shim should canonicalize")
+        );
     }
 
     #[test]
