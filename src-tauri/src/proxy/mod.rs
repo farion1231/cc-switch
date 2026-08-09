@@ -12,6 +12,7 @@ pub mod error_mapper;
 pub(crate) mod failover_switch;
 mod forwarder;
 pub mod gemini_url;
+pub mod guardrail_detector;
 pub mod handler_config;
 pub mod handler_context;
 mod handlers;
@@ -43,11 +44,13 @@ pub use circuit_breaker::{
 #[allow(unused_imports)]
 pub use error::ProxyError;
 #[allow(unused_imports)]
+pub use guardrail_detector::GuardrailDetector;
+#[allow(unused_imports)]
 pub use provider_router::ProviderRouter;
 #[allow(unused_imports)]
 pub use session::{extract_session_id, SessionIdResult, SessionIdSource};
 #[allow(unused_imports)]
-pub use types::{ProxyConfig, ProxyServerInfo, ProxyStatus};
+pub use types::{ProxyConfig, ProxyServerInfo, ProxyStatus, GuardrailConfig};
 
 // 内部模块间共享（供子模块使用）
 // 注意：这个导出用于模块内部，编译器可能警告未使用但实际被子模块使用
