@@ -34,6 +34,7 @@ export interface PiModel {
   name?: string;
   contextWindow?: number;
   maxTokens?: number;
+  /** Supports extended thinking. Defaults to true when unset. */
   reasoning?: boolean;
   cost?: {
     input: number;

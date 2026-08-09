@@ -144,9 +144,24 @@ export function PiFormFields({
     }
   }, [models.length]);
 
+  // Normalize reasoning: undefined → true (Pi defaults to extended thinking)
+  useEffect(() => {
+    let changed = false;
+    const next = models.map((m) => {
+      if (m.reasoning === undefined) {
+        changed = true;
+        return { ...m, reasoning: true };
+      }
+      return m;
+    });
+    if (changed) {
+      onModelsChange(next);
+    }
+  }, []); // only run once on mount
+
   const handleAddModel = () => {
     modelKeysRef.current.push(crypto.randomUUID());
-    onModelsChange([...models, { id: "", name: "" }]);
+    onModelsChange([...models, { id: "", name: "", reasoning: true }]);
   };
 
   const handleRemoveModel = (index: number) => {
@@ -473,7 +488,7 @@ export function PiFormFields({
                       {t("pi.form.reasoning", { defaultValue: "推理模式" })}
                     </FormLabel>
                     <Select
-                      value={model.reasoning ? "on" : "off"}
+                      value={model.reasoning !== false ? "on" : "off"}
                       onValueChange={(v) => handleModelReasoningChange(index, v)}
                     >
                       <SelectTrigger className="h-8 text-sm">
