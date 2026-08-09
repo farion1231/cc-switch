@@ -25,6 +25,8 @@ interface UniversalProviderFormModalProps {
   onSaveAndSync?: (provider: UniversalProvider) => void;
   editingProvider?: UniversalProvider | null;
   initialPreset?: UniversalProviderPreset | null;
+  /** 新建模式下用于预填的统一供应商（来自「转换 / 剪贴板导入」，不进入编辑模式） */
+  initialProvider?: UniversalProvider | null;
 }
 
 export function UniversalProviderFormModal({
@@ -34,6 +36,7 @@ export function UniversalProviderFormModal({
   onSaveAndSync,
   editingProvider,
   initialPreset,
+  initialProvider,
 }: UniversalProviderFormModalProps) {
   const isDarkMode = useDarkMode();
   const { t } = useTranslation();
@@ -81,6 +84,21 @@ export function UniversalProviderFormModal({
         (p) => p.providerType === editingProvider.providerType,
       );
       setSelectedPreset(preset || null);
+    } else if (initialProvider) {
+      // 新建模式 + 预填（来自「从已有配置转换」或剪贴板导入）
+      const preset = universalProviderPresets.find(
+        (p) => p.providerType === initialProvider.providerType,
+      );
+      setSelectedPreset(preset || null);
+      setName(initialProvider.name);
+      setBaseUrl(initialProvider.baseUrl);
+      setApiKey(initialProvider.apiKey);
+      setWebsiteUrl(initialProvider.websiteUrl || "");
+      setNotes(initialProvider.notes || "");
+      setClaudeEnabled(initialProvider.apps.claude);
+      setCodexEnabled(initialProvider.apps.codex);
+      setGeminiEnabled(initialProvider.apps.gemini);
+      setModels(deepClone(initialProvider.models || {}));
     } else {
       // 新建模式：使用传入的预设或默认选择第一个预设
       const defaultPreset = initialPreset || universalProviderPresets[0];
@@ -95,7 +113,7 @@ export function UniversalProviderFormModal({
       setGeminiEnabled(defaultPreset.defaultApps.gemini);
       setModels(deepClone(defaultPreset.defaultModels));
     }
-  }, [editingProvider, initialPreset, isOpen]);
+  }, [editingProvider, initialPreset, initialProvider, isOpen]);
 
   // 选择预设
   const handlePresetSelect = useCallback(
@@ -250,44 +268,59 @@ requires_openai_auth = true`;
       return null;
     }
 
+    const apps = {
+      claude: claudeEnabled,
+      codex: codexEnabled,
+      gemini: geminiEnabled,
+    };
+    const website = websiteUrl.trim() || undefined;
+    const notesTrimmed = notes.trim() || undefined;
+
     const provider: UniversalProvider = editingProvider
       ? {
           ...editingProvider,
           name: name.trim(),
           baseUrl: baseUrl.trim(),
           apiKey: apiKey.trim(),
-          websiteUrl: websiteUrl.trim() || undefined,
-          notes: notes.trim() || undefined,
-          apps: {
-            claude: claudeEnabled,
-            codex: codexEnabled,
-            gemini: geminiEnabled,
-          },
+          websiteUrl: website,
+          notes: notesTrimmed,
+          apps,
           models,
         }
-      : createUniversalProviderFromPreset(
-          selectedPreset || universalProviderPresets[0],
-          crypto.randomUUID(),
-          baseUrl.trim(),
-          apiKey.trim(),
-          name.trim(),
-        );
+      : initialProvider
+        ? // 来自「转换 / 剪贴板导入」的预填：保留图标、类型与元数据，仅替换可编辑字段并生成新 ID
+          {
+            ...initialProvider,
+            id: crypto.randomUUID(),
+            createdAt: Date.now(),
+            name: name.trim(),
+            baseUrl: baseUrl.trim(),
+            apiKey: apiKey.trim(),
+            websiteUrl: website,
+            notes: notesTrimmed,
+            apps,
+            models,
+          }
+        : createUniversalProviderFromPreset(
+            selectedPreset || universalProviderPresets[0],
+            crypto.randomUUID(),
+            baseUrl.trim(),
+            apiKey.trim(),
+            name.trim(),
+          );
 
     // 如果是新建，更新应用启用状态和模型
     if (!editingProvider) {
-      provider.apps = {
-        claude: claudeEnabled,
-        codex: codexEnabled,
-        gemini: geminiEnabled,
-      };
+      provider.apps = apps;
       provider.models = models;
-      provider.websiteUrl = websiteUrl.trim() || undefined;
-      provider.notes = notes.trim() || undefined;
+      provider.websiteUrl = website;
+      provider.notes = notesTrimmed;
     }
 
     return provider;
   }, [
     editingProvider,
+    initialProvider,
     name,
     baseUrl,
     apiKey,

@@ -893,6 +893,122 @@ requires_openai_auth = true"#
             in_failover_queue: false,
         })
     }
+    /// 从已有客户端供应商配置反向构建统一供应商。
+    ///
+    /// 复用 `resolve_usage_credentials` 提取各应用的 `base_url` / `api_key`，
+    /// 并在源应用为 Claude / Codex / Gemini 时回填对应模型配置。
+    /// 其他客户端（GrokBuild / OpenCode / OpenClaw / Hermes）仅提取凭据，
+    /// 默认启用 Claude 应用，模型由用户在表单中补充。
+    pub fn from_provider(
+        app_type: &crate::app_config::AppType,
+        provider: &Provider,
+    ) -> Option<Self> {
+        use crate::app_config::AppType;
+
+        let (base_url, api_key) = provider.resolve_usage_credentials(app_type);
+        // 既无 base_url 也无 api_key 时无法构成有意义的统一供应商
+        if base_url.is_empty() && api_key.is_empty() {
+            return None;
+        }
+
+        let mut apps = UniversalProviderApps::default();
+        let mut models = UniversalProviderModels::default();
+
+        match app_type {
+            AppType::Claude | AppType::ClaudeDesktop => {
+                apps.claude = true;
+                models.claude = Self::extract_claude_models(&provider.settings_config);
+            }
+            AppType::Codex => {
+                apps.codex = true;
+                models.codex = Self::extract_codex_models(&provider.settings_config);
+            }
+            AppType::Gemini => {
+                apps.gemini = true;
+                models.gemini = Self::extract_gemini_models(&provider.settings_config);
+            }
+            // 其他客户端：仅提取凭据，默认启用 Claude（最常见的聚合端点场景）
+            _ => {
+                apps.claude = true;
+            }
+        }
+
+        let provider_type = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.provider_type.clone())
+            .unwrap_or_else(|| "custom".to_string());
+
+        Some(Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: provider.name.clone(),
+            provider_type,
+            apps,
+            base_url,
+            api_key,
+            models,
+            website_url: provider.website_url.clone(),
+            notes: provider.notes.clone(),
+            icon: provider.icon.clone(),
+            icon_color: provider.icon_color.clone(),
+            meta: provider.meta.clone(),
+            created_at: Some(chrono::Utc::now().timestamp_millis()),
+            sort_index: None,
+        })
+    }
+
+    /// 从 Claude settings_config（env 块）提取模型配置
+    fn extract_claude_models(settings: &Value) -> Option<ClaudeModelConfig> {
+        let env = settings.get("env")?;
+        let model = env.get("ANTHROPIC_MODEL").and_then(|v| v.as_str());
+        let haiku = env
+            .get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+            .and_then(|v| v.as_str());
+        let sonnet = env
+            .get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+            .and_then(|v| v.as_str());
+        let opus = env
+            .get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+            .and_then(|v| v.as_str());
+
+        if model.is_none() && haiku.is_none() && sonnet.is_none() && opus.is_none() {
+            return None;
+        }
+
+        Some(ClaudeModelConfig {
+            model: model.map(ToString::to_string),
+            haiku_model: haiku.map(ToString::to_string),
+            sonnet_model: sonnet.map(ToString::to_string),
+            opus_model: opus.map(ToString::to_string),
+        })
+    }
+
+    /// 从 Codex settings_config（config.toml 字符串）提取模型与推理强度
+    fn extract_codex_models(settings: &Value) -> Option<CodexModelConfig> {
+        let config_text = settings.get("config").and_then(|v| v.as_str())?;
+        let doc = config_text.parse::<toml::Value>().ok()?;
+
+        let model = doc.get("model").and_then(|v| v.as_str());
+        let reasoning_effort = doc.get("model_reasoning_effort").and_then(|v| v.as_str());
+
+        if model.is_none() && reasoning_effort.is_none() {
+            return None;
+        }
+
+        Some(CodexModelConfig {
+            model: model.map(ToString::to_string),
+            reasoning_effort: reasoning_effort.map(ToString::to_string),
+        })
+    }
+
+    /// 从 Gemini settings_config（env 块）提取模型配置
+    fn extract_gemini_models(settings: &Value) -> Option<GeminiModelConfig> {
+        let env = settings.get("env")?;
+        let model = env.get("GEMINI_MODEL").and_then(|v| v.as_str());
+        model.map(|m| GeminiModelConfig {
+            model: Some(m.to_string()),
+        })
+    }
 }
 
 // ============================================================================
@@ -1342,6 +1458,138 @@ mod tests {
                 .and_then(|item| item.as_str()),
             Some("gemini-custom")
         );
+    }
+
+    #[test]
+    fn universal_provider_from_claude_provider_extracts_credentials_and_models() {
+        let mut universal = UniversalProvider::new(
+            "u1".to_string(),
+            "Claude Aggregator".to_string(),
+            "newapi".to_string(),
+            "https://api.example.com".to_string(),
+            "api-key".to_string(),
+        );
+        universal.apps.claude = true;
+        universal.models.claude = Some(ClaudeModelConfig {
+            model: Some("claude-main".to_string()),
+            haiku_model: Some("claude-haiku".to_string()),
+            sonnet_model: None,
+            opus_model: None,
+        });
+
+        let provider = universal.to_claude_provider().expect("claude provider");
+        let back = UniversalProvider::from_provider(&AppType::Claude, &provider)
+            .expect("should convert back to universal");
+
+        assert_eq!(back.name, "Claude Aggregator");
+        assert_eq!(back.base_url, "https://api.example.com");
+        assert_eq!(back.api_key, "api-key");
+        assert!(back.apps.claude);
+        assert!(!back.apps.codex);
+        assert!(!back.apps.gemini);
+        assert_eq!(
+            back.models.claude.as_ref().and_then(|m| m.model.as_deref()),
+            Some("claude-main")
+        );
+        assert_eq!(
+            back.models
+                .claude
+                .as_ref()
+                .and_then(|m| m.haiku_model.as_deref()),
+            Some("claude-haiku")
+        );
+    }
+
+    #[test]
+    fn universal_provider_from_codex_provider_extracts_model() {
+        let mut universal = UniversalProvider::new(
+            "u1".to_string(),
+            "Codex Aggregator".to_string(),
+            "newapi".to_string(),
+            "https://api.example.com".to_string(),
+            "api-key".to_string(),
+        );
+        universal.apps.codex = true;
+        universal.models.codex = Some(CodexModelConfig {
+            model: Some("gpt-4o-mini".to_string()),
+            reasoning_effort: Some("low".to_string()),
+        });
+
+        let provider = universal.to_codex_provider().expect("codex provider");
+        let back = UniversalProvider::from_provider(&AppType::Codex, &provider)
+            .expect("should convert back to universal");
+
+        assert!(back.apps.codex);
+        assert_eq!(back.base_url, "https://api.example.com/v1");
+        assert_eq!(back.api_key, "api-key");
+        assert_eq!(
+            back.models.codex.as_ref().and_then(|m| m.model.as_deref()),
+            Some("gpt-4o-mini")
+        );
+        assert_eq!(
+            back.models
+                .codex
+                .as_ref()
+                .and_then(|m| m.reasoning_effort.as_deref()),
+            Some("low")
+        );
+    }
+
+    #[test]
+    fn universal_provider_from_gemini_provider_extracts_model() {
+        let mut universal = UniversalProvider::new(
+            "u1".to_string(),
+            "Gemini Aggregator".to_string(),
+            "newapi".to_string(),
+            "https://api.example.com".to_string(),
+            "api-key".to_string(),
+        );
+        universal.apps.gemini = true;
+        universal.models.gemini = Some(GeminiModelConfig {
+            model: Some("gemini-custom".to_string()),
+        });
+
+        let provider = universal.to_gemini_provider().expect("gemini provider");
+        let back = UniversalProvider::from_provider(&AppType::Gemini, &provider)
+            .expect("should convert back to universal");
+
+        assert!(back.apps.gemini);
+        assert_eq!(back.base_url, "https://api.example.com");
+        assert_eq!(back.api_key, "api-key");
+        assert_eq!(
+            back.models.gemini.as_ref().and_then(|m| m.model.as_deref()),
+            Some("gemini-custom")
+        );
+    }
+
+    #[test]
+    fn universal_provider_from_provider_without_credentials_returns_none() {
+        let provider = provider_with(serde_json::json!({ "env": {} }));
+        assert!(UniversalProvider::from_provider(&AppType::Claude, &provider).is_none());
+    }
+
+    #[test]
+    fn universal_provider_from_opencode_provider_enables_claude_only() {
+        // OpenCode 把凭据放在 options 下；转换后默认启用 Claude，无模型预填。
+        let provider = provider_with(serde_json::json!({
+            "npm": "@ai-sdk/openai-compatible",
+            "options": {
+                "baseURL": "https://api.opencode.example.com/v1",
+                "apiKey": "opencode-key"
+            },
+            "models": {}
+        }));
+        let back = UniversalProvider::from_provider(&AppType::OpenCode, &provider)
+            .expect("should convert opencode provider");
+
+        assert!(back.apps.claude);
+        assert!(!back.apps.codex);
+        assert!(!back.apps.gemini);
+        assert_eq!(back.base_url, "https://api.opencode.example.com/v1");
+        assert_eq!(back.api_key, "opencode-key");
+        assert!(back.models.claude.is_none());
+        assert!(back.models.codex.is_none());
+        assert!(back.models.gemini.is_none());
     }
 
     #[test]

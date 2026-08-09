@@ -1367,6 +1367,7 @@ pub fn run() {
             commands::check_for_updates,
             commands::is_portable_mode,
             commands::copy_text_to_clipboard,
+            commands::read_text_from_clipboard,
             commands::get_claude_plugin_status,
             commands::read_claude_plugin_config,
             commands::apply_claude_plugin_config,
@@ -1566,6 +1567,9 @@ pub fn run() {
             commands::upsert_universal_provider,
             commands::delete_universal_provider,
             commands::sync_universal_provider,
+            commands::convert_provider_to_universal,
+            commands::convert_provider_for_app,
+            commands::convert_universal_to_provider,
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,

@@ -176,7 +176,18 @@
         "apiKeyPlaceholder": "Gemini API Key を入力"
       }
     },
-    "duplicateLiveIdsLoadFailed": "設定内のプロバイダー識別子を読み込めませんでした。設定を修正してから再度お試しください"
+    "duplicateLiveIdsLoadFailed": "設定内のプロバイダー識別子を読み込めませんでした。設定を修正してから再度お試しください",
+    "copyMenu": "コピー / エクスポート",
+    "copyConfigToClipboard": "設定をクリップボードへコピー",
+    "convertToUniversal": "統一プロバイダーへ変換",
+    "copiedToClipboard": "クリップボードへコピーしました",
+    "copyToClipboardError": "クリップボードへのコピーに失敗しました",
+    "convertError": "変換失敗：この設定から利用可能な認証情報を取得できませんでした",
+    "importFromClipboard": "クリップボードからインポート",
+    "importedToList": "プロバイダーリストにインポートしました",
+    "importConvertError": "インポート失敗：この設定を現在のクライアント形式に変換できません",
+    "clipboardReadError": "クリップボードの読み取りに失敗しました",
+    "clipboardNoConfig": "クリップボードに認識可能な設定がありません"
   },
   "claudeCode": {
     "needsRouting": "ルーティングが必要",
@@ -1749,7 +1760,16 @@
     "fieldExtra": "• extra: String。自由記述の追加テキスト",
     "tip1": "• 変数 {{apiKey}} と {{baseUrl}} は自動で置換されます",
     "tip2": "• 抽出関数はサンドボックスで実行され、ES2020+ の構文を使えます",
-    "tip3": "• 全体を () で囲み、オブジェクトリテラル式にしてください"
+    "tip3": "• 全体を () で囲み、オブジェクトリテラル式にしてください",
+    "exportToClipboard": "クリップボードへエクスポート",
+    "export": "エクスポート",
+    "exportedToClipboard": "用量スクリプトをクリップボードへコピーしました",
+    "exportError": "クリップボードへのエクスポートに失敗しました",
+    "importFromClipboard": "クリップボードからインポート",
+    "import": "インポート",
+    "importedFromClipboard": "用量スクリプトをインポートしました",
+    "clipboardReadError": "クリップボードの読み取りに失敗しました",
+    "clipboardNoScript": "クリップボードに認識可能な用量スクリプトがありません"
   },
   "dbUpgrade": {
     "title": "データベースのバージョンが新しすぎます",
@@ -2833,7 +2853,31 @@
     "savedAndSynced": "すべてのアプリに保存・同期されました",
     "saveAndSyncError": "保存と同期に失敗しました",
     "configJsonPreview": "設定 JSON プレビュー",
-    "configJsonPreviewHint": "以下は各アプリに同期される設定内容です（表示されているフィールドのみ上書きされ、他のカスタム設定は保持されます）"
+    "configJsonPreviewHint": "以下は各アプリに同期される設定内容です（表示されているフィールドのみ上書きされ、他のカスタム設定は保持されます）",
+    "export": "クリップボードへエクスポート",
+    "exported": "クリップボードへコピーしました",
+    "exportError": "クリップボードへのエクスポートに失敗しました",
+    "importFromClipboard": "クリップボードからインポート",
+    "imported": "統一プロバイダーをインポート・同期しました",
+    "importError": "統一プロバイダーのインポートに失敗しました",
+    "clipboardReadError": "クリップボードの読み取りに失敗しました",
+    "clipboardNoConfig": "クリップボードに認識可能な設定がありません",
+    "convertFromProvider": "既存設定から変換",
+    "convertFromProviderTitle": "既存設定から変換",
+    "convertFromProviderDescription": "任意のクライアントのプロバイダー設定を選んで統一プロバイダーに変換するか、クリップボードへコピーして別マシンへインポートできます。",
+    "convert": "変換",
+    "convertError": "変換失敗：この設定から利用可能な認証情報を取得できませんでした",
+    "searchProviders": "プロバイダーを検索…",
+    "noProvidersToConvert": "変換可能なプロバイダーがありません",
+    "copiedToClipboard": "クリップボードへコピーしました",
+    "copyToClipboardError": "クリップボードへのコピーに失敗しました",
+    "copyToClipboard": "クリップボードへコピー",
+    "importedAsProvider": "プロバイダーリストへそのままインポートしました",
+    "importAsProviderError": "プロバイダーリストへのインポートに失敗しました",
+    "importChoiceTitle": "プロバイダー設定をインポート",
+    "importChoiceDescription": "「{{app}}」のプロバイダー設定を検出しました。統一プロバイダーへの変換でクライアント間同期、またはそのままインポートで元クライアントに完全な設定を保持します。",
+    "importAsIs": "そのままインポート",
+    "convertToUniversal": "統一プロバイダーへ変換"
   },
   "omo": {
     "editProfile": "OMO 設定を編集",

@@ -931,6 +931,91 @@ pub fn sync_universal_provider(
     Ok(result)
 }
 
+/// 将指定客户端的供应商配置转换为统一供应商（不落库，仅返回转换结果供前端预填表单）。
+///
+/// `app` 为客户端标识（claude / codex / gemini / grokbuild / opencode / openclaw / hermes），
+/// `provider` 为完整的 Provider 负载（可来自数据库或剪贴板导入）。当源配置无可用凭据时返回错误。
+#[tauri::command]
+pub fn convert_provider_to_universal(
+    app: String,
+    provider: Provider,
+) -> Result<UniversalProvider, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    UniversalProvider::from_provider(&app_type, &provider)
+        .ok_or_else(|| "无法从该配置提取可用的 base_url / api_key".to_string())
+}
+
+/// 将供应商配置转换为目标客户端格式（用于跨客户端粘贴导入）。
+///
+/// - 来源与目标相同：原样返回（前端会重新生成 id）。
+/// - 来源与目标不同：经统一供应商中转后转为目标格式。
+///   支持的目标为 Claude / Codex / Gemini；其他目标返回错误。
+#[tauri::command]
+pub fn convert_provider_for_app(
+    source_app: String,
+    provider: Provider,
+    target_app: String,
+) -> Result<Provider, String> {
+    let src = AppType::from_str(&source_app).map_err(|e| e.to_string())?;
+    let tgt = AppType::from_str(&target_app).map_err(|e| e.to_string())?;
+
+    if src == tgt {
+        return Ok(provider);
+    }
+
+    let mut universal = UniversalProvider::from_provider(&src, &provider)
+        .ok_or_else(|| "无法从该配置提取可用的 base_url / api_key".to_string())?;
+
+    let converted = match tgt {
+        AppType::Claude | AppType::ClaudeDesktop => {
+            universal.apps.claude = true;
+            universal.to_claude_provider()
+        }
+        AppType::Codex => {
+            universal.apps.codex = true;
+            universal.to_codex_provider()
+        }
+        AppType::Gemini => {
+            universal.apps.gemini = true;
+            universal.to_gemini_provider()
+        }
+        _ => None,
+    };
+
+    converted.ok_or_else(|| format!("不支持转换为 {} 配置", tgt.as_str()))
+}
+
+/// 将统一供应商转换为目标客户端格式（用于跨客户端粘贴导入）。
+///
+/// 支持的目标为 Claude / Codex / Gemini；其他目标返回错误。
+#[tauri::command]
+pub fn convert_universal_to_provider(
+    universal: UniversalProvider,
+    target_app: String,
+) -> Result<Provider, String> {
+    let tgt = AppType::from_str(&target_app).map_err(|e| e.to_string())?;
+
+    let mut universal = universal;
+
+    let converted = match tgt {
+        AppType::Claude | AppType::ClaudeDesktop => {
+            universal.apps.claude = true;
+            universal.to_claude_provider()
+        }
+        AppType::Codex => {
+            universal.apps.codex = true;
+            universal.to_codex_provider()
+        }
+        AppType::Gemini => {
+            universal.apps.gemini = true;
+            universal.to_gemini_provider()
+        }
+        _ => None,
+    };
+
+    converted.ok_or_else(|| format!("不支持转换为 {} 配置", tgt.as_str()))
+}
+
 #[tauri::command]
 pub fn import_opencode_providers_from_live(state: State<'_, AppState>) -> Result<usize, String> {
     crate::services::provider::import_opencode_providers_from_live(state.inner())

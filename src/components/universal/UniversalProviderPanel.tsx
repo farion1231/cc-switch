@@ -1,15 +1,55 @@
 import { useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { Layers } from "lucide-react";
+import { Layers, Download } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Button } from "@/components/ui/button";
 import { UniversalProviderCard } from "./UniversalProviderCard";
 import { UniversalProviderFormModal } from "./UniversalProviderFormModal";
-import { universalProvidersApi } from "@/lib/api";
-import type { UniversalProvider, UniversalProvidersMap } from "@/types";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { providersApi, universalProvidersApi } from "@/lib/api";
+import type { AppId } from "@/lib/api";
+import type {
+  Provider,
+  UniversalProvider,
+  UniversalProvidersMap,
+} from "@/types";
 import { deepClone } from "@/utils/deepClone";
+import {
+  exportUniversalProviderToClipboard,
+  importProviderFromClipboard,
+  type ProviderClipboardEnvelope,
+} from "@/lib/providerClipboard";
 
-export function UniversalProviderPanel() {
+const APP_LABELS: Record<AppId, string> = {
+  claude: "Claude",
+  "claude-desktop": "Claude Desktop",
+  codex: "Codex",
+  gemini: "Gemini",
+  grokbuild: "Grok Build",
+  opencode: "OpenCode",
+  openclaw: "OpenClaw",
+  hermes: "Hermes",
+};
+
+interface UniversalProviderPanelProps {
+  /** 由外部（如客户端供应商卡片）发起的「转换为统一供应商」待处理负载；
+   *  传入后自动打开预填表单，并由 onPendingConvertConsumed 清空。 */
+  pendingConvert?: UniversalProvider | null;
+  onPendingConvertConsumed?: () => void;
+}
+
+export function UniversalProviderPanel({
+  pendingConvert,
+  onPendingConvertConsumed,
+}: UniversalProviderPanelProps = {}) {
   const { t } = useTranslation();
 
   // 状态
@@ -28,6 +68,15 @@ export function UniversalProviderPanel() {
     id: string;
     name: string;
   }>({ open: false, id: "", name: "" });
+  // 新建模式下的预填统一供应商（来自「转换」或剪贴板导入）
+  const [initialProvider, setInitialProvider] =
+    useState<UniversalProvider | null>(null);
+  // 剪贴板导入客户端供应商时的导入方式选择
+  const [importChoice, setImportChoice] = useState<{
+    open: boolean;
+    app?: AppId;
+    provider?: Provider;
+  }>({ open: false });
 
   // 加载数据
   const loadProviders = useCallback(async () => {
@@ -50,6 +99,15 @@ export function UniversalProviderPanel() {
   useEffect(() => {
     loadProviders();
   }, [loadProviders]);
+
+  // 外部发起的转换请求：预填表单并打开
+  useEffect(() => {
+    if (!pendingConvert) return;
+    setEditingProvider(null);
+    setInitialProvider(pendingConvert);
+    setIsFormOpen(true);
+    onPendingConvertConsumed?.();
+  }, [pendingConvert, onPendingConvertConsumed]);
 
   // 添加/编辑供应商
   const handleSave = useCallback(
@@ -196,9 +254,141 @@ export function UniversalProviderPanel() {
     [loadProviders, t],
   );
 
+  // 导出统一供应商到剪贴板
+  const handleExport = useCallback(
+    async (provider: UniversalProvider) => {
+      try {
+        await exportUniversalProviderToClipboard(provider);
+        toast.success(
+          t("universalProvider.exported", {
+            defaultValue: "已复制到剪贴板",
+          }),
+        );
+      } catch {
+        toast.error(
+          t("universalProvider.exportError", {
+            defaultValue: "导出到剪贴板失败",
+          }),
+        );
+      }
+    },
+    [t],
+  );
+
+  // 从剪贴板导入：统一供应商直接导入；客户端供应商则转换为统一供应商并预填表单
+  const handleImportFromClipboard = useCallback(async () => {
+    let envelope: ProviderClipboardEnvelope | null = null;
+    try {
+      envelope = await importProviderFromClipboard();
+    } catch {
+      toast.error(
+        t("universalProvider.clipboardReadError", {
+          defaultValue: "读取剪贴板失败",
+        }),
+      );
+      return;
+    }
+    if (!envelope) {
+      toast.error(
+        t("universalProvider.clipboardNoConfig", {
+          defaultValue: "剪贴板中没有可识别的配置",
+        }),
+      );
+      return;
+    }
+
+    if (envelope.kind === "universal-provider") {
+      const imported = envelope.provider as UniversalProvider;
+      const created: UniversalProvider = {
+        ...deepClone(imported),
+        id: crypto.randomUUID(),
+        createdAt: Date.now(),
+      };
+      try {
+        await universalProvidersApi.upsert(created);
+        await universalProvidersApi.sync(created.id);
+        toast.success(
+          t("universalProvider.imported", {
+            defaultValue: "统一供应商已导入并同步",
+          }),
+        );
+        loadProviders();
+      } catch {
+        toast.error(
+          t("universalProvider.importError", {
+            defaultValue: "导入统一供应商失败",
+          }),
+        );
+      }
+      return;
+    }
+
+    // kind === "provider"：弹出选择框，让用户决定「转换为统一供应商」或「按原样导入到来源客户端」
+    const app = envelope.appType;
+    const provider = envelope.provider as Provider;
+    if (!app) {
+      toast.error(
+        t("universalProvider.clipboardNoConfig", {
+          defaultValue: "剪贴板中没有可识别的配置",
+        }),
+      );
+      return;
+    }
+    setImportChoice({ open: true, app, provider });
+  }, [loadProviders, t]);
+
+  // 选择「转换为统一供应商」：转换为统一供应商并打开表单预填
+  const handleChoiceConvert = useCallback(async () => {
+    const { app, provider } = importChoice;
+    setImportChoice({ open: false });
+    if (!app || !provider) return;
+    try {
+      const converted = await universalProvidersApi.convertFromProvider(
+        app,
+        provider,
+      );
+      setEditingProvider(null);
+      setInitialProvider(converted);
+      setIsFormOpen(true);
+    } catch {
+      toast.error(
+        t("universalProvider.convertError", {
+          defaultValue: "转换失败：无法从该配置提取可用凭据",
+        }),
+      );
+    }
+  }, [importChoice, t]);
+
+  // 选择「按原样导入到来源客户端」：保留完整配置（含用量脚本 / 图标等）导入到对应应用
+  const handleChoiceImportAsIs = useCallback(async () => {
+    const { app, provider } = importChoice;
+    setImportChoice({ open: false });
+    if (!app || !provider) return;
+    const newProvider: Provider = {
+      ...deepClone(provider),
+      id: crypto.randomUUID(),
+      createdAt: Date.now(),
+    };
+    try {
+      await providersApi.add(newProvider, app);
+      toast.success(
+        t("universalProvider.importedAsProvider", {
+          defaultValue: "已按原样导入到供应商列表",
+        }),
+      );
+    } catch {
+      toast.error(
+        t("universalProvider.importAsProviderError", {
+          defaultValue: "导入到供应商列表失败",
+        }),
+      );
+    }
+  }, [importChoice, t]);
+
   // 打开编辑
   const handleEdit = useCallback((provider: UniversalProvider) => {
     setEditingProvider(provider);
+    setInitialProvider(null);
     setIsFormOpen(true);
   }, []);
 
@@ -220,14 +410,28 @@ export function UniversalProviderPanel() {
   return (
     <div className="space-y-4">
       {/* 头部 */}
-      <div className="flex items-center gap-2">
-        <Layers className="h-5 w-5 text-primary" />
-        <h2 className="text-lg font-semibold">
-          {t("universalProvider.title", { defaultValue: "统一供应商" })}
-        </h2>
-        <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-          {providerList.length}
-        </span>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Layers className="h-5 w-5 text-primary" />
+          <h2 className="text-lg font-semibold">
+            {t("universalProvider.title", { defaultValue: "统一供应商" })}
+          </h2>
+          <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+            {providerList.length}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleImportFromClipboard}
+          >
+            <Download className="h-4 w-4" />
+            {t("universalProvider.importFromClipboard", {
+              defaultValue: "从剪贴板导入",
+            })}
+          </Button>
+        </div>
       </div>
 
       {/* 描述 */}
@@ -267,6 +471,7 @@ export function UniversalProviderPanel() {
               onDelete={handleDeleteClick}
               onSync={handleSyncClick}
               onDuplicate={handleDuplicate}
+              onExport={handleExport}
             />
           ))}
         </div>
@@ -278,11 +483,54 @@ export function UniversalProviderPanel() {
         onClose={() => {
           setIsFormOpen(false);
           setEditingProvider(null);
+          setInitialProvider(null);
         }}
         onSave={handleSave}
         onSaveAndSync={handleSaveAndSync}
         editingProvider={editingProvider}
+        initialProvider={initialProvider}
       />
+
+      {/* 剪贴板导入客户端供应商：选择导入方式 */}
+      <Dialog
+        open={importChoice.open}
+        onOpenChange={(open) => !open && setImportChoice({ open: false })}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {t("universalProvider.importChoiceTitle", {
+                defaultValue: "导入供应商配置",
+              })}
+            </DialogTitle>
+            <DialogDescription>
+              {t("universalProvider.importChoiceDescription", {
+                defaultValue:
+                  "检测到来自「{{app}}」的供应商配置。请选择导入方式：转换为统一供应商可跨客户端同步；按原样导入则保留完整配置并加入来源客户端。",
+                app: importChoice.app ? APP_LABELS[importChoice.app] : "",
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button
+              variant="outline"
+              onClick={() => setImportChoice({ open: false })}
+            >
+              {t("common.cancel", { defaultValue: "取消" })}
+            </Button>
+            <Button variant="outline" onClick={handleChoiceImportAsIs}>
+              {t("universalProvider.importAsIs", {
+                defaultValue: "按原样导入",
+              })}
+            </Button>
+            <Button onClick={handleChoiceConvert}>
+              {t("universalProvider.convertToUniversal", {
+                defaultValue: "转换为统一供应商",
+              })}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 删除确认对话框 */}
       <ConfirmDialog

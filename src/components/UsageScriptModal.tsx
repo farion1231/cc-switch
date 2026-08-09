@@ -1,5 +1,14 @@
 import React, { useState } from "react";
-import { Play, Wand2, Eye, EyeOff, Save, ExternalLink } from "lucide-react";
+import {
+  Play,
+  Wand2,
+  Eye,
+  EyeOff,
+  Save,
+  ExternalLink,
+  Share2,
+  Download,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
@@ -26,6 +35,10 @@ import { Switch } from "@/components/ui/switch";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { cn } from "@/lib/utils";
+import {
+  exportUsageScriptToClipboard,
+  importUsageScriptFromClipboard,
+} from "@/lib/providerClipboard";
 import { TEMPLATE_TYPES, PROVIDER_TYPES } from "@/config/constants";
 import {
   CODING_PLAN_PROVIDERS,
@@ -724,6 +737,58 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     }
   };
 
+  // 导出当前用量查询脚本到剪贴板
+  const handleExportScript = async () => {
+    try {
+      await exportUsageScriptToClipboard(script, {
+        appType: appId,
+        providerName: provider.name,
+      });
+      toast.success(
+        t("usageScript.exportedToClipboard", {
+          defaultValue: "用量脚本已复制到剪贴板",
+        }),
+        { duration: 2000, closeButton: true },
+      );
+    } catch {
+      toast.error(
+        t("usageScript.exportError", {
+          defaultValue: "导出到剪贴板失败",
+        }),
+      );
+    }
+  };
+
+  // 从剪贴板导入用量查询脚本
+  const handleImportScript = async () => {
+    let envelope;
+    try {
+      envelope = await importUsageScriptFromClipboard();
+    } catch {
+      toast.error(
+        t("usageScript.clipboardReadError", {
+          defaultValue: "读取剪贴板失败",
+        }),
+      );
+      return;
+    }
+    if (!envelope) {
+      toast.error(
+        t("usageScript.clipboardNoScript", {
+          defaultValue: "剪贴板中没有可识别的用量脚本",
+        }),
+      );
+      return;
+    }
+    setScript(createUsageScript(envelope.script));
+    toast.success(
+      t("usageScript.importedFromClipboard", {
+        defaultValue: "用量脚本已导入",
+      }),
+      { duration: 2000, closeButton: true },
+    );
+  };
+
   const handleUsePreset = (presetName: string) => {
     const preset = PRESET_TEMPLATES[presetName];
     if (preset !== undefined) {
@@ -842,6 +907,29 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         >
           <Wand2 size={14} className="mr-1" />
           {t("usageScript.format")}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleExportScript}
+          disabled={!script.enabled}
+          title={t("usageScript.exportToClipboard", {
+            defaultValue: "导出到剪贴板",
+          })}
+        >
+          <Share2 size={14} className="mr-1" />
+          {t("usageScript.export", { defaultValue: "导出" })}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleImportScript}
+          title={t("usageScript.importFromClipboard", {
+            defaultValue: "从剪贴板导入",
+          })}
+        >
+          <Download size={14} className="mr-1" />
+          {t("usageScript.import", { defaultValue: "导入" })}
         </Button>
       </div>
 

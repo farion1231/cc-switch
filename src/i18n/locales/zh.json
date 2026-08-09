@@ -176,7 +176,18 @@
         "apiKeyPlaceholder": "请输入 Gemini API Key"
       }
     },
-    "duplicateLiveIdsLoadFailed": "读取配置中的供应商标识失败，请先修复配置后再试"
+    "duplicateLiveIdsLoadFailed": "读取配置中的供应商标识失败，请先修复配置后再试",
+    "copyMenu": "复制 / 导出",
+    "copyConfigToClipboard": "复制配置到剪贴板",
+    "convertToUniversal": "转换为统一供应商",
+    "copiedToClipboard": "已复制到剪贴板",
+    "copyToClipboardError": "复制到剪贴板失败",
+    "convertError": "转换失败：无法从该配置提取可用凭据",
+    "importFromClipboard": "从剪贴板导入",
+    "importedToList": "已导入到供应商列表",
+    "importConvertError": "导入失败：无法将该配置转换为当前客户端格式",
+    "clipboardReadError": "读取剪贴板失败",
+    "clipboardNoConfig": "剪贴板中没有可识别的配置"
   },
   "claudeCode": {
     "needsRouting": "需要路由",
@@ -1749,7 +1760,16 @@
     "fieldExtra": "• extra: 字符串，扩展字段，可自由补充需要展示的文本",
     "tip1": "• 变量 {{apiKey}} 和 {{baseUrl}} 会自动替换",
     "tip2": "• extractor 函数在沙箱环境中执行，支持 ES2020+ 语法",
-    "tip3": "• 整个配置必须用 () 包裹，形成对象字面量表达式"
+    "tip3": "• 整个配置必须用 () 包裹，形成对象字面量表达式",
+    "exportToClipboard": "导出到剪贴板",
+    "export": "导出",
+    "exportedToClipboard": "用量脚本已复制到剪贴板",
+    "exportError": "导出到剪贴板失败",
+    "importFromClipboard": "从剪贴板导入",
+    "import": "导入",
+    "importedFromClipboard": "用量脚本已导入",
+    "clipboardReadError": "读取剪贴板失败",
+    "clipboardNoScript": "剪贴板中没有可识别的用量脚本"
   },
   "dbUpgrade": {
     "title": "数据库版本过新",
@@ -2833,7 +2853,31 @@
     "savedAndSynced": "已保存并同步到所有应用",
     "saveAndSyncError": "保存并同步失败",
     "configJsonPreview": "配置 JSON 预览",
-    "configJsonPreviewHint": "以下是将要同步到各应用的配置内容（仅覆盖显示的字段，保留其他自定义配置）"
+    "configJsonPreviewHint": "以下是将要同步到各应用的配置内容（仅覆盖显示的字段，保留其他自定义配置）",
+    "export": "导出到剪贴板",
+    "exported": "已复制到剪贴板",
+    "exportError": "导出到剪贴板失败",
+    "importFromClipboard": "从剪贴板导入",
+    "imported": "统一供应商已导入并同步",
+    "importError": "导入统一供应商失败",
+    "clipboardReadError": "读取剪贴板失败",
+    "clipboardNoConfig": "剪贴板中没有可识别的配置",
+    "convertFromProvider": "从已有配置转换",
+    "convertFromProviderTitle": "从已有配置转换",
+    "convertFromProviderDescription": "选择任意客户端的供应商配置，转换为统一供应商；或复制到剪贴板以便跨机器导入。",
+    "convert": "转换",
+    "convertError": "转换失败：无法从该配置提取可用凭据",
+    "searchProviders": "搜索供应商…",
+    "noProvidersToConvert": "没有可转换的供应商",
+    "copiedToClipboard": "已复制到剪贴板",
+    "copyToClipboardError": "复制到剪贴板失败",
+    "copyToClipboard": "复制到剪贴板",
+    "importedAsProvider": "已按原样导入到供应商列表",
+    "importAsProviderError": "导入到供应商列表失败",
+    "importChoiceTitle": "导入供应商配置",
+    "importChoiceDescription": "检测到来自「{{app}}」的供应商配置。转换为统一供应商可跨客户端同步；按原样导入则保留完整配置并加入来源客户端。",
+    "importAsIs": "按原样导入",
+    "convertToUniversal": "转换为统一供应商"
   },
   "omo": {
     "editProfile": "编辑 OMO 配置",

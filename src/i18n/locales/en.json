@@ -176,7 +176,18 @@
         "apiKeyPlaceholder": "Enter Gemini API Key"
       }
     },
-    "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again"
+    "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again",
+    "copyMenu": "Copy / Export",
+    "copyConfigToClipboard": "Copy config to clipboard",
+    "convertToUniversal": "Convert to universal provider",
+    "copiedToClipboard": "Copied to clipboard",
+    "copyToClipboardError": "Failed to copy to clipboard",
+    "convertError": "Conversion failed: no usable credentials could be extracted from this config",
+    "importFromClipboard": "Import from clipboard",
+    "importedToList": "Imported to provider list",
+    "importConvertError": "Import failed: unable to convert this config to the current client format",
+    "clipboardReadError": "Failed to read clipboard",
+    "clipboardNoConfig": "No recognizable config found in clipboard"
   },
   "claudeCode": {
     "needsRouting": "Needs Routing",
@@ -1749,7 +1760,16 @@
     "fieldExtra": "• extra: String, custom display text",
     "tip1": "• Variables {{apiKey}} and {{baseUrl}} are automatically replaced",
     "tip2": "• Extractor function runs in sandbox environment, supports ES2020+ syntax",
-    "tip3": "• Entire config must be wrapped in () to form object literal expression"
+    "tip3": "• Entire config must be wrapped in () to form object literal expression",
+    "exportToClipboard": "Export to clipboard",
+    "export": "Export",
+    "exportedToClipboard": "Usage script copied to clipboard",
+    "exportError": "Failed to export to clipboard",
+    "importFromClipboard": "Import from clipboard",
+    "import": "Import",
+    "importedFromClipboard": "Usage script imported",
+    "clipboardReadError": "Failed to read clipboard",
+    "clipboardNoScript": "No recognizable usage script in clipboard"
   },
   "dbUpgrade": {
     "title": "Database version is too new",
@@ -2833,7 +2853,31 @@
     "savedAndSynced": "Saved and synced to all apps",
     "saveAndSyncError": "Failed to save and sync",
     "configJsonPreview": "Config JSON Preview",
-    "configJsonPreviewHint": "The following configurations will be synced to each app (only the displayed fields will be overwritten, other custom settings will be preserved)"
+    "configJsonPreviewHint": "The following configurations will be synced to each app (only the displayed fields will be overwritten, other custom settings will be preserved)",
+    "export": "Export to clipboard",
+    "exported": "Copied to clipboard",
+    "exportError": "Failed to export to clipboard",
+    "importFromClipboard": "Import from clipboard",
+    "imported": "Universal provider imported and synced",
+    "importError": "Failed to import universal provider",
+    "clipboardReadError": "Failed to read clipboard",
+    "clipboardNoConfig": "No recognizable config in clipboard",
+    "convertFromProvider": "Convert from existing config",
+    "convertFromProviderTitle": "Convert from existing config",
+    "convertFromProviderDescription": "Pick any client provider config to convert into a universal provider, or copy it to the clipboard for cross-machine import.",
+    "convert": "Convert",
+    "convertError": "Conversion failed: no usable credentials could be extracted from this config",
+    "searchProviders": "Search providers…",
+    "noProvidersToConvert": "No providers to convert",
+    "copiedToClipboard": "Copied to clipboard",
+    "copyToClipboardError": "Failed to copy to clipboard",
+    "copyToClipboard": "Copy to clipboard",
+    "importedAsProvider": "Imported into the provider list as-is",
+    "importAsProviderError": "Failed to import into the provider list",
+    "importChoiceTitle": "Import provider config",
+    "importChoiceDescription": "Detected a provider config from \"{{app}}\". Convert to a universal provider to sync across clients, or import as-is to keep the full config in the source client.",
+    "importAsIs": "Import as-is",
+    "convertToUniversal": "Convert to universal provider"
   },
   "omo": {
     "editProfile": "Edit OMO Config",

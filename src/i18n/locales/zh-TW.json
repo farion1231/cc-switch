@@ -176,7 +176,18 @@
         "apiKeyPlaceholder": "請輸入 Gemini API Key"
       }
     },
-    "duplicateLiveIdsLoadFailed": "讀取設定中的供應商識別碼失敗，請先修復設定後再試"
+    "duplicateLiveIdsLoadFailed": "讀取設定中的供應商識別碼失敗，請先修復設定後再試",
+    "copyMenu": "複製 / 匯出",
+    "copyConfigToClipboard": "複製設定至剪貼簿",
+    "convertToUniversal": "轉換為統一供應商",
+    "copiedToClipboard": "已複製至剪貼簿",
+    "copyToClipboardError": "複製至剪貼簿失敗",
+    "convertError": "轉換失敗：無法從該設定提取可用憑證",
+    "importFromClipboard": "從剪貼簿匯入",
+    "importedToList": "已匯入至供應商列表",
+    "importConvertError": "匯入失敗：無法將該設定轉換為當前客戶端格式",
+    "clipboardReadError": "讀取剪貼簿失敗",
+    "clipboardNoConfig": "剪貼簿中沒有可識別的設定"
   },
   "claudeCode": {
     "needsRouting": "需要路由",
@@ -1750,7 +1761,16 @@
     "fieldExtra": "• extra: 字串，擴充欄位，可自由補充需要展示的文字",
     "tip1": "• 變數 {{apiKey}} 和 {{baseUrl}} 會自動替換",
     "tip2": "• extractor 函式在沙盒環境中執行，支援 ES2020+ 語法",
-    "tip3": "• 整個設定必須用 () 包覆，形成物件實字運算式"
+    "tip3": "• 整個設定必須用 () 包覆，形成物件實字運算式",
+    "exportToClipboard": "匯出至剪貼簿",
+    "export": "匯出",
+    "exportedToClipboard": "用量腳本已複製至剪貼簿",
+    "exportError": "匯出至剪貼簿失敗",
+    "importFromClipboard": "從剪貼簿匯入",
+    "import": "匯入",
+    "importedFromClipboard": "用量腳本已匯入",
+    "clipboardReadError": "讀取剪貼簿失敗",
+    "clipboardNoScript": "剪貼簿中沒有可識別的用量腳本"
   },
   "dbUpgrade": {
     "title": "資料庫版本過新",
@@ -2834,7 +2854,31 @@
     "savedAndSynced": "已儲存並同步至所有應用程式",
     "saveAndSyncError": "儲存並同步失敗",
     "configJsonPreview": "設定 JSON 預覽",
-    "configJsonPreviewHint": "以下是將要同步至各應用程式的設定內容（僅覆寫顯示的欄位，保留其他自訂設定）"
+    "configJsonPreviewHint": "以下是將要同步至各應用程式的設定內容（僅覆寫顯示的欄位，保留其他自訂設定）",
+    "export": "匯出至剪貼簿",
+    "exported": "已複製至剪貼簿",
+    "exportError": "匯出至剪貼簿失敗",
+    "importFromClipboard": "從剪貼簿匯入",
+    "imported": "統一供應商已匯入並同步",
+    "importError": "匯入統一供應商失敗",
+    "clipboardReadError": "讀取剪貼簿失敗",
+    "clipboardNoConfig": "剪貼簿中沒有可識別的設定",
+    "convertFromProvider": "從已有設定轉換",
+    "convertFromProviderTitle": "從已有設定轉換",
+    "convertFromProviderDescription": "選擇任意客戶端的供應商設定，轉換為統一供應商；或複製至剪貼簿以便跨機器匯入。",
+    "convert": "轉換",
+    "convertError": "轉換失敗：無法從該設定提取可用憑證",
+    "searchProviders": "搜尋供應商…",
+    "noProvidersToConvert": "沒有可轉換的供應商",
+    "copiedToClipboard": "已複製至剪貼簿",
+    "copyToClipboardError": "複製至剪貼簿失敗",
+    "copyToClipboard": "複製至剪貼簿",
+    "importedAsProvider": "已按原樣匯入至供應商列表",
+    "importAsProviderError": "匯入至供應商列表失敗",
+    "importChoiceTitle": "匯入供應商設定",
+    "importChoiceDescription": "偵測到來自「{{app}}」的供應商設定。轉換為統一供應商可跨用戶端同步；按原樣匯入則保留完整設定並加入來源用戶端。",
+    "importAsIs": "按原樣匯入",
+    "convertToUniversal": "轉換為統一供應商"
   },
   "omo": {
     "editProfile": "編輯 OMO 設定",

@@ -36,6 +36,16 @@ pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> 
 
 #[tauri::command]
 pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
+    // On Linux, prefer CLI tools (xclip/wl-copy) because arboard suffers from
+    // X11 selection-ownership loss: once the Clipboard instance is dropped,
+    // the clipboard content disappears unless a clipboard manager is running.
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(()) = try_linux_copy_via_cli(&text) {
+            return Ok(true);
+        }
+    }
+
     // Use spawn_blocking to avoid blocking the async runtime
     // Clipboard access can block on some platforms and may have thread/loop constraints
     tokio::task::spawn_blocking(move || {
@@ -48,6 +58,107 @@ pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
     })
     .await
     .map_err(|e| format!("剪贴板任务执行失败: {e}"))?
+}
+
+/// 从系统剪贴板读取文本（与 `copy_text_to_clipboard` 互补，用于配置导入）
+#[tauri::command]
+pub async fn read_text_from_clipboard() -> Result<String, String> {
+    // On Linux, pair with the write side: try CLI tools first for consistency.
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(text) = try_linux_read_via_cli() {
+            return Ok(text);
+        }
+    }
+
+    tokio::task::spawn_blocking(|| {
+        let mut clipboard =
+            arboard::Clipboard::new().map_err(|e| format!("访问系统剪贴板失败: {e}"))?;
+        let text = clipboard
+            .get_text()
+            .map_err(|e| format!("读取系统剪贴板失败: {e}"))?;
+        Ok(text)
+    })
+    .await
+    .map_err(|e| format!("剪贴板任务执行失败: {e}"))?
+}
+
+#[cfg(target_os = "linux")]
+fn try_linux_copy_via_cli(text: &str) -> Result<(), ()> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let is_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+
+    let tools: &[&[&str]] = if is_wayland {
+        &[
+            &["wl-copy"],
+            &["xclip", "-selection", "clipboard"],
+            &["xsel", "--clipboard", "--input"],
+        ]
+    } else {
+        &[
+            &["xclip", "-selection", "clipboard"],
+            &["xsel", "--clipboard", "--input"],
+            &["wl-copy"],
+        ]
+    };
+
+    for tool in tools {
+        let (cmd, args) = tool.split_first().unwrap();
+        let result = (|| -> std::io::Result<()> {
+            let mut child = Command::new(cmd)
+                .args(args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()?;
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(text.as_bytes())?;
+            }
+            let _ = child.wait()?;
+            Ok(())
+        })();
+        if result.is_ok() {
+            return Ok(());
+        }
+    }
+
+    Err(())
+}
+
+#[cfg(target_os = "linux")]
+fn try_linux_read_via_cli() -> Result<String, ()> {
+    use std::process::Command;
+
+    let is_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+
+    let tools: &[&[&str]] = if is_wayland {
+        &[
+            &["wl-paste"],
+            &["xclip", "-selection", "clipboard", "-o"],
+            &["xsel", "--clipboard", "--output"],
+        ]
+    } else {
+        &[
+            &["xclip", "-selection", "clipboard", "-o"],
+            &["xsel", "--clipboard", "--output"],
+            &["wl-paste"],
+        ]
+    };
+
+    for tool in tools {
+        let (cmd, args) = tool.split_first().unwrap();
+        if let Ok(output) = Command::new(cmd).args(args).output() {
+            if output.status.success() {
+                if let Ok(text) = String::from_utf8(output.stdout) {
+                    return Ok(text);
+                }
+            }
+        }
+    }
+
+    Err(())
 }
 
 /// 检查更新

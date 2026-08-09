@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -29,15 +29,21 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { Provider, VisibleApps } from "@/types";
+import type { Provider, UniversalProvider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
 import { proxyKeys, useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
   providersApi,
+  universalProvidersApi,
   settingsApi,
   type AppId,
   type ProviderSwitchEvent,
 } from "@/lib/api";
+import {
+  exportProviderToClipboard,
+  importProviderFromClipboard,
+  type ProviderClipboardEnvelope,
+} from "@/lib/providerClipboard";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
@@ -178,6 +184,10 @@ function App() {
   const sharedFeatureApp: AppId =
     activeApp === "claude-desktop" ? "claude" : activeApp;
   const [currentView, setCurrentView] = useState<View>(getInitialView);
+  // 由客户端供应商卡片发起的「转换为统一供应商」待处理负载
+  const [convertTarget, setConvertTarget] = useState<UniversalProvider | null>(
+    null,
+  );
   const [skillsDiscoverySource, setSkillsDiscoverySource] =
     useState<SkillsPageSource>("repos");
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
@@ -822,6 +832,116 @@ function App() {
     await addProvider(duplicatedProvider);
   };
 
+  // 复制当前客户端供应商配置到剪贴板（跨机器 / 跨客户端可移植）
+  const handleExportProvider = useCallback(
+    async (provider: Provider) => {
+      try {
+        await exportProviderToClipboard(activeApp, provider);
+        toast.success(
+          t("provider.copiedToClipboard", {
+            defaultValue: "已复制到剪贴板",
+          }),
+        );
+      } catch {
+        toast.error(
+          t("provider.copyToClipboardError", {
+            defaultValue: "复制到剪贴板失败",
+          }),
+        );
+      }
+    },
+    [activeApp, t],
+  );
+
+  // 从剪贴板导入供应商配置到当前客户端列表：
+  // - 客户端供应商信封：跨客户端时经统一供应商中转转换，重新生成 id 后入库
+  // - 统一供应商信封：直接转换为目标客户端格式后入库
+  const handleImportProviderFromClipboard = useCallback(async () => {
+    let envelope: ProviderClipboardEnvelope | null = null;
+    try {
+      envelope = await importProviderFromClipboard();
+    } catch {
+      toast.error(
+        t("provider.clipboardReadError", {
+          defaultValue: "读取剪贴板失败",
+        }),
+      );
+      return;
+    }
+    if (!envelope) {
+      toast.error(
+        t("provider.clipboardNoConfig", {
+          defaultValue: "剪贴板中没有可识别的配置",
+        }),
+      );
+      return;
+    }
+
+    try {
+      let provider: Provider;
+      if (envelope.kind === "universal-provider") {
+        provider = await universalProvidersApi.convertUniversalToProvider(
+          envelope.provider as UniversalProvider,
+          activeApp,
+        );
+      } else {
+        const srcApp = envelope.appType;
+        if (!srcApp) {
+          toast.error(
+            t("provider.clipboardNoConfig", {
+              defaultValue: "剪贴板中没有可识别的配置",
+            }),
+          );
+          return;
+        }
+        provider = await universalProvidersApi.convertProviderForApp(
+          srcApp,
+          envelope.provider as Provider,
+          activeApp,
+        );
+      }
+
+      const newProvider: Provider = {
+        ...deepClone(provider),
+        id: crypto.randomUUID(),
+        createdAt: Date.now(),
+      };
+      await providersApi.add(newProvider, activeApp);
+      toast.success(
+        t("provider.importedToList", {
+          defaultValue: "已导入到供应商列表",
+        }),
+      );
+    } catch {
+      toast.error(
+        t("provider.importConvertError", {
+          defaultValue: "导入失败：无法将该配置转换为当前客户端格式",
+        }),
+      );
+    }
+  }, [activeApp, t]);
+
+  // 将当前客户端供应商配置转换为统一供应商，并跳转到统一供应商面板预填表单
+  const handleConvertProviderToUniversal = useCallback(
+    async (provider: Provider) => {
+      try {
+        const converted = await universalProvidersApi.convertFromProvider(
+          activeApp,
+          provider,
+        );
+        setConvertTarget(converted);
+        setCurrentView("universal");
+      } catch {
+        toast.error(
+          t("provider.convertError", {
+            defaultValue: "转换失败：无法从该配置提取可用凭据",
+          }),
+        );
+      }
+    },
+    [activeApp, t],
+  );
+
   const handleOpenTerminal = async (provider: Provider) => {
     try {
       const selectedDir = await settingsApi.pickDirectory();
@@ -975,7 +1095,10 @@ function App() {
         case "universal":
           return (
             <div className="px-6 pt-4">
-              <UniversalProviderPanel />
+              <UniversalProviderPanel
+                pendingConvert={convertTarget}
+                onPendingConvertConsumed={() => setConvertTarget(null)}
+              />
             </div>
           );
 
@@ -1041,6 +1164,9 @@ function App() {
                           : undefined
                       }
                       onDuplicate={handleDuplicateProvider}
+                      onExport={handleExportProvider}
+                      onConvertToUniversal={handleConvertProviderToUniversal}
+                      onImportFromClipboard={handleImportProviderFromClipboard}
                       onConfigureUsage={setUsageProvider}
                       onOpenWebsite={handleOpenWebsite}
                       onOpenTerminal={

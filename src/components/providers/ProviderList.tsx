@@ -13,7 +13,7 @@ import {
   type CSSProperties,
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, Search, X } from "lucide-react";
+import { AlertTriangle, ClipboardPaste, Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -59,6 +59,9 @@ interface ProviderListProps {
   onDisableOmo?: () => void;
   onDisableOmoSlim?: () => void;
   onDuplicate: (provider: Provider) => void;
+  onExport?: (provider: Provider) => void;
+  onConvertToUniversal?: (provider: Provider) => void;
+  onImportFromClipboard?: () => void;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onOpenTerminal?: (provider: Provider) => void;
@@ -81,6 +84,9 @@ export function ProviderList({
   onDisableOmo,
   onDisableOmoSlim,
   onDuplicate,
+  onExport,
+  onConvertToUniversal,
+  onImportFromClipboard,
   onConfigureUsage,
   onOpenWebsite,
   onOpenTerminal,
@@ -417,6 +423,8 @@ export function ProviderList({
                 onDisableOmo={onDisableOmo}
                 onDisableOmoSlim={onDisableOmoSlim}
                 onDuplicate={onDuplicate}
+                onExport={onExport}
+                onConvertToUniversal={onConvertToUniversal}
                 onConfigureUsage={onConfigureUsage}
                 onOpenWebsite={onOpenWebsite}
                 onOpenTerminal={onOpenTerminal}
@@ -450,6 +458,21 @@ export function ProviderList({
 
   return (
     <div className="mt-4 space-y-4">
+      {onImportFromClipboard && (
+        <div className="flex justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onImportFromClipboard}
+            className="gap-1.5"
+          >
+            <ClipboardPaste className="h-4 w-4" />
+            {t("provider.importFromClipboard", {
+              defaultValue: "从剪贴板导入",
+            })}
+          </Button>
+        </div>
+      )}
       {claudeDesktopStatusMessages.length > 0 && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
           <div className="flex items-center gap-2 font-medium">
@@ -556,6 +579,8 @@ interface SortableProviderCardProps {
   onDisableOmo?: () => void;
   onDisableOmoSlim?: () => void;
   onDuplicate: (provider: Provider) => void;
+  onExport?: (provider: Provider) => void;
+  onConvertToUniversal?: (provider: Provider) => void;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onOpenTerminal?: (provider: Provider) => void;
@@ -587,6 +612,8 @@ function SortableProviderCard({
   onDisableOmo,
   onDisableOmoSlim,
   onDuplicate,
+  onExport,
+  onConvertToUniversal,
   onConfigureUsage,
   onOpenWebsite,
   onOpenTerminal,
@@ -632,6 +659,8 @@ function SortableProviderCard({
         onDisableOmo={onDisableOmo}
         onDisableOmoSlim={onDisableOmoSlim}
         onDuplicate={onDuplicate}
+        onExport={onExport}
+        onConvertToUniversal={onConvertToUniversal}
         onConfigureUsage={
           onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
         }
