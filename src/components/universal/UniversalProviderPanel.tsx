@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Layers, Download } from "lucide-react";
 import { toast } from "sonner";
@@ -51,6 +52,7 @@ export function UniversalProviderPanel({
   onPendingConvertConsumed,
 }: UniversalProviderPanelProps = {}) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
 
   // 状态
   const [providers, setProviders] = useState<UniversalProvidersMap>({});
@@ -371,6 +373,11 @@ export function UniversalProviderPanel({
     };
     try {
       await providersApi.add(newProvider, app);
+      // 目标客户端的列表由 App.tsx 的 ["providers", app] 查询驱动，
+      // 直接入库需手动失效缓存，否则列表不刷新
+      await queryClient.invalidateQueries({
+        queryKey: ["providers", app],
+      });
       toast.success(
         t("universalProvider.importedAsProvider", {
           defaultValue: "已按原样导入到供应商列表",
@@ -383,7 +390,7 @@ export function UniversalProviderPanel({
         }),
       );
     }
-  }, [importChoice, t]);
+  }, [importChoice, queryClient, t]);
 
   // 打开编辑
   const handleEdit = useCallback((provider: UniversalProvider) => {

@@ -907,6 +907,20 @@ function App() {
         createdAt: Date.now(),
       };
       await providersApi.add(newProvider, activeApp);
+      // 直接调用 providersApi.add 不会触发 mutation 的缓存失效，
+      // 需手动失效当前客户端的列表查询，否则导入后列表不刷新
+      await queryClient.invalidateQueries({
+        queryKey: ["providers", activeApp],
+      });
+      // 更新托盘菜单（失败不影响主操作）
+      try {
+        await providersApi.updateTrayMenu();
+      } catch (trayError) {
+        console.error(
+          "Failed to update tray menu after clipboard import",
+          trayError,
+        );
+      }
       toast.success(
         t("provider.importedToList", {
           defaultValue: "已导入到供应商列表",
@@ -919,7 +933,7 @@ function App() {
         }),
       );
     }
-  }, [activeApp, t]);
+  }, [activeApp, queryClient, t]);
 
   // 将当前客户端供应商配置转换为统一供应商，并跳转到统一供应商面板预填表单
   const handleConvertProviderToUniversal = useCallback(
