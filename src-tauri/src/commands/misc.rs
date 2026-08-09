@@ -1850,6 +1850,24 @@ fn is_windows_command_script(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Convert a canonicalized Windows path back to the form accepted by shell
+/// commands. `std::fs::canonicalize` prefixes local paths with `\\?\` (and UNC
+/// paths with `\\?\UNC\`), but `cmd.exe` cannot `call` a batch file through
+/// those verbatim paths and reports "The system cannot find the path
+/// specified." Direct Win32 executable launches accept the prefix; batch
+/// scripts do not.
+#[cfg(target_os = "windows")]
+fn windows_shell_compatible_path(path: &Path) -> std::path::PathBuf {
+    let raw = path.to_string_lossy();
+    if let Some(unc) = raw.strip_prefix(r"\\?\UNC\") {
+        std::path::PathBuf::from(format!(r"\\{unc}"))
+    } else if let Some(local) = raw.strip_prefix(r"\\?\") {
+        std::path::PathBuf::from(local)
+    } else {
+        path.to_path_buf()
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn windows_runnable_sibling_for_extensionless_tool(path: &Path) -> Option<std::path::PathBuf> {
     if path.extension().is_some() {
@@ -1871,7 +1889,13 @@ fn run_windows_tool_command(
     use std::process::Command;
 
     if is_windows_command_script(tool_path) {
-        let path = tool_path.to_string_lossy();
+        // `resolve_path_default` returns a canonical path so callers can
+        // compare installation identities. Canonical Windows paths carry a
+        // `\\?\` prefix, which `cmd /C call` rejects for batch files. Normalize
+        // only at this shell boundary and keep the canonical identity intact
+        // everywhere else.
+        let shell_path = windows_shell_compatible_path(tool_path);
+        let path = shell_path.to_string_lossy();
         let args = args
             .iter()
             .map(|arg| windows_cmd_double_quote_arg(arg))
@@ -3643,20 +3667,8 @@ fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
         return Err(format!("选择的路径不是文件夹: {}", resolved.display()));
     }
 
-    // Strip Windows extended-length prefix that canonicalize produces,
-    // as it can break batch scripts and other shell commands.
-    // Special-case \\?\UNC\server\share -> \\server\share for network/WSL paths.
     #[cfg(target_os = "windows")]
-    let resolved = {
-        let s = resolved.to_string_lossy();
-        if let Some(unc) = s.strip_prefix(r"\\?\UNC\") {
-            PathBuf::from(format!(r"\\{unc}"))
-        } else if let Some(stripped) = s.strip_prefix(r"\\?\") {
-            PathBuf::from(stripped)
-        } else {
-            resolved
-        }
-    };
+    let resolved = windows_shell_compatible_path(&resolved);
 
     Ok(Some(resolved))
 }
@@ -6450,6 +6462,49 @@ mod tests {
         let preferred = windows_runnable_sibling_for_extensionless_tool(&extensionless);
 
         assert_eq!(preferred.as_deref(), Some(cmd.as_path()));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_shell_compatible_path_strips_verbatim_prefixes() {
+        assert_eq!(
+            windows_shell_compatible_path(Path::new(r"\\?\C:\tools\codex.cmd")),
+            PathBuf::from(r"C:\tools\codex.cmd")
+        );
+        assert_eq!(
+            windows_shell_compatible_path(Path::new(r"\\?\UNC\server\share\tools\codex.cmd")),
+            PathBuf::from(r"\\server\share\tools\codex.cmd")
+        );
+        assert_eq!(
+            windows_shell_compatible_path(Path::new(r"C:\tools\codex.cmd")),
+            PathBuf::from(r"C:\tools\codex.cmd")
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn run_windows_tool_version_command_accepts_canonicalized_cmd_path() {
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let cmd = dir.path().join("codex.cmd");
+        std::fs::write(&cmd, "@echo off\r\necho codex-cli 0.144.3\r\n")
+            .expect("cmd shim should be created");
+        let canonical = std::fs::canonicalize(&cmd).expect("cmd shim should canonicalize");
+        assert!(
+            canonical.to_string_lossy().starts_with(r"\\?\"),
+            "Windows canonical paths should use the verbatim prefix: {}",
+            canonical.display()
+        );
+
+        let current_path = std::env::var("PATH").unwrap_or_default();
+        let output = run_windows_tool_version_command(&canonical, &current_path)
+            .expect("canonicalized cmd shim should execute");
+        let stderr = decode_command_output(&output.stderr);
+
+        assert!(output.status.success(), "cmd shim failed: {stderr}");
+        assert_eq!(
+            decode_command_output(&output.stdout).trim(),
+            "codex-cli 0.144.3"
+        );
     }
 
     #[test]
