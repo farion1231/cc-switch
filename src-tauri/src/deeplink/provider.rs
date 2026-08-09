@@ -433,12 +433,35 @@ requires_openai_auth = true
 "#
     );
 
-    json!({
+    let mut settings = json!({
         "auth": {
             "OPENAI_API_KEY": request.api_key,
         },
         "config": config_toml
-    })
+    });
+
+    // `modelCatalog` is the database SSOT used by CC Switch to generate
+    // Codex's model_catalog_json. Preserve it from a JSON deeplink payload so
+    // provider imports can carry the complete upstream model list instead of
+    // collapsing to the single default `model` field.
+    if let Some(model_catalog) = extract_codex_model_catalog(request) {
+        settings["modelCatalog"] = model_catalog;
+    }
+
+    settings
+}
+
+fn extract_codex_model_catalog(request: &DeepLinkImportRequest) -> Option<serde_json::Value> {
+    if request.config_format.as_deref().unwrap_or("json") != "json" {
+        return None;
+    }
+
+    let encoded = request.config.as_deref()?;
+    let decoded = decode_base64_param("config", encoded).ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+    let catalog = value.get("modelCatalog")?;
+    catalog.get("models")?.as_array()?;
+    Some(catalog.clone())
 }
 
 /// Build Gemini settings configuration
@@ -1159,6 +1182,46 @@ mod tests {
                 .get("base_url")
                 .and_then(|value| value.as_str()),
             Some("https://api.example.com/v1")
+        );
+    }
+
+    #[test]
+    fn build_codex_settings_preserves_inline_model_catalog() {
+        use base64::prelude::*;
+
+        let payload = json!({
+            "config": "model = \"gpt-5.6-sol\"",
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "gpt-5.6-sol",
+                        "displayName": "GPT-5.6-Sol",
+                        "contextWindow": 272000
+                    },
+                    {
+                        "model": "gpt-5.6-terra",
+                        "displayName": "GPT-5.6-Terra",
+                        "contextWindow": 272000
+                    }
+                ]
+            }
+        });
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("codex".to_string()),
+            name: Some("Catalog Relay".to_string()),
+            endpoint: Some("https://api.example.com/v1".to_string()),
+            api_key: Some("sk-test".to_string()),
+            model: Some("gpt-5.6-sol".to_string()),
+            config: Some(BASE64_STANDARD.encode(payload.to_string())),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+
+        let settings = build_codex_settings(&request);
+        assert_eq!(
+            settings.pointer("/modelCatalog/models/1/model"),
+            Some(&json!("gpt-5.6-terra"))
         );
     }
 
