@@ -30,6 +30,7 @@ const APP_CONFIG: Array<{
   { id: "opencode", icon: "opencode", nameKey: "apps.opencode" },
   { id: "openclaw", icon: "openclaw", nameKey: "apps.openclaw" },
   { id: "hermes", icon: "hermes", nameKey: "apps.hermes" },
+  { id: "pi", icon: "pi", nameKey: "apps.pi" },
 ];
 
 export function AppVisibilitySettings({
@@ -47,7 +48,7 @@ export function AppVisibilitySettings({
     opencode: true,
     openclaw: true,
     hermes: true,
-    pi: false,
+    pi: true,
   };
 
   // Count how many apps are currently visible

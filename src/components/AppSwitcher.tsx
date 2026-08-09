@@ -33,6 +33,7 @@ const ALL_APPS: AppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "pi",
 ];
 const STORAGE_KEY = "cc-switch-last-app";
 
