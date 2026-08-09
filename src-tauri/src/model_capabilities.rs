@@ -45,6 +45,18 @@ pub(crate) fn image_input_capability_from_settings(
     )
 }
 
+/// Whether provider settings prove that a model accepts text input only.
+/// A negative image flag alone is not enough because the model may still
+/// accept audio or files.
+pub(crate) fn is_text_only_model_from_settings(
+    settings: &Value,
+    model: &str,
+    use_confirmed_registry: bool,
+) -> bool {
+    declared_model_text_only(settings, model)
+        .unwrap_or_else(|| use_confirmed_registry && is_confirmed_text_only_model(model))
+}
+
 /// Convert a catalog row's explicit modality list into the shared capability
 /// representation, falling back to the text-only registry when omitted.
 pub(crate) fn image_input_capability_from_modalities(
@@ -117,6 +129,32 @@ fn declared_model_image_support(settings: &Value, model: &str) -> Option<bool> {
     .find_map(|value| declared_model_image_support_in_value(value, model))
 }
 
+fn declared_model_text_only(settings: &Value, model: &str) -> Option<bool> {
+    [
+        settings
+            .get("modelCatalog")
+            .and_then(|catalog| catalog.get("models")),
+        settings.get("modelCatalog"),
+        settings.get("models"),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|value| declared_model_text_only_in_value(value, model))
+}
+
+fn declared_model_text_only_in_value(value: &Value, model: &str) -> Option<bool> {
+    if let Some(models) = value.as_array() {
+        return models.iter().find_map(|entry| {
+            model_entry_matches(entry, None, model).then(|| explicit_text_only(entry))?
+        });
+    }
+
+    let object = value.as_object()?;
+    object.iter().find_map(|(key, entry)| {
+        model_entry_matches(entry, Some(key), model).then(|| explicit_text_only(entry))?
+    })
+}
+
 fn declared_model_image_support_in_value(value: &Value, model: &str) -> Option<bool> {
     if let Some(models) = value.as_array() {
         return models.iter().find_map(|entry| {
@@ -149,6 +187,28 @@ fn explicit_image_support(entry: &Value) -> Option<bool> {
     .into_iter()
     .flatten()
     .find_map(input_modalities_support_image)
+}
+
+fn explicit_text_only(entry: &Value) -> Option<bool> {
+    [
+        entry.get("input"),
+        entry.pointer("/modalities/input"),
+        entry.get("input_modalities"),
+        entry.get("inputModalities"),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|value| {
+        let modalities = value.as_array()?;
+        Some(
+            !modalities.is_empty()
+                && modalities.iter().all(|item| {
+                    item.as_str()
+                        .map(str::trim)
+                        .is_some_and(|item| item.eq_ignore_ascii_case("text"))
+                }),
+        )
+    })
 }
 
 fn input_modalities_support_image(value: &Value) -> Option<bool> {
