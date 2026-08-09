@@ -1070,6 +1070,8 @@ async fn handle_codex_responses_namespace_restore(
                 response.bytes_stream(),
                 restore_map,
             );
+        let restore_stream =
+            super::providers::codex_responses_sse::sanitize_capacity_shed_stream(restore_stream);
         let usage_collector =
             create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
         let logged_stream = create_logged_passthrough_stream(
