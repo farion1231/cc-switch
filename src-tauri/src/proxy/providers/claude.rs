@@ -1566,7 +1566,10 @@ mod tests {
         // User pasted the full OpenAI endpoint but left the "full URL" switch off:
         // the tail must be rewritten instead of double-appended.
         assert_eq!(
-            adapter.build_url("https://opencode.ai/zen/go/v1/chat/completions", "/v1/messages"),
+            adapter.build_url(
+                "https://opencode.ai/zen/go/v1/chat/completions",
+                "/v1/messages"
+            ),
             "https://opencode.ai/zen/go/v1/messages"
         );
         assert_eq!(
@@ -1594,7 +1597,10 @@ mod tests {
         );
         // OpenAI-format target from an OpenAI full endpoint stays put.
         assert_eq!(
-            adapter.build_url("https://host.example/v1/chat/completions", "/v1/chat/completions"),
+            adapter.build_url(
+                "https://host.example/v1/chat/completions",
+                "/v1/chat/completions"
+            ),
             "https://host.example/v1/chat/completions"
         );
     }
