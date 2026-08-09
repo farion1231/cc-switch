@@ -21,6 +21,7 @@ pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 /// cleaned up without mistaking a user's own local provider for takeover.
 pub const CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID: &str = "cc-switch-official";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
+pub(crate) const CODEX_OFFICIAL_MODELS_MERGED_KEY: &str = "cc_switch_merged";
 const CC_SWITCH_CODEX_OFFICIAL_MODELS_CACHE_FILENAME: &str = "cc-switch-official-models-cache.json";
 const CODEX_OFFICIAL_BASELINE_STATE_KEY: &str = "cc_switch_state";
 const CODEX_OFFICIAL_BASELINE_AWAITING_REFRESH: &str = "awaiting_official_refresh";
@@ -1008,6 +1009,10 @@ fn codex_cache_is_reliable_official_baseline(cache: &Value) -> bool {
         .and_then(|models| models.as_array())
         .is_some_and(|models| !models.is_empty())
         && !codex_cache_has_cc_switch_etag(cache)
+        && !cache
+            .get(CODEX_OFFICIAL_MODELS_MERGED_KEY)
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
 }
 
 #[derive(Debug)]
@@ -1032,7 +1037,9 @@ fn prepare_codex_official_models_baseline(
     }
 }
 
-pub(crate) fn restore_or_clear_codex_official_models_cache(codex_dir: &Path) -> Result<(), AppError> {
+pub(crate) fn restore_or_clear_codex_official_models_cache(
+    codex_dir: &Path,
+) -> Result<(), AppError> {
     let live_path = codex_dir.join("models_cache.json");
     let live_cache: Value = fs::read_to_string(&live_path)
         .ok()
@@ -5970,6 +5977,73 @@ web_search = "disabled"
                 .and_then(Value::as_str),
             Some("DeepSeek V4 Flash"),
             "the rendered cache must still apply the current custom mapping"
+        );
+    }
+
+    #[test]
+    fn official_login_does_not_capture_proxy_merged_catalog_as_baseline() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        let clean_baseline = json!({
+            "fetched_at": "2026-08-08T00:00:00Z",
+            "etag": "W/\"official-old\"",
+            "client_version": "0.147.0",
+            "cc_switch_captured_at": chrono::Utc::now().to_rfc3339(),
+            "models": [{"slug": "gpt-5.5", "display_name": "GPT-5.5"}]
+        });
+        let proxy_merged_catalog = json!({
+            "fetched_at": "2026-08-09T00:00:00Z",
+            "etag": "W/\"official-new\"",
+            "client_version": "0.147.0",
+            "cc_switch_merged": true,
+            "models": [
+                {"slug": "gpt-5.5", "display_name": "GPT-5.5"},
+                {"slug": "gpt-5.2", "display_name": "DeepSeek V4 Flash"}
+            ]
+        });
+        std::fs::write(
+            codex_dir.join(CC_SWITCH_CODEX_OFFICIAL_MODELS_CACHE_FILENAME),
+            serde_json::to_string(&clean_baseline).expect("serialize clean baseline"),
+        )
+        .expect("write clean baseline");
+        std::fs::write(
+            codex_dir.join("models_cache.json"),
+            serde_json::to_string(&proxy_merged_catalog).expect("serialize proxy catalog"),
+        )
+        .expect("write proxy catalog");
+
+        let settings = json!({
+            "enableOfficialLogin": true,
+            "codexCustomModels": [{
+                "model": "gpt-5.2",
+                "providerId": "deepseek",
+                "upstreamModel": "deepseek-v4-flash",
+                "displayName": "DeepSeek V4 Flash"
+            }]
+        });
+        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "")
+            .expect("render official-login cache");
+
+        let baseline: Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                codex_dir.join(CC_SWITCH_CODEX_OFFICIAL_MODELS_CACHE_FILENAME),
+            )
+            .expect("read official baseline"),
+        )
+        .expect("parse official baseline");
+        let baseline_slugs: Vec<&str> = baseline
+            .get("models")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|model| model.get("slug").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            baseline_slugs,
+            vec!["gpt-5.5"],
+            "a proxy-merged catalog must never become the official baseline"
         );
     }
 

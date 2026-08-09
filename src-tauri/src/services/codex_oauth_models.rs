@@ -10,16 +10,26 @@ use std::time::Duration;
 const CODEX_OAUTH_MODELS_URL: &str = "https://chatgpt.com/backend-api/codex/models";
 const CODEX_OAUTH_FETCH_TIMEOUT_SECS: u64 = 15;
 const ERROR_BODY_MAX_CHARS: usize = 512;
-const CODEX_OAUTH_CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+async fn resolve_codex_client_version_for_request() -> Result<String, String> {
+    tokio::task::spawn_blocking(crate::codex_config::resolve_codex_client_version)
+        .await
+        .map_err(|error| format!("Failed to resolve Codex client version: {error}"))?
+        .ok_or_else(|| {
+            "Unable to determine Codex client version; install Codex or provide a valid models_cache.json"
+                .to_string()
+        })
+}
 
 pub async fn fetch_models_with_token(
     token: &str,
     account_id: &str,
 ) -> Result<Vec<FetchedModel>, String> {
+    let client_version = resolve_codex_client_version_for_request().await?;
     let client = crate::proxy::http_client::get();
     let response = client
         .get(CODEX_OAUTH_MODELS_URL)
-        .query(&[("client_version", CODEX_OAUTH_CLIENT_VERSION)])
+        .query(&[("client_version", client_version.as_str())])
         .header("Authorization", format!("Bearer {token}"))
         .header("originator", "cc-switch")
         .header("chatgpt-account-id", account_id)
@@ -46,10 +56,11 @@ fn build_official_models_request(
     client: &reqwest::Client,
     token: &str,
     account_id: Option<&str>,
+    client_version: &str,
 ) -> reqwest::RequestBuilder {
     let request = client
         .get(CODEX_OAUTH_MODELS_URL)
-        .query(&[("client_version", CODEX_OAUTH_CLIENT_VERSION)])
+        .query(&[("client_version", client_version)])
         .header("Authorization", format!("Bearer {token}"))
         .header("originator", "cc-switch");
     match account_id.map(str::trim).filter(|id| !id.is_empty()) {
@@ -63,8 +74,9 @@ pub async fn fetch_official_models_with_token(
     token: &str,
     account_id: Option<&str>,
 ) -> Result<Vec<FetchedModel>, String> {
+    let client_version = resolve_codex_client_version_for_request().await?;
     let client = crate::proxy::http_client::get();
-    let response = build_official_models_request(&client, token, account_id)
+    let response = build_official_models_request(&client, token, account_id, &client_version)
         .timeout(Duration::from_secs(CODEX_OAUTH_FETCH_TIMEOUT_SECS))
         .send()
         .await
@@ -235,10 +247,14 @@ mod tests {
     #[test]
     fn official_models_request_forwards_account_id_when_present() {
         let client = reqwest::Client::new();
-        let request =
-            build_official_models_request(&client, "official-token", Some("workspace-123"))
-                .build()
-                .expect("build official models request");
+        let request = build_official_models_request(
+            &client,
+            "official-token",
+            Some("workspace-123"),
+            "0.147.0",
+        )
+        .build()
+        .expect("build official models request");
 
         assert_eq!(
             request
@@ -252,10 +268,27 @@ mod tests {
     #[test]
     fn official_models_request_omits_account_id_when_absent() {
         let client = reqwest::Client::new();
-        let request = build_official_models_request(&client, "official-token", None)
+        let request = build_official_models_request(&client, "official-token", None, "0.147.0")
             .build()
             .expect("build official models request");
 
         assert!(!request.headers().contains_key("chatgpt-account-id"));
+    }
+
+    #[test]
+    fn official_models_request_uses_codex_client_version() {
+        let client = reqwest::Client::new();
+        let request = build_official_models_request(&client, "official-token", None, "0.147.0")
+            .build()
+            .expect("build official models request");
+
+        assert_eq!(
+            request
+                .url()
+                .query_pairs()
+                .find(|(key, _)| key == "client_version")
+                .map(|(_, value)| value.into_owned()),
+            Some("0.147.0".to_string())
+        );
     }
 }

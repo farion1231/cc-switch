@@ -247,8 +247,25 @@ async fn forward_codex_official_models(
                 }
             }
         }
+        mark_codex_models_catalog_as_cc_switch_merged(&mut catalog);
     }
     Ok(Json(catalog).into_response())
+}
+
+fn mark_codex_models_catalog_as_cc_switch_merged(catalog: &mut Value) {
+    if let Some(object) = catalog.as_object_mut() {
+        object.insert(
+            crate::codex_config::CODEX_OFFICIAL_MODELS_MERGED_KEY.to_string(),
+            Value::Bool(true),
+        );
+        object.insert(
+            "etag".to_string(),
+            Value::String(format!(
+                "W/\"cc-switch-merged-{}\"",
+                chrono::Utc::now().timestamp()
+            )),
+        );
+    }
 }
 
 fn codex_models_query(
@@ -2840,10 +2857,12 @@ async fn log_usage(
 mod tests {
     use super::{
         body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
-        codex_models_query, codex_proxy_error_json, responses_sse_to_response_value,
-        should_use_claude_transform_streaming, transform, upstream_body_parse_error,
+        codex_models_query, codex_proxy_error_json, mark_codex_models_catalog_as_cc_switch_merged,
+        responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
+        upstream_body_parse_error,
     };
     use crate::proxy::ProxyError;
+    use serde_json::json;
 
     #[test]
     fn codex_models_query_preserves_client_version_or_uses_verified_fallback() {
@@ -2857,6 +2876,24 @@ mod tests {
             "foo=bar&client_version=0.148.1"
         );
         assert!(codex_models_query(None, None).is_err());
+    }
+
+    #[test]
+    fn proxy_merged_codex_catalog_is_marked_for_cache_ownership() {
+        let mut catalog = json!({"models": [{"slug": "gpt-5.5"}]});
+
+        mark_codex_models_catalog_as_cc_switch_merged(&mut catalog);
+
+        assert_eq!(
+            catalog
+                .get(crate::codex_config::CODEX_OFFICIAL_MODELS_MERGED_KEY)
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert!(catalog
+            .get("etag")
+            .and_then(|value| value.as_str())
+            .is_some_and(|etag| etag.starts_with("W/\"cc-switch-")));
     }
 
     #[test]
