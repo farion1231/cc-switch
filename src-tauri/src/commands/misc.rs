@@ -1591,11 +1591,6 @@ fn effective_path_string() -> String {
     merge_path_segments_win(&[&process, &user, &machine])
 }
 
-#[cfg(not(target_os = "windows"))]
-fn effective_path_string() -> String {
-    std::env::var("PATH").unwrap_or_default()
-}
-
 /// `extend_from_cli_path_env` consumes an `OsString` via `split_paths`. On
 /// Windows this is derived from `effective_path_string`; on other platforms the
 /// raw process value is returned unchanged (zero behaviour change).
@@ -1607,6 +1602,20 @@ fn effective_path_os() -> Option<std::ffi::OsString> {
 #[cfg(not(target_os = "windows"))]
 fn effective_path_os() -> Option<std::ffi::OsString> {
     std::env::var_os("PATH")
+}
+
+/// Prepend a candidate directory without converting the existing PATH to
+/// UTF-8. Unix permits arbitrary non-NUL bytes in environment values; keeping
+/// this as an `OsString` ensures one non-Unicode segment cannot discard or
+/// corrupt every other interpreter directory needed by an npm/python shim.
+#[cfg(not(target_os = "windows"))]
+fn prepend_search_dir_to_path(dir: &Path, current_path: &std::ffi::OsStr) -> std::ffi::OsString {
+    let mut path = dir.as_os_str().to_os_string();
+    if !current_path.is_empty() {
+        path.push(":");
+        path.push(current_path);
+    }
+    path
 }
 
 /// Expand `%VAR%` environment-variable references. The registry `Path` value is
@@ -1983,7 +1992,10 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
     use std::process::Command;
 
     let search_paths = build_tool_search_paths(tool);
+    #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
+    #[cfg(not(target_os = "windows"))]
+    let current_path = effective_path_os().unwrap_or_default();
 
     // 记录"可执行文件存在、但 `--version` 非零退出"时的首个诊断信息。
     // 典型场景：工具已安装但当前环境跑不起来（如 openclaw 要求 Node v22.19+）。
@@ -1995,7 +2007,7 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
         let new_path = format!("{};{}", path.display(), current_path);
 
         #[cfg(not(target_os = "windows"))]
-        let new_path = format!("{}:{}", path.display(), current_path);
+        let new_path = prepend_search_dir_to_path(path, &current_path);
 
         for tool_path in tool_executable_candidates(tool, path) {
             if !tool_path.exists() {
@@ -2213,25 +2225,45 @@ fn resolve_path_default(
 }
 
 #[cfg(target_os = "windows")]
+fn windows_path_lookup_command(
+    tool: &str,
+    effective_path: &std::ffi::OsStr,
+) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    // Use the system copy explicitly so a project-local `where.exe` cannot
+    // hijack the passive lookup before the PATH-only pattern is evaluated.
+    let where_exe = PathBuf::from(
+        std::env::var_os("SystemRoot").unwrap_or_else(|| std::ffi::OsString::from(r"C:\Windows")),
+    )
+    .join("System32")
+    .join("where.exe");
+    let mut command = Command::new(where_exe);
+    command
+        // `$PATH:pattern` is where.exe's documented environment-variable
+        // search form. Unlike a bare pattern, it does not search the current
+        // directory before PATH.
+        .arg(format!("$PATH:{tool}"))
+        .env("PATH", effective_path)
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command
+}
+
+#[cfg(target_os = "windows")]
 fn resolve_path_default(
     tool: &str,
     deadline: Option<CommandDeadline>,
 ) -> Result<Option<std::path::PathBuf>, String> {
-    use std::os::windows::process::CommandExt;
-    use std::process::{Command, Stdio};
-
-    // Run `where` against the merged effective PATH rather than relying on the
-    // inherited process PATH — the latter loses the user-level PATH after an
-    // in-app-update relaunch (#6061), so `where codex` would miss a CLI
-    // installed in a user-PATH location like
-    // `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin`.
-    let current_path = effective_path_string();
-    let child = Command::new("cmd")
-        .args(["/C", &format!("where {tool}")])
-        .env("PATH", &current_path)
-        .creation_flags(CREATE_NO_WINDOW)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+    // Restrict `where` to the merged effective PATH. A bare `where {tool}` also
+    // searches the current directory first, which would let a project-local
+    // `codex.cmd` be executed by a passive version check. The `$PATH:pattern`
+    // form searches only the supplied environment variable while still seeing
+    // registry PATH entries lost by an in-app-update relaunch (#6061).
+    let current_path = effective_path_os().unwrap_or_default();
+    let child = windows_path_lookup_command(tool, &current_path)
         .spawn()
         .map_err(|e| format!("Failed to locate {tool}: {e}"))?;
     let out = wait_child_output(child, deadline)?;
@@ -2267,7 +2299,10 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
     use std::process::Command;
 
     let search_paths = build_tool_search_paths(tool);
+    #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
+    #[cfg(not(target_os = "windows"))]
+    let current_path = effective_path_os().unwrap_or_default();
     let path_default = resolve_path_default(tool, None).ok().flatten();
 
     let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
@@ -2277,7 +2312,7 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
         #[cfg(target_os = "windows")]
         let new_path = format!("{};{}", dir.display(), current_path);
         #[cfg(not(target_os = "windows"))]
-        let new_path = format!("{}:{}", dir.display(), current_path);
+        let new_path = prepend_search_dir_to_path(dir, &current_path);
 
         for tool_path in tool_executable_candidates(tool, dir) {
             if !tool_path.exists() {
@@ -6348,6 +6383,20 @@ mod tests {
         assert_eq!(merged, r"C:\a;C:\B;%SystemRoot%\system32");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn prepend_search_dir_to_path_preserves_non_utf8_bytes() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let current = std::ffi::OsString::from_vec(b"/usr/bin:/tmp/\xff/bin".to_vec());
+        let combined = prepend_search_dir_to_path(Path::new("/candidate/bin"), &current);
+
+        assert_eq!(
+            combined.as_os_str().as_bytes(),
+            b"/candidate/bin:/usr/bin:/tmp/\xff/bin"
+        );
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn expand_env_chars_preserves_unknown_vars_and_plain_text() {
@@ -6392,6 +6441,34 @@ mod tests {
                 .join("Codex")
                 .join("bin")
         ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_path_lookup_ignores_same_named_file_in_current_directory() {
+        let current_dir = tempfile::tempdir().expect("current directory should be created");
+        let path_dir = tempfile::tempdir().expect("PATH directory should be created");
+        std::fs::write(current_dir.path().join("codex.cmd"), "@echo current\r\n")
+            .expect("current-directory shim should be created");
+        let expected = path_dir.path().join("codex.cmd");
+        std::fs::write(&expected, "@echo path\r\n").expect("PATH shim should be created");
+
+        let effective_path =
+            std::env::join_paths([path_dir.path()]).expect("test PATH should join");
+        let output = windows_path_lookup_command("codex", &effective_path)
+            .current_dir(current_dir.path())
+            .output()
+            .expect("where.exe should execute");
+        let stderr = decode_command_output(&output.stderr);
+        let matches = decode_command_output(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+
+        assert!(output.status.success(), "where.exe failed: {stderr}");
+        assert_eq!(matches, vec![expected]);
     }
 
     #[test]
