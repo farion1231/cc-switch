@@ -117,6 +117,12 @@ pub async fn get_config_status(
 
             Ok(ConfigStatus { exists, path })
         }
+        AppType::Pi => {
+            let dir = crate::config::get_pi_agent_dir();
+            let exists = dir.exists();
+            let path = dir.to_string_lossy().to_string();
+            Ok(ConfigStatus { exists, path })
+        }
         AppType::OpenClaw => {
             let config_path = crate::openclaw_config::get_openclaw_config_path();
             let exists = config_path.exists();
@@ -155,6 +161,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::GrokBuild => crate::grok_config::get_grok_config_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
+        AppType::Pi => crate::config::get_pi_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
     };
 
@@ -174,6 +181,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
+        AppType::Pi => crate::config::get_pi_agent_dir(),
     };
 
     if !config_dir.exists() {

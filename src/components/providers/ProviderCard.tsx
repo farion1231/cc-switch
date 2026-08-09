@@ -101,6 +101,16 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
       (!baseUrl || (typeof baseUrl === "string" && baseUrl.trim() === ""))
     );
   }
+  if (appId === "pi") {
+    // Pi uses ANTHROPIC_BASE_URL; official if empty or contains anthropic.com
+    const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
+    return (
+      !baseUrl ||
+      (typeof baseUrl === "string" &&
+        (baseUrl.trim() === "" || baseUrl.includes("anthropic.com")))
+    );
+  }
+
   return false;
 }
 
@@ -172,7 +182,10 @@ export function ProviderCard({
   // OMO and OMO Slim share the same card behavior
   const isAnyOmo = isOmo || isOmoSlim;
   const handleDisableAnyOmo = isOmoSlim ? onDisableOmoSlim : onDisableOmo;
-  const isAdditiveMode = appId === "opencode" && !isAnyOmo;
+  // 累加模式应用（OpenCode 非 OMO / Pi）共享"已在配置中"的常驻高亮
+  const isAdditiveMode =
+    (appId === "opencode" && !isAnyOmo) ||
+    appId === "pi";
 
   const { data: health } = useProviderHealth(provider.id, appId);
 
@@ -235,9 +248,9 @@ export function ProviderCard({
   const codexNeedsRouting =
     appId === "codex" && providerNeedsRouting(appId, provider);
   // 获取用量数据以判断是否有多套餐
-  // 累加模式应用（OpenCode/OpenClaw/Hermes）：使用 isInConfig 代替 isCurrent
+
   const shouldAutoQuery =
-    appId === "opencode" || appId === "openclaw" || appId === "hermes"
+    appId === "opencode" || appId === "openclaw" || appId === "hermes" || appId === "pi"
       ? isInConfig
       : isCurrent;
   const autoQueryInterval = shouldAutoQuery

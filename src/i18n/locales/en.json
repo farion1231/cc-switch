@@ -34,9 +34,6 @@
     "import": "Import",
     "all": "All",
     "search": "Search",
-    "enableAllForApp": "Enable all for {{app}}",
-    "disableAllForApp": "Disable all for {{app}}",
-    "bulkToggleFailed": "Failed to update {{count}} item(s)",
     "reset": "Reset",
     "actions": "Actions",
     "deleting": "Deleting...",
@@ -773,6 +770,8 @@
     "openclawConfigDirDescription": "Override OpenClaw configuration directory (openclaw.json).",
     "hermesConfigDir": "Hermes Configuration Directory",
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
+    "piConfigDir": "Pi Config Directory",
+    "browsePlaceholderPi": "Browse Pi Config Directory",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
@@ -890,10 +889,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
-  },
-  "appSwitcher": {
-    "more": "More apps"
+    "hermes": "Hermes",
+    "pi": "Pi"
   },
   "grokBuild": {
     "apiBackend": "API backend",
@@ -1028,10 +1025,10 @@
     "providerKeyStatusLoading": "Provider identifier status is still loading. Please try again shortly.",
     "getApiKey": "Get API Key",
     "partnerPromotion": {
-      "kimi": "New Kimi users get 10% of their first successful top-up back as bonus API credit, up to CNY ¥1,000.",
       "a6api": "A6API is a token aggregation platform with a built-in real-time price leaderboard that automatically picks the lowest price on the market. Smooth and stable, simple to operate, and no more tedious price comparisons. Register now to claim free trial credits!",
       "sudocode": "With one SudoCode key, Claude Code and Claude Desktop use Claude Opus 5, while Codex uses GPT-5.6. Sign up, join QQ group 726213516, and contact the group owner to claim CNY ¥10 in trial credit.",
       "code0": "code0.ai is an AI coding service platform for developers, supporting Claude Code, Codex, and Gemini. Exclusive for CC Switch users: contact support via the official website to claim free trial credits!",
+      "nekocode": "NekoCode gives developers a stable, efficient, and reliable API relay for Claude, Codex, and other AI models, with transparent pay-as-you-go pricing. Exclusive 10% off for CC Switch users: register via the link above and enter promo code cc-switch at recharge to save 10%!",
       "packycode": "PackyCode is an official partner of CC Switch. Register using this link and enter \"cc-switch\" promo code during recharge to get 10% off",
       "apikeyfun": "APIKEY.FUN offers a special deal for CC Switch users. Register through the exclusive link to enjoy up to permanent 5% off top-ups.",
       "apinebula": "APINEBULA offers CC Switch users a special discount: register using the link and enter the \"ccswitch\" promo code during your first top-up to get 10% off.",
@@ -1039,7 +1036,7 @@
       "patewayai": "PatewayAI offers special benefits for CC Switch users. Register via this link to receive $3 credit.",
       "claudeapi": "ClaudeAPI offers special benefits for CC Switch users. Register via this link to claim test credits.",
       "claudecn": "ClaudeCN is an enterprise-grade AI gateway operated by a registered company, supporting enterprise procurement processes with corporate payments, contracts, and compliance guarantees.",
-      "runapi": "RunAPI offers special benefits for CC Switch users. Register via this link and enjoy 10% off your first top-up.",
+      "runapi": "RunAPI offers special benefits for CC Switch users. Register via this link and contact customer support to claim ¥14 free credit.",
       "minimax_cn": "MiniMax Coding Plan Special Offer, Starter from ¥9.9",
       "minimax_en": "MiniMax Coding Plan Black Friday, Starter is now $2/mo (80% OFF!)",
       "opencode_go": "Subscribe to OpenCode Go via this link — only $5 for your first month, plus an extra $5 in credit!",
@@ -1801,9 +1798,6 @@
       "enabledApps": "Enabled Apps",
       "noImportFound": "No MCP servers to import found. All servers are already managed by CC Switch.",
       "importSuccess": "Successfully imported {{count}} MCP servers",
-      "searchPlaceholder": "Search MCP name, description, tag, or command...",
-      "searchAriaLabel": "Search managed MCP servers",
-      "noSearchResults": "No MCP servers match your search",
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
@@ -1811,7 +1805,8 @@
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "pi": "Pi"
       }
     },
     "userLevelPath": "User-level MCP path",
@@ -1962,9 +1957,6 @@
     "empty": "No prompts yet",
     "emptyDescription": "Click the button above to add or import prompts",
     "loading": "Loading...",
-    "searchPlaceholder": "Search prompt name, description, or content...",
-    "searchAriaLabel": "Search managed prompts",
-    "noSearchResults": "No prompts match your search",
     "name": "Name",
     "namePlaceholder": "e.g., Default Project Prompt",
     "description": "Description",
@@ -2169,6 +2161,38 @@
     "primaryModel": "Primary Model",
     "fallbackModel": "Fallback Model"
   },
+  "pi": {
+    "form": {
+      "providerKey": "Provider Key",
+      "providerKeyPlaceholder": "my-provider",
+      "providerKeyHint": "Lowercase letters, numbers, and hyphens only. Used as the provider identifier in models.json.",
+      "providerKeyLockedHint": "This provider is in Pi config; the key is locked.",
+      "providerKeyRequired": "Provider key is required",
+      "providerKeyInvalid": "Provider key must be lowercase letters, numbers, and hyphens only",
+      "providerKeyDuplicate": "This provider key already exists",
+      "apiType": "API Protocol",
+      "apiTypeHint": "Provider API protocol. Use anthropic-messages for Anthropic-compatible, openai-completions for OpenAI Chat-compatible, openai-responses for OpenAI Responses.",
+      "baseUrlHint": "Pi API endpoint address, written to env var {key}.",
+      "models": "Models",
+      "addModel": "Add Model",
+      "noModels": "No models yet. Click \"Add Model\" to add one.",
+      "modelsHint": "Pi requires at least one model entry. id is required (e.g. claude-sonnet-4-20250514); name is an optional display name.",
+      "modelId": "Model ID",
+      "modelName": "Display Name",
+      "primaryModel": "Primary Model",
+      "fallbackModel": "Fallback Model",
+      "contextWindow": "Context Window",
+      "maxTokens": "Max Output Tokens",
+      "reasoning": "Reasoning",
+      "reasoningOn": "On",
+      "reasoningOff": "Off",
+      "costSection": "Pricing ($/M tokens, optional)",
+      "inputCost": "Input Price ($/M tokens)",
+      "outputCost": "Output Price ($/M tokens)",
+      "cacheReadCost": "Cache Read Price ($/M tokens)",
+      "cacheWriteCost": "Cache Write Price ($/M tokens)"
+    }
+  },
   "hermes": {
     "form": {
       "baseUrl": "API Endpoint",
@@ -2363,9 +2387,6 @@
     },
     "search": "Search Skills",
     "searchPlaceholder": "Search skill name or repo...",
-    "installedSearchPlaceholder": "Search installed skill name, description, or repo...",
-    "installedSearchAriaLabel": "Search installed skills",
-    "noInstalledSearchResults": "No installed skills match your search",
     "searchSource": {
       "repos": "Repos",
       "skillssh": "skills.sh"
@@ -2428,7 +2449,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "openclaw": "OpenClaw"
+      "openclaw": "OpenClaw",
+      "pi": "Pi"
     },
     "installFromZip": {
       "button": "Install from ZIP",
@@ -2515,8 +2537,6 @@
     "usageScriptWarning": "This is JavaScript that runs when usage is queried, once enabled. Import it only if you trust the source.",
     "usageApiKey": "Usage API Key",
     "usageBaseUrl": "Usage Query URL",
-    "usageAccessToken": "Usage Access Token",
-    "usageUserId": "Usage User ID",
     "usageAutoInterval": "Auto Query",
     "usageAutoIntervalValue": "Every {{minutes}} minutes",
     "risk": {
@@ -2887,7 +2907,6 @@
     "noEnabledModelsWarning": "No configured models available. Configure OpenCode models first.",
     "modelSourcePartialWarning": "Some provider model configs are invalid and were skipped.",
     "modelSourceFallbackWarning": "Failed to load live provider state. Falling back to configured providers.",
-    "runtimeModelsFailedWarning": "Failed to load OpenCode runtime models. Showing configured providers only.",
     "importLocalReplaceSuccess": "Imported local file and replaced Agents/Categories/Other Fields",
     "importLocalFailed": "Failed to read local file: {{error}}",
     "agentKeyPlaceholder": "agent key",

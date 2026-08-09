@@ -152,6 +152,7 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
+        AppType::Pi => build_pi_settings(request),
     };
 
     // Build usage script configuration if provided
@@ -578,6 +579,39 @@ fn build_hermes_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
             "models".to_string(),
             json!([{ "id": model, "name": model }]),
         );
+    }
+
+    json!(config)
+}
+
+/// Build Pi provider settings (env-shaped).
+///
+/// Pi's settings_config uses `{ api, env: {...}, models: [...] }` where env
+/// holds the base URL / API key under ANTHROPIC_* or OPENAI_* keys depending
+/// on the API protocol. Deeplinks only carry an endpoint + optional key, so we
+/// default to anthropic-messages and let the user adjust the protocol later.
+fn build_pi_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let endpoint = get_primary_endpoint(request);
+
+    let mut env = serde_json::Map::new();
+    if !endpoint.is_empty() {
+        env.insert("ANTHROPIC_BASE_URL".to_string(), json!(endpoint));
+    }
+    if let Some(api_key) = &request.api_key {
+        env.insert("ANTHROPIC_API_KEY".to_string(), json!(api_key));
+    }
+
+    let mut config = serde_json::Map::new();
+    config.insert("api".to_string(), json!("anthropic-messages"));
+    config.insert("env".to_string(), json!(env));
+
+    if let Some(model) = &request.model {
+        config.insert(
+            "models".to_string(),
+            json!([{ "id": model, "name": model }]),
+        );
+    } else {
+        config.insert("models".to_string(), json!([]));
     }
 
     json!(config)

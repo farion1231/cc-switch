@@ -186,6 +186,8 @@ pub(crate) fn provider_exists_in_live_config(
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::Pi => crate::pi_config::get_provider_ids()
+            .map(|ids| ids.iter().any(|id| id == provider_id)),
         _ => Ok(false),
     }
 }
@@ -527,6 +529,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
+        | AppType::Pi
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -601,6 +604,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
+        | AppType::Pi
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
@@ -660,6 +664,7 @@ fn apply_common_config_to_settings(
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
+        | AppType::Pi
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
@@ -1162,6 +1167,47 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::Pi => {
+            // Pi uses additive mode: upsert provider into ~/.pi/agent/models.json
+            // under `providers.<provider.id>`, preserving other providers.
+            // Derive the per-provider entry from the env-shaped settings_config.
+            let env = provider.settings_config.get("env");
+            let base_url = env
+                .and_then(|e| e.get("ANTHROPIC_BASE_URL"))
+                .or_else(|| env.and_then(|e| e.get("OPENAI_BASE_URL")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let api_key = env
+                .and_then(|e| e.get("ANTHROPIC_API_KEY"))
+                .or_else(|| env.and_then(|e| e.get("ANTHROPIC_AUTH_TOKEN")))
+                .or_else(|| env.and_then(|e| e.get("OPENAI_API_KEY")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let api = provider.settings_config
+                .get("api")
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| {
+                    if env.and_then(|e| e.get("OPENAI_BASE_URL")).is_some()
+                        || env.and_then(|e| e.get("OPENAI_API_KEY")).is_some()
+                    {
+                        "openai-completions"
+                    } else {
+                        "anthropic-messages"
+                    }
+                });
+            let models = provider.settings_config
+                .get("models")
+                .and_then(|v| if v.is_array() { Some(v.clone()) } else { None })
+                .unwrap_or_else(|| serde_json::json!([]));
+            let entry = serde_json::json!({
+                "baseUrl": base_url,
+                "api": api,
+                "apiKey": api_key,
+                "models": models
+            });
+            crate::pi_config::set_provider(&provider.id, entry)?;
+            log::info!("Pi provider '{}' written to models.json", provider.id);
+        }
     }
     Ok(())
 }
@@ -1417,6 +1463,11 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = crate::hermes_config::yaml_to_json(&yaml_config)?;
             Ok(config)
         }
+        AppType::Pi => {
+            // Pi uses additive mode; read the providers map as live settings
+            // (the frontend treats the current-provider read as advisory).
+            Ok(crate::pi_config::get_providers_json()?)
+        }
     }
 }
 
@@ -1525,8 +1576,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
-        // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+        // OpenCode, OpenClaw, Hermes and Pi use additive mode and are handled by early return above
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1969,6 +2020,115 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 
     openclaw_config::remove_provider(provider_id)?;
     log::info!("OpenClaw provider '{provider_id}' removed from live config");
+
+    Ok(())
+}
+
+/// Import Pi providers from live config (~/.pi/agent/models.json `providers`)
+///
+/// For each live provider entry, converts the models.json shape
+/// {baseUrl, api, apiKey, models} back into the env-shaped settings_config
+/// {api, env, models} used by cc-switch, then upserts into the database.
+pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    let providers_json = crate::pi_config::get_providers_json()?;
+    let Some(providers) = providers_json.as_object() else {
+        return Ok(0);
+    };
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let mut updated = 0;
+    let existing_ids = state.db.get_provider_ids("pi")?;
+
+    for (id, entry) in providers {
+        if id.trim().is_empty() {
+            log::warn!("Skipping Pi provider with empty id");
+            continue;
+        }
+
+        let settings = pi_live_entry_to_settings_config(entry);
+
+        if existing_ids.contains(id) {
+            match state.db.get_provider_by_id(id, "pi") {
+                Ok(Some(existing)) => {
+                    if existing.settings_config != settings {
+                        let mut provider = existing;
+                        provider.settings_config = settings;
+                        if let Err(e) = state.db.save_provider("pi", &provider) {
+                            log::warn!("Failed to update Pi provider '{id}' from live config: {e}");
+                        } else {
+                            updated += 1;
+                            log::info!("Updated Pi provider '{id}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("Pi provider '{id}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up Pi provider '{id}': {e}"),
+            }
+            continue;
+        }
+
+        let mut provider = Provider::with_id(id.clone(), id.clone(), settings, None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+        if let Err(e) = state.db.save_provider("pi", &provider) {
+            log::warn!("Failed to import Pi provider '{id}': {e}");
+            continue;
+        }
+        imported += 1;
+        log::info!("Imported Pi provider '{id}' from live config");
+    }
+
+    Ok(imported + updated)
+}
+
+/// Convert a models.json provider entry ({baseUrl, api, apiKey, models}) back
+/// into the env-shaped settings_config ({api, env, models}) used by cc-switch.
+fn pi_live_entry_to_settings_config(entry: &Value) -> Value {
+    let base_url = entry.get("baseUrl").and_then(|v| v.as_str()).unwrap_or("");
+    let api_key = entry.get("apiKey").and_then(|v| v.as_str()).unwrap_or("");
+    let api = entry
+        .get("api")
+        .and_then(|v| v.as_str())
+        .unwrap_or("anthropic-messages");
+    let models = entry.get("models").cloned().unwrap_or_else(|| json!([]));
+
+    let env = match api {
+        "openai-completions" | "openai-responses" => json!({
+            "OPENAI_BASE_URL": base_url,
+            "OPENAI_API_KEY": api_key,
+        }),
+        _ => json!({
+            "ANTHROPIC_BASE_URL": base_url,
+            "ANTHROPIC_API_KEY": api_key,
+        }),
+    };
+
+    json!({
+        "api": api,
+        "env": env,
+        "models": models,
+    })
+}
+
+/// Remove a Pi provider from live config
+///
+/// This removes a specific provider from ~/.pi/agent/models.json `providers`
+/// without affecting other providers in the file.
+pub fn remove_pi_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+    if !crate::config::get_pi_agent_dir().exists() {
+        log::debug!("Pi config directory doesn't exist, skipping removal of '{provider_id}'");
+        return Ok(());
+    }
+
+    crate::pi_config::remove_provider(provider_id)?;
+    log::info!("Pi provider '{provider_id}' removed from models.json");
 
     Ok(())
 }

@@ -232,6 +232,24 @@ impl Provider {
                 );
                 (base_url, api_key)
             }
+            // Pi uses env-style credentials: ANTHROPIC_BASE_URL or OPENAI_BASE_URL
+            // with corresponding API keys in the env map.
+            AppType::Pi => {
+                let env = settings.get("env");
+                let base_url = first_non_empty(
+                    env,
+                    &["ANTHROPIC_BASE_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE"],
+                );
+                let api_key = first_non_empty(
+                    env,
+                    &[
+                        "ANTHROPIC_API_KEY",
+                        "ANTHROPIC_AUTH_TOKEN",
+                        "OPENAI_API_KEY",
+                    ],
+                );
+                (base_url, api_key)
+            }
         };
 
         // Normalize like the JS-script path (extract_base_url_from_provider) so a

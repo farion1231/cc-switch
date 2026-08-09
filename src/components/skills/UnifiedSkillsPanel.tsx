@@ -217,6 +217,7 @@ const UnifiedSkillsPanel = React.forwardRef<
       opencode: 0,
       openclaw: 0,
       hermes: 0,
+      pi: 0,
     };
     if (!skills) return counts;
     skills.forEach((skill) => {
@@ -1019,6 +1020,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           opencode: skill.foundIn.includes("opencode"),
           openclaw: false,
           hermes: skill.foundIn.includes("hermes"),
+          pi: false,
         },
       ]),
     ),

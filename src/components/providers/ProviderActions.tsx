@@ -84,11 +84,12 @@ export function ProviderActions({
   const { t } = useTranslation();
   const iconButtonClass = "h-8 w-8 p-1";
 
-  // 累加模式应用（OpenCode 非 OMO / OpenClaw / Hermes）
+  // 累加模式应用（OpenCode 非 OMO / OpenClaw / Hermes / Pi）
   const isAdditiveMode =
     (appId === "opencode" && !isOmo) ||
     appId === "openclaw" ||
-    appId === "hermes";
+    appId === "hermes" ||
+    appId === "pi";
 
   // 故障转移模式下的按钮逻辑（累加模式和 OMO 应用不支持故障转移）
   const isFailoverMode =

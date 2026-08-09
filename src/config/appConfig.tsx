@@ -24,9 +24,10 @@ export const APP_IDS: AppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "pi",
 ];
 
-/** App IDs shown in Skills panels (excludes OpenClaw — it doesn't support Skills) */
+/** App IDs shown in Skills panels (excludes OpenClaw and Pi — they don't support Skills) */
 export const SKILLS_APP_IDS: AppId[] = [
   "claude",
   "codex",
@@ -36,8 +37,15 @@ export const SKILLS_APP_IDS: AppId[] = [
   "hermes",
 ];
 
-/** App IDs shown in MCP panels (excludes OpenClaw) */
-export const MCP_APP_IDS: AppId[] = [...SKILLS_APP_IDS];
+/** App IDs shown in MCP panels (excludes OpenClaw and Pi — they don't support MCP) */
+export const MCP_APP_IDS: AppId[] = [
+  "claude",
+  "codex",
+  "gemini",
+  "grokbuild",
+  "opencode",
+  "hermes",
+];
 
 export const APP_ICON_MAP: Record<AppId, AppConfig> = {
   claude: {
@@ -109,6 +117,12 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-rose-500/10 ring-1 ring-rose-500/20 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400",
     badgeClass:
       "bg-rose-500/10 text-rose-700 dark:text-rose-300 hover:bg-rose-500/20 border-0 gap-1.5",
+  },
+  pi: {
+    label: "Pi",
+    icon: <ProviderIcon icon="pi" name="Pi" size={14} showFallback={false} />,
+    activeClass: "bg-teal-500/10 ring-1 ring-teal-500/20 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400",
+    badgeClass: "bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 border-0 gap-1.5",
   },
   hermes: {
     label: "Hermes",

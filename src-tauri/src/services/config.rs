@@ -138,6 +138,10 @@ impl ConfigService {
             AppType::Hermes => {
                 // Hermes uses additive mode, no live sync needed
             }
+            AppType::Pi => {
+                // Pi uses additive mode, no live sync needed via this legacy path;
+                // providers are managed directly in models.json by the provider service.
+            }
         }
 
         Ok(())

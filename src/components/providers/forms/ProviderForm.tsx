@@ -50,9 +50,14 @@ import {
   hermesProviderPresets,
   type HermesProviderPreset,
 } from "@/config/hermesProviderPresets";
+import {
+  piProviderPresets,
+  type PiProviderPreset,
+} from "@/config/piProviderPresets";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import { HermesFormFields } from "./HermesFormFields";
+import { PiFormFields } from "./PiFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import {
   applyTemplateValues,
@@ -108,6 +113,7 @@ import {
   useCopilotAuth,
   useCodexOauth,
   useXaiOauth,
+  usePiFormState,
 } from "./hooks";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useSettingsQuery } from "@/lib/query";
@@ -117,12 +123,14 @@ import {
   GEMINI_DEFAULT_CONFIG,
   OPENCODE_DEFAULT_CONFIG,
   OPENCLAW_DEFAULT_CONFIG,
+  PI_DEFAULT_CONFIG,
   normalizePricingSource,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
+import { usePiLiveProviderIds } from "@/hooks/usePi";
 
 type PresetEntry = {
   id: string;
@@ -132,7 +140,8 @@ type PresetEntry = {
     | GeminiProviderPreset
     | OpenCodeProviderPreset
     | OpenClawProviderPreset
-    | HermesProviderPreset;
+    | HermesProviderPreset
+    | PiProviderPreset;
 };
 
 export const normalizeCodexCatalogModelsForSave = (
@@ -394,7 +403,9 @@ function ProviderFormFull({
                 ? OPENCLAW_DEFAULT_CONFIG
                 : appId === "hermes"
                   ? HERMES_DEFAULT_CONFIG
-                  : CLAUDE_DEFAULT_CONFIG,
+                  : appId === "pi"
+                    ? PI_DEFAULT_CONFIG
+                    : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
@@ -708,6 +719,11 @@ function ProviderFormFull({
         id: `hermes-${index}`,
         preset,
       }));
+    } else if (appId === "pi") {
+      return piProviderPresets.map<PresetEntry>((preset, index) => ({
+        id: `pi-${index}`,
+        preset,
+      }));
     }
     return providerPresets
       .filter((p) => !p.hidden)
@@ -926,6 +942,101 @@ function ProviderFormFull({
     isLoading: isHermesLiveProviderIdsLoading,
   } = useHermesLiveProviderIds(appId === "hermes");
 
+  const piForm = usePiFormState({
+    initialData,
+    appId,
+    providerId,
+  });
+  const {
+    data: piLiveProviderIds = [],
+    isLoading: isPiLiveProviderIdsLoading,
+  } = usePiLiveProviderIds(appId === "pi");
+
+  // Sync callbacks: update both local state and settingsConfig JSON
+  const handlePiBaseUrlChange = useCallback(
+    (url: string) => {
+      piForm.setPiBaseUrl(url);
+      try {
+        const raw = form.getValues("settingsConfig");
+        const config = JSON.parse(raw || "{}") as Record<string, unknown>;
+        const env = (config.env as Record<string, unknown>) || {};
+        env[piForm.baseUrlEnvKey] = url;
+        form.setValue("settingsConfig", JSON.stringify({ ...config, env }, null, 2));
+      } catch {
+        // ignore parse errors during editing
+      }
+    },
+    [piForm, form],
+  );
+
+  const handlePiApiKeyChange = useCallback(
+    (key: string) => {
+      piForm.setPiApiKey(key);
+      try {
+        const raw = form.getValues("settingsConfig");
+        const config = JSON.parse(raw || "{}") as Record<string, unknown>;
+        const env = (config.env as Record<string, unknown>) || {};
+        env[piForm.apiKeyEnvKey] = key;
+        form.setValue("settingsConfig", JSON.stringify({ ...config, env }, null, 2));
+      } catch {
+        // ignore parse errors during editing
+      }
+    },
+    [piForm, form],
+  );
+
+  const handlePiApiTypeChange = useCallback(
+    (type: import("@/config/piProviderPresets").PiApiType) => {
+      piForm.setPiApiType(type);
+      try {
+        const raw = form.getValues("settingsConfig");
+        const config = JSON.parse(raw || "{}") as Record<string, unknown>;
+        // Update the api field
+        config.api = type;
+        // Re-map env keys: move values from old keys to new keys
+        const env = (config.env as Record<string, unknown>) || {};
+        const oldBaseUrl = env["ANTHROPIC_BASE_URL"] ?? env["OPENAI_BASE_URL"] ?? "";
+        const oldApiKey = env["ANTHROPIC_API_KEY"] ?? env["ANTHROPIC_AUTH_TOKEN"] ?? env["OPENAI_API_KEY"] ?? "";
+        // Clear all known env keys
+        delete env["ANTHROPIC_BASE_URL"];
+        delete env["ANTHROPIC_API_KEY"];
+        delete env["ANTHROPIC_AUTH_TOKEN"];
+        delete env["OPENAI_BASE_URL"];
+        delete env["OPENAI_API_KEY"];
+        // Set new keys based on api type
+        if (type === "openai-completions") {
+          env["OPENAI_BASE_URL"] = oldBaseUrl;
+          env["OPENAI_API_KEY"] = oldApiKey;
+        } else {
+          env["ANTHROPIC_BASE_URL"] = oldBaseUrl;
+          env["ANTHROPIC_API_KEY"] = oldApiKey;
+        }
+        form.setValue("settingsConfig", JSON.stringify({ ...config, env }, null, 2));
+      } catch {
+        // ignore parse errors
+      }
+    },
+    [piForm, form],
+  );
+
+  const handlePiModelsChange = useCallback(
+    (models: import("@/config/piProviderPresets").PiModel[]) => {
+      piForm.setPiModels(models);
+      try {
+        const raw = form.getValues("settingsConfig");
+        const config = JSON.parse(raw || "{}") as Record<string, unknown>;
+        config.models = models;
+        form.setValue(
+          "settingsConfig",
+          JSON.stringify(config, null, 2),
+        );
+      } catch {
+        // ignore parse errors
+      }
+    },
+    [piForm, form],
+  );
+
   const additiveExistingProviderKeys = useMemo(() => {
     if (appId === "opencode" && !isAnyOmoCategory) {
       return Array.from(
@@ -958,6 +1069,16 @@ function ProviderFormFull({
       );
     }
 
+    if (appId === "pi") {
+      return Array.from(
+        new Set(
+          [...piForm.existingPiKeys, ...piLiveProviderIds].filter(
+            (key) => key !== providerId,
+          ),
+        ),
+      );
+    }
+
     return [];
   }, [
     appId,
@@ -968,6 +1089,8 @@ function ProviderFormFull({
     openclawForm.existingOpenclawKeys,
     openclawLiveProviderIds,
     opencodeLiveProviderIds,
+    piForm.existingPiKeys,
+    piLiveProviderIds,
     providerId,
   ]);
 
@@ -982,6 +1105,9 @@ function ProviderFormFull({
     if (appId === "hermes") {
       return isHermesLiveProviderIdsLoading;
     }
+    if (appId === "pi") {
+      return isPiLiveProviderIdsLoading;
+    }
     return false;
   }, [
     appId,
@@ -990,6 +1116,7 @@ function ProviderFormFull({
     isHermesLiveProviderIdsLoading,
     isOpenclawLiveProviderIdsLoading,
     isOpencodeLiveProviderIdsLoading,
+    isPiLiveProviderIdsLoading,
   ]);
 
   const isProviderKeyLocked = useMemo(() => {
@@ -1003,6 +1130,9 @@ function ProviderFormFull({
     if (appId === "hermes") {
       return hermesLiveProviderIds.includes(providerId);
     }
+    if (appId === "pi") {
+      return piLiveProviderIds.includes(providerId);
+    }
     return false;
   }, [
     appId,
@@ -1011,6 +1141,7 @@ function ProviderFormFull({
     isEditMode,
     openclawLiveProviderIds,
     opencodeLiveProviderIds,
+    piLiveProviderIds,
     providerId,
   ]);
 
@@ -1158,6 +1289,32 @@ function ProviderFormFull({
         additiveExistingProviderKeys.includes(hermesForm.hermesProviderKey)
       ) {
         toast.error(t("hermes.form.providerKeyDuplicate"));
+        return;
+      }
+    }
+
+    if (appId === "pi") {
+      if (!piForm.piProviderKey.trim()) {
+        toast.error(t("pi.form.providerKeyRequired"));
+        return;
+      }
+      if (!keyPattern.test(piForm.piProviderKey)) {
+        toast.error(t("pi.form.providerKeyInvalid"));
+        return;
+      }
+      if (isProviderKeyLockStateLoading) {
+        toast.error(
+          t("providerForm.providerKeyStatusLoading", {
+            defaultValue: "正在加载供应商标识状态，请稍后再试",
+          }),
+        );
+        return;
+      }
+      if (
+        !isProviderKeyLocked &&
+        additiveExistingProviderKeys.includes(piForm.piProviderKey)
+      ) {
+        toast.error(t("pi.form.providerKeyDuplicate"));
         return;
       }
     }
@@ -1326,6 +1483,30 @@ function ProviderFormFull({
             }),
           );
         }
+      } else if (appId === "pi") {
+        // Pi uses env-style settings like Claude
+        try {
+          const piConfig = JSON.parse(values.settingsConfig || "{}") as Record<string, unknown>;
+          const piEnv = (piConfig.env as Record<string, unknown>) || {};
+          const piBaseUrl = (piEnv.ANTHROPIC_BASE_URL as string) || "";
+          const piApiKey = (piEnv.ANTHROPIC_API_KEY as string) || "";
+          if (!piBaseUrl.trim()) {
+            issues.push(
+              t("providerForm.endpointRequired", {
+                defaultValue: "非官方供应商请填写 API 端点",
+              }),
+            );
+          }
+          if (!piApiKey.trim()) {
+            issues.push(
+              t("providerForm.apiKeyRequired", {
+                defaultValue: "非官方供应商请填写 API Key",
+              }),
+            );
+          }
+        } catch {
+          // ignore parse errors
+        }
       }
     }
 
@@ -1445,6 +1626,33 @@ function ProviderFormFull({
         }
       }
       settingsConfig = JSON.stringify(omoConfig);
+    } else if (appId === "pi") {
+      // Pi uses env-style config: { api: "...", env: { BASE_URL_KEY, API_KEY_KEY }, models: [...] }
+      try {
+        const existingConfig = JSON.parse(
+          values.settingsConfig || "{}",
+        ) as Record<string, unknown>;
+        const env =
+          (existingConfig.env as Record<string, unknown>) || {};
+        env[piForm.baseUrlEnvKey] = piForm.piBaseUrl;
+        env[piForm.apiKeyEnvKey] = piForm.piApiKey;
+        settingsConfig = JSON.stringify({
+          ...existingConfig,
+          api: piForm.piApiType,
+          env,
+          models: piForm.piModels,
+        });
+      } catch {
+        // fallback: construct minimal config
+        settingsConfig = JSON.stringify({
+          api: piForm.piApiType,
+          env: {
+            [piForm.baseUrlEnvKey]: piForm.piBaseUrl,
+            [piForm.apiKeyEnvKey]: piForm.piApiKey,
+          },
+          models: piForm.piModels,
+        });
+      }
     } else {
       settingsConfig = values.settingsConfig.trim();
     }
@@ -1469,6 +1677,8 @@ function ProviderFormFull({
       payload.providerKey = openclawForm.openclawProviderKey;
     } else if (appId === "hermes") {
       payload.providerKey = hermesForm.hermesProviderKey;
+    } else if (appId === "pi") {
+      payload.providerKey = piForm.piProviderKey;
     }
 
     if (isAnyOmoCategory && !payload.presetCategory) {
@@ -1748,6 +1958,20 @@ function ProviderFormFull({
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
 
+  // 使用 API Key 链接 hook (Pi)
+  const {
+    shouldShowApiKeyLink: shouldShowPiApiKeyLink,
+    websiteUrl: piWebsiteUrl,
+    isPartner: isPiPartner,
+    partnerPromotionKey: piPartnerPromotionKey,
+  } = useApiKeyLink({
+    appId: "pi",
+    category,
+    selectedPresetId,
+    presetEntries,
+    formWebsiteUrl: form.watch("websiteUrl") || "",
+  });
+
   // 使用端点测速候选 hook
   const speedTestEndpoints = useSpeedTestEndpoints({
     appId,
@@ -1787,6 +2011,9 @@ function ProviderFormFull({
       }
       if (appId === "hermes") {
         hermesForm.resetHermesState();
+      }
+      if (appId === "pi") {
+        piForm.resetPiState();
       }
       return;
     }
@@ -1905,6 +2132,23 @@ function ProviderFormFull({
       const config = preset.settingsConfig;
 
       hermesForm.resetHermesState(config);
+
+      form.reset({
+        name: preset.nameKey ? t(preset.nameKey) : preset.name,
+        websiteUrl: preset.websiteUrl ?? "",
+        settingsConfig: JSON.stringify(config, null, 2),
+        icon: preset.icon ?? "",
+        iconColor: preset.iconColor ?? "",
+      });
+      return;
+    }
+
+    // Pi preset handling
+    if (appId === "pi") {
+      const preset = entry.preset as PiProviderPreset;
+      const config = preset.settingsConfig;
+
+      piForm.resetPiState(config as Record<string, unknown>);
 
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -2180,6 +2424,61 @@ function ProviderFormFull({
                       </p>
                     )}
                 </div>
+              ) : appId === "pi" ? (
+                <div className="space-y-2">
+                  <Label htmlFor="pi-key">
+                    {t("pi.form.providerKey", {
+                      defaultValue: "Provider Key",
+                    })}
+                    <span className="text-destructive ml-1">*</span>
+                  </Label>
+                  <Input
+                    id="pi-key"
+                    value={piForm.piProviderKey}
+                    onChange={(e) => piForm.setPiProviderKey(e.target.value)}
+                    placeholder={t("pi.form.providerKeyPlaceholder", {
+                      defaultValue: "my-provider",
+                    })}
+                    disabled={isProviderKeyLocked}
+                    className={
+                      (additiveExistingProviderKeys.includes(
+                        piForm.piProviderKey,
+                      ) &&
+                        !isProviderKeyLocked) ||
+                      (piForm.piProviderKey.trim() !== "" &&
+                        !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(piForm.piProviderKey))
+                        ? "border-destructive"
+                        : ""
+                    }
+                  />
+                  {additiveExistingProviderKeys.includes(
+                    piForm.piProviderKey,
+                  ) &&
+                    !isProviderKeyLocked && (
+                      <p className="text-xs text-destructive">
+                        {t("pi.form.providerKeyDuplicate")}
+                      </p>
+                    )}
+                  {piForm.piProviderKey.trim() !== "" &&
+                    !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(piForm.piProviderKey) && (
+                      <p className="text-xs text-destructive">
+                        {t("pi.form.providerKeyInvalid")}
+                      </p>
+                    )}
+                  {!(
+                    additiveExistingProviderKeys.includes(
+                      piForm.piProviderKey,
+                    ) && !isProviderKeyLocked
+                  ) &&
+                    (piForm.piProviderKey.trim() === "" ||
+                      /^[a-z0-9]+(-[a-z0-9]+)*$/.test(piForm.piProviderKey)) && (
+                      <p className="text-xs text-muted-foreground">
+                        {isProviderKeyLocked
+                          ? t("pi.form.providerKeyLockedHint")
+                          : t("pi.form.providerKeyHint")}
+                      </p>
+                    )}
+                </div>
               ) : undefined
             }
           />
@@ -2448,6 +2747,27 @@ function ProviderFormFull({
             />
           )}
 
+          {/* Pi 专属字段 */}
+          {appId === "pi" && (
+            <PiFormFields
+              baseUrl={piForm.piBaseUrl}
+              onBaseUrlChange={handlePiBaseUrlChange}
+              apiKey={piForm.piApiKey}
+              onApiKeyChange={handlePiApiKeyChange}
+              apiType={piForm.piApiType}
+              onApiTypeChange={handlePiApiTypeChange}
+              models={piForm.piModels}
+              onModelsChange={handlePiModelsChange}
+              category={category}
+              shouldShowApiKeyLink={shouldShowPiApiKeyLink}
+              websiteUrl={piWebsiteUrl}
+              isPartner={isPiPartner}
+              partnerPromotionKey={piPartnerPromotionKey}
+              baseUrlEnvKey={piForm.baseUrlEnvKey}
+              apiKeyEnvKey={piForm.apiKeyEnvKey}
+            />
+          )}
+
           {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
           {appId === "codex" ? (
             <>
@@ -2536,7 +2856,7 @@ function ProviderFormFull({
               </div>
               {settingsConfigErrorField}
             </>
-          ) : appId === "openclaw" || appId === "hermes" ? (
+          ) : appId === "openclaw" || appId === "hermes" || appId === "pi" ? (
             <>
               <div className="space-y-2">
                 <Label htmlFor="settingsConfig">
@@ -2552,7 +2872,15 @@ function ProviderFormFull({
   "base_url": "https://api.example.com/v1",
   "api_key": ""
 }`
-                      : `{
+                      : appId === "pi"
+                        ? `{
+  "api": "anthropic-messages",
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://api.example.com",
+    "ANTHROPIC_API_KEY": "your-api-key-here"
+  }
+}`
+                        : `{
   "baseUrl": "https://api.example.com/v1",
   "apiKey": "your-api-key-here",
   "api": "openai-completions",
@@ -2598,7 +2926,8 @@ function ProviderFormFull({
           {!isAnyOmoCategory &&
             appId !== "opencode" &&
             appId !== "openclaw" &&
-            appId !== "hermes" && (
+            appId !== "hermes" &&
+            appId !== "pi" && (
               <ProviderAdvancedConfig
                 pricingConfig={pricingConfig}
                 onPricingConfigChange={setPricingConfig}

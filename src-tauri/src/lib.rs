@@ -25,6 +25,7 @@ mod model_capabilities;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
+mod pi_config;
 mod prompt;
 mod prompt_files;
 mod provider;
@@ -829,6 +830,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No Hermes provider changes from live config"),
                 Err(e) => log::warn!("✗ Failed to import Hermes providers: {e}"),
             }
+            match crate::services::provider::import_pi_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} Pi provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No Pi provider changes from live config"),
+                Err(e) => log::warn!("✗ Failed to import Pi providers: {e}"),
+            }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
@@ -1588,6 +1596,9 @@ pub fn run() {
             commands::import_hermes_providers_from_live,
             commands::get_hermes_live_provider_ids,
             commands::get_hermes_live_provider,
+            // Pi specific (additive mode)
+            commands::import_pi_providers_from_live,
+            commands::get_pi_live_provider_ids,
             commands::get_hermes_model_config,
             commands::open_hermes_web_ui,
             commands::launch_hermes_dashboard,

@@ -47,6 +47,19 @@ pub fn get_default_claude_mcp_path() -> PathBuf {
     get_home_dir().join(".claude.json")
 }
 
+/// 获取 Pi 配置目录路径 (~/.pi/)
+pub fn get_pi_dir() -> PathBuf {
+    if let Some(custom) = crate::settings::get_pi_override_dir() {
+        return custom;
+    }
+    get_home_dir().join(".pi")
+}
+
+/// 获取 Pi agent 配置目录路径 (~/.pi/agent/)
+pub fn get_pi_agent_dir() -> PathBuf {
+    get_pi_dir().join("agent")
+}
+
 fn normalize_path_lexically(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
 

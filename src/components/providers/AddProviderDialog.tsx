@@ -46,7 +46,7 @@ export function AddProviderDialog({
   onSubmit,
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
-  // OpenCode and OpenClaw don't support universal providers
+
   const showUniversalTab =
     appId !== "opencode" &&
     appId !== "openclaw" &&
@@ -158,9 +158,11 @@ export function AddProviderDialog({
           values.presetId === GROKBUILD_OFFICIAL_PROVIDER_ID;
       }
 
-      // OpenCode/OpenClaw: pass providerKey for ID generation
       if (
-        (appId === "opencode" || appId === "openclaw" || appId === "hermes") &&
+        (appId === "opencode" ||
+          appId === "openclaw" ||
+          appId === "hermes" ||
+          appId === "pi") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;
@@ -286,6 +288,12 @@ export function AddProviderDialog({
         } else if (appId === "hermes") {
           if (parsedConfig.base_url) {
             addUrl(parsedConfig.base_url as string);
+          }
+        } else if (appId === "pi") {
+          // Pi uses env-style settings like Claude
+          const env = parsedConfig.env as Record<string, any> | undefined;
+          if (env?.ANTHROPIC_BASE_URL) {
+            addUrl(env.ANTHROPIC_BASE_URL);
           }
         }
 
