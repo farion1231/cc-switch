@@ -2954,9 +2954,16 @@ impl ProxyService {
 
         // Codex takeover rewrites config.toml as a whole. Reproject the MCP
         // state immediately so restart repair cannot leave DB-enabled servers
-        // missing from the live file (#6265).
-        McpService::sync_enabled_for_app_from_db(self.db.as_ref(), &AppType::Codex)
-            .map_err(|e| format!("重投影 Codex MCP 失败: {e}"))
+        // missing from the live file (#6265). The live write has already
+        // succeeded here, so projection failure must not surface as a false
+        // "save failed" result; a later switch or MCP update will retry it.
+        if let Err(err) =
+            McpService::sync_enabled_for_app_from_db(self.db.as_ref(), &AppType::Codex)
+        {
+            log::warn!("写入 Codex 接管配置后重投影 MCP 失败（将在下次同步时自愈）: {err}");
+        }
+
+        Ok(())
     }
 
     fn write_codex_live_verbatim(&self, config: &Value) -> Result<(), String> {
@@ -3953,6 +3960,62 @@ wire_api = "responses"
 
         crate::settings::update_settings(crate::settings::AppSettings::default())
             .expect("reset settings");
+    }
+
+    #[test]
+    #[serial]
+    fn codex_takeover_live_write_succeeds_when_mcp_reprojection_fails() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let provider = Provider::with_id(
+            "rightcode".to_string(),
+            "RightCode".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "rightcode-key" },
+                "config": r#"model_provider = "rightcode"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+"#
+            }),
+            None,
+        );
+        let takeover_settings = json!({
+            "auth": { "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER },
+            "config": r#"model_provider = "rightcode"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+"#
+        });
+
+        db.conn
+            .lock()
+            .expect("lock database")
+            .execute_batch("DROP TABLE mcp_servers")
+            .expect("drop MCP table to force reprojection failure");
+
+        service
+            .write_codex_takeover_live_for_provider(&takeover_settings, Some(&provider))
+            .expect("the completed live write must not report MCP reprojection failure");
+
+        let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read written live config");
+        assert!(
+            live_config.contains("http://127.0.0.1:15721/v1"),
+            "the takeover route must remain written despite MCP reprojection failure"
+        );
+        assert!(
+            live_config.contains(PROXY_TOKEN_PLACEHOLDER),
+            "the takeover token must remain written despite MCP reprojection failure"
+        );
     }
 
     #[tokio::test]
