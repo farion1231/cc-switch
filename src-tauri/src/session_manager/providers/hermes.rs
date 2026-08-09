@@ -187,7 +187,13 @@ fn row_to_json(row: &rusqlite::Row, columns: &[String]) -> Value {
 fn sqlite_timestamp_to_ms(value: ValueRef<'_>) -> Option<i64> {
     let value = match value {
         ValueRef::Integer(value) => Value::Number(value.into()),
-        ValueRef::Real(value) => Value::Number(serde_json::Number::from_f64(value)?),
+        ValueRef::Real(value) => {
+            return Some(if value > 1_000_000_000_000.0 {
+                value as i64
+            } else {
+                (value * 1000.0) as i64
+            });
+        }
         ValueRef::Text(value) => Value::String(std::str::from_utf8(value).ok()?.to_string()),
         ValueRef::Null | ValueRef::Blob(_) => return None,
     };
@@ -236,11 +242,7 @@ pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String>
         if content.trim().is_empty() {
             continue;
         }
-        messages.push(SessionMessage {
-            role,
-            content,
-            ts,
-        });
+        messages.push(SessionMessage { role, content, ts });
     }
 
     Ok(messages)
@@ -550,7 +552,7 @@ mod tests {
             INSERT INTO messages (session_id, role, content, timestamp)
             VALUES ('s1', 'assistant', 'second', 1700000002.0);
             INSERT INTO messages (session_id, role, content, timestamp)
-            VALUES ('s1', 'user', 'first', 1700000001.0);
+            VALUES ('s1', 'user', 'first', 1700000001.750);
             "#,
         )
         .expect("create current Hermes schema");
@@ -561,7 +563,7 @@ mod tests {
 
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].content, "first");
-        assert_eq!(messages[0].ts, Some(1_700_000_001_000));
+        assert_eq!(messages[0].ts, Some(1_700_000_001_750));
         assert_eq!(messages[1].content, "second");
     }
 
