@@ -21,6 +21,7 @@ use super::{
     },
     types::{
         CopilotOptimizerConfig, OptimizerConfig, ProxyRetryRule, ProxyStatus, RectifierConfig,
+        RetryBackoffStrategy,
     },
     ProxyError,
 };
@@ -271,11 +272,20 @@ impl RequestForwarder {
                         return Err(error);
                     };
                     if retry_index >= rule.retry_count {
+                        log::warn!(
+                            "{}",
+                            build_retry_rule_exhausted_log(
+                                app_type,
+                                &provider.name,
+                                retry_index,
+                                &error
+                            )
+                        );
                         return Err(error);
                     }
 
                     retry_index += 1;
-                    let delay = retry_delay(retry_index);
+                    let delay = retry_delay(rule, retry_index);
                     log::warn!(
                         "[{}] 特定错误规则命中，{}ms 后重试当前 Provider {} ({}/{})：{}",
                         app_type.as_str(),
@@ -2829,14 +2839,35 @@ fn extract_upstream_error_code(body: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn retry_delay(retry_index: u32) -> std::time::Duration {
-    let exponent = retry_index.saturating_sub(1).min(5);
-    let base_ms = 250u64.saturating_mul(1u64 << exponent);
+fn retry_delay(rule: &ProxyRetryRule, retry_index: u32) -> std::time::Duration {
+    let max_ms = u64::from(rule.max_delay_seconds).saturating_mul(1000);
+    let base_ms = match rule.backoff_strategy {
+        RetryBackoffStrategy::Exponential => {
+            let exponent = retry_index.saturating_sub(1).min(31);
+            250u64.saturating_mul(1u64 << exponent).min(max_ms)
+        }
+        RetryBackoffStrategy::Fixed => max_ms,
+    };
     let jitter_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| u64::from(duration.subsec_nanos() % 101))
         .unwrap_or(0);
-    std::time::Duration::from_millis(base_ms.saturating_add(jitter_ms))
+    std::time::Duration::from_millis(base_ms.saturating_add(jitter_ms).min(max_ms))
+}
+
+fn build_retry_rule_exhausted_log(
+    app_type: &AppType,
+    provider_name: &str,
+    retry_count: u32,
+    error: &ProxyError,
+) -> String {
+    format!(
+        "[{}] 特定错误重试已耗尽，当前 Provider {} 已额外重试 {} 次：{}",
+        app_type.as_str(),
+        provider_name,
+        retry_count,
+        error
+    )
 }
 
 /// 从 ProxyError 中提取错误消息
@@ -3808,6 +3839,8 @@ mod tests {
             error_codes: vec!["server_is_overloaded".to_string(), "slow_down".to_string()],
             message_contains: None,
             retry_count: 3,
+            backoff_strategy: RetryBackoffStrategy::Exponential,
+            max_delay_seconds: 15,
         }];
         let error = ProxyError::UpstreamError {
             status: 503,
@@ -3830,6 +3863,8 @@ mod tests {
             error_codes: Vec::new(),
             message_contains: Some("selected MODEL is at capacity".to_string()),
             retry_count: 2,
+            backoff_strategy: RetryBackoffStrategy::Exponential,
+            max_delay_seconds: 15,
         }];
         let error = ProxyError::UpstreamError {
             status: 500,
@@ -3847,6 +3882,8 @@ mod tests {
             error_codes: vec!["slow_down".to_string()],
             message_contains: None,
             retry_count: 1,
+            backoff_strategy: RetryBackoffStrategy::Exponential,
+            max_delay_seconds: 15,
         }];
         let error = ProxyError::UpstreamError {
             status: 503,
@@ -3864,6 +3901,8 @@ mod tests {
             error_codes: vec!["slow_down".to_string()],
             message_contains: None,
             retry_count: 1,
+            backoff_strategy: RetryBackoffStrategy::Exponential,
+            max_delay_seconds: 15,
         }];
         let error = ProxyError::UpstreamError {
             status: 503,
@@ -3874,6 +3913,57 @@ mod tests {
         };
 
         assert!(matching_retry_rule(&rules, &error).is_none());
+    }
+
+    #[test]
+    fn retry_rule_exhausted_log_identifies_provider_and_retry_count() {
+        let error = ProxyError::UpstreamError {
+            status: 503,
+            body: Some(r#"{"error":{"code":"server_overloaded"}}"#.to_string()),
+        };
+
+        let message = build_retry_rule_exhausted_log(&AppType::Codex, "primary", 6, &error);
+
+        assert!(message.contains("[codex] 特定错误重试已耗尽"));
+        assert!(message.contains("当前 Provider primary 已额外重试 6 次"));
+        assert!(message.contains("上游错误 (状态码 503)"));
+    }
+
+    #[test]
+    fn exponential_retry_delay_grows_and_respects_cap() {
+        let rule = ProxyRetryRule {
+            enabled: true,
+            status_codes: vec![503],
+            error_codes: Vec::new(),
+            message_contains: None,
+            retry_count: 10,
+            backoff_strategy: RetryBackoffStrategy::Exponential,
+            max_delay_seconds: 15,
+        };
+
+        let first = retry_delay(&rule, 1);
+        let second = retry_delay(&rule, 2);
+        let capped = retry_delay(&rule, 10);
+
+        assert!((250..=350).contains(&first.as_millis()));
+        assert!((500..=600).contains(&second.as_millis()));
+        assert_eq!(capped, std::time::Duration::from_secs(15));
+    }
+
+    #[test]
+    fn fixed_retry_delay_uses_configured_interval() {
+        let rule = ProxyRetryRule {
+            enabled: true,
+            status_codes: vec![503],
+            error_codes: Vec::new(),
+            message_contains: None,
+            retry_count: 3,
+            backoff_strategy: RetryBackoffStrategy::Fixed,
+            max_delay_seconds: 5,
+        };
+
+        assert_eq!(retry_delay(&rule, 1), std::time::Duration::from_secs(5));
+        assert_eq!(retry_delay(&rule, 3), std::time::Duration::from_secs(5));
     }
 
     #[test]

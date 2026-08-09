@@ -282,6 +282,7 @@ impl Database {
         if config.retry_rules.len() > 20
             || config.retry_rules.iter().any(|rule| {
                 rule.retry_count > 10
+                    || !(1..=15).contains(&rule.max_delay_seconds)
                     || rule
                         .status_codes
                         .iter()
@@ -349,6 +350,7 @@ impl Database {
         if config.retry_rules.len() > 20
             || config.retry_rules.iter().any(|rule| {
                 rule.retry_count > 10
+                    || !(1..=15).contains(&rule.max_delay_seconds)
                     || rule
                         .status_codes
                         .iter()

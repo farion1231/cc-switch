@@ -48,6 +48,8 @@ const baseConfig: AppProxyConfig = {
       errorCodes: ["server_is_overloaded"],
       messageContains: null,
       retryCount: 3,
+      backoffStrategy: "exponential",
+      maxDelaySeconds: 15,
     },
   ],
   streamingFirstByteTimeout: 90,
@@ -76,6 +78,8 @@ describe("AutoFailoverConfigPanel", () => {
 
     expect(await screen.findByLabelText("HTTP 状态码")).toHaveValue("503");
     expect(screen.getByLabelText("错误码")).toHaveValue("server_is_overloaded");
+    expect(screen.getByLabelText("退避算法")).toHaveTextContent("指数退避");
+    expect(screen.getByLabelText("最大等待时间（秒）")).toHaveValue(15);
     expect(
       screen.queryByRole("textbox", { name: /JSON/i }),
     ).not.toBeInTheDocument();
@@ -108,6 +112,9 @@ describe("AutoFailoverConfigPanel", () => {
     fireEvent.change(screen.getByLabelText("错误码"), {
       target: { value: "slow_down, server_is_overloaded slow_down" },
     });
+    fireEvent.change(screen.getByLabelText("最大等待时间（秒）"), {
+      target: { value: "12" },
+    });
     fireEvent.blur(screen.getByLabelText("HTTP 状态码"));
     fireEvent.blur(screen.getByLabelText("错误码"));
 
@@ -128,6 +135,8 @@ describe("AutoFailoverConfigPanel", () => {
           errorCodes: ["slow_down", "server_is_overloaded"],
           messageContains: null,
           retryCount: 3,
+          backoffStrategy: "exponential",
+          maxDelaySeconds: 12,
         },
       ],
     });
@@ -164,6 +173,8 @@ describe("AutoFailoverConfigPanel", () => {
             errorCodes: [],
             messageContains: "rate limit",
             retryCount: 2,
+            backoffStrategy: "fixed",
+            maxDelaySeconds: 5,
           },
         ],
       },

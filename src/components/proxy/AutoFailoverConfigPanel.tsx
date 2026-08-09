@@ -4,6 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Popover,
@@ -27,6 +34,8 @@ interface RetryRuleDraft {
   errorCodes: string;
   messageContains: string;
   retryCount: string;
+  backoffStrategy: "exponential" | "fixed";
+  maxDelaySeconds: string;
 }
 
 let nextRetryRuleId = 0;
@@ -38,6 +47,8 @@ const emptyRetryRule = (): RetryRuleDraft => ({
   errorCodes: "",
   messageContains: "",
   retryCount: "3",
+  backoffStrategy: "exponential",
+  maxDelaySeconds: "15",
 });
 
 const toRetryRuleDraft = (rule: ProxyRetryRule): RetryRuleDraft => ({
@@ -47,6 +58,8 @@ const toRetryRuleDraft = (rule: ProxyRetryRule): RetryRuleDraft => ({
   errorCodes: rule.errorCodes.join(", "),
   messageContains: rule.messageContains ?? "",
   retryCount: String(rule.retryCount),
+  backoffStrategy: rule.backoffStrategy ?? "exponential",
+  maxDelaySeconds: String(rule.maxDelaySeconds ?? 15),
 });
 
 const createFormData = (config?: AppProxyConfig) => ({
@@ -140,6 +153,7 @@ export function AutoFailoverConfigPanel({
       const errorCodes = splitValues(rule.errorCodes);
       const messageContains = rule.messageContains.trim();
       const retryCount = parseNum(rule.retryCount);
+      const maxDelaySeconds = parseNum(rule.maxDelaySeconds);
       const isValid =
         statusCodeValues.every((code) => /^\d+$/.test(code)) &&
         statusCodes.every(
@@ -150,6 +164,9 @@ export function AutoFailoverConfigPanel({
         Number.isInteger(retryCount) &&
         retryCount >= 0 &&
         retryCount <= 10 &&
+        Number.isInteger(maxDelaySeconds) &&
+        maxDelaySeconds >= 1 &&
+        maxDelaySeconds <= 15 &&
         (statusCodes.length > 0 ||
           errorCodes.length > 0 ||
           messageContains.length > 0);
@@ -170,6 +187,8 @@ export function AutoFailoverConfigPanel({
         errorCodes,
         messageContains: messageContains || null,
         retryCount,
+        backoffStrategy: rule.backoffStrategy,
+        maxDelaySeconds,
       });
     });
     const checkRange = (
@@ -623,11 +642,72 @@ export function AutoFailoverConfigPanel({
                           disabled={isDisabled}
                         />
                       </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor={`retry-backoff-${appType}-${index}`}>
+                          {t("proxy.autoFailover.backoffStrategy", "退避算法")}
+                        </Label>
+                        <Select
+                          value={rule.backoffStrategy}
+                          onValueChange={(backoffStrategy) =>
+                            updateRetryRule(index, {
+                              backoffStrategy: backoffStrategy as
+                                | "exponential"
+                                | "fixed",
+                            })
+                          }
+                          disabled={isDisabled}
+                        >
+                          <SelectTrigger
+                            id={`retry-backoff-${appType}-${index}`}
+                            aria-label={t(
+                              "proxy.autoFailover.backoffStrategy",
+                              "退避算法",
+                            )}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="exponential">
+                              {t(
+                                "proxy.autoFailover.exponentialBackoff",
+                                "指数退避",
+                              )}
+                            </SelectItem>
+                            <SelectItem value="fixed">
+                              {t(
+                                "proxy.autoFailover.fixedBackoff",
+                                "固定间隔",
+                              )}
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor={`retry-max-delay-${appType}-${index}`}>
+                          {t(
+                            "proxy.autoFailover.maxDelaySeconds",
+                            "最大等待时间（秒）",
+                          )}
+                        </Label>
+                        <Input
+                          id={`retry-max-delay-${appType}-${index}`}
+                          type="number"
+                          min="1"
+                          max="15"
+                          value={rule.maxDelaySeconds}
+                          onChange={(event) =>
+                            updateRetryRule(index, {
+                              maxDelaySeconds: event.target.value,
+                            })
+                          }
+                          disabled={isDisabled}
+                        />
+                      </div>
                     </div>
                     <p className="text-xs text-muted-foreground">
                       {t(
                         "proxy.autoFailover.retryRuleConditionHint",
-                        "至少填写一个条件。多个状态码或错误码可用逗号、空格或分号分隔。",
+                        "至少填写一个条件。指数退避从约 250ms 开始逐次翻倍，等待时间不会超过设置上限。",
                       )}
                     </p>
                   </div>

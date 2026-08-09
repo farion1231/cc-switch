@@ -205,6 +205,23 @@ pub struct ProxyRetryRule {
     pub message_contains: Option<String>,
     /// 首次请求失败后的额外重试次数
     pub retry_count: u32,
+    #[serde(default)]
+    pub backoff_strategy: RetryBackoffStrategy,
+    /// 指数退避上限；固定间隔模式下为每次等待时间
+    #[serde(default = "default_retry_max_delay_seconds")]
+    pub max_delay_seconds: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RetryBackoffStrategy {
+    #[default]
+    Exponential,
+    Fixed,
+}
+
+fn default_retry_max_delay_seconds() -> u32 {
+    15
 }
 
 /// 整流器配置

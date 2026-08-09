@@ -147,4 +147,6 @@ export interface ProxyRetryRule {
   errorCodes: string[];
   messageContains?: string | null;
   retryCount: number;
+  backoffStrategy: "exponential" | "fixed";
+  maxDelaySeconds: number;
 }
