@@ -160,7 +160,6 @@ export function usePiFormState({
   }, []);
 
   const resetPiState = useCallback((config?: Record<string, unknown>) => {
-    setPiProviderKeyRaw("");
     if (config) {
       const explicitApi = config.api as string | undefined;
       const newApiType =
