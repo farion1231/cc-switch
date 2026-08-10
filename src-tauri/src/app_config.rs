@@ -132,7 +132,7 @@ impl SkillApps {
             AppType::OpenCode => self.opencode = enabled,
             AppType::Hermes => self.hermes = enabled,
             AppType::Pi => self.pi = enabled,
-            AppType::OpenClaw => {}      // OpenClaw doesn't support Skills, ignore
+            AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
         }
     }

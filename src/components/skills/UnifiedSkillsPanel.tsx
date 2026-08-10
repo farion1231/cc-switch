@@ -1025,7 +1025,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           opencode: skill.foundIn.includes("opencode"),
           openclaw: false,
           hermes: skill.foundIn.includes("hermes"),
-          pi: false,
+          pi: skill.foundIn.includes("pi"),
         },
       ]),
     ),
