@@ -34,7 +34,7 @@ export interface PiModel {
   name?: string;
   contextWindow?: number;
   maxTokens?: number;
-  /** Supports extended thinking. Defaults to true when unset. */
+  /** Supports extended thinking. Pi defaults to false when the field is absent. */
   reasoning?: boolean;
   cost?: {
     input: number;
