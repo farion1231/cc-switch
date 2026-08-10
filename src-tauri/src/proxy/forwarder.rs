@@ -1462,8 +1462,20 @@ impl RequestForwarder {
         // `system` field. Normalize to the top-level field so all transform paths
         // and passthrough upstream providers handle it correctly.
         let mapped_body = if self.rectifier_config.enabled && self.rectifier_config.normalize_system_messages {
-            let before = mapped_body.clone();
-            let normalized = super::providers::transform::normalize_system_messages(mapped_body);
+            // Cheap pre-scan: only clone + normalize when there are actually
+            // role:system messages to move. Request bodies can be large, so avoid
+            // cloning the whole thing on the common (no system-role) path.
+            let has_system_in_messages = mapped_body
+                .get("messages")
+                .and_then(|m| m.as_array())
+                .is_some_and(|msgs| {
+                    msgs.iter()
+                        .any(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+                });
+
+            if has_system_in_messages {
+                let before = mapped_body.clone();
+                let normalized = super::providers::transform::normalize_system_messages(mapped_body);
 
             // Log if normalization actually happened
             if before != normalized {
@@ -1498,7 +1510,10 @@ impl RequestForwarder {
                 }
             }
 
-            normalized
+                normalized
+            } else {
+                mapped_body
+            }
         } else {
             mapped_body
         };

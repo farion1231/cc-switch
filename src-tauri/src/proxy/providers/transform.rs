@@ -562,12 +562,7 @@ pub fn normalize_system_messages(mut body: Value) -> Value {
                             if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
                                 let text = strip_leading_anthropic_billing_header(text);
                                 if !text.is_empty() {
-                                    let mut part = json!({"text": text});
-                                    // Preserve cache_control for proxy cache compatibility
-                                    if let Some(cc) = block.get("cache_control") {
-                                        part["cache_control"] = cc.clone();
-                                    }
-                                    extracted_parts.push(part);
+                                    extracted_parts.push(json!({"text": text}));
                                 }
                             }
                         }
