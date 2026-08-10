@@ -633,7 +633,7 @@ pub fn tree_blob_scheme(files: &[RepoFile]) -> BlobHashScheme {
 /// 计算 git blob id，必须与远端仓库的对象格式一致。
 pub fn compute_local_blob_hash(dir: &Path, scheme: BlobHashScheme) -> Result<String> {
     let mut files: Vec<PathBuf> = Vec::new();
-    collect_all_files(dir, dir, &mut files)?;
+    collect_all_files(dir, &mut files)?;
     files.sort();
     let mut hasher = Sha256::new();
     for file_path in &files {
@@ -653,12 +653,12 @@ pub fn compute_local_blob_hash(dir: &Path, scheme: BlobHashScheme) -> Result<Str
 }
 
 /// 递归收集目录下所有文件（含隐藏文件）
-fn collect_all_files(base: &Path, current: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+fn collect_all_files(current: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            collect_all_files(base, &path, files)?;
+            collect_all_files(&path, files)?;
         } else {
             files.push(path);
         }
@@ -701,8 +701,8 @@ pub fn should_use_large_repo_path(size_kb: Option<u64>) -> bool {
 
 /// 仓库 size 缓存 TTL：1 小时
 const SIZE_CACHE_TTL: Duration = Duration::from_secs(3600);
-static SIZE_CACHE: LazyLock<Mutex<HashMap<(String, String), (Instant, u64)>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+type SizeCache = HashMap<(String, String), (Instant, u64)>;
+static SIZE_CACHE: LazyLock<Mutex<SizeCache>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// 获取仓库 size（KB）。失败返回 Ok(None)（上层回退旧路径）。1h TTL 缓存。
 pub async fn fetch_repo_size_kb(owner: &str, name: &str) -> Result<Option<u64>> {
@@ -788,12 +788,7 @@ fn detect_git_uncached() -> Option<PathBuf> {
             }
         }
     }
-    for c in candidates {
-        if c.is_file() {
-            return Some(c);
-        }
-    }
-    None
+    candidates.into_iter().find(|c| c.is_file())
 }
 
 /// 选择后端：有 git → GitBackend，无 → ApiBackend

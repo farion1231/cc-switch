@@ -1195,6 +1195,7 @@ impl SkillService {
     /// 通过 ZIP 下载路径检查一组 skill 的更新（旧路径 + 大仓库路径兜底共用）。
     ///
     /// 返回 false 表示下载失败（调用方跳过该组，与旧路径行为一致）。
+    #[allow(clippy::too_many_arguments)]
     async fn check_updates_via_zip(
         &self,
         db: &Arc<Database>,
@@ -1318,9 +1319,7 @@ impl SkillService {
             },
         };
 
-        let Some(local) = local_hash else {
-            return None;
-        };
+        let local = local_hash?;
 
         // 方案一致则直接用
         if !hash_needs_recompute(&local, remote_scheme) {
