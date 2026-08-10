@@ -14,6 +14,7 @@ pub struct ModelMapping {
     pub fable_model: Option<String>,
     pub subagent_model: Option<String>,
     pub default_model: Option<String>,
+    pub classifier_model: Option<String>,
 }
 
 impl ModelMapping {
@@ -52,6 +53,9 @@ impl ModelMapping {
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(String::from),
+            classifier_model: env
+                .and_then(get_classifier_model_from_env)
+                .map(String::from),
         }
     }
 
@@ -63,6 +67,7 @@ impl ModelMapping {
             || self.fable_model.is_some()
             || self.subagent_model.is_some()
             || self.default_model.is_some()
+            || self.classifier_model.is_some()
     }
 
     /// 根据原始模型名称获取映射后的模型
@@ -169,6 +174,97 @@ pub fn strip_one_m_suffix_for_upstream_from_body(mut body: Value) -> Value {
         body["model"] = serde_json::json!(stripped);
     }
     body
+}
+
+/// Extract ANTHROPIC_CLASSIFIER_MODEL from an env JSON object.
+fn get_classifier_model_from_env(env: &Value) -> Option<&str> {
+    env.get("ANTHROPIC_CLASSIFIER_MODEL")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+}
+
+/// Read ANTHROPIC_CLASSIFIER_MODEL_DISABLE_THINKING from an env JSON object.
+fn get_classifier_disable_thinking_from_env(env: &Value) -> bool {
+    env.get("ANTHROPIC_CLASSIFIER_MODEL_DISABLE_THINKING")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// Determine whether an Anthropic Messages request is a classifier request.
+///
+/// Classifier requests are identified by max_tokens ≤ 256.
+/// Normal coding requests use max_tokens ≥ 1024 (typically 8192–64000).
+/// Returns `false` when `max_tokens` is absent or not an integer.
+pub fn is_classifier_request(body: &Value) -> bool {
+    matches!(
+        body.get("max_tokens").and_then(|v| v.as_i64()),
+        Some(n) if n <= 256
+    )
+}
+
+/// Apply classifier model override when a classifier request is detected.
+///
+/// When the request body has max_tokens ≤ 256 and a classifier_model is
+/// configured, replaces the model field. When `disable_thinking` is true,
+/// also sets `thinking` to `{"type": "disabled"}` so the classifier model
+/// runs without extended thinking (useful for models like DeepSeek that
+/// default to thinking mode).
+///
+/// Returns true if an override was applied.
+pub fn apply_classifier_override(
+    body: &mut Value,
+    classifier_model: Option<&str>,
+    disable_thinking: bool,
+) -> bool {
+    if !is_classifier_request(body) {
+        log::debug!(
+            "[Classifier] max_tokens={}, is_classifier=false",
+            body.get("max_tokens")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(-1)
+        );
+        return false;
+    }
+    let Some(classifier) = classifier_model else {
+        log::debug!(
+            "[Classifier] max_tokens={}, is_classifier=true, no override configured",
+            body.get("max_tokens")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(-1)
+        );
+        return false;
+    };
+    let original = body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("<unknown>");
+    log::info!(
+        "[Classifier] 分类器请求: model={} -> {}",
+        original,
+        classifier
+    );
+    body["model"] = serde_json::json!(classifier);
+
+    if disable_thinking {
+        body["thinking"] = serde_json::json!({"type": "disabled"});
+        log::debug!("[Classifier] thinking disabled for classifier request");
+    }
+
+    true
+}
+
+/// Public wrapper that extracts classifier_model and disable_thinking from
+/// a Provider and applies the override. For use by the forwarder pipeline.
+///
+/// Reads `ANTHROPIC_CLASSIFIER_MODEL` and
+/// `ANTHROPIC_CLASSIFIER_MODEL_DISABLE_THINKING` from the provider env —
+/// avoids building a full `ModelMapping` since tier model extraction is
+/// already done by `apply_model_mapping` earlier in the pipeline.
+pub fn apply_classifier_override_from_provider(body: &mut Value, provider: &Provider) {
+    let env = provider.settings_config.get("env");
+    let classifier_model = env.and_then(get_classifier_model_from_env);
+    let disable_thinking = env.is_some_and(get_classifier_disable_thinking_from_env);
+    apply_classifier_override(body, classifier_model, disable_thinking);
 }
 
 #[cfg(test)]
@@ -424,5 +520,338 @@ mod tests {
         let body = json!({"model": "deepseek-v4-pro"});
         let result = strip_one_m_suffix_for_upstream_from_body(body);
         assert_eq!(result["model"], "deepseek-v4-pro");
+    }
+
+    // --- is_classifier_request tests ---
+
+    #[test]
+    fn classifier_fast_path_max_tokens_64() {
+        let body = json!({"max_tokens": 64});
+        assert!(is_classifier_request(&body));
+    }
+
+    #[test]
+    fn classifier_thinking_path_max_tokens_128() {
+        let body = json!({"max_tokens": 128});
+        assert!(is_classifier_request(&body));
+    }
+
+    #[test]
+    fn classifier_boundary_max_tokens_256() {
+        let body = json!({"max_tokens": 256});
+        assert!(is_classifier_request(&body));
+    }
+
+    #[test]
+    fn normal_boundary_max_tokens_1024() {
+        let body = json!({"max_tokens": 1024});
+        assert!(!is_classifier_request(&body));
+    }
+
+    #[test]
+    fn normal_max_tokens_64000() {
+        let body = json!({"max_tokens": 64000});
+        assert!(!is_classifier_request(&body));
+    }
+
+    #[test]
+    fn max_tokens_absent_returns_false() {
+        let body = json!({"model": "claude-sonnet-4-6"});
+        assert!(!is_classifier_request(&body));
+    }
+
+    #[test]
+    fn max_tokens_zero_is_classifier() {
+        let body = json!({"max_tokens": 0});
+        assert!(is_classifier_request(&body));
+    }
+
+    // --- apply_classifier_override tests ---
+
+    #[test]
+    fn classifier_request_with_override_replaces_model() {
+        let mut body = json!({"model": "claude-sonnet-4-6", "max_tokens": 128});
+        let result = apply_classifier_override(&mut body, Some("claude-haiku-4-5"), false);
+        assert!(result);
+        assert_eq!(body["model"], "claude-haiku-4-5");
+    }
+
+    #[test]
+    fn classifier_request_without_override_keeps_model() {
+        let mut body = json!({"model": "claude-sonnet-4-6", "max_tokens": 128});
+        let result = apply_classifier_override(&mut body, None, false);
+        assert!(!result);
+        assert_eq!(body["model"], "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn non_classifier_request_with_override_keeps_model() {
+        let mut body = json!({"model": "claude-sonnet-4-6", "max_tokens": 1024});
+        let result = apply_classifier_override(&mut body, Some("claude-haiku-4-5"), false);
+        assert!(!result);
+        assert_eq!(body["model"], "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn non_classifier_request_without_override_keeps_model() {
+        let mut body = json!({"model": "claude-sonnet-4-6", "max_tokens": 1024});
+        let result = apply_classifier_override(&mut body, None, false);
+        assert!(!result);
+        assert_eq!(body["model"], "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn classifier_model_extracted_from_provider_config() {
+        let provider = Provider {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_CLASSIFIER_MODEL": "claude-haiku-4-5"
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+        let mapping = ModelMapping::from_provider(&provider);
+        assert_eq!(
+            mapping.classifier_model,
+            Some("claude-haiku-4-5".to_string())
+        );
+    }
+
+    #[test]
+    fn classifier_model_empty_string_treated_as_none() {
+        let provider = Provider {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_CLASSIFIER_MODEL": ""
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+        let mapping = ModelMapping::from_provider(&provider);
+        assert_eq!(mapping.classifier_model, None);
+    }
+
+    #[test]
+    fn classifier_model_absent_from_config_treated_as_none() {
+        let provider = Provider {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            settings_config: json!({"env": {}}),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+        let mapping = ModelMapping::from_provider(&provider);
+        assert_eq!(mapping.classifier_model, None);
+    }
+
+    #[test]
+    fn apply_classifier_override_from_provider_replaces_model() {
+        let provider = Provider {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_CLASSIFIER_MODEL": "claude-haiku-4-5"
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+        let mut body = json!({"model": "claude-sonnet-4-6", "max_tokens": 64});
+        apply_classifier_override_from_provider(&mut body, &provider);
+        assert_eq!(body["model"], "claude-haiku-4-5");
+    }
+
+    #[test]
+    fn apply_classifier_override_from_provider_without_config_is_noop() {
+        let provider = Provider {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            settings_config: json!({"env": {}}),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+        let mut body = json!({"model": "claude-sonnet-4-6", "max_tokens": 64});
+        apply_classifier_override_from_provider(&mut body, &provider);
+        assert_eq!(body["model"], "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn classifier_request_with_override_and_no_model_field_adds_model() {
+        // E7: body without a "model" field — override still applies since
+        // the Anthropic Messages API always includes "model", but we
+        // document the behavior for completeness.
+        let mut body = json!({"max_tokens": 64});
+        let result = apply_classifier_override(&mut body, Some("claude-haiku-4-5"), false);
+        assert!(result);
+        assert_eq!(body["model"], "claude-haiku-4-5");
+    }
+
+    // --- disable_thinking tests ---
+
+    #[test]
+    fn classifier_disable_thinking_strips_thinking_field() {
+        let mut body = json!({
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 128,
+            "thinking": {"type": "enabled", "budget_tokens": 16000}
+        });
+        let result = apply_classifier_override(&mut body, Some("deepseek-v4-flash"), true);
+        assert!(result);
+        assert_eq!(body["model"], "deepseek-v4-flash");
+        assert_eq!(body["thinking"], json!({"type": "disabled"}));
+    }
+
+    #[test]
+    fn classifier_disable_thinking_false_preserves_thinking() {
+        let mut body = json!({
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 128,
+            "thinking": {"type": "enabled", "budget_tokens": 16000}
+        });
+        let result = apply_classifier_override(&mut body, Some("deepseek-v4-flash"), false);
+        assert!(result);
+        assert_eq!(body["model"], "deepseek-v4-flash");
+        assert!(body.get("thinking").is_some());
+    }
+
+    #[test]
+    fn classifier_disable_thinking_no_override_does_not_strip() {
+        // When no classifier_model is configured, disable_thinking has no effect
+        let mut body = json!({
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 128,
+            "thinking": {"type": "enabled"}
+        });
+        let result = apply_classifier_override(&mut body, None, true);
+        assert!(!result);
+        assert_eq!(body["model"], "claude-sonnet-4-6");
+        assert!(body.get("thinking").is_some());
+    }
+
+    #[test]
+    fn classifier_disable_thinking_non_classifier_does_not_strip() {
+        let mut body = json!({
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 1024,
+            "thinking": {"type": "enabled"}
+        });
+        let result = apply_classifier_override(&mut body, Some("deepseek-v4-flash"), true);
+        assert!(!result);
+        assert_eq!(body["model"], "claude-sonnet-4-6");
+        assert!(body.get("thinking").is_some());
+    }
+
+    #[test]
+    fn classifier_disable_thinking_no_thinking_field_in_body() {
+        // Body without thinking field — explicitly sets disabled
+        let mut body = json!({"model": "claude-sonnet-4-6", "max_tokens": 64});
+        let result = apply_classifier_override(&mut body, Some("deepseek-v4-flash"), true);
+        assert!(result);
+        assert_eq!(body["model"], "deepseek-v4-flash");
+        assert_eq!(body["thinking"], json!({"type": "disabled"}));
+    }
+
+    #[test]
+    fn classifier_disable_thinking_from_provider_config() {
+        let provider = Provider {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_CLASSIFIER_MODEL": "deepseek-v4-flash",
+                    "ANTHROPIC_CLASSIFIER_MODEL_DISABLE_THINKING": true
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+        let mut body = json!({
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 64,
+            "thinking": {"type": "enabled"}
+        });
+        apply_classifier_override_from_provider(&mut body, &provider);
+        assert_eq!(body["model"], "deepseek-v4-flash");
+        assert_eq!(body["thinking"], json!({"type": "disabled"}));
+    }
+
+    #[test]
+    fn classifier_disable_thinking_false_from_provider_config() {
+        let provider = Provider {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_CLASSIFIER_MODEL": "deepseek-v4-flash",
+                    "ANTHROPIC_CLASSIFIER_MODEL_DISABLE_THINKING": false
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+        let mut body = json!({
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 64,
+            "thinking": {"type": "enabled"}
+        });
+        apply_classifier_override_from_provider(&mut body, &provider);
+        assert_eq!(body["model"], "deepseek-v4-flash");
+        assert!(body.get("thinking").is_some());
     }
 }

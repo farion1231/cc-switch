@@ -15,6 +15,7 @@ export type ClaudeModelEnvField =
   | "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"
   | "ANTHROPIC_DEFAULT_FABLE_MODEL"
   | "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"
+  | "ANTHROPIC_CLASSIFIER_MODEL"
   | "CLAUDE_CODE_SUBAGENT_MODEL";
 
 export const CLAUDE_ONE_M_MARKER = "[1M]";
@@ -87,6 +88,14 @@ function parseModelsFromConfig(settingsConfig: string) {
         ? env.CLAUDE_CODE_SUBAGENT_MODEL
         : "";
 
+    const classifierModel =
+      typeof env.ANTHROPIC_CLASSIFIER_MODEL === "string"
+        ? env.ANTHROPIC_CLASSIFIER_MODEL
+        : "";
+
+    const classifierDisableThinking =
+      env.ANTHROPIC_CLASSIFIER_MODEL_DISABLE_THINKING === true;
+
     return {
       model,
       haiku,
@@ -97,7 +106,9 @@ function parseModelsFromConfig(settingsConfig: string) {
       opusName,
       fable,
       fableName,
+      classifierModel,
       subagent,
+      classifierDisableThinking,
     };
   } catch {
     return {
@@ -110,7 +121,9 @@ function parseModelsFromConfig(settingsConfig: string) {
       opusName: "",
       fable: "",
       fableName: "",
+      classifierModel: "",
       subagent: "",
+      classifierDisableThinking: false,
     };
   }
 }
@@ -141,7 +154,13 @@ export function useModelState({
   const [defaultFableModelName, setDefaultFableModelName] = useState(
     initial.fableName,
   );
+  const [classifierModel, setClassifierModel] = useState(
+    initial.classifierModel,
+  );
   const [subagentModel, setSubagentModel] = useState(initial.subagent);
+  const [classifierDisableThinking, setClassifierDisableThinking] = useState(
+    initial.classifierDisableThinking,
+  );
 
   const isUserEditingRef = useRef(false);
   const lastConfigRef = useRef(settingsConfig);
@@ -172,7 +191,9 @@ export function useModelState({
     setDefaultOpusModelName(parsed.opusName);
     setDefaultFableModel(parsed.fable);
     setDefaultFableModelName(parsed.fableName);
+    setClassifierModel(parsed.classifierModel);
     setSubagentModel(parsed.subagent);
+    setClassifierDisableThinking(parsed.classifierDisableThinking);
   }, [settingsConfig]);
 
   const handleModelChange = useCallback(
@@ -195,6 +216,7 @@ export function useModelState({
         setDefaultFableModel(value);
       if (field === "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME")
         setDefaultFableModelName(value);
+      if (field === "ANTHROPIC_CLASSIFIER_MODEL") setClassifierModel(value);
       if (field === "CLAUDE_CODE_SUBAGENT_MODEL") setSubagentModel(value);
 
       try {
@@ -224,6 +246,37 @@ export function useModelState({
     [onConfigChange],
   );
 
+  const handleClassifierDisableThinkingChange = useCallback(
+    (enabled: boolean) => {
+      isUserEditingRef.current = true;
+      setClassifierDisableThinking(enabled);
+
+      try {
+        const currentConfig = latestConfigRef.current
+          ? JSON.parse(latestConfigRef.current)
+          : { env: {} };
+        if (!currentConfig.env) currentConfig.env = {};
+        const env = currentConfig.env as Record<string, unknown>;
+
+        if (enabled) {
+          env["ANTHROPIC_CLASSIFIER_MODEL_DISABLE_THINKING"] = true;
+        } else {
+          delete env["ANTHROPIC_CLASSIFIER_MODEL_DISABLE_THINKING"];
+        }
+
+        const updatedConfig = JSON.stringify(currentConfig, null, 2);
+        latestConfigRef.current = updatedConfig;
+        onConfigChange(updatedConfig);
+      } catch (err) {
+        console.error(
+          "Failed to update classifier disable thinking config:",
+          err,
+        );
+      }
+    },
+    [onConfigChange],
+  );
+
   return {
     claudeModel,
     setClaudeModel,
@@ -243,8 +296,13 @@ export function useModelState({
     setDefaultFableModel,
     defaultFableModelName,
     setDefaultFableModelName,
+    classifierModel,
+    setClassifierModel,
     subagentModel,
     setSubagentModel,
+    classifierDisableThinking,
+    setClassifierDisableThinking,
+    handleClassifierDisableThinkingChange,
     handleModelChange,
   };
 }
