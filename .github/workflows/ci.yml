@@ -11,9 +11,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      # On pull_request the filter reads changed files via the API (no checkout);
+      # on push it needs a local git history to diff against.
+      - name: Checkout
+        if: github.event_name == 'push'
+        uses: actions/checkout@v6
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            frontend:
+              - "src/**"
+              - "tests/**"
+              - "index.html"
+              - "package.json"
+              - "pnpm-lock.yaml"
+              - "pnpm-workspace.yaml"
+              - "tsconfig.json"
+              - "tsconfig.node.json"
+              - "vite.config.ts"
+              - "vitest.config.ts"
+              - "tailwind.config.cjs"
+              - "postcss.config.cjs"
+              - "components.json"
+              - ".github/workflows/**"
+            backend:
+              - "src-tauri/**"
+              - "rust-toolchain.toml"
+              - ".github/workflows/**"
+
   frontend:
     name: Frontend Checks
     runs-on: ubuntu-latest
+    needs: changes
+    # Pushes to main always run everything: they keep the caches that PRs restore from warm.
+    if: github.event_name != 'pull_request' || needs.changes.outputs.frontend == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -58,6 +102,8 @@ jobs:
   backend:
     name: Backend Checks
     runs-on: ${{ matrix.os }}
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.backend == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -110,6 +156,8 @@ jobs:
     name: Backend Checks (Windows + WSL2 home)
     runs-on: windows-2025
     timeout-minutes: 45
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.backend == 'true'
     permissions:
       contents: read
     steps:
