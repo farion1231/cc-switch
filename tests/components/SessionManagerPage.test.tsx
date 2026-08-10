@@ -221,6 +221,30 @@ describe("SessionManagerPage", () => {
     setSessionFixtures(sessions, messages);
   });
 
+  it("exports the selected session as Markdown", async () => {
+    const exportSpy = vi
+      .spyOn(sessionsApi, "exportMarkdown")
+      .mockResolvedValueOnce("/tmp/Alpha Session.md");
+
+    renderPage();
+
+    const exportButton = await screen.findByRole("button", {
+      name: /导出会话/i,
+    });
+    await waitFor(() => expect(exportButton).not.toBeDisabled());
+    fireEvent.click(exportButton);
+
+    await waitFor(() =>
+      expect(exportSpy).toHaveBeenCalledWith(
+        "Alpha Session.md",
+        "## User\n\nalpha\n",
+      ),
+    );
+    expect(toastSuccessMock).toHaveBeenCalled();
+
+    exportSpy.mockRestore();
+  });
+
   it("deletes the selected session and selects the next visible session", async () => {
     renderPage();
 
