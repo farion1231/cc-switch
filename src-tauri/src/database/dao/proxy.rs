@@ -329,6 +329,7 @@ impl Database {
                 "codex" => (3, 60, 120, 4, 2, 60, 0.6, 10),
                 "gemini" => (5, 60, 120, 4, 2, 60, 0.6, 10),
                 "kimi" => (5, 60, 120, 4, 2, 60, 0.6, 10),
+                "grokbuild" => (3, 60, 120, 4, 2, 60, 0.6, 10),
                 _ => (3, 60, 120, 4, 2, 60, 0.6, 10), // 默认值
             };
 
@@ -395,6 +396,18 @@ impl Database {
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                 circuit_error_rate_threshold, circuit_min_requests
             ) VALUES ('gemini', 5, 60, 120, 600, 4, 2, 60, 0.6, 10)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // grokbuild: Responses protocol, same timeout defaults as Codex.
+        conn.execute(
+            "INSERT OR IGNORE INTO proxy_config (
+                app_type, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests
+            ) VALUES ('grokbuild', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

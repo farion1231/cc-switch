@@ -113,17 +113,9 @@ pub struct ProxyTakeoverStatus {
     pub claude: bool,
     pub codex: bool,
     pub gemini: bool,
+    pub grokbuild: bool,
     pub opencode: bool,
     pub openclaw: bool,
-}
-
-/// API 格式类型（预留，当前不需要格式转换）
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum ApiFormat {
-    Claude,
-    OpenAI,
-    Gemini,
 }
 
 /// Provider健康状态

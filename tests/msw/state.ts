@@ -69,10 +69,11 @@ const createDefaultProviders = (): ProvidersByApp => ({
       createdAt: Date.now(),
     },
   },
+  kimi: {},
+  grokbuild: {},
   opencode: {},
   openclaw: {},
   hermes: {},
-  kimi: {},
 });
 
 const createDefaultCurrent = (): CurrentProviderState => ({
@@ -81,6 +82,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   codex: "codex-1",
   gemini: "gemini-1",
   kimi: "",
+  grokbuild: "",
   opencode: "",
   openclaw: "",
   hermes: "",
@@ -195,10 +197,11 @@ let mcpConfigs: McpConfigState = {
     },
   },
   gemini: {},
+  kimi: {},
+  grokbuild: {},
   opencode: {},
   openclaw: {},
   hermes: {},
-  kimi: {},
 };
 
 const cloneProviders = (value: ProvidersByApp) =>
@@ -266,10 +269,11 @@ export const resetProviderState = () => {
       },
     },
     gemini: {},
+    kimi: {},
+    grokbuild: {},
     opencode: {},
     openclaw: {},
     hermes: {},
-    kimi: {},
   };
 };
 

@@ -23,7 +23,6 @@
     "unknown": "未知",
     "enterValidValue": "请输入有效的内容",
     "clear": "清除",
-    "toggleTheme": "切换主题",
     "format": "格式化",
     "formatSuccess": "格式化成功",
     "formatError": "格式化失败：{{error}}",
@@ -35,6 +34,9 @@
     "import": "导入",
     "all": "全部",
     "search": "查询",
+    "enableAllForApp": "为 {{app}} 全部启用",
+    "disableAllForApp": "为 {{app}} 全部停用",
+    "bulkToggleFailed": "有 {{count}} 项更新失败",
     "reset": "重置",
     "actions": "操作",
     "deleting": "删除中...",
@@ -173,7 +175,8 @@
         "oauthHint": "Google 官方使用 OAuth 个人认证，无需填写 API Key。首次使用时会自动打开浏览器进行登录。",
         "apiKeyPlaceholder": "请输入 Gemini API Key"
       }
-    }
+    },
+    "duplicateLiveIdsLoadFailed": "读取配置中的供应商标识失败，请先修复配置后再试"
   },
   "claudeCode": {
     "needsRouting": "需要路由",
@@ -222,7 +225,8 @@
       "tooltip": {
         "active": "Claude Desktop 本地路由已开启 - {{address}}:{{port}}",
         "inactive": "开启 Claude Desktop 本地路由，用于需要模型映射或格式转换的供应商。当前配置地址：{{address}}:{{port}}"
-      }
+      },
+      "stopBlockedByTakeover": "其它应用正在使用代理接管。请先在设置中关闭对应应用接管，再停止本地路由。"
     }
   },
   "notifications": {
@@ -231,6 +235,7 @@
     "providerDeleted": "供应商删除成功",
     "switchSuccess": "切换成功！",
     "codexRestartRequired": "切换成功，请重启客户端以生效",
+    "grokBuildRestartRequired": "切换成功，请重启 Grok Build 以生效",
     "claudeDesktopRestartRequired": "切换成功，重启 Claude Desktop 后生效",
     "claudeDesktopProxyRestartRequired": "切换成功，请保持 CC Switch 运行，并重启 Claude Desktop 后生效",
     "addToConfigSuccess": "已添加到配置",
@@ -258,6 +263,8 @@
     "proxyReasonOpenAIResponses": "使用 OpenAI Responses 接口格式",
     "proxyReasonAnthropicMessages": "使用 Anthropic Messages 接口格式",
     "proxyReasonFullUrl": "开启了完整 URL 连接模式",
+    "proxyReasonManagedOAuth": "使用托管 OAuth 登录（令牌由本地路由注入）",
+    "proxyReasonRoutingRequired": "需要本地路由处理请求",
     "openAIFormatHint": "此供应商使用 OpenAI 兼容格式，需要开启路由服务才能正常使用",
     "copilotProxyHint": "GitHub Copilot 作为 Claude 供应商时始终需要本地路由；路由会根据当前模型自动选择 Chat Completions 或 Responses。",
     "openLinkFailed": "链接打开失败",
@@ -268,7 +275,8 @@
     "backfillWarning": "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
     "windowControlFailed": "窗口控制失败：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切换到官方供应商，使用路由访问官方 API 可能导致账号被封禁",
-    "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由"
+    "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由",
+    "proxyReasonClaudeDesktop": "使用 Claude Desktop 本地路由模式"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -325,7 +333,8 @@
       "description": "在 Claude Code 中使用您的其他订阅，请注意合规风险。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 账号",
-      "codexOauthDescription": "管理 ChatGPT 账号"
+      "codexOauthDescription": "管理 ChatGPT 账号",
+      "xaiOauthDescription": "管理 xAI / Grok 账号"
     },
     "advanced": {
       "configDir": {
@@ -396,10 +405,10 @@
         "cacheInjectionDescription": "自动在请求关键位置注入标准 5 分钟 Cache 断点，减少重复 token 计费"
       },
       "logConfig": {
-        "title": "日志管理",
-        "description": "控制日志输出级别",
-        "enabled": "启用日志",
-        "enabledDescription": "总开关，关闭后所有日志将被禁用",
+        "title": "应用诊断日志",
+        "description": "控制应用诊断日志的输出级别",
+        "enabled": "启用应用诊断日志",
+        "enabledDescription": "控制 cc-switch.log；不影响请求用量记录和 crash.log",
         "level": "日志级别",
         "levelDescription": "设置输出的最低日志级别",
         "levels": {
@@ -756,20 +765,23 @@
     "codexConfigDirDescription": "覆盖 Codex 配置目录。",
     "geminiConfigDir": "Gemini 配置目录",
     "geminiConfigDirDescription": "覆盖 Gemini 配置目录 (.env)。",
+    "kimiConfigDir": "Kimi 配置目录",
+    "kimiConfigDirDescription": "覆盖 Kimi 配置目录 (config.toml)。",
+    "grokConfigDir": "Grok Build 配置目录",
+    "grokConfigDirDescription": "覆盖 Grok Build 配置目录 (config.toml)。",
     "opencodeConfigDir": "OpenCode 配置目录",
     "opencodeConfigDirDescription": "覆盖 OpenCode 配置目录 (opencode.json)。",
     "openclawConfigDir": "OpenClaw 配置目录",
     "openclawConfigDirDescription": "覆盖 OpenClaw 配置目录 (openclaw.json)。",
-    "kimiConfigDir": "Kimi 配置目录",
-    "kimiConfigDirDescription": "覆盖 Kimi 配置目录 (config.toml)。",
     "hermesConfigDir": "Hermes 配置目录",
     "hermesConfigDirDescription": "覆盖 Hermes 配置目录 (config.yaml)。",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
     "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
     "browsePlaceholderGemini": "例如：/home/<你的用户名>/.gemini",
+    "browsePlaceholderKimi": "例如：/home/<你的用户名>/.kimi-code",
+    "browsePlaceholderGrok": "例如：/home/<你的用户名>/.grok",
     "browsePlaceholderOpencode": "例如：/home/<你的用户名>/.config/opencode",
     "browsePlaceholderOpenclaw": "例如：/home/<你的用户名>/.openclaw",
-    "browsePlaceholderKimi": "例如：/home/<你的用户名>/.kimi-code",
     "browsePlaceholderHermes": "例如：/home/<你的用户名>/.hermes",
     "browseDirectory": "浏览目录",
     "resetDefault": "恢复默认目录（需保存后生效）",
@@ -879,13 +891,25 @@
     "codex": "Codex",
     "gemini": "Gemini",
     "kimi": "Kimi Code",
+    "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes"
   },
+  "appSwitcher": {
+    "more": "更多应用"
+  },
+  "grokBuild": {
+    "apiBackend": "API Backend",
+    "contextWindow": "上下文窗口",
+    "contextWindowInvalid": "上下文窗口必须是正整数",
+    "profile": "客户端模型档位",
+    "rawConfig": "config.toml",
+    "invalidToml": "config.toml 格式错误：{{error}}"
+  },
   "sessionManager": {
     "title": "会话管理",
-    "subtitle": "管理 Claude Code、Codex、OpenCode、OpenClaw、Hermes 与 Gemini CLI 会话记录",
+    "subtitle": "管理 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw 与 Hermes 会话记录",
     "searchPlaceholder": "搜索会话内容、目录或 ID",
     "searchSessions": "搜索会话",
     "providerFilterAll": "全部",
@@ -1005,11 +1029,13 @@
     "customApiKeyHint": "💡 自定义配置需手动填写所有必要字段",
     "omoHint": "💡 OMO 配置管理 Agent 模型分配，兼容 oh-my-openagent.jsonc / oh-my-opencode.jsonc",
     "officialHint": "💡 官方供应商使用浏览器登录，无需配置 API Key",
+    "providerKeyStatusLoading": "正在加载供应商标识状态，请稍后再试",
     "getApiKey": "获取 API Key",
     "partnerPromotion": {
-      "sudocode": "SudoCode 让 Claude Code 与 Claude Desktop 接入 Claude Opus 4.8，Codex 接入 GPT-5.6，一个 Key 统一使用。CC Switch 用户注册并加入 QQ 群 726213516，联系群主领取 ¥10 试用额度。",
+      "kimi": "Kimi 新用户首次成功充值，即可获赠充值金额 10% 的 API 额度，最高赠送 ¥1000。",
+      "a6api": "A6API 是一家 Token 聚合站，内置实时价格排行自动筛选全网最低价，丝滑稳定不卡顿，简易操作省去比价繁琐，注册获得体验金！",
+      "sudocode": "SudoCode 让 Claude Code 与 Claude Desktop 接入 Claude Opus 5，Codex 接入 GPT-5.6，一个 Key 统一使用。CC Switch 用户注册并加入 QQ 群 726213516，联系群主领取 ¥10 试用额度。",
       "code0": "code0.ai 是面向开发者的 AI 编程服务平台，支持 Claude Code、Codex、Gemini。CC Switch 用户专属福利：通过官网联系客服即可领取测试额度！",
-      "nekocode": "NekoCode 为开发者提供稳定、高效、可靠的 Claude、Codex 等 AI 模型 API 中转服务，价格透明、按量计费。CC Switch 用户专享 9 折：通过上方链接注册，充值时输入优惠码 cc-switch 即享 9 折优惠！",
       "packycode": "PackyCode 是 CC Switch 的官方合作伙伴，使用此链接注册并在充值时填写 \"cc-switch\" 优惠码，可以享受9折优惠",
       "apikeyfun": "APIKEY.FUN 为 CC Switch 的用户提供了特别优惠，通过专属链接注册，可享受最高充值永久 95 折优惠。",
       "apinebula": "APINEBULA 为 CC Switch 用户提供特别优惠：使用专属链接注册并在充值时填写 \"ccswitch\" 优惠码，可享九折优惠。",
@@ -1017,7 +1043,7 @@
       "patewayai": "PatewayAI 为 CC Switch 的用户提供了特别福利，通过此链接注册可以获得3美元额度。",
       "claudeapi": "ClaudeAPI 为 CC Switch 的用户提供了特别福利，通过此链接注册可以领取测试额度。",
       "claudecn": "ClaudeCN 是一家实体企业运营的企业级AI中转平台，支持企业采购流程，可对公打款、签约，服务合规有保障。",
-      "runapi": "RunAPI 为 CC Switch 的用户提供了特别福利，通过此链接注册并联系客服可领取 ¥14 免费额度。",
+      "runapi": "RunAPI 为 CC Switch 的用户提供了特别福利，通过此链接注册，首次充值即可享受 9 折优惠。",
       "minimax_cn": "MiniMax Coding Plan 特惠，Starter 套餐 9.9 元起",
       "minimax_en": "MiniMax Coding Plan 黑五特惠，Starter 套餐现仅 $2/月（2折优惠！）",
       "opencode_go": "使用此链接订阅 OpenCode Go，首月只需 $5，并可获得额外的 $5 额度！",
@@ -1026,6 +1052,7 @@
       "aigocode": "AIGoCode 是 CC Switch 的官方合作伙伴，使用此链接注册首次充值时可以获得10%额度奖励！",
       "rightcode": "RightCode 是 CC Switch 的官方合作伙伴，使用此链接注册每次充值均可赠送5%额外额度！",
       "aicodemirror": "AICodeMirror 是 CC Switch 的官方合作伙伴，使用此链接注册可享受8折优惠！",
+      "aicoding": "AI Coding 为 CC Switch 的用户提供了特殊优惠，首次充值可以享受 9 折优惠！",
       "crazyrouter": "CrazyRouter 为 CC Switch 的用户提供了特殊优惠，首次充值赠予 30% 额外额度！",
       "sssaicode": "SSAI Code 为 CC Switch 的用户提供了特殊优惠，每次充值赠予额外 $10 额度！",
       "siliconflow": "硅基流动是 CC Switch 的官方合作伙伴",
@@ -1041,8 +1068,7 @@
       "qiniu": "七牛云是多协议 AI 中转平台，一个 Key 即可调用原生 Claude、GPT、Gemini 模型，兼容 Anthropic、OpenAI、Gemini 多种接口。",
       "fenno": "Fenno.ai 是稳定高效的 API 中转服务商，可接入多种主流模型。CC Switch 用户专属福利：通过此链接订阅 9.9 元 /150 刀额度的超值 Coding Plan！",
       "zetaapi": "ZetaAPI 主打模型不掺水、不降智，价格低至官方价 35 折。CC Switch 用户专属福利：通过此链接注册，首次充值使用优惠码 CC-SWITCH 即可享受九折优惠！",
-      "teamorouter": "TeamoRouter 是企业级 Agentic LLM 网关，价格最高可达 90% 折扣。为 CC Switch 的用户提供了特别福利：新用户通过此链接注册，首次充值享 10% 折扣！",
-      "unity2": "Unity2.ai 为 CC Switch 用户提供专属福利：通过此链接注册可领取 $2 余额，加入官方群再送 $10，最高可领 $12 免费额度！"
+      "teamorouter": "TeamoRouter 是企业级 Agentic LLM 网关，价格最高可达 90% 折扣。为 CC Switch 的用户提供了特别福利：新用户通过此链接注册，首次充值享 10% 折扣！"
     },
     "presets": {
       "ucloud": "优云智算",
@@ -1154,7 +1180,8 @@
     "fetchModelsAuthFailed": "API Key 无效或无权限",
     "fetchModelsNotSupported": "该供应商不支持获取模型列表",
     "fetchModelsEndpointNotFound": "未找到可用的模型列表端点，请检查 Base URL 或确认供应商是否开放该接口",
-    "fetchModelsTimeout": "请求超时，请检查网络连接"
+    "fetchModelsTimeout": "请求超时，请检查网络连接",
+    "requiredFields": "请填写供应商名称、API 地址、API Key 和模型"
   },
   "copilot": {
     "authSection": "GitHub Copilot 认证",
@@ -1212,6 +1239,31 @@
     "copyCode": "复制代码",
     "fastMode": "FAST 模式",
     "fastModeDescription": "发送 service_tier=\"priority\" 换取更低延迟。默认关闭——开启后会按更高速率消耗 ChatGPT 配额。"
+  },
+  "xaiOauth": {
+    "authStatus": "xAI OAuth 认证",
+    "accountCount": "{{count}} 个可用账号",
+    "reauthRequired": "需要重新登录",
+    "notAuthenticated": "未认证",
+    "selectAccount": "选择账号",
+    "selectAccountPlaceholder": "选择 xAI 账号",
+    "useDefaultAccount": "使用默认账号",
+    "accounts": "xAI 账号",
+    "defaultAccount": "默认",
+    "expired": "凭据已失效",
+    "setAsDefault": "设为默认",
+    "removeAccount": "移除账号",
+    "addOrReauth": "添加账号或重新登录",
+    "login": "使用 xAI 登录",
+    "waitingForAuth": "等待 xAI 授权中…",
+    "enterCode": "若浏览器未自动填入，请输入：",
+    "retry": "重试",
+    "logoutAll": "移除所有 xAI 账号",
+    "loginRequired": "请先登录 xAI 账号"
+  },
+  "managedAuth": {
+    "selectedAccountNeedsReauth": "已绑定账号不存在或需要重新登录",
+    "selectedAccountUnavailable": "已绑定账号不存在或需要重新登录，请重新选择账号"
   },
   "endpointTest": {
     "title": "请求地址管理",
@@ -1306,7 +1358,7 @@
     "modelMetadataAdvanced": "模型元数据高级选项",
     "modelMetadataAdvancedHint": "用于未知模型的 Codex 元数据覆盖；清空字段会从 config.toml 删除对应配置。",
     "defaultModelLabel": "默认模型",
-    "defaultModelPlaceholder": "例如: gpt-5.6",
+    "defaultModelPlaceholder": "例如: gpt-5.6-sol",
     "defaultModelHint": "Codex 默认请求的模型，随时可改，无需等待预设更新。留空且配置了模型映射时，默认使用映射第一行。",
     "defaultModelNotInCatalog": "该模型不在模型映射中，Codex 的 /model 菜单不会列出它（直接请求仍然有效）。",
     "addToModelMapping": "加入映射",
@@ -1326,7 +1378,8 @@
     "reasoningEffortHint": "上游支持 low/high/max 等思考深度控制时启用。启用后会自动启用思考模式，并把 Codex 的 reasoning.effort 转成上游 Chat 参数。",
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "预设供应商已自动配置；自定义供应商会按名称/地址自动推断。仅当自动识别不准时才需手动覆盖。",
-    "advancedSectionHint": "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。"
+    "advancedSectionHint": "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。",
+    "noCommonConfigToApply": "通用配置片段为空或没有可写入的内容"
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",
@@ -1425,6 +1478,7 @@
     "totalRequests": "总请求数",
     "totalCost": "总成本",
     "cost": "成本",
+    "unpriced": "未定价",
     "perMillion": "(每百万)",
     "trends": "使用趋势",
     "rangeToday": "过去 24 小时 (按小时)",
@@ -1463,25 +1517,21 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "kimi": "Kimi Code",
+      "opencode": "OpenCode",
+      "grokbuild": "Grok Build"
     },
     "rawInputLabel": "原始",
-    "dataSources": "数据来源",
-    "dataSource": {
-      "proxy": "路由",
-      "session_log": "会话日志",
-      "codex_db": "Codex 数据库",
-      "codex_session": "Codex 会话日志",
-      "gemini_session": "Gemini 会话日志",
-      "opencode_session": "OpenCode 会话日志"
-    },
-    "sessionSync": {
-      "trigger": "同步会话日志",
-      "import": "导入会话",
-      "resync": "同步",
-      "imported": "从会话日志导入了 {{count}} 条记录",
-      "upToDate": "会话日志已是最新",
-      "failed": "会话同步失败"
+    "rebuildCodex": {
+      "title": "Codex 用量维护",
+      "description": "从本地 rollout 日志重新构建 Codex 会话用量",
+      "warning": "重建前会自动备份数据库。若源 JSONL 已删除，对应历史将无法重新导入。",
+      "action": "重建 Codex 用量",
+      "confirmTitle": "确认重建 Codex 用量",
+      "confirmMessage": "此操作会清除现有 Codex 会话明细与汇总，再从本地 Codex 日志重新导入。\n\n已删除日志对应的历史将丢失；缺少父 rollout 的 fork 会暂缓导入。",
+      "confirmAction": "备份并重建",
+      "completed": "重建完成：导入 {{imported}} 条，错误 {{errors}}，疑似重复 {{suspected}}，暂缓文件 {{deferred}}",
+      "failed": "Codex 用量重建失败：{{error}}"
     },
     "totalRecords": "共 {{total}} 条记录",
     "goToPage": "跳转",
@@ -1581,6 +1631,40 @@
     "modelsDevNoResults": "没有匹配的模型",
     "modelsDevTruncated": "仅显示前 {{shown}} 条，共 {{total}} 条结果，请缩小搜索范围",
     "modelsDevDefaultHint": "默认展示最新发布的 {{shown}} 个模型（共 {{total}} 个），输入关键字可全量搜索",
+    "modelsDevAutoSync": {
+      "title": "自动同步 models.dev 定价",
+      "description": "开启后，CC Switch 会在启动时定期拉取所选模型的最新价格，并保存到本地定价文件。",
+      "enabled": "已开启",
+      "disabled": "已关闭",
+      "enableConfirmTitle": "开启自动同步定价？",
+      "enableConfirmMessage": "开启后，CC Switch 会在启动时定期从 models.dev 更新所选模型的价格（最多每 6 小时一次）。同一模型 ID 的软件内置价格和手动设置价格都会被覆盖。",
+      "enableConfirmAction": "开启自动同步",
+      "configure": "选择模型",
+      "configureTitle": "选择自动同步定价的模型",
+      "configureDescription": "通过搜索和供应商筛选选择需要自动更新的模型，选择结果保存在本地。",
+      "commonModels": "自动包含常用模型",
+      "commonModelsDescription": "自动选择 {{count}} 个近期 Claude、GPT、Gemini、Grok、DeepSeek、Qwen、MiMo、LongCat、Kimi、MiniMax 和 GLM 模型。",
+      "selectFiltered": "全选筛选结果（{{count}}）",
+      "clearFiltered": "清空筛选结果",
+      "selectedCount": "已选择 {{count}} 个模型",
+      "selectionHint": "归一化模型 ID 相同的选项只会导入一次。",
+      "commonBadge": "常用",
+      "selectionSaved": "自动定价同步选择已保存",
+      "syncSuccess": "定价同步完成：检查 {{imported}} 个模型，更新 {{changed}} 个",
+      "syncFailed": "定价同步失败：{{error}}",
+      "configLoadFailed": "加载本地定价配置失败：{{error}}",
+      "neverSynced": "从未同步",
+      "lastSync": "上次同步",
+      "commonStatus": "常用模型",
+      "lastError": "上次自动同步失败：{{error}}",
+      "localFile": "本地定价文件",
+      "openFolder": "打开目录",
+      "openFolderFailed": "打开本地定价文件目录失败：{{error}}",
+      "reloadLocalFile": "重新加载文件",
+      "localFileReloaded": "本地定价文件已重新加载",
+      "localFileReloadFailed": "重新加载本地定价文件失败：{{error}}",
+      "syncNow": "立即同步"
+    },
     "cacheReadCostPerMillion": "缓存读取成本 (每百万 tokens, USD)",
     "cacheCreationCostPerMillion": "缓存写入成本 (每百万 tokens, USD)"
   },
@@ -1692,7 +1776,10 @@
   "errors": {
     "usage_query_failed": "用量查询失败",
     "configLoadFailedTitle": "配置加载失败",
-    "configLoadFailedMessage": "无法读取配置文件：\n{{path}}\n\n错误详情：\n{{detail}}\n\n请手动检查 JSON 是否有效，或从同目录的备份文件（如 config.json.bak）恢复。\n\n应用将退出以便您进行修复。"
+    "configLoadFailedMessage": "无法读取配置文件：\n{{path}}\n\n错误详情：\n{{detail}}\n\n请手动检查 JSON 是否有效，或从同目录的备份文件（如 config.json.bak）恢复。\n\n应用将退出以便您进行修复。",
+    "frontendCrashTitle": "界面遇到了问题",
+    "frontendCrashMessage": "已尝试将错误信息写入应用诊断日志。请重新加载界面；如果问题持续，请在提交 Issue 时附上日志。",
+    "reloadInterface": "重新加载界面"
   },
   "presetSelector": {
     "title": "选择配置类型",
@@ -1719,11 +1806,15 @@
       "enabledApps": "启用的应用",
       "noImportFound": "未发现需要导入的 MCP 服务器。所有服务器已在 CC Switch 统一管理中。",
       "importSuccess": "成功导入 {{count}} 个 MCP 服务器",
+      "searchPlaceholder": "搜索 MCP 名称、描述、标签或命令...",
+      "searchAriaLabel": "搜索已管理的 MCP 服务器",
+      "noSearchResults": "未找到匹配的 MCP 服务器",
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
         "gemini": "Gemini",
         "kimi": "Kimi Code",
+        "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes"
@@ -1877,6 +1968,9 @@
     "empty": "暂无提示词",
     "emptyDescription": "点击右上角按钮添加或导入提示词",
     "loading": "加载中...",
+    "searchPlaceholder": "搜索提示词名称、描述或内容...",
+    "searchAriaLabel": "搜索已管理的提示词",
+    "noSearchResults": "未找到匹配的提示词",
     "name": "名称",
     "namePlaceholder": "例如：项目默认提示词",
     "description": "描述",
@@ -2105,9 +2199,9 @@
       "addModel": "添加模型",
       "noModels": "暂无模型配置。切换到此供应商时将不会更新默认模型。",
       "modelId": "模型 ID",
-      "modelIdPlaceholder": "anthropic/claude-opus-4-8",
+      "modelIdPlaceholder": "anthropic/claude-opus-5",
       "modelName": "显示名称",
-      "modelNamePlaceholder": "Claude Opus 4.8",
+      "modelNamePlaceholder": "Claude Opus 5",
       "contextLength": "上下文长度",
       "advancedOptions": "高级选项",
       "modelsHint": "切换到此供应商时，第一个模型会写入顶层 model.default。",
@@ -2228,6 +2322,9 @@
       "skillDirNotFound": "技能目录不存在：{{path}}",
       "directoryConflict": "技能目录 '{{directory}}' 已被 {{existing_repo}} 占用，无法从 {{new_repo}} 安装",
       "emptyArchive": "下载的压缩包为空",
+      "invalidRepoRef": "仓库地址不合法：{{owner}}/{{name}}",
+      "archiveTooLarge": "压缩包解压后超过 {{limit_mb}} MB 上限，已中止",
+      "archiveTooManyEntries": "压缩包条目过多（{{count}}），上限 {{limit}}",
       "downloadFailed": "下载失败：HTTP {{status}}",
       "allBranchesFailed": "所有分支下载失败，尝试了：{{branches}}",
       "httpError": "HTTP 错误 {{status}}",
@@ -2272,6 +2369,9 @@
     },
     "search": "搜索技能",
     "searchPlaceholder": "搜索技能名称或仓库名称...",
+    "installedSearchPlaceholder": "搜索已安装技能的名称、描述或仓库...",
+    "installedSearchAriaLabel": "搜索已安装技能",
+    "noInstalledSearchResults": "未找到匹配的已安装技能",
     "searchSource": {
       "repos": "仓库",
       "skillssh": "skills.sh"
@@ -2333,6 +2433,7 @@
       "claude": "Claude",
       "codex": "Codex",
       "gemini": "Gemini",
+      "kimi": "Kimi Code",
       "opencode": "OpenCode",
       "openclaw": "OpenClaw"
     },
@@ -2391,7 +2492,11 @@
       "title": "批量导入 MCP Servers",
       "targetApps": "目标应用",
       "serverCount": "MCP Servers ({{count}} 个)",
-      "enabledWarning": "导入后将立即写入所有指定应用的配置文件"
+      "enabledWarning": "导入后将立即写入所有指定应用的配置文件",
+      "command": "命令",
+      "args": "参数",
+      "env": "环境",
+      "url": "地址"
     },
     "prompt": {
       "title": "导入系统提示词",
@@ -2413,10 +2518,19 @@
     "usageScript": "用量查询",
     "usageScriptEnabled": "已启用",
     "usageScriptDisabled": "未启用",
+    "usageScriptCode": "脚本代码",
+    "usageScriptWarning": "这是一段 JavaScript 代码，启用后会在查询用量时执行。请确认来源可信后再导入。",
     "usageApiKey": "用量 API Key",
     "usageBaseUrl": "用量查询地址",
+    "usageAccessToken": "用量访问令牌",
+    "usageUserId": "用量用户 ID",
     "usageAutoInterval": "自动查询",
-    "usageAutoIntervalValue": "每 {{minutes}} 分钟"
+    "usageAutoIntervalValue": "每 {{minutes}} 分钟",
+    "risk": {
+      "envHijack": "该配置包含可改变进程加载行为的环境变量（如注入动态库、替换 CA 证书），请确认来源可信。",
+      "privateEndpoint": "该地址指向本机或内网。若非你自建的本地服务，请勿导入。",
+      "shellCommand": "该配置通过 shell 执行一整段命令，实际运行的内容在参数里，请逐行核对。"
+    }
   },
   "iconPicker": {
     "search": "搜索图标",
@@ -2435,8 +2549,7 @@
     "selectIcon": "选择图标",
     "preview": "预览",
     "clickToChange": "点击更换图标",
-    "clickToSelect": "点击选择图标",
-    "color": "图标颜色"
+    "clickToSelect": "点击选择图标"
   },
   "migration": {
     "success": "配置迁移成功",
@@ -2465,7 +2578,8 @@
     },
     "tooltip": {
       "enabled": "{{app}} 故障转移已启用\n按队列优先级（P1→P2→...）选择供应商",
-      "disabled": "启用 {{app}} 故障转移\n将立即切换到队列 P1，并在失败时自动切换到下一个"
+      "disabled": "启用 {{app}} 故障转移\n将立即切换到队列 P1，并在失败时自动切换到下一个",
+      "takeoverRequired": "请先接管 {{app}}，再启用故障转移"
     }
   },
   "proxy": {
@@ -2524,8 +2638,8 @@
           "description": "单个请求的最大等待时间（0 表示不限制，或设置 10 ~ 600 秒）"
         },
         "enableLogging": {
-          "label": "启用日志记录",
-          "description": "记录所有路由请求，便于排查问题"
+          "label": "记录请求用量",
+          "description": "将路由请求的用量与状态写入本地统计数据库"
         },
         "streamingFirstByteTimeout": {
           "label": "流式首字超时（秒）",
@@ -2643,7 +2757,9 @@
     },
     "server": {
       "started": "路由服务已启动 - {{address}}:{{port}}",
-      "startFailed": "启动路由服务失败: {{detail}}"
+      "startFailed": "启动路由服务失败: {{detail}}",
+      "stopped": "路由服务已停止",
+      "stopFailed": "停止路由服务失败：{{detail}}"
     },
     "stoppedWithRestore": "路由服务已关闭，已恢复所有路由配置",
     "stopWithRestoreFailed": "停止失败: {{detail}}"
@@ -2677,33 +2793,6 @@
     "streamingFirstByte": "流式首字节超时",
     "streamingIdle": "流式静默超时",
     "nonStreaming": "非流式超时"
-  },
-  "circuitBreaker": {
-    "failureThreshold": "失败阈值",
-    "successThreshold": "成功阈值",
-    "timeoutSeconds": "超时时间（秒）",
-    "errorRateThreshold": "错误率阈值 (%)",
-    "minRequests": "最小请求数",
-    "validationFailed": "以下字段超出有效范围: {{fields}}",
-    "configSaved": "熔断器配置已保存",
-    "saveFailed": "保存失败",
-    "loading": "加载中...",
-    "title": "熔断器配置",
-    "description": "调整熔断器参数以控制故障检测和恢复行为",
-    "failureThresholdHint": "连续失败多少次后打开熔断器",
-    "timeoutSecondsHint": "熔断器打开后多久尝试恢复（半开状态）",
-    "successThresholdHint": "半开状态下成功多少次后关闭熔断器",
-    "errorRateThresholdHint": "错误率超过此值时打开熔断器",
-    "minRequestsHint": "计算错误率前的最小请求数",
-    "saveConfig": "保存配置",
-    "instructionsTitle": "配置说明",
-    "instructions": {
-      "failureThreshold": "连续失败达到此次数时，熔断器打开",
-      "timeout": "熔断器打开后，等待此时间后尝试半开",
-      "successThreshold": "半开状态下，成功达到此次数时关闭熔断器",
-      "errorRate": "错误率超过此值时，熔断器打开",
-      "minRequests": "只有请求数达到此值后才计算错误率"
-    }
   },
   "universalProvider": {
     "duplicate": "复制",
@@ -2805,6 +2894,7 @@
     "noEnabledModelsWarning": "当前没有可用的已配置模型，请先配置 OpenCode 模型",
     "modelSourcePartialWarning": "部分供应商模型配置无效，已自动跳过。",
     "modelSourceFallbackWarning": "读取 live 供应商状态失败，已回退到已配置供应商列表。",
+    "runtimeModelsFailedWarning": "读取 OpenCode 运行时模型失败，已仅展示已配置供应商模型。",
     "importLocalReplaceSuccess": "已从本地文件导入并覆盖 Agent/Category/Other Fields",
     "importLocalFailed": "读取本地文件失败: {{error}}",
     "agentKeyPlaceholder": "agent 键名",
@@ -2885,13 +2975,13 @@
       "writing": "写作"
     },
     "categoryTooltip": {
-      "visualEngineering": "前端与视觉工程类别，专注于 UI/UX 设计、样式、动画和界面实现，默认使用 Gemini 3.5 Flash 模型。",
+      "visualEngineering": "前端与视觉工程类别，专注于 UI/UX 设计、样式、动画和界面实现，默认使用 Gemini 3.6 Flash 模型。",
       "ultrabrain": "深度逻辑推理类别，用于需要广泛分析的复杂架构决策，默认使用 GPT-5.3 Codex 的超高推理变体。",
       "deep": "深度自主问题解决类别，目标导向执行，行动前进行彻底研究，适用于需要深度理解的棘手问题。",
-      "artistry": "高度创意与艺术性任务类别，激发新颖想法和创造性解决方案，默认使用 Gemini 3.5 Flash 的高推理变体。",
+      "artistry": "高度创意与艺术性任务类别，激发新颖想法和创造性解决方案，默认使用 Gemini 3.6 Flash 的高推理变体。",
       "quick": "轻量任务类别，用于单文件修改、错别字修复、简单调整等琐碎工作，默认使用 Claude Haiku 4.5 快速模型。",
       "unspecifiedLow": "未归类低工作量任务类别，适用于不适合其他类别且工作量较小的任务，默认使用 Claude Sonnet 4.5。",
-      "unspecifiedHigh": "未归类高工作量任务类别，适用于不适合其他类别且工作量较大的任务，默认使用 Claude Opus 4.8 的最大变体。",
+      "unspecifiedHigh": "未归类高工作量任务类别，适用于不适合其他类别且工作量较大的任务，默认使用 Claude Opus 5 的最大变体。",
       "writing": "写作类别，专注于文档、散文和技术写作，默认使用 Kimi K2.5 模型。"
     },
     "slimAgentDesc": {
@@ -2954,6 +3044,7 @@
     "geminiFlashLite": "Flash Lite",
     "weeklyLimit": "每周",
     "monthly": "每月",
+    "credits": "额度",
     "copilotPremium": "高级请求",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}}后重置",

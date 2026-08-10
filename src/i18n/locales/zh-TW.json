@@ -23,7 +23,6 @@
     "unknown": "未知",
     "enterValidValue": "請輸入有效的內容",
     "clear": "清除",
-    "toggleTheme": "切換主題",
     "format": "格式化",
     "formatSuccess": "格式化成功",
     "formatError": "格式化失敗：{{error}}",
@@ -35,6 +34,9 @@
     "import": "匯入",
     "all": "全部",
     "search": "搜尋",
+    "enableAllForApp": "為 {{app}} 全部啟用",
+    "disableAllForApp": "為 {{app}} 全部停用",
+    "bulkToggleFailed": "有 {{count}} 個項目更新失敗",
     "reset": "重設",
     "actions": "操作",
     "deleting": "刪除中...",
@@ -173,7 +175,8 @@
         "oauthHint": "Google 官方使用 OAuth 個人驗證，無需填寫 API Key。首次使用時會自動開啟瀏覽器進行登入。",
         "apiKeyPlaceholder": "請輸入 Gemini API Key"
       }
-    }
+    },
+    "duplicateLiveIdsLoadFailed": "讀取設定中的供應商識別碼失敗，請先修復設定後再試"
   },
   "claudeCode": {
     "needsRouting": "需要路由",
@@ -222,7 +225,8 @@
       "tooltip": {
         "active": "Claude Desktop 本地路由已開啟 - {{address}}:{{port}}",
         "inactive": "開啟 Claude Desktop 本地路由，用於需要模型對應或格式轉換的供應商。目前設定位址：{{address}}:{{port}}"
-      }
+      },
+      "stopBlockedByTakeover": "其他應用正在使用代理接管。請先在設定中關閉對應應用接管，再停止本機路由。"
     }
   },
   "notifications": {
@@ -231,6 +235,7 @@
     "providerDeleted": "供應商刪除成功",
     "switchSuccess": "切換成功！",
     "codexRestartRequired": "切換成功，請重新啟動客戶端以套用",
+    "grokBuildRestartRequired": "切換成功，請重新啟動 Grok Build 以套用",
     "claudeDesktopRestartRequired": "切換成功，重新啟動 Claude Desktop 後生效",
     "claudeDesktopProxyRestartRequired": "切換成功，請保持 CC Switch 執行，並重新啟動 Claude Desktop 後生效",
     "addToConfigSuccess": "已新增至設定",
@@ -258,6 +263,8 @@
     "proxyReasonOpenAIResponses": "使用 OpenAI Responses API 格式",
     "proxyReasonAnthropicMessages": "使用 Anthropic Messages API 格式",
     "proxyReasonFullUrl": "開啟了完整 URL 連線模式",
+    "proxyReasonManagedOAuth": "使用託管 OAuth 登入（權杖由本機路由注入）",
+    "proxyReasonRoutingRequired": "需要本機路由處理請求",
     "openAIFormatHint": "此供應商使用 OpenAI 相容格式，需要開啟路由服務才能正常使用",
     "copilotProxyHint": "GitHub Copilot 作為 Claude 供應商時始終需要本地路由；路由會根據目前模型自動選擇 Chat Completions 或 Responses。",
     "openLinkFailed": "連結開啟失敗",
@@ -268,7 +275,8 @@
     "backfillWarning": "切換成功，但舊供應商設定回填失敗，您手動修改的設定可能未儲存",
     "windowControlFailed": "視窗控制失敗：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切換至官方供應商，使用路由存取官方 API 可能導致帳號被封鎖",
-    "proxyOfficialWarning": "目前供應商 {{name}} 是官方供應商，建議切換至第三方供應商後再使用本地路由"
+    "proxyOfficialWarning": "目前供應商 {{name}} 是官方供應商，建議切換至第三方供應商後再使用本地路由",
+    "proxyReasonClaudeDesktop": "使用 Claude Desktop 本機路由模式"
   },
   "confirm": {
     "deleteProvider": "刪除供應商",
@@ -325,7 +333,8 @@
       "description": "在 Claude Code 中使用您的其他訂閱，請注意合規風險。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 帳號",
-      "codexOauthDescription": "管理 ChatGPT 帳號"
+      "codexOauthDescription": "管理 ChatGPT 帳號",
+      "xaiOauthDescription": "管理 xAI / Grok 帳號"
     },
     "advanced": {
       "configDir": {
@@ -396,10 +405,10 @@
         "cacheInjectionDescription": "自動在請求關鍵位置注入標準 5 分鐘 Cache 斷點，減少重複 token 計費"
       },
       "logConfig": {
-        "title": "日誌管理",
-        "description": "控制日誌輸出層級",
-        "enabled": "啟用日誌",
-        "enabledDescription": "總開關，關閉後所有日誌將被停用",
+        "title": "應用程式診斷日誌",
+        "description": "控制應用程式診斷日誌的輸出層級",
+        "enabled": "啟用應用程式診斷日誌",
+        "enabledDescription": "控制 cc-switch.log；不影響請求用量記錄和 crash.log",
         "level": "日誌層級",
         "levelDescription": "設定輸出的最低日誌層級",
         "levels": {
@@ -756,6 +765,10 @@
     "codexConfigDirDescription": "覆寫 Codex 設定目錄。",
     "geminiConfigDir": "Gemini 設定目錄",
     "geminiConfigDirDescription": "覆寫 Gemini 設定目錄 (.env)。",
+    "kimiConfigDir": "Kimi 設定目錄",
+    "kimiConfigDirDescription": "覆寫 Kimi 設定目錄 (config.toml)。",
+    "grokConfigDir": "Grok Build 設定目錄",
+    "grokConfigDirDescription": "覆寫 Grok Build 設定目錄 (config.toml)。",
     "opencodeConfigDir": "OpenCode 設定目錄",
     "opencodeConfigDirDescription": "覆寫 OpenCode 設定目錄 (opencode.json)。",
     "openclawConfigDir": "OpenClaw 設定目錄",
@@ -765,6 +778,8 @@
     "browsePlaceholderClaude": "例如：/home/<您的帳號>/.claude",
     "browsePlaceholderCodex": "例如：/home/<您的帳號>/.codex",
     "browsePlaceholderGemini": "例如：/home/<您的帳號>/.gemini",
+    "browsePlaceholderKimi": "例如：/home/<您的帳號>/.kimi-code",
+    "browsePlaceholderGrok": "例如：/home/<您的帳號>/.grok",
     "browsePlaceholderOpencode": "例如：/home/<您的帳號>/.config/opencode",
     "browsePlaceholderOpenclaw": "例如：/home/<您的帳號>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<您的帳號>/.hermes",
@@ -787,9 +802,39 @@
     "viewCurrentReleaseNotes": "檢視目前版本更新日誌",
     "officialWebsite": "官方網站",
     "github": "GitHub",
+    "manualInstallCommands": "手動安裝指令",
     "oneClickInstall": "一鍵安裝",
-    "oneClickInstallHint": "安裝 Claude Code / Codex / Gemini CLI / OpenCode",
+    "oneClickInstallHint": "安裝或更新 Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw / Hermes",
     "localEnvCheck": "本地環境檢查",
+    "updateAllTools": "全部更新（{{count}}）",
+    "currentVersion": "目前版本",
+    "latestVersion": "最新版本",
+    "updateAvailableShort": "可更新",
+    "toolInstall": "安裝",
+    "toolUpdate": "更新",
+    "toolReady": "已就緒",
+    "toolActionDone": "{{count}} 個工具{{action}}完成",
+    "toolActionPartial": "{{succeeded}} 個{{action}}成功，{{failed}} 個失敗",
+    "toolActionFailed": "安裝/更新指令執行失敗",
+    "toolNotRunnable": "已安裝但無法執行（未偵測到版本）",
+    "toolActionVersionUnchangedTitle": "版本未變更",
+    "toolActionVersionUnchanged": "仍為 {{version}}（最新版本：{{latest}}）。上游更新程式可能回報成功，但實際上並未套用更新。",
+    "toolActionInstalledNotRunnable": "已安裝，但目前環境無法執行，請檢查",
+    "installedNotRunnable": "已安裝 · 無法執行",
+    "toolCheckEnv": "請檢查執行環境",
+    "toolDiagnose": "診斷安裝衝突",
+    "toolDiagnosing": "診斷中…",
+    "toolConflictTitle": "偵測到多處安裝",
+    "toolConflictHint": "命令列實際使用標示為「預設」的項目；更新可能已寫入其他位置。",
+    "toolConflictDefault": "預設",
+    "toolConflictNotRunnable": "無法執行",
+    "toolDiagnoseNoConflict": "未發現安裝衝突",
+    "toolDiagnoseFailed": "診斷失敗",
+    "toolUpgradeConfirmTitle": "確認更新位置",
+    "toolUpgradeConfirmHint": "偵測到多處安裝。本次更新不會更新所有安裝；請以下方各工具顯示的實際更新位置為準。",
+    "toolUpgradeWillRun": "將執行：",
+    "toolUpgradeConfirmBtn": "確認更新",
+    "toolUpgradeUnanchoredHint": "無法判定命令列實際使用的安裝位置；將執行預設更新指令（可能安裝至 PATH 中第一個 npm）。",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
@@ -846,13 +891,26 @@
     "claude-desktop": "Claude Desktop",
     "codex": "Codex",
     "gemini": "Gemini",
+    "kimi": "Kimi Code",
+    "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes"
   },
+  "appSwitcher": {
+    "more": "更多應用程式"
+  },
+  "grokBuild": {
+    "apiBackend": "API Backend",
+    "contextWindow": "上下文視窗",
+    "contextWindowInvalid": "上下文視窗必須是正整數",
+    "profile": "用戶端模型檔位",
+    "rawConfig": "config.toml",
+    "invalidToml": "config.toml 格式錯誤：{{error}}"
+  },
   "sessionManager": {
     "title": "工作階段管理",
-    "subtitle": "管理 Claude Code、Codex、OpenCode、OpenClaw、Hermes 與 Gemini CLI 工作階段紀錄",
+    "subtitle": "管理 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw 與 Hermes 工作階段紀錄",
     "searchPlaceholder": "搜尋對話內容、目錄或 ID",
     "searchSessions": "搜尋工作階段",
     "providerFilterAll": "全部",
@@ -972,11 +1030,13 @@
     "customApiKeyHint": "自訂設定需手動填寫所有必要欄位",
     "omoHint": "OMO 設定管理 Agent 模型指派，相容 oh-my-openagent.jsonc / oh-my-opencode.jsonc",
     "officialHint": "官方供應商使用瀏覽器登入，無需設定 API Key",
+    "providerKeyStatusLoading": "正在載入供應商識別碼狀態，請稍後再試",
     "getApiKey": "取得 API Key",
     "partnerPromotion": {
-      "sudocode": "SudoCode 讓 Claude Code 與 Claude Desktop 使用 Claude Opus 4.8，Codex 使用 GPT-5.6，一個 Key 統一管理。CC Switch 使用者註冊並加入 QQ 群 726213516，聯絡群主領取人民幣 ¥10 試用額度。",
+      "kimi": "Kimi 新使用者首次成功儲值，即可獲贈儲值金額 10% 的 API 額度，最高贈送 ¥1000。",
+      "a6api": "A6API 是一家 Token 聚合站，內建即時價格排行自動篩選全網最低價，滑順穩定不卡頓，簡易操作省去比價繁瑣，註冊獲得體驗金！",
+      "sudocode": "SudoCode 讓 Claude Code 與 Claude Desktop 使用 Claude Opus 5，Codex 使用 GPT-5.6，一個 Key 統一管理。CC Switch 使用者註冊並加入 QQ 群 726213516，聯絡群主領取人民幣 ¥10 試用額度。",
       "code0": "code0.ai 是面向開發者的 AI 程式設計服務平台，支援 Claude Code、Codex、Gemini。CC Switch 使用者專屬福利：透過官網聯繫客服即可領取測試額度！",
-      "nekocode": "NekoCode 為開發者提供穩定、高效、可靠的 Claude、Codex 等 AI 模型 API 中轉服務，價格透明、按量計費。CC Switch 使用者專享 9 折：透過上方連結註冊，儲值時輸入優惠碼 cc-switch 即享 9 折優惠！",
       "packycode": "PackyCode 是 CC Switch 的官方合作夥伴，使用此連結註冊並在儲值時填寫「cc-switch」優惠碼，可以享受 9 折優惠",
       "apikeyfun": "APIKEY.FUN 為 CC Switch 的使用者提供了特別優惠，透過專屬連結註冊，可享受最高儲值永久 95 折優惠。",
       "apinebula": "APINEBULA 為 CC Switch 使用者提供特別優惠：使用專屬連結註冊並在儲值時填寫「ccswitch」優惠碼，可享 9 折優惠。",
@@ -984,7 +1044,7 @@
       "patewayai": "PatewayAI 為 CC Switch 的使用者提供了特別福利，透過此連結註冊可以獲得 3 美元額度。",
       "claudeapi": "ClaudeAPI 為 CC Switch 的使用者提供了特別福利，透過此連結註冊可以領取測試額度。",
       "claudecn": "ClaudeCN 是一家實體企業營運的企業級 AI 中繼平台，支援企業採購流程，可對公打款、簽約，服務合規有保障。",
-      "runapi": "RunAPI 為 CC Switch 的使用者提供了特別福利，透過此連結註冊並聯繫客服可領取 ¥14 免費額度。",
+      "runapi": "RunAPI 為 CC Switch 的使用者提供了特別福利，透過此連結註冊，首次儲值即可享受 9 折優惠。",
       "minimax_cn": "MiniMax Coding Plan 特惠，Starter 方案 9.9 元起",
       "minimax_en": "MiniMax Coding Plan 黑五特惠，Starter 方案現僅 $2 / 月（2 折優惠！）",
       "opencode_go": "使用此連結訂閱 OpenCode Go，首月僅需 $5，並可獲得額外的 $5 額度！",
@@ -1009,8 +1069,7 @@
       "qiniu": "七牛雲是多協定 AI 中轉平台，一個 Key 即可呼叫原生 Claude、GPT、Gemini 模型，相容 Anthropic、OpenAI、Gemini 多種介面。",
       "fenno": "Fenno.ai 是穩定高效的 API 中轉服務商，可接入多種主流模型。CC Switch 使用者專屬福利：透過此連結訂閱 9.9 元 /150 刀額度的超值 Coding Plan！",
       "zetaapi": "ZetaAPI 主打模型不摻水、不降智，價格低至官方價 35 折。CC Switch 使用者專屬福利：透過此連結註冊，首次充值使用優惠碼 CC-SWITCH 即可享受九折優惠！",
-      "teamorouter": "TeamoRouter 是企業級 Agentic LLM 閘道，價格最高可達 90% 折扣。為 CC Switch 的使用者提供了特別福利：新使用者透過此連結註冊，首次充值享 10% 折扣！",
-      "unity2": "Unity2.ai 為 CC Switch 使用者提供專屬福利：透過此連結註冊可領取 $2 餘額，加入官方群再送 $10，最高可領 $12 免費額度！"
+      "teamorouter": "TeamoRouter 是企業級 Agentic LLM 閘道，價格最高可達 90% 折扣。為 CC Switch 的使用者提供了特別福利：新使用者透過此連結註冊，首次充值享 10% 折扣！"
     },
     "presets": {
       "ucloud": "優雲智算",
@@ -1122,7 +1181,8 @@
     "fetchModelsAuthFailed": "API Key 無效或無權限",
     "fetchModelsNotSupported": "該供應商不支援取得模型清單",
     "fetchModelsEndpointNotFound": "未找到可用的模型清單端點，請檢查 Base URL 或確認供應商是否開放該 API",
-    "fetchModelsTimeout": "請求逾時，請檢查網路連線"
+    "fetchModelsTimeout": "請求逾時，請檢查網路連線",
+    "requiredFields": "請填寫供應商名稱、API 位址、API Key 和模型"
   },
   "copilot": {
     "authSection": "GitHub Copilot 驗證",
@@ -1180,6 +1240,31 @@
     "copyCode": "複製程式碼",
     "fastMode": "FAST 模式",
     "fastModeDescription": "發送 service_tier=\"priority\" 換取更低延遲。預設關閉——開啟後會以更高速率消耗 ChatGPT 配額。"
+  },
+  "xaiOauth": {
+    "authStatus": "xAI OAuth 驗證",
+    "accountCount": "{{count}} 個可用帳號",
+    "reauthRequired": "需要重新登入",
+    "notAuthenticated": "尚未驗證",
+    "selectAccount": "選擇帳號",
+    "selectAccountPlaceholder": "選擇 xAI 帳號",
+    "useDefaultAccount": "使用預設帳號",
+    "accounts": "xAI 帳號",
+    "defaultAccount": "預設",
+    "expired": "憑證已失效",
+    "setAsDefault": "設為預設",
+    "removeAccount": "移除帳號",
+    "addOrReauth": "新增帳號或重新登入",
+    "login": "使用 xAI 登入",
+    "waitingForAuth": "正在等待 xAI 授權…",
+    "enterCode": "若瀏覽器未自動填入，請輸入：",
+    "retry": "重試",
+    "logoutAll": "移除所有 xAI 帳號",
+    "loginRequired": "請先登入 xAI 帳號"
+  },
+  "managedAuth": {
+    "selectedAccountNeedsReauth": "已綁定的帳號不存在或需要重新登入",
+    "selectedAccountUnavailable": "已綁定的帳號不存在或需要重新登入，請重新選擇帳號"
   },
   "endpointTest": {
     "title": "請求位址管理",
@@ -1268,7 +1353,7 @@
     "promptCacheRoutingDisabled": "關閉",
     "promptCacheRoutingHint": "自動模式僅對已確認相容的上游傳送 prompt_cache_key；開啟可用於其他相容閘道，關閉可避免嚴格閘道因未知欄位回傳 400。只使用客戶端提供的穩定工作階段 ID。",
     "defaultModelLabel": "預設模型",
-    "defaultModelPlaceholder": "例如: gpt-5.6",
+    "defaultModelPlaceholder": "例如: gpt-5.6-sol",
     "defaultModelHint": "Codex 預設請求的模型，隨時可改，無需等待軟體更新供應商範本。留空且設定了模型映射時，預設使用映射第一行。",
     "defaultModelNotInCatalog": "該模型不在模型映射中，Codex 的 /model 選單不會列出它（直接請求仍然有效）。",
     "addToModelMapping": "加入映射",
@@ -1294,7 +1379,8 @@
     "reasoningEffortHint": "上游支援 low/high/max 等思考深度控制時啟用。啟用後會自動啟用思考模式，並把 Codex 的 reasoning.effort 轉成上游 Chat 參數。",
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "預設供應商已自動設定；自訂供應商會按名稱/位址自動推斷。僅當自動識別不準時才需手動覆寫。",
-    "advancedSectionHint": "包含上游格式、模型映射、思考能力與自訂 User-Agent。使用 Chat Completions 協定的供應商需開啟路由接管才能使用。"
+    "advancedSectionHint": "包含上游格式、模型映射、思考能力與自訂 User-Agent。使用 Chat Completions 協定的供應商需開啟路由接管才能使用。",
+    "noCommonConfigToApply": "通用設定片段為空或沒有可寫入的內容"
   },
   "geminiConfig": {
     "envFile": "環境變數 (.env)",
@@ -1393,6 +1479,7 @@
     "totalRequests": "總請求數",
     "totalCost": "總成本",
     "cost": "成本",
+    "unpriced": "未定價",
     "perMillion": "(每百萬)",
     "trends": "使用趨勢",
     "rangeToday": "過去 24 小時 (按小時)",
@@ -1431,25 +1518,21 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "kimi": "Kimi Code",
+      "opencode": "OpenCode",
+      "grokbuild": "Grok Build"
     },
     "rawInputLabel": "原始",
-    "dataSources": "資料來源",
-    "dataSource": {
-      "proxy": "路由",
-      "session_log": "工作階段日誌",
-      "codex_db": "Codex 資料庫",
-      "codex_session": "Codex 工作階段日誌",
-      "gemini_session": "Gemini 工作階段日誌",
-      "opencode_session": "OpenCode 工作階段日誌"
-    },
-    "sessionSync": {
-      "trigger": "同步工作階段日誌",
-      "import": "匯入工作階段",
-      "resync": "同步",
-      "imported": "從工作階段日誌匯入了 {{count}} 筆紀錄",
-      "upToDate": "工作階段日誌已是最新",
-      "failed": "工作階段同步失敗"
+    "rebuildCodex": {
+      "title": "Codex 用量維護",
+      "description": "從本機 rollout 日誌重新建構 Codex 工作階段用量",
+      "warning": "重建前會自動備份資料庫。若來源 JSONL 已刪除，對應歷史將無法重新匯入。",
+      "action": "重建 Codex 用量",
+      "confirmTitle": "確認重建 Codex 用量",
+      "confirmMessage": "此操作會清除現有 Codex 工作階段明細與彙總，再從本機 Codex 日誌重新匯入。\n\n已刪除日誌對應的歷史將遺失；缺少父 rollout 的 fork 會暫緩匯入。",
+      "confirmAction": "備份並重建",
+      "completed": "重建完成：匯入 {{imported}} 筆，錯誤 {{errors}}，疑似重複 {{suspected}}，暫緩檔案 {{deferred}}",
+      "failed": "Codex 用量重建失敗：{{error}}"
     },
     "totalRecords": "共 {{total}} 筆紀錄",
     "goToPage": "跳轉",
@@ -1549,6 +1632,40 @@
     "modelsDevNoResults": "沒有符合的模型",
     "modelsDevTruncated": "僅顯示前 {{shown}} 條，共 {{total}} 條結果，請縮小搜尋範圍",
     "modelsDevDefaultHint": "預設展示最新發布的 {{shown}} 個模型（共 {{total}} 個），輸入關鍵字可全量搜尋",
+    "modelsDevAutoSync": {
+      "title": "自動同步 models.dev 定價",
+      "description": "開啟後，CC Switch 會在啟動時定期擷取所選模型的最新價格，並儲存到本機定價檔案。",
+      "enabled": "已開啟",
+      "disabled": "已關閉",
+      "enableConfirmTitle": "開啟自動同步定價？",
+      "enableConfirmMessage": "開啟後，CC Switch 會在啟動時定期從 models.dev 更新所選模型的價格（最多每 6 小時一次）。相同模型 ID 的軟體內建價格和手動設定價格都會被覆寫。",
+      "enableConfirmAction": "開啟自動同步",
+      "configure": "選擇模型",
+      "configureTitle": "選擇自動同步定價的模型",
+      "configureDescription": "透過搜尋和供應商篩選選擇需要自動更新的模型，選擇結果儲存在本機。",
+      "commonModels": "自動包含常用模型",
+      "commonModelsDescription": "自動選擇 {{count}} 個近期 Claude、GPT、Gemini、Grok、DeepSeek、Qwen、MiMo、LongCat、Kimi、MiniMax 和 GLM 模型。",
+      "selectFiltered": "全選篩選結果（{{count}}）",
+      "clearFiltered": "清除篩選結果",
+      "selectedCount": "已選擇 {{count}} 個模型",
+      "selectionHint": "標準化模型 ID 相同的選項只會匯入一次。",
+      "commonBadge": "常用",
+      "selectionSaved": "自動定價同步選擇已儲存",
+      "syncSuccess": "定價同步完成：檢查 {{imported}} 個模型，更新 {{changed}} 個",
+      "syncFailed": "定價同步失敗：{{error}}",
+      "configLoadFailed": "載入本機定價設定失敗：{{error}}",
+      "neverSynced": "從未同步",
+      "lastSync": "上次同步",
+      "commonStatus": "常用模型",
+      "lastError": "上次自動同步失敗：{{error}}",
+      "localFile": "本機定價檔案",
+      "openFolder": "開啟資料夾",
+      "openFolderFailed": "開啟本機定價檔案資料夾失敗：{{error}}",
+      "reloadLocalFile": "重新載入檔案",
+      "localFileReloaded": "本機定價檔案已重新載入",
+      "localFileReloadFailed": "重新載入本機定價檔案失敗：{{error}}",
+      "syncNow": "立即同步"
+    },
     "cacheReadCostPerMillion": "快取讀取成本 (每百萬 tokens, USD)",
     "cacheCreationCostPerMillion": "快取寫入成本 (每百萬 tokens, USD)"
   },
@@ -1660,7 +1777,10 @@
   "errors": {
     "usage_query_failed": "用量查詢失敗",
     "configLoadFailedTitle": "設定載入失敗",
-    "configLoadFailedMessage": "無法讀取設定檔：\n{{path}}\n\n錯誤詳情：\n{{detail}}\n\n請手動檢查 JSON 是否有效，或從同目錄的備份檔案（如 config.json.bak）還原。\n\n應用程式將退出以便您進行修復。"
+    "configLoadFailedMessage": "無法讀取設定檔：\n{{path}}\n\n錯誤詳情：\n{{detail}}\n\n請手動檢查 JSON 是否有效，或從同目錄的備份檔案（如 config.json.bak）還原。\n\n應用程式將退出以便您進行修復。",
+    "frontendCrashTitle": "介面遇到了問題",
+    "frontendCrashMessage": "已嘗試將錯誤資訊寫入應用程式診斷日誌。請重新載入介面；如果問題持續，請在提交 Issue 時附上日誌。",
+    "reloadInterface": "重新載入介面"
   },
   "presetSelector": {
     "title": "選擇設定類型",
@@ -1687,10 +1807,15 @@
       "enabledApps": "啟用的應用程式",
       "noImportFound": "未發現需要匯入的 MCP 伺服器。所有伺服器已在 CC Switch 統一管理中。",
       "importSuccess": "成功匯入 {{count}} 個 MCP 伺服器",
+      "searchPlaceholder": "搜尋 MCP 名稱、描述、標籤或命令...",
+      "searchAriaLabel": "搜尋已管理的 MCP 伺服器",
+      "noSearchResults": "未找到相符的 MCP 伺服器",
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
         "gemini": "Gemini",
+        "kimi": "Kimi Code",
+        "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes"
@@ -1844,6 +1969,9 @@
     "empty": "暫無提示詞",
     "emptyDescription": "點擊右上角按鈕新增或匯入提示詞",
     "loading": "載入中...",
+    "searchPlaceholder": "搜尋提示詞名稱、描述或內容...",
+    "searchAriaLabel": "搜尋已管理的提示詞",
+    "noSearchResults": "未找到相符的提示詞",
     "name": "名稱",
     "namePlaceholder": "例如：專案預設提示詞",
     "description": "描述",
@@ -2072,9 +2200,9 @@
       "addModel": "新增模型",
       "noModels": "暫無模型設定。切換至此供應商時將不會更新預設模型。",
       "modelId": "模型 ID",
-      "modelIdPlaceholder": "anthropic/claude-opus-4-8",
+      "modelIdPlaceholder": "anthropic/claude-opus-5",
       "modelName": "顯示名稱",
-      "modelNamePlaceholder": "Claude Opus 4.8",
+      "modelNamePlaceholder": "Claude Opus 5",
       "contextLength": "上下文長度",
       "advancedOptions": "進階選項",
       "modelsHint": "切換至此供應商時，第一個模型會寫入頂層 model.default。",
@@ -2195,6 +2323,9 @@
       "skillDirNotFound": "技能目錄不存在：{{path}}",
       "directoryConflict": "技能目錄 '{{directory}}' 已被 {{existing_repo}} 佔用，無法從 {{new_repo}} 安裝",
       "emptyArchive": "下載的壓縮檔為空",
+      "invalidRepoRef": "倉庫位址不合法：{{owner}}/{{name}}",
+      "archiveTooLarge": "壓縮檔解壓後超過 {{limit_mb}} MB 上限，已中止",
+      "archiveTooManyEntries": "壓縮檔項目過多（{{count}}），上限 {{limit}}",
       "downloadFailed": "下載失敗：HTTP {{status}}",
       "allBranchesFailed": "所有分支下載失敗，嘗試了：{{branches}}",
       "httpError": "HTTP 錯誤 {{status}}",
@@ -2239,6 +2370,9 @@
     },
     "search": "搜尋技能",
     "searchPlaceholder": "搜尋技能名稱或儲存庫名稱...",
+    "installedSearchPlaceholder": "搜尋已安裝技能的名稱、描述或儲存庫...",
+    "installedSearchAriaLabel": "搜尋已安裝技能",
+    "noInstalledSearchResults": "未找到相符的已安裝技能",
     "searchSource": {
       "repos": "儲存庫",
       "skillssh": "skills.sh"
@@ -2300,6 +2434,7 @@
       "claude": "Claude",
       "codex": "Codex",
       "gemini": "Gemini",
+      "kimi": "Kimi Code",
       "opencode": "OpenCode",
       "openclaw": "OpenClaw"
     },
@@ -2358,7 +2493,11 @@
       "title": "批次匯入 MCP Servers",
       "targetApps": "目標應用程式",
       "serverCount": "MCP Servers ({{count}} 個)",
-      "enabledWarning": "匯入後將立即寫入所有指定應用程式的設定檔"
+      "enabledWarning": "匯入後將立即寫入所有指定應用程式的設定檔",
+      "command": "命令",
+      "args": "參數",
+      "env": "環境",
+      "url": "位址"
     },
     "prompt": {
       "title": "匯入系統提示詞",
@@ -2380,10 +2519,19 @@
     "usageScript": "用量查詢",
     "usageScriptEnabled": "已啟用",
     "usageScriptDisabled": "未啟用",
+    "usageScriptCode": "指令碼程式碼",
+    "usageScriptWarning": "這是一段 JavaScript 程式碼，啟用後會在查詢用量時執行。請確認來源可信後再匯入。",
     "usageApiKey": "用量 API Key",
     "usageBaseUrl": "用量查詢位址",
+    "usageAccessToken": "用量存取權杖",
+    "usageUserId": "用量使用者 ID",
     "usageAutoInterval": "自動查詢",
-    "usageAutoIntervalValue": "每 {{minutes}} 分鐘"
+    "usageAutoIntervalValue": "每 {{minutes}} 分鐘",
+    "risk": {
+      "envHijack": "該設定包含可改變處理程序載入行為的環境變數（例如注入動態程式庫、替換 CA 憑證），請確認來源可信。",
+      "privateEndpoint": "該位址指向本機或內部網路。若非你自建的本機服務，請勿匯入。",
+      "shellCommand": "該設定透過 shell 執行整段命令，實際執行的內容在參數裡，請逐行核對。"
+    }
   },
   "iconPicker": {
     "search": "搜尋圖示",
@@ -2402,8 +2550,7 @@
     "selectIcon": "選擇圖示",
     "preview": "預覽",
     "clickToChange": "點擊更換圖示",
-    "clickToSelect": "點擊選擇圖示",
-    "color": "圖示顏色"
+    "clickToSelect": "點擊選擇圖示"
   },
   "migration": {
     "success": "設定遷移成功",
@@ -2432,7 +2579,8 @@
     },
     "tooltip": {
       "enabled": "{{app}} 故障轉移已啟用\n按佇列優先順序（P1→P2→...）選擇供應商",
-      "disabled": "啟用 {{app}} 故障轉移\n將立即切換至佇列 P1，並在失敗時自動切換至下一個"
+      "disabled": "啟用 {{app}} 故障轉移\n將立即切換至佇列 P1，並在失敗時自動切換至下一個",
+      "takeoverRequired": "請先接管 {{app}}，再啟用故障轉移"
     }
   },
   "proxy": {
@@ -2491,8 +2639,8 @@
           "description": "單個請求的最大等待時間（0 表示不限制，或設定 10 ~ 600 秒）"
         },
         "enableLogging": {
-          "label": "啟用日誌紀錄",
-          "description": "紀錄所有路由請求，便於排查問題"
+          "label": "記錄請求用量",
+          "description": "將路由請求的用量與狀態寫入本機統計資料庫"
         },
         "streamingFirstByteTimeout": {
           "label": "串流首位元組逾時（秒）",
@@ -2610,7 +2758,9 @@
     },
     "server": {
       "started": "路由服務已啟動 - {{address}}:{{port}}",
-      "startFailed": "啟動路由服務失敗：{{detail}}"
+      "startFailed": "啟動路由服務失敗：{{detail}}",
+      "stopped": "路由服務已停止",
+      "stopFailed": "停止路由服務失敗：{{detail}}"
     },
     "stoppedWithRestore": "路由服務已關閉，已還原所有路由設定",
     "stopWithRestoreFailed": "停止失敗：{{detail}}"
@@ -2644,33 +2794,6 @@
     "streamingFirstByte": "串流首位元組逾時",
     "streamingIdle": "串流閒置逾時",
     "nonStreaming": "非串流逾時"
-  },
-  "circuitBreaker": {
-    "failureThreshold": "失敗閾值",
-    "successThreshold": "成功閾值",
-    "timeoutSeconds": "逾時時間（秒）",
-    "errorRateThreshold": "錯誤率閾值 (%)",
-    "minRequests": "最小請求數",
-    "validationFailed": "以下欄位超出有效範圍：{{fields}}",
-    "configSaved": "斷路器設定已儲存",
-    "saveFailed": "儲存失敗",
-    "loading": "載入中...",
-    "title": "斷路器設定",
-    "description": "調整斷路器參數以控制故障檢測和恢復行為",
-    "failureThresholdHint": "連續失敗多少次後打開斷路器",
-    "timeoutSecondsHint": "斷路器打開後多久嘗試恢復（半開狀態）",
-    "successThresholdHint": "半開狀態下成功多少次後關閉斷路器",
-    "errorRateThresholdHint": "錯誤率超過此值時打開斷路器",
-    "minRequestsHint": "計算錯誤率前的最小請求數",
-    "saveConfig": "儲存設定",
-    "instructionsTitle": "設定說明",
-    "instructions": {
-      "failureThreshold": "連續失敗達到此次數時，斷路器打開",
-      "timeout": "斷路器打開後，等待此時間後嘗試半開",
-      "successThreshold": "半開狀態下，成功達到此次數時關閉斷路器",
-      "errorRate": "錯誤率超過此值時，斷路器打開",
-      "minRequests": "只有請求數達到此值後才計算錯誤率"
-    }
   },
   "universalProvider": {
     "duplicate": "複製",
@@ -2772,6 +2895,7 @@
     "noEnabledModelsWarning": "目前沒有可用的已設定模型，請先設定 OpenCode 模型",
     "modelSourcePartialWarning": "部分供應商模型設定無效，已自動跳過。",
     "modelSourceFallbackWarning": "讀取 live 供應商狀態失敗，已回退至已設定供應商清單。",
+    "runtimeModelsFailedWarning": "讀取 OpenCode 執行時模型失敗，已僅顯示已設定供應商模型。",
     "importLocalReplaceSuccess": "已從本地檔案匯入並覆寫 Agent/Category/Other Fields",
     "importLocalFailed": "讀取本地檔案失敗：{{error}}",
     "agentKeyPlaceholder": "agent 鍵名",
@@ -2852,13 +2976,13 @@
       "writing": "寫作"
     },
     "categoryTooltip": {
-      "visualEngineering": "前端與視覺工程類別，專注於 UI/UX 設計、樣式、動畫和介面實作，預設使用 Gemini 3.5 Flash 模型。",
+      "visualEngineering": "前端與視覺工程類別，專注於 UI/UX 設計、樣式、動畫和介面實作，預設使用 Gemini 3.6 Flash 模型。",
       "ultrabrain": "深度邏輯推理類別，用於需要廣泛分析的複雜架構決策，預設使用 GPT-5.3 Codex 的超高推理變體。",
       "deep": "深度自主問題解決類別，目標導向執行，行動前進行徹底研究，適用於需要深度理解的棘手問題。",
-      "artistry": "高度創意與藝術性任務類別，激發新穎想法和創造性解決方案，預設使用 Gemini 3.5 Flash 的高推理變體。",
+      "artistry": "高度創意與藝術性任務類別，激發新穎想法和創造性解決方案，預設使用 Gemini 3.6 Flash 的高推理變體。",
       "quick": "輕量任務類別，用於單檔案修改、錯別字修復、簡單調整等瑣碎工作，預設使用 Claude Haiku 4.5 快速模型。",
       "unspecifiedLow": "未分類低工作量任務類別，適用於不適合其他類別且工作量較小的任務，預設使用 Claude Sonnet 4.5。",
-      "unspecifiedHigh": "未分類高工作量任務類別，適用於不適合其他類別且工作量較大的任務，預設使用 Claude Opus 4.8 的最大變體。",
+      "unspecifiedHigh": "未分類高工作量任務類別，適用於不適合其他類別且工作量較大的任務，預設使用 Claude Opus 5 的最大變體。",
       "writing": "寫作類別，專注於文件、散文和技術寫作，預設使用 Kimi K2.5 模型。"
     },
     "slimAgentDesc": {
@@ -2921,6 +3045,7 @@
     "geminiFlashLite": "Flash Lite",
     "weeklyLimit": "每週",
     "monthly": "每月",
+    "credits": "額度",
     "copilotPremium": "進階請求",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}} 後重設",

@@ -11,6 +11,7 @@ type AppDirectoryKey =
   | "codex"
   | "gemini"
   | "kimi"
+  | "grokbuild"
   | "opencode"
   | "openclaw"
   | "hermes";
@@ -22,6 +23,7 @@ export interface ResolvedDirectories {
   codex: string;
   gemini: string;
   kimi: string;
+  grokbuild: string;
   opencode: string;
   openclaw: string;
   hermes: string;
@@ -36,6 +38,7 @@ const APP_DIRECTORY_META: Record<
   codex: { key: "codex", defaultFolder: ".codex" },
   gemini: { key: "gemini", defaultFolder: ".gemini" },
   kimi: { key: "kimi", defaultFolder: ".kimi-code" },
+  grokbuild: { key: "grokbuild", defaultFolder: ".grok" },
   opencode: { key: "opencode", defaultFolder: ".config/opencode" },
   openclaw: { key: "openclaw", defaultFolder: ".openclaw" },
   hermes: { key: "hermes", defaultFolder: ".hermes" },
@@ -49,6 +52,7 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
   codex: "codexConfigDir",
   gemini: "geminiConfigDir",
   kimi: "kimiConfigDir",
+  grokbuild: "grokConfigDir",
   opencode: "opencodeConfigDir",
   openclaw: "openclawConfigDir",
   hermes: "hermesConfigDir",
@@ -135,6 +139,7 @@ export function useDirectorySettings({
     codex: "",
     gemini: "",
     kimi: "",
+    grokbuild: "",
     opencode: "",
     openclaw: "",
     hermes: "",
@@ -147,6 +152,7 @@ export function useDirectorySettings({
     codex: "",
     gemini: "",
     kimi: "",
+    grokbuild: "",
     opencode: "",
     openclaw: "",
     hermes: "",
@@ -166,6 +172,7 @@ export function useDirectorySettings({
           codexDir,
           geminiDir,
           kimiDir,
+          grokDir,
           opencodeDir,
           openclawDir,
           hermesDir,
@@ -174,6 +181,7 @@ export function useDirectorySettings({
           defaultCodexDir,
           defaultGeminiDir,
           defaultKimiDir,
+          defaultGrokDir,
           defaultOpencodeDir,
           defaultOpenclawDir,
           defaultHermesDir,
@@ -183,6 +191,7 @@ export function useDirectorySettings({
           settingsApi.getConfigDir("codex"),
           settingsApi.getConfigDir("gemini"),
           settingsApi.getConfigDir("kimi"),
+          settingsApi.getConfigDir("grokbuild"),
           settingsApi.getConfigDir("opencode"),
           settingsApi.getConfigDir("openclaw"),
           settingsApi.getConfigDir("hermes"),
@@ -191,6 +200,7 @@ export function useDirectorySettings({
           computeDefaultConfigDir("codex"),
           computeDefaultConfigDir("gemini"),
           computeDefaultConfigDir("kimi"),
+          computeDefaultConfigDir("grokbuild"),
           computeDefaultConfigDir("opencode"),
           computeDefaultConfigDir("openclaw"),
           computeDefaultConfigDir("hermes"),
@@ -206,6 +216,7 @@ export function useDirectorySettings({
           codex: defaultCodexDir ?? "",
           gemini: defaultGeminiDir ?? "",
           kimi: defaultKimiDir ?? "",
+          grokbuild: defaultGrokDir ?? "",
           opencode: defaultOpencodeDir ?? "",
           openclaw: defaultOpenclawDir ?? "",
           hermes: defaultHermesDir ?? "",
@@ -220,6 +231,7 @@ export function useDirectorySettings({
           codex: codexDir || defaultsRef.current.codex,
           gemini: geminiDir || defaultsRef.current.gemini,
           kimi: kimiDir || defaultsRef.current.kimi,
+          grokbuild: grokDir || defaultsRef.current.grokbuild,
           opencode: opencodeDir || defaultsRef.current.opencode,
           openclaw: openclawDir || defaultsRef.current.openclaw,
           hermes: hermesDir || defaultsRef.current.hermes,
@@ -362,6 +374,7 @@ export function useDirectorySettings({
         codex: overrides?.codex ?? defaultsRef.current.codex,
         gemini: overrides?.gemini ?? defaultsRef.current.gemini,
         kimi: overrides?.kimi ?? defaultsRef.current.kimi,
+        grokbuild: overrides?.grokbuild ?? defaultsRef.current.grokbuild,
         opencode: overrides?.opencode ?? defaultsRef.current.opencode,
         openclaw: overrides?.openclaw ?? defaultsRef.current.openclaw,
         hermes: overrides?.hermes ?? defaultsRef.current.hermes,
