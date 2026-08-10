@@ -837,7 +837,8 @@
     "toolUninstallConfirmMultipleHint": "複数のインストールが検出されました。コマンドラインが既定で使用する箇所のみ削除され、残りは保持されます。",
     "toolUninstallConfirmBtn": "アンインストールを確認",
     "toolUninstallWillRun": "実行内容：",
-    "toolUninstallNotSupportedHint": "{{tool}} は cc-switch で自動アンインストールできません。手動で削除してください（インストールディレクトリの削除など）。",
+    "toolUninstallNotSupportedHint": "{{tool}} は cc-switch で自動アンインストールできません。公式のアンインストール手順に従ってください。",
+    "toolUninstallVerifyFailed": "アンインストールコマンドは終了しましたが、ツールが削除されたことを確認できませんでした。",
     "toolUninstallIncompleteTitle": "アンインストール後もツールが検出されます",
     "toolUninstallIncompleteHint": "複数のインストールが存在する可能性があり、既定の箇所のみ削除されました。「インストールの診断」を実行して残りのインストールを確認してください。",
     "envBadge": {

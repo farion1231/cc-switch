@@ -612,11 +612,16 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           );
           const tool = refreshed.find((t) => t.name === toolName);
           if (action === "uninstall") {
-            // Uninstall semantics flip vs install/update: a missing version after the
-            // command means success (it's gone); a version still present means the
-            // uninstall only removed one of several installs (the default), so surface a
-            // soft warning and re-diagnose to reveal the remaining installs.
-            if (tool?.version) {
+            // A missing result means refresh failed. A result with no version and no
+            // broken-install marker confirms removal; anything still detected gets a
+            // soft warning and a fresh install diagnosis.
+            if (!tool) {
+              failures.push({
+                toolName,
+                detail: t("settings.toolUninstallVerifyFailed"),
+                soft: false,
+              });
+            } else if (tool.version || tool.installed_but_broken) {
               failures.push({
                 toolName,
                 detail: t("settings.toolUninstallIncompleteHint"),

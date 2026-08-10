@@ -320,7 +320,7 @@ export interface ToolInstallationReport {
   command: string;
   anchored: boolean;
   /** Anchored/static uninstall command (display only; regenerated on execution).
-   * Empty when the install method is not auto-uninstallable (hermes, grok native). */
+   * Empty when the install method is not auto-uninstallable (e.g. grok native). */
   uninstall_command: string;
   /** Whether the current install can be auto-uninstalled via cc-switch. When false,
    * `uninstall_command` is empty and the UI should prompt manual removal. */

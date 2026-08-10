@@ -2513,18 +2513,14 @@ fn is_grok_native_install(bin_path: &str, real_target: &str) -> bool {
     })
 }
 
-/// 含空格才用 POSIX 单引号包一层,否则保持裸路径——命令展示更干净。
-/// claude / brew / volta / bun / npm 五个锚定分支共用,避免"含空格"判定漂移。
-///
-/// **仅按空格判定,不防其他 shell 元字符**(`$` / `` ` `` / `'` / `"` / `;` 等)。
-/// 调用方传入的是探测得到的可执行路径(`enumerate_tool_installations` 里来源于
-/// `Path::display()`),实际 macOS/Linux 上 home dir 名几乎不允许这类字符、
-/// npm/brew/volta/bun 也不会装到含这类字符的路径,与 diff 前内联在 npm 分支里的
-/// `if npm.contains(' ')` 实现等价。若未来要扩广,改成 `shell_single_quote` 无条件
-/// 包裹即可,但会失去"无空格时的清洁展示"。
+/// 普通绝对路径保持裸写；出现空白、shell 元字符或非 ASCII 字符时，用 POSIX
+/// 单引号完整包裹，避免路径字符被 `bash -c` 解释成 shell 语法。
 #[cfg(not(target_os = "windows"))]
 fn quote_path_if_spaced(p: &str) -> String {
-    if p.contains(' ') {
+    let needs_quote = p
+        .chars()
+        .any(|c| !(c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-' | '.')));
+    if needs_quote {
         shell_single_quote(p)
     } else {
         p.to_string()
@@ -3527,6 +3523,11 @@ fn uninstall_plan(tool: &str, installs: &[ToolInstallation]) -> (String, bool) {
     if let Some(cmd) = anchored_uninstall_command(tool, installs) {
         return (cmd, true);
     }
+    // OpenClaw service cleanup must not be paired with a bare npm that may own a
+    // different prefix. Without a canonical owner, require manual removal.
+    if tool == "openclaw" {
+        return (String::new(), false);
+    }
     let static_cmd = static_uninstall_command_for(tool);
     if !static_cmd.is_empty() {
         return (static_cmd, true);
@@ -3596,6 +3597,10 @@ fn anchored_uninstall_command_from_paths(
     if tool == "hermes" {
         return anchored_official_uninstall_command(tool, bin_path);
     }
+    if tool == "openclaw" {
+        let remove_command = openclaw_package_remove_command(real_target)?;
+        return Some(wrap_openclaw_service_uninstall(bin_path, remove_command));
+    }
     // ② claude native: official CLI uninstall, no package-manager fallback (npm uninstall
     //    would target a different npm copy and leave the native install).
     if tool == "claude"
@@ -3635,6 +3640,9 @@ fn anchored_uninstall_command_from_paths(
     bin_path: &str,
     _real_target: &str,
 ) -> Option<String> {
+    if tool == "openclaw" {
+        return None;
+    }
     // ① hermes: official CLI uninstall, no package-manager fallback.
     if tool == "hermes" {
         return anchored_official_uninstall_command(tool, bin_path);
@@ -3657,6 +3665,70 @@ fn anchored_uninstall_command_from_paths(
     }
     // ③ package-manager uninstall for the rest (grok, gemini, opencode, openclaw).
     package_command
+}
+
+#[cfg(not(target_os = "windows"))]
+fn wrap_openclaw_service_uninstall(bin_path: &str, remove_command: String) -> String {
+    format!(
+        "{} uninstall --service --yes --non-interactive && {remove_command}",
+        quote_path_if_spaced(bin_path)
+    )
+}
+
+#[cfg(not(target_os = "windows"))]
+fn openclaw_package_remove_command(real_target: &str) -> Option<String> {
+    let lower = real_target.to_ascii_lowercase();
+
+    let (owner_entry, manager) = if let Some(cellar) = lower.find("/cellar/") {
+        if brew_formula_from_path(real_target)?.as_str() != "openclaw" {
+            return None;
+        }
+        (
+            Path::new(&real_target[..cellar]).join("bin/openclaw"),
+            "brew",
+        )
+    } else if let Some(tools) = lower.find("/.volta/tools/image/packages/openclaw/") {
+        let volta_home = &real_target[..tools + "/.volta".len()];
+        (Path::new(volta_home).join("bin/openclaw"), "volta")
+    } else if let Some(install) = lower.find("/.bun/install/global/node_modules/openclaw/") {
+        let bun_home = &real_target[..install + "/.bun".len()];
+        (Path::new(bun_home).join("bin/openclaw"), "bun")
+    } else if let Some(global) = lower.rfind("/global/") {
+        let pnpm_home = &real_target[..global];
+        if lower[..global].ends_with("/pnpm") && lower[global..].contains("/node_modules/openclaw/")
+        {
+            (Path::new(pnpm_home).join("openclaw"), "pnpm")
+        } else {
+            return None;
+        }
+    } else if lower.ends_with("/.volta/bin/openclaw") || lower.ends_with("/volta/bin/openclaw") {
+        (Path::new(real_target).to_path_buf(), "volta")
+    } else if lower.ends_with("/pnpm/openclaw") {
+        (Path::new(real_target).to_path_buf(), "pnpm")
+    } else {
+        let marker = "/lib/node_modules/openclaw/";
+        let prefix = &real_target[..lower.rfind(marker)?];
+        let owner_entry = Path::new(prefix).join("bin/openclaw");
+        if prefix.is_empty() || !owner_entry.with_file_name("npm").is_file() {
+            return None;
+        }
+        return anchored_npm_command(
+            &owner_entry.to_string_lossy(),
+            &format!(
+                "uninstall -g openclaw --prefix {}",
+                shell_single_quote(prefix)
+            ),
+        );
+    };
+
+    if !owner_entry.with_file_name(manager).is_file() {
+        return None;
+    }
+    package_manager_anchored_uninstall_command_from_paths(
+        "openclaw",
+        &owner_entry.to_string_lossy(),
+        real_target,
+    )
 }
 
 /// POSIX package-manager uninstall command: symmetric with
@@ -3687,6 +3759,10 @@ fn package_manager_anchored_uninstall_command_from_paths(
         "bun" => {
             let bun = sibling_bin(bin_path, "bun")?;
             Some(format!("{} remove -g {pkg}", quote_path_if_spaced(&bun)))
+        }
+        "pnpm" => {
+            let pnpm = sibling_bin(bin_path, "pnpm")?;
+            Some(format!("{} remove -g {pkg}", quote_path_if_spaced(&pnpm)))
         }
         // Node managers that ship a sibling npm: anchor to that npm's uninstall.
         "nvm" | "fnm" | "mise" | "homebrew" => {
@@ -3798,9 +3874,8 @@ fn install_command_for(tool: &str) -> String {
 /// Static (non-anchored) uninstall command for WSL tools. Same rationale as
 /// `posix_install_command_for`: across the `wsl.exe` boundary, Windows-host absolute
 /// paths are invalid, so WSL does not anchor and uses a bare POSIX command. Only
-/// npm-package tools get `npm uninstall -g <pkg>`; hermes has no npm package -> empty
-/// string -> `wsl_tool_action_shell_command` returns None -> the caller reports "not
-/// auto-uninstallable".
+/// npm-package tools get `npm uninstall -g <pkg>`; Hermes uses its official CLI.
+/// OpenClaw is refused because WSL cannot prove which package manager owns its PATH entry.
 ///
 /// `#[cfg(target_os = "windows")]` mirrors the only call site
 /// (`wsl_tool_action_shell_command`, Windows-only): unlike `posix_install_command_for`
@@ -3808,7 +3883,11 @@ fn install_command_for(tool: &str) -> String {
 /// Linux/macOS and fails `cargo build` there (CI runs `cargo test` on ubuntu + macos).
 #[cfg(target_os = "windows")]
 fn posix_uninstall_command_for(tool: &str) -> String {
-    static_uninstall_command_for(tool)
+    match tool {
+        "hermes" => "hermes uninstall --yes".to_string(),
+        "openclaw" => String::new(),
+        _ => static_uninstall_command_for(tool),
+    }
 }
 
 /// 计算某工具的升级命令与"是否需确认"。全平台共用一份:
@@ -3870,7 +3949,7 @@ pub struct ToolInstallationReport {
     /// 命中哪处，或该处无同级 npm）；前端据此给出"默认入口无法确定"的诚实文案。
     anchored: bool,
     /// Anchored/static uninstall command (display only; regenerated on execution). Empty
-    /// for "not auto-uninstallable" install methods like hermes and grok native. The
+    /// for install methods whose package-manager owner cannot be proven. The
     /// frontend uses this to show the command in the uninstall confirm dialog or switch
     /// to manual-removal guidance.
     uninstall_command: String,
@@ -5668,6 +5747,15 @@ mod tests {
             let expected = format!("{} uninstall --yes", expect_quoted_path(&bin_path));
             assert_eq!(cmd.as_deref(), Some(expected.as_str()));
         }
+
+        #[test]
+        fn openclaw_windows_requires_manual_owner_resolution() {
+            let (_dir, _sub, bin_path) = setup_sibling("pnpm", "openclaw.cmd", &["pnpm.cmd"]);
+            assert_eq!(
+                anchored_uninstall_command_from_paths("openclaw", &bin_path, &bin_path),
+                None
+            );
+        }
     }
 
     /// Windows-only helpers 单测——在 macOS/Linux 上整块通过 cfg 排除,不参与 `cargo test`。
@@ -5827,6 +5915,17 @@ mod tests {
             assert!(
                 !install_cmd.contains('|') && install_cmd.contains(" -o $tmp && bash $tmp"),
                 "WSL hermes 安装不应依赖 pipefail,得到: {install_cmd}"
+            );
+
+            let uninstall_cmd =
+                wsl_tool_action_shell_command("hermes", ToolLifecycleAction::Uninstall).unwrap();
+            assert_eq!(uninstall_cmd, "hermes uninstall --yes");
+        }
+
+        #[test]
+        fn wsl_openclaw_uninstall_requires_manual_owner_resolution() {
+            assert!(
+                wsl_tool_action_shell_command("openclaw", ToolLifecycleAction::Uninstall).is_none()
             );
         }
 
@@ -6677,6 +6776,19 @@ mod tests {
         }
 
         #[test]
+        fn hermes_uninstall_quotes_shell_metacharacters() {
+            assert_eq!(
+                anchored_uninstall_command_from_paths(
+                    "hermes",
+                    "/opt/O'Brien/bin/hermes",
+                    "/opt/O'Brien/bin/hermes"
+                )
+                .as_deref(),
+                Some("'/opt/O'\"'\"'Brien/bin/hermes' uninstall --yes")
+            );
+        }
+
+        #[test]
         fn gemini_homebrew_formula_uses_brew_uninstall() {
             let cmd = anchored_uninstall_command_from_paths(
                 "gemini",
@@ -6746,6 +6858,28 @@ mod tests {
         }
 
         #[test]
+        fn openclaw_manager_shims_use_their_canonical_owner() {
+            for (entry, manager, args) in [
+                ("pnpm/openclaw", "pnpm/pnpm", "remove -g openclaw"),
+                (
+                    ".volta/bin/openclaw",
+                    ".volta/bin/volta",
+                    "uninstall openclaw",
+                ),
+            ] {
+                let dir = tempfile::tempdir().unwrap();
+                let entry = dir.path().join(entry);
+                let manager = dir.path().join(manager);
+                std::fs::create_dir_all(manager.parent().unwrap()).unwrap();
+                std::fs::write(&manager, "").unwrap();
+                assert_eq!(
+                    openclaw_package_remove_command(&entry.to_string_lossy()),
+                    Some(format!("{} {args}", manager.display()))
+                );
+            }
+        }
+
+        #[test]
         fn opencode_native_install_not_anchored() {
             // ~/.opencode/bin has no sibling npm and opencode has no confirmed uninstall
             // subcommand -> anchor is None; `uninstall_plan` then falls back to the static
@@ -6780,6 +6914,11 @@ mod tests {
         }
 
         #[test]
+        fn uninstall_plan_hermes_without_anchor_is_not_supported() {
+            assert_eq!(uninstall_plan("hermes", &[]), (String::new(), false));
+        }
+
+        #[test]
         fn uninstall_plan_grok_native_uses_static_npm() {
             // grok native (~/.grok/bin) anchors to None (no sibling npm) and grok is not in
             // tool_prefers_official_uninstall, so the plan falls back to the static
@@ -6809,6 +6948,51 @@ mod tests {
             let installs = vec![inst("/usr/local/bin/hermes", true)];
             let cmd = uninstall_command_for("hermes", &installs).expect("hermes uninstallable");
             assert_eq!(cmd, "/usr/local/bin/hermes uninstall --yes");
+        }
+
+        #[test]
+        fn openclaw_unowned_wrappers_are_not_supported() {
+            for path in [
+                "/Users/me/.local/bin/openclaw",
+                "/Users/me/.openclaw/bin/openclaw",
+                "/opt/pnpm/custom/bin/openclaw",
+            ] {
+                let (command, supported) = uninstall_plan("openclaw", &[inst(path, true)]);
+                assert!(!supported && command.is_empty(), "{path}");
+            }
+        }
+
+        #[test]
+        fn openclaw_npm_requires_real_targets_owner() {
+            let dir = tempfile::tempdir().unwrap();
+            let path_bin = dir.path().join("homebrew/bin");
+            let owner = dir.path().join("owner-prefix");
+            let owner_bin = owner.join("bin");
+            std::fs::create_dir_all(&path_bin).unwrap();
+            std::fs::create_dir_all(&owner_bin).unwrap();
+            let openclaw = path_bin.join("openclaw");
+            let owner_npm = owner_bin.join("npm");
+            let mut installs = vec![inst(&openclaw.to_string_lossy(), true)];
+            installs[0].real = owner.join("lib/node_modules/openclaw/openclaw.mjs");
+            assert_eq!(
+                uninstall_plan("openclaw", &installs),
+                (String::new(), false)
+            );
+
+            std::fs::write(&owner_npm, "").unwrap();
+            let (cmd, supported) = uninstall_plan("openclaw", &installs);
+            assert!(supported);
+            assert_eq!(
+                cmd,
+                format!(
+                    "{} uninstall --service --yes --non-interactive && PATH='{}':\"$PATH\" {} uninstall -g openclaw --prefix '{}'",
+                    openclaw.display(),
+                    owner_bin.display(),
+                    owner_npm.display(),
+                    owner.display()
+                )
+            );
+            assert!(!cmd.contains(path_bin.join("npm").to_string_lossy().as_ref()));
         }
     }
 

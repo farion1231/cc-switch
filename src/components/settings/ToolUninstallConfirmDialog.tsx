@@ -28,7 +28,7 @@ interface ToolUninstallConfirmDialogProps {
  * - `plan` null (probe failed): generic "uninstall {tool}?" confirm, no command preview.
  * - `plan.uninstall_supported`: show the anchored uninstall command + a confirm button.
  *   When ≥2 installs exist, warn that only the command-line default install is removed.
- * - `!plan.uninstall_supported` (hermes / grok native): show manual-removal guidance and
+ * - `!plan.uninstall_supported` (for example grok native): show manual-removal guidance and
  *   only a Close button — no auto-uninstall is executed.
  */
 export function ToolUninstallConfirmDialog({

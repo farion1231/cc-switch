@@ -42,6 +42,7 @@ const requiredKeys = [
   "toolUninstallConfirmBtn",
   "toolUninstallWillRun",
   "toolUninstallNotSupportedHint",
+  "toolUninstallVerifyFailed",
   "toolUninstallIncompleteTitle",
   "toolUninstallIncompleteHint",
 ] as const;
