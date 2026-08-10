@@ -39,7 +39,10 @@
     "deleting": "Deleting...",
     "auto": "Auto",
     "enabled": "Enabled",
-    "notSet": "Not Set"
+    "notSet": "Not Set",
+    "enableAllForApp": "Enable all for {{app}}",
+    "disableAllForApp": "Disable all for {{app}}",
+    "bulkToggleFailed": "Failed to update {{count}} item(s)"
   },
   "firstRunNotice": {
     "title": "Welcome to CC Switch",
@@ -1807,7 +1810,10 @@
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
         "pi": "Pi"
-      }
+      },
+      "searchPlaceholder": "Search MCP name, description, tag, or command...",
+      "searchAriaLabel": "Search managed MCP servers",
+      "noSearchResults": "No MCP servers match your search"
     },
     "userLevelPath": "User-level MCP path",
     "serverList": "Servers",
@@ -1977,7 +1983,10 @@
     "confirm": {
       "deleteTitle": "Confirm Delete",
       "deleteMessage": "Are you sure you want to delete prompt \"{{name}}\"?"
-    }
+    },
+    "searchPlaceholder": "Search prompt name, description, or content...",
+    "searchAriaLabel": "Search managed prompts",
+    "noSearchResults": "No prompts match your search"
   },
   "profiles": {
     "switcherTooltip": {
@@ -2457,7 +2466,10 @@
       "successSingle": "Skill {{name}} installed",
       "successMultiple": "Successfully installed {{count}} skills",
       "noSkillsFound": "No skills found in ZIP file (requires SKILL.md file)"
-    }
+    },
+    "installedSearchPlaceholder": "Search installed skill name, description, or repo...",
+    "installedSearchAriaLabel": "Search installed skills",
+    "noInstalledSearchResults": "No installed skills match your search"
   },
   "deeplink": {
     "confirmImport": "Confirm Import Provider",

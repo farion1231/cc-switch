@@ -39,7 +39,10 @@
     "deleting": "删除中...",
     "auto": "自动",
     "enabled": "已开启",
-    "notSet": "未设置"
+    "notSet": "未设置",
+    "enableAllForApp": "为 {{app}} 全部启用",
+    "disableAllForApp": "为 {{app}} 全部停用",
+    "bulkToggleFailed": "有 {{count}} 项更新失败"
   },
   "firstRunNotice": {
     "title": "欢迎使用 CC Switch",
@@ -1807,7 +1810,10 @@
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
         "pi": "Pi"
-      }
+      },
+      "searchPlaceholder": "搜索 MCP 名称、描述、标签或命令...",
+      "searchAriaLabel": "搜索已管理的 MCP 服务器",
+      "noSearchResults": "未找到匹配的 MCP 服务器"
     },
     "userLevelPath": "用户级 MCP 配置路径",
     "serverList": "服务器列表",
@@ -1977,7 +1983,10 @@
     "confirm": {
       "deleteTitle": "确认删除",
       "deleteMessage": "确定要删除提示词 \"{{name}}\" 吗？"
-    }
+    },
+    "searchPlaceholder": "搜索提示词名称、描述或内容...",
+    "searchAriaLabel": "搜索已管理的提示词",
+    "noSearchResults": "未找到匹配的提示词"
   },
   "profiles": {
     "switcherTooltip": {
@@ -2457,7 +2466,10 @@
       "successSingle": "技能 {{name}} 已安装",
       "successMultiple": "成功安装 {{count}} 个技能",
       "noSkillsFound": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）"
-    }
+    },
+    "installedSearchPlaceholder": "搜索已安装技能的名称、描述或仓库...",
+    "installedSearchAriaLabel": "搜索已安装技能",
+    "noInstalledSearchResults": "未找到匹配的已安装技能"
   },
   "deeplink": {
     "confirmImport": "确认导入供应商配置",
