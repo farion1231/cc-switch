@@ -92,8 +92,11 @@ export function UniversalProviderFormModal({
       );
       setSelectedPreset(preset || null);
     } else {
-      // 新建模式：使用传入的预设或默认选择第一个预设
-      const defaultPreset = initialPreset || universalProviderPresets[0];
+      // 新建模式：使用传入的预设或默认选择第一个可见预设
+      const defaultPreset =
+        initialPreset ||
+        universalProviderPresets.find((p) => !p.hidden) ||
+        universalProviderPresets[0];
       setSelectedPreset(defaultPreset);
       setName(defaultPreset.name);
       setBaseUrl(
@@ -210,7 +213,7 @@ requires_openai_auth = true`;
       return;
     }
 
-    // CC Switch 代理强制走本地代理地址
+    // 聚合代理强制走本地代理地址
     const effectiveBaseUrl = isCcSwitch
       ? "http://127.0.0.1:15721"
       : baseUrl.trim();
@@ -278,7 +281,7 @@ requires_openai_auth = true`;
       return null;
     }
 
-    // CC Switch 代理强制走本地代理地址
+    // 聚合代理强制走本地代理地址
     const effectiveBaseUrl = isCcSwitch
       ? "http://127.0.0.1:15721"
       : baseUrl.trim();
@@ -414,25 +417,27 @@ requires_openai_auth = true`;
               })}
             </Label>
             <div className="flex flex-wrap gap-2">
-              {universalProviderPresets.map((preset) => (
-                <button
-                  key={preset.providerType}
-                  type="button"
-                  onClick={() => handlePresetSelect(preset)}
-                  className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-                    selectedPreset?.providerType === preset.providerType
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-accent text-muted-foreground hover:bg-accent/80"
-                  }`}
-                >
-                  <ProviderIcon
-                    icon={preset.icon}
-                    name={preset.name}
-                    size={16}
-                  />
-                  {preset.name}
-                </button>
-              ))}
+              {universalProviderPresets
+                .filter((preset) => !preset.hidden)
+                .map((preset) => (
+                  <button
+                    key={preset.providerType}
+                    type="button"
+                    onClick={() => handlePresetSelect(preset)}
+                    className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                      selectedPreset?.providerType === preset.providerType
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-accent text-muted-foreground hover:bg-accent/80"
+                    }`}
+                  >
+                    <ProviderIcon
+                      icon={preset.icon}
+                      name={preset.name}
+                      size={16}
+                    />
+                    {preset.name}
+                  </button>
+                ))}
             </div>
             {selectedPreset?.description && (
               <p className="text-xs text-muted-foreground">

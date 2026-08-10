@@ -584,11 +584,11 @@ export interface UniversalProvider {
   sortIndex?: number;
   /** 是否启用代理路由 */
   enabled?: boolean;
-  /** CC Switch 代理专用：内部路由表 */
+  /** 聚合代理专用：内部路由表 */
   routes?: UpstreamRoute[];
 }
 
-/** CC Switch 代理路由表中的一条上游目标 */
+/** 聚合代理路由表中的一条上游目标 */
 export interface UpstreamRoute {
   id: string;
   name: string;

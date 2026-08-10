@@ -52,7 +52,7 @@ export function UniversalProviderPanel() {
     loadProviders();
   }, [loadProviders]);
 
-  /** CC Switch 代理保存后自动启用代理接管 */
+  /** 聚合代理保存后自动启用代理接管 */
   async function autoEnableProxy(provider: UniversalProvider) {
     const apps: string[] = [];
     if (provider.apps.claude) apps.push("claude");
@@ -78,7 +78,7 @@ export function UniversalProviderPanel() {
           await universalProvidersApi.sync(provider.id);
         }
 
-        // CC Switch 代理：自动启用代理接管
+        // 聚合代理：自动启用代理接管
         if (provider.providerType === "cc_switch") {
           await autoEnableProxy(provider);
         }
@@ -107,25 +107,22 @@ export function UniversalProviderPanel() {
   );
 
   // 保存路由表配置（仅 DB，不同步）
-  const handleSaveRoutes = useCallback(
-    async (provider: UniversalProvider) => {
-      try {
-        await universalProvidersApi.upsert(provider);
-        // 重新加载，确保下次打开编辑时显示最新数据
-        const data = await universalProvidersApi.getAll();
-        setProviders(data);
-        const updated = data[provider.id];
-        if (updated) {
-          setEditingProvider(updated);
-        }
-        toast.success("路由表已保存");
-      } catch (error) {
-        console.error("Failed to save routes:", error);
-        toast.error("保存路由表失败");
+  const handleSaveRoutes = useCallback(async (provider: UniversalProvider) => {
+    try {
+      await universalProvidersApi.upsert(provider);
+      // 重新加载，确保下次打开编辑时显示最新数据
+      const data = await universalProvidersApi.getAll();
+      setProviders(data);
+      const updated = data[provider.id];
+      if (updated) {
+        setEditingProvider(updated);
       }
-    },
-    [],
-  );
+      toast.success("路由表已保存");
+    } catch (error) {
+      console.error("Failed to save routes:", error);
+      toast.error("保存路由表失败");
+    }
+  }, []);
 
   // 保存并同步供应商
   const handleSaveAndSync = useCallback(
@@ -134,7 +131,7 @@ export function UniversalProviderPanel() {
         await universalProvidersApi.upsert(provider);
         await universalProvidersApi.sync(provider.id);
 
-        // CC Switch 代理：自动启用代理接管
+        // 聚合代理：自动启用代理接管
         if (provider.providerType === "cc_switch") {
           await autoEnableProxy(provider);
         }

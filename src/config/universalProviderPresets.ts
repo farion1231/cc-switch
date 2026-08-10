@@ -34,6 +34,8 @@ export interface UniversalProviderPreset {
   description?: string;
   /** 是否为自定义模板（允许用户完全自定义） */
   isCustomTemplate?: boolean;
+  /** 是否隐藏（不显示在预设选择器中，仅代码内部使用） */
+  hidden?: boolean;
 }
 
 /**
@@ -60,8 +62,9 @@ const NEWAPI_DEFAULT_MODELS: UniversalProviderModels = {
  */
 export const universalProviderPresets: UniversalProviderPreset[] = [
   {
-    name: "CC Switch 代理",
+    name: "聚合代理",
     providerType: "cc_switch",
+    hidden: true,
     defaultApps: {
       claude: true,
       codex: true,
@@ -86,7 +89,7 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
     icon: "cc-switch",
     iconColor: "#22C55E",
     description:
-      "使用本机的 CC Switch 代理作为统一入口，按模型自动路由到已配置的上游供应商",
+      "使用本机的聚合代理作为统一入口，按模型自动路由到已配置的上游供应商",
   },
   {
     name: "NewAPI",
