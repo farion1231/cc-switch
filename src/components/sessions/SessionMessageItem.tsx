@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { SessionMessage } from "@/types";
+import { SessionMarkdown } from "./SessionMarkdown";
 import {
   formatTimestamp,
   getRoleLabel,
@@ -36,13 +37,10 @@ export const SessionMessageItem = memo(function SessionMessageItem({
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
 
+  const role = message.role.toLowerCase();
+  const shouldRenderMarkdown = role === "assistant";
   const isLong = message.content.length > COLLAPSE_THRESHOLD;
-  const hasSearchMatch =
-    isLong &&
-    !expanded &&
-    !!searchQuery &&
-    message.content.toLowerCase().includes(searchQuery.toLowerCase());
-  const collapsed = isLong && !expanded && !hasSearchMatch;
+  const collapsed = isLong && !expanded;
   const displayContent = collapsed
     ? message.content.slice(0, COLLAPSED_LENGTH) + "…"
     : message.content;
@@ -51,9 +49,9 @@ export const SessionMessageItem = memo(function SessionMessageItem({
     <div
       className={cn(
         "rounded-lg border px-3 py-2.5 relative group transition-shadow min-w-0",
-        message.role.toLowerCase() === "user"
+        role === "user"
           ? "bg-primary/5 border-primary/20 ml-8"
-          : message.role.toLowerCase() === "assistant"
+          : role === "assistant"
             ? "bg-blue-500/5 border-blue-500/20 mr-8"
             : "bg-muted/40 border-border/60",
         isActive && "ring-2 ring-primary ring-offset-2",
@@ -86,12 +84,16 @@ export const SessionMessageItem = memo(function SessionMessageItem({
           </span>
         )}
       </div>
-      <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-relaxed min-w-0">
-        {searchQuery
-          ? highlightText(displayContent, searchQuery)
-          : displayContent}
-      </div>
-      {isLong && !hasSearchMatch && (
+      {shouldRenderMarkdown ? (
+        <SessionMarkdown content={displayContent} searchQuery={searchQuery} />
+      ) : (
+        <div className="min-w-0 whitespace-pre-wrap break-words text-sm leading-relaxed [overflow-wrap:anywhere]">
+          {searchQuery
+            ? highlightText(displayContent, searchQuery)
+            : displayContent}
+        </div>
+      )}
+      {isLong && (
         <button
           type="button"
           aria-expanded={expanded}
