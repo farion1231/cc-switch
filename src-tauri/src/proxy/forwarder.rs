@@ -550,7 +550,7 @@ impl RequestForwarder {
                         uses_anthropic_request_format(app_type, provider, endpoint);
                     let mut signature_rectifier_non_retryable_client_error = false;
 
-                    if is_anthropic_provider && should_rectify_tool_strict(&e) {
+                    if should_retry_tool_strict(&self.rectifier_config, is_anthropic_provider, &e) {
                         let removed = rectify_tool_strict(&mut provider_body);
                         if removed > 0 {
                             log::info!(
@@ -2817,6 +2817,14 @@ fn uses_anthropic_request_format(app_type: &AppType, provider: &Provider, endpoi
         && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint))
 }
 
+fn should_retry_tool_strict(
+    rectifier_config: &RectifierConfig,
+    is_anthropic_provider: bool,
+    error: &ProxyError,
+) -> bool {
+    rectifier_config.enabled && is_anthropic_provider && should_rectify_tool_strict(error)
+}
+
 /// 检测 Provider 是否为 Bedrock（通过 CLAUDE_CODE_USE_BEDROCK 环境变量判断）
 fn is_bedrock_provider(provider: &Provider) -> bool {
     provider
@@ -3739,6 +3747,36 @@ mod tests {
             &AppType::Codex,
             &provider,
             "/responses"
+        ));
+    }
+
+    #[test]
+    fn tool_strict_retry_honors_rectifier_opt_out() {
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(
+                r#"{"error":{"message":"tools.0.custom.strict: Extra inputs are not permitted"}}"#
+                    .to_string(),
+            ),
+        };
+
+        assert!(should_retry_tool_strict(
+            &RectifierConfig::default(),
+            true,
+            &error
+        ));
+        assert!(!should_retry_tool_strict(
+            &RectifierConfig {
+                enabled: false,
+                ..RectifierConfig::default()
+            },
+            true,
+            &error
+        ));
+        assert!(!should_retry_tool_strict(
+            &RectifierConfig::default(),
+            false,
+            &error
         ));
     }
 
