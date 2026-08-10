@@ -145,6 +145,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       ],
     },
     category: "cn_official",
+    partnerPromotionKey: "kimi",
     icon: "kimi",
     iconColor: "#6366F1",
     suggestedDefaults: {
@@ -310,31 +311,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "Unity2.ai",
-    websiteUrl: "https://unity2.ai",
-    apiKeyUrl: "https://unity2.ai/register?source=ccs",
-    settingsConfig: {
-      name: "unity2",
-      base_url: "https://api.unity2.ai/v1",
-      api_key: "",
-      api_mode: "chat_completions",
-      models: [
-        {
-          id: "gpt-5.6-sol",
-          name: "GPT-5.6 Sol",
-          context_length: 400000,
-        },
-      ],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "unity2",
-    icon: "unity2",
-    suggestedDefaults: {
-      model: { default: "gpt-5.6-sol", provider: "unity2" },
-    },
-  },
-  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
@@ -376,6 +352,26 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#5B7FFF",
     suggestedDefaults: {
       model: { default: "claude-opus-5", provider: "aigocode" },
+    },
+  },
+  {
+    name: "Qiniu",
+    nameKey: "providerForm.presets.qiniu",
+    websiteUrl: "https://s.qiniu.com/nMvAvy",
+    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
+    settingsConfig: {
+      name: "qiniu",
+      base_url: "https://api.qnaigc.com/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [{ id: "gpt-5.6-sol", name: "GPT-5.6 Sol" }],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "qiniu",
+    icon: "qiniu",
+    suggestedDefaults: {
+      model: { default: "gpt-5.6-sol", provider: "qiniu" },
     },
   },
   {
@@ -673,22 +669,22 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "NekoCode",
-    websiteUrl: "https://nekocode.ai",
-    apiKeyUrl: "https://nekocode.ai?aff=CCSWITCH",
+    name: "A6API",
+    websiteUrl: "https://www.a6api.com",
+    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
     settingsConfig: {
-      name: "nekocode",
-      base_url: "https://nekocode.ai/v1",
+      name: "a6api",
+      base_url: "https://api.a6api.com/v1",
       api_key: "",
       api_mode: "chat_completions",
       models: [{ id: "gpt-5.6-sol", name: "GPT-5.6 Sol" }],
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "nekocode",
-    icon: "nekocode",
+    partnerPromotionKey: "a6api",
+    icon: "a6api",
     suggestedDefaults: {
-      model: { default: "gpt-5.6-sol", provider: "nekocode" },
+      model: { default: "gpt-5.6-sol", provider: "a6api" },
     },
   },
   {
@@ -944,26 +940,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     partnerPromotionKey: "dmxapi",
     suggestedDefaults: {
       model: { default: "gpt-5.6-sol", provider: "dmxapi" },
-    },
-  },
-  {
-    name: "Qiniu",
-    nameKey: "providerForm.presets.qiniu",
-    websiteUrl: "https://s.qiniu.com/nMvAvy",
-    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
-    settingsConfig: {
-      name: "qiniu",
-      base_url: "https://api.qnaigc.com/v1",
-      api_key: "",
-      api_mode: "chat_completions",
-      models: [{ id: "gpt-5.6-sol", name: "GPT-5.6 Sol" }],
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "qiniu",
-    icon: "qiniu",
-    suggestedDefaults: {
-      model: { default: "gpt-5.6-sol", provider: "qiniu" },
     },
   },
   {

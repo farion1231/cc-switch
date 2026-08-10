@@ -11,6 +11,7 @@ interface PromptListItemProps {
   onToggle: (id: string, enabled: boolean) => void;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
+  disabled?: boolean;
 }
 
 const PromptListItem: React.FC<PromptListItemProps> = ({
@@ -19,6 +20,7 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
   onToggle,
   onEdit,
   onDelete,
+  disabled = false,
 }) => {
   const { t } = useTranslation();
 
@@ -32,6 +34,7 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
           <PromptToggle
             enabled={enabled}
             onChange={(newEnabled) => onToggle(id, newEnabled)}
+            disabled={disabled}
           />
         </div>
 
@@ -50,6 +53,8 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
             variant="ghost"
             size="icon"
             onClick={() => onEdit(id)}
+            disabled={disabled}
+            className="disabled:opacity-100"
             title={t("common.edit")}
           >
             <Edit3 size={16} />
@@ -59,7 +64,8 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
             variant="ghost"
             size="icon"
             onClick={() => onDelete(id)}
-            className="hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
+            disabled={disabled}
+            className="hover:text-red-500 hover:bg-red-100 disabled:opacity-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
             title={t("common.delete")}
           >
             <Trash2 size={16} />

@@ -883,6 +883,168 @@ requires_openai_auth = true
 }
 
 #[test]
+fn provider_service_switch_codex_official_clears_stale_third_party_auth() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    // preservation stays OFF (default): switching to the third-party provider
+    // wrote its key into live auth.json, and that residue is what this test
+    // expects the official switch to clean up.
+    let _home = ensure_test_home();
+
+    let third_party_config = r#"model_provider = "aihubmix"
+model = "gpt-5.4"
+
+[model_providers.aihubmix]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+    // Live key intentionally differs from the DB row so the assertion below
+    // proves the backfill preserved the live copy before it was deleted.
+    let live_auth = json!({ "OPENAI_API_KEY": "stale-live-key" });
+    write_codex_live_atomic(&live_auth, Some(third_party_config))
+        .expect("seed third-party live config");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "third-party".to_string();
+        manager.providers.insert(
+            "third-party".to_string(),
+            Provider::with_id(
+                "third-party".to_string(),
+                "AiHubMix".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "old-db-key"},
+                    "config": third_party_config
+                }),
+                None,
+            ),
+        );
+        let mut official_provider = Provider::with_id(
+            "official-provider".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": {},
+                "config": ""
+            }),
+            None,
+        );
+        official_provider.category = Some("official".to_string());
+        manager
+            .providers
+            .insert("official-provider".to_string(), official_provider);
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "official-provider")
+        .expect("switch to official provider should succeed");
+
+    assert!(
+        !cc_switch_lib::get_codex_auth_path().exists(),
+        "switching to a material-less official provider must delete the stale \
+         third-party auth.json so Codex shows its login screen"
+    );
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("read providers after switch");
+    assert_eq!(
+        providers
+            .get("third-party")
+            .expect("third-party provider exists")
+            .settings_config
+            .pointer("/auth/OPENAI_API_KEY")
+            .and_then(|v| v.as_str()),
+        Some("stale-live-key"),
+        "the live key must be backfilled into the outgoing provider before deletion"
+    );
+
+    let live_config =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    assert!(
+        !live_config.contains("experimental_bearer_token"),
+        "official provider has no API key to inject"
+    );
+}
+
+#[test]
+fn provider_service_reswitch_current_official_keeps_live_auth() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    // Re-selecting the already-current provider performs no backfill, so the
+    // cleanup must not run either: without a fresh DB copy of whatever sits
+    // in live auth.json, deleting it would destroy the only copy.
+    let live_auth = json!({ "OPENAI_API_KEY": "residue-key" });
+    write_codex_live_atomic(&live_auth, Some("")).expect("seed live config");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "official-provider".to_string();
+        let mut official_provider = Provider::with_id(
+            "official-provider".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": {},
+                "config": ""
+            }),
+            None,
+        );
+        official_provider.category = Some("official".to_string());
+        manager
+            .providers
+            .insert("official-provider".to_string(), official_provider);
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "official-provider")
+        .expect("re-switch to current official provider should succeed");
+
+    let auth_value: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("auth.json must survive");
+    assert_eq!(
+        auth_value.get("OPENAI_API_KEY").and_then(|v| v.as_str()),
+        Some("residue-key"),
+        "no backfill happened, so live auth.json must be left untouched"
+    );
+}
+
+#[test]
+fn read_codex_live_settings_tolerates_missing_auth_when_config_file_exists() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    assert!(
+        cc_switch_lib::read_codex_live_settings().is_err(),
+        "both files missing is still 'no live install'"
+    );
+
+    // auth.json deleted + empty config.toml is the exact state the official
+    // switch cleanup leaves behind; it must stay readable or the next
+    // backfill / hot switch would treat Codex as uninstalled.
+    let config_path = cc_switch_lib::get_codex_config_path();
+    std::fs::create_dir_all(config_path.parent().expect("codex dir")).expect("create codex dir");
+    std::fs::write(&config_path, "").expect("write empty config.toml");
+
+    let live = cc_switch_lib::read_codex_live_settings()
+        .expect("config file present but empty must be readable");
+    assert_eq!(live.get("auth"), Some(&json!({})));
+    assert_eq!(live.get("config").and_then(|v| v.as_str()), Some(""));
+}
+
+#[test]
 fn reapply_codex_official_live_resyncs_mcp_servers() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
