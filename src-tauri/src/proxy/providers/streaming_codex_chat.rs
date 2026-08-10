@@ -3,7 +3,8 @@
 use super::codex_responses_sse as sse;
 use super::{
     codex_chat_common::{
-        extract_reasoning_field_text, split_leading_think_block, strip_leading_think_open_tag,
+        extract_reasoning_field_text, split_leading_think_block, strip_all_think_tags,
+        strip_leading_think_open_tag,
     },
     transform_codex_chat::{
         chat_usage_to_responses_usage, custom_tool_input_from_chat_arguments,
@@ -145,14 +146,36 @@ impl ChatToResponsesState {
         };
 
         if let Some(delta) = choice.get("delta") {
-            if let Some(reasoning) = chat_delta_reasoning_text(delta) {
-                events.extend(self.push_reasoning_delta(&reasoning));
-                self.append_reasoning_to_active_tools(&reasoning);
+            let reasoning_extracted = chat_delta_reasoning_text(delta);
+
+            if let Some(reasoning) = &reasoning_extracted {
+                events.extend(self.push_reasoning_delta(reasoning));
+                self.append_reasoning_to_active_tools(reasoning);
             }
 
             if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
                 if !content.is_empty() {
-                    events.extend(self.push_content_delta(content));
+                    // When reasoning_content was extracted from this delta,
+                    // the content field may mirror the reasoning (some providers
+                    // send both).  Strip think tags and skip if it duplicates
+                    // the reasoning text to prevent output_text duplication.
+                    let content = if let Some(ref reasoning) = reasoning_extracted {
+                        let stripped = strip_all_think_tags(content);
+                        let stripped_trimmed = stripped.trim();
+                        if stripped_trimmed.is_empty()
+                            || reasoning.contains(stripped_trimmed)
+                            || stripped_trimmed.contains(reasoning.trim())
+                        {
+                            String::new()
+                        } else {
+                            stripped
+                        }
+                    } else {
+                        content.to_string()
+                    };
+                    if !content.is_empty() {
+                        events.extend(self.push_content_delta(&content));
+                    }
                 }
             }
 
@@ -179,7 +202,14 @@ impl ChatToResponsesState {
         match self.inline_think.mode {
             InlineThinkMode::Text => {
                 let mut events = self.finalize_reasoning();
-                events.extend(self.push_text_delta(delta));
+                // Strip any stray think tags that arrive after the state
+                // machine has committed to Text mode, preventing
+                // `thinking`/`think` fragments from leaking into
+                // output_text.delta.
+                let cleaned = strip_all_think_tags(delta);
+                if !cleaned.is_empty() {
+                    events.extend(self.push_text_delta(&cleaned));
+                }
                 events
             }
             InlineThinkMode::Detecting => {
@@ -1473,4 +1503,50 @@ mod tests {
         assert!(output.contains("rate_limit_exceeded"));
         assert!(!output.contains("event: response.completed"));
     }
+    #[tokio::test]
+    async fn dedup_content_when_reasoning_content_mirrors_in_same_delta() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_dup\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"reasoning_content\":\"让我分析。\",\"content\":\"让我分析。\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_dup\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"content\":\"答案是42。\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        let delta_lines: Vec<&str> = output
+            .lines()
+            .filter(|l| l.contains("response.output_text.delta"))
+            .collect();
+        for delta_line in &delta_lines {
+            assert!(
+                !delta_line.contains("让我分析"),
+                "reasoning text leaked into output_text: {delta_line}"
+            );
+        }
+        assert!(output.contains("答案是42"));
+    }
+
+    #[tokio::test]
+    async fn strips_leaked_close_tag_in_text_mode() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_leak\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"content\":\"答案\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_leak\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"content\":\"</think>\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_leak\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"content\":\"完整。\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        let delta_lines: Vec<&str> = output
+            .lines()
+            .filter(|l| l.contains("response.output_text.delta"))
+            .collect();
+        for delta_line in &delta_lines {
+            assert!(
+                !delta_line.contains("think"),
+                "close tag leaked into output_text: {delta_line}"
+            );
+        }
+        assert!(output.contains("答案"));
+        assert!(output.contains("完整"));
+    }
+
 }
