@@ -529,6 +529,25 @@ fn official_update_args(tool: &str) -> Option<&'static str> {
     }
 }
 
+/// Official CLI uninstall subcommand args, mirroring `official_update_args` for the
+/// uninstall path. Verified against each tool's source/docs:
+/// - claude: `claude uninstall` (native installer; confirmed in Anthropic's docs).
+/// - grok: `grok uninstall` (native `~/.grok/bin` binary; same Rust CLI that ships
+///   `grok update`).
+/// - hermes: `hermes uninstall --yes` (confirmed in `hermes_cli/subcommands/uninstall.py`
+///   — removes code + cleans shell PATH; `--yes` skips confirmation so it runs silently;
+///   keeps `~/.hermes/` data unless `--full`).
+/// - codex / gemini / opencode / openclaw: no CLI uninstall subcommand — their official
+///   installers fall back to the package manager (`npm uninstall -g`, `brew uninstall`,
+///   `bun remove -g`), so they return None here and go through the package-manager path.
+fn official_uninstall_args(tool: &str) -> Option<&'static str> {
+    match tool {
+        "claude" | "grok" => Some("uninstall"),
+        "hermes" => Some("uninstall --yes"),
+        _ => None,
+    }
+}
+
 fn bare_official_update_command(tool: &str) -> Option<String> {
     official_update_args(tool).map(|args| format!("{tool} {args}"))
 }
@@ -2641,6 +2660,22 @@ fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String
     official_update_args(tool).map(|args| format!("{} {args}", win_quote_path_for_batch(bin_path)))
 }
 
+/// Anchored official CLI uninstall command = `<abs bin> uninstall [--yes]`. Mirrors
+/// `anchored_official_update_command`: absolute-path call to the launcher the command
+/// line actually resolves to, so the official self-uninstall removes *that* install
+/// (not a different one the bare CLI name might hit on a narrow GUI PATH). Returns None
+/// for tools with no official uninstall subcommand (codex/gemini/opencode/openclaw).
+#[cfg(not(target_os = "windows"))]
+fn anchored_official_uninstall_command(tool: &str, bin_path: &str) -> Option<String> {
+    official_uninstall_args(tool).map(|args| format!("{} {args}", quote_path_if_spaced(bin_path)))
+}
+
+#[cfg(target_os = "windows")]
+fn anchored_official_uninstall_command(tool: &str, bin_path: &str) -> Option<String> {
+    official_uninstall_args(tool)
+        .map(|args| format!("{} {args}", win_quote_path_for_batch(bin_path)))
+}
+
 /// Grok Build 原生安装的升级命令 = `<bin 绝对> update || <官方 installer>`。
 ///
 /// **为什么唯独 native Grok 的 self-update 需要 fallback**（claude native / hermes 都没有）：
@@ -3452,26 +3487,6 @@ fn installs_anchored_command(tool: &str, installs: &[ToolInstallation]) -> Optio
     anchored_command_from_paths(tool, &inst.path, &real)
 }
 
-/// "Not auto-uninstallable"判定 for the uninstall command: these install methods have
-/// no safe silent uninstall command. Forcing `npm uninstall -g` either no-ops and then
-/// falsely reports success (the native install remains) or removes the wrong copy.
-/// - hermes: official installer puts everything in an isolated dir (with its own
-///   Python/Node); no `hermes uninstall`.
-/// - grok native (`~/.grok/bin`): no `grok uninstall` subcommand; npm uninstall only
-///   removes the npm copy.
-///
-/// Other tools (including claude native, which has `claude uninstall`) are allowed to
-/// go through the anchored/static uninstall path.
-fn tool_is_native_uninstallable(tool: &str, installs: &[ToolInstallation]) -> bool {
-    match tool {
-        "hermes" => true,
-        "grok" => default_install(installs)
-            .map(|inst| is_grok_native_install(&inst.path, &inst.real.to_string_lossy()))
-            .unwrap_or(false),
-        _ => false,
-    }
-}
-
 /// Static (non-anchored) uninstall command: only npm-package tools have one, falling
 /// back to bare `npm uninstall -g <pkg>` (resolves to the first npm on PATH, matching
 /// the install/update static-fallback semantics). Tools without an npm package (hermes)
@@ -3490,20 +3505,17 @@ fn static_uninstall_command_for(tool: &str) -> String {
 ///
 /// Decision order (first hit wins):
 /// 1. Anchor to the command-line default install and build the source-specific
-///    uninstall command (`anchored_uninstall_command`). Covers npm global packages
-///    (nvm/fnm/mise/homebrew/scoop/choco/winget/nvm-windows/system sibling npm), Homebrew
-///    formula (`brew uninstall`), Volta/Bun/pnpm, and claude native (`claude uninstall`).
-/// 2. No anchor and the install is "not auto-uninstallable" (hermes / grok native)
-///    -> not supported.
-/// 3. Other tools with an npm package -> static `npm uninstall -g <pkg>` (best-effort,
-///    mirroring the install/update static fallback).
-/// 4. No npm package and no anchor hit (hermes ends up here) -> not supported.
+///    uninstall command (`anchored_uninstall_command`). Covers the official CLI
+///    uninstall (claude/grok native, hermes — preferred) and the package-manager
+///    uninstall (Homebrew/Volta/Bun/pnpm/anchored npm) for the rest.
+/// 2. No anchor (default install couldn't be determined) and the tool has an npm
+///    package -> static `npm uninstall -g <pkg>` (best-effort, mirroring the
+///    install/update static fallback).
+/// 3. No anchor and no npm package (no tool currently hits this — hermes has an
+///    official CLI uninstall that always anchors) -> not supported.
 fn uninstall_plan(tool: &str, installs: &[ToolInstallation]) -> (String, bool) {
     if let Some(cmd) = anchored_uninstall_command(tool, installs) {
         return (cmd, true);
-    }
-    if tool_is_native_uninstallable(tool, installs) {
-        return (String::new(), false);
     }
     let static_cmd = static_uninstall_command_for(tool);
     if !static_cmd.is_empty() {
@@ -3541,14 +3553,28 @@ fn anchored_uninstall_command(tool: &str, installs: &[ToolInstallation]) -> Opti
 /// Given the tool, the raw bin path (the entry the command line resolves to) and the
 /// canonicalized real target, infer the anchored uninstall command that removes "the
 /// same install". The POSIX version is a pure function (no FS), symmetric with
-/// `anchored_command_from_paths`. Decision order (first hit wins):
-/// ① hermes -> None (no `hermes uninstall`; isolated install, not auto-uninstallable);
+/// `anchored_command_from_paths`. Mirrors the upgrade anchoring's "official CLI first,
+/// package-manager fallback" structure.
+///
+/// Decision order (first hit wins):
+/// ① hermes -> `<abs bin> uninstall --yes`. Hermes ships an official `hermes uninstall`
+///    (removes code + cleans shell PATH; `--yes` runs silently; keeps `~/.hermes/` data).
+///    No package-manager fallback: hermes has no npm package and its installer is
+///    isolated, so there's no `npm uninstall -g` to chain. The CLI is the only path.
 /// ② claude native (real in `~/.local/share/claude/` or `.../claude/versions/`) ->
-///    `<abs bin> uninstall` (officially supported);
-/// ③ grok native (`~/.grok/bin`) -> None (no `grok uninstall`; npm uninstall only
-///    removes the copy);
-/// ④ the rest -> package-manager uninstall (`brew uninstall <formula>` /
-///    `volta uninstall` / `bun remove -g` / anchored sibling `npm uninstall -g <pkg>`).
+///    `<abs bin> uninstall` (officially supported); no package-manager fallback for the
+///    native install (npm uninstall would remove a *different* npm copy and leave the
+///    native one).
+/// ③ grok native (`~/.grok/bin`) -> `<abs bin> uninstall` (official `grok uninstall`).
+///    No installer fallback here (unlike update): grok's uninstall just removes the
+///    local `~/.grok` layout, and re-running install.sh is an *install*, not a fallback
+///    for an uninstall. If `grok uninstall` itself fails, the user re-installs, not us.
+/// ④ tools with an official uninstall subcommand AND a package-manager install (none
+///    currently fall here for uninstall, but the branch mirrors update for symmetry) ->
+///    `<abs bin> uninstall || <package-manager uninstall>`.
+/// ⑤ the rest (codex/gemini/opencode/openclaw, no official uninstall) ->
+///    package-manager uninstall (`brew uninstall <formula>` / `volta uninstall` /
+///    `bun remove -g` / anchored sibling `npm uninstall -g <pkg>`).
 #[cfg(not(target_os = "windows"))]
 fn anchored_uninstall_command_from_paths(
     tool: &str,
@@ -3557,18 +3583,26 @@ fn anchored_uninstall_command_from_paths(
 ) -> Option<String> {
     let real_lower = real_target.to_ascii_lowercase();
 
+    // ① hermes: official CLI uninstall, no package-manager fallback (isolated install,
+    //    no npm package to chain).
     if tool == "hermes" {
-        return None;
+        return anchored_official_uninstall_command(tool, bin_path);
     }
+    // ② claude native: official CLI uninstall, no package-manager fallback (npm uninstall
+    //    would target a different npm copy and leave the native install).
     if tool == "claude"
         && (real_lower.contains("/.local/share/claude/")
             || real_lower.contains("/claude/versions/"))
     {
-        return Some(format!("{} uninstall", quote_path_if_spaced(bin_path)));
+        return anchored_official_uninstall_command(tool, bin_path);
     }
+    // ③ grok native: official CLI uninstall. Unlike update, no installer fallback —
+    //    `grok uninstall` removes `~/.grok`; a failed uninstall is surfaced to the user
+    //    rather than papered over with a reinstall.
     if tool == "grok" && is_grok_native_install(bin_path, real_target) {
-        return None;
+        return anchored_official_uninstall_command(tool, bin_path);
     }
+    // ⑤ package-manager uninstall for tools without an official uninstall subcommand.
     package_manager_anchored_uninstall_command_from_paths(tool, bin_path, real_target)
 }
 
@@ -3578,14 +3612,17 @@ fn anchored_uninstall_command_from_paths(
     bin_path: &str,
     real_target: &str,
 ) -> Option<String> {
+    // ① hermes: official CLI uninstall, no package-manager fallback.
+    if tool == "hermes" {
+        return anchored_official_uninstall_command(tool, bin_path);
+    }
+    // ③ grok native: official CLI uninstall (`grok uninstall`), no installer fallback.
     // No claude-native branch on Windows (symmetric with update anchoring: claude goes
     // through the package manager on Windows).
-    if tool == "hermes" {
-        return None;
-    }
     if tool == "grok" && is_grok_native_install(bin_path, real_target) {
-        return None;
+        return anchored_official_uninstall_command(tool, bin_path);
     }
+    // ⑤ package-manager uninstall for the rest.
     package_manager_anchored_uninstall_command_from_paths(tool, bin_path)
 }
 
@@ -5546,21 +5583,24 @@ mod tests {
         }
 
         #[test]
-        fn grok_native_windows_not_uninstallable() {
-            // Native grok (~/.grok/bin) has no `grok uninstall`; even with a sibling
-            // npm.cmd present we must not fall back to npm (would remove the wrong copy and
-            // report a misleading success). -> None.
+        fn grok_native_windows_uses_cli_uninstall() {
+            // Native grok (~/.grok/bin) ships `grok uninstall`; anchor to the launcher
+            // (absolute path) so it removes this native install, not a different npm copy.
             let (_dir, _sub, bin_path) = setup_sibling(".grok/bin", "grok.exe", &["npm.cmd"]);
             let cmd = anchored_uninstall_command_from_paths("grok", &bin_path, &bin_path);
-            assert_eq!(cmd, None);
+            let expected = format!("{} uninstall", expect_quoted_path(&bin_path));
+            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
         }
 
         #[test]
-        fn hermes_windows_not_uninstallable() {
-            // hermes has no auto-uninstall regardless of install path.
+        fn hermes_windows_uses_cli_uninstall_with_yes() {
+            // hermes ships `hermes uninstall --yes`; anchor to the launcher. The sibling
+            // npm.cmd is irrelevant — hermes has no npm package; the official CLI is the
+            // only uninstall path.
             let (_dir, _sub, bin_path) = setup_sibling("v22.0.0", "hermes.cmd", &["npm.cmd"]);
             let cmd = anchored_uninstall_command_from_paths("hermes", &bin_path, &bin_path);
-            assert_eq!(cmd, None);
+            let expected = format!("{} uninstall --yes", expect_quoted_path(&bin_path));
+            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
         }
     }
 
@@ -6493,26 +6533,35 @@ mod tests {
         }
 
         #[test]
-        fn grok_native_is_not_auto_uninstallable() {
-            // grok native has no `grok uninstall` subcommand and npm uninstall only
-            // removes the npm copy -> not supported.
+        fn grok_native_uses_cli_uninstall() {
+            // grok native ships an official `grok uninstall` subcommand; anchor to the
+            // launcher's absolute path so it removes *this* native install (not a
+            // different copy a bare `grok` might hit on a narrow GUI PATH). No installer
+            // fallback (unlike update) — a failed uninstall is surfaced, not papered over
+            // with a reinstall.
             let cmd = anchored_uninstall_command_from_paths(
                 "grok",
                 "/Users/me/.grok/bin/grok",
                 "/Users/me/.grok/downloads/grok-macos-aarch64",
             );
-            assert_eq!(cmd, None);
+            assert_eq!(cmd.as_deref(), Some("/Users/me/.grok/bin/grok uninstall"));
         }
 
         #[test]
-        fn hermes_is_not_auto_uninstallable() {
-            // hermes is isolated and has no `hermes uninstall` -> not supported.
+        fn hermes_uses_cli_uninstall_with_yes() {
+            // Hermes ships an official `hermes uninstall` (removes code + cleans shell
+            // PATH; keeps `~/.hermes/` data). `--yes` skips confirmation so it runs
+            // silently under the non-interactive lifecycle executor. No package-manager
+            // fallback: hermes has no npm package and its installer is isolated.
             let cmd = anchored_uninstall_command_from_paths(
                 "hermes",
                 "/usr/local/bin/hermes",
                 "/usr/local/bin/hermes",
             );
-            assert_eq!(cmd, None);
+            assert_eq!(
+                cmd.as_deref(),
+                Some("/usr/local/bin/hermes uninstall --yes")
+            );
         }
 
         #[test]
@@ -6620,29 +6669,31 @@ mod tests {
         }
 
         #[test]
-        fn uninstall_plan_hermes_not_supported() {
+        fn uninstall_plan_hermes_uses_cli_uninstall() {
+            // hermes now has an official `hermes uninstall --yes` that always anchors ->
+            // supported, with that command.
             let installs = vec![inst("/usr/local/bin/hermes", true)];
             let (cmd, supported) = uninstall_plan("hermes", &installs);
-            assert!(!supported);
-            assert!(cmd.is_empty());
+            assert!(supported);
+            assert_eq!(cmd, "/usr/local/bin/hermes uninstall --yes");
         }
 
         #[test]
-        fn uninstall_plan_grok_native_not_supported() {
+        fn uninstall_plan_grok_native_uses_cli_uninstall() {
             let installs = vec![inst("/Users/me/.grok/bin/grok", true)];
             // Set real to the official download path to trigger the native check.
             let mut installs = installs;
             installs[0].real =
                 std::path::PathBuf::from("/Users/me/.grok/downloads/grok-macos-aarch64");
             let (cmd, supported) = uninstall_plan("grok", &installs);
-            assert!(!supported);
-            assert!(cmd.is_empty());
+            assert!(supported);
+            assert_eq!(cmd, "/Users/me/.grok/bin/grok uninstall");
         }
 
         #[test]
         fn uninstall_plan_opencode_native_falls_back_to_static_npm() {
-            // No anchor (opencode native has no sibling npm) and not "not
-            // auto-uninstallable" -> static npm uninstall.
+            // No anchor (opencode native has no sibling npm) and opencode has no official
+            // uninstall subcommand -> static npm uninstall (best-effort).
             let installs = vec![inst("/Users/me/.opencode/bin/opencode", true)];
             let (cmd, supported) = uninstall_plan("opencode", &installs);
             assert!(supported);
@@ -6650,9 +6701,11 @@ mod tests {
         }
 
         #[test]
-        fn uninstall_command_for_hermes_returns_err() {
+        fn uninstall_command_for_hermes_returns_ok() {
+            // hermes is now auto-uninstallable via its CLI subcommand.
             let installs = vec![inst("/usr/local/bin/hermes", true)];
-            assert!(uninstall_command_for("hermes", &installs).is_err());
+            let cmd = uninstall_command_for("hermes", &installs).expect("hermes uninstallable");
+            assert_eq!(cmd, "/usr/local/bin/hermes uninstall --yes");
         }
     }
 
