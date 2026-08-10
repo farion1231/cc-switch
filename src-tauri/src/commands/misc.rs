@@ -3731,6 +3731,12 @@ fn install_command_for(tool: &str) -> String {
 /// npm-package tools get `npm uninstall -g <pkg>`; hermes has no npm package -> empty
 /// string -> `wsl_tool_action_shell_command` returns None -> the caller reports "not
 /// auto-uninstallable".
+///
+/// `#[cfg(target_os = "windows")]` mirrors the only call site
+/// (`wsl_tool_action_shell_command`, Windows-only): unlike `posix_install_command_for`
+/// there is no non-Windows caller, so without this gate the function is dead code on
+/// Linux/macOS and fails `cargo build` there (CI runs `cargo test` on ubuntu + macos).
+#[cfg(target_os = "windows")]
 fn posix_uninstall_command_for(tool: &str) -> String {
     static_uninstall_command_for(tool)
 }
