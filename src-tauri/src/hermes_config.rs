@@ -911,6 +911,55 @@ pub fn set_model_config(model: &HermesModelConfig) -> Result<HermesWriteOutcome,
     write_yaml_section_to_config("model", &yaml_val)
 }
 
+#[derive(Default)]
+struct HermesSwitchDefaults {
+    default: Option<String>,
+    base_url: Option<String>,
+    context_length: Option<u64>,
+    max_tokens: Option<u64>,
+}
+
+fn hermes_switch_defaults(settings_config: &serde_json::Value) -> HermesSwitchDefaults {
+    let first_model = settings_config
+        .get("models")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first());
+    HermesSwitchDefaults {
+        default: first_model
+            .and_then(|model| model.get("id"))
+            .and_then(|id| id.as_str())
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string),
+        base_url: settings_config
+            .get("base_url")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        context_length: first_model
+            .and_then(|model| model.get("context_length"))
+            .and_then(|value| value.as_u64())
+            .filter(|value| *value > 0),
+        max_tokens: first_model
+            .and_then(|model| model.get("max_tokens"))
+            .and_then(|value| value.as_u64())
+            .filter(|value| *value > 0),
+    }
+}
+
+fn refresh_provider_derived_value<T: PartialEq>(
+    current: Option<T>,
+    previous: Option<T>,
+    next: Option<T>,
+) -> Option<T> {
+    match (current, previous) {
+        (None, _) => next,
+        (Some(current), Some(previous)) if current == previous => next,
+        (current, _) => current,
+    }
+}
+
 /// Apply the top-level `model:` defaults when switching to a Hermes provider.
 ///
 /// `model.provider` is **always** updated to the new provider id — without
@@ -922,25 +971,45 @@ pub fn set_model_config(model: &HermesModelConfig) -> Result<HermesWriteOutcome,
 /// still have a runnable configuration (Hermes will surface a clear error
 /// if the default no longer belongs to the active provider).
 ///
-/// Existing fields in `model:` (`context_length` / `max_tokens` / `base_url`
-/// / `extra`) are preserved via struct-update.
+/// Provider-derived `base_url` and first-model `context_length` / `max_tokens`
+/// follow the new provider when the current value still matches the previously
+/// active provider. Values that differ from the previous provider are treated
+/// as explicit user overrides and preserved, as are unknown `extra` fields.
 pub fn apply_switch_defaults(
     provider_id: &str,
     settings_config: &serde_json::Value,
 ) -> Result<HermesWriteOutcome, AppError> {
-    let first_model_id = settings_config
-        .get("models")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|m| m.get("id"))
-        .and_then(|id| id.as_str())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-
     let current = get_model_config()?.unwrap_or_default();
+    let previous = match current
+        .provider
+        .as_deref()
+        .filter(|previous_id| *previous_id != provider_id)
+    {
+        Some(previous_id) => get_provider(previous_id)?
+            .as_ref()
+            .map(hermes_switch_defaults)
+            .unwrap_or_default(),
+        None => HermesSwitchDefaults::default(),
+    };
+    let next = hermes_switch_defaults(settings_config);
     let merged = HermesModelConfig {
-        default: first_model_id.or(current.default.clone()),
+        default: next.default.or(current.default.clone()),
         provider: Some(provider_id.to_string()),
+        base_url: refresh_provider_derived_value(
+            current.base_url.clone(),
+            previous.base_url,
+            next.base_url,
+        ),
+        context_length: refresh_provider_derived_value(
+            current.context_length,
+            previous.context_length,
+            next.context_length,
+        ),
+        max_tokens: refresh_provider_derived_value(
+            current.max_tokens,
+            previous.max_tokens,
+            next.max_tokens,
+        ),
         ..current
     };
     set_model_config(&merged)
@@ -2031,6 +2100,18 @@ custom_providers:
     #[serial]
     fn apply_switch_defaults_preserves_user_context_length() {
         with_test_home(|| {
+            set_provider(
+                "old-provider",
+                serde_json::json!({
+                    "base_url": "https://old-provider.example.com",
+                    "models": [{
+                        "id": "old-model",
+                        "context_length": 200000,
+                        "max_tokens": 8192
+                    }]
+                }),
+            )
+            .unwrap();
             // User previously set a custom context_length via the Model panel.
             let initial = HermesModelConfig {
                 default: Some("old-model".to_string()),
@@ -2043,7 +2124,12 @@ custom_providers:
             set_model_config(&initial).unwrap();
 
             let settings = serde_json::json!({
-                "models": [{ "id": "new-model" }]
+                "base_url": "https://new-provider.example.com",
+                "models": [{
+                    "id": "new-model",
+                    "context_length": 256000,
+                    "max_tokens": 32768
+                }]
             });
             apply_switch_defaults("new-provider", &settings).unwrap();
 
@@ -2057,6 +2143,54 @@ custom_providers:
             );
             assert_eq!(model.context_length, Some(131072));
             assert_eq!(model.max_tokens, Some(16384));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn apply_switch_defaults_refreshes_previous_provider_derived_fields() {
+        with_test_home(|| {
+            set_provider(
+                "old-provider",
+                serde_json::json!({
+                    "base_url": "https://old.example.com/v1",
+                    "models": [{
+                        "id": "old-model",
+                        "context_length": 1_048_576,
+                        "max_tokens": 65_536
+                    }]
+                }),
+            )
+            .unwrap();
+            let initial = HermesModelConfig {
+                default: Some("old-model".to_string()),
+                provider: Some("old-provider".to_string()),
+                base_url: Some("https://old.example.com/v1".to_string()),
+                context_length: Some(1_048_576),
+                max_tokens: Some(65_536),
+                extra: HashMap::new(),
+            };
+            set_model_config(&initial).unwrap();
+
+            let settings = serde_json::json!({
+                "base_url": "https://new.example.com/v1",
+                "models": [{
+                    "id": "new-model",
+                    "context_length": 256_000,
+                    "max_tokens": 16_384
+                }]
+            });
+            apply_switch_defaults("new-provider", &settings).unwrap();
+
+            let model = get_model_config().unwrap().unwrap();
+            assert_eq!(model.default.as_deref(), Some("new-model"));
+            assert_eq!(model.provider.as_deref(), Some("new-provider"));
+            assert_eq!(
+                model.base_url.as_deref(),
+                Some("https://new.example.com/v1")
+            );
+            assert_eq!(model.context_length, Some(256_000));
+            assert_eq!(model.max_tokens, Some(16_384));
         });
     }
 
