@@ -34,11 +34,16 @@ use bytes::Bytes;
 use futures::StreamExt;
 use http::Extensions;
 use serde_json::Value;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tauri::Manager;
 use tokio::sync::RwLock;
 
 const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
+const PROVIDER_RETRY_DELAY: Duration = Duration::from_secs(1);
+
+fn attempts_per_provider(max_retries: u32) -> usize {
+    (max_retries as usize).saturating_add(1)
+}
 
 fn validate_codex_official_authorization(headers: &http::HeaderMap) -> Result<(), ProxyError> {
     let authorization = headers
@@ -140,11 +145,10 @@ pub struct RequestForwarder {
     non_streaming_timeout: std::time::Duration,
     /// 流式请求响应头等待超时（秒）
     streaming_first_byte_timeout: std::time::Duration,
-    /// 单个客户端请求最多尝试的 provider 数。
+    /// 单个 provider 最多发往上游的请求数。
     ///
-    /// 由 `AppProxyConfig.max_retries` (UI: "请求失败时的重试次数, 0-10") 派生：
-    /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
-    /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
+    /// `AppProxyConfig.max_retries` 是该 provider 的额外重试次数。0 表示只请求
+    /// 一次；故障转移队列的所有启用 provider 都会参与。
     max_attempts: usize,
 }
 
@@ -214,9 +218,7 @@ impl RequestForwarder {
         copilot_optimizer_config: CopilotOptimizerConfig,
         max_retries: u32,
     ) -> Self {
-        // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
-        // saturating_add 防止 u32::MAX + 1 溢出。
-        let max_attempts = (max_retries as usize).saturating_add(1);
+        let max_attempts = attempts_per_provider(max_retries);
         Self {
             router,
             status,
@@ -273,68 +275,78 @@ impl RequestForwarder {
         });
     }
 
-    /// 整流（thinking signature 或 budget）重试失败后的统一收尾。
-    ///
-    /// `None` 表示已记录熔断器、累积 `last_error`/`last_provider`，
-    /// 调用方应 `continue` 让下一家 provider 继续故障转移；
-    /// `Some(ForwardError)` 表示是客户端错误，没有 provider 能修复，
-    /// 调用方应直接 `return` 把错误返回给客户端。
-    #[allow(clippy::too_many_arguments)]
-    async fn handle_rectifier_retry_failure(
+    async fn finish_success(
         &self,
-        retry_err: ProxyError,
         provider: &Provider,
         app_type_str: &str,
         used_half_open_permit: bool,
-        rectifier_label: &str,
-        last_error: &mut Option<ProxyError>,
-        last_provider: &mut Option<Provider>,
-    ) -> Option<ForwardError> {
-        // Provider 错误：本家上游/网络确实出问题，下一家 provider 可能可用 → 继续故障转移。
-        // 客户端错误：整流后请求仍违法，下一家也修不好 → 直接返回。
-        let is_provider_error = match &retry_err {
-            ProxyError::Timeout(_) | ProxyError::ForwardFailed(_) => true,
-            ProxyError::UpstreamError { status, .. } => *status >= 500,
-            _ => false,
-        };
+        response: ProxyResponse,
+        claude_api_format: Option<String>,
+        outbound_model: Option<String>,
+    ) -> ForwardResult {
+        self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
+            .await;
 
-        if is_provider_error {
-            let _ = self
-                .router
-                .record_result(
-                    &provider.id,
-                    app_type_str,
-                    used_half_open_permit,
-                    false,
-                    Some(retry_err.to_string()),
-                )
-                .await;
-            {
-                let mut status = self.status.write().await;
-                status.last_error = Some(format!(
-                    "Provider {} {rectifier_label}重试失败: {}",
-                    provider.name, retry_err
-                ));
-            }
-            *last_error = Some(retry_err);
-            *last_provider = Some(provider.clone());
-            return None;
+        {
+            let mut current_providers = self.current_providers.write().await;
+            current_providers.insert(
+                app_type_str.to_string(),
+                (provider.id.clone(), provider.name.clone()),
+            );
         }
 
+        {
+            let mut status = self.status.write().await;
+            status.success_requests += 1;
+            status.last_error = None;
+            if self.current_provider_id_at_start.as_str() != provider.id.as_str() {
+                status.failover_count += 1;
+                let fm = self.failover_manager.clone();
+                let ah = self.app_handle.clone();
+                let pid = provider.id.clone();
+                let pname = provider.name.clone();
+                let at = app_type_str.to_string();
+
+                tokio::spawn(async move {
+                    let _ = fm.try_switch(ah.as_ref(), &at, &pid, &pname).await;
+                });
+            }
+            if status.total_requests > 0 {
+                status.success_rate =
+                    (status.success_requests as f32 / status.total_requests as f32) * 100.0;
+            }
+        }
+
+        ForwardResult {
+            response,
+            provider: provider.clone(),
+            claude_api_format,
+            outbound_model,
+            connection_guard: None,
+        }
+    }
+
+    async fn finish_non_retryable_failure(
+        &self,
+        error: ProxyError,
+        provider: &Provider,
+        app_type_str: &str,
+        used_half_open_permit: bool,
+    ) -> ForwardError {
         self.router
             .release_permit_neutral(&provider.id, app_type_str, used_half_open_permit)
             .await;
         let mut status = self.status.write().await;
         status.failed_requests += 1;
-        status.last_error = Some(retry_err.to_string());
+        status.last_error = Some(error.to_string());
         if status.total_requests > 0 {
             status.success_rate =
                 (status.success_requests as f32 / status.total_requests as f32) * 100.0;
         }
-        Some(ForwardError {
-            error: retry_err,
+        ForwardError {
+            error,
             provider: Some(provider.clone()),
-        })
+        }
     }
 
     /// 转发请求（带故障转移）
@@ -394,7 +406,6 @@ impl RequestForwarder {
         extensions: Extensions,
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
-        // 获取适配器
         let adapter = get_adapter(app_type);
         let app_type_str = app_type.as_str();
 
@@ -408,31 +419,9 @@ impl RequestForwarder {
         let mut last_error = None;
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
-
-        // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
         let bypass_circuit_breaker = providers.len() == 1;
 
-        // 依次尝试每个供应商
         for provider in providers.iter() {
-            // 整流器重试标记：每个 provider 独立持有，避免标记跨 provider 短路故障转移
-            // —— 首家 provider 整流后被 5xx/timeout 击落时，下家仍能用整流后的请求体走整流流程
-            let mut rectifier_retried = false;
-            let mut budget_rectifier_retried = false;
-            let mut media_rectifier_retried = false;
-
-            // 上限检查：尊重用户在 AppProxyConfig.max_retries 上配置的「重试次数」。
-            // 放在熔断器 allow 检查之前，避免在已经超限时还占用 HalfOpen 探测名额。
-            if attempted_providers >= self.max_attempts {
-                log::warn!(
-                    "[{app_type_str}] 已达最大尝试次数上限 ({}/{}), 停止故障转移",
-                    attempted_providers,
-                    self.max_attempts
-                );
-                break;
-            }
-
-            // 发起请求前先获取熔断器放行许可（HalfOpen 会占用探测名额）
-            // 单 Provider 场景下跳过此检查，避免熔断器阻塞所有请求
             let (allowed, used_half_open_permit) = if bypass_circuit_breaker {
                 (true, false)
             } else {
@@ -446,9 +435,8 @@ impl RequestForwarder {
             if !allowed {
                 continue;
             }
+            attempted_providers += 1;
 
-            // PRE-SEND 优化器：每个 provider 独立决定是否优化
-            // clone body 以避免 Bedrock 优化字段泄漏到非 Bedrock provider（failover 场景）
             let mut provider_body =
                 if self.optimizer_config.enabled && is_bedrock_provider(provider) {
                     let mut b = body.clone();
@@ -463,612 +451,206 @@ impl RequestForwarder {
                     body.clone()
                 };
 
-            attempted_providers += 1;
+            let mut rectifier_retried = false;
+            let mut budget_rectifier_retried = false;
+            let mut media_rectifier_retried = false;
+            let mut provider_last_error = None;
 
-            // 更新状态中的当前 Provider 信息（per-attempt 维度的标识）
-            //
-            // total_requests / last_request_at / active_connections 已由
-            // forward_with_retry wrapper 在客户端请求维度统一处理，这里只刷
-            // 新「正在尝试哪个 provider」的展示字段。
-            {
-                let mut status = self.status.write().await;
-                status.current_provider = Some(provider.name.clone());
-                status.current_provider_id = Some(provider.id.clone());
-            }
-
-            // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
-            match self
-                .forward(
-                    app_type,
-                    &method,
-                    provider,
-                    endpoint,
-                    &provider_body,
-                    &headers,
-                    &extensions,
-                    adapter.as_ref(),
-                )
-                .await
-            {
-                Ok((response, claude_api_format, outbound_model)) => {
-                    // 成功：普通闭合熔断状态异步记录，避免阻塞流式首包返回；
-                    // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
-                    self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
-                        .await;
-
-                    // 更新当前应用类型使用的 provider
-                    {
-                        let mut current_providers = self.current_providers.write().await;
-                        current_providers.insert(
-                            app_type_str.to_string(),
-                            (provider.id.clone(), provider.name.clone()),
-                        );
-                    }
-
-                    // 更新成功统计
-                    {
-                        let mut status = self.status.write().await;
-                        status.success_requests += 1;
-                        status.last_error = None;
-                        let should_switch =
-                            self.current_provider_id_at_start.as_str() != provider.id.as_str();
-                        if should_switch {
-                            status.failover_count += 1;
-
-                            // 异步触发供应商切换，更新 UI/托盘，并把“当前供应商”同步为实际使用的 provider
-                            let fm = self.failover_manager.clone();
-                            let ah = self.app_handle.clone();
-                            let pid = provider.id.clone();
-                            let pname = provider.name.clone();
-                            let at = app_type_str.to_string();
-
-                            tokio::spawn(async move {
-                                let _ = fm.try_switch(ah.as_ref(), &at, &pid, &pname).await;
-                            });
-                        }
-                        // 重新计算成功率
-                        if status.total_requests > 0 {
-                            status.success_rate = (status.success_requests as f32
-                                / status.total_requests as f32)
-                                * 100.0;
-                        }
-                    }
-
-                    return Ok(ForwardResult {
-                        response,
-                        provider: provider.clone(),
-                        claude_api_format,
-                        outbound_model,
-                        connection_guard: None,
-                    });
-                }
-                Err(e) => {
-                    // 检测是否需要触发整流器（仅 Claude/ClaudeAuth 供应商）
-                    let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
-                    let is_anthropic_provider = matches!(
-                        provider_type,
-                        ProviderType::Claude | ProviderType::ClaudeAuth
+            for attempt in 1..=self.max_attempts {
+                if attempt > 1 {
+                    log::info!(
+                        "[{app_type_str}] Provider {} 第 {attempt}/{} 次请求前等待 1 秒",
+                        provider.name,
+                        self.max_attempts
                     );
-                    let mut signature_rectifier_non_retryable_client_error = false;
+                    tokio::time::sleep(PROVIDER_RETRY_DELAY).await;
+                }
 
-                    if self.media_retry_should_trigger(
-                        adapter.name(),
-                        media_rectifier_retried,
+                {
+                    let mut status = self.status.write().await;
+                    status.current_provider = Some(provider.name.clone());
+                    status.current_provider_id = Some(provider.id.clone());
+                }
+
+                match self
+                    .forward(
+                        app_type,
+                        &method,
+                        provider,
+                        endpoint,
                         &provider_body,
-                        &e,
-                    ) {
-                        let mut media_body = provider_body.clone();
-                        let replaced_images =
-                            super::media_sanitizer::replace_image_blocks_with_marker(
-                                &mut media_body,
-                            );
-
-                        if replaced_images > 0 {
-                            let _ = std::mem::replace(&mut media_rectifier_retried, true);
-                            let model = media_body
-                                .get("model")
-                                .and_then(Value::as_str)
-                                .unwrap_or("");
-                            log::info!(
-                                "[{app_type_str}] [Media] Upstream rejected image input; retrying provider={} model={} with {replaced_images} image block(s) replaced by {}",
-                                provider.id,
-                                model,
-                                super::media_sanitizer::UNSUPPORTED_IMAGE_MARKER
-                            );
-
-                            match self
-                                .forward(
-                                    app_type,
-                                    &method,
-                                    provider,
-                                    endpoint,
-                                    &media_body,
-                                    &headers,
-                                    &extensions,
-                                    adapter.as_ref(),
-                                )
-                                .await
-                            {
-                                Ok((response, claude_api_format, outbound_model)) => {
-                                    log::info!(
-                                        "[{app_type_str}] [Media] Unsupported-image retry succeeded"
-                                    );
-                                    self.record_success_result(
-                                        &provider.id,
-                                        app_type_str,
-                                        used_half_open_permit,
-                                    )
-                                    .await;
-
-                                    {
-                                        let mut current_providers =
-                                            self.current_providers.write().await;
-                                        current_providers.insert(
-                                            app_type_str.to_string(),
-                                            (provider.id.clone(), provider.name.clone()),
-                                        );
-                                    }
-
-                                    {
-                                        let mut status = self.status.write().await;
-                                        status.success_requests += 1;
-                                        status.last_error = None;
-                                        let should_switch =
-                                            self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
-                                        if should_switch {
-                                            status.failover_count += 1;
-                                            let fm = self.failover_manager.clone();
-                                            let ah = self.app_handle.clone();
-                                            let pid = provider.id.clone();
-                                            let pname = provider.name.clone();
-                                            let at = app_type_str.to_string();
-
-                                            tokio::spawn(async move {
-                                                let _ = fm
-                                                    .try_switch(ah.as_ref(), &at, &pid, &pname)
-                                                    .await;
-                                            });
-                                        }
-                                        if status.total_requests > 0 {
-                                            status.success_rate = (status.success_requests as f32
-                                                / status.total_requests as f32)
-                                                * 100.0;
-                                        }
-                                    }
-
-                                    return Ok(ForwardResult {
-                                        response,
-                                        provider: provider.clone(),
-                                        claude_api_format,
-                                        outbound_model,
-                                        connection_guard: None,
-                                    });
-                                }
-                                Err(retry_err) => {
-                                    log::warn!(
-                                        "[{app_type_str}] [Media] Unsupported-image retry still failed: {retry_err}"
-                                    );
-                                    if let Some(err) = self
-                                        .handle_rectifier_retry_failure(
-                                            retry_err,
-                                            provider,
-                                            app_type_str,
-                                            used_half_open_permit,
-                                            "media 降级",
-                                            &mut last_error,
-                                            &mut last_provider,
-                                        )
-                                        .await
-                                    {
-                                        return Err(err);
-                                    }
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-
-                    if is_anthropic_provider {
-                        let error_message = extract_error_message(&e);
-                        if should_rectify_thinking_signature(
-                            error_message.as_deref(),
-                            &self.rectifier_config,
-                        ) {
-                            // 已经重试过：直接返回错误（不可重试客户端错误）
-                            if rectifier_retried {
-                                log::warn!("[{app_type_str}] [RECT-005] 整流器已触发过，不再重试");
-                                // 释放 HalfOpen permit（不记录熔断器，这是客户端兼容性问题）
-                                self.router
-                                    .release_permit_neutral(
-                                        &provider.id,
-                                        app_type_str,
-                                        used_half_open_permit,
-                                    )
-                                    .await;
-                                let mut status = self.status.write().await;
-                                status.failed_requests += 1;
-                                status.last_error = Some(e.to_string());
-                                if status.total_requests > 0 {
-                                    status.success_rate = (status.success_requests as f32
-                                        / status.total_requests as f32)
-                                        * 100.0;
-                                }
-                                return Err(ForwardError {
-                                    error: e,
-                                    provider: Some(provider.clone()),
-                                });
-                            }
-
-                            // 首次触发：整流请求体
-                            let rectified = rectify_anthropic_request(&mut provider_body);
-
-                            // 整流未生效：继续尝试 budget 整流路径，避免误判后短路
-                            if !rectified.applied {
-                                log::warn!(
-                                    "[{app_type_str}] [RECT-006] thinking 签名整流器触发但无可整流内容，继续检查 budget；若 budget 也未命中则按客户端错误返回"
-                                );
-                                signature_rectifier_non_retryable_client_error = true;
-                            } else {
-                                log::info!(
-                                    "[{}] [RECT-001] thinking 签名整流器触发, 移除 {} thinking blocks, {} redacted_thinking blocks, {} signature fields",
-                                    app_type_str,
-                                    rectified.removed_thinking_blocks,
-                                    rectified.removed_redacted_thinking_blocks,
-                                    rectified.removed_signature_fields
-                                );
-
-                                // 标记已重试（当前逻辑下重试后必定 return，保留标记以备将来扩展）
-                                let _ = std::mem::replace(&mut rectifier_retried, true);
-
-                                // 使用同一供应商重试（不计入熔断器）
-                                match self
-                                    .forward(
-                                        app_type,
-                                        &method,
-                                        provider,
-                                        endpoint,
-                                        &provider_body,
-                                        &headers,
-                                        &extensions,
-                                        adapter.as_ref(),
-                                    )
-                                    .await
-                                {
-                                    Ok((response, claude_api_format, outbound_model)) => {
-                                        log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
-                                        self.record_success_result(
-                                            &provider.id,
-                                            app_type_str,
-                                            used_half_open_permit,
-                                        )
-                                        .await;
-
-                                        // 更新当前应用类型使用的 provider
-                                        {
-                                            let mut current_providers =
-                                                self.current_providers.write().await;
-                                            current_providers.insert(
-                                                app_type_str.to_string(),
-                                                (provider.id.clone(), provider.name.clone()),
-                                            );
-                                        }
-
-                                        // 更新成功统计
-                                        {
-                                            let mut status = self.status.write().await;
-                                            status.success_requests += 1;
-                                            status.last_error = None;
-                                            let should_switch =
-                                                self.current_provider_id_at_start.as_str()
-                                                    != provider.id.as_str();
-                                            if should_switch {
-                                                status.failover_count += 1;
-
-                                                // 异步触发供应商切换，更新 UI/托盘
-                                                let fm = self.failover_manager.clone();
-                                                let ah = self.app_handle.clone();
-                                                let pid = provider.id.clone();
-                                                let pname = provider.name.clone();
-                                                let at = app_type_str.to_string();
-
-                                                tokio::spawn(async move {
-                                                    let _ = fm
-                                                        .try_switch(ah.as_ref(), &at, &pid, &pname)
-                                                        .await;
-                                                });
-                                            }
-                                            if status.total_requests > 0 {
-                                                status.success_rate = (status.success_requests
-                                                    as f32
-                                                    / status.total_requests as f32)
-                                                    * 100.0;
-                                            }
-                                        }
-
-                                        return Ok(ForwardResult {
-                                            response,
-                                            provider: provider.clone(),
-                                            claude_api_format,
-                                            outbound_model,
-                                            connection_guard: None,
-                                        });
-                                    }
-                                    Err(retry_err) => {
-                                        log::warn!(
-                                            "[{app_type_str}] [RECT-003] 整流重试仍失败: {retry_err}"
-                                        );
-                                        if let Some(err) = self
-                                            .handle_rectifier_retry_failure(
-                                                retry_err,
-                                                provider,
-                                                app_type_str,
-                                                used_half_open_permit,
-                                                "整流",
-                                                &mut last_error,
-                                                &mut last_provider,
-                                            )
-                                            .await
-                                        {
-                                            return Err(err);
-                                        }
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // 检测是否需要触发 budget 整流器（仅 Claude/ClaudeAuth 供应商）
-                    if is_anthropic_provider {
-                        let error_message = extract_error_message(&e);
-                        if should_rectify_thinking_budget(
-                            error_message.as_deref(),
-                            &self.rectifier_config,
-                        ) {
-                            // 已经重试过：直接返回错误（不可重试客户端错误）
-                            if budget_rectifier_retried {
-                                log::warn!(
-                                    "[{app_type_str}] [RECT-013] budget 整流器已触发过，不再重试"
-                                );
-                                self.router
-                                    .release_permit_neutral(
-                                        &provider.id,
-                                        app_type_str,
-                                        used_half_open_permit,
-                                    )
-                                    .await;
-                                let mut status = self.status.write().await;
-                                status.failed_requests += 1;
-                                status.last_error = Some(e.to_string());
-                                if status.total_requests > 0 {
-                                    status.success_rate = (status.success_requests as f32
-                                        / status.total_requests as f32)
-                                        * 100.0;
-                                }
-                                return Err(ForwardError {
-                                    error: e,
-                                    provider: Some(provider.clone()),
-                                });
-                            }
-
-                            let budget_rectified = rectify_thinking_budget(&mut provider_body);
-                            if !budget_rectified.applied {
-                                log::warn!(
-                                    "[{app_type_str}] [RECT-014] budget 整流器触发但无可整流内容，不做无意义重试"
-                                );
-                                self.router
-                                    .release_permit_neutral(
-                                        &provider.id,
-                                        app_type_str,
-                                        used_half_open_permit,
-                                    )
-                                    .await;
-                                let mut status = self.status.write().await;
-                                status.failed_requests += 1;
-                                status.last_error = Some(e.to_string());
-                                if status.total_requests > 0 {
-                                    status.success_rate = (status.success_requests as f32
-                                        / status.total_requests as f32)
-                                        * 100.0;
-                                }
-                                return Err(ForwardError {
-                                    error: e,
-                                    provider: Some(provider.clone()),
-                                });
-                            }
-
-                            log::info!(
-                                "[{}] [RECT-010] thinking budget 整流器触发, before={:?}, after={:?}",
-                                app_type_str,
-                                budget_rectified.before,
-                                budget_rectified.after
-                            );
-
-                            let _ = std::mem::replace(&mut budget_rectifier_retried, true);
-
-                            // 使用同一供应商重试（不计入熔断器）
-                            match self
-                                .forward(
-                                    app_type,
-                                    &method,
-                                    provider,
-                                    endpoint,
-                                    &provider_body,
-                                    &headers,
-                                    &extensions,
-                                    adapter.as_ref(),
-                                )
-                                .await
-                            {
-                                Ok((response, claude_api_format, outbound_model)) => {
-                                    log::info!("[{app_type_str}] [RECT-011] budget 整流重试成功");
-                                    self.record_success_result(
-                                        &provider.id,
-                                        app_type_str,
-                                        used_half_open_permit,
-                                    )
-                                    .await;
-
-                                    {
-                                        let mut current_providers =
-                                            self.current_providers.write().await;
-                                        current_providers.insert(
-                                            app_type_str.to_string(),
-                                            (provider.id.clone(), provider.name.clone()),
-                                        );
-                                    }
-
-                                    {
-                                        let mut status = self.status.write().await;
-                                        status.success_requests += 1;
-                                        status.last_error = None;
-                                        let should_switch =
-                                            self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
-                                        if should_switch {
-                                            status.failover_count += 1;
-                                            let fm = self.failover_manager.clone();
-                                            let ah = self.app_handle.clone();
-                                            let pid = provider.id.clone();
-                                            let pname = provider.name.clone();
-                                            let at = app_type_str.to_string();
-                                            tokio::spawn(async move {
-                                                let _ = fm
-                                                    .try_switch(ah.as_ref(), &at, &pid, &pname)
-                                                    .await;
-                                            });
-                                        }
-                                        if status.total_requests > 0 {
-                                            status.success_rate = (status.success_requests as f32
-                                                / status.total_requests as f32)
-                                                * 100.0;
-                                        }
-                                    }
-
-                                    return Ok(ForwardResult {
-                                        response,
-                                        provider: provider.clone(),
-                                        claude_api_format,
-                                        outbound_model,
-                                        connection_guard: None,
-                                    });
-                                }
-                                Err(retry_err) => {
-                                    log::warn!(
-                                        "[{app_type_str}] [RECT-012] budget 整流重试仍失败: {retry_err}"
-                                    );
-                                    if let Some(err) = self
-                                        .handle_rectifier_retry_failure(
-                                            retry_err,
-                                            provider,
-                                            app_type_str,
-                                            used_half_open_permit,
-                                            "budget 整流",
-                                            &mut last_error,
-                                            &mut last_provider,
-                                        )
-                                        .await
-                                    {
-                                        return Err(err);
-                                    }
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-
-                    if signature_rectifier_non_retryable_client_error {
-                        self.router
-                            .release_permit_neutral(
-                                &provider.id,
+                        &headers,
+                        &extensions,
+                        adapter.as_ref(),
+                    )
+                    .await
+                {
+                    Ok((response, claude_api_format, outbound_model)) => {
+                        return Ok(self
+                            .finish_success(
+                                provider,
                                 app_type_str,
                                 used_half_open_permit,
+                                response,
+                                claude_api_format,
+                                outbound_model,
                             )
-                            .await;
-                        let mut status = self.status.write().await;
-                        status.failed_requests += 1;
-                        status.last_error = Some(e.to_string());
-                        if status.total_requests > 0 {
-                            status.success_rate = (status.success_requests as f32
-                                / status.total_requests as f32)
-                                * 100.0;
-                        }
-                        return Err(ForwardError {
-                            error: e,
-                            provider: Some(provider.clone()),
-                        });
+                            .await);
                     }
+                    Err(e) => {
+                        let provider_type =
+                            ProviderType::from_app_type_and_config(app_type, provider);
+                        let is_anthropic_provider = matches!(
+                            provider_type,
+                            ProviderType::Claude | ProviderType::ClaudeAuth
+                        );
+                        let mut signature_rectifier_non_retryable_client_error = false;
 
-                    // 先分类错误，决定是否计入 provider 健康度
-                    // —— NonRetryable / ClientAbort 是客户端层错误，无论换哪家 provider 都会被拒绝，
-                    //    不应污染熔断器和数据库健康度（与 release_permit_neutral 同语义）。
-                    let category = self.categorize_proxy_error(&e, provider);
-
-                    match category {
-                        ErrorCategory::Retryable => {
-                            // 可重试：真正的 provider 故障 → 记录失败并更新熔断器/DB 健康度
-                            let _ = self
-                                .router
-                                .record_result(
-                                    &provider.id,
-                                    app_type_str,
-                                    used_half_open_permit,
-                                    false,
-                                    Some(e.to_string()),
-                                )
-                                .await;
-
-                            {
-                                let mut status = self.status.write().await;
-                                status.last_error =
-                                    Some(format!("Provider {} 失败: {}", provider.name, e));
+                        if self.media_retry_should_trigger(
+                            adapter.name(),
+                            media_rectifier_retried,
+                            &provider_body,
+                            &e,
+                        ) {
+                            let mut media_body = provider_body.clone();
+                            let replaced_images =
+                                super::media_sanitizer::replace_image_blocks_with_marker(
+                                    &mut media_body,
+                                );
+                            if replaced_images > 0 && attempt < self.max_attempts {
+                                media_rectifier_retried = true;
+                                provider_body = media_body;
+                                log::info!(
+                                    "[{app_type_str}] [Media] 上游拒绝图片输入，Provider {} 使用降级请求重试",
+                                    provider.name
+                                );
+                                continue;
                             }
-
-                            let (log_code, log_message) = build_retryable_failure_log(
-                                &provider.name,
-                                attempted_providers,
-                                providers.len(),
-                                &e,
-                            );
-                            log::warn!("[{app_type_str}] [{log_code}] {log_message}");
-
-                            last_error = Some(e);
-                            last_provider = Some(provider.clone());
-                            // 继续尝试下一个供应商
-                            continue;
                         }
-                        ErrorCategory::NonRetryable | ErrorCategory::ClientAbort => {
-                            // 不可重试：客户端层错误或客户端断连 → 不污染健康度，仅释放 HalfOpen permit
-                            self.router
-                                .release_permit_neutral(
-                                    &provider.id,
-                                    app_type_str,
-                                    used_half_open_permit,
-                                )
-                                .await;
+
+                        if is_anthropic_provider {
+                            let error_message = extract_error_message(&e);
+                            if should_rectify_thinking_signature(
+                                error_message.as_deref(),
+                                &self.rectifier_config,
+                            ) && !rectifier_retried
                             {
-                                let mut status = self.status.write().await;
-                                status.failed_requests += 1;
-                                status.last_error = Some(e.to_string());
-                                if status.total_requests > 0 {
-                                    status.success_rate = (status.success_requests as f32
-                                        / status.total_requests as f32)
-                                        * 100.0;
+                                let rectified = rectify_anthropic_request(&mut provider_body);
+                                if !rectified.applied {
+                                    signature_rectifier_non_retryable_client_error = true;
+                                } else if attempt < self.max_attempts {
+                                    rectifier_retried = true;
+                                    log::info!(
+                                        "[{app_type_str}] [RECT-001] thinking 签名整流后在同一 Provider 重试"
+                                    );
+                                    continue;
                                 }
                             }
-                            return Err(ForwardError {
-                                error: e,
-                                provider: Some(provider.clone()),
-                            });
+                        }
+
+                        if is_anthropic_provider {
+                            let error_message = extract_error_message(&e);
+                            if should_rectify_thinking_budget(
+                                error_message.as_deref(),
+                                &self.rectifier_config,
+                            ) && !budget_rectifier_retried
+                            {
+                                let budget_rectified = rectify_thinking_budget(&mut provider_body);
+                                if !budget_rectified.applied {
+                                    return Err(self
+                                        .finish_non_retryable_failure(
+                                            e,
+                                            provider,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                        )
+                                        .await);
+                                }
+                                if attempt < self.max_attempts {
+                                    budget_rectifier_retried = true;
+                                    log::info!(
+                                        "[{app_type_str}] [RECT-010] thinking budget 整流后在同一 Provider 重试"
+                                    );
+                                    continue;
+                                }
+                            }
+                        }
+
+                        if signature_rectifier_non_retryable_client_error {
+                            return Err(self
+                                .finish_non_retryable_failure(
+                                    e,
+                                    provider,
+                                    app_type_str,
+                                    used_half_open_permit,
+                                )
+                                .await);
+                        }
+
+                        match self.categorize_proxy_error(&e, provider) {
+                            ErrorCategory::Retryable => {
+                                let error_summary = summarize_proxy_error(&e);
+                                provider_last_error = Some(e);
+                                if attempt < self.max_attempts {
+                                    log::warn!(
+                                        "[{app_type_str}] Provider {} 第 {attempt}/{} 次失败，1 秒后重试同一渠道: {error_summary}",
+                                        provider.name,
+                                        self.max_attempts
+                                    );
+                                    continue;
+                                }
+                                log::warn!(
+                                    "[{app_type_str}] Provider {} 已耗尽 {}/{} 次请求预算: {error_summary}",
+                                    provider.name,
+                                    attempt,
+                                    self.max_attempts
+                                );
+                            }
+                            ErrorCategory::NonRetryable | ErrorCategory::ClientAbort => {
+                                return Err(self
+                                    .finish_non_retryable_failure(
+                                        e,
+                                        provider,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await);
+                            }
                         }
                     }
                 }
+            }
+
+            if let Some(error) = provider_last_error {
+                // 一个 provider 的整组请求只记录一次失败，避免重复尝试把熔断器
+                // 和数据库健康度同时增加多次。
+                let _ = self
+                    .router
+                    .record_result(
+                        &provider.id,
+                        app_type_str,
+                        used_half_open_permit,
+                        false,
+                        Some(error.to_string()),
+                    )
+                    .await;
+                {
+                    let mut status = self.status.write().await;
+                    status.last_error = Some(format!("Provider {} 失败: {}", provider.name, error));
+                }
+                let (log_code, log_message) = build_retryable_failure_log(
+                    &provider.name,
+                    attempted_providers,
+                    providers.len(),
+                    &error,
+                );
+                log::warn!("[{app_type_str}] [{log_code}] {log_message}");
+                last_error = Some(error);
+                last_provider = Some(provider.clone());
             }
         }
 
         if attempted_providers == 0 {
-            // providers 列表非空，但全部被熔断器拒绝（典型：HalfOpen 探测名额被占用）
             {
                 let mut status = self.status.write().await;
                 status.failed_requests += 1;
@@ -1084,7 +666,6 @@ impl RequestForwarder {
             });
         }
 
-        // 所有供应商都失败了
         {
             let mut status = self.status.write().await;
             status.failed_requests += 1;
@@ -3589,12 +3170,17 @@ mod tests {
     use super::*;
     use crate::database::Database;
     use crate::provider::LocalProxyRequestOverrides;
+    use axum::extract::State;
     use axum::http::header::{HeaderValue, ACCEPT};
     use axum::http::HeaderMap;
+    use axum::response::IntoResponse;
+    use axum::routing::any;
+    use axum::{Json, Router};
     use bytes::Bytes;
     use http::StatusCode;
     use serde_json::json;
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     fn test_provider_with_type(provider_type: Option<&str>) -> Provider {
@@ -3621,6 +3207,11 @@ mod tests {
         non_streaming_timeout: Duration,
         streaming_first_byte_timeout: Duration,
     ) -> RequestForwarder {
+        static CRYPTO_PROVIDER: std::sync::Once = std::sync::Once::new();
+        CRYPTO_PROVIDER.call_once(|| {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        });
+
         let db = Arc::new(Database::memory().expect("memory db"));
 
         RequestForwarder {
@@ -3641,6 +3232,235 @@ mod tests {
             streaming_first_byte_timeout,
             max_attempts: 1,
         }
+    }
+
+    #[derive(Clone)]
+    struct RetryTestUpstream {
+        attempts: Arc<AtomicUsize>,
+        failures_before_success: usize,
+        failure_status: StatusCode,
+    }
+
+    async fn retry_test_upstream_handler(
+        State(state): State<RetryTestUpstream>,
+    ) -> impl IntoResponse {
+        let attempt = state.attempts.fetch_add(1, Ordering::SeqCst) + 1;
+        if attempt <= state.failures_before_success {
+            return (
+                state.failure_status,
+                Json(json!({"error": {"message": "temporary upstream failure"}})),
+            );
+        }
+
+        (
+            StatusCode::OK,
+            Json(json!({
+                "id": "msg_test",
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "ok"}],
+                "model": "claude-test",
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 1, "output_tokens": 1}
+            })),
+        )
+    }
+
+    async fn spawn_retry_test_upstream(
+        failures_before_success: usize,
+        failure_status: StatusCode,
+    ) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let state = RetryTestUpstream {
+            attempts: attempts.clone(),
+            failures_before_success,
+            failure_status,
+        };
+        let app = Router::new()
+            .fallback(any(retry_test_upstream_handler))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind retry test upstream");
+        let address = listener.local_addr().expect("retry test upstream address");
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve retry test upstream");
+        });
+
+        (format!("http://{address}"), attempts, task)
+    }
+
+    fn retry_test_provider(id: &str, base_url: &str) -> Provider {
+        let mut provider = test_provider_with_type(Some("anthropic"));
+        provider.id = id.to_string();
+        provider.name = id.to_string();
+        provider.settings_config = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": base_url,
+                "ANTHROPIC_AUTH_TOKEN": "test-token"
+            }
+        });
+        provider
+    }
+
+    async fn forward_retry_test_request(
+        forwarder: &RequestForwarder,
+        providers: Vec<Provider>,
+    ) -> Result<ForwardResult, ForwardError> {
+        forwarder
+            .forward_with_retry_inner(
+                &AppType::Claude,
+                http::Method::POST,
+                "/v1/messages",
+                json!({
+                    "model": "claude-test",
+                    "max_tokens": 16,
+                    "messages": [{"role": "user", "content": "hello"}]
+                }),
+                HeaderMap::new(),
+                Extensions::new(),
+                providers,
+            )
+            .await
+    }
+
+    #[test]
+    fn provider_attempt_budget_is_extra_retries_plus_initial_request() {
+        assert_eq!(attempts_per_provider(0), 1);
+        assert_eq!(attempts_per_provider(3), 4);
+        assert_eq!(
+            attempts_per_provider(u32::MAX),
+            (u32::MAX as usize).saturating_add(1)
+        );
+    }
+
+    #[test]
+    fn provider_retry_delay_is_one_second() {
+        assert_eq!(PROVIDER_RETRY_DELAY, Duration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn retryable_failure_exhausts_provider_before_failover_and_records_once() {
+        let (primary_url, primary_attempts, primary_task) =
+            spawn_retry_test_upstream(usize::MAX, StatusCode::SERVICE_UNAVAILABLE).await;
+        let (secondary_url, secondary_attempts, secondary_task) =
+            spawn_retry_test_upstream(0, StatusCode::SERVICE_UNAVAILABLE).await;
+        let primary = retry_test_provider("primary", &primary_url);
+        let secondary = retry_test_provider("secondary", &secondary_url);
+        let mut forwarder = test_forwarder(Duration::from_secs(10), Duration::from_secs(10));
+        forwarder.max_attempts = 2;
+        forwarder.current_provider_id_at_start = secondary.id.clone();
+
+        let result =
+            match forward_retry_test_request(&forwarder, vec![primary, secondary.clone()]).await {
+                Ok(result) => result,
+                Err(error) => panic!("secondary provider should succeed: {}", error.error),
+            };
+
+        assert_eq!(result.provider.id, secondary.id);
+        assert_eq!(primary_attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(secondary_attempts.load(Ordering::SeqCst), 1);
+        let stats = forwarder
+            .router
+            .get_circuit_breaker_stats("primary", AppType::Claude.as_str())
+            .await
+            .expect("primary circuit breaker stats");
+        assert_eq!(stats.consecutive_failures, 1);
+
+        primary_task.abort();
+        secondary_task.abort();
+    }
+
+    #[tokio::test]
+    async fn retry_success_stops_before_next_provider() {
+        let (primary_url, primary_attempts, primary_task) =
+            spawn_retry_test_upstream(1, StatusCode::SERVICE_UNAVAILABLE).await;
+        let (secondary_url, secondary_attempts, secondary_task) =
+            spawn_retry_test_upstream(0, StatusCode::SERVICE_UNAVAILABLE).await;
+        let primary = retry_test_provider("primary", &primary_url);
+        let secondary = retry_test_provider("secondary", &secondary_url);
+        let mut forwarder = test_forwarder(Duration::from_secs(10), Duration::from_secs(10));
+        forwarder.max_attempts = 3;
+        forwarder.current_provider_id_at_start = primary.id.clone();
+
+        let result =
+            match forward_retry_test_request(&forwarder, vec![primary.clone(), secondary]).await {
+                Ok(result) => result,
+                Err(error) => {
+                    panic!("primary provider retry should succeed: {}", error.error)
+                }
+            };
+
+        assert_eq!(result.provider.id, primary.id);
+        assert_eq!(primary_attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(secondary_attempts.load(Ordering::SeqCst), 0);
+
+        primary_task.abort();
+        secondary_task.abort();
+    }
+
+    #[tokio::test]
+    async fn provider_queue_is_not_truncated_by_retry_budget() {
+        let (first_url, first_attempts, first_task) =
+            spawn_retry_test_upstream(usize::MAX, StatusCode::SERVICE_UNAVAILABLE).await;
+        let (second_url, second_attempts, second_task) =
+            spawn_retry_test_upstream(usize::MAX, StatusCode::SERVICE_UNAVAILABLE).await;
+        let (third_url, third_attempts, third_task) =
+            spawn_retry_test_upstream(0, StatusCode::SERVICE_UNAVAILABLE).await;
+        let first = retry_test_provider("first", &first_url);
+        let second = retry_test_provider("second", &second_url);
+        let third = retry_test_provider("third", &third_url);
+        let mut forwarder = test_forwarder(Duration::from_secs(10), Duration::from_secs(10));
+        forwarder.max_attempts = 1;
+        forwarder.current_provider_id_at_start = third.id.clone();
+
+        let result = match forward_retry_test_request(
+            &forwarder,
+            vec![first, second, third.clone()],
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => panic!("third provider should be reached: {}", error.error),
+        };
+
+        assert_eq!(result.provider.id, third.id);
+        assert_eq!(first_attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(second_attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(third_attempts.load(Ordering::SeqCst), 1);
+
+        first_task.abort();
+        second_task.abort();
+        third_task.abort();
+    }
+
+    #[tokio::test]
+    async fn non_retryable_failure_stops_without_retry_or_failover() {
+        let (primary_url, primary_attempts, primary_task) =
+            spawn_retry_test_upstream(usize::MAX, StatusCode::BAD_REQUEST).await;
+        let (secondary_url, secondary_attempts, secondary_task) =
+            spawn_retry_test_upstream(0, StatusCode::SERVICE_UNAVAILABLE).await;
+        let primary = retry_test_provider("primary", &primary_url);
+        let secondary = retry_test_provider("secondary", &secondary_url);
+        let mut forwarder = test_forwarder(Duration::from_secs(10), Duration::from_secs(10));
+        forwarder.max_attempts = 3;
+
+        let error = match forward_retry_test_request(&forwarder, vec![primary, secondary]).await {
+            Ok(_) => panic!("400 response must not retry or fail over"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error.error,
+            ProxyError::UpstreamError { status: 400, .. }
+        ));
+        assert_eq!(primary_attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(secondary_attempts.load(Ordering::SeqCst), 0);
+
+        primary_task.abort();
+        secondary_task.abort();
     }
 
     #[test]
