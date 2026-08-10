@@ -217,7 +217,7 @@ describe("RequestLogTable", () => {
 
     // 报错行状态码渲染为可点击按钮，完整报错信息挂在原生 title 上
     const statusButton = screen.getByRole("button", {
-      name: "usage.clickToCopy",
+      name: /429.*usage\.clickToCopy|usage\.clickToCopy.*429/,
     });
     expect(statusButton).toHaveTextContent("429");
     expect(statusButton).toHaveAttribute(
