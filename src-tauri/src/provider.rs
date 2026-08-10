@@ -905,7 +905,7 @@ requires_openai_auth = true"#
     ) -> Option<Self> {
         use crate::app_config::AppType;
 
-        let (base_url, api_key) = provider.resolve_usage_credentials(app_type);
+        let (mut base_url, api_key) = provider.resolve_usage_credentials(app_type);
         // 既无 base_url 也无 api_key 时无法构成有意义的统一供应商
         if base_url.is_empty() && api_key.is_empty() {
             return None;
@@ -922,6 +922,13 @@ requires_openai_auth = true"#
             AppType::Codex => {
                 apps.codex = true;
                 models.codex = Self::extract_codex_models(&provider.settings_config);
+                // Codex 配置里的 base_url 通常以 OpenAI 兼容的 /v1 结尾。统一供应商的
+                // base_url 需要同时服务 Claude（客户端会自行追加 /v1/messages），
+                // 这里去掉尾部 /v1，避免转成 Claude 后出现 /v1/v1/messages；
+                // to_codex_provider 生成 Codex 配置时会按需补回 /v1。
+                if let Some(stripped) = base_url.strip_suffix("/v1") {
+                    base_url = stripped.to_string();
+                }
             }
             AppType::Gemini => {
                 apps.gemini = true;
@@ -1520,7 +1527,7 @@ mod tests {
             .expect("should convert back to universal");
 
         assert!(back.apps.codex);
-        assert_eq!(back.base_url, "https://api.example.com/v1");
+        assert_eq!(back.base_url, "https://api.example.com");
         assert_eq!(back.api_key, "api-key");
         assert_eq!(
             back.models.codex.as_ref().and_then(|m| m.model.as_deref()),
@@ -1533,6 +1540,42 @@ mod tests {
                 .and_then(|m| m.reasoning_effort.as_deref()),
             Some("low")
         );
+    }
+
+    #[test]
+    fn universal_provider_from_codex_provider_strips_v1_for_claude() {
+        // Codex 配置里的 base_url 以 /v1 结尾；转成统一供应商后应去掉 /v1，
+        // 避免转成 Claude 时 ANTHROPIC_BASE_URL 出现 /v1/v1/messages。
+        let provider = provider_with(json!({
+            "auth": { "OPENAI_API_KEY": "sk-key" },
+            "config": "model_provider = \"custom\"\n\n[model_providers.custom]\nbase_url = \"https://api.example.com/v1\"\n"
+        }));
+        let universal = UniversalProvider::from_provider(&AppType::Codex, &provider)
+            .expect("should convert codex provider");
+
+        assert!(universal.apps.codex);
+        assert_eq!(universal.base_url, "https://api.example.com");
+
+        // 与 convert_provider_for_app 一致：转换前显式启用目标应用
+        let mut universal = universal;
+        universal.apps.claude = true;
+        let claude = universal.to_claude_provider().expect("claude provider");
+        assert_eq!(
+            claude
+                .settings_config
+                .pointer("/env/ANTHROPIC_BASE_URL")
+                .and_then(|v| v.as_str()),
+            Some("https://api.example.com")
+        );
+
+        // Codex 往返仍能按需补回 /v1
+        let codex = universal.to_codex_provider().expect("codex provider");
+        let config = codex
+            .settings_config
+            .get("config")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(config.contains("base_url = \"https://api.example.com/v1\""));
     }
 
     #[test]

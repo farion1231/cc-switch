@@ -378,6 +378,15 @@ export function UniversalProviderPanel({
       await queryClient.invalidateQueries({
         queryKey: ["providers", app],
       });
+      // 同步托盘菜单（失败不影响主操作）
+      try {
+        await providersApi.updateTrayMenu();
+      } catch (trayError) {
+        console.error(
+          "Failed to update tray menu after import-as-is",
+          trayError,
+        );
+      }
       toast.success(
         t("universalProvider.importedAsProvider", {
           defaultValue: "已按原样导入到供应商列表",

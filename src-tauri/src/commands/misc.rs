@@ -116,7 +116,15 @@ fn try_linux_copy_via_cli(text: &str) -> Result<(), ()> {
             if let Some(mut stdin) = child.stdin.take() {
                 stdin.write_all(text.as_bytes())?;
             }
-            let _ = child.wait()?;
+            let status = child.wait()?;
+            if !status.success() {
+                // 工具可能因无法访问显示服务等原因启动失败并返回非零退出码
+                // （例如 xclip 已安装但 $DISPLAY 无效），此时必须视为失败，
+                // 继续尝试下一个工具，避免误报「复制成功」。
+                return Err(std::io::Error::other(format!(
+                    "{cmd} exited with {status}"
+                )));
+            }
             Ok(())
         })();
         if result.is_ok() {
