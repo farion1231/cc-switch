@@ -35,6 +35,15 @@ const requiredKeys = [
   "toolUpgradeWillRun",
   "toolUpgradeConfirmBtn",
   "toolUpgradeUnanchoredHint",
+  "toolUninstall",
+  "toolUninstallConfirmTitle",
+  "toolUninstallConfirmHint",
+  "toolUninstallConfirmMultipleHint",
+  "toolUninstallConfirmBtn",
+  "toolUninstallWillRun",
+  "toolUninstallNotSupportedHint",
+  "toolUninstallIncompleteTitle",
+  "toolUninstallIncompleteHint",
 ] as const;
 
 type SettingsTranslations = Record<string, unknown>;

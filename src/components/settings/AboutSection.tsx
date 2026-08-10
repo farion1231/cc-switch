@@ -14,6 +14,7 @@ import {
   ArrowUpCircle,
   ChevronDown,
   Stethoscope,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -41,6 +42,7 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 import { isWindows } from "@/lib/platform";
 import { isUpdateAvailable } from "@/lib/version";
 import { ToolUpgradeConfirmDialog } from "./ToolUpgradeConfirmDialog";
+import { ToolUninstallConfirmDialog } from "./ToolUninstallConfirmDialog";
 import { ToolInstallRow } from "./ToolInstallRow";
 
 interface AboutSectionProps {
@@ -69,7 +71,7 @@ const TOOL_NAMES = [
   "hermes",
 ] as const;
 type ToolName = (typeof TOOL_NAMES)[number];
-type ToolLifecycleAction = "install" | "update";
+type ToolLifecycleAction = "install" | "update" | "uninstall";
 
 type WslShellPreference = {
   wslShell?: string | null;
@@ -256,6 +258,14 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   const [pendingUpgrade, setPendingUpgrade] = useState<{
     toolNames: ToolName[];
     plans: ToolInstallationReport[];
+  } | null>(null);
+  // Uninstall is destructive, so it always prompts. `report` is the probe result for the
+  // single tool being uninstalled (null when probing failed → generic confirm). The
+  // dialog uses `uninstall_supported` to switch between command preview + confirm and
+  // manual-removal guidance + close.
+  const [pendingUninstall, setPendingUninstall] = useState<{
+    toolName: ToolName;
+    report: ToolInstallationReport | null;
   } | null>(null);
   // 升级 preflight(probe 阶段)的 in-flight 工具集合。
   // probeToolInstallations 是个 1-3 秒级别的跨进程探测(对每个工具跑 --version + canonicalize),
@@ -579,7 +589,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         toolName: ToolName;
         detail: string;
         soft: boolean;
-        kind?: "notRunnable" | "versionUnchanged";
+        kind?: "notRunnable" | "versionUnchanged" | "uninstallIncomplete";
       }[] = [];
       let succeeded = 0;
 
@@ -601,7 +611,23 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             wslShellByTool,
           );
           const tool = refreshed.find((t) => t.name === toolName);
-          if (tool?.version) {
+          if (action === "uninstall") {
+            // Uninstall semantics flip vs install/update: a missing version after the
+            // command means success (it's gone); a version still present means the
+            // uninstall only removed one of several installs (the default), so surface a
+            // soft warning and re-diagnose to reveal the remaining installs.
+            if (tool?.version) {
+              failures.push({
+                toolName,
+                detail: t("settings.toolUninstallIncompleteHint"),
+                soft: true,
+                kind: "uninstallIncomplete",
+              });
+              void diagnoseToolSilently(toolName);
+            } else {
+              succeeded += 1;
+            }
+          } else if (tool?.version) {
             const latestVersion = tool.latest_version ?? previousLatestVersion;
             const versionUnchangedAfterUpdate =
               action === "update" &&
@@ -667,7 +693,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       const actionLabel =
         action === "install"
           ? t("settings.toolInstall")
-          : t("settings.toolUpdate");
+          : action === "uninstall"
+            ? t("settings.toolUninstall")
+            : t("settings.toolUpdate");
 
       if (failures.length === 0) {
         toast.success(
@@ -697,14 +725,19 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       const allSoftVersionUnchanged =
         failures.length > 0 &&
         failures.every((f) => f.soft && f.kind === "versionUnchanged");
+      const allSoftUninstallIncomplete =
+        failures.length > 0 &&
+        failures.every((f) => f.soft && f.kind === "uninstallIncomplete");
 
       if (succeeded === 0 && hardFailures.length === 0) {
-        // 命令均成功执行、但结果需要用户介入（版本没变 / 装上却跑不起来）
+        // 命令均成功执行、但结果需要用户介入（版本没变 / 装上却跑不起来 / 卸载后仍残留）
         // → 降级为 warning 并解释原因。
         toast.warning(
           allSoftVersionUnchanged
             ? t("settings.toolActionVersionUnchangedTitle")
-            : t("settings.toolActionInstalledNotRunnable"),
+            : allSoftUninstallIncomplete
+              ? t("settings.toolUninstallIncompleteTitle")
+              : t("settings.toolActionInstalledNotRunnable"),
           {
             description: failureDescription || undefined,
             closeButton: true,
@@ -800,6 +833,54 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   }, [pendingUpgrade, executeRun]);
 
   const handleCancelUpgrade = useCallback(() => setPendingUpgrade(null), []);
+
+  // Uninstall always prompts (destructive). Probe the single tool first so the dialog
+  // can show the anchored command / multiple-install warning / not-supported guidance,
+  // mirroring the update preflight. If probing fails, still prompt a generic confirm
+  // (report=null) rather than silently running a destructive command.
+  const handleUninstallClick = useCallback(
+    async (toolName: ToolName) => {
+      if (preflightTools.has(toolName) || toolActions[toolName] !== undefined) {
+        return;
+      }
+      setPreflightTools((prev) => {
+        const next = new Set(prev);
+        next.add(toolName);
+        return next;
+      });
+      try {
+        const reports = await settingsApi.probeToolInstallations([toolName]);
+        setPendingUninstall({ toolName, report: reports[0] ?? null });
+      } catch (error) {
+        console.error(
+          `[AboutSection] probeToolInstallations failed for uninstall of ${toolName}`,
+          error,
+        );
+        setPendingUninstall({ toolName, report: null });
+      } finally {
+        setPreflightTools((prev) => {
+          const next = new Set(prev);
+          next.delete(toolName);
+          return next;
+        });
+      }
+    },
+    [preflightTools, toolActions],
+  );
+
+  const handleConfirmUninstall = useCallback(() => {
+    const pending = pendingUninstall;
+    setPendingUninstall(null);
+    if (!pending) return;
+    // Not-supported tools never show a confirm button, so reaching here implies the
+    // install is auto-uninstallable (or probing failed and we prompted generically).
+    void executeRun([pending.toolName], "uninstall");
+  }, [pendingUninstall, executeRun]);
+
+  const handleCancelUninstall = useCallback(
+    () => setPendingUninstall(null),
+    [],
+  );
 
   const displayVersion = version ?? t("common.unknown");
 
@@ -1037,6 +1118,11 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             const runningAction = toolActions[toolName];
             const title = tool?.version || tool?.error || t("common.unknown");
             const conflicts = toolDiagnostics[toolName];
+            // Uninstall is offered whenever the tool is installed (working or broken) and
+            // not still loading. Not-installed tools keep the install button only.
+            const canUninstall =
+              !isToolVersionLoading &&
+              (Boolean(tool?.version) || installedButBroken);
 
             return (
               <motion.div
@@ -1175,41 +1261,66 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                   </div>
                 )}
 
-                <div className="mt-auto flex items-center justify-end">
+                <div className="mt-auto flex items-center justify-end gap-2">
                   {isToolVersionLoading ? (
                     <span className="text-xs text-muted-foreground">
                       {t("common.loading")}
                     </span>
-                  ) : installedButBroken ? (
-                    // 已安装但跑不起来：重装无济于事，不给按钮，给一句指向环境的提示。
-                    <span className="text-xs text-yellow-600 dark:text-yellow-400">
-                      {t("settings.toolCheckEnv")}
-                    </span>
-                  ) : action ? (
-                    <Button
-                      size="sm"
-                      variant={action === "install" ? "outline" : "default"}
-                      className="h-7 gap-1.5 text-xs"
-                      onClick={() => handleRunToolAction([toolName], action)}
-                      disabled={isToolVersionLoading || isAnyBusy}
-                    >
-                      {runningAction ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : action === "install" ? (
-                        <Download className="h-3.5 w-3.5" />
-                      ) : (
-                        <ArrowUpCircle className="h-3.5 w-3.5" />
-                      )}
-                      {/* loading 时文案保持不变、仅图标切换为 spinner，
-                          按钮宽度恒定，避免"升级"→"升级中…"导致的抖动。 */}
-                      {action === "install"
-                        ? t("settings.toolInstall")
-                        : t("settings.toolUpdate")}
-                    </Button>
                   ) : (
-                    <span className="text-xs text-muted-foreground">
-                      {t("settings.toolReady")}
-                    </span>
+                    <>
+                      {/* Primary action: install (not installed) / update (outdated).
+                          Up-to-date and broken installs have no primary action here. */}
+                      {action ? (
+                        <Button
+                          size="sm"
+                          variant={action === "install" ? "outline" : "default"}
+                          className="h-7 gap-1.5 text-xs"
+                          onClick={() =>
+                            handleRunToolAction([toolName], action)
+                          }
+                          disabled={isToolVersionLoading || isAnyBusy}
+                        >
+                          {runningAction && runningAction !== "uninstall" ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : action === "install" ? (
+                            <Download className="h-3.5 w-3.5" />
+                          ) : (
+                            <ArrowUpCircle className="h-3.5 w-3.5" />
+                          )}
+                          {/* loading 时文案保持不变、仅图标切换为 spinner，
+                              按钮宽度恒定，避免"升级"→"升级中…"导致的抖动。 */}
+                          {action === "install"
+                            ? t("settings.toolInstall")
+                            : t("settings.toolUpdate")}
+                        </Button>
+                      ) : installedButBroken ? (
+                        // 已安装但跑不起来：重装无济于事，给一句指向环境的提示；
+                        // 旁边仍提供卸载按钮作为恢复手段。
+                        <span className="text-xs text-yellow-600 dark:text-yellow-400">
+                          {t("settings.toolCheckEnv")}
+                        </span>
+                      ) : null}
+
+                      {/* Uninstall: offered for any installed tool (working or broken),
+                          mirroring the install button for not-installed ones. Destructive
+                          → goes through the confirm dialog (handleUninstallClick). */}
+                      {canUninstall && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 gap-1.5 text-xs text-destructive hover:text-destructive"
+                          onClick={() => handleUninstallClick(toolName)}
+                          disabled={isAnyBusy}
+                        >
+                          {runningAction === "uninstall" ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3.5 w-3.5" />
+                          )}
+                          {t("settings.toolUninstall")}
+                        </Button>
+                      )}
+                    </>
                   )}
                 </div>
               </motion.div>
@@ -1266,6 +1377,14 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         displayName={toolDisplayName}
         onConfirm={handleConfirmUpgrade}
         onCancel={handleCancelUpgrade}
+      />
+
+      <ToolUninstallConfirmDialog
+        isOpen={pendingUninstall !== null}
+        plan={pendingUninstall?.report ?? null}
+        displayName={toolDisplayName}
+        onConfirm={handleConfirmUninstall}
+        onCancel={handleCancelUninstall}
       />
     </motion.section>
   );

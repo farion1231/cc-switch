@@ -255,7 +255,7 @@ export const settingsApi = {
 
   async runToolLifecycleAction(
     tools: string[],
-    action: "install" | "update",
+    action: "install" | "update" | "uninstall",
     wslShellByTool?: Record<
       string,
       { wslShell?: string | null; wslShellFlag?: string | null }
@@ -319,6 +319,12 @@ export interface ToolInstallationReport {
   needs_confirmation: boolean;
   command: string;
   anchored: boolean;
+  /** Anchored/static uninstall command (display only; regenerated on execution).
+   * Empty when the install method is not auto-uninstallable (hermes, grok native). */
+  uninstall_command: string;
+  /** Whether the current install can be auto-uninstalled via cc-switch. When false,
+   * `uninstall_command` is empty and the UI should prompt manual removal. */
+  uninstall_supported: boolean;
 }
 
 export interface RectifierConfig {
