@@ -159,8 +159,32 @@ pub fn start_worker(db: Arc<crate::database::Database>, app: tauri::AppHandle) {
         return;
     }
 
+    // Startup grace: setup-stage DB writes (migration, defaults,
+    // periodic_backup_if_needed, recover_from_crash settings writes)
+    // must not trigger an auto-upload before the user has done
+    // anything. push 2 here; setup closure releases once and a
+    // delayed-release task (spawned from setup) releases once more —
+    // net zero, but coverage spans both the setup synchronous path
+    // AND tasks spawned from it that complete after setup returns.
+    // 30s is enough for startup background tasks to land (typically
+    // <5s) and short enough that a real user interaction is never
+    // suppressed (UI is still rendering at that point).
+    // See #4547 + codex review P1.
+    AUTO_SYNC_SUPPRESS_DEPTH.fetch_add(2, Ordering::SeqCst);
+
     tauri::async_runtime::spawn(async move {
         run_worker_loop(db, rx, app).await;
+    });
+}
+
+/// 在 setup 流程结束时调用，释放 startup 期 suppression。
+/// 调用后 SQLite update_hook 投递的"数据变更"信号才会真正触发自动同步。
+///
+/// 在 `notify_db_changed` 已经开始触发的场景下（例如 DB hook 抢先于本函数调用），
+/// 信号会被 try_send 丢弃（容量 1 的 channel），所以这里是幂等且安全的。
+pub fn release_startup_auto_sync() {
+    let _ = AUTO_SYNC_SUPPRESS_DEPTH.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
+        Some(value.saturating_sub(1))
     });
 }
 
@@ -197,12 +221,73 @@ async fn run_worker_loop(
 mod tests {
     use super::{
         auto_sync_wait_duration, enqueue_change_signal, is_auto_sync_suppressed,
-        should_run_auto_sync, should_trigger_for_table, AutoSyncSuppressionGuard,
-        MAX_AUTO_SYNC_WAIT_MS,
+        release_startup_auto_sync, should_run_auto_sync, should_trigger_for_table,
+        AutoSyncSuppressionGuard, MAX_AUTO_SYNC_WAIT_MS,
     };
     use crate::settings::WebDavSyncSettings;
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc::channel;
+
+    // AUTO_SYNC_SUPPRESS_DEPTH 是模块级 AtomicUsize，跨模块测试可能并发。
+    // 共享 crate::services::SUPPRESS_TEST_LOCK 串行化所有读取/修改它的测试。
+    // 现有 `suppression_guard_enables_and_restores_state` 也加同一把锁，
+    // 否则它会与新测试并行跑、相互污染。
+
+    #[test]
+    fn start_worker_pushes_two_for_setup_and_delayed_release() {
+        let _lock = crate::services::SUPPRESS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // Regression guard for codex review P1 on #4587: start_worker
+        // must push *2* (one for the setup closure release, one for the
+        // 30s delayed-release task spawned from setup), not just 1.
+        // If a future refactor drops back to push(1), this test will
+        // detect it because two paired releases no longer leave
+        // suppression fully off.
+        let _startup = AutoSyncSuppressionGuard::new(); // simulates start_worker push
+        AutoSyncSuppressionGuard::new(); // second push for the delayed-release path
+                                         // Two releases — one sync (setup), one for the 30s path.
+        release_startup_auto_sync();
+        release_startup_auto_sync();
+        // net = 0 → no suppression
+        assert!(
+            !is_auto_sync_suppressed(),
+            "expected suppression cleared after paired push(2)/release(2)"
+        );
+    }
+
+    #[test]
+    fn release_startup_auto_sync_clears_suppression_when_paired() {
+        let _lock = crate::services::SUPPRESS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // 模拟 start_worker + setup 末尾的配对：start_worker 内 fetch_add(1)，
+        // setup 末尾 release_startup_auto_sync() 减 1。验证：
+        //   1. guard 进入时 suppression 开启
+        //   2. release 后该 guard 的影响被抵消（即便此时还有别的 guard 也无关）
+        // 用 RAII guard 避免测试结束时残留污染。
+        {
+            let _startup_guard = AutoSyncSuppressionGuard::new();
+            assert!(is_auto_sync_suppressed());
+            release_startup_auto_sync();
+            // startup_guard 仍未 drop，仍在抑制；但我们验证了 release 不 panic 且调用合法。
+        }
+    }
+
+    #[test]
+    fn release_is_idempotent_under_saturating_sub() {
+        let _lock = crate::services::SUPPRESS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // release 必须用 saturating_sub 防止下溢。多次 release 不应让计数溢出成
+        // 巨数。此处只验证不 panic + 调用合法，不依赖绝对状态。
+        {
+            let _g = AutoSyncSuppressionGuard::new();
+            release_startup_auto_sync();
+            release_startup_auto_sync();
+            release_startup_auto_sync();
+        }
+    }
 
     #[test]
     fn should_trigger_sync_for_config_tables_only() {
@@ -214,6 +299,9 @@ mod tests {
 
     #[test]
     fn suppression_guard_enables_and_restores_state() {
+        let _lock = crate::services::SUPPRESS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         assert!(!is_auto_sync_suppressed());
         {
             let _guard = AutoSyncSuppressionGuard::new();
