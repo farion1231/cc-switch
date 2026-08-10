@@ -440,11 +440,34 @@ fn convert_message_to_openai(
                             None => String::new(),
                         }
                     };
-                    result.push(json!({
-                        "role": "tool",
-                        "tool_call_id": tool_use_id,
-                        "content": content_str
-                    }));
+                    // OpenAI 要求一个 tool_call 恰好一条 tool 消息。Anthropic 客户端可能把
+                    // 一次工具调用的结果拆成多个共用同一 tool_use_id 的 tool_result 块
+                    // （Office 的 read_slide_text 每页幻灯片一条），严格上游（DeepSeek）
+                    // 会把多出的 tool 消息判成孤儿 400。同 id 的后续块并入第一条。
+                    if let Some(existing) = result.iter_mut().find(|m| {
+                        m.get("role").and_then(|r| r.as_str()) == Some("tool")
+                            && m.get("tool_call_id").and_then(|i| i.as_str()) == Some(tool_use_id)
+                    }) {
+                        let prev = existing
+                            .get("content")
+                            .and_then(|c| c.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let merged = if prev.is_empty() {
+                            content_str
+                        } else if content_str.is_empty() {
+                            prev
+                        } else {
+                            format!("{prev}\n\n{content_str}")
+                        };
+                        existing["content"] = json!(merged);
+                    } else {
+                        result.push(json!({
+                            "role": "tool",
+                            "tool_call_id": tool_use_id,
+                            "content": content_str
+                        }));
+                    }
                 }
                 "thinking" => {
                     // 提取 thinking 内容，后续可作为 reasoning_content 传给需要它的上游。
@@ -1277,6 +1300,87 @@ mod tests {
         assert_eq!(messages[1]["role"], "tool");
         assert_eq!(messages[2]["role"], "user");
         assert_eq!(messages[2]["content"].as_array().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn test_duplicate_tool_result_blocks_merge_into_single_tool_message() {
+        // Office 的 read_slide_text 把一次工具调用的结果按页拆成多个共用同一
+        // tool_use_id 的 tool_result 块。严格上游（DeepSeek OpenAI 端点）要求
+        // 一个 tool_call 恰好一条 tool 消息，否则报 tool must follow tool_calls。
+        let input = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "thinking": "..."},
+                        {"type": "tool_use", "id": "call_1", "name": "read_slide_text", "input": {"slide": 1}}
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "call_1", "content": "第16页内容"},
+                        {"type": "tool_result", "tool_use_id": "call_1", "content": "第17页内容"},
+                        {"type": "tool_result", "tool_use_id": "call_1", "content": "第18页内容"}
+                    ]
+                }
+            ]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        let tool_msgs: Vec<_> = messages
+            .iter()
+            .filter(|m| m["role"] == "tool")
+            .collect();
+        assert_eq!(tool_msgs.len(), 1, "duplicate tool_results must merge");
+        assert_eq!(tool_msgs[0]["tool_call_id"], "call_1");
+        assert_eq!(
+            tool_msgs[0]["content"],
+            "第16页内容\n\n第17页内容\n\n第18页内容"
+        );
+
+        // 只有一个 assistant tool_call，后面恰好跟一条 tool 消息
+        let assistant = messages
+            .iter()
+            .find(|m| m["role"] == "assistant")
+            .expect("assistant message");
+        assert_eq!(assistant["tool_calls"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_distinct_tool_result_ids_stay_separate() {
+        let input = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "call_1", "name": "a", "input": {}},
+                        {"type": "tool_use", "id": "call_2", "name": "b", "input": {}}
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "call_1", "content": "r1"},
+                        {"type": "tool_result", "tool_use_id": "call_2", "content": "r2"}
+                    ]
+                }
+            ]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+        let tool_msgs: Vec<_> = messages
+            .iter()
+            .filter(|m| m["role"] == "tool")
+            .collect();
+        assert_eq!(tool_msgs.len(), 2, "distinct ids must not merge");
+        assert_eq!(tool_msgs[0]["content"], "r1");
+        assert_eq!(tool_msgs[1]["content"], "r2");
     }
 
     #[test]

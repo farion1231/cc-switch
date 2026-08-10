@@ -46,6 +46,12 @@ export interface ClaudeDesktopDefaultRoute {
   supports1m: boolean;
 }
 
+export interface ClaudeOfficeGatewayInfo {
+  gatewayUrl: string;
+  token: string;
+  proxyRunning: boolean;
+}
+
 export const providersApi = {
   async getAll(appId: AppId): Promise<Record<string, Provider>> {
     return await invoke("get_providers", { app: appId });
@@ -117,6 +123,10 @@ export const providersApi = {
 
   async getClaudeDesktopDefaultRoutes(): Promise<ClaudeDesktopDefaultRoute[]> {
     return await invoke("get_claude_desktop_default_routes");
+  },
+
+  async getClaudeOfficeGatewayInfo(): Promise<ClaudeOfficeGatewayInfo> {
+    return await invoke("get_claude_office_gateway_info");
   },
 
   async updateTrayMenu(): Promise<boolean> {

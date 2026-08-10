@@ -28,6 +28,22 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
 use tokio::task::JoinHandle;
+use tower_http::cors::{AllowOrigin, CorsLayer};
+
+/// Claude for Office 专用的 CORS 层
+///
+/// Office 加载项运行在 WebView2 中，Origin 是 https://*.office.com（随租户/区域变化），
+/// 且从 HTTPS 公共页面访问本机地址属于 Private Network Access，预检里会带
+/// `Access-Control-Request-Private-Network: true`，必须回
+/// `Access-Control-Allow-Private-Network: true` 浏览器才放行实际请求。
+fn claude_office_cors_layer() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::mirror_request())
+        .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
+        .allow_headers(tower_http::cors::AllowHeaders::mirror_request())
+        .allow_private_network(true)
+        .max_age(std::time::Duration::from_secs(7200))
+}
 
 /// 代理服务器状态（共享）
 #[derive(Clone)]
@@ -289,6 +305,27 @@ impl ProxyServer {
     }
 
     fn build_router(&self) -> Router {
+        // Claude for Office 本地 gateway（Office 加载项跑在 WebView2 浏览器中，
+        // 只发 x-api-key 鉴权，且要求 CORS + Private Network Access 预检通过）。
+        // 单独嵌套子 Router：CorsLayer 只作用于 /claude-office 前缀。若用
+        // Router::layer 挂在主路由上，axum 会把该层应用到之前注册的所有路由
+        // （含无鉴权的 /v1/messages），导致任意网页可跨站调用本机代理（PNA 劫持）。
+        let office_router = Router::new()
+            .route(
+                "/claude-office/v1/models",
+                get(handlers::handle_claude_office_models),
+            )
+            .route(
+                "/claude-office/v1/messages",
+                post(handlers::handle_claude_office_messages),
+            )
+            // Office 取模型列表时可能用 OpenAI 风格的 /models 路径
+            .route(
+                "/claude-office/models",
+                get(handlers::handle_claude_office_models),
+            )
+            .layer(claude_office_cors_layer());
+
         Router::new()
             // 健康检查
             .route("/health", get(handlers::health_check))
@@ -305,6 +342,7 @@ impl ProxyServer {
                 "/claude-desktop/v1/messages",
                 post(handlers::handle_claude_desktop_messages),
             )
+            .merge(office_router)
             // OpenAI Chat Completions API (Codex CLI，支持带前缀和不带前缀)
             .route("/chat/completions", post(handlers::handle_chat_completions))
             .route(
