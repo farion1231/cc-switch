@@ -30,7 +30,10 @@ import {
   useHermesLiveProviderIds,
   useHermesModelConfig,
 } from "@/hooks/useHermes";
-import { usePiLiveProviderIds } from "@/hooks/usePi";
+import {
+  usePiLiveProviderIds,
+  invalidatePiProviderCaches,
+} from "@/hooks/usePi";
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
@@ -244,6 +247,9 @@ export function ProviderList({
         queryClient.invalidateQueries({ queryKey: ["providers", appId] });
         if (appId === "claude-desktop") {
           queryClient.invalidateQueries({ queryKey: ["claudeDesktopStatus"] });
+        }
+        if (appId === "pi") {
+          void invalidatePiProviderCaches(queryClient);
         }
         toast.success(t("provider.importCurrentDescription"));
       } else {

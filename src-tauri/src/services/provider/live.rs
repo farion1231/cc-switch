@@ -186,8 +186,9 @@ pub(crate) fn provider_exists_in_live_config(
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
-        AppType::Pi => crate::pi_config::get_provider_ids()
-            .map(|ids| ids.iter().any(|id| id == provider_id)),
+        AppType::Pi => {
+            crate::pi_config::get_provider_ids().map(|ids| ids.iter().any(|id| id == provider_id))
+        }
         _ => Ok(false),
     }
 }
@@ -1175,6 +1176,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             let base_url = env
                 .and_then(|e| e.get("ANTHROPIC_BASE_URL"))
                 .or_else(|| env.and_then(|e| e.get("OPENAI_BASE_URL")))
+                .or_else(|| env.and_then(|e| e.get("OPENAI_API_BASE")))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             let api_key = env
@@ -1183,7 +1185,8 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 .or_else(|| env.and_then(|e| e.get("OPENAI_API_KEY")))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let api = provider.settings_config
+            let api = provider
+                .settings_config
                 .get("api")
                 .and_then(|v| v.as_str())
                 .unwrap_or_else(|| {
@@ -1195,7 +1198,8 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                         "anthropic-messages"
                     }
                 });
-            let models = provider.settings_config
+            let models = provider
+                .settings_config
                 .get("models")
                 .and_then(|v| if v.is_array() { Some(v.clone()) } else { None })
                 .unwrap_or_else(|| serde_json::json!([]));

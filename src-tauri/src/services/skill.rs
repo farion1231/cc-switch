@@ -19,6 +19,7 @@ use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
 use crate::config::get_app_config_dir;
 use crate::database::Database;
 use crate::error::format_skill_error;
+use crate::error::AppError;
 
 // ========== 数据结构 ==========
 
@@ -574,6 +575,18 @@ impl SkillService {
         // 默认路径：回退到用户主目录下的标准位置。
         // 必须走 get_home_dir()（可被 CC_SWITCH_TEST_HOME 覆盖）：Windows 上 dirs::home_dir()
         // 走 Known Folder API，测试无法隔离真实用户目录。
+        // Pi doesn't support Skills; return early so callers (scan_unmanaged,
+        // import_from_apps, uninstall) skip Pi without scanning or deleting any
+        // directory.
+        if matches!(app, AppType::Pi) {
+            return Err(AppError::localized(
+                "skills.pi.unsupported",
+                "Pi 不支持 Skills 功能",
+                "Pi does not support Skills",
+            )
+            .into());
+        }
+
         let home = crate::config::get_home_dir();
 
         Ok(match app {
@@ -585,7 +598,8 @@ impl SkillService {
             AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
-            AppType::Pi => home.join(".pi").join("skills"),
+            // Pi early-returns above; unreachable here.
+            AppType::Pi => unreachable!("Pi does not support Skills"),
         })
     }
 

@@ -2172,7 +2172,7 @@
       "providerKeyDuplicate": "此标识已被使用，请更换",
       "apiType": "API 协议",
       "apiTypeHint": "供应商 API 协议类型。Anthropic 兼容选 anthropic-messages，OpenAI Chat 兼容选 openai-completions，OpenAI Responses 选 openai-responses。",
-      "baseUrlHint": "Pi 的 API 端点地址，将写入环境变量 {key}。",
+      "baseUrlHint": "Pi 的 API 端点地址，将写入环境变量 {{key}}。",
       "models": "模型列表",
       "addModel": "添加模型",
       "noModels": "暂无模型，请点击\"添加模型\"按钮。",
@@ -2449,8 +2449,7 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "openclaw": "OpenClaw",
-      "pi": "Pi"
+      "openclaw": "OpenClaw"
     },
     "installFromZip": {
       "button": "从 ZIP 安装",

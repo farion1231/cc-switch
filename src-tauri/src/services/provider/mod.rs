@@ -3494,7 +3494,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi => Ok(String::new()), // Pi doesn't use common config snippets
+            AppType::Pi => Ok(String::new()),     // Pi doesn't use common config snippets
         }
     }
 
@@ -3512,7 +3512,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-        AppType::Pi => Ok(String::new()), // Pi doesn't use common config snippets
+            AppType::Pi => Ok(String::new()),     // Pi doesn't use common config snippets
         }
     }
 
@@ -4515,6 +4515,7 @@ impl ProviderService {
                 let base_url = env
                     .get("ANTHROPIC_BASE_URL")
                     .or_else(|| env.get("OPENAI_BASE_URL"))
+                    .or_else(|| env.get("OPENAI_API_BASE"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();

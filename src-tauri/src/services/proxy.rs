@@ -722,6 +722,9 @@ impl ProxyService {
         // OpenCode and OpenClaw don't support proxy features, always return false
         let opencode_enabled = false;
         let openclaw_enabled = false;
+        // Hermes and Pi don't support proxy features, always return false
+        let hermes_enabled = false;
+        let pi_enabled = false;
 
         Ok(ProxyTakeoverStatus {
             claude: claude_enabled,
@@ -730,6 +733,8 @@ impl ProxyService {
             grokbuild: grokbuild_enabled,
             opencode: opencode_enabled,
             openclaw: openclaw_enabled,
+            hermes: hermes_enabled,
+            pi: pi_enabled,
         })
     }
 

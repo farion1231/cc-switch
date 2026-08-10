@@ -60,7 +60,10 @@ pub fn read_models_config() -> Result<Value, AppError> {
 /// 读取 `providers` 段作为 JSON(用于命令侧 `get_pi_live_provider_ids`)。
 pub fn get_providers_json() -> Result<Value, AppError> {
     let config = read_models_config()?;
-    Ok(config.get("providers").cloned().unwrap_or_else(|| json!({})))
+    Ok(config
+        .get("providers")
+        .cloned()
+        .unwrap_or_else(|| json!({})))
 }
 
 /// 返回 `providers` 映射的全部键(即 live 中已存在的 provider id 列表,有序)。
@@ -173,7 +176,11 @@ mod tests {
             assert_eq!(ids, vec!["anthropic".to_string(), "deepseek".to_string()]);
 
             // upsert:覆盖 anthropic,不应删除 deepseek
-            set_provider("anthropic", json!({"baseUrl": "https://new.example.com", "apiKey": "sk-3"})).expect("upsert");
+            set_provider(
+                "anthropic",
+                json!({"baseUrl": "https://new.example.com", "apiKey": "sk-3"}),
+            )
+            .expect("upsert");
             let ids = get_provider_ids().expect("ids after upsert");
             assert_eq!(ids, vec!["anthropic".to_string(), "deepseek".to_string()]);
             let providers = get_providers_json().expect("providers");

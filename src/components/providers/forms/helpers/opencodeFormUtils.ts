@@ -30,12 +30,6 @@ export const GEMINI_DEFAULT_CONFIG = JSON.stringify(
   null,
   2,
 );
-export const PI_DEFAULT_CONFIG = JSON.stringify(
-  { api: "anthropic-messages", env: {}, models: [] },
-  null,
-  2,
-);
-
 export const OPENCODE_DEFAULT_NPM = "@ai-sdk/openai-compatible";
 export const OPENCODE_DEFAULT_CONFIG = JSON.stringify(
   {

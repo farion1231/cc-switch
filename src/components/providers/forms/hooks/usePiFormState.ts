@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import type { AppId } from "@/lib/api";
 import type { PiApiType, PiModel } from "@/config/piProviderPresets";
 import { useProvidersQuery } from "@/lib/query/queries";
@@ -49,7 +49,21 @@ function detectApiType(config?: Record<string, unknown>): PiApiType {
   return "anthropic-messages";
 }
 
-function getEnvKeys(apiType: PiApiType): { baseUrlKey: string; apiKeyKey: string } {
+export const PI_DEFAULT_CONFIG = JSON.stringify(
+  { api: "anthropic-messages", env: {}, models: [] },
+  null,
+  2,
+);
+
+/**
+ * Shared contract for Pi env key names per API protocol.
+ * Keep in sync with PI_API_TYPES and the Rust `resolve_usage_credentials`/live.rs
+ * fallback chains (ANTHROPIC_* first, then OPENAI_BASE_URL, then OPENAI_API_BASE).
+ */
+export function getPiEnvKeys(apiType: PiApiType): {
+  baseUrlKey: string;
+  apiKeyKey: string;
+} {
   switch (apiType) {
     case "openai-completions":
     case "openai-responses":
@@ -57,7 +71,10 @@ function getEnvKeys(apiType: PiApiType): { baseUrlKey: string; apiKeyKey: string
     case "anthropic-messages":
     case "google-generative-ai":
     default:
-      return { baseUrlKey: "ANTHROPIC_BASE_URL", apiKeyKey: "ANTHROPIC_API_KEY" };
+      return {
+        baseUrlKey: "ANTHROPIC_BASE_URL",
+        apiKeyKey: "ANTHROPIC_API_KEY",
+      };
   }
 }
 
@@ -68,11 +85,11 @@ export function usePiFormState({
 }: UsePiFormStateParams): PiFormState {
   const { data: piProvidersData } = useProvidersQuery("pi");
   const existingPiKeys = useMemo(() => {
-    if (!piProvidersData?.providers) return [];
+    if (appId !== "pi" || !piProvidersData?.providers) return [];
     return Object.keys(piProvidersData.providers).filter(
       (k) => k !== providerId,
     );
-  }, [piProvidersData?.providers, providerId]);
+  }, [appId, piProvidersData?.providers, providerId]);
 
   const [piProviderKey, setPiProviderKeyRaw] = useState<string>(() => {
     if (appId !== "pi") return "";
@@ -80,7 +97,8 @@ export function usePiFormState({
   });
 
   const initialApiType = useMemo(() => {
-    if (appId !== "pi" || !initialData?.settingsConfig) return "anthropic-messages" as PiApiType;
+    if (appId !== "pi" || !initialData?.settingsConfig)
+      return "anthropic-messages" as PiApiType;
     // Check for explicit api field first
     const explicitApi = initialData.settingsConfig.api as string | undefined;
     if (explicitApi && PI_KNOWN_API_TYPES.includes(explicitApi)) {
@@ -89,7 +107,10 @@ export function usePiFormState({
     return detectApiType(initialData.settingsConfig);
   }, [appId, initialData]);
 
-  const initialEnvKeys = useMemo(() => getEnvKeys(initialApiType), [initialApiType]);
+  const initialEnvKeys = useMemo(
+    () => getPiEnvKeys(initialApiType),
+    [initialApiType],
+  );
 
   const [piApiType, setPiApiTypeState] = useState<PiApiType>(initialApiType);
   const [baseUrlEnvKey, setBaseUrlEnvKey] = useState(initialEnvKeys.baseUrlKey);
@@ -97,13 +118,15 @@ export function usePiFormState({
 
   const [piBaseUrl, setPiBaseUrl] = useState<string>(() => {
     if (appId !== "pi" || !initialData?.settingsConfig) return "";
-    const env = (initialData.settingsConfig.env as Record<string, unknown>) || {};
+    const env =
+      (initialData.settingsConfig.env as Record<string, unknown>) || {};
     return (env[initialEnvKeys.baseUrlKey] as string) || "";
   });
 
   const [piApiKey, setPiApiKey] = useState<string>(() => {
     if (appId !== "pi" || !initialData?.settingsConfig) return "";
-    const env = (initialData.settingsConfig.env as Record<string, unknown>) || {};
+    const env =
+      (initialData.settingsConfig.env as Record<string, unknown>) || {};
     return (env[initialEnvKeys.apiKeyKey] as string) || "";
   });
 
@@ -116,9 +139,18 @@ export function usePiFormState({
     return [];
   });
 
+  // Reset state when the editing target (appId + providerId) changes to avoid
+  // stale initialData from a previous edit target.
+  useEffect(() => {
+    if (appId === "pi" && initialData?.settingsConfig) {
+      resetPiState(initialData.settingsConfig);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appId, providerId]);
+
   const setPiApiType = useCallback((type: PiApiType) => {
     setPiApiTypeState(type);
-    const keys = getEnvKeys(type);
+    const keys = getPiEnvKeys(type);
     setBaseUrlEnvKey(keys.baseUrlKey);
     setApiKeyEnvKey(keys.apiKeyKey);
   }, []);
@@ -127,34 +159,32 @@ export function usePiFormState({
     setPiProviderKeyRaw(key.toLowerCase().replace(/[^a-z0-9-]/g, ""));
   }, []);
 
-  const resetPiState = useCallback(
-    (config?: Record<string, unknown>) => {
-      setPiProviderKeyRaw("");
-      if (config) {
-        const explicitApi = config.api as string | undefined;
-        const newApiType = (explicitApi && PI_KNOWN_API_TYPES.includes(explicitApi))
-          ? explicitApi as PiApiType
+  const resetPiState = useCallback((config?: Record<string, unknown>) => {
+    setPiProviderKeyRaw("");
+    if (config) {
+      const explicitApi = config.api as string | undefined;
+      const newApiType =
+        explicitApi && PI_KNOWN_API_TYPES.includes(explicitApi)
+          ? (explicitApi as PiApiType)
           : detectApiType(config);
-        setPiApiTypeState(newApiType);
-        const keys = getEnvKeys(newApiType);
-        setBaseUrlEnvKey(keys.baseUrlKey);
-        setApiKeyEnvKey(keys.apiKeyKey);
-        const env = (config.env as Record<string, unknown>) || {};
-        setPiBaseUrl((env[keys.baseUrlKey] as string) || "");
-        setPiApiKey((env[keys.apiKeyKey] as string) || "");
-        const models = config.models;
-        setPiModels(Array.isArray(models) ? (models as PiModel[]) : []);
-      } else {
-        setPiApiTypeState("anthropic-messages");
-        setBaseUrlEnvKey("ANTHROPIC_BASE_URL");
-        setApiKeyEnvKey("ANTHROPIC_API_KEY");
-        setPiBaseUrl("");
-        setPiApiKey("");
-        setPiModels([]);
-      }
-    },
-    [],
-  );
+      setPiApiTypeState(newApiType);
+      const keys = getPiEnvKeys(newApiType);
+      setBaseUrlEnvKey(keys.baseUrlKey);
+      setApiKeyEnvKey(keys.apiKeyKey);
+      const env = (config.env as Record<string, unknown>) || {};
+      setPiBaseUrl((env[keys.baseUrlKey] as string) || "");
+      setPiApiKey((env[keys.apiKeyKey] as string) || "");
+      const models = config.models;
+      setPiModels(Array.isArray(models) ? (models as PiModel[]) : []);
+    } else {
+      setPiApiTypeState("anthropic-messages");
+      setBaseUrlEnvKey("ANTHROPIC_BASE_URL");
+      setApiKeyEnvKey("ANTHROPIC_API_KEY");
+      setPiBaseUrl("");
+      setPiApiKey("");
+      setPiModels([]);
+    }
+  }, []);
 
   return {
     piProviderKey,

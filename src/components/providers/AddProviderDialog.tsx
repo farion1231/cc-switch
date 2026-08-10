@@ -8,6 +8,7 @@ import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import type { Provider, CustomEndpoint, UniversalProvider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { universalProvidersApi } from "@/lib/api";
+import { getPiEnvKeys } from "@/components/providers/forms/hooks/usePiFormState";
 import {
   ProviderForm,
   type ProviderFormValues,
@@ -290,10 +291,22 @@ export function AddProviderDialog({
             addUrl(parsedConfig.base_url as string);
           }
         } else if (appId === "pi") {
-          // Pi uses env-style settings like Claude
+          // Pi uses env-style settings like Claude; resolve the base URL env key
+          // by the configured API protocol
           const env = parsedConfig.env as Record<string, any> | undefined;
-          if (env?.ANTHROPIC_BASE_URL) {
-            addUrl(env.ANTHROPIC_BASE_URL);
+          const api =
+            (parsedConfig.api as string | undefined) || "anthropic-messages";
+          const { baseUrlKey } = getPiEnvKeys(
+            api === "openai-completions" || api === "openai-responses"
+              ? api
+              : "anthropic-messages",
+          );
+          const piBaseUrl =
+            env?.[baseUrlKey] ??
+            env?.OPENAI_API_BASE ??
+            env?.ANTHROPIC_BASE_URL;
+          if (piBaseUrl) {
+            addUrl(piBaseUrl);
           }
         }
 

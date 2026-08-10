@@ -2172,7 +2172,7 @@
       "providerKeyDuplicate": "This provider key already exists",
       "apiType": "API Protocol",
       "apiTypeHint": "Provider API protocol. Use anthropic-messages for Anthropic-compatible, openai-completions for OpenAI Chat-compatible, openai-responses for OpenAI Responses.",
-      "baseUrlHint": "Pi API endpoint address, written to env var {key}.",
+      "baseUrlHint": "Pi API endpoint address, written to env var {{key}}.",
       "models": "Models",
       "addModel": "Add Model",
       "noModels": "No models yet. Click \"Add Model\" to add one.",
@@ -2449,8 +2449,7 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "openclaw": "OpenClaw",
-      "pi": "Pi"
+      "openclaw": "OpenClaw"
     },
     "installFromZip": {
       "button": "Install from ZIP",

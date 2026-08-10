@@ -77,6 +77,10 @@ export const handlers = [
     success(getLiveProviderIds("openclaw")),
   ),
 
+  http.post(`${TAURI_ENDPOINT}/get_pi_live_provider_ids`, () =>
+    success(getLiveProviderIds("pi")),
+  ),
+
   http.post(`${TAURI_ENDPOINT}/get_openclaw_default_model`, () =>
     success({ primary: null, fallback: [] }),
   ),

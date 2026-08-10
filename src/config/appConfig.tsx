@@ -121,8 +121,10 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
   pi: {
     label: "Pi",
     icon: <ProviderIcon icon="pi" name="Pi" size={14} showFallback={false} />,
-    activeClass: "bg-teal-500/10 ring-1 ring-teal-500/20 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400",
-    badgeClass: "bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 border-0 gap-1.5",
+    activeClass:
+      "bg-teal-500/10 ring-1 ring-teal-500/20 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400",
+    badgeClass:
+      "bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 border-0 gap-1.5",
   },
   hermes: {
     label: "Hermes",

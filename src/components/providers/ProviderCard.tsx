@@ -17,6 +17,7 @@ import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
+import { getPiEnvKeys } from "@/components/providers/forms/hooks/usePiFormState";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
 import {
@@ -102,12 +103,23 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
     );
   }
   if (appId === "pi") {
-    // Pi uses ANTHROPIC_BASE_URL; official if empty or contains anthropic.com
-    const baseUrl = config?.env?.ANTHROPIC_BASE_URL;
+    // Pi uses protocol-specific env keys; official if empty or contains the provider domain
+    const api = (config?.api as string | undefined) || "anthropic-messages";
+    const { baseUrlKey } = getPiEnvKeys(
+      api === "openai-completions" || api === "openai-responses"
+        ? api
+        : "anthropic-messages",
+    );
+    const baseUrl =
+      config?.env?.[baseUrlKey] ??
+      config?.env?.OPENAI_API_BASE ??
+      config?.env?.ANTHROPIC_BASE_URL;
     return (
       !baseUrl ||
       (typeof baseUrl === "string" &&
-        (baseUrl.trim() === "" || baseUrl.includes("anthropic.com")))
+        (baseUrl.trim() === "" ||
+          baseUrl.includes("anthropic.com") ||
+          baseUrl.includes("openai.com")))
     );
   }
 
@@ -183,9 +195,7 @@ export function ProviderCard({
   const isAnyOmo = isOmo || isOmoSlim;
   const handleDisableAnyOmo = isOmoSlim ? onDisableOmoSlim : onDisableOmo;
   // 累加模式应用（OpenCode 非 OMO / Pi）共享"已在配置中"的常驻高亮
-  const isAdditiveMode =
-    (appId === "opencode" && !isAnyOmo) ||
-    appId === "pi";
+  const isAdditiveMode = (appId === "opencode" && !isAnyOmo) || appId === "pi";
 
   const { data: health } = useProviderHealth(provider.id, appId);
 
@@ -250,7 +260,10 @@ export function ProviderCard({
   // 获取用量数据以判断是否有多套餐
 
   const shouldAutoQuery =
-    appId === "opencode" || appId === "openclaw" || appId === "hermes" || appId === "pi"
+    appId === "opencode" ||
+    appId === "openclaw" ||
+    appId === "hermes" ||
+    appId === "pi"
       ? isInConfig
       : isCurrent;
   const autoQueryInterval = shouldAutoQuery

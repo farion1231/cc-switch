@@ -1,7 +1,4 @@
-import {
-  useQuery,
-  type QueryClient,
-} from "@tanstack/react-query";
+import { useQuery, type QueryClient } from "@tanstack/react-query";
 import { providersApi } from "@/lib/api/providers";
 
 /**
@@ -18,9 +15,7 @@ export const piKeys = {
  * added/updated/deleted/added-to-config.
  */
 export function invalidatePiProviderCaches(queryClient: QueryClient) {
-  return Promise.all([
-    queryClient.invalidateQueries({ queryKey: piKeys.liveProviderIds }),
-  ]);
+  return queryClient.invalidateQueries({ queryKey: piKeys.all });
 }
 
 // ============================================================

@@ -79,9 +79,7 @@ export function PiFormFields({
   apiKeyEnvKey = "ANTHROPIC_API_KEY",
 }: PiFormFieldsProps) {
   const { t } = useTranslation();
-  const modelKeysRef = useRef<string[]>(
-    models.map(() => crypto.randomUUID()),
-  );
+  const modelKeysRef = useRef<string[]>(models.map(() => crypto.randomUUID()));
 
   // ── Fetch models ─────────────────────────────────────────────
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
@@ -135,17 +133,20 @@ export function PiFormFields({
     });
   };
 
-  // Keep keys array in sync with models length
+  // Keep keys array in sync with models length (both grow and shrink)
   useEffect(() => {
-    if (modelKeysRef.current.length < models.length) {
-      while (modelKeysRef.current.length < models.length) {
-        modelKeysRef.current.push(crypto.randomUUID());
-      }
+    while (modelKeysRef.current.length < models.length) {
+      modelKeysRef.current.push(crypto.randomUUID());
+    }
+    if (modelKeysRef.current.length > models.length) {
+      modelKeysRef.current.length = models.length;
     }
   }, [models.length]);
 
   // Normalize reasoning: undefined → true (Pi defaults to extended thinking)
+  const reasoningNormalizedRef = useRef(false);
   useEffect(() => {
+    if (reasoningNormalizedRef.current) return;
     let changed = false;
     const next = models.map((m) => {
       if (m.reasoning === undefined) {
@@ -155,9 +156,10 @@ export function PiFormFields({
       return m;
     });
     if (changed) {
+      reasoningNormalizedRef.current = true;
       onModelsChange(next);
     }
-  }, []); // only run once on mount
+  }, [models, onModelsChange]);
 
   const handleAddModel = () => {
     modelKeysRef.current.push(crypto.randomUUID());
@@ -229,7 +231,7 @@ export function PiFormFields({
         cost[field] = parsed;
       }
       const next: PiModel = { ...m };
-      if (cost.input === undefined && cost.output === undefined) {
+      if (Object.keys(cost).length === 0) {
         delete next.cost;
       } else {
         next.cost = cost;
@@ -284,7 +286,7 @@ export function PiFormFields({
         />
         <p className="text-xs text-muted-foreground">
           {t("pi.form.baseUrlHint", {
-            defaultValue: "Pi 的 API 端点地址，将写入环境变量 {key}。",
+            defaultValue: "Pi 的 API 端点地址，将写入环境变量 {{key}}。",
             key: baseUrlEnvKey,
           })}
         </p>
@@ -413,7 +415,9 @@ export function PiFormFields({
                     {fetchedModels.length > 0 && (
                       <ModelDropdown
                         models={fetchedModels}
-                        onSelect={(id) => handleModelFieldChange(index, "id", id)}
+                        onSelect={(id) =>
+                          handleModelFieldChange(index, "id", id)
+                        }
                       />
                     )}
                   </div>
@@ -489,7 +493,9 @@ export function PiFormFields({
                     </FormLabel>
                     <Select
                       value={model.reasoning !== false ? "on" : "off"}
-                      onValueChange={(v) => handleModelReasoningChange(index, v)}
+                      onValueChange={(v) =>
+                        handleModelReasoningChange(index, v)
+                      }
                     >
                       <SelectTrigger className="h-8 text-sm">
                         <SelectValue />

@@ -188,9 +188,7 @@ export function EditProviderDialog({
         unknown
       >;
       const nextProviderId =
-        (appId === "opencode" ||
-          appId === "openclaw" ||
-          appId === "pi") &&
+        (appId === "opencode" || appId === "openclaw" || appId === "pi") &&
         values.providerKey?.trim()
           ? values.providerKey.trim()
           : provider.id;

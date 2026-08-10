@@ -31,7 +31,7 @@ impl McpApps {
             AppType::GrokBuild => self.grokbuild,
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => false, // OpenClaw doesn't support MCP
-            AppType::Pi => false, // Pi doesn't support MCP
+            AppType::Pi => false,       // Pi doesn't support MCP
             AppType::Hermes => self.hermes,
             AppType::ClaudeDesktop => false,
         }
@@ -46,7 +46,7 @@ impl McpApps {
             AppType::GrokBuild => self.grokbuild = enabled,
             AppType::OpenCode => self.opencode = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
-            AppType::Pi => {} // Pi doesn't support MCP, ignore
+            AppType::Pi => {}       // Pi doesn't support MCP, ignore
             AppType::Hermes => self.hermes = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P provider config doesn't support MCP here
         }
@@ -114,7 +114,7 @@ impl SkillApps {
             AppType::GrokBuild => self.grokbuild,
             AppType::OpenCode => self.opencode,
             AppType::Hermes => self.hermes,
-            AppType::Pi => false, // Pi doesn't support Skills
+            AppType::Pi => false,       // Pi doesn't support Skills
             AppType::OpenClaw => false, // OpenClaw doesn't support Skills
             AppType::ClaudeDesktop => false,
         }
@@ -129,8 +129,8 @@ impl SkillApps {
             AppType::GrokBuild => self.grokbuild = enabled,
             AppType::OpenCode => self.opencode = enabled,
             AppType::Hermes => self.hermes = enabled,
-            AppType::Pi => {} // Pi doesn't support Skills, ignore
-            AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
+            AppType::Pi => {}            // Pi doesn't support Skills, ignore
+            AppType::OpenClaw => {}      // OpenClaw doesn't support Skills, ignore
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
         }
     }
@@ -310,6 +310,8 @@ pub struct McpRoot {
     /// Hermes MCP 配置（实际使用 config.yaml）
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub hermes: McpConfig,
+    /// Pi MCP 配置(实际使用 models.json)
+    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub pi: McpConfig,
 }
 
@@ -508,7 +510,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode = snippet,
             AppType::OpenClaw => self.openclaw = snippet,
             AppType::Hermes => self.hermes = snippet,
-            AppType::Pi => {},
+            AppType::Pi => {}
         }
     }
 }

@@ -42,6 +42,7 @@ import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
+import { piKeys, invalidatePiProviderCaches } from "@/hooks/usePi";
 import { hermesApi } from "@/lib/api/hermes";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
@@ -251,6 +252,16 @@ function App() {
     }
   }, [sharedFeatureApp, currentView]);
 
+  // Fallback from skills view when switching to an app without skills support
+  useEffect(() => {
+    if (
+      (currentView === "skills" || currentView === "skillsDiscovery") &&
+      (sharedFeatureApp === "openclaw" || sharedFeatureApp === "pi")
+    ) {
+      setCurrentView("providers");
+    }
+  }, [sharedFeatureApp, currentView]);
+
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
@@ -304,7 +315,8 @@ function App() {
       currentView === "openclawAgents");
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
-  const hasSkillsSupport = sharedFeatureApp !== "openclaw";
+  const hasSkillsSupport =
+    sharedFeatureApp !== "openclaw" && sharedFeatureApp !== "pi";
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||
@@ -701,6 +713,8 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: hermesKeys.liveProviderIds,
         });
+      } else if (activeApp === "pi") {
+        await invalidatePiProviderCaches(queryClient);
       }
       toast.success(
         t("notifications.removeFromConfigSuccess", {
@@ -752,7 +766,8 @@ function App() {
     if (
       activeApp === "opencode" ||
       activeApp === "openclaw" ||
-      activeApp === "hermes"
+      activeApp === "hermes" ||
+      activeApp === "pi"
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -767,10 +782,15 @@ function App() {
                   queryKey: openclawKeys.liveProviderIds,
                   queryFn: () => providersApi.getOpenClawLiveProviderIds(),
                 })
-              : await queryClient.ensureQueryData({
-                  queryKey: hermesKeys.liveProviderIds,
-                  queryFn: () => providersApi.getHermesLiveProviderIds(),
-                });
+              : activeApp === "hermes"
+                ? await queryClient.ensureQueryData({
+                    queryKey: hermesKeys.liveProviderIds,
+                    queryFn: () => providersApi.getHermesLiveProviderIds(),
+                  })
+                : await queryClient.ensureQueryData({
+                    queryKey: piKeys.liveProviderIds,
+                    queryFn: () => providersApi.getPiLiveProviderIds(),
+                  });
       } catch (error) {
         console.error(
           "[App] Failed to load live provider IDs for duplication",
@@ -1030,7 +1050,8 @@ function App() {
                       onRemoveFromConfig={
                         activeApp === "opencode" ||
                         activeApp === "openclaw" ||
-                        activeApp === "hermes"
+                        activeApp === "hermes" ||
+                        activeApp === "pi"
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
                           : undefined

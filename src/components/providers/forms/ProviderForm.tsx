@@ -123,10 +123,10 @@ import {
   GEMINI_DEFAULT_CONFIG,
   OPENCODE_DEFAULT_CONFIG,
   OPENCLAW_DEFAULT_CONFIG,
-  PI_DEFAULT_CONFIG,
   normalizePricingSource,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
+import { PI_DEFAULT_CONFIG } from "./hooks/usePiFormState";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
@@ -961,7 +961,10 @@ function ProviderFormFull({
         const config = JSON.parse(raw || "{}") as Record<string, unknown>;
         const env = (config.env as Record<string, unknown>) || {};
         env[piForm.baseUrlEnvKey] = url;
-        form.setValue("settingsConfig", JSON.stringify({ ...config, env }, null, 2));
+        form.setValue(
+          "settingsConfig",
+          JSON.stringify({ ...config, env }, null, 2),
+        );
       } catch {
         // ignore parse errors during editing
       }
@@ -977,7 +980,10 @@ function ProviderFormFull({
         const config = JSON.parse(raw || "{}") as Record<string, unknown>;
         const env = (config.env as Record<string, unknown>) || {};
         env[piForm.apiKeyEnvKey] = key;
-        form.setValue("settingsConfig", JSON.stringify({ ...config, env }, null, 2));
+        form.setValue(
+          "settingsConfig",
+          JSON.stringify({ ...config, env }, null, 2),
+        );
       } catch {
         // ignore parse errors during editing
       }
@@ -995,8 +1001,13 @@ function ProviderFormFull({
         config.api = type;
         // Re-map env keys: move values from old keys to new keys
         const env = (config.env as Record<string, unknown>) || {};
-        const oldBaseUrl = env["ANTHROPIC_BASE_URL"] ?? env["OPENAI_BASE_URL"] ?? "";
-        const oldApiKey = env["ANTHROPIC_API_KEY"] ?? env["ANTHROPIC_AUTH_TOKEN"] ?? env["OPENAI_API_KEY"] ?? "";
+        const oldBaseUrl =
+          env["ANTHROPIC_BASE_URL"] ?? env["OPENAI_BASE_URL"] ?? "";
+        const oldApiKey =
+          env["ANTHROPIC_API_KEY"] ??
+          env["ANTHROPIC_AUTH_TOKEN"] ??
+          env["OPENAI_API_KEY"] ??
+          "";
         // Clear all known env keys
         delete env["ANTHROPIC_BASE_URL"];
         delete env["ANTHROPIC_API_KEY"];
@@ -1011,7 +1022,10 @@ function ProviderFormFull({
           env["ANTHROPIC_BASE_URL"] = oldBaseUrl;
           env["ANTHROPIC_API_KEY"] = oldApiKey;
         }
-        form.setValue("settingsConfig", JSON.stringify({ ...config, env }, null, 2));
+        form.setValue(
+          "settingsConfig",
+          JSON.stringify({ ...config, env }, null, 2),
+        );
       } catch {
         // ignore parse errors
       }
@@ -1026,10 +1040,7 @@ function ProviderFormFull({
         const raw = form.getValues("settingsConfig");
         const config = JSON.parse(raw || "{}") as Record<string, unknown>;
         config.models = models;
-        form.setValue(
-          "settingsConfig",
-          JSON.stringify(config, null, 2),
-        );
+        form.setValue("settingsConfig", JSON.stringify(config, null, 2));
       } catch {
         // ignore parse errors
       }
@@ -1484,28 +1495,21 @@ function ProviderFormFull({
           );
         }
       } else if (appId === "pi") {
-        // Pi uses env-style settings like Claude
-        try {
-          const piConfig = JSON.parse(values.settingsConfig || "{}") as Record<string, unknown>;
-          const piEnv = (piConfig.env as Record<string, unknown>) || {};
-          const piBaseUrl = (piEnv.ANTHROPIC_BASE_URL as string) || "";
-          const piApiKey = (piEnv.ANTHROPIC_API_KEY as string) || "";
-          if (!piBaseUrl.trim()) {
-            issues.push(
-              t("providerForm.endpointRequired", {
-                defaultValue: "非官方供应商请填写 API 端点",
-              }),
-            );
-          }
-          if (!piApiKey.trim()) {
-            issues.push(
-              t("providerForm.apiKeyRequired", {
-                defaultValue: "非官方供应商请填写 API Key",
-              }),
-            );
-          }
-        } catch {
-          // ignore parse errors
+        // Pi uses env-style settings like Claude; read from the live form state
+        // so the correct env keys for the selected API protocol are used.
+        if (!piForm.piBaseUrl.trim()) {
+          issues.push(
+            t("providerForm.endpointRequired", {
+              defaultValue: "非官方供应商请填写 API 端点",
+            }),
+          );
+        }
+        if (!piForm.piApiKey.trim()) {
+          issues.push(
+            t("providerForm.apiKeyRequired", {
+              defaultValue: "非官方供应商请填写 API Key",
+            }),
+          );
         }
       }
     }
@@ -1632,8 +1636,7 @@ function ProviderFormFull({
         const existingConfig = JSON.parse(
           values.settingsConfig || "{}",
         ) as Record<string, unknown>;
-        const env =
-          (existingConfig.env as Record<string, unknown>) || {};
+        const env = (existingConfig.env as Record<string, unknown>) || {};
         env[piForm.baseUrlEnvKey] = piForm.piBaseUrl;
         env[piForm.apiKeyEnvKey] = piForm.piApiKey;
         settingsConfig = JSON.stringify({
@@ -2439,7 +2442,9 @@ function ProviderFormFull({
                     placeholder={t("pi.form.providerKeyPlaceholder", {
                       defaultValue: "my-provider",
                     })}
-                    disabled={isProviderKeyLocked}
+                    disabled={
+                      isProviderKeyLocked || isProviderKeyLockStateLoading
+                    }
                     className={
                       (additiveExistingProviderKeys.includes(
                         piForm.piProviderKey,
@@ -2471,7 +2476,9 @@ function ProviderFormFull({
                     ) && !isProviderKeyLocked
                   ) &&
                     (piForm.piProviderKey.trim() === "" ||
-                      /^[a-z0-9]+(-[a-z0-9]+)*$/.test(piForm.piProviderKey)) && (
+                      /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                        piForm.piProviderKey,
+                      )) && (
                       <p className="text-xs text-muted-foreground">
                         {isProviderKeyLocked
                           ? t("pi.form.providerKeyLockedHint")
