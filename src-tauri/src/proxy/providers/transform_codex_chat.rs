@@ -314,7 +314,26 @@ pub fn responses_to_chat_completions_with_reasoning(
 
     let tools = tool_context.chat_tools();
     if !tools.is_empty() {
-        result["tools"] = json!(tools);
+        // The shared tool context preserves native JSON Schema shapes so
+        // Anthropic and other upstreams keep `oneOf`/`$defs`. Strict Chat
+        // Completions gateways need root combinators flattened and local
+        // references inlined, so harden each tool only on this path.
+        let chat_tools: Vec<Value> = tools
+            .iter()
+            .map(|tool| {
+                let mut tool = tool.clone();
+                if let Some(function) = tool.get_mut("function").and_then(Value::as_object_mut) {
+                    if let Some(parameters) = function.get("parameters").cloned() {
+                        function.insert(
+                            "parameters".to_string(),
+                            harden_chat_function_parameters(parameters),
+                        );
+                    }
+                }
+                tool
+            })
+            .collect();
+        result["tools"] = json!(chat_tools);
     }
 
     if let Some(tool_choice) = body.get("tool_choice") {
@@ -1294,12 +1313,95 @@ fn inline_local_schema_refs(value: &Value, root: &Value, stack: &mut Vec<String>
     }
 }
 
+/// Flatten combinators nested inside a union branch. Generated schemas often
+/// express a branch through `allOf` (inherited types); without this, the root
+/// flattening finds no direct `properties` and silently discards the branch.
+fn flatten_branch_combinators(branch: Value) -> Value {
+    let Value::Object(mut obj) = branch else {
+        return branch;
+    };
+    let mut properties = match obj.remove("properties") {
+        Some(Value::Object(properties)) => properties,
+        _ => Map::new(),
+    };
+    let mut required = Vec::new();
+    let mut has_combinator = false;
+
+    for key in ["oneOf", "anyOf", "allOf"] {
+        let Some(values) = obj.remove(key).and_then(|value| value.as_array().cloned()) else {
+            continue;
+        };
+        has_combinator = true;
+        let mut union_required = Vec::new();
+        for member in values {
+            let member = flatten_branch_combinators(member);
+            if let Some(member_properties) = member.get("properties").and_then(Value::as_object) {
+                for (name, value) in member_properties {
+                    properties
+                        .entry(name.clone())
+                        .or_insert_with(|| value.clone());
+                }
+            }
+            if key == "allOf" {
+                append_unique(&mut required, schema_required_fields(&member));
+            } else {
+                union_required.push(schema_required_fields(&member));
+            }
+        }
+        if key != "allOf" {
+            // A nested union can require only fields common to every member;
+            // branch-specific requirements would reject valid arguments.
+            if let Some(first) = union_required.first() {
+                let common = first
+                    .iter()
+                    .filter(|name| {
+                        union_required
+                            .iter()
+                            .all(|fields| fields.iter().any(|field| field == *name))
+                    })
+                    .cloned();
+                append_unique(&mut required, common);
+            }
+        }
+    }
+
+    if !properties.is_empty() {
+        obj.insert("properties".to_string(), Value::Object(properties));
+    }
+    if has_combinator && !required.is_empty() {
+        obj.insert(
+            "required".to_string(),
+            Value::Array(required.into_iter().map(Value::String).collect()),
+        );
+    }
+    Value::Object(obj)
+}
+
+/// Recursively scan for local JSON Schema references that survive inlining.
+/// Recursive or mutually recursive schemas keep their innermost `$ref`, so the
+/// definitions it points to must be retained for the schema to stay valid.
+fn schema_has_local_refs(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => {
+            if object
+                .get("$ref")
+                .and_then(Value::as_str)
+                .is_some_and(|reference| reference.starts_with("#/"))
+            {
+                return true;
+            }
+            object.values().any(schema_has_local_refs)
+        }
+        Value::Array(array) => array.iter().any(schema_has_local_refs),
+        _ => false,
+    }
+}
+
 /// Flatten root-level JSON Schema unions into an object schema accepted by
 /// strict Chat Completions providers. The original Responses tool contract is
 /// flat (arguments are not wrapped), so branch properties are merged directly
 /// instead of being nested under a synthetic `value` field.
 fn flatten_root_schema_combinators(schema: &mut Map<String, Value>) {
-    let root = Value::Object(schema.clone());
     let mut branches = Vec::new();
     let mut all_of_required = Vec::new();
     let mut union_required = Vec::new();
@@ -1322,7 +1424,13 @@ fn flatten_root_schema_combinators(schema: &mut Map<String, Value>) {
 
         for branch in values {
             if branch.is_object() {
-                let branch = inline_local_schema_refs(branch, &root, &mut Vec::new());
+                // Branches were already inlined against the full schema by the
+                // caller (`harden_chat_function_parameters`); re-inlining with
+                // a fresh stack would expand recursive refs one extra level.
+                // A resolved branch may itself be expressed through combinators
+                // (inherited types via `allOf`); merge those before collecting
+                // properties so the branch is not silently dropped.
+                let branch = flatten_branch_combinators(branch.clone());
                 let required = schema_required_fields(&branch);
                 if key == "allOf" {
                     append_unique(&mut all_of_required, required);
@@ -1354,12 +1462,17 @@ fn flatten_root_schema_combinators(schema: &mut Map<String, Value>) {
         }
     }
     schema.insert("properties".to_string(), Value::Object(properties));
-    // Local references have been expanded above. These metadata definitions
-    // are not part of the flat Chat Completions function contract and can be
-    // rejected as unsupported root keywords by strict gateways.
-    schema.remove("$schema");
-    schema.remove("$defs");
-    schema.remove("definitions");
+    // Local references have been expanded above. These metadata definitions are
+    // not part of the flat Chat Completions function contract and can be
+    // rejected as unsupported root keywords by strict gateways. Recursive or
+    // mutually recursive schemas keep their innermost `$ref` intact though, so
+    // retain the definitions while any local reference survives; removing them
+    // would leave a dangling `$ref` in the forwarded tool schema.
+    if !schema_has_local_refs(&Value::Object(schema.clone())) {
+        schema.remove("$schema");
+        schema.remove("$defs");
+        schema.remove("definitions");
+    }
 
     let mut required = schema_required_fields(&Value::Object(schema.clone()));
     if has_all_of {
@@ -1395,22 +1508,46 @@ fn flatten_root_schema_combinators(schema: &mut Map<String, Value>) {
 ///
 /// Some Responses tools carry `parameters: null` or `parameters: {"type": null}`,
 /// but OpenAI Chat Completions strictly requires `{"type": "object", "properties": {...}}`.
+/// This runs on the shared tool context, so it must stay shape-preserving:
+/// combinator flattening is applied only on the Chat Completions emission path
+/// (see `harden_chat_function_parameters`) where strict gateways require it.
 fn normalize_function_parameters(params: Option<&Value>) -> Value {
     let mut params = match params {
         Some(Value::Object(obj)) => Value::Object(obj.clone()),
         _ => json!({"type": "object", "properties": {}}),
     };
+    if let Some(obj) = params.as_object_mut() {
+        match obj.get("type").and_then(|v| v.as_str()) {
+            Some("object") => {}
+            _ => {
+                obj.insert("type".to_string(), json!("object"));
+            }
+        }
+    }
+    params
+}
+
+/// Harden tool parameters for strict Chat Completions gateways.
+///
+/// Databricks and some OpenAI-compatible gateways reject root combinators and
+/// scalar constraints in a function schema. Inline local references, flatten
+/// unions while preserving the tool's flat argument names, then drop root
+/// keywords those upstreams do not support. Only the Chat Completions path
+/// calls this; Anthropic upstreams keep their native `oneOf`/`$defs` shapes.
+fn harden_chat_function_parameters(parameters: Value) -> Value {
+    let mut params = match parameters {
+        Value::Object(obj) => Value::Object(obj),
+        _ => json!({"type": "object", "properties": {}}),
+    };
     let root = params.clone();
     params = inline_local_schema_refs(&params, &root, &mut Vec::new());
     if let Some(obj) = params.as_object_mut() {
-        // Databricks and some OpenAI-compatible gateways reject combinators and
-        // scalar constraints at the root of a function schema. Flatten unions
-        // while preserving the tool's flat argument names.
         flatten_root_schema_combinators(obj);
+        // Recursive schemas keep their innermost `$ref`; retain the definitions
+        // they point to instead of leaving a dangling reference.
+        let keep_defs = schema_has_local_refs(&Value::Object(obj.clone()));
         for key in [
             "$schema",
-            "$defs",
-            "definitions",
             "$id",
             "$anchor",
             "$comment",
@@ -1425,6 +1562,10 @@ fn normalize_function_parameters(params: Option<&Value>) -> Value {
             "patternProperties",
         ] {
             obj.remove(key);
+        }
+        if !keep_defs {
+            obj.remove("$defs");
+            obj.remove("definitions");
         }
         match obj.get("type").and_then(|v| v.as_str()) {
             Some("object") => {}
@@ -2629,6 +2770,98 @@ mod tests {
         assert!(parameters.get("$defs").is_none());
         assert!(parameters.get("$schema").is_none());
         assert!(parameters.get("required").is_none());
+    }
+
+    #[test]
+    fn responses_request_to_chat_flattens_all_of_inside_union_branches() {
+        // A resolved union branch may itself be expressed through `allOf`
+        // (inherited types). Its properties must be collected instead of the
+        // branch being silently discarded when the root combinator is removed.
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "lookup",
+                "parameters": {
+                    "oneOf": [
+                        {
+                            "allOf": [
+                                {
+                                    "type": "object",
+                                    "properties": {"id": {"type": "string"}}
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {"mode": {"type": "string"}}
+                                }
+                            ]
+                        },
+                        {
+                            "type": "object",
+                            "properties": {"slug": {"type": "string"}}
+                        }
+                    ]
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["type"], "object");
+        assert_eq!(
+            parameters["properties"],
+            json!({
+                "id": {"type": "string"},
+                "mode": {"type": "string"},
+                "slug": {"type": "string"}
+            })
+        );
+        assert!(parameters.get("oneOf").is_none());
+        assert!(parameters.get("allOf").is_none());
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_defs_for_recursive_schema_refs() {
+        // Recursive schemas keep their innermost `$ref` intact after inlining;
+        // the definitions it points to must survive so the forwarded schema has
+        // no dangling local reference.
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "walk",
+                "parameters": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "oneOf": [
+                        { "$ref": "#/$defs/node" },
+                        { "type": "object", "properties": { "root": { "type": "string" } } }
+                    ],
+                    "$defs": {
+                        "node": {
+                            "type": "object",
+                            "properties": {
+                                "name": { "type": "string" },
+                                "next": { "$ref": "#/$defs/node" }
+                            }
+                        }
+                    }
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["type"], "object");
+        assert!(parameters.get("oneOf").is_none());
+        assert!(
+            parameters.get("$defs").is_some(),
+            "recursive $defs must be kept"
+        );
+        assert!(parameters["properties"]["next"]["$ref"].is_string());
     }
 
     #[test]
