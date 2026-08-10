@@ -6,6 +6,7 @@ import {
 import {
   extractCodexBaseUrl,
   extractCodexModelName,
+  extractCodexWireApi,
 } from "../utils/providerConfigUtils";
 import { GROK_BUILD_DEFAULT_MODEL } from "../utils/grokBuildConfig";
 
@@ -40,11 +41,25 @@ describe("grokBuildProviderPresets", () => {
       "Novita AI",
       "Nvidia",
       "AtlasCloud",
-      "OpenCode Go",
     ];
     for (const name of excluded) {
       expect(names.has(name), name).toBe(false);
     }
+  });
+
+  it("includes OpenCode Go with the Grok 4.5 chat-completions endpoint", () => {
+    const preset = grokBuildProviderPresets.find(
+      (p) => p.name === "OpenCode Go",
+    );
+    expect(preset).toBeDefined();
+    if (!preset) return;
+    expect(preset.category).toBe("third_party");
+    expect(extractCodexModelName(preset.config)).toBe(GROK_BUILD_DEFAULT_MODEL);
+    expect(extractCodexBaseUrl(preset.config)).toBe(
+      "https://opencode.ai/zen/go/v1",
+    );
+    expect(extractCodexWireApi(preset.config)).toBe("chat");
+    expect(preset.apiFormat).toBe("openai_chat");
   });
 
   it("uses a Grok default model on every preset", () => {
