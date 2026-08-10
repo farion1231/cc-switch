@@ -136,6 +136,7 @@ interface ClaudeFormFieldsProps {
   defaultFableModelName: string;
   subagentModel: string;
   onModelChange: (field: ClaudeModelEnvField, value: string) => void;
+  onBatchModelChange?: (changes: Array<[ClaudeModelEnvField, string]>) => void;
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
@@ -211,6 +212,7 @@ export function ClaudeFormFields({
   defaultFableModelName,
   subagentModel,
   onModelChange,
+  onBatchModelChange,
   speedTestEndpoints,
   apiFormat,
   onApiFormatChange,
@@ -913,16 +915,35 @@ export function ClaudeFormFields({
                         defaultHaikuModel ||
                         subagentModel;
                       if (value) {
-                        for (const row of modelRoleRows) {
-                          const roleValue = row.supportsOneM
-                            ? value
-                            : stripClaudeOneMMarker(value);
-                          onModelChange(row.modelField, roleValue);
-                          if (row.displayNameField) {
-                            onModelChange(
-                              row.displayNameField,
-                              stripClaudeOneMMarker(roleValue),
-                            );
+                        if (onBatchModelChange) {
+                          // 批量更新：只触发一次 onConfigChange，避免连续重渲染闪烁
+                          const changes: Array<[ClaudeModelEnvField, string]> = [];
+                          for (const row of modelRoleRows) {
+                            const roleValue = row.supportsOneM
+                              ? value
+                              : stripClaudeOneMMarker(value);
+                            changes.push([row.modelField, roleValue]);
+                            if (row.displayNameField) {
+                              changes.push([
+                                row.displayNameField,
+                                stripClaudeOneMMarker(roleValue),
+                              ]);
+                            }
+                          }
+                          onBatchModelChange(changes);
+                        } else {
+                          // fallback: 逐字段调用（兼容旧调用方）
+                          for (const row of modelRoleRows) {
+                            const roleValue = row.supportsOneM
+                              ? value
+                              : stripClaudeOneMMarker(value);
+                            onModelChange(row.modelField, roleValue);
+                            if (row.displayNameField) {
+                              onModelChange(
+                                row.displayNameField,
+                                stripClaudeOneMMarker(roleValue),
+                              );
+                            }
                           }
                         }
                         toast.success(

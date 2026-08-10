@@ -1551,4 +1551,28 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "mimo-v2.5-pro", provider: "xiaomi_mimo_token_plan" },
     },
   },
+  {
+    name: "Tokenhub",
+    nameKey: "providerForm.presets.tokenhub",
+    websiteUrl: "https://aigw.telecomjs.com",
+    settingsConfig: {
+      name: "tokenhub",
+      base_url: "https://aigw.telecomjs.com/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
+        { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
+        { id: "qwen3-coder-plus", name: "Qwen3 Coder Plus" },
+        { id: "qwen3.7-max", name: "Qwen3.7 Max" },
+        { id: "glm-5.2", name: "GLM-5.2" },
+      ],
+    },
+    category: "cn_official",
+    icon: "tokenhub",
+    iconColor: "#0078D4",
+    suggestedDefaults: {
+      model: { default: "deepseek-v4-pro", provider: "tokenhub" },
+    },
+  },
 ];

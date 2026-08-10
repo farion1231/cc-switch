@@ -1,15 +1,22 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { ChevronDown, Download, Loader2 } from "lucide-react";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandInput,
+  CommandList,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+} from "@/components/ui/command";
+import { ChevronsUpDown, Check, Download, Loader2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import type { FetchedModel } from "@/lib/api/model-fetch";
 
 interface ModelInputWithFetchProps {
@@ -33,8 +40,9 @@ export function ModelInputWithFetch({
   onFetch,
 }: ModelInputWithFetchProps) {
   const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
 
-  // 有模型数据: Input + DropdownMenu
+  // 有模型数据: Input + 可搜索 Popover 下拉
   if (fetchedModels.length > 0) {
     const grouped: Record<string, FetchedModel[]> = {};
     for (const model of fetchedModels) {
@@ -55,32 +63,56 @@ export function ModelInputWithFetch({
           autoComplete="off"
           className="flex-1"
         />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
             <Button variant="outline" size="icon" className="shrink-0">
-              <ChevronDown className="h-4 w-4" />
+              <ChevronsUpDown className="h-4 w-4" />
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
+          </PopoverTrigger>
+          <PopoverContent
             align="end"
-            className="max-h-64 overflow-y-auto z-[200]"
+            sideOffset={4}
+            collisionPadding={8}
+            className="min-w-[280px] w-[320px] p-0 z-[200]"
           >
-            {vendors.map((vendor, vi) => (
-              <div key={vendor}>
-                {vi > 0 && <DropdownMenuSeparator />}
-                <DropdownMenuLabel>{vendor}</DropdownMenuLabel>
-                {grouped[vendor].map((model) => (
-                  <DropdownMenuItem
-                    key={model.id}
-                    onSelect={() => onChange(model.id)}
-                  >
-                    {model.id}
-                  </DropdownMenuItem>
+            <Command>
+              <CommandInput
+                placeholder={t("providerForm.searchModel", {
+                  defaultValue: "Search model...",
+                })}
+              />
+              <CommandList>
+                <CommandEmpty>
+                  {t("providerForm.noModelsFound", {
+                    defaultValue: "No models found.",
+                  })}
+                </CommandEmpty>
+                {vendors.map((vendor) => (
+                  <CommandGroup key={vendor} heading={vendor}>
+                    {grouped[vendor].map((model) => (
+                      <CommandItem
+                        key={model.id}
+                        value={model.id}
+                        onSelect={() => {
+                          onChange(model.id);
+                          setOpen(false);
+                        }}
+                      >
+                        <Check
+                          className={cn(
+                            "mr-2 h-4 w-4",
+                            value === model.id ? "opacity-100" : "opacity-0",
+                          )}
+                        />
+                        {model.id}
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
                 ))}
-              </div>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
       </div>
     );
   }

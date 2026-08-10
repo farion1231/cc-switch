@@ -1073,6 +1073,7 @@
       "qiniu": "Qiniu",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
+      "tokenhub": "Tokenhub (Jiangsu Telecom)",
       "together": "Together AI"
     },
     "parameterConfig": "Parameter Config - {{name}} *",
@@ -1166,6 +1167,8 @@
     "categoryAggregation": "Aggregation",
     "categoryThirdParty": "Third Party",
     "fetchModels": "Fetch Models",
+    "searchModel": "Search model...",
+    "noModelsFound": "No models found.",
     "fetchingModels": "Fetching...",
     "fetchModelsSuccess": "Found {{count}} models",
     "fetchModelsFailed": "Failed to fetch models",

@@ -476,6 +476,7 @@ function ProviderFormFull({
     defaultFableModelName,
     subagentModel,
     handleModelChange,
+    handleBatchModelChange,
   } = useModelState({
     settingsConfig: form.getValues("settingsConfig"),
     onConfigChange: handleSettingsConfigChange,
@@ -2260,6 +2261,7 @@ function ProviderFormFull({
               defaultFableModelName={defaultFableModelName}
               subagentModel={subagentModel}
               onModelChange={handleModelChange}
+              onBatchModelChange={handleBatchModelChange}
               speedTestEndpoints={speedTestEndpoints}
               apiFormat={localApiFormat}
               onApiFormatChange={handleApiFormatChange}

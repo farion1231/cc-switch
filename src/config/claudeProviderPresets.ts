@@ -1103,6 +1103,22 @@ export const providerPresets: ProviderPreset[] = [
     category: "cn_official",
   },
   {
+    name: "Tokenhub",
+    nameKey: "providerForm.presets.tokenhub",
+    websiteUrl: "https://aigw.telecomjs.com",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://aigw.telecomjs.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: ["https://aigw.telecomjs.com"],
+    category: "cn_official",
+    modelsUrl: "https://aigw.telecomjs.com/v1/models",
+    icon: "tokenhub",
+    iconColor: "#0078D4",
+  },
+  {
     name: "AiHubMix",
     websiteUrl: "https://aihubmix.com",
     apiKeyUrl: "https://aihubmix.com",

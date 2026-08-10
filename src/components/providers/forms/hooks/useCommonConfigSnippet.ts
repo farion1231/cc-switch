@@ -309,6 +309,8 @@ export function useCommonConfigSnippet({
   );
 
   // 当配置变化时检查是否包含通用配置（但避免在通过通用配置更新时检查）
+  // 使用 ref 保存上一次推断结果，仅在结果真正变化时 setState，防止循环振荡
+  const lastHasCommonRef = useRef<boolean | null>(null);
   useEffect(() => {
     if (!enabled) return;
     if (isUpdatingFromCommonConfig.current || isLoading) {
@@ -318,7 +320,10 @@ export function useCommonConfigSnippet({
       settingsConfig,
       commonConfigSnippet,
     );
-    setUseCommonConfig(hasCommon);
+    if (lastHasCommonRef.current !== hasCommon) {
+      lastHasCommonRef.current = hasCommon;
+      setUseCommonConfig(hasCommon);
+    }
   }, [enabled, settingsConfig, commonConfigSnippet, isLoading]);
 
   // 从编辑器当前内容提取通用配置片段

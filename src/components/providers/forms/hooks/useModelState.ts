@@ -115,6 +115,12 @@ function parseModelsFromConfig(settingsConfig: string) {
   }
 }
 
+/** 字段 → 对应的 setState 映射，供批量更新使用 */
+interface FieldSetter {
+  set: (value: string) => void;
+  value: string;
+}
+
 /**
  * 管理模型选择状态
  * 支持 ANTHROPIC_MODEL 和各类型默认模型
@@ -163,39 +169,101 @@ export function useModelState({
     lastConfigRef.current = settingsConfig;
 
     const parsed = parseModelsFromConfig(settingsConfig);
-    setClaudeModel(parsed.model);
-    setDefaultHaikuModel(parsed.haiku);
-    setDefaultHaikuModelName(parsed.haikuName);
-    setDefaultSonnetModel(parsed.sonnet);
-    setDefaultSonnetModelName(parsed.sonnetName);
-    setDefaultOpusModel(parsed.opus);
-    setDefaultOpusModelName(parsed.opusName);
-    setDefaultFableModel(parsed.fable);
-    setDefaultFableModelName(parsed.fableName);
-    setSubagentModel(parsed.subagent);
+    // 仅在值真正变化时 setState，避免无变化时的冗余重渲染
+    setClaudeModel((prev: string) => (prev !== parsed.model ? parsed.model : prev));
+    setDefaultHaikuModel((prev: string) =>
+      prev !== parsed.haiku ? parsed.haiku : prev,
+    );
+    setDefaultHaikuModelName((prev: string) =>
+      prev !== parsed.haikuName ? parsed.haikuName : prev,
+    );
+    setDefaultSonnetModel((prev: string) =>
+      prev !== parsed.sonnet ? parsed.sonnet : prev,
+    );
+    setDefaultSonnetModelName((prev: string) =>
+      prev !== parsed.sonnetName ? parsed.sonnetName : prev,
+    );
+    setDefaultOpusModel((prev: string) =>
+      prev !== parsed.opus ? parsed.opus : prev,
+    );
+    setDefaultOpusModelName((prev: string) =>
+      prev !== parsed.opusName ? parsed.opusName : prev,
+    );
+    setDefaultFableModel((prev: string) =>
+      prev !== parsed.fable ? parsed.fable : prev,
+    );
+    setDefaultFableModelName((prev: string) =>
+      prev !== parsed.fableName ? parsed.fableName : prev,
+    );
+    setSubagentModel((prev: string) =>
+      prev !== parsed.subagent ? parsed.subagent : prev,
+    );
   }, [settingsConfig]);
+
+  /** 将字段映射到对应的 setState，用于 handleModelChange 和 handleBatchModelChange */
+  const getFieldSetterMap = useCallback(
+    (): Record<string, FieldSetter> => ({
+      ANTHROPIC_MODEL: { set: setClaudeModel, value: claudeModel },
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: {
+        set: setDefaultHaikuModel,
+        value: defaultHaikuModel,
+      },
+      ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME: {
+        set: setDefaultHaikuModelName,
+        value: defaultHaikuModelName,
+      },
+      ANTHROPIC_DEFAULT_SONNET_MODEL: {
+        set: setDefaultSonnetModel,
+        value: defaultSonnetModel,
+      },
+      ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: {
+        set: setDefaultSonnetModelName,
+        value: defaultSonnetModelName,
+      },
+      ANTHROPIC_DEFAULT_OPUS_MODEL: {
+        set: setDefaultOpusModel,
+        value: defaultOpusModel,
+      },
+      ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: {
+        set: setDefaultOpusModelName,
+        value: defaultOpusModelName,
+      },
+      ANTHROPIC_DEFAULT_FABLE_MODEL: {
+        set: setDefaultFableModel,
+        value: defaultFableModel,
+      },
+      ANTHROPIC_DEFAULT_FABLE_MODEL_NAME: {
+        set: setDefaultFableModelName,
+        value: defaultFableModelName,
+      },
+      CLAUDE_CODE_SUBAGENT_MODEL: {
+        set: setSubagentModel,
+        value: subagentModel,
+      },
+    }),
+    [
+      claudeModel,
+      defaultHaikuModel,
+      defaultHaikuModelName,
+      defaultSonnetModel,
+      defaultSonnetModelName,
+      defaultOpusModel,
+      defaultOpusModelName,
+      defaultFableModel,
+      defaultFableModelName,
+      subagentModel,
+    ],
+  );
 
   const handleModelChange = useCallback(
     (field: ClaudeModelEnvField, value: string) => {
       isUserEditingRef.current = true;
 
-      if (field === "ANTHROPIC_MODEL") setClaudeModel(value);
-      if (field === "ANTHROPIC_DEFAULT_HAIKU_MODEL")
-        setDefaultHaikuModel(value);
-      if (field === "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME")
-        setDefaultHaikuModelName(value);
-      if (field === "ANTHROPIC_DEFAULT_SONNET_MODEL")
-        setDefaultSonnetModel(value);
-      if (field === "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME")
-        setDefaultSonnetModelName(value);
-      if (field === "ANTHROPIC_DEFAULT_OPUS_MODEL") setDefaultOpusModel(value);
-      if (field === "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME")
-        setDefaultOpusModelName(value);
-      if (field === "ANTHROPIC_DEFAULT_FABLE_MODEL")
-        setDefaultFableModel(value);
-      if (field === "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME")
-        setDefaultFableModelName(value);
-      if (field === "CLAUDE_CODE_SUBAGENT_MODEL") setSubagentModel(value);
+      const setterMap = getFieldSetterMap();
+      const entry = setterMap[field];
+      if (entry && value !== entry.value) {
+        entry.set(value);
+      }
 
       try {
         const currentConfig = latestConfigRef.current
@@ -221,7 +289,55 @@ export function useModelState({
         console.error("Failed to update model config:", err);
       }
     },
-    [onConfigChange],
+    [onConfigChange, getFieldSetterMap],
+  );
+
+  /**
+   * 批量更新模型字段：一次性修改多个字段，只触发一次 onConfigChange。
+   * 解决"一键设置"等场景下逐字段调用导致的连续重渲染问题。
+   */
+  const handleBatchModelChange = useCallback(
+    (changes: Array<[ClaudeModelEnvField, string]>) => {
+      if (changes.length === 0) return;
+      isUserEditingRef.current = true;
+
+      const setterMap = getFieldSetterMap();
+
+      // 批量更新本地状态
+      for (const [field, value] of changes) {
+        const entry = setterMap[field];
+        if (entry && value !== entry.value) {
+          entry.set(value);
+        }
+      }
+
+      // 一次性修改 config JSON
+      try {
+        const currentConfig = latestConfigRef.current
+          ? JSON.parse(latestConfigRef.current)
+          : { env: {} };
+        if (!currentConfig.env) currentConfig.env = {};
+        const env = currentConfig.env as Record<string, unknown>;
+
+        for (const [field, value] of changes) {
+          const trimmed = value.trim();
+          if (trimmed) {
+            env[field] = trimmed;
+          } else {
+            delete env[field];
+          }
+        }
+        // 删除旧键
+        delete env["ANTHROPIC_SMALL_FAST_MODEL"];
+
+        const updatedConfig = JSON.stringify(currentConfig, null, 2);
+        latestConfigRef.current = updatedConfig;
+        onConfigChange(updatedConfig);
+      } catch (err) {
+        console.error("Failed to batch update model config:", err);
+      }
+    },
+    [onConfigChange, getFieldSetterMap],
   );
 
   return {
@@ -246,5 +362,6 @@ export function useModelState({
     subagentModel,
     setSubagentModel,
     handleModelChange,
+    handleBatchModelChange,
   };
 }

@@ -1757,6 +1757,36 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
     },
   },
+  {
+    name: "Tokenhub",
+    nameKey: "providerForm.presets.tokenhub",
+    websiteUrl: "https://aigw.telecomjs.com",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Tokenhub",
+      options: {
+        baseURL: "https://aigw.telecomjs.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "deepseek-v4-pro": { name: "DeepSeek V4 Pro" },
+        "kimi-k2.7-code": { name: "Kimi K2.7 Code" },
+        "qwen3-coder-plus": { name: "Qwen3 Coder Plus" },
+        "qwen3.7-max": { name: "Qwen3.7 Max" },
+      },
+    },
+    category: "cn_official",
+    icon: "tokenhub",
+    iconColor: "#0078D4",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
 
   {
     name: "OpenCode Go",

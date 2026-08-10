@@ -575,4 +575,15 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     endpointCandidates: ["https://api.therouter.ai/v1"],
     category: "aggregator",
   },
+  {
+    name: "Tokenhub",
+    nameKey: "providerForm.presets.tokenhub",
+    websiteUrl: "https://aigw.telecomjs.com",
+    auth: grokAuth(),
+    config: grokPresetConfig("Tokenhub", "https://aigw.telecomjs.com/v1", GROK_BUILD_DEFAULT_MODEL),
+    endpointCandidates: ["https://aigw.telecomjs.com/v1"],
+    category: "aggregator",
+    icon: "tokenhub",
+    iconColor: "#0078D4",
+  },
 ];

@@ -195,4 +195,60 @@ describe("ClaudeFormFields", () => {
       "shared-model[1M]",
     );
   });
+
+  it("一键设置优先使用 onBatchModelChange 批量调用", () => {
+    const onModelChange = vi.fn();
+    const onBatchModelChange = vi.fn();
+    renderCopilotForm({
+      claudeModel: "batch-model",
+      defaultSonnetModel: "",
+      defaultSonnetModelName: "",
+      onModelChange,
+      onBatchModelChange,
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "一键设置",
+      }),
+    );
+
+    // 优先调用 onBatchModelChange
+    expect(onBatchModelChange).toHaveBeenCalledTimes(1);
+    // 不应逐字段调用 onModelChange
+    expect(onModelChange).not.toHaveBeenCalled();
+
+    // 验证批量调用包含所有角色字段
+    const changes = onBatchModelChange.mock.calls[0][0];
+    const fields = changes.map(([field]: [string]) => field);
+    expect(fields).toContain("ANTHROPIC_DEFAULT_SONNET_MODEL");
+    expect(fields).toContain("ANTHROPIC_DEFAULT_OPUS_MODEL");
+    expect(fields).toContain("ANTHROPIC_DEFAULT_FABLE_MODEL");
+    expect(fields).toContain("ANTHROPIC_DEFAULT_HAIKU_MODEL");
+    expect(fields).toContain("CLAUDE_CODE_SUBAGENT_MODEL");
+  });
+
+  it("一键设置在无 onBatchModelChange 时回退到逐字段调用", () => {
+    const onModelChange = vi.fn();
+    renderCopilotForm({
+      claudeModel: "fallback-model",
+      defaultSonnetModel: "",
+      defaultSonnetModelName: "",
+      onModelChange,
+      // 不传 onBatchModelChange
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "一键设置",
+      }),
+    );
+
+    // 回退到逐字段调用
+    expect(onModelChange).toHaveBeenCalled();
+    expect(onModelChange).toHaveBeenCalledWith(
+      "CLAUDE_CODE_SUBAGENT_MODEL",
+      "fallback-model",
+    );
+  });
 });
