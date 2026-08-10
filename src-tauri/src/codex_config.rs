@@ -483,7 +483,7 @@ pub fn codex_live_auth_is_stale_third_party_residue(live_auth: &Value) -> bool {
 /// what heals official API-key logins into the DB row, and this cleanup's
 /// safety depends on it — do not align the two guards.
 ///
-/// Returns Ok(true) when the file was deleted.
+/// Returns Ok(true) when the file was deleted or a stale key was stripped.
 pub fn clear_stale_codex_live_auth_after_official_switch(
     db_auth: &Value,
 ) -> Result<bool, AppError> {
@@ -497,11 +497,41 @@ pub fn clear_stale_codex_live_auth_after_official_switch(
         return Ok(false);
     }
     let live_auth: Value = read_json_file(&auth_path)?;
-    if !codex_live_auth_is_stale_third_party_residue(&live_auth) {
-        return Ok(false);
+
+    // Case 1: No credential login material, just a stale third-party
+    // OPENAI_API_KEY (possibly alongside metadata like auth_mode /
+    // last_refresh).  Delete the file so Codex shows its login screen.
+    if codex_live_auth_is_stale_third_party_residue(&live_auth) {
+        delete_file(&auth_path)?;
+        return Ok(true);
     }
-    delete_file(&auth_path)?;
-    Ok(true)
+
+    // Case 2: OAuth credential login material (tokens) coexists with a
+    // stale third-party OPENAI_API_KEY left by a previous preserve-off
+    // switch.  `codex_live_auth_is_stale_third_party_residue` returns
+    // false here because it treats credential-bearing auth as non-stale
+    // — but the OPENAI_API_KEY is still a third-party residue that must
+    // not leak into the official endpoint.  Strip just that field,
+    // preserving the OAuth tokens so the official login stays intact.
+    if codex_auth_has_credential_login_material(&live_auth) {
+        if let Some(obj) = live_auth.as_object() {
+            let has_stale_key = obj
+                .get("OPENAI_API_KEY")
+                .and_then(Value::as_str)
+                .map(|key| !key.trim().is_empty())
+                .unwrap_or(false);
+            if has_stale_key {
+                let mut cleaned = live_auth.clone();
+                if let Some(cleaned_obj) = cleaned.as_object_mut() {
+                    cleaned_obj.remove("OPENAI_API_KEY");
+                }
+                write_json_file(&auth_path, &cleaned)?;
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
 }
 
 pub fn should_restore_codex_provider_token_for_backfill(
