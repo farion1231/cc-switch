@@ -883,6 +883,127 @@ requires_openai_auth = true
 }
 
 #[test]
+fn provider_service_update_current_codex_official_clears_only_stale_api_key() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let live_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": "sk-stale",
+        "tokens": {
+            "access_token": "oauth-access",
+            "refresh_token": "oauth-refresh",
+            "account_id": "acct-official"
+        },
+        "last_refresh": "2026-08-10T00:00:00Z"
+    });
+    write_codex_live_atomic(&live_auth, Some("model = \"old-model\"\n"))
+        .expect("seed official auth with stale API key");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "official-provider".to_string();
+        let mut official_provider = Provider::with_id(
+            "official-provider".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": live_auth,
+                "config": "model = \"old-model\"\n"
+            }),
+            None,
+        );
+        official_provider.category = Some("official".to_string());
+        manager
+            .providers
+            .insert("official-provider".to_string(), official_provider);
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+    let mut updated_provider = Provider::with_id(
+        "official-provider".to_string(),
+        "OpenAI Official".to_string(),
+        json!({
+            "auth": {},
+            "config": "model = \"gpt-5.4\"\n"
+        }),
+        None,
+    );
+    updated_provider.category = Some("official".to_string());
+
+    ProviderService::update(&state, AppType::Codex, None, updated_provider)
+        .expect("save current official provider with cleared API key");
+
+    let saved_auth: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read preserved OAuth auth");
+    assert!(
+        saved_auth.get("OPENAI_API_KEY").is_none(),
+        "saving empty official auth should remove only the stale API key"
+    );
+    assert_eq!(
+        saved_auth
+            .pointer("/tokens/access_token")
+            .and_then(|value| value.as_str()),
+        Some("oauth-access"),
+        "the existing OAuth access token must survive"
+    );
+    assert_eq!(
+        saved_auth
+            .pointer("/tokens/refresh_token")
+            .and_then(|value| value.as_str()),
+        Some("oauth-refresh"),
+        "the existing OAuth refresh token must survive"
+    );
+    assert_eq!(
+        saved_auth
+            .get("last_refresh")
+            .and_then(|value| value.as_str()),
+        Some("2026-08-10T00:00:00Z"),
+        "unrelated auth metadata must survive"
+    );
+    assert_eq!(
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+            .expect("read updated config.toml"),
+        "model = \"gpt-5.4\"\n"
+    );
+}
+
+#[test]
+fn provider_service_add_empty_codex_official_auth_writes_only_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+    let state = create_test_state().expect("create test state");
+
+    let mut official_provider = Provider::with_id(
+        "official-provider".to_string(),
+        "OpenAI Official".to_string(),
+        json!({
+            "auth": {},
+            "config": "model = \"gpt-5.4\"\n"
+        }),
+        None,
+    );
+    official_provider.category = Some("official".to_string());
+
+    ProviderService::add(&state, AppType::Codex, official_provider, false)
+        .expect("add first official provider");
+
+    assert!(
+        !cc_switch_lib::get_codex_auth_path().exists(),
+        "empty official auth must not create auth.json"
+    );
+    assert_eq!(
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+            .expect("read config-only official write"),
+        "model = \"gpt-5.4\"\n"
+    );
+}
+
+#[test]
 fn provider_service_switch_codex_official_clears_stale_third_party_auth() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
@@ -1432,7 +1553,7 @@ fn provider_service_switch_codex_official_accounts_write_auth_json() {
                     "account_id": "acct-b"
                 }
             },
-            "config": ""
+            "config": "model = \"gpt-5.4\"\n"
         }),
         None,
     );
@@ -1464,6 +1585,12 @@ fn provider_service_switch_codex_official_accounts_write_auth_json() {
             .and_then(|v| v.as_str()),
         Some("official-b-token"),
         "switching official accounts must replace auth.json with the selected account"
+    );
+    assert_eq!(
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+            .expect("read official account B config"),
+        "model = \"gpt-5.4\"\n",
+        "switching official accounts must write the selected config"
     );
 
     ProviderService::switch(&state, AppType::Codex, "official-a")
