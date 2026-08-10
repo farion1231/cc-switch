@@ -234,6 +234,72 @@ pub(crate) fn strip_leading_think_open_tag(text: &str) -> Option<String> {
         .map(|value| value.trim().to_string())
 }
 
+/// Strip all complete `thinking…think` blocks **and** stray tag fragments
+/// from arbitrary text (not just a leading block).
+///
+/// This is used in `InlineThinkMode::Text` to prevent reasoning tags that
+/// arrive after the state machine has already committed to Text mode from
+/// leaking into `output_text.delta`.
+///
+/// It also strips a trailing partial close-tag fragment (e.g. `</t` from a
+/// `think` tag that was split across two SSE chunks) so that the fragment
+/// does not appear verbatim in the visible output.
+pub(crate) fn strip_all_think_tags(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut remaining = text;
+
+    loop {
+        match remaining.find(THINK_OPEN_TAG) {
+            Some(open_start) => {
+                // Emit text before the open tag.
+                result.push_str(&remaining[..open_start]);
+
+                let after_open = &remaining[open_start + THINK_OPEN_TAG.len()..];
+                match after_open.find(THINK_CLOSE_TAG) {
+                    Some(close_pos) => {
+                        // Complete block — skip the reasoning inside.
+                        remaining = &after_open[close_pos + THINK_CLOSE_TAG.len()..];
+                    }
+                    None => {
+                        // Open tag without a close — treat the rest as
+                        // reasoning and discard it.
+                        remaining = "";
+                    }
+                }
+            }
+            None => {
+                // No more open tags.  Strip a trailing partial close-tag
+                // fragment so it doesn't leak (e.g. `</t`, `</th`, …).
+                result.push_str(strip_trailing_close_tag_fragment(remaining));
+                break;
+            }
+        }
+    }
+
+    result
+}
+
+/// If `text` ends with a prefix of `THINK_CLOSE_TAG` (e.g. `<`, `</`, `</t`, …),
+/// return `text` without that fragment so it doesn't leak into output_text.
+fn strip_trailing_close_tag_fragment(text: &str) -> &str {
+    // THINK_CLOSE_TAG is pure ASCII (`think`), so any valid fragment
+    // prefix is also ASCII.  We must only cut at char boundaries to
+    // avoid slicing inside a multi-byte UTF-8 sequence.
+    let max_cut = THINK_CLOSE_TAG.len().min(text.len());
+
+    for cut in (1..=max_cut).rev() {
+        let split_point = text.len() - cut;
+        if !text.is_char_boundary(split_point) {
+            continue;
+        }
+        let suffix = &text[split_point..];
+        if THINK_CLOSE_TAG.starts_with(suffix) {
+            return &text[..split_point];
+        }
+    }
+    text
+}
+
 fn strip_think_answer_separator(text: &str) -> &str {
     text.trim_start_matches(['\r', '\n', '\t', ' '])
 }
