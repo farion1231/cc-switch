@@ -27,7 +27,7 @@ export const APP_IDS: AppId[] = [
   "pi",
 ];
 
-/** App IDs shown in Skills panels (excludes OpenClaw and Pi — they don't support Skills) */
+/** App IDs shown in Skills panels (excludes OpenClaw — it doesn't support Skills) */
 export const SKILLS_APP_IDS: AppId[] = [
   "claude",
   "codex",
@@ -35,6 +35,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "grokbuild",
   "opencode",
   "hermes",
+  "pi",
 ];
 
 /** App IDs shown in MCP panels (excludes OpenClaw and Pi — they don't support MCP) */

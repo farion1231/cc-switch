@@ -19,7 +19,6 @@ use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
 use crate::config::get_app_config_dir;
 use crate::database::Database;
 use crate::error::format_skill_error;
-use crate::error::AppError;
 
 // ========== 数据结构 ==========
 
@@ -567,26 +566,15 @@ impl SkillService {
                 }
             }
             AppType::Pi => {
-                // Pi doesn't support Skills; return default
-                // (Pi's agent dir is used for prompts instead)
+                // Pi 的 skills 位于 agent 子目录(~/.pi/agent/skills,或 override 下
+                // 的 <piConfigDir>/agent/skills)。get_pi_agent_dir() 已封装 override 处理。
+                return Ok(crate::config::get_pi_agent_dir().join("skills"));
             }
         }
 
         // 默认路径：回退到用户主目录下的标准位置。
         // 必须走 get_home_dir()（可被 CC_SWITCH_TEST_HOME 覆盖）：Windows 上 dirs::home_dir()
         // 走 Known Folder API，测试无法隔离真实用户目录。
-        // Pi doesn't support Skills; return early so callers (scan_unmanaged,
-        // import_from_apps, uninstall) skip Pi without scanning or deleting any
-        // directory.
-        if matches!(app, AppType::Pi) {
-            return Err(AppError::localized(
-                "skills.pi.unsupported",
-                "Pi 不支持 Skills 功能",
-                "Pi does not support Skills",
-            )
-            .into());
-        }
-
         let home = crate::config::get_home_dir();
 
         Ok(match app {
@@ -598,8 +586,7 @@ impl SkillService {
             AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
-            // Pi early-returns above; unreachable here.
-            AppType::Pi => unreachable!("Pi does not support Skills"),
+            AppType::Pi => crate::config::get_pi_agent_dir().join("skills"),
         })
     }
 
@@ -4547,6 +4534,33 @@ mod tests {
         assert!(
             dir.starts_with(temp.path()),
             "skills dir must live under the overridden test home, got {}",
+            dir.display()
+        );
+    }
+
+    #[test]
+    // serial:与 get_app_skills_dir_honors_test_home_override 一样读写进程级
+    // CC_SWITCH_TEST_HOME,必须与其它读写该变量的测试互斥。
+    #[serial_test::serial]
+    fn get_app_skills_dir_pi_resolves_to_agent_skills_under_test_home() {
+        struct EnvGuard(Option<std::ffi::OsString>);
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                    None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                }
+            }
+        }
+        let temp = tempdir().expect("tempdir");
+        let _guard = EnvGuard(std::env::var_os("CC_SWITCH_TEST_HOME"));
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+
+        let dir = SkillService::get_app_skills_dir(&AppType::Pi).expect("resolve pi skills dir");
+        assert_eq!(
+            dir,
+            temp.path().join(".pi").join("agent").join("skills"),
+            "Pi skills must resolve to ~/.pi/agent/skills, got {}",
             dir.display()
         );
     }

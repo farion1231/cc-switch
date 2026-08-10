@@ -10,7 +10,8 @@ export type AppType =
   | "grokbuild"
   | "opencode"
   | "openclaw"
-  | "hermes";
+  | "hermes"
+  | "pi";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {
@@ -22,6 +23,7 @@ export interface SkillApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  pi: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */
