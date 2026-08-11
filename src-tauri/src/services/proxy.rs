@@ -1767,8 +1767,11 @@ impl ProxyService {
             }
             AppType::Codex => {
                 if let Ok(Some(backup)) = self.db.get_live_backup("codex").await {
-                    let config: Value = serde_json::from_str(&backup.original_config)
+                    let mut config: Value = serde_json::from_str(&backup.original_config)
                         .map_err(|e| format!("解析 Codex 备份失败: {e}"))?;
+                    // 与 with_fallback 版共用同一保护：半接管重建与接管失败
+                    // 回滚也不得用快照覆盖 live 的官方 ChatGPT 登录（#6277）。
+                    self.preserve_codex_oauth_login_on_restore(&mut config);
                     self.write_codex_live(&config)?;
                     log::info!("Codex Live 配置已恢复");
                 }
@@ -1842,7 +1845,7 @@ impl ProxyService {
             .await
             .map_err(|e| format!("获取 {app_type_str} Live 备份失败: {e}"))?;
         if let Some(backup) = backup {
-            let config: Value = serde_json::from_str(&backup.original_config)
+            let mut config: Value = serde_json::from_str(&backup.original_config)
                 .map_err(|e| format!("解析 {app_type_str} 备份失败: {e}"))?;
 
             // 备份若是代理占位符（异常历史：上次 stop 失败导致 Live 留在了代理状态，
@@ -1853,6 +1856,9 @@ impl ProxyService {
                     "{app_type_str} 备份本身已是代理占位符（异常历史状态），跳过备份，改走 SSOT 重建 Live"
                 );
             } else {
+                if matches!(app_type, AppType::Codex) {
+                    self.preserve_codex_oauth_login_on_restore(&mut config);
+                }
                 self.write_live_config_for_app(app_type, &config)?;
                 log::info!("{app_type_str} Live 配置已从备份恢复");
                 return Ok(());
@@ -2713,6 +2719,65 @@ impl ProxyService {
         target_obj.insert("auth".to_string(), existing_auth);
 
         Ok(())
+    }
+
+    /// 恢复备份到 Codex live 时绝不覆盖官方 ChatGPT 登录。
+    ///
+    /// 备份是接管开启时的快照，而 live 的 `auth.json` 只会被 Codex 自己
+    /// （登录 / token 自刷新）更新——所以只要 live 持有真实登录凭据（非
+    /// 接管占位符），它就恒比快照新，必须获胜：登录发生在接管期间时备份
+    /// 里是第三方 API key（#6277 的循环覆盖链），把它降级进 config 的
+    /// `experimental_bearer_token`；备份也是官方形态时它的 tokens 只是旧
+    /// 副本，同样不写回。摘掉备份 auth 槽后 `write_codex_live_verbatim`
+    /// 只写 config.toml，live 登录零接触。判定用
+    /// `codex_auth_has_credential_login_material`——`last_refresh` /
+    /// `tokens.account_id` 等元数据残留不算登录，既不让 sk-+元数据形态的
+    /// 备份逃过降级，也不把元数据残留的 live 误当官方登录。与
+    /// `preserve_codex_auth_in_backup` 语义对称（那边保护备份方向），同样
+    /// 不受"非接管切换保留官方登录"设置门控（接管子系统的既有不变量是
+    /// 无条件不清官方登录）。
+    fn preserve_codex_oauth_login_on_restore(&self, target: &mut Value) {
+        let Ok(live) = self.read_codex_live() else {
+            return;
+        };
+        let live_has_login = live.get("auth").is_some_and(|auth| {
+            !Self::codex_auth_has_proxy_placeholder(auth)
+                && crate::codex_config::codex_auth_has_credential_login_material(auth)
+        });
+        if !live_has_login {
+            return;
+        }
+
+        let Some(target_obj) = target.as_object_mut() else {
+            return;
+        };
+
+        if let Some(config_text) = target_obj
+            .get("config")
+            .and_then(|value| value.as_str())
+            .map(str::to_string)
+        {
+            let provider_auth = target_obj.get("auth").cloned().unwrap_or_else(|| json!({}));
+            match crate::codex_config::prepare_codex_provider_live_config(
+                &provider_auth,
+                &config_text,
+            ) {
+                Ok(live_config) => {
+                    target_obj.insert("config".to_string(), json!(live_config));
+                }
+                Err(e) => {
+                    // 降级失败时仍优先保住登录：API key 可从 DB 供应商配置随时
+                    // 重新落盘，OAuth 登录被覆盖则只能重新登录。
+                    log::warn!(
+                        "Codex 恢复：备份 API key 降级进 config 失败，仅跳过 auth 覆盖: {e}"
+                    );
+                }
+            }
+        }
+        target_obj.remove("auth");
+        log::info!(
+            "Codex 恢复：live 持有官方 ChatGPT 登录凭据（恒比备份快照新），保留登录，仅恢复 config"
+        );
     }
 
     /// 代理模式下切换供应商（热切换，并按需刷新代理安全的 Live 显示字段）
@@ -7041,6 +7106,348 @@ requires_openai_auth = true
                 .and_then(|v| v.as_str()),
             Some(PROXY_TOKEN_PLACEHOLDER),
             "Live must not still carry the proxy placeholder"
+        );
+    }
+
+    /// Regression for #6277: the restore backup is a snapshot taken when
+    /// takeover started. If the user logs into official ChatGPT DURING
+    /// takeover, live auth.json holds OAuth tokens the backup never saw;
+    /// restoring the backup verbatim on exit/crash-recovery would wipe the
+    /// login every restart. Restore must keep the live OAuth login and demote
+    /// the backup's API key into config.toml instead.
+    #[tokio::test]
+    #[serial]
+    async fn restore_keeps_codex_oauth_login_when_backup_has_api_key_only() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        // Backup snapshot: third-party API-key shape (pre-login state)
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": { "OPENAI_API_KEY": "sk-third-party" },
+                "config": r#"model_provider = "any"
+model = "gpt-5"
+
+[model_providers.any]
+base_url = "https://third.example/v1"
+"#
+            }))
+            .expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        // Live: user logged into official ChatGPT during takeover
+        crate::codex_config::write_codex_live_atomic(
+            &json!({
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": null,
+                "tokens": {
+                    "id_token": "idt",
+                    "access_token": "at",
+                    "refresh_token": "rt",
+                    "account_id": "acc"
+                },
+                "last_refresh": "2026-08-10T00:00:00Z"
+            }),
+            Some("model_provider = \"any\"\n"),
+        )
+        .expect("seed live codex files");
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Codex)
+            .await
+            .expect("restore codex");
+
+        let live = service.read_codex_live().expect("read live");
+        let auth = live.get("auth").expect("auth present");
+        assert_eq!(
+            auth.get("tokens")
+                .and_then(|t| t.get("refresh_token"))
+                .and_then(|v| v.as_str()),
+            Some("rt"),
+            "official ChatGPT login must survive restore"
+        );
+        assert!(
+            crate::codex_config::codex_auth_has_oauth_login_material(auth),
+            "restored auth.json must keep OAuth login material"
+        );
+
+        let config_text = live
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("config text");
+        assert!(
+            config_text.contains("https://third.example/v1"),
+            "backup config.toml must still be restored"
+        );
+        assert!(
+            config_text.contains("sk-third-party"),
+            "backup API key must be demoted into config.toml as experimental_bearer_token"
+        );
+    }
+
+    /// The normal restore path (no login happened during takeover): live auth
+    /// only carries the takeover placeholder, so the backup must be restored
+    /// verbatim including its auth.json.
+    #[tokio::test]
+    #[serial]
+    async fn restore_writes_codex_backup_auth_verbatim_when_live_has_no_oauth_login() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": { "OPENAI_API_KEY": "sk-third-party" },
+                "config": "model_provider = \"any\"\n"
+            }))
+            .expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        crate::codex_config::write_codex_live_atomic(
+            &json!({ "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER }),
+            Some("model_provider = \"any\"\n"),
+        )
+        .expect("seed live codex files");
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Codex)
+            .await
+            .expect("restore codex");
+
+        let live = service.read_codex_live().expect("read live");
+        assert_eq!(
+            live.get("auth")
+                .and_then(|auth| auth.get("OPENAI_API_KEY"))
+                .and_then(|v| v.as_str()),
+            Some("sk-third-party"),
+            "without a live OAuth login the backup auth must be restored verbatim"
+        );
+    }
+
+    /// Live auth.json is only ever advanced by Codex itself (login / token
+    /// self-refresh), so genuine live credentials are always newer than the
+    /// takeover-start snapshot: even an official-shape backup must not roll
+    /// live tokens back.
+    #[tokio::test]
+    #[serial]
+    async fn restore_prefers_live_codex_oauth_tokens_over_backup_snapshot() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": {
+                    "auth_mode": "chatgpt",
+                    "OPENAI_API_KEY": null,
+                    "tokens": { "refresh_token": "backup-rt" }
+                },
+                "config": "model_provider = \"any\"\n"
+            }))
+            .expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        crate::codex_config::write_codex_live_atomic(
+            &json!({
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": null,
+                "tokens": { "refresh_token": "live-rt" }
+            }),
+            Some("model_provider = \"any\"\n"),
+        )
+        .expect("seed live codex files");
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Codex)
+            .await
+            .expect("restore codex");
+
+        let live = service.read_codex_live().expect("read live");
+        assert_eq!(
+            live.get("auth")
+                .and_then(|auth| auth.get("tokens"))
+                .and_then(|t| t.get("refresh_token"))
+                .and_then(|v| v.as_str()),
+            Some("live-rt"),
+            "restore must not roll live tokens back to the takeover-start snapshot"
+        );
+    }
+
+    /// Regression for #6277 with the metadata-residue backup shape: an
+    /// `OPENAI_API_KEY` accompanied by `last_refresh` / `tokens.account_id`
+    /// is NOT a login and must not be restored over a real live login.
+    #[tokio::test]
+    #[serial]
+    async fn restore_keeps_codex_oauth_login_when_backup_key_carries_metadata_residue() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": {
+                    "OPENAI_API_KEY": "sk-third-party",
+                    "last_refresh": "2026-08-01T00:00:00Z",
+                    "tokens": { "account_id": "acc" }
+                },
+                "config": "model_provider = \"any\"\n"
+            }))
+            .expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        crate::codex_config::write_codex_live_atomic(
+            &json!({
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": null,
+                "tokens": { "refresh_token": "rt" }
+            }),
+            Some("model_provider = \"any\"\n"),
+        )
+        .expect("seed live codex files");
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Codex)
+            .await
+            .expect("restore codex");
+
+        let live = service.read_codex_live().expect("read live");
+        assert_eq!(
+            live.get("auth")
+                .and_then(|auth| auth.get("tokens"))
+                .and_then(|t| t.get("refresh_token"))
+                .and_then(|v| v.as_str()),
+            Some("rt"),
+            "metadata residue must not shield the backup API key from demotion"
+        );
+        assert!(
+            live.get("config")
+                .and_then(|v| v.as_str())
+                .is_some_and(|cfg| cfg.contains("sk-third-party")),
+            "backup API key must still be demoted into config.toml"
+        );
+    }
+
+    /// Metadata residue on the LIVE side is not a login either: restore must
+    /// still write the backup auth verbatim instead of protecting stale
+    /// `last_refresh` / `tokens.account_id` leftovers.
+    #[tokio::test]
+    #[serial]
+    async fn restore_writes_codex_backup_auth_when_live_has_only_metadata_residue() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": { "OPENAI_API_KEY": "sk-restored" },
+                "config": "model_provider = \"any\"\n"
+            }))
+            .expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        crate::codex_config::write_codex_live_atomic(
+            &json!({
+                "OPENAI_API_KEY": "sk-stale",
+                "last_refresh": "2026-08-01T00:00:00Z",
+                "tokens": { "account_id": "acc" }
+            }),
+            Some("model_provider = \"any\"\n"),
+        )
+        .expect("seed live codex files");
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Codex)
+            .await
+            .expect("restore codex");
+
+        let live = service.read_codex_live().expect("read live");
+        assert_eq!(
+            live.get("auth")
+                .and_then(|auth| auth.get("OPENAI_API_KEY"))
+                .and_then(|v| v.as_str()),
+            Some("sk-restored"),
+            "live metadata residue is not a login and must not block the restore"
+        );
+    }
+
+    /// The simple restore path (`restore_live_config_for_app_inner`, used by
+    /// takeover rebuild and takeover-failure rollback) must apply the same
+    /// OAuth-login protection as the with_fallback path.
+    #[tokio::test]
+    #[serial]
+    async fn simple_restore_path_keeps_codex_oauth_login() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": { "OPENAI_API_KEY": "sk-third-party" },
+                "config": "model_provider = \"any\"\n"
+            }))
+            .expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        crate::codex_config::write_codex_live_atomic(
+            &json!({
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": null,
+                "tokens": { "refresh_token": "rt" }
+            }),
+            Some("model_provider = \"any\"\n"),
+        )
+        .expect("seed live codex files");
+
+        service
+            .restore_live_config_for_app_inner(&AppType::Codex)
+            .await
+            .expect("restore codex via simple path");
+
+        let live = service.read_codex_live().expect("read live");
+        assert_eq!(
+            live.get("auth")
+                .and_then(|auth| auth.get("tokens"))
+                .and_then(|t| t.get("refresh_token"))
+                .and_then(|v| v.as_str()),
+            Some("rt"),
+            "takeover rebuild / rollback restore must not wipe the ChatGPT login"
+        );
+        assert!(
+            live.get("config")
+                .and_then(|v| v.as_str())
+                .is_some_and(|cfg| cfg.contains("sk-third-party")),
+            "backup API key must be demoted into config.toml on the simple path too"
         );
     }
 
