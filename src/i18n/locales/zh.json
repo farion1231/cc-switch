@@ -23,7 +23,6 @@
     "unknown": "未知",
     "enterValidValue": "请输入有效的内容",
     "clear": "清除",
-    "toggleTheme": "切换主题",
     "format": "格式化",
     "formatSuccess": "格式化成功",
     "formatError": "格式化失败：{{error}}",
@@ -35,6 +34,9 @@
     "import": "导入",
     "all": "全部",
     "search": "查询",
+    "enableAllForApp": "为 {{app}} 全部启用",
+    "disableAllForApp": "为 {{app}} 全部停用",
+    "bulkToggleFailed": "有 {{count}} 项更新失败",
     "reset": "重置",
     "actions": "操作",
     "deleting": "删除中...",
@@ -173,7 +175,8 @@
         "oauthHint": "Google 官方使用 OAuth 个人认证，无需填写 API Key。首次使用时会自动打开浏览器进行登录。",
         "apiKeyPlaceholder": "请输入 Gemini API Key"
       }
-    }
+    },
+    "duplicateLiveIdsLoadFailed": "读取配置中的供应商标识失败，请先修复配置后再试"
   },
   "claudeCode": {
     "needsRouting": "需要路由",
@@ -222,7 +225,8 @@
       "tooltip": {
         "active": "Claude Desktop 本地路由已开启 - {{address}}:{{port}}",
         "inactive": "开启 Claude Desktop 本地路由，用于需要模型映射或格式转换的供应商。当前配置地址：{{address}}:{{port}}"
-      }
+      },
+      "stopBlockedByTakeover": "其它应用正在使用代理接管。请先在设置中关闭对应应用接管，再停止本地路由。"
     }
   },
   "notifications": {
@@ -271,7 +275,8 @@
     "backfillWarning": "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
     "windowControlFailed": "窗口控制失败：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切换到官方供应商，使用路由访问官方 API 可能导致账号被封禁",
-    "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由"
+    "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由",
+    "proxyReasonClaudeDesktop": "使用 Claude Desktop 本地路由模式"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -887,6 +892,9 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes"
   },
+  "appSwitcher": {
+    "more": "更多应用"
+  },
   "grokBuild": {
     "apiBackend": "API Backend",
     "contextWindow": "上下文窗口",
@@ -1020,9 +1028,10 @@
     "providerKeyStatusLoading": "正在加载供应商标识状态，请稍后再试",
     "getApiKey": "获取 API Key",
     "partnerPromotion": {
+      "kimi": "Kimi 新用户首次成功充值，即可获赠充值金额 10% 的 API 额度，最高赠送 ¥1000。",
+      "a6api": "A6API 是一家 Token 聚合站，内置实时价格排行自动筛选全网最低价，丝滑稳定不卡顿，简易操作省去比价繁琐，注册获得体验金！",
       "sudocode": "SudoCode 让 Claude Code 与 Claude Desktop 接入 Claude Opus 5，Codex 接入 GPT-5.6，一个 Key 统一使用。CC Switch 用户注册并加入 QQ 群 726213516，联系群主领取 ¥10 试用额度。",
       "code0": "code0.ai 是面向开发者的 AI 编程服务平台，支持 Claude Code、Codex、Gemini。CC Switch 用户专属福利：通过官网联系客服即可领取测试额度！",
-      "nekocode": "NekoCode 为开发者提供稳定、高效、可靠的 Claude、Codex 等 AI 模型 API 中转服务，价格透明、按量计费。CC Switch 用户专享 9 折：通过上方链接注册，充值时输入优惠码 cc-switch 即享 9 折优惠！",
       "packycode": "PackyCode 是 CC Switch 的官方合作伙伴，使用此链接注册并在充值时填写 \"cc-switch\" 优惠码，可以享受9折优惠",
       "apikeyfun": "APIKEY.FUN 为 CC Switch 的用户提供了特别优惠，通过专属链接注册，可享受最高充值永久 95 折优惠。",
       "apinebula": "APINEBULA 为 CC Switch 用户提供特别优惠：使用专属链接注册并在充值时填写 \"ccswitch\" 优惠码，可享九折优惠。",
@@ -1030,7 +1039,7 @@
       "patewayai": "PatewayAI 为 CC Switch 的用户提供了特别福利，通过此链接注册可以获得3美元额度。",
       "claudeapi": "ClaudeAPI 为 CC Switch 的用户提供了特别福利，通过此链接注册可以领取测试额度。",
       "claudecn": "ClaudeCN 是一家实体企业运营的企业级AI中转平台，支持企业采购流程，可对公打款、签约，服务合规有保障。",
-      "runapi": "RunAPI 为 CC Switch 的用户提供了特别福利，通过此链接注册并联系客服可领取 ¥14 免费额度。",
+      "runapi": "RunAPI 为 CC Switch 的用户提供了特别福利，通过此链接注册，首次充值即可享受 9 折优惠。",
       "minimax_cn": "MiniMax Coding Plan 特惠，Starter 套餐 9.9 元起",
       "minimax_en": "MiniMax Coding Plan 黑五特惠，Starter 套餐现仅 $2/月（2折优惠！）",
       "opencode_go": "使用此链接订阅 OpenCode Go，首月只需 $5，并可获得额外的 $5 额度！",
@@ -1055,8 +1064,7 @@
       "qiniu": "七牛云是多协议 AI 中转平台，一个 Key 即可调用原生 Claude、GPT、Gemini 模型，兼容 Anthropic、OpenAI、Gemini 多种接口。",
       "fenno": "Fenno.ai 是稳定高效的 API 中转服务商，可接入多种主流模型。CC Switch 用户专属福利：通过此链接订阅 9.9 元 /150 刀额度的超值 Coding Plan！",
       "zetaapi": "ZetaAPI 主打模型不掺水、不降智，价格低至官方价 35 折。CC Switch 用户专属福利：通过此链接注册，首次充值使用优惠码 CC-SWITCH 即可享受九折优惠！",
-      "teamorouter": "TeamoRouter 是企业级 Agentic LLM 网关，价格最高可达 90% 折扣。为 CC Switch 的用户提供了特别福利：新用户通过此链接注册，首次充值享 10% 折扣！",
-      "unity2": "Unity2.ai 为 CC Switch 用户提供专属福利：通过此链接注册可领取 $2 余额，加入官方群再送 $10，最高可领 $12 免费额度！"
+      "teamorouter": "TeamoRouter 是企业级 Agentic LLM 网关，价格最高可达 90% 折扣。为 CC Switch 的用户提供了特别福利：新用户通过此链接注册，首次充值享 10% 折扣！"
     },
     "presets": {
       "ucloud": "优云智算",
@@ -1096,8 +1104,8 @@
     "visitWebsite": "访问 {{url}}",
     "anthropicModel": "主模型",
     "anthropicSmallFastModel": "快速模型",
-    "apiFormat": "API 格式",
-    "apiFormatHint": "选择供应商 API 的输入格式",
+    "apiFormat": "上游格式",
+    "apiFormatHint": "供应商原生为 Anthropic Messages API 就选 Anthropic Messages（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；使用 Responses API 就选 Responses；使用 Gemini generateContent 协议就选 Gemini Native。Chat、Responses 与 Gemini Native 均需开启路由接管才能转换为 Anthropic Messages。",
     "customUserAgent": "自定义 User-Agent",
     "customUserAgentHint": "仅在开启本地路由/代理接管后生效，会替换转发到供应商 API 请求中的 User-Agent。",
     "customUserAgentInvalid": "User-Agent 不能包含控制字符（如换行符），否则将被忽略。",
@@ -1159,6 +1167,9 @@
     "categoryThirdParty": "第三方",
     "fetchModels": "获取模型列表",
     "fetchingModels": "正在获取...",
+    "searchModelPlaceholder": "搜索模型...",
+    "searchModelEmpty": "没有匹配的模型",
+    "searchModelAriaLabel": "选择模型",
     "fetchModelsSuccess": "获取到 {{count}} 个模型",
     "fetchModelsFailed": "获取模型列表失败",
     "fetchModelsEmpty": "未找到可用模型",
@@ -1168,7 +1179,8 @@
     "fetchModelsAuthFailed": "API Key 无效或无权限",
     "fetchModelsNotSupported": "该供应商不支持获取模型列表",
     "fetchModelsEndpointNotFound": "未找到可用的模型列表端点，请检查 Base URL 或确认供应商是否开放该接口",
-    "fetchModelsTimeout": "请求超时，请检查网络连接"
+    "fetchModelsTimeout": "请求超时，请检查网络连接",
+    "requiredFields": "请填写供应商名称、API 地址、API Key 和模型"
   },
   "copilot": {
     "authSection": "GitHub Copilot 认证",
@@ -1371,7 +1383,8 @@
     "reasoningEffortHint": "上游支持 low/high/max 等思考深度控制时启用。启用后会自动启用思考模式，并把 Codex 的 reasoning.effort 转成上游 Chat 参数。",
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "预设供应商已自动配置；自定义供应商会按名称/地址自动推断。仅当自动识别不准时才需手动覆盖。",
-    "advancedSectionHint": "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。"
+    "advancedSectionHint": "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。",
+    "noCommonConfigToApply": "通用配置片段为空或没有可写入的内容"
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",
@@ -1470,6 +1483,7 @@
     "totalRequests": "总请求数",
     "totalCost": "总成本",
     "cost": "成本",
+    "unpriced": "未定价",
     "perMillion": "(每百万)",
     "trends": "使用趋势",
     "rangeToday": "过去 24 小时 (按小时)",
@@ -1512,24 +1526,6 @@
       "grokbuild": "Grok Build"
     },
     "rawInputLabel": "原始",
-    "dataSources": "数据来源",
-    "dataSource": {
-      "proxy": "路由",
-      "session_log": "会话日志",
-      "codex_db": "Codex 数据库",
-      "codex_session": "Codex 会话日志",
-      "gemini_session": "Gemini 会话日志",
-      "opencode_session": "OpenCode 会话日志",
-      "grok_session": "Grok Build 会话日志"
-    },
-    "sessionSync": {
-      "trigger": "同步会话日志",
-      "import": "导入会话",
-      "resync": "同步",
-      "imported": "从会话日志导入了 {{count}} 条记录",
-      "upToDate": "会话日志已是最新",
-      "failed": "会话同步失败"
-    },
     "rebuildCodex": {
       "title": "Codex 用量维护",
       "description": "从本地 rollout 日志重新构建 Codex 会话用量",
@@ -1639,6 +1635,40 @@
     "modelsDevNoResults": "没有匹配的模型",
     "modelsDevTruncated": "仅显示前 {{shown}} 条，共 {{total}} 条结果，请缩小搜索范围",
     "modelsDevDefaultHint": "默认展示最新发布的 {{shown}} 个模型（共 {{total}} 个），输入关键字可全量搜索",
+    "modelsDevAutoSync": {
+      "title": "自动同步 models.dev 定价",
+      "description": "开启后，CC Switch 会在启动时定期拉取所选模型的最新价格，并保存到本地定价文件。",
+      "enabled": "已开启",
+      "disabled": "已关闭",
+      "enableConfirmTitle": "开启自动同步定价？",
+      "enableConfirmMessage": "开启后，CC Switch 会在启动时定期从 models.dev 更新所选模型的价格（最多每 6 小时一次）。同一模型 ID 的软件内置价格和手动设置价格都会被覆盖。",
+      "enableConfirmAction": "开启自动同步",
+      "configure": "选择模型",
+      "configureTitle": "选择自动同步定价的模型",
+      "configureDescription": "通过搜索和供应商筛选选择需要自动更新的模型，选择结果保存在本地。",
+      "commonModels": "自动包含常用模型",
+      "commonModelsDescription": "自动选择 {{count}} 个近期 Claude、GPT、Gemini、Grok、DeepSeek、Qwen、MiMo、LongCat、Kimi、MiniMax 和 GLM 模型。",
+      "selectFiltered": "全选筛选结果（{{count}}）",
+      "clearFiltered": "清空筛选结果",
+      "selectedCount": "已选择 {{count}} 个模型",
+      "selectionHint": "归一化模型 ID 相同的选项只会导入一次。",
+      "commonBadge": "常用",
+      "selectionSaved": "自动定价同步选择已保存",
+      "syncSuccess": "定价同步完成：检查 {{imported}} 个模型，更新 {{changed}} 个",
+      "syncFailed": "定价同步失败：{{error}}",
+      "configLoadFailed": "加载本地定价配置失败：{{error}}",
+      "neverSynced": "从未同步",
+      "lastSync": "上次同步",
+      "commonStatus": "常用模型",
+      "lastError": "上次自动同步失败：{{error}}",
+      "localFile": "本地定价文件",
+      "openFolder": "打开目录",
+      "openFolderFailed": "打开本地定价文件目录失败：{{error}}",
+      "reloadLocalFile": "重新加载文件",
+      "localFileReloaded": "本地定价文件已重新加载",
+      "localFileReloadFailed": "重新加载本地定价文件失败：{{error}}",
+      "syncNow": "立即同步"
+    },
     "cacheReadCostPerMillion": "缓存读取成本 (每百万 tokens, USD)",
     "cacheCreationCostPerMillion": "缓存写入成本 (每百万 tokens, USD)"
   },
@@ -1780,6 +1810,9 @@
       "enabledApps": "启用的应用",
       "noImportFound": "未发现需要导入的 MCP 服务器。所有服务器已在 CC Switch 统一管理中。",
       "importSuccess": "成功导入 {{count}} 个 MCP 服务器",
+      "searchPlaceholder": "搜索 MCP 名称、描述、标签或命令...",
+      "searchAriaLabel": "搜索已管理的 MCP 服务器",
+      "noSearchResults": "未找到匹配的 MCP 服务器",
       "apps": {
         "claude": "Claude",
         "codex": "Codex",
@@ -1938,6 +1971,9 @@
     "empty": "暂无提示词",
     "emptyDescription": "点击右上角按钮添加或导入提示词",
     "loading": "加载中...",
+    "searchPlaceholder": "搜索提示词名称、描述或内容...",
+    "searchAriaLabel": "搜索已管理的提示词",
+    "noSearchResults": "未找到匹配的提示词",
     "name": "名称",
     "namePlaceholder": "例如：项目默认提示词",
     "description": "描述",
@@ -2336,6 +2372,9 @@
     },
     "search": "搜索技能",
     "searchPlaceholder": "搜索技能名称或仓库名称...",
+    "installedSearchPlaceholder": "搜索已安装技能的名称、描述或仓库...",
+    "installedSearchAriaLabel": "搜索已安装技能",
+    "noInstalledSearchResults": "未找到匹配的已安装技能",
     "searchSource": {
       "repos": "仓库",
       "skillssh": "skills.sh"
@@ -2455,7 +2494,11 @@
       "title": "批量导入 MCP Servers",
       "targetApps": "目标应用",
       "serverCount": "MCP Servers ({{count}} 个)",
-      "enabledWarning": "导入后将立即写入所有指定应用的配置文件"
+      "enabledWarning": "导入后将立即写入所有指定应用的配置文件",
+      "command": "命令",
+      "args": "参数",
+      "env": "环境",
+      "url": "地址"
     },
     "prompt": {
       "title": "导入系统提示词",
@@ -2477,10 +2520,19 @@
     "usageScript": "用量查询",
     "usageScriptEnabled": "已启用",
     "usageScriptDisabled": "未启用",
+    "usageScriptCode": "脚本代码",
+    "usageScriptWarning": "这是一段 JavaScript 代码，启用后会在查询用量时执行。请确认来源可信后再导入。",
     "usageApiKey": "用量 API Key",
     "usageBaseUrl": "用量查询地址",
+    "usageAccessToken": "用量访问令牌",
+    "usageUserId": "用量用户 ID",
     "usageAutoInterval": "自动查询",
-    "usageAutoIntervalValue": "每 {{minutes}} 分钟"
+    "usageAutoIntervalValue": "每 {{minutes}} 分钟",
+    "risk": {
+      "envHijack": "该配置包含可改变进程加载行为的环境变量（如注入动态库、替换 CA 证书），请确认来源可信。",
+      "privateEndpoint": "该地址指向本机或内网。若非你自建的本地服务，请勿导入。",
+      "shellCommand": "该配置通过 shell 执行一整段命令，实际运行的内容在参数里，请逐行核对。"
+    }
   },
   "iconPicker": {
     "search": "搜索图标",
@@ -2499,8 +2551,7 @@
     "selectIcon": "选择图标",
     "preview": "预览",
     "clickToChange": "点击更换图标",
-    "clickToSelect": "点击选择图标",
-    "color": "图标颜色"
+    "clickToSelect": "点击选择图标"
   },
   "migration": {
     "success": "配置迁移成功",
@@ -2529,7 +2580,8 @@
     },
     "tooltip": {
       "enabled": "{{app}} 故障转移已启用\n按队列优先级（P1→P2→...）选择供应商",
-      "disabled": "启用 {{app}} 故障转移\n将立即切换到队列 P1，并在失败时自动切换到下一个"
+      "disabled": "启用 {{app}} 故障转移\n将立即切换到队列 P1，并在失败时自动切换到下一个",
+      "takeoverRequired": "请先接管 {{app}}，再启用故障转移"
     }
   },
   "proxy": {
@@ -2707,7 +2759,9 @@
     },
     "server": {
       "started": "路由服务已启动 - {{address}}:{{port}}",
-      "startFailed": "启动路由服务失败: {{detail}}"
+      "startFailed": "启动路由服务失败: {{detail}}",
+      "stopped": "路由服务已停止",
+      "stopFailed": "停止路由服务失败：{{detail}}"
     },
     "stoppedWithRestore": "路由服务已关闭，已恢复所有路由配置",
     "stopWithRestoreFailed": "停止失败: {{detail}}"
@@ -2741,33 +2795,6 @@
     "streamingFirstByte": "流式首字节超时",
     "streamingIdle": "流式静默超时",
     "nonStreaming": "非流式超时"
-  },
-  "circuitBreaker": {
-    "failureThreshold": "失败阈值",
-    "successThreshold": "成功阈值",
-    "timeoutSeconds": "超时时间（秒）",
-    "errorRateThreshold": "错误率阈值 (%)",
-    "minRequests": "最小请求数",
-    "validationFailed": "以下字段超出有效范围: {{fields}}",
-    "configSaved": "熔断器配置已保存",
-    "saveFailed": "保存失败",
-    "loading": "加载中...",
-    "title": "熔断器配置",
-    "description": "调整熔断器参数以控制故障检测和恢复行为",
-    "failureThresholdHint": "连续失败多少次后打开熔断器",
-    "timeoutSecondsHint": "熔断器打开后多久尝试恢复（半开状态）",
-    "successThresholdHint": "半开状态下成功多少次后关闭熔断器",
-    "errorRateThresholdHint": "错误率超过此值时打开熔断器",
-    "minRequestsHint": "计算错误率前的最小请求数",
-    "saveConfig": "保存配置",
-    "instructionsTitle": "配置说明",
-    "instructions": {
-      "failureThreshold": "连续失败达到此次数时，熔断器打开",
-      "timeout": "熔断器打开后，等待此时间后尝试半开",
-      "successThreshold": "半开状态下，成功达到此次数时关闭熔断器",
-      "errorRate": "错误率超过此值时，熔断器打开",
-      "minRequests": "只有请求数达到此值后才计算错误率"
-    }
   },
   "universalProvider": {
     "duplicate": "复制",
@@ -2869,6 +2896,7 @@
     "noEnabledModelsWarning": "当前没有可用的已配置模型，请先配置 OpenCode 模型",
     "modelSourcePartialWarning": "部分供应商模型配置无效，已自动跳过。",
     "modelSourceFallbackWarning": "读取 live 供应商状态失败，已回退到已配置供应商列表。",
+    "runtimeModelsFailedWarning": "读取 OpenCode 运行时模型失败，已仅展示已配置供应商模型。",
     "importLocalReplaceSuccess": "已从本地文件导入并覆盖 Agent/Category/Other Fields",
     "importLocalFailed": "读取本地文件失败: {{error}}",
     "agentKeyPlaceholder": "agent 键名",

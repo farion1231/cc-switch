@@ -3090,6 +3090,7 @@ impl ProviderService {
         // Use effective current provider (validated existence) to ensure backfill targets valid provider
         let current_id = crate::settings::get_effective_current_provider(&state.db, &app_type)?;
 
+        let mut backfill_completed = false;
         if let Some(current_id) = current_id {
             if current_id != id {
                 // Additive mode apps - all providers coexist in the same file,
@@ -3123,6 +3124,8 @@ impl ProviderService {
                                 result
                                     .warnings
                                     .push(format!("backfill_failed:{current_id}"));
+                            } else {
+                                backfill_completed = true;
                             }
                         }
                     }
@@ -3141,6 +3144,30 @@ impl ProviderService {
 
         // Sync to live (write_gemini_live handles security flag internally for Gemini)
         write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+
+        // A material-less official Codex provider gets a config-only live
+        // write, which can leave the previous third-party key in
+        // ~/.codex/auth.json and strand the user on a 401 with no login
+        // screen. Only clean up after a successful backfill — the DB copy
+        // made above is what keeps that key recoverable. Failures degrade to
+        // a log entry: config.toml and is_current are already committed, so
+        // failing the switch here would report a switch that in fact happened.
+        if matches!(app_type, AppType::Codex)
+            && backfill_completed
+            && provider.category.as_deref() == Some("official")
+        {
+            let db_auth = provider.settings_config.get("auth");
+            match crate::codex_config::clear_stale_codex_live_auth_after_official_switch(
+                db_auth.unwrap_or(&serde_json::Value::Null),
+            ) {
+                Ok(true) => log::info!(
+                    "Removed stale third-party auth.json after switching to official Codex provider '{}'",
+                    provider.id
+                ),
+                Ok(false) => {}
+                Err(e) => log::warn!("Failed to clean stale Codex auth.json: {e}"),
+            }
+        }
 
         // Hermes is additive, so "switching" doesn't overwrite a live config file
         // — we instead update the top-level `model:` section to point at this

@@ -144,6 +144,9 @@ impl Database {
             log::warn!("Failed to ensure incremental auto-vacuum: {e}");
         }
         db.ensure_model_pricing_seeded()?;
+        if let Err(e) = crate::services::model_pricing::sync_local_model_pricing(&db) {
+            log::warn!("Failed to sync local model pricing file: {e}");
+        }
 
         // Startup cleanup: prune old logs and reclaim space
         if let Err(e) = db.cleanup_old_stream_check_logs(7) {

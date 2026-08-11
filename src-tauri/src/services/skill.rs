@@ -673,6 +673,8 @@ impl SkillService {
         let dest = ssot_dir.join(&install_name);
 
         let mut repo_branch = skill.repo_branch.clone();
+        // 真实解析出的源目录推导的文档路径（仅本次真正下载解析时可得）
+        let mut resolved_doc_path: Option<String> = None;
 
         // 如果已存在则跳过下载
         if !dest.exists() {
@@ -732,6 +734,10 @@ impl SkillService {
                 )));
             }
 
+            // 用真实解析出的源目录推导文档路径——skills.sh 的 directory 只是
+            // skillId（末级目录名），嵌套目录场景直接拼接会丢路径、链接 404（#6111）
+            resolved_doc_path = Self::doc_path_for_source(&canonical_temp, &canonical_source);
+
             Self::copy_dir_recursive(&canonical_source, &dest)?;
 
             // 使用实际下载成功的分支，避免 readme_url / repo_branch 与真实分支不一致。
@@ -746,18 +752,11 @@ impl SkillService {
             }
         }
 
-        let doc_path = skill
-            .readme_url
-            .as_deref()
-            .and_then(Self::extract_doc_path_from_url)
-            .map(|path| {
-                if path.ends_with("/SKILL.md") || path == "SKILL.md" {
-                    path
-                } else {
-                    format!("{}/SKILL.md", path.trim_end_matches('/'))
-                }
-            })
-            .unwrap_or_else(|| format!("{}/SKILL.md", skill.directory.trim_end_matches('/')));
+        let doc_path = Self::choose_doc_path(
+            resolved_doc_path,
+            skill.readme_url.as_deref(),
+            &skill.directory,
+        );
 
         let readme_url =
             Self::build_skill_doc_url(&skill.repo_owner, &skill.repo_name, &repo_branch, &doc_path);
@@ -914,6 +913,47 @@ impl SkillService {
         Ok(())
     }
 
+    /// 判定 check_updates 应使用的本地哈希。
+    ///
+    /// 次序关键：必须先确认 SSOT 目录存在，再信任数据库缓存的 content_hash。
+    /// 换机恢复数据库备份后 Skill 文件不随库迁移，此时缓存哈希仍在而目录已
+    /// 缺失；若先取缓存会把这类 Skill 误报成「无更新」，缺失状态被永久掩盖。
+    /// 目录缺失 → 返回 None，与远端哈希必然不等，Skill 进入更新列表，
+    /// update_skill 对缺失目录本就容忍（存在才删、随后整体复制），点更新即可重建。
+    ///
+    /// 返回 `(hash, freshly_computed)`；freshly_computed 表示哈希是现场算出的，
+    /// 调用方应回填数据库缓存。
+    fn local_hash_for_update_check(
+        ssot_dir: &Path,
+        raw_directory: &str,
+        cached_hash: Option<&str>,
+    ) -> Option<(String, bool)> {
+        // 脏 directory 会让 compute_dir_hash 递归遍历任意目录，且哈希结果经
+        // 「有无更新」的界面状态泄露少量信息；无法安全拼路径时也不能报
+        // 「可更新」——update_skill 会在同一校验上硬报错，只能沿用缓存。
+        let directory = match Self::require_valid_directory(raw_directory) {
+            Ok(d) => d,
+            Err(err) => {
+                log::warn!("Skill directory 非法，跳过本地目录检查: {err}");
+                return cached_hash.map(|h| (h.to_string(), false));
+            }
+        };
+
+        let local_dir = ssot_dir.join(&directory);
+        if !local_dir.exists() {
+            return None;
+        }
+
+        if let Some(h) = cached_hash {
+            return Some((h.to_string(), false));
+        }
+
+        match Self::compute_dir_hash(&local_dir) {
+            Ok(h) => Some((h, true)),
+            Err(_) => None,
+        }
+    }
+
     /// 检查所有已安装 Skill 的更新
     ///
     /// 仅检查有 repo_owner 的 Skill（本地 Skill 跳过），
@@ -997,31 +1037,18 @@ impl SkillService {
                     }
                 };
 
-                // 本地哈希：优先数据库，否则实时计算
-                let local_hash = match &skill.content_hash {
-                    Some(h) => Some(h.clone()),
-                    // 脏 directory 会让 compute_dir_hash 递归遍历任意目录，
-                    // 且哈希结果经「有无更新」的界面状态泄露少量信息。
-                    None => match Self::require_valid_directory(&skill.directory) {
-                        Err(err) => {
-                            log::warn!("跳过非法 directory 的哈希计算: {err}");
-                            None
+                let local_hash = match Self::local_hash_for_update_check(
+                    &ssot_dir,
+                    &skill.directory,
+                    skill.content_hash.as_deref(),
+                ) {
+                    Some((h, freshly_computed)) => {
+                        if freshly_computed {
+                            let _ = db.update_skill_hash(&skill.id, &h, 0);
                         }
-                        Ok(directory) => {
-                            let local_dir = ssot_dir.join(&directory);
-                            if local_dir.exists() {
-                                match Self::compute_dir_hash(&local_dir) {
-                                    Ok(h) => {
-                                        let _ = db.update_skill_hash(&skill.id, &h, 0);
-                                        Some(h)
-                                    }
-                                    Err(_) => None,
-                                }
-                            } else {
-                                None
-                            }
-                        }
-                    },
+                        Some(h)
+                    }
+                    None => None,
                 };
 
                 if local_hash.as_deref() != Some(&remote_hash) {
@@ -1036,6 +1063,23 @@ impl SkillService {
         }
 
         Ok(updates)
+    }
+
+    /// 持久化更新后的 Skill 元数据，并重新读取数据库中的权威应用启用状态。
+    ///
+    /// 更新过程包含网络下载，期间用户可能切换启用状态或卸载 Skill。这里必须
+    /// 使用只更新现有记录的 DAO，避免旧快照覆盖 `enabled_*`，也避免已卸载记录
+    /// 被重新插入。
+    fn persist_updated_skill_metadata(
+        db: &Arc<Database>,
+        updated_skill: &InstalledSkill,
+    ) -> Result<InstalledSkill> {
+        if !db.update_skill_metadata(updated_skill)? {
+            return Err(anyhow!("Skill no longer installed: {}", updated_skill.id));
+        }
+
+        db.get_installed_skill(&updated_skill.id)?
+            .ok_or_else(|| anyhow!("Skill no longer installed: {}", updated_skill.id))
     }
 
     /// 更新单个 Skill（重新下载并替换本地文件）
@@ -1113,6 +1157,23 @@ impl SkillService {
                 ))
             })?;
 
+        // 下载和扫描期间用户可能已经卸载了该 Skill。必须在任何备份、删除或
+        // 复制之前重新确认记录仍存在；否则即使最终的 metadata UPDATE 能发现
+        // 缺行，这里也会先把已卸载的 SSOT 目录重新创建出来。
+        let current_skill = db
+            .get_installed_skill(&skill.id)?
+            .ok_or_else(|| anyhow!("Skill no longer installed: {}", skill.id))?;
+        if current_skill.directory != skill.directory
+            || current_skill.repo_owner != skill.repo_owner
+            || current_skill.repo_name != skill.repo_name
+            || current_skill.repo_branch != skill.repo_branch
+            || current_skill.installed_at != skill.installed_at
+        {
+            return Err(anyhow!("Skill changed during update: {}", skill.id));
+        }
+        Self::require_valid_directory(&current_skill.directory)?;
+        let skill = current_skill;
+
         // 备份旧文件
         let _ = Self::create_uninstall_backup(&skill);
 
@@ -1136,7 +1197,7 @@ impl SkillService {
             .unwrap_or_else(|| format!("{}/SKILL.md", skill.directory.trim_end_matches('/')));
         let readme_url = Self::build_skill_doc_url(&owner, &name, &used_branch, &doc_path);
 
-        let updated_skill = InstalledSkill {
+        let updated_metadata = InstalledSkill {
             id: skill.id.clone(),
             name: new_name,
             description: new_description,
@@ -1151,7 +1212,7 @@ impl SkillService {
             updated_at: chrono::Utc::now().timestamp(),
         };
 
-        db.save_skill(&updated_skill)?;
+        let updated_skill = Self::persist_updated_skill_metadata(db, &updated_metadata)?;
 
         // 同步到所有已启用的应用目录
         for app in updated_skill.apps.enabled_apps() {
@@ -2374,36 +2435,79 @@ impl SkillService {
 
     /// 将 discoverable skill 的目录信息重新解析为解压目录中的真实源目录。
     ///
-    /// 兼容三种情况：
-    /// 1. `skills/foo` 这类直接相对路径；
-    /// 2. 仅持有安装名 `foo`，需要在仓库中递归查找真实目录；
-    /// 3. 仓库根目录本身就是 skill，此时回退到解压根目录。
+    /// **核心原则：返回的目录必定含 `SKILL.md`**（以 SKILL.md 为锚点）。解析顺序：
+    /// 1. 直接相对路径命中（如 `skills/foo`），校验含 `SKILL.md`——明确路径优先；
+    /// 2. 按安装名递归查找名字匹配 **且** 含 `SKILL.md` 的目录；
+    /// 3. 兜底：仓库根本身含 `SKILL.md`。
     fn resolve_skill_source_dir(root: &Path, raw_directory: &str) -> Option<PathBuf> {
         let source_rel = Self::sanitize_skill_source_path(raw_directory)?;
+        let install_name = source_rel
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())?;
+
+        // 1. 直接相对路径命中（明确路径优先）——必须校验 SKILL.md，否则同名空壳目录
+        //    （如 ast-grep/agent-skill 根下的 plugin 包目录 ast-grep/）会被误判为源目录。
         let direct = root.join(&source_rel);
-        if direct.is_dir() {
+        if direct.is_dir() && direct.join("SKILL.md").is_file() {
             return Some(direct);
         }
 
-        let target_name = source_rel.file_name()?.to_string_lossy().to_string();
-        if let Some(found) = Self::find_skill_dir_by_name(root, &target_name) {
+        // 2. 按名字递归查找（find_skill_dir_by_name 已校验 SKILL.md）
+        if let Some(found) = Self::find_skill_dir_by_name(root, &install_name) {
             log::info!(
                 "Skill directory '{}' not found at direct path, using fallback: {}",
-                target_name,
+                install_name,
                 found.display()
             );
             return Some(found);
         }
 
-        if root.is_dir() && root.join("SKILL.md").exists() {
+        // 3. 兜底：仓库根本身是 skill
+        if root.join("SKILL.md").is_file() {
             log::info!(
                 "Skill directory '{}' not found, but SKILL.md exists at root, using repo root",
-                target_name,
+                install_name,
             );
             return Some(root.to_path_buf());
         }
 
         None
+    }
+
+    /// 由真实解析出的源目录推导 SKILL.md 在仓库内的相对文档路径（正斜杠）。
+    /// 两个参数都应是已 canonicalize 的路径（安装流程已做包含性校验）。
+    fn doc_path_for_source(repo_root: &Path, source: &Path) -> Option<String> {
+        let rel = source.strip_prefix(repo_root).ok()?;
+        let mut parts: Vec<String> = rel
+            .components()
+            .filter_map(|component| match component {
+                std::path::Component::Normal(part) => Some(part.to_string_lossy().to_string()),
+                _ => None,
+            })
+            .collect();
+        parts.push("SKILL.md".to_string());
+        Some(parts.join("/"))
+    }
+
+    /// 选择 readme_url 使用的仓库内文档路径：真实解析出的源目录优先，其次是
+    /// 旧 readme_url 中保存的路径，最后才按 directory 拼接。skills.sh 的
+    /// `directory` 只是 skillId（末级目录名），嵌套目录场景直接拼接会丢路径、
+    /// 文档链接 404（#6111），所以真实源目录必须排第一优先级。
+    fn choose_doc_path(
+        resolved_source_doc_path: Option<String>,
+        readme_url: Option<&str>,
+        directory: &str,
+    ) -> String {
+        if let Some(path) = resolved_source_doc_path {
+            return path;
+        }
+        if let Some(path) = readme_url.and_then(Self::extract_doc_path_from_url) {
+            if path.ends_with("/SKILL.md") || path == "SKILL.md" {
+                return path;
+            }
+            return format!("{}/SKILL.md", path.trim_end_matches('/'));
+        }
+        format!("{}/SKILL.md", directory.trim_end_matches('/'))
     }
 
     /// 去重技能列表（基于完整 key，不同仓库的同名 skill 分开显示）
@@ -3121,6 +3225,13 @@ impl SkillService {
     /// 磁盘上。守卫交给调用方持有，清理就变成作用域结束时自动发生，不再依赖每条
     /// 出口都记得手写 `remove_dir_all`（实测漏了不止一条）。
     fn extract_local_zip(zip_path: &Path) -> Result<tempfile::TempDir> {
+        Self::extract_local_zip_in(zip_path, &std::env::temp_dir())
+    }
+
+    /// 与 [`Self::extract_local_zip`] 相同，但临时目录的落点由调用方指定。
+    /// 测试用它把解压根钉在私有目录里，而不是劫持进程级 `TMPDIR`——后者会把
+    /// 并发测试的临时目录一起吸进被观测目录，"目录必须为空"的断言就会随机失败。
+    fn extract_local_zip_in(zip_path: &Path, base_dir: &Path) -> Result<tempfile::TempDir> {
         let file = fs::File::open(zip_path)
             .with_context(|| format!("Failed to open ZIP file: {}", zip_path.display()))?;
 
@@ -3149,7 +3260,7 @@ impl SkillService {
 
         // 守卫持有到解压全部成功为止：中途任何 `?` 都会让它清掉半成品目录。
         // 原来在这里就 keep()，超限或解压出错都会留下永久残留。
-        let temp_dir = tempfile::tempdir()?;
+        let temp_dir = tempfile::tempdir_in(base_dir)?;
         let temp_path = temp_dir.path().to_path_buf();
 
         let mut symlinks: Vec<(PathBuf, String)> = Vec::new();
@@ -3965,12 +4076,12 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
     fn extract_local_zip_leaves_no_partial_directory_when_it_fails() {
         use std::io::Write;
         use zip::write::SimpleFileOptions;
 
-        // TMPDIR 要在建这两个目录之后再改，否则它们自己就落进被观测的目录里
+        // scratch 只喂给这一次解压：并发测试的临时目录不会落进来，
+        // 所以"必须为空"的断言观测到的恰好就是这次解压的残留
         let holder = tempdir().expect("tempdir");
         let scratch = tempdir().expect("tempdir");
 
@@ -3989,13 +4100,7 @@ mod tests {
         let zip_path = holder.path().join("collide.zip");
         fs::write(&zip_path, &buf).expect("write zip");
 
-        let original = std::env::var_os("TMPDIR");
-        std::env::set_var("TMPDIR", scratch.path());
-        let result = SkillService::extract_local_zip(&zip_path);
-        match original {
-            Some(value) => std::env::set_var("TMPDIR", value),
-            None => std::env::remove_var("TMPDIR"),
-        }
+        let result = SkillService::extract_local_zip_in(&zip_path, scratch.path());
 
         assert!(
             result.is_err(),
@@ -4013,7 +4118,6 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
     fn extract_local_zip_hands_back_a_guard_that_owns_the_tree() {
         use std::io::Write;
         use zip::write::SimpleFileOptions;
@@ -4036,15 +4140,8 @@ mod tests {
         let zip_path = holder.path().join("ok.zip");
         fs::write(&zip_path, &buf).expect("write zip");
 
-        let original = std::env::var_os("TMPDIR");
-        std::env::set_var("TMPDIR", scratch.path());
-        let extracted = SkillService::extract_local_zip(&zip_path);
-        match original {
-            Some(value) => std::env::set_var("TMPDIR", value),
-            None => std::env::remove_var("TMPDIR"),
-        }
-
-        let extracted = extracted.expect("extract must succeed");
+        let extracted = SkillService::extract_local_zip_in(&zip_path, scratch.path())
+            .expect("extract must succeed");
         assert!(
             extracted.path().join("s").join("SKILL.md").exists(),
             "the fixture must actually extract something worth cleaning up"
@@ -4167,6 +4264,65 @@ mod tests {
     }
 
     #[test]
+    fn persist_updated_skill_metadata_uses_database_apps() {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let mut installed = poisoned_skill("owner/repo:skill", "skill");
+        installed.name = "old name".to_string();
+        installed.apps = SkillApps::only(&AppType::Claude);
+        db.save_skill(&installed).expect("seed skill");
+
+        // 模拟下载期间用户将 Skill 从 Claude 切换到 Codex。待写入的 metadata
+        // 仍携带下载开始时的旧 apps 快照。
+        let authoritative_apps = SkillApps::only(&AppType::Codex);
+        db.update_skill_apps(&installed.id, &authoritative_apps)
+            .expect("toggle apps");
+
+        let mut updated_metadata = installed.clone();
+        updated_metadata.name = "new name".to_string();
+        updated_metadata.content_hash = Some("new hash".to_string());
+        updated_metadata.updated_at = 42;
+
+        let persisted = SkillService::persist_updated_skill_metadata(&db, &updated_metadata)
+            .expect("persist metadata");
+
+        assert_eq!(persisted.name, "new name");
+        assert_eq!(persisted.content_hash.as_deref(), Some("new hash"));
+        assert_eq!(persisted.updated_at, 42);
+        assert_eq!(persisted.apps, authoritative_apps);
+        assert_eq!(
+            db.get_installed_skill(&installed.id)
+                .expect("query skill")
+                .expect("skill remains installed")
+                .apps,
+            authoritative_apps
+        );
+    }
+
+    #[test]
+    fn persist_updated_skill_metadata_does_not_restore_uninstalled_skill() {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let installed = poisoned_skill("owner/repo:skill", "skill");
+        db.save_skill(&installed).expect("seed skill");
+
+        // 模拟下载期间卸载完成，随后旧的更新任务才尝试落库。
+        assert!(db.delete_skill(&installed.id).expect("uninstall skill"));
+
+        let mut updated_metadata = installed.clone();
+        updated_metadata.name = "downloaded update".to_string();
+        let err = SkillService::persist_updated_skill_metadata(&db, &updated_metadata)
+            .expect_err("an uninstalled skill must not be restored");
+
+        assert!(
+            err.to_string().contains("Skill no longer installed"),
+            "unexpected error: {err}"
+        );
+        assert!(db
+            .get_installed_skill(&installed.id)
+            .expect("query skill")
+            .is_none());
+    }
+
+    #[test]
     fn require_valid_directory_accepts_single_segment_names_only() {
         assert_eq!(
             SkillService::require_valid_directory("my-skill").expect("valid name"),
@@ -4188,6 +4344,58 @@ mod tests {
                 "must reject: {bad:?}"
             );
         }
+    }
+
+    #[test]
+    fn local_hash_for_update_check_ignores_cached_hash_when_dir_missing() {
+        // 换机恢复数据库备份的现场：content_hash 还在库里，SSOT 目录已不在。
+        // 必须无视缓存返回 None，让 Skill 进入更新列表以便重建文件；
+        // 若信任缓存则界面显示「无更新」，缺失状态被永久掩盖。
+        let ssot = tempdir().expect("tempdir");
+        assert_eq!(
+            SkillService::local_hash_for_update_check(ssot.path(), "my-skill", Some("cached")),
+            None
+        );
+    }
+
+    #[test]
+    fn local_hash_for_update_check_uses_cache_when_dir_exists() {
+        let ssot = tempdir().expect("tempdir");
+        fs::create_dir(ssot.path().join("my-skill")).expect("create skill dir");
+        assert_eq!(
+            SkillService::local_hash_for_update_check(ssot.path(), "my-skill", Some("cached")),
+            Some(("cached".to_string(), false))
+        );
+    }
+
+    #[test]
+    fn local_hash_for_update_check_computes_and_backfills_when_cache_empty() {
+        let ssot = tempdir().expect("tempdir");
+        let dir = ssot.path().join("my-skill");
+        fs::create_dir(&dir).expect("create skill dir");
+        fs::write(dir.join("SKILL.md"), "---\nname: x\n---\n").expect("write skill");
+
+        let expected = SkillService::compute_dir_hash(&dir).expect("hash");
+        assert_eq!(
+            SkillService::local_hash_for_update_check(ssot.path(), "my-skill", None),
+            Some((expected, true))
+        );
+    }
+
+    #[test]
+    fn local_hash_for_update_check_keeps_cache_for_invalid_directory() {
+        // 非法 directory 无法安全拼路径，做不了存在性检查：有缓存沿用缓存
+        // （维持修复前行为），无缓存返回 None。不能因非法值报「可更新」，
+        // 否则用户点更新会在 update_skill 的同一校验上硬报错。
+        let ssot = tempdir().expect("tempdir");
+        assert_eq!(
+            SkillService::local_hash_for_update_check(ssot.path(), "../evil", Some("cached")),
+            Some(("cached".to_string(), false))
+        );
+        assert_eq!(
+            SkillService::local_hash_for_update_check(ssot.path(), "../evil", None),
+            None
+        );
     }
 
     #[test]
@@ -4457,6 +4665,144 @@ mod tests {
         assert!(
             dest.join("SKILL.md").is_file(),
             "existing destination skill should be preserved"
+        );
+    }
+
+    #[test]
+    fn resolve_skill_source_dir_rejects_same_name_wrapper_without_skill_md() {
+        // 复刻 issue #4141：ast-grep/agent-skill 结构。仓库根下有同名目录 ast-grep/
+        // （plugin 包，无 SKILL.md），真正的 skill 在 ast-grep/skills/ast-grep/SKILL.md。
+        let temp = tempdir().expect("tempdir");
+        let wrapper = temp.path().join("ast-grep");
+        fs::create_dir_all(wrapper.join(".claude-plugin")).expect("create wrapper plugin dir");
+        fs::write(
+            wrapper.join(".claude-plugin").join("plugin.json"),
+            "{\"name\":\"ast-grep\"}",
+        )
+        .expect("write plugin.json");
+        let real_skill = wrapper.join("skills").join("ast-grep");
+        write_skill(&real_skill, "ast-grep");
+
+        // directory 只给了 skill 名 "ast-grep"（skills.sh API 的语义），不能命中空壳 wrapper。
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "ast-grep")
+            .expect("should resolve to the inner skill dir, not the same-name wrapper");
+
+        assert_eq!(resolved, real_skill);
+        assert!(resolved.join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn resolve_skill_source_dir_finds_two_level_catalog_skill() {
+        // catalog layout：skills/category/foo/SKILL.md（depth 3，find_skill_dir_by_name 可达）。
+        let temp = tempdir().expect("tempdir");
+        let catalog_skill = temp.path().join("skills").join("category").join("foo");
+        write_skill(&catalog_skill, "Foo Skill");
+
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "foo")
+            .expect("should resolve the two-level catalog skill by name");
+
+        assert_eq!(resolved, catalog_skill);
+    }
+
+    #[test]
+    fn resolve_skill_source_dir_returns_none_for_wrapper_without_inner_skill() {
+        // 同名 wrapper 存在、无 SKILL.md，且无 inner skill / root SKILL.md 可兜底时，
+        // 必须返回 None——守住 #4141 这个 bug class 的负例（不能把空壳目录当源目录）。
+        let temp = tempdir().expect("tempdir");
+        let wrapper = temp.path().join("ast-grep");
+        fs::create_dir_all(wrapper.join(".claude-plugin")).expect("create wrapper plugin dir");
+        fs::write(
+            wrapper.join(".claude-plugin").join("plugin.json"),
+            "{\"name\":\"ast-grep\"}",
+        )
+        .expect("write plugin.json");
+
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "ast-grep");
+        assert!(
+            resolved.is_none(),
+            "wrapper dir without SKILL.md and no inner skill must resolve to None, got {:?}",
+            resolved
+        );
+    }
+
+    #[test]
+    fn resolve_skill_source_dir_returns_none_when_no_skill_md_anywhere() {
+        let temp = tempdir().expect("tempdir");
+        fs::create_dir_all(temp.path().join("skills").join("foo")).expect("create empty skill dir");
+        fs::write(temp.path().join("README.md"), "no skills here").expect("write README");
+
+        let resolved = SkillService::resolve_skill_source_dir(temp.path(), "foo");
+        assert!(
+            resolved.is_none(),
+            "no SKILL.md anywhere must resolve to None"
+        );
+    }
+
+    #[test]
+    fn choose_doc_path_prefers_resolved_source_over_stale_readme_url() {
+        // #6111 现场还原：skills.sh 安装嵌套目录 skill——directory 是 skillId
+        // （末级目录名），readme_url 是仓库根 URL，真实嵌套路径只能来自
+        // 解析出的源目录。若退回"readme_url 提取优先、directory 拼接兜底"，
+        // 本断言即失败（旧逻辑产出 alibabacloud-cli-guidance/SKILL.md → 404）。
+        let doc_path = SkillService::choose_doc_path(
+            Some("skills/developertools/solutions/alibabacloud-cli-guidance/SKILL.md".to_string()),
+            Some("https://github.com/aliyun/alibabacloud-aiops-skills"),
+            "alibabacloud-cli-guidance",
+        );
+        assert_eq!(
+            doc_path,
+            "skills/developertools/solutions/alibabacloud-cli-guidance/SKILL.md"
+        );
+    }
+
+    #[test]
+    fn choose_doc_path_falls_back_to_readme_url_path_then_directory() {
+        // 无解析结果（SSOT 目录已存在、未重新下载）时沿用旧 readme_url 的仓库内
+        // 路径，兼容 blob/tree 两种格式并补 SKILL.md 后缀
+        let doc_path = SkillService::choose_doc_path(
+            None,
+            Some("https://github.com/o/r/tree/main/skills/foo"),
+            "foo",
+        );
+        assert_eq!(doc_path, "skills/foo/SKILL.md");
+
+        // 旧 readme_url 已是完整文档路径时原样保留
+        let doc_path = SkillService::choose_doc_path(
+            None,
+            Some("https://github.com/o/r/blob/main/skills/foo/SKILL.md"),
+            "foo",
+        );
+        assert_eq!(doc_path, "skills/foo/SKILL.md");
+
+        // 两者都没有时按 directory 拼接
+        let doc_path = SkillService::choose_doc_path(None, None, "skills/foo");
+        assert_eq!(doc_path, "skills/foo/SKILL.md");
+    }
+
+    #[test]
+    fn doc_path_for_source_returns_repo_relative_skill_md_path() {
+        let temp = tempdir().expect("tempdir");
+        let nested = temp
+            .path()
+            .join("skills")
+            .join("developertools")
+            .join("solutions")
+            .join("foo");
+        fs::create_dir_all(&nested).expect("create nested dirs");
+
+        assert_eq!(
+            SkillService::doc_path_for_source(temp.path(), &nested),
+            Some("skills/developertools/solutions/foo/SKILL.md".to_string())
+        );
+        // 源目录即仓库根：文档路径就是根下的 SKILL.md
+        assert_eq!(
+            SkillService::doc_path_for_source(temp.path(), temp.path()),
+            Some("SKILL.md".to_string())
+        );
+        // 仓库根之外：None（调用方已做包含性校验，防御性兜底）
+        assert_eq!(
+            SkillService::doc_path_for_source(temp.path(), std::path::Path::new("/elsewhere")),
+            None
         );
     }
 }
