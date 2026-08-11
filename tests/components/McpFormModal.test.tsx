@@ -144,6 +144,7 @@ describe("McpFormModal", () => {
     toastErrorMock.mockClear();
     toastSuccessMock.mockClear();
     upsertMock.mockClear();
+    upsertMock.mockResolvedValue(undefined);
   });
 
   const renderForm = (
@@ -469,5 +470,39 @@ type = "stdio"
 
     const addButton = screen.getByText("common.add") as HTMLButtonElement;
     expect(addButton.disabled).toBe(false);
+  });
+
+  it("保存进行中阻止返回按钮和 Escape 提前关闭表单", async () => {
+    let resolveUpsert: (() => void) | undefined;
+    upsertMock.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveUpsert = resolve;
+        }),
+    );
+    const { onSave, onClose } = renderForm();
+
+    fireEvent.change(screen.getByPlaceholderText("mcp.form.titlePlaceholder"), {
+      target: { value: "pending-save" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("mcp.form.jsonPlaceholder"), {
+      target: { value: '{"type":"stdio","command":"run"}' },
+    });
+
+    fireEvent.click(screen.getByText("common.add"));
+    await waitFor(() => expect(upsertMock).toHaveBeenCalledTimes(1));
+
+    const backButton = document
+      .querySelector("svg.lucide-arrow-left")
+      ?.closest("button");
+    expect(backButton).not.toBeNull();
+    fireEvent.click(backButton!);
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+
+    resolveUpsert?.();
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
   });
 });

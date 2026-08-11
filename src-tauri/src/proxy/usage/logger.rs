@@ -122,7 +122,7 @@ impl<'a> UsageLogger<'a> {
 
         let created_at = chrono::Utc::now().timestamp();
         let input_token_semantics =
-            if matches!(log.app_type.as_str(), "codex" | "gemini" | "grokbuild") {
+            if crate::services::sql_helpers::is_cache_inclusive_app(log.app_type.as_str()) {
                 INPUT_TOKEN_SEMANTICS_TOTAL
             } else {
                 INPUT_TOKEN_SEMANTICS_FRESH
@@ -684,6 +684,57 @@ mod tests {
         assert_eq!(session_source, "proxy");
         assert_eq!(codex_input, 1);
         assert_eq!(fallback_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn claude_desktop_proxy_replaces_matching_session_log_row() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, input_tokens,
+                    output_tokens, cache_read_tokens, cache_creation_tokens,
+                    latency_ms, status_code, created_at, data_source
+                 ) VALUES ('session:msg_desktop', '_session', 'claude',
+                    'claude-sonnet-4-5', 10, 5, 2, 1, 0, 200, 1, 'session_log')",
+                [],
+            )?;
+        }
+
+        let usage = TokenUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_tokens: 2,
+            cache_creation_tokens: 1,
+            model: Some("claude-sonnet-4-5".to_string()),
+            message_id: Some("msg_desktop".to_string()),
+        };
+        let request_id = usage.dedup_request_id(crate::proxy::usage::parser::dedup_scope_for_app(
+            "claude-desktop",
+            "desktop-provider",
+        ));
+        let mut proxy_log = request_log(&request_id, 10);
+        proxy_log.provider_id = "desktop-provider".to_string();
+        proxy_log.app_type = "claude-desktop".to_string();
+        proxy_log.model = "claude-sonnet-4-5".to_string();
+        proxy_log.request_model = "claude-sonnet-4-5".to_string();
+        proxy_log.pricing_model = "claude-sonnet-4-5".to_string();
+        proxy_log.usage = usage;
+
+        UsageLogger::new(&db).log_request(&proxy_log)?;
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let (count, source, app_type): (i64, String, String) = conn.query_row(
+            "SELECT COUNT(*), data_source, app_type FROM proxy_request_logs
+             WHERE request_id = 'session:msg_desktop'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(count, 1);
+        assert_eq!(source, "proxy");
+        assert_eq!(app_type, "claude-desktop");
         Ok(())
     }
 

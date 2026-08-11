@@ -797,13 +797,17 @@ export function ClaudeFormFields({
       )}
 
       {shouldShowModelSelector && (
-        <Collapsible open={advancedExpanded} onOpenChange={setAdvancedExpanded}>
+        <Collapsible
+          open={advancedExpanded}
+          onOpenChange={setAdvancedExpanded}
+          className="rounded-lg border border-border-default p-4"
+        >
           <CollapsibleTrigger asChild>
             <Button
               type="button"
               variant={null}
               size="sm"
-              className="h-8 gap-1.5 px-0 text-sm font-medium text-foreground hover:opacity-70"
+              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-foreground hover:opacity-70"
             >
               {advancedExpanded ? (
                 <ChevronDown className="h-4 w-4" />
@@ -819,11 +823,11 @@ export function ClaudeFormFields({
             </p>
           )}
           <CollapsibleContent className="space-y-4 pt-2">
-            {/* API 格式选择（仅非云服务商显示） */}
+            {/* 上游格式选择（仅非云服务商显示） */}
             {category !== "cloud_provider" && !isXaiOauthPreset && (
               <div className="space-y-2">
                 <FormLabel htmlFor="apiFormat">
-                  {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
+                  {t("providerForm.apiFormat", { defaultValue: "上游格式" })}
                 </FormLabel>
                 <Select value={apiFormat} onValueChange={onApiFormatChange}>
                   <SelectTrigger id="apiFormat" className="w-full">
@@ -852,9 +856,10 @@ export function ClaudeFormFields({
                     </SelectItem>
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs leading-relaxed text-muted-foreground">
                   {t("providerForm.apiFormatHint", {
-                    defaultValue: "选择供应商 API 的输入格式",
+                    defaultValue:
+                      "供应商原生为 Anthropic Messages API 就选 Anthropic Messages（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；使用 Responses API 就选 Responses；使用 Gemini generateContent 协议就选 Gemini Native。Chat、Responses 与 Gemini Native 均需开启路由接管才能转换为 Anthropic Messages。",
                   })}
                 </p>
               </div>
@@ -895,7 +900,7 @@ export function ClaudeFormFields({
             </div>
 
             {/* 模型映射 */}
-            <div className="space-y-1 pt-2 border-t">
+            <div className="space-y-1 border-t border-border-default pt-2">
               <div className="flex items-center justify-between">
                 <FormLabel>{t("providerForm.modelMappingLabel")}</FormLabel>
                 <div className="flex gap-2">
@@ -1061,7 +1066,7 @@ export function ClaudeFormFields({
               })}
             </div>
 
-            <div className="space-y-2 border-t pt-4">
+            <div className="space-y-2 border-t border-border-default pt-4">
               <FormLabel htmlFor="claudeModel">
                 {t("providerForm.fallbackModelLabel", {
                   defaultValue: "默认兜底模型",

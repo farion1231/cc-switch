@@ -13,6 +13,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 /// 使用量汇总
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -214,6 +215,7 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_codex_session' THEN 'Codex (Session)' \
          WHEN '_gemini_session' THEN 'Gemini (Session)' \
          WHEN '_opencode_session' THEN 'OpenCode (Session)' \
+         WHEN '_grok_session' THEN 'Grok Build (Session)' \
          ELSE {log_alias}.provider_id END)"
     )
 }
@@ -229,6 +231,12 @@ fn data_source_expr(log_alias: &str) -> String {
     format!("COALESCE({log_alias}.data_source, 'proxy')")
 }
 
+fn dedup_app_type_match_sql(left: &str, right: &str) -> String {
+    format!(
+        "{left} IN ({right}, CASE WHEN {right} = 'claude' THEN 'claude-desktop' ELSE {right} END)"
+    )
+}
+
 /// SQL 标量表达式：把 Claude Desktop 网关的 `claude-desktop` app_type 在“展示口径”
 /// 上折叠进 `claude`，其余 app_type 原样返回。
 ///
@@ -242,8 +250,8 @@ fn data_source_expr(log_alias: &str) -> String {
 /// 而不改动任何已存储的行（详情面板仍读原始 `app_type`）。
 ///
 /// 注意：包裹后该列上的索引在此比较中失效，但这些都是已带时间过滤的聚合扫描，
-/// app_type 本就不是主访问路径，可接受。仅用于读侧；去重匹配（`has_matching_
-/// proxy_usage_log`）与额度检查（`check_provider_limits`）必须保留原始精确比较。
+/// app_type 本就不是主访问路径，可接受。仅用于读侧；跨源去重使用更窄的
+/// [`dedup_app_type_match_sql`]，额度检查（`check_provider_limits`）仍保留原始精确比较。
 fn folded_app_type_sql(column: &str) -> String {
     format!("CASE WHEN {column} = 'claude-desktop' THEN 'claude' ELSE {column} END")
 }
@@ -297,6 +305,8 @@ fn push_provider_model_filters(
 pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     let data_source = data_source_expr(log_alias);
     let proxy_data_source = data_source_expr("proxy_dedup");
+    let app_type_match =
+        dedup_app_type_match_sql("proxy_dedup.app_type", &format!("{log_alias}.app_type"));
     format!(
         "NOT (
             {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
@@ -304,7 +314,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
                 WHERE {proxy_data_source} = 'proxy'
-                  AND proxy_dedup.app_type = {log_alias}.app_type
+                  AND {app_type_match}
                   AND proxy_dedup.status_code >= 200
                   AND proxy_dedup.status_code < 300
                   AND proxy_dedup.input_tokens = {log_alias}.input_tokens
@@ -361,28 +371,22 @@ pub(crate) fn should_skip_session_insert(
 }
 
 fn proxy_request_id_exists(conn: &Connection, request_id: &str) -> Result<bool, AppError> {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM proxy_request_logs WHERE request_id = ?1)",
-        params![request_id],
-        |row| row.get::<_, bool>(0),
-    )
-    .map_err(|e| AppError::Database(format!("查询 request_id 失败: {e}")))
+    conn.prepare_cached("SELECT EXISTS(SELECT 1 FROM proxy_request_logs WHERE request_id = ?1)")
+        .and_then(|mut stmt| stmt.query_row(params![request_id], |row| row.get::<_, bool>(0)))
+        .map_err(|e| AppError::Database(format!("查询 request_id 失败: {e}")))
 }
 
-pub(crate) fn has_matching_proxy_usage_log(
-    conn: &Connection,
-    key: &DedupKey,
-) -> Result<bool, AppError> {
-    let allow_missing_cache_creation =
-        matches!(key.app_type, "codex" | "gemini" | "opencode") && key.cache_creation_tokens == 0;
-
+// 会话重导每个 token 事件都要跑一次这条查询；SQL 文本静态化让
+// prepare_cached 稳定命中，也省掉每行的 format! 分配。
+static MATCHING_PROXY_USAGE_LOG_SQL: LazyLock<String> = LazyLock::new(|| {
     let l_data_source = data_source_expr("l");
-    let sql = format!(
+    let app_type_match = dedup_app_type_match_sql("l.app_type", "?1");
+    format!(
         "SELECT EXISTS (
             SELECT 1
             FROM proxy_request_logs l
             WHERE {l_data_source} = 'proxy'
-              AND l.app_type = ?1
+              AND {app_type_match}
               AND l.status_code >= 200
               AND l.status_code < 300
               AND l.input_tokens = ?3
@@ -396,33 +400,73 @@ pub(crate) fn has_matching_proxy_usage_log(
                   OR LOWER(?2) = 'unknown'
               )
         )"
-    );
-
-    conn.query_row(
-        &sql,
-        params![
-            key.app_type,
-            key.model,
-            key.input_tokens as i64,
-            key.output_tokens as i64,
-            key.cache_read_tokens as i64,
-            key.cache_creation_tokens as i64,
-            key.created_at,
-            SESSION_PROXY_DEDUP_WINDOW_SECONDS,
-            allow_missing_cache_creation as i64,
-        ],
-        |row| row.get::<_, bool>(0),
     )
-    .map_err(|e| AppError::Database(format!("查询重复代理用量日志失败: {e}")))
-}
+});
 
-pub(crate) fn has_suspected_codex_session_duplicate(
+pub(crate) fn has_matching_proxy_usage_log(
     conn: &Connection,
-    request_id: &str,
     key: &DedupKey,
 ) -> Result<bool, AppError> {
-    let data_source = data_source_expr("l");
+    let allow_missing_cache_creation =
+        matches!(key.app_type, "codex" | "gemini" | "opencode") && key.cache_creation_tokens == 0;
+
+    conn.prepare_cached(&MATCHING_PROXY_USAGE_LOG_SQL)
+        .and_then(|mut stmt| {
+            stmt.query_row(
+                params![
+                    key.app_type,
+                    key.model,
+                    key.input_tokens as i64,
+                    key.output_tokens as i64,
+                    key.cache_read_tokens as i64,
+                    key.cache_creation_tokens as i64,
+                    key.created_at,
+                    SESSION_PROXY_DEDUP_WINDOW_SECONDS,
+                    allow_missing_cache_creation as i64,
+                ],
+                |row| row.get::<_, bool>(0),
+            )
+        })
+        .map_err(|e| AppError::Database(format!("查询重复代理用量日志失败: {e}")))
+}
+
+/// grokbuild 会话导入的接管活动守卫：给定时刻 ±窗口内存在任何 grokbuild
+/// 代理直录行，即认为当时处于代理接管态，会话事件应整体跳过——同一请求
+/// 已由代理逐请求记账，会话侧再入账必双算。
+///
+/// 不复用 [`has_matching_proxy_usage_log`] 的指纹匹配：Grok 会话事件是
+/// 逐轮聚合值，与代理逐请求行的 token 值结构性不相等，指纹永不命中。
+/// 这里按"接管态检测"而非"行匹配"设计，故不过滤 status_code——失败的
+/// 代理请求同样证明流量正走代理。
+///
+/// 已知局限（有意取舍，方向保守只漏不双）：窗口不含 session 维度，任一
+/// grokbuild 代理行会给 ±窗口内的全部会话事件投下阴影——接管/官方两态在
+/// 十分钟内交替或并行使用时，官方侧轮次会被跳过（漏记而非双算）。
+pub(crate) fn has_recent_grokbuild_proxy_activity(
+    conn: &Connection,
+    created_at: i64,
+) -> Result<bool, AppError> {
+    let l_data_source = data_source_expr("l");
     let sql = format!(
+        "SELECT EXISTS (
+            SELECT 1
+            FROM proxy_request_logs l
+            WHERE {l_data_source} = 'proxy'
+              AND l.app_type = 'grokbuild'
+              AND l.created_at BETWEEN ?1 - ?2 AND ?1 + ?2
+        )"
+    );
+    conn.query_row(
+        &sql,
+        params![created_at, SESSION_PROXY_DEDUP_WINDOW_SECONDS],
+        |row| row.get::<_, bool>(0),
+    )
+    .map_err(|e| AppError::Database(format!("查询 Grok 接管活动失败: {e}")))
+}
+
+static SUSPECTED_CODEX_DUPLICATE_SQL: LazyLock<String> = LazyLock::new(|| {
+    let data_source = data_source_expr("l");
+    format!(
         "SELECT EXISTS (
             SELECT 1
             FROM proxy_request_logs l
@@ -435,21 +479,30 @@ pub(crate) fn has_suspected_codex_session_duplicate(
               AND l.cache_read_tokens = ?5
               AND l.created_at BETWEEN ?6 - ?7 AND ?6 + ?7
         )"
-    );
-    conn.query_row(
-        &sql,
-        params![
-            request_id,
-            key.model,
-            key.input_tokens as i64,
-            key.output_tokens as i64,
-            key.cache_read_tokens as i64,
-            key.created_at,
-            SESSION_PROXY_DEDUP_WINDOW_SECONDS,
-        ],
-        |row| row.get::<_, bool>(0),
     )
-    .map_err(|error| AppError::Database(format!("查询疑似重复 Codex 会话用量失败: {error}")))
+});
+
+pub(crate) fn has_suspected_codex_session_duplicate(
+    conn: &Connection,
+    request_id: &str,
+    key: &DedupKey,
+) -> Result<bool, AppError> {
+    conn.prepare_cached(&SUSPECTED_CODEX_DUPLICATE_SQL)
+        .and_then(|mut stmt| {
+            stmt.query_row(
+                params![
+                    request_id,
+                    key.model,
+                    key.input_tokens as i64,
+                    key.output_tokens as i64,
+                    key.cache_read_tokens as i64,
+                    key.created_at,
+                    SESSION_PROXY_DEDUP_WINDOW_SECONDS,
+                ],
+                |row| row.get::<_, bool>(0),
+            )
+        })
+        .map_err(|error| AppError::Database(format!("查询疑似重复 Codex 会话用量失败: {error}")))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1850,10 +1903,11 @@ impl Database {
         let million = rust_decimal::Decimal::from(1_000_000u64);
 
         // 与 CostCalculator::calculate_for_app 保持一致的计算逻辑：
-        // 1. 历史 Codex/Gemini 行只包含 cache read；新 total 行还包含 cache write。
+        // 1. 历史 cache-inclusive 行只包含 cache read；新 total 行还包含 cache write。
         // 2. Claude/Anthropic 的 input_tokens 已经是 fresh input，不能再次扣减
         // 3. 各项成本是基础成本（不含倍率），倍率只作用于最终总价
-        let cache_inclusive_app = matches!(log.app_type.as_str(), "codex" | "gemini");
+        let cache_inclusive_app =
+            crate::services::sql_helpers::is_cache_inclusive_app(log.app_type.as_str());
         let billable_input_tokens =
             if !cache_inclusive_app || log.input_token_semantics == INPUT_TOKEN_SEMANTICS_FRESH {
                 log.input_tokens as u64
@@ -2428,6 +2482,75 @@ mod tests {
     }
 
     #[test]
+    fn test_matching_proxy_log_matches_claude_desktop_for_claude_session() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        create_legacy_nullable_logs_table(&conn)?;
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, app_type, model, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, status_code, created_at, data_source
+            ) VALUES ('desktop-proxy', 'claude-desktop', 'claude-sonnet-4-5', 100, 20, 10, 5, 200, 1000, 'proxy')",
+            [],
+        )?;
+
+        let key = DedupKey {
+            app_type: "claude",
+            model: "claude-sonnet-4-5",
+            input_tokens: 100,
+            output_tokens: 20,
+            cache_read_tokens: 10,
+            cache_creation_tokens: 5,
+            created_at: 1060,
+        };
+        assert!(has_matching_proxy_usage_log(&conn, &key)?);
+
+        let mut outside_window = key;
+        outside_window.created_at = 1_601;
+        assert!(!has_matching_proxy_usage_log(&conn, &outside_window)?);
+
+        let mut different_model = key;
+        different_model.model = "claude-opus-4-5";
+        assert!(!has_matching_proxy_usage_log(&conn, &different_model)?);
+
+        let mut different_input = key;
+        different_input.input_tokens += 1;
+        assert!(!has_matching_proxy_usage_log(&conn, &different_input)?);
+
+        let mut different_cache_creation = key;
+        different_cache_creation.cache_creation_tokens += 1;
+        assert!(!has_matching_proxy_usage_log(
+            &conn,
+            &different_cache_creation
+        )?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_effective_filter_dedups_claude_session_against_desktop_proxy() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        create_legacy_nullable_logs_table(&conn)?;
+        conn.execute_batch(
+            "INSERT INTO proxy_request_logs (
+                request_id, app_type, model, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, status_code, created_at, data_source
+            ) VALUES
+                ('desktop-proxy', 'claude-desktop', 'claude-sonnet-4-5', 100, 20, 10, 5, 200, 1000, 'proxy'),
+                ('claude-session', 'claude', 'claude-sonnet-4-5', 100, 20, 10, 5, 200, 1060, 'session_log');",
+        )?;
+
+        let filter = effective_usage_log_filter("l");
+        let sql = format!("SELECT request_id FROM proxy_request_logs l WHERE {filter}");
+        let request_ids = conn
+            .prepare(&sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(request_ids, vec!["desktop-proxy"]);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_claude_desktop_folds_into_claude_for_display() -> Result<(), AppError> {
         let db = Database::memory()?;
         let ts = local_ts(2026, 6, 10, 12, 0, 0);
@@ -2610,6 +2733,53 @@ mod tests {
             ]
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_deducts_cache_read_for_grokbuild_total_rows() -> Result<(), AppError> {
+        // 回归：回填侧的 cache-inclusive 判定曾硬编码 codex|gemini 漏掉
+        // grokbuild，导致 TOTAL 行按全量 input 计价、cache_read 双算。
+        // 判定收敛到 sql_helpers::is_cache_inclusive_app 后按 450 fresh 计价。
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "grokbuild-total-backfill",
+                "grokbuild",
+                "_grok_session",
+                "grok-4.5",
+                "grok_session",
+                1000,
+                700,
+                100,
+                250,
+                0,
+                200,
+                "0",
+            )?;
+            conn.execute(
+                "UPDATE proxy_request_logs
+                 SET input_token_semantics = ?1
+                 WHERE request_id = 'grokbuild-total-backfill'",
+                [INPUT_TOKEN_SEMANTICS_TOTAL],
+            )?;
+        }
+
+        assert_eq!(db.backfill_missing_usage_costs()?, 1);
+
+        let conn = lock_conn!(db.conn);
+        let (input_cost, cache_read_cost, total_cost): (String, String, String) = conn.query_row(
+            "SELECT input_cost_usd, cache_read_cost_usd, total_cost_usd
+             FROM proxy_request_logs WHERE request_id = 'grokbuild-total-backfill'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        // grok-4.5 定价 2/6/0.50：input = (700-250)×2/1M，cache_read = 250×0.5/1M
+        assert_eq!(input_cost, "0.000900");
+        assert_eq!(cache_read_cost, "0.000125");
+        assert_eq!(total_cost, "0.001625");
         Ok(())
     }
 

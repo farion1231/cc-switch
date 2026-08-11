@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::config::{
-    atomic_write, delete_file, get_home_dir, read_json_file, sanitize_provider_name,
-    write_json_file, write_text_file,
+    atomic_write, delete_file, get_home_dir, path_is_within, read_json_file,
+    sanitize_provider_name, write_json_file, write_text_file,
 };
 use crate::error::AppError;
 use crate::model_capabilities::{image_input_capability_from_modalities, ImageInputCapability};
@@ -417,6 +417,93 @@ pub fn codex_auth_has_oauth_login_material(auth: &Value) -> bool {
     })
 }
 
+/// True only when the auth carries material Codex itself authenticates with
+/// ahead of the API-key fallback: OAuth tokens or another first-class login
+/// carrier. Unlike `codex_auth_has_oauth_login_material`, pure metadata such
+/// as `last_refresh` or `tokens.account_id` does NOT count — metadata must not
+/// shield a stale third-party `OPENAI_API_KEY` from post-switch cleanup.
+pub fn codex_auth_has_credential_login_material(auth: &Value) -> bool {
+    let Some(obj) = auth.as_object() else {
+        return false;
+    };
+
+    let value_present = |value: &Value| match value {
+        Value::Null => false,
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+        _ => true,
+    };
+
+    if ["personal_access_token", "agent_identity", "bedrock_api_key"]
+        .iter()
+        .any(|key| obj.get(*key).is_some_and(value_present))
+    {
+        return true;
+    }
+
+    obj.get("tokens")
+        .and_then(Value::as_object)
+        .is_some_and(|tokens| {
+            ["id_token", "access_token", "refresh_token"]
+                .iter()
+                .any(|key| tokens.get(*key).is_some_and(value_present))
+        })
+}
+
+/// True when live `auth.json` is the shape a preserve-off third-party switch
+/// leaves behind: an `OPENAI_API_KEY` (possibly alongside metadata like
+/// `auth_mode` / `last_refresh`) with no real login credential next to it.
+pub fn codex_live_auth_is_stale_third_party_residue(live_auth: &Value) -> bool {
+    if codex_auth_has_credential_login_material(live_auth) {
+        return false;
+    }
+    live_auth
+        .get("OPENAI_API_KEY")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|key| !key.is_empty())
+}
+
+/// After a normal switch to an official provider that carries no login
+/// material of its own, delete a live `auth.json` that only holds a stale
+/// third-party API key, so Codex shows its login screen instead of sending
+/// the wrong key to the official endpoint (401 with no way to re-login).
+///
+/// Deleting the file — not writing `{}` — is deliberate: Codex resolves an
+/// empty object to ChatGPT mode without tokens and errors at bootstrap,
+/// while a missing file yields NotAuthenticated and the login screen,
+/// matching Codex's own logout.
+///
+/// Callers must only invoke this after the outgoing provider was
+/// successfully backfilled into the DB — that backfill holds the only other
+/// copy of the third-party key. The switch backfill intentionally lacks the
+/// proxy-side "no credentials in the builtin official row" guard
+/// (`services/proxy.rs` `sync_live_config_to_provider`): that asymmetry is
+/// what heals official API-key logins into the DB row, and this cleanup's
+/// safety depends on it — do not align the two guards.
+///
+/// Returns Ok(true) when the file was deleted.
+pub fn clear_stale_codex_live_auth_after_official_switch(
+    db_auth: &Value,
+) -> Result<bool, AppError> {
+    if codex_auth_has_login_material(db_auth) {
+        // A material-carrying official provider gets a full auth write;
+        // nothing stale can remain.
+        return Ok(false);
+    }
+    let auth_path = get_codex_auth_path();
+    if !auth_path.exists() {
+        return Ok(false);
+    }
+    let live_auth: Value = read_json_file(&auth_path)?;
+    if !codex_live_auth_is_stale_third_party_residue(&live_auth) {
+        return Ok(false);
+    }
+    delete_file(&auth_path)?;
+    Ok(true)
+}
+
 pub fn should_restore_codex_provider_token_for_backfill(
     category: Option<&str>,
     template_settings: &Value,
@@ -466,17 +553,20 @@ fn codex_catalog_model_entry(
     spec: &CodexCatalogModelSpec,
     priority: usize,
     profile: CodexCatalogToolProfile,
+    default_context_window: u64,
 ) -> Value {
     let mut entry = template.clone();
     let Some(entry_obj) = entry.as_object_mut() else {
         return json!({});
     };
 
+    let display_name = spec.display_name.as_deref().unwrap_or(&spec.model);
+    let context_window = spec.context_window.unwrap_or(default_context_window);
     entry_obj.insert("slug".to_string(), json!(spec.model));
-    entry_obj.insert("display_name".to_string(), json!(spec.display_name));
-    entry_obj.insert("description".to_string(), json!(spec.display_name));
-    entry_obj.insert("context_window".to_string(), json!(spec.context_window));
-    entry_obj.insert("max_context_window".to_string(), json!(spec.context_window));
+    entry_obj.insert("display_name".to_string(), json!(display_name));
+    entry_obj.insert("description".to_string(), json!(display_name));
+    entry_obj.insert("context_window".to_string(), json!(context_window));
+    entry_obj.insert("max_context_window".to_string(), json!(context_window));
     entry_obj.insert("priority".to_string(), json!(1000 + priority));
     entry_obj.insert("additional_speed_tiers".to_string(), json!([]));
     entry_obj.insert("service_tiers".to_string(), json!([]));
@@ -535,8 +625,13 @@ fn codex_catalog_model_entry(
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CodexCatalogModelSpec {
     model: String,
-    display_name: String,
-    context_window: u64,
+    /// Explicit user value only. Entries fall back to the model id — except
+    /// official vendor catalog entries, which keep the vendor's display name.
+    display_name: Option<String>,
+    /// Explicit user value only. Entries fall back to the config's
+    /// `model_context_window` (or 128k) — except official vendor catalog
+    /// entries, which keep the vendor's declared window.
+    context_window: Option<u64>,
     /// Per-row override for the native template's `supports_parallel_tool_calls`
     /// (e.g. MiniMax=true, MiMo=false). Only consulted for `NativeResponses`.
     supports_parallel_tool_calls: Option<bool>,
@@ -552,7 +647,7 @@ struct CodexCatalogModelSpec {
     base_instructions: Option<String>,
 }
 
-fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCatalogModelSpec> {
+fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
     let Some(models) = settings
         .get("modelCatalog")
         .and_then(|catalog| catalog.get("models"))
@@ -561,8 +656,6 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
         return Vec::new();
     };
 
-    let default_context_window =
-        extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
     let mut seen = std::collections::HashSet::new();
     let mut specs = Vec::new();
 
@@ -586,13 +679,12 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
             .and_then(|value| value.as_str())
             .map(str::trim)
             .filter(|name| !name.is_empty())
-            .unwrap_or(model);
+            .map(str::to_string);
         let context_window = parse_codex_positive_u64(
             model_config
                 .get("contextWindow")
                 .or_else(|| model_config.get("context_window")),
-        )
-        .unwrap_or(default_context_window);
+        );
 
         let supports_parallel_tool_calls = model_config
             .get("supportsParallelToolCalls")
@@ -621,7 +713,7 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
 
         specs.push(CodexCatalogModelSpec {
             model: model.to_string(),
-            display_name: display_name.to_string(),
+            display_name,
             context_window,
             supports_parallel_tool_calls,
             input_modalities,
@@ -891,6 +983,122 @@ fn load_codex_native_responses_template() -> Value {
     serde_json::from_str(text).expect("bundled codex native responses template must be valid JSON")
 }
 
+/// Hosts whose native `/responses` gateway publishes an OFFICIAL Codex model
+/// catalog (models.json) that cc-switch mirrors verbatim. Matched against
+/// `base_url` ONLY — deliberately NOT by model brand, unlike
+/// `CODEX_WEB_SEARCH_REJECT_MODEL_PREFIXES`: the official entries GRANT
+/// capabilities (freeform `apply_patch`, vendor harness), and an aggregator
+/// merely hosting the same model may not honor them. The safe failure
+/// direction for aggregators is the neutral template (degraded but working);
+/// wrongly granting freeform apply_patch would reintroduce the custom-tool
+/// rejection bug.
+const CODEX_DEEPSEEK_OFFICIAL_CATALOG_HOSTS: &[&str] = &["deepseek.com"];
+
+/// Bundled copy of DeepSeek's official Codex models.json — the exact file
+/// their one-click integration script writes (api-docs.deepseek.com →
+/// quick_start/agent_integrations/codex): freeform apply_patch, GPT-5 harness
+/// base_instructions, low/high/max reasoning levels, web_search supported,
+/// 1m context. Declares `minimal_client_version` 0.144.0.
+fn load_codex_deepseek_official_catalog_models() -> Vec<Value> {
+    let text = include_str!("resources/codex_deepseek_catalog_template.json");
+    let catalog: Value =
+        serde_json::from_str(text).expect("bundled DeepSeek official catalog must be valid JSON");
+    catalog
+        .get("models")
+        .and_then(|models| models.as_array())
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Official vendor catalog entries for the provider in `config_text`, if its
+/// gateway ships one. Only the `NativeResponses` profile qualifies: ProxyChat
+/// runs through cc-switch's converter (gpt-5.5 template contract) and the
+/// Anthropic transform drops custom tools, so both must keep their existing
+/// templates. Host-driven like the web_search blacklist, so existing providers
+/// pick it up on their next switch without a re-save.
+fn codex_official_vendor_catalog_models(
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+) -> Option<Vec<Value>> {
+    if profile != CodexCatalogToolProfile::NativeResponses {
+        return None;
+    }
+    let base_url = extract_codex_base_url(config_text)?.to_ascii_lowercase();
+    if CODEX_DEEPSEEK_OFFICIAL_CATALOG_HOSTS
+        .iter()
+        .any(|host| base_url.contains(host))
+    {
+        let models = load_codex_deepseek_official_catalog_models();
+        if !models.is_empty() {
+            return Some(models);
+        }
+    }
+    None
+}
+
+/// Build one catalog entry from an official vendor catalog: match the user's
+/// model id against the vendor entries by slug; an unknown id clones the
+/// vendor's first (flagship) entry so it keeps the gateway's capability
+/// profile without impersonating the flagship. The official entry is
+/// authoritative — no tool-profile stripping — but explicit per-row user
+/// overrides still win.
+fn codex_vendor_catalog_model_entry(
+    vendor_models: &[Value],
+    spec: &CodexCatalogModelSpec,
+    priority: usize,
+) -> Value {
+    let matched = vendor_models.iter().find(|entry| {
+        entry
+            .get("slug")
+            .and_then(|slug| slug.as_str())
+            .is_some_and(|slug| slug.eq_ignore_ascii_case(&spec.model))
+    });
+    let mut entry = match matched {
+        Some(found) => found.clone(),
+        None => vendor_models.first().cloned().unwrap_or_else(|| json!({})),
+    };
+    let Some(entry_obj) = entry.as_object_mut() else {
+        return json!({});
+    };
+
+    if matched.is_none() {
+        let display_name = spec.display_name.as_deref().unwrap_or(&spec.model);
+        entry_obj.insert("slug".to_string(), json!(spec.model));
+        entry_obj.insert("display_name".to_string(), json!(display_name));
+        entry_obj.insert("description".to_string(), json!(display_name));
+        entry_obj.insert("priority".to_string(), json!(1000 + priority));
+    }
+
+    // Explicit user overrides win over the official entry; absent values keep
+    // the vendor's declarations (context window, modalities, harness, ...).
+    if let Some(display_name) = spec.display_name.as_deref() {
+        entry_obj.insert("display_name".to_string(), json!(display_name));
+    }
+    if let Some(context_window) = spec.context_window {
+        entry_obj.insert("context_window".to_string(), json!(context_window));
+        entry_obj.insert("max_context_window".to_string(), json!(context_window));
+    }
+    if let Some(parallel) = spec.supports_parallel_tool_calls {
+        entry_obj.insert("supports_parallel_tool_calls".to_string(), json!(parallel));
+    }
+    if let Some(modalities) = spec.input_modalities.as_deref() {
+        entry_obj.insert("input_modalities".to_string(), json!(modalities));
+    }
+    if let Some(base_instructions) = spec
+        .base_instructions
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        entry_obj.insert("base_instructions".to_string(), json!(base_instructions));
+    }
+
+    // Defensive: if a future codex parser requires a field the vendor file
+    // predates, backfill only whitelisted parser-required keys.
+    fill_template_fields_from_static(&mut entry);
+    entry
+}
+
 /// Fields Codex's external-catalog parser REQUIRES (no serde default): when
 /// one is missing Codex rejects the whole catalog file at startup ("missing
 /// field ..."). `base_instructions` is the other known required field; the
@@ -973,11 +1181,14 @@ fn codex_model_catalog_from_specs(
     specs: &[CodexCatalogModelSpec],
     template: &Value,
     profile: CodexCatalogToolProfile,
+    default_context_window: u64,
 ) -> Value {
     let entries: Vec<Value> = specs
         .iter()
         .enumerate()
-        .map(|(index, spec)| codex_catalog_model_entry(template, spec, index, profile))
+        .map(|(index, spec)| {
+            codex_catalog_model_entry(template, spec, index, profile, default_context_window)
+        })
         .collect();
 
     json!({ "models": entries })
@@ -988,10 +1199,27 @@ fn codex_model_catalog_from_settings(
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Result<Option<Value>, AppError> {
-    let specs = codex_catalog_model_specs(settings, config_text);
+    let specs = codex_catalog_model_specs(settings);
     if specs.is_empty() {
         return Ok(None);
     }
+
+    // Vendors that publish an OFFICIAL Codex models.json for their native
+    // `/responses` gateway get it mirrored verbatim instead of the neutral
+    // template: its freeform apply_patch, vendor harness base_instructions and
+    // reasoning levels are load-bearing (the harness tells the model to use
+    // apply_patch, so catalog and harness must stay consistent).
+    if let Some(vendor_models) = codex_official_vendor_catalog_models(config_text, profile) {
+        let entries: Vec<Value> = specs
+            .iter()
+            .enumerate()
+            .map(|(index, spec)| codex_vendor_catalog_model_entry(&vendor_models, spec, index))
+            .collect();
+        return Ok(Some(json!({ "models": entries })));
+    }
+
+    let default_context_window =
+        extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
 
     // Native providers use the bundled clean template (no freeform apply_patch,
     // no cache dependency); proxy-chat providers keep cloning Codex's gpt-5.5
@@ -1003,7 +1231,10 @@ fn codex_model_catalog_from_settings(
         CodexCatalogToolProfile::ProxyChat => load_codex_model_catalog_template()?,
     };
     Ok(Some(codex_model_catalog_from_specs(
-        &specs, &template, profile,
+        &specs,
+        &template,
+        profile,
+        default_context_window,
     )))
 }
 
@@ -1017,7 +1248,22 @@ fn set_codex_model_catalog_json_field(
 
     match catalog_path {
         Some(_) => {
-            doc["model_catalog_json"] = toml_edit::value(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+            // Only claim the pointer when it is absent or already cc-switch-owned.
+            // A user-managed external catalog file (custom filename or path) is
+            // left untouched, mirroring the None arm's ownership rule that
+            // `resolve_cc_switch_catalog_path` relies on.
+            let is_cc_switch_owned = doc
+                .get("model_catalog_json")
+                .and_then(|item| item.as_str())
+                .map(|path| {
+                    Path::new(path).file_name().and_then(|name| name.to_str())
+                        == Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+                })
+                .unwrap_or(true);
+            if is_cc_switch_owned {
+                doc["model_catalog_json"] =
+                    toml_edit::value(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+            }
         }
         None => {
             let should_remove = doc
@@ -1128,17 +1374,28 @@ pub fn prepare_codex_config_text_with_model_catalog(
 /// All failure modes (missing file, parse error, no `model_catalog_json`,
 /// entries without `slug`) collapse to `Ok(None)` so callers can treat this
 /// as best-effort enrichment without making `read_live_settings` brittle.
+/// 模型目录文件读取上限（32 MiB）。目录 JSON 正常只有几百 KiB；超过则视为异常，
+/// 避免指向外部大文件时耗尽内存。
+const MAX_CODEX_CATALOG_BYTES: u64 = 32 * 1024 * 1024;
+
 pub fn read_codex_model_catalog_simplified_from_live() -> Result<Option<Value>, AppError> {
     let config_text = read_codex_config_text()?;
-    let generated_path = get_codex_model_catalog_path();
-    let Some(catalog_path) = resolve_cc_switch_catalog_path(&config_text, &generated_path) else {
+    let config_dir = get_codex_config_dir();
+    let Some(catalog_path) = resolve_cc_switch_catalog_path(&config_text, &config_dir) else {
         return Ok(None);
     };
     if !catalog_path.exists() {
         return Ok(None);
     }
-    let Ok(catalog_text) = fs::read_to_string(&catalog_path) else {
-        return Ok(None);
+    let catalog_text = match read_limited_string(&catalog_path, MAX_CODEX_CATALOG_BYTES) {
+        Ok(text) => text,
+        Err(error) => {
+            log::warn!(
+                "拒绝读取越界或过大的 Codex 模型目录 {}: {error}",
+                catalog_path.display()
+            );
+            return Ok(None);
+        }
     };
     Ok(build_simplified_catalog_from_texts(
         &config_text,
@@ -1146,12 +1403,31 @@ pub fn read_codex_model_catalog_simplified_from_live() -> Result<Option<Value>, 
     ))
 }
 
+/// 安全地读取文件为字符串，并在超过字节上限时返回错误。
+pub(crate) fn read_limited_string(path: &Path, max_bytes: u64) -> Result<String, AppError> {
+    let metadata = fs::metadata(path).map_err(|error| AppError::io(path, error))?;
+    if metadata.len() > max_bytes {
+        return Err(AppError::Config(format!(
+            "文件 {} 超过大小上限 {} 字节",
+            path.display(),
+            max_bytes
+        )));
+    }
+    fs::read_to_string(path).map_err(|error| AppError::io(path, error))
+}
+
+/// Read the cc-switch Codex model catalog file with a size cap.
+pub(crate) fn read_codex_model_catalog_text(path: &Path) -> Result<String, AppError> {
+    read_limited_string(path, MAX_CODEX_CATALOG_BYTES)
+}
+
 /// Given `config.toml` text, resolve the on-disk path of the cc-switch–owned
 /// catalog file (returns `None` if `model_catalog_json` is absent or points at
-/// a file we don't own). Relative paths fall back to `generated_path`.
+/// a file we don't own). Relative paths are resolved under `base_dir`;
+/// absolute paths must still be inside `base_dir`.
 pub(crate) fn resolve_cc_switch_catalog_path(
     config_text: &str,
-    generated_path: &Path,
+    base_dir: &Path,
 ) -> Option<PathBuf> {
     if config_text.trim().is_empty() {
         return None;
@@ -1170,11 +1446,59 @@ pub(crate) fn resolve_cc_switch_catalog_path(
         return None;
     }
 
-    if referenced_path.is_absolute() {
-        Some(referenced_path.to_path_buf())
+    // 注意（有意的行为变更）：Windows 上 `/…` 形式的旧 WSL 风格 Linux 路径也会
+    // 被视为绝对路径，从而在下方的包含性校验中失败——此前这类路径会因无法匹配
+    // 生成文件名而回退为按文件名解析、碰巧能工作。可接受：下一次切换供应商时
+    // 写入侧会重新落一个裸文件名，配置自愈（见
+    // `set_catalog_json_none_removes_cc_switch_owned_by_filename` 的场景注释）。
+    let is_unix_absolute = catalog_path_str.starts_with('/');
+    let resolved = if referenced_path.is_absolute() || is_unix_absolute {
+        referenced_path.to_path_buf()
     } else {
-        Some(generated_path.to_path_buf())
+        base_dir.join(referenced_path)
+    };
+
+    if !path_is_within(base_dir, &resolved) {
+        log::warn!(
+            "Codex model_catalog_json 指向配置目录外: {}（允许目录: {}）",
+            resolved.display(),
+            base_dir.display()
+        );
+        return None;
     }
+
+    // 词法包含不等于运行时包含：配置目录内的符号链接（如 ~/.codex/link ->
+    // /etc）能让 `link/cc-switch-model-catalog.json` 通过上面的检查，读取却
+    // 落到目录外。文件存在时把真实路径 canonicalize 出来再校验一次，并把
+    // canonical 路径返回给调用方——后续读取不再经过 symlink 组件。
+    if resolved.exists() {
+        let canonical = match fs::canonicalize(&resolved) {
+            Ok(path) => path,
+            Err(error) => {
+                log::warn!(
+                    "Codex model_catalog_json canonicalize 失败: {}: {error}",
+                    resolved.display()
+                );
+                return None;
+            }
+        };
+        // base 同样 canonicalize，保证两侧前缀一致（Windows \\?\、
+        // macOS /tmp -> /private/tmp）；base 失败时退回词法 base——
+        // 词法 base 与 canonical 路径比较只会误拒（退化为不读），不会误放。
+        let canonical_base = fs::canonicalize(base_dir).unwrap_or_else(|_| base_dir.to_path_buf());
+        if !path_is_within(&canonical_base, &canonical) {
+            log::warn!(
+                "Codex model_catalog_json 经符号链接解析到配置目录外: {} -> {}（允许目录: {}）",
+                resolved.display(),
+                canonical.display(),
+                canonical_base.display()
+            );
+            return None;
+        }
+        return Some(canonical);
+    }
+
+    Some(resolved)
 }
 
 /// Pure reverse-parsing core: convert Codex catalog JSON text back into the
@@ -1424,7 +1748,9 @@ fn remove_codex_experimental_bearer_token(config_text: &str) -> Result<String, A
 /// Read the current Codex live settings as a `{ auth, config }` object.
 ///
 /// Missing `auth.json` collapses to `{}` so a config-only third-party install
-/// is still importable; both files empty is treated as "no live install".
+/// is still importable; both files missing is treated as "no live install".
+/// A `config.toml` that exists but is empty is a valid state — e.g. the
+/// official seed after stale-auth cleanup — and must stay readable.
 pub fn read_codex_live_settings() -> Result<Value, AppError> {
     let auth_path = get_codex_auth_path();
     let auth_present = auth_path.exists();
@@ -1434,7 +1760,7 @@ pub fn read_codex_live_settings() -> Result<Value, AppError> {
         json!({})
     };
     let cfg_text = read_and_validate_codex_config_text()?;
-    if !auth_present && cfg_text.trim().is_empty() {
+    if !auth_present && !get_codex_config_path().exists() {
         return Err(AppError::localized(
             "codex.live.missing",
             "Codex 配置文件不存在",
@@ -1908,25 +2234,53 @@ pub fn update_codex_toml_field(toml_str: &str, field: &str, value: &str) -> Resu
 
             if let Some(provider_key) = model_provider {
                 // Ensure [model_providers] table exists
-                if doc.get("model_providers").is_none() {
+                //
+                // 用 as_table_like_mut 而非 as_table_mut：用户把配置写成 inline table
+                // （`model_providers = { foo = {...} }`，TOML 合法）时 as_table_mut
+                // 返回 None，会一路掉进下面的顶层 fallback——用户改的 base_url 被写到
+                // 了错误层级且毫无提示。
+                if doc
+                    .get("model_providers")
+                    .is_none_or(|item| item.as_table_like().is_none())
+                {
+                    // 键存在但不是表（`model_providers = 42`）时，下面这行会把用户
+                    // 手写的值替换掉。旧代码在这种形状下会掉进顶层 fallback 而不动
+                    // 它，所以归一化必须留痕——与 mcp/codex.rs、mcp/grokbuild.rs、
+                    // opencode_config.rs 的同款处理保持一致。
+                    if doc
+                        .get("model_providers")
+                        .is_some_and(|item| !item.is_none())
+                    {
+                        log::warn!("config.toml 的 model_providers 不是表，已重置为空表");
+                    }
                     doc["model_providers"] = toml_edit::table();
                 }
 
-                if let Some(model_providers) = doc["model_providers"].as_table_mut() {
+                if let Some(model_providers) = doc
+                    .get_mut("model_providers")
+                    .and_then(toml_edit::Item::as_table_like_mut)
+                {
                     // Ensure [model_providers.<provider_key>] table exists
                     if !model_providers.contains_key(&provider_key) {
-                        model_providers[&provider_key] = toml_edit::table();
+                        model_providers.insert(&provider_key, toml_edit::table());
                     }
 
-                    if let Some(provider_table) = model_providers[&provider_key].as_table_mut() {
+                    if let Some(provider_table) = model_providers
+                        .get_mut(&provider_key)
+                        .and_then(toml_edit::Item::as_table_like_mut)
+                    {
                         if trimmed.is_empty() {
                             provider_table.remove(field);
                         } else {
-                            provider_table[field] = toml_edit::value(trimmed);
+                            provider_table.insert(field, toml_edit::value(trimmed));
                         }
                         return Ok(doc.to_string());
                     }
                 }
+
+                log::warn!(
+                    "config.toml 的 [model_providers.{provider_key}] 结构异常，{field} 改写为顶层字段"
+                );
             }
 
             // Fallback: no model_provider or structure mismatch → top-level field
@@ -2376,6 +2730,65 @@ experimental_bearer_token = "stale-table-key"
     }
 
     #[test]
+    fn credential_login_material_only_counts_real_credentials() {
+        assert!(codex_auth_has_credential_login_material(&json!({
+            "tokens": { "access_token": "t" }
+        })));
+        assert!(codex_auth_has_credential_login_material(&json!({
+            "tokens": { "refresh_token": "r" }
+        })));
+        assert!(codex_auth_has_credential_login_material(&json!({
+            "personal_access_token": "pat"
+        })));
+
+        // API key and pure metadata are not credentials in this predicate's
+        // sense — they must not shield a stale key from cleanup.
+        assert!(!codex_auth_has_credential_login_material(&json!({
+            "OPENAI_API_KEY": "sk-x"
+        })));
+        assert!(!codex_auth_has_credential_login_material(&json!({
+            "OPENAI_API_KEY": "sk-x",
+            "last_refresh": "2026-01-01T00:00:00Z",
+            "tokens": { "account_id": "acct-meta-only" }
+        })));
+        assert!(!codex_auth_has_credential_login_material(&json!({})));
+    }
+
+    #[test]
+    fn stale_third_party_residue_detection() {
+        // Shapes a preserve-off third-party switch leaves behind: cleared.
+        assert!(codex_live_auth_is_stale_third_party_residue(&json!({
+            "OPENAI_API_KEY": "sk-third-party"
+        })));
+        assert!(codex_live_auth_is_stale_third_party_residue(&json!({
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "sk-third-party"
+        })));
+        assert!(codex_live_auth_is_stale_third_party_residue(&json!({
+            "OPENAI_API_KEY": "sk-third-party",
+            "last_refresh": "2026-01-01T00:00:00Z",
+            "tokens": { "account_id": "acct-meta-only" }
+        })));
+
+        // Anything carrying a real credential must survive untouched.
+        assert!(!codex_live_auth_is_stale_third_party_residue(&json!({
+            "OPENAI_API_KEY": "sk-x",
+            "tokens": { "access_token": "t" }
+        })));
+        assert!(!codex_live_auth_is_stale_third_party_residue(&json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": { "access_token": "official-oauth-token" }
+        })));
+
+        // Nothing to clear.
+        assert!(!codex_live_auth_is_stale_third_party_residue(&json!({})));
+        assert!(!codex_live_auth_is_stale_third_party_residue(&json!({
+            "OPENAI_API_KEY": ""
+        })));
+    }
+
+    #[test]
     fn prepare_provider_live_config_does_not_create_incomplete_provider_table() {
         let input = r#"model_provider = "vendor_x"
 model = "gpt-5"
@@ -2586,6 +2999,34 @@ model = "gpt-4"
     }
 
     #[test]
+    fn base_url_writes_into_inline_table_provider_section() {
+        // inline table 是合法 TOML，但 as_table_mut() 对它返回 None。旧代码会因此
+        // 掉进「写顶层字段」的 fallback：用户改的 base_url 落在错误层级，
+        // Codex 读不到，且界面毫无提示。
+        let input = r#"model_provider = "any"
+model_providers = { any = { name = "any", base_url = "https://old.api/v1", wire_api = "responses" } }
+"#;
+
+        let result = update_codex_toml_field(input, "base_url", "https://new.api/v1").unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed["model_providers"]["any"]["base_url"].as_str(),
+            Some("https://new.api/v1"),
+            "must update the provider section, not a top-level field"
+        );
+        assert!(
+            parsed.get("base_url").is_none(),
+            "must not leak a top-level base_url fallback"
+        );
+        assert_eq!(
+            parsed["model_providers"]["any"]["wire_api"].as_str(),
+            Some("responses"),
+            "sibling fields must survive"
+        );
+    }
+
+    #[test]
     fn clearing_base_url_removes_only_from_correct_section() {
         let input = r#"model_provider = "any"
 
@@ -2779,14 +3220,18 @@ base_url = "https://production.api/v1"
         fill_template_fields_from_static(&mut template);
         let specs = vec![CodexCatalogModelSpec {
             model: "k3".to_string(),
-            display_name: "Kimi K3".to_string(),
-            context_window: 262_144,
+            display_name: Some("Kimi K3".to_string()),
+            context_window: Some(262_144),
             supports_parallel_tool_calls: None,
             input_modalities: None,
             base_instructions: None,
         }];
-        let catalog =
-            codex_model_catalog_from_specs(&specs, &template, CodexCatalogToolProfile::ProxyChat);
+        let catalog = codex_model_catalog_from_specs(
+            &specs,
+            &template,
+            CodexCatalogToolProfile::ProxyChat,
+            128_000,
+        );
         assert_eq!(
             catalog["models"][0]
                 .get("supports_reasoning_summaries")
@@ -2842,9 +3287,13 @@ base_url = "https://production.api/v1"
                 ]
             }
         });
-        let specs = codex_catalog_model_specs(&settings, r#"model_context_window = 128000"#);
-        let catalog =
-            codex_model_catalog_from_specs(&specs, &template, CodexCatalogToolProfile::ProxyChat);
+        let specs = codex_catalog_model_specs(&settings);
+        let catalog = codex_model_catalog_from_specs(
+            &specs,
+            &template,
+            CodexCatalogToolProfile::ProxyChat,
+            128_000,
+        );
         let models = catalog
             .get("models")
             .and_then(|value| value.as_array())
@@ -2977,40 +3426,40 @@ base_url = "https://production.api/v1"
         let specs = vec![
             CodexCatalogModelSpec {
                 model: "gpt-5.4".to_string(),
-                display_name: "GPT 5.4".to_string(),
-                context_window: 128_000,
+                display_name: Some("GPT 5.4".to_string()),
+                context_window: Some(128_000),
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
             },
             CodexCatalogModelSpec {
                 model: "deepseek/deepseek-v4-pro".to_string(),
-                display_name: "DeepSeek V4 Pro".to_string(),
-                context_window: 128_000,
+                display_name: Some("DeepSeek V4 Pro".to_string()),
+                context_window: Some(128_000),
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
             },
             CodexCatalogModelSpec {
                 model: "glm-5.2v".to_string(),
-                display_name: "GLM 5.2V".to_string(),
-                context_window: 128_000,
+                display_name: Some("GLM 5.2V".to_string()),
+                context_window: Some(128_000),
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
             },
             CodexCatalogModelSpec {
                 model: "deepseek-v4-flash".to_string(),
-                display_name: "Explicit Visual Override".to_string(),
-                context_window: 128_000,
+                display_name: Some("Explicit Visual Override".to_string()),
+                context_window: Some(128_000),
                 supports_parallel_tool_calls: None,
                 input_modalities: Some(vec!["text".to_string(), "image".to_string()]),
                 base_instructions: None,
             },
             CodexCatalogModelSpec {
                 model: "custom-text-alias".to_string(),
-                display_name: "Explicit Text Override".to_string(),
-                context_window: 128_000,
+                display_name: Some("Explicit Text Override".to_string()),
+                context_window: Some(128_000),
                 supports_parallel_tool_calls: None,
                 input_modalities: Some(vec!["text".to_string()]),
                 base_instructions: None,
@@ -3022,7 +3471,7 @@ base_url = "https://production.api/v1"
             CodexCatalogToolProfile::NativeResponses,
             CodexCatalogToolProfile::Anthropic,
         ] {
-            let catalog = codex_model_catalog_from_specs(&specs, &template, profile);
+            let catalog = codex_model_catalog_from_specs(&specs, &template, profile, 128_000);
             let models = catalog["models"].as_array().expect("models array");
             let modalities = |slug: &str| {
                 models
@@ -3073,6 +3522,205 @@ base_url = "https://production.api/v1"
         );
     }
 
+    const DEEPSEEK_NATIVE_CONFIG: &str = r#"model = "deepseek-v4-flash"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "deepseek"
+base_url = "https://api.deepseek.com"
+wire_api = "responses"
+"#;
+
+    #[test]
+    fn deepseek_host_native_catalog_mirrors_official_entries() {
+        // DeepSeek publishes an official Codex models.json (freeform
+        // apply_patch + GPT-5 harness + low/high/max reasoning levels). For a
+        // deepseek.com native provider the generated catalog must mirror it
+        // verbatim instead of the stripped neutral template — the harness
+        // tells the model to use apply_patch, so stripping the tool while
+        // keeping the harness would be self-inconsistent.
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-v4-flash", "displayName": "DeepSeek V4 Flash" },
+                    { "model": "deepseek-v4-pro", "contextWindow": 500_000 }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("vendor catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let flash = &catalog["models"][0];
+        assert_eq!(
+            flash.get("slug").and_then(|v| v.as_str()),
+            Some("deepseek-v4-flash")
+        );
+        assert_eq!(
+            flash.get("apply_patch_tool_type").and_then(|v| v.as_str()),
+            Some("freeform"),
+            "official DeepSeek entries keep the freeform apply_patch grant"
+        );
+        assert!(
+            flash
+                .get("base_instructions")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s.starts_with("You are Codex, an agent based on GPT-5")),
+            "official GPT-5 harness must survive verbatim"
+        );
+        let efforts: Vec<&str> = flash["supported_reasoning_levels"]
+            .as_array()
+            .expect("official reasoning levels array")
+            .iter()
+            .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(efforts, vec!["low", "high", "max"]);
+        assert_eq!(flash.get("supports_search_tool"), Some(&json!(true)));
+        assert_eq!(
+            flash.get("web_search_tool_type").and_then(|v| v.as_str()),
+            Some("text")
+        );
+        assert_eq!(
+            flash.get("supports_reasoning_summaries"),
+            Some(&json!(true))
+        );
+        assert_eq!(flash.get("input_modalities"), Some(&json!(["text"])));
+        assert!(
+            flash.get("model_messages").is_some(),
+            "official entries are mirrored verbatim, incl. model_messages"
+        );
+        // No explicit contextWindow on the row: the official 1m window must
+        // survive instead of being clobbered by the 128k default.
+        assert_eq!(
+            flash.get("context_window").and_then(|v| v.as_u64()),
+            Some(1_048_576)
+        );
+        // Explicit user display name still wins over the official one.
+        assert_eq!(
+            flash.get("display_name").and_then(|v| v.as_str()),
+            Some("DeepSeek V4 Flash")
+        );
+
+        let pro = &catalog["models"][1];
+        assert_eq!(
+            pro.get("slug").and_then(|v| v.as_str()),
+            Some("deepseek-v4-pro")
+        );
+        // Explicit user context window override wins…
+        assert_eq!(
+            pro.get("context_window").and_then(|v| v.as_u64()),
+            Some(500_000)
+        );
+        assert_eq!(
+            pro.get("max_context_window").and_then(|v| v.as_u64()),
+            Some(500_000)
+        );
+        // …while the untouched official display name is kept.
+        assert_eq!(
+            pro.get("display_name").and_then(|v| v.as_str()),
+            Some("DeepSeek-V4-Pro")
+        );
+    }
+
+    #[test]
+    fn deepseek_official_catalog_unknown_model_clones_flagship() {
+        // A user-added model id the official file doesn't know keeps the
+        // gateway's capability profile (clone of the flagship entry) without
+        // impersonating it: own slug/name, demoted priority, and the official
+        // context window rather than the 128k synthetic default.
+        let settings = json!({
+            "modelCatalog": { "models": [{ "model": "deepseek-v4-lite" }] }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("vendor catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let entry = &catalog["models"][0];
+        assert_eq!(
+            entry.get("slug").and_then(|v| v.as_str()),
+            Some("deepseek-v4-lite")
+        );
+        assert_eq!(
+            entry.get("display_name").and_then(|v| v.as_str()),
+            Some("deepseek-v4-lite")
+        );
+        assert!(
+            entry
+                .get("priority")
+                .and_then(|v| v.as_u64())
+                .is_some_and(|p| p >= 1000),
+            "clones must sort after official entries"
+        );
+        assert_eq!(
+            entry.get("apply_patch_tool_type").and_then(|v| v.as_str()),
+            Some("freeform")
+        );
+        assert_eq!(
+            entry.get("context_window").and_then(|v| v.as_u64()),
+            Some(1_048_576),
+            "absent contextWindow keeps the flagship's official window"
+        );
+        assert!(entry
+            .get("base_instructions")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.trim().is_empty()));
+    }
+
+    #[test]
+    fn official_vendor_catalog_gated_by_native_profile_and_host() {
+        // The official mirror is a capability GRANT, so the gate must be
+        // narrow: native `/responses` profile AND the vendor's own host. Chat
+        // runs through the proxy converter (gpt-5.5 contract), the Anthropic
+        // transform drops custom tools, and aggregators hosting the same
+        // model may reject freeform tools — all of them keep their templates.
+        assert!(codex_official_vendor_catalog_models(
+            DEEPSEEK_NATIVE_CONFIG,
+            CodexCatalogToolProfile::NativeResponses
+        )
+        .is_some_and(|models| !models.is_empty()));
+
+        for profile in [
+            CodexCatalogToolProfile::ProxyChat,
+            CodexCatalogToolProfile::Anthropic,
+        ] {
+            assert!(
+                codex_official_vendor_catalog_models(DEEPSEEK_NATIVE_CONFIG, profile).is_none(),
+                "only the NativeResponses profile may mirror the official catalog"
+            );
+        }
+
+        let minimax_config = r#"model = "MiniMax-M3"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "minimax"
+base_url = "https://api.minimaxi.com/v1"
+wire_api = "responses"
+"#;
+        assert!(
+            codex_official_vendor_catalog_models(
+                minimax_config,
+                CodexCatalogToolProfile::NativeResponses
+            )
+            .is_none(),
+            "non-DeepSeek native hosts keep the neutral template"
+        );
+        assert!(
+            codex_official_vendor_catalog_models("", CodexCatalogToolProfile::NativeResponses)
+                .is_none()
+        );
+    }
+
     #[test]
     fn proxy_chat_profile_still_keeps_apply_patch() {
         // Regression guard for Mode A: the proxy-chat profile must keep the
@@ -3080,8 +3728,8 @@ base_url = "https://production.api/v1"
         let template = load_codex_native_responses_template();
         let specs = vec![CodexCatalogModelSpec {
             model: "x".to_string(),
-            display_name: "x".to_string(),
-            context_window: 128_000,
+            display_name: Some("x".to_string()),
+            context_window: Some(128_000),
             supports_parallel_tool_calls: None,
             input_modalities: None,
             base_instructions: None,
@@ -3095,6 +3743,7 @@ base_url = "https://production.api/v1"
             &specs,
             &proxy_template,
             CodexCatalogToolProfile::ProxyChat,
+            128_000,
         );
         assert_eq!(
             catalog["models"][0]
@@ -3295,30 +3944,30 @@ web_search = "disabled"
 
     #[test]
     fn resolve_catalog_path_returns_none_when_config_missing_field() {
-        let generated = PathBuf::from("/tmp/.codex/cc-switch-model-catalog.json");
-        assert!(resolve_cc_switch_catalog_path("", &generated).is_none());
+        let base = PathBuf::from("/tmp/.codex");
+        assert!(resolve_cc_switch_catalog_path("", &base).is_none());
         assert!(
-            resolve_cc_switch_catalog_path("model = \"gpt-5\"", &generated).is_none(),
+            resolve_cc_switch_catalog_path("model = \"gpt-5\"", &base).is_none(),
             "no model_catalog_json field should yield None"
         );
     }
 
     #[test]
     fn resolve_catalog_path_accepts_cc_switch_owned_file() {
-        let generated = PathBuf::from("/tmp/.codex/cc-switch-model-catalog.json");
+        let base = PathBuf::from("/tmp/.codex");
         let config = r#"model_catalog_json = "/tmp/.codex/cc-switch-model-catalog.json"
 "#;
-        let resolved = resolve_cc_switch_catalog_path(config, &generated).expect("path resolves");
-        assert_eq!(resolved, generated);
+        let resolved = resolve_cc_switch_catalog_path(config, &base).expect("path resolves");
+        assert_eq!(resolved, base.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME));
     }
 
     #[test]
     fn resolve_catalog_path_rejects_user_owned_external_file() {
-        let generated = PathBuf::from("/tmp/.codex/cc-switch-model-catalog.json");
+        let base = PathBuf::from("/tmp/.codex");
         let config = r#"model_catalog_json = "/Users/me/.codex/my-handwritten-catalog.json"
 "#;
         assert!(
-            resolve_cc_switch_catalog_path(config, &generated).is_none(),
+            resolve_cc_switch_catalog_path(config, &base).is_none(),
             "external catalog files should be left alone"
         );
     }
@@ -3663,40 +4312,151 @@ model = "glm-5"
     }
 
     #[test]
+    fn set_catalog_json_some_preserves_user_owned_catalog() {
+        // When CC Switch generates a catalog (Some arm), it must still respect a
+        // user-managed external catalog file instead of clobbering it with the
+        // cc-switch-owned filename. Only an absent or cc-switch-owned pointer is
+        // claimed; this mirrors the None arm's ownership rule.
+        let input = r#"model_provider = "custom"
+model = "glm-5"
+model_catalog_json = "/Users/me/.codex/my-custom-catalog.json"
+"#;
+        let catalog_path = Path::new("/tmp/cc-switch-model-catalog.json");
+        let result = set_codex_model_catalog_json_field(input, Some(catalog_path)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some("/Users/me/.codex/my-custom-catalog.json"),
+            "Some arm should NOT clobber a user-owned catalog (full path)"
+        );
+    }
+
+    #[test]
+    fn set_catalog_json_some_preserves_user_owned_relative_filename() {
+        // A bare custom filename (no directory component) is also user-owned
+        // and must be preserved by the Some arm.
+        let input = r#"model_provider = "custom"
+model = "glm-5"
+model_catalog_json = "my-custom-catalog.json"
+"#;
+        let catalog_path = Path::new("/tmp/cc-switch-model-catalog.json");
+        let result = set_codex_model_catalog_json_field(input, Some(catalog_path)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some("my-custom-catalog.json"),
+            "Some arm should NOT clobber a relative user-owned catalog"
+        );
+    }
+
+    #[test]
     fn resolve_catalog_finds_relative_filename() {
         let config_text = r#"model_provider = "custom"
 model_catalog_json = "cc-switch-model-catalog.json"
 "#;
-        let generated_path = PathBuf::from("/home/user/.codex/cc-switch-model-catalog.json");
-        let result = resolve_cc_switch_catalog_path(config_text, &generated_path);
+        let base_dir = PathBuf::from("/home/user/.codex");
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
         assert_eq!(
             result,
-            Some(generated_path),
-            "relative filename should resolve to generated_path for file I/O"
+            Some(base_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)),
+            "relative filename should resolve under base_dir for file I/O"
         );
     }
 
     #[test]
-    fn resolve_catalog_ignores_user_owned_relative() {
-        let config_text = r#"model_catalog_json = "my-custom-catalog.json"
+    fn resolve_catalog_rejects_absolute_path_outside_config_dir() {
+        let config_text = r#"model_catalog_json = "/tmp/secret/cc-switch-model-catalog.json"
 "#;
-        let generated_path = PathBuf::from("/home/user/.codex/cc-switch-model-catalog.json");
-        let result = resolve_cc_switch_catalog_path(config_text, &generated_path);
+        let base_dir = PathBuf::from("/home/user/.codex");
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
         assert_eq!(
             result, None,
-            "user-owned catalog should not be claimed by cc-switch"
+            "absolute path outside ~/.codex must not be accepted"
         );
     }
 
     #[test]
-    fn set_catalog_json_none_removes_relative_path() {
-        let input = r#"model_catalog_json = "cc-switch-model-catalog.json"
+    fn resolve_catalog_accepts_absolute_path_inside_config_dir() {
+        let config_text = r#"model_catalog_json = "/home/user/.codex/cc-switch-model-catalog.json"
 "#;
-        let result = set_codex_model_catalog_json_field(input, None).unwrap();
-        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        let base_dir = PathBuf::from("/home/user/.codex");
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
+        assert_eq!(
+            result,
+            Some(base_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)),
+            "absolute path inside ~/.codex should be accepted"
+        );
+    }
+
+    #[test]
+    fn resolve_catalog_rejects_traversal_to_parent_directory() {
+        let config_text = r#"model_catalog_json = "../cc-switch-model-catalog.json"
+"#;
+        let base_dir = PathBuf::from("/home/user/.codex");
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
+        assert_eq!(
+            result, None,
+            "relative traversal outside ~/.codex must not be accepted"
+        );
+    }
+
+    #[test]
+    fn resolve_catalog_rejects_symlink_escaping_config_dir() {
+        // 词法包含可被符号链接绕过：~/.codex/link -> 外部目录，
+        // "link/cc-switch-model-catalog.json" 词法上在 base 内，真实读取却落到
+        // base 外。canonicalize 之后的二次校验必须拒绝。
+        let temp = tempfile::tempdir().expect("tempdir");
+        let base_dir = temp.path().join("codex");
+        let outside_dir = temp.path().join("outside");
+        fs::create_dir_all(&base_dir).expect("create base");
+        fs::create_dir_all(&outside_dir).expect("create outside");
+        let escaped_file = outside_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+        fs::write(&escaped_file, r#"{"models":[]}"#).expect("write escaped catalog");
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside_dir, base_dir.join("link")).expect("symlink");
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&outside_dir, base_dir.join("link")).expect("symlink");
+
+        let config_text = r#"model_catalog_json = "link/cc-switch-model-catalog.json"
+"#;
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
+        assert_eq!(
+            result, None,
+            "symlink escaping the config dir must be rejected after canonicalization"
+        );
+    }
+
+    #[test]
+    fn resolve_catalog_accepts_real_file_inside_config_dir() {
+        // 存在于 base 内的真实文件：canonical 校验通过后仍应接受
+        let temp = tempfile::tempdir().expect("tempdir");
+        let base_dir = temp.path().join("codex");
+        fs::create_dir_all(&base_dir).expect("create base");
+        let catalog_file = base_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+        fs::write(&catalog_file, r#"{"models":[]}"#).expect("write catalog");
+
+        let config_text = r#"model_catalog_json = "cc-switch-model-catalog.json"
+"#;
+        let result = resolve_cc_switch_catalog_path(config_text, &base_dir);
+        let resolved = result.expect("real file inside config dir should be accepted");
+        assert_eq!(
+            resolved.file_name().and_then(|n| n.to_str()),
+            Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+        );
+    }
+
+    #[test]
+    fn read_limited_string_rejects_oversized_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("huge.json");
+        let file = std::fs::File::create(&path).expect("create");
+        file.set_len(MAX_CODEX_CATALOG_BYTES + 1).expect("set_len");
+
+        let result = read_limited_string(&path, MAX_CODEX_CATALOG_BYTES);
         assert!(
-            parsed.get("model_catalog_json").is_none(),
-            "None arm should remove relative cc-switch-owned field"
+            result.is_err(),
+            "file larger than MAX_CODEX_CATALOG_BYTES must be rejected"
         );
     }
 }
