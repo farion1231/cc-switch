@@ -2923,8 +2923,6 @@ fn package_manager_anchored_command_from_paths(
 ///    "那处 bin 目录的 npm"。
 #[cfg(not(target_os = "windows"))]
 fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) -> Option<String> {
-    let real_lower = real_target.to_ascii_lowercase();
-
     if tool == "hermes" {
         return anchored_official_update_command(tool, bin_path);
     }
