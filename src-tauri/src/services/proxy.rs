@@ -21,6 +21,13 @@ use tokio::sync::RwLock;
 /// 用于接管 Live 配置时的占位符（避免客户端提示缺少 key，同时不泄露真实 Token）
 const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
 
+fn is_live_token_syncable(token: &str) -> bool {
+    let token = token.trim();
+    !token.is_empty()
+        && token != PROXY_TOKEN_PLACEHOLDER
+        && !token.eq_ignore_ascii_case("localhost")
+}
+
 /// 代理接管模式下需要从 Claude Live 配置中移除的"模型覆盖"字段。
 ///
 /// 原因：接管模式下 `*_MODEL` 必须由 CC Switch 写成稳定的 Claude 角色别名，
@@ -994,12 +1001,8 @@ impl ProxyService {
                             ]
                             .into_iter()
                             .find_map(|key| {
-                                env.get(key)
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| (key, s.trim()))
-                            })
-                            .filter(|(_, token)| {
-                                !token.is_empty() && *token != PROXY_TOKEN_PLACEHOLDER
+                                let token = env.get(key).and_then(|v| v.as_str())?.trim();
+                                is_live_token_syncable(token).then_some((key, token))
                             });
 
                             if let Some((token_key, token)) = token_pair {
@@ -1091,7 +1094,7 @@ impl ProxyService {
                             .and_then(|v| v.get("OPENAI_API_KEY"))
                             .and_then(|v| v.as_str())
                             .map(|s| s.trim())
-                            .filter(|s| !s.is_empty() && *s != PROXY_TOKEN_PLACEHOLDER)
+                            .filter(|s| is_live_token_syncable(s))
                         {
                             if let Some(auth_obj) = provider
                                 .settings_config
@@ -1143,7 +1146,7 @@ impl ProxyService {
                             .and_then(|v| v.get("GEMINI_API_KEY"))
                             .and_then(|v| v.as_str())
                             .map(|s| s.trim())
-                            .filter(|s| !s.is_empty() && *s != PROXY_TOKEN_PLACEHOLDER)
+                            .filter(|s| is_live_token_syncable(s))
                         {
                             if let Some(env_obj) = provider
                                 .settings_config
@@ -1199,7 +1202,7 @@ impl ProxyService {
                         if let Some(token) =
                             crate::grok_config::extract_inline_api_key(live_config_toml)
                         {
-                            if !token.is_empty() && token != PROXY_TOKEN_PLACEHOLDER {
+                            if is_live_token_syncable(&token) {
                                 if let Some(provider_config) = provider
                                     .settings_config
                                     .get("config")
@@ -5350,6 +5353,114 @@ model = "gpt-5.1-codex"
         assert!(
             !env.contains_key("ANTHROPIC_AUTH_TOKEN"),
             "should not add ANTHROPIC_AUTH_TOKEN when absent"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn sync_claude_token_ignores_localhost_placeholder() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                    "ANTHROPIC_API_KEY": "real-key"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set current provider");
+
+        let live_config = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "localhost"
+            }
+        });
+
+        service
+            .sync_live_config_to_provider(&AppType::Claude, &live_config)
+            .await
+            .expect("sync");
+
+        let updated = db
+            .get_provider_by_id("p1", "claude")
+            .expect("get provider")
+            .expect("provider exists");
+        let env = updated
+            .settings_config
+            .get("env")
+            .and_then(|v| v.as_object())
+            .expect("env object");
+
+        assert_eq!(
+            env.get("ANTHROPIC_API_KEY").and_then(|v| v.as_str()),
+            Some("real-key")
+        );
+        assert!(
+            !env.contains_key("ANTHROPIC_AUTH_TOKEN"),
+            "localhost must not be copied into the provider"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn sync_claude_token_skips_localhost_and_uses_next_real_key() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "stale"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set current provider");
+
+        let live_config = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "localhost",
+                "ANTHROPIC_API_KEY": "fresh"
+            }
+        });
+
+        service
+            .sync_live_config_to_provider(&AppType::Claude, &live_config)
+            .await
+            .expect("sync");
+
+        let updated = db
+            .get_provider_by_id("p1", "claude")
+            .expect("get provider")
+            .expect("provider exists");
+        let env = updated
+            .settings_config
+            .get("env")
+            .and_then(|v| v.as_object())
+            .expect("env object");
+
+        assert_eq!(
+            env.get("ANTHROPIC_API_KEY").and_then(|v| v.as_str()),
+            Some("fresh")
         );
     }
 
