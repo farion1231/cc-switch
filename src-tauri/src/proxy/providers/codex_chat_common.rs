@@ -245,6 +245,15 @@ pub(crate) fn strip_leading_think_open_tag(text: &str) -> Option<String> {
 /// `think` tag that was split across two SSE chunks) so that the fragment
 /// does not appear verbatim in the visible output.
 pub(crate) fn strip_all_think_tags(text: &str) -> String {
+    strip_all_think_tags_with_pending(text).0
+}
+
+/// Like `strip_all_think_tags`, but also returns any trailing partial
+/// close-tag fragment (e.g. `</t`, `</th`) as the second element.  The
+/// caller should buffer this fragment and prepend it to the next delta
+/// so that a close tag split across SSE chunks is reassembled correctly
+/// instead of being dropped or leaked.
+pub(crate) fn strip_all_think_tags_with_pending(text: &str) -> (String, String) {
     let mut result = String::with_capacity(text.len());
     let mut remaining = text;
 
@@ -268,20 +277,26 @@ pub(crate) fn strip_all_think_tags(text: &str) -> String {
                 }
             }
             None => {
-                // No more open tags.  Strip a trailing partial close-tag
-                // fragment so it doesn't leak (e.g. `</t`, `</th`, …).
-                result.push_str(strip_trailing_close_tag_fragment(remaining));
-                break;
+                // No more open tags.  Remove any standalone close tags
+                // (close tags without a matching open tag that were not
+                // consumed by the main loop).  Then extract a trailing
+                // partial close-tag fragment for buffering.
+                let without_close_tags = remaining.replace(THINK_CLOSE_TAG, "");
+                let (clean, pending) =
+                    extract_trailing_close_tag_fragment(&without_close_tags);
+                result.push_str(clean);
+                return (result, pending.to_string());
             }
         }
     }
 
-    result
+    (result, String::new())
 }
 
-/// If `text` ends with a prefix of `THINK_CLOSE_TAG` (e.g. `<`, `</`, `</t`, …),
-/// return `text` without that fragment so it doesn't leak into output_text.
-fn strip_trailing_close_tag_fragment(text: &str) -> &str {
+/// Split `text` into `(clean, pending)` where `pending` is a trailing
+/// prefix of `THINK_CLOSE_TAG` (e.g. `<`, `</`, `</t`, …).  Returns
+/// `(text, "")` if the text does not end with such a fragment.
+fn extract_trailing_close_tag_fragment(text: &str) -> (&str, &str) {
     // THINK_CLOSE_TAG is pure ASCII (`think`), so any valid fragment
     // prefix is also ASCII.  We must only cut at char boundaries to
     // avoid slicing inside a multi-byte UTF-8 sequence.
@@ -294,10 +309,10 @@ fn strip_trailing_close_tag_fragment(text: &str) -> &str {
         }
         let suffix = &text[split_point..];
         if THINK_CLOSE_TAG.starts_with(suffix) {
-            return &text[..split_point];
+            return (&text[..split_point], suffix);
         }
     }
-    text
+    (text, "")
 }
 
 fn strip_think_answer_separator(text: &str) -> &str {
