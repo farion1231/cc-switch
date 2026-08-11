@@ -12,6 +12,7 @@ use crate::proxy::{
     ProxyError,
 };
 use axum::http::HeaderMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 /// 流式超时配置
@@ -235,6 +236,16 @@ impl RequestContext {
             .map(|cfg| crate::fallback::fallback_chain::FallbackRuntimeConfig::from_dao(&cfg))
             .filter(|runtime| runtime.enabled);
 
+        // 加载 fallback 链路定义（provider/model 联合切换所需的 model_id 映射）
+        let fallback_chains = match &fallback_config {
+            Some(_) => state
+                .db
+                .get_all_fallback_chains(self.app_type_str)
+                .map(Arc::new)
+                .unwrap_or_default(),
+            None => Arc::new(std::collections::HashMap::new()),
+        };
+
         RequestForwarder::new(
             state.provider_router.clone(),
             non_streaming_timeout,
@@ -254,6 +265,7 @@ impl RequestContext {
             self.copilot_optimizer_config.clone(),
             self.guardrail_config.clone(),
             fallback_config,
+            fallback_chains,
             state.fallback_suppression.clone(),
             max_retries,
         )

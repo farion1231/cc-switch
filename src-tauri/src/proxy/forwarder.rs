@@ -144,6 +144,10 @@ pub struct RequestForwarder {
     guardrail_detector: Option<super::guardrail_detector::GuardrailDetector>,
     /// fallback chain 运行时配置（None/disabled = 走旧 failover 路径）
     fallback_config: Option<crate::fallback::fallback_chain::FallbackRuntimeConfig>,
+    /// fallback 链路定义（chain_key → 有序条目），按 app 加载，跨请求共享
+    fallback_chains: Arc<
+        std::collections::HashMap<String, Vec<crate::database::FallbackChainEntry>>,
+    >,
     /// Selector 级抑制管理器（跨请求共享，持有渐进式冷却状态）
     fallback_suppression: Arc<crate::fallback::selector_suppression::SelectorSuppression>,
     /// 非流式请求超时（秒）
@@ -260,6 +264,9 @@ impl RequestForwarder {
         copilot_optimizer_config: CopilotOptimizerConfig,
         guardrail_config: GuardrailConfig,
         fallback_config: Option<crate::fallback::fallback_chain::FallbackRuntimeConfig>,
+        fallback_chains: Arc<
+            std::collections::HashMap<String, Vec<crate::database::FallbackChainEntry>>,
+        >,
         fallback_suppression: Arc<crate::fallback::selector_suppression::SelectorSuppression>,
         max_retries: u32,
     ) -> Self {
@@ -297,6 +304,7 @@ impl RequestForwarder {
             guardrail_config,
             guardrail_detector,
             fallback_config,
+            fallback_chains,
             fallback_suppression,
             non_streaming_timeout: std::time::Duration::from_secs(non_streaming_timeout),
             streaming_first_byte_timeout: std::time::Duration::from_secs(
@@ -497,6 +505,23 @@ impl RequestForwarder {
         let mut cumulative_backoff = std::time::Duration::ZERO;
         let fail_fast_cap = std::time::Duration::from_secs(300);
 
+        // fallback chain：provider/model 联合切换 —— 按请求 model 解析
+        // provider_id → 目标 model 映射（对齐 omp selector 语义）。
+        let fallback_model_map: std::collections::HashMap<String, String> =
+            if fallback_active {
+                let request_model = body
+                    .get("model")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                crate::fallback::fallback_chain::resolve_fallback_model_map(
+                    &self.fallback_chains,
+                    &request_model,
+                )
+            } else {
+                std::collections::HashMap::new()
+            };
+
         // 依次尝试每个供应商
         for provider in providers.iter() {
             // 整流器重试标记：每个 provider 独立持有，避免标记跨 provider 短路故障转移
@@ -557,6 +582,22 @@ impl RequestForwarder {
                 } else {
                     body.clone()
                 };
+
+            // fallback chain：provider/model 联合切换 —— 若当前 provider 配置了
+            // 目标 model（非 '*'），改写请求体的 model 字段。格式转换（anthropic↔
+            // gemini/openai）由 forward() 按 provider 的 claude_api_format 自动分派。
+            if apply_fallback_model_override(&mut provider_body, &fallback_model_map, &provider.id)
+            {
+                let new_model = provider_body
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                log::info!(
+                    "[{app_type_str}] [Fallback] provider={} model 改写为 {}",
+                    provider.id,
+                    new_model
+                );
+            }
 
             attempted_providers += 1;
 
@@ -2887,13 +2928,33 @@ impl RequestForwarder {
     }
 }
 
+/// 应用 fallback 的 provider/model 联合切换：改写请求体的 model 字段。
+///
+/// 对齐 oh-my-pi selector 语义：fallback 候选可显式指定目标 model；
+/// `*`/缺失则保留当前请求的 model（向后兼容）。返回是否实际发生了改写。
+fn apply_fallback_model_override(
+    provider_body: &mut Value,
+    fallback_model_map: &std::collections::HashMap<String, String>,
+    provider_id: &str,
+) -> bool {
+    let Some(target_model) = fallback_model_map.get(provider_id) else {
+        return false;
+    };
+    let original = provider_body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let changed = original != target_model;
+    provider_body["model"] = Value::String(target_model.clone());
+    changed
+}
+
 /// 从 ProxyError 中提取错误消息
 fn extract_error_message(error: &ProxyError) -> Option<String> {
     match error {
         ProxyError::UpstreamError { body, .. } => body.clone(),
         _ => Some(error.to_string()),
-    }
-}
+    }}
 
 /// 检测 Provider 是否为 Bedrock（通过 CLAUDE_CODE_USE_BEDROCK 环境变量判断）
 fn is_bedrock_provider(provider: &Provider) -> bool {
@@ -3793,6 +3854,38 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_apply_fallback_model_override_switches_model() {
+        let mut body = json!({ "model": "claude-sonnet-4" });
+        let mut map = HashMap::new();
+        map.insert("provider-b".to_string(), "gemini-pro".to_string());
+
+        let changed = apply_fallback_model_override(&mut body, &map, "provider-b");
+        assert!(changed);
+        assert_eq!(body["model"], "gemini-pro");
+    }
+
+    #[test]
+    fn test_apply_fallback_model_override_keeps_current_when_absent() {
+        // 无映射条目 → 不改写，返回 false
+        let mut body = json!({ "model": "claude-sonnet-4" });
+        let map = HashMap::new();
+        let changed = apply_fallback_model_override(&mut body, &map, "provider-b");
+        assert!(!changed);
+        assert_eq!(body["model"], "claude-sonnet-4");
+    }
+
+    #[test]
+    fn test_apply_fallback_model_override_same_model_no_log() {
+        // 目标 model 与当前一致 → 返回 false（不产生"改写"日志）
+        let mut body = json!({ "model": "claude-sonnet-4" });
+        let mut map = HashMap::new();
+        map.insert("provider-b".to_string(), "claude-sonnet-4".to_string());
+        let changed = apply_fallback_model_override(&mut body, &map, "provider-b");
+        assert!(!changed);
+        assert_eq!(body["model"], "claude-sonnet-4");
+    }
+
     fn test_forwarder(
         non_streaming_timeout: Duration,
         streaming_first_byte_timeout: Duration,
@@ -3816,6 +3909,7 @@ mod tests {
             guardrail_config: GuardrailConfig::default(),
             guardrail_detector: None,
             fallback_config: None,
+            fallback_chains: Arc::new(std::collections::HashMap::new()),
             fallback_suppression: Arc::new(crate::fallback::selector_suppression::SelectorSuppression::new()),
             non_streaming_timeout,
             streaming_first_byte_timeout,

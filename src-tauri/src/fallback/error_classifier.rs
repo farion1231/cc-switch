@@ -55,8 +55,11 @@ pub struct ClassifiedError {
 impl ClassifiedError {
     /// 该错误是否可重试。
     /// 可重试的条件：包含 TRANSIENT/USAGE_LIMIT/SERVER_ERROR/
-    /// PROVIDER_OVERLOAD/NETWORK_ERROR/CLASSIFIER_REFUSAL 中的任一标志，
-    /// 且不包含 AUTH_FAILED。
+    /// PROVIDER_OVERLOAD/NETWORK_ERROR/CLASSIFIER_REFUSAL/ACCOUNT_POLICY
+    /// 中的任一标志，且不包含 AUTH_FAILED。
+    ///
+    /// ACCOUNT_POLICY（封禁/欠费）可重试，是因为换一个 provider/账号
+    /// 可能持有不同的额度与策略（对齐 oh-my-pi 的凭证轮换语义）。
     pub fn is_retryable(&self) -> bool {
         self.flags.intersects(
             ErrorFlags::TRANSIENT
@@ -64,7 +67,8 @@ impl ClassifiedError {
                 | ErrorFlags::SERVER_ERROR
                 | ErrorFlags::PROVIDER_OVERLOAD
                 | ErrorFlags::NETWORK_ERROR
-                | ErrorFlags::CLASSIFIER_REFUSAL,
+                | ErrorFlags::CLASSIFIER_REFUSAL
+                | ErrorFlags::ACCOUNT_POLICY,
         ) && !self.flags.contains(ErrorFlags::AUTH_FAILED)
     }
 
@@ -356,33 +360,43 @@ pub fn classify_proxy_error(error: &crate::proxy::error::ProxyError, selector_id
 }
 
 /// 从 HTTP 响应头中解析 Retry-After 值。
-fn parse_retry_after(headers: &HashMap<String, String>) -> Option<u64> {    // 首先检查 retry-after-ms 自定义头
+fn parse_retry_after(headers: &HashMap<String, String>) -> Option<u64> {
+    // 对齐 oh-my-pi：收集所有 retry 提示候选，取最大值。
+    // 候选源：retry-after-ms / x-ratelimit-reset-ms（毫秒）、
+    // x-ratelimit-reset（秒）、标准 Retry-After（秒或 HTTP 日期）。
+    let mut best: Option<u64> = None;
+    let mut consider = |candidate: Option<u64>| {
+        if let Some(value) = candidate {
+            best = Some(best.map_or(value, |current| current.max(value)));
+        }
+    };
+
+    // 毫秒级自定义头（先于秒级解析，单位换算为秒）
     for key in &["retry-after-ms", "x-ratelimit-reset-ms"] {
         if let Some(value) = headers.get(&key.to_lowercase()) {
-            if let Ok(ms) = value.parse::<u64>() {
-                return Some(ms / 1000);
-            }
+            consider(value.parse::<u64>().ok().map(|ms| ms / 1000));
         }
     }
 
-    // 标准 Retry-After 头
+    // x-ratelimit-reset（秒，Anthropic/OpenAI 常用）
+    if let Some(value) = headers.get("x-ratelimit-reset") {
+        consider(value.parse::<u64>().ok());
+    }
+
+    // 标准 Retry-After 头（秒或 HTTP 日期）
     if let Some(value) = headers.get("retry-after") {
-        // 尝试作为秒数解析
-        if let Ok(seconds) = value.parse::<u64>() {
-            return Some(seconds);
-        }
-        // 尝试作为 HTTP 日期解析
+        consider(value.parse::<u64>().ok());
         if let Ok(datetime) = chrono::DateTime::parse_from_rfc2822(value) {
             let datetime_utc = datetime.with_timezone(&chrono::Utc);
             let now_utc = chrono::Utc::now();
             let diff = (datetime_utc - now_utc).num_seconds();
             if diff > 0 {
-                return Some(diff as u64);
+                consider(Some(diff as u64));
             }
         }
     }
 
-    None
+    best
 }
 
 #[cfg(test)]
@@ -600,5 +614,51 @@ mod tests {
         assert!(classified.flags.contains(ErrorFlags::NETWORK_ERROR));
         assert!(classified.is_retryable());
         assert!(classified.should_suppress());
+    }
+
+    #[test]
+    fn test_account_policy_retryable_and_suppressible() {
+        // 对齐 omp：AccountPolicy（封禁/欠费）可重试（换 provider/账号），且应抑制
+        let error = ClassifiedError {
+            flags: ErrorFlags::ACCOUNT_POLICY,
+            status_code: Some(403),
+            message: "account suspended".into(),
+            retry_after_seconds: None,
+            selector_identity: "test:model".into(),
+        };
+        assert!(error.is_retryable());
+        assert!(error.should_suppress());
+        assert!(!error.should_pin());
+    }
+
+    #[test]
+    fn test_parse_retry_after_x_ratelimit_reset() {
+        let mut headers = HashMap::new();
+        headers.insert("x-ratelimit-reset".to_string(), "120".to_string());
+        let seconds = parse_retry_after(&headers);
+        assert_eq!(seconds, Some(120));
+    }
+
+    #[test]
+    fn test_parse_retry_after_takes_max_across_headers() {
+        let mut headers = HashMap::new();
+        headers.insert("retry-after".to_string(), "60".to_string());
+        headers.insert("x-ratelimit-reset-ms".to_string(), "180000".to_string()); // 180s
+        let seconds = parse_retry_after(&headers);
+        assert_eq!(seconds, Some(180));
+    }
+
+    #[test]
+    fn test_parse_retry_after_prefers_ms_headers() {
+        let mut headers = HashMap::new();
+        headers.insert("retry-after-ms".to_string(), "5000".to_string()); // 5s
+        let seconds = parse_retry_after(&headers);
+        assert_eq!(seconds, Some(5));
+    }
+
+    #[test]
+    fn test_parse_retry_after_none() {
+        let headers = HashMap::new();
+        assert_eq!(parse_retry_after(&headers), None);
     }
 }

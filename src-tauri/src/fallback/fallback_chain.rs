@@ -426,6 +426,43 @@ pub fn format_selector_identity(provider_id: &str, model_id: &str) -> String {
     format!("{}:{}", provider_id, model_id)
 }
 
+/// 从 fallback 条目的 `model_id` 解析目标模型名。
+///
+/// 对齐 oh-my-pi 的 selector 语义：fallback 条目可显式指定目标 model
+/// （`claude-sonnet-4-5`），也可用 `*`/空表示"保留当前请求的 model"。
+pub fn resolve_fallback_target_model(model_id: &str, current_model: &str) -> String {
+    if model_id.is_empty() || model_id == "*" {
+        current_model.to_string()
+    } else {
+        model_id.to_string()
+    }
+}
+
+/// 从配置的 fallback chains 中，为指定请求 model 构建 `provider_id → 目标 model` 映射。
+///
+/// 对齐 oh-my-pi 的 chain key 解析：优先精确 model 名 key，否则回退到 `default`。
+/// 这是「provider/model 联合切换」的核心：切换 provider 的同时改写请求的 model 字段。
+pub fn resolve_fallback_model_map(
+    chains: &HashMap<String, Vec<crate::database::FallbackChainEntry>>,
+    request_model: &str,
+) -> HashMap<String, String> {
+    let chain = chains
+        .get(request_model)
+        .or_else(|| chains.get("default"));
+    let Some(entries) = chain else {
+        return HashMap::new();
+    };
+    entries
+        .iter()
+        .map(|entry| {
+            (
+                entry.provider_id.clone(),
+                resolve_fallback_target_model(&entry.model_id, request_model),
+            )
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -606,6 +643,82 @@ mod tests {
     fn test_format_selector_identity() {
         let identity = format_selector_identity("anthropic", "claude-sonnet-4");
         assert_eq!(identity, "anthropic:claude-sonnet-4");
+    }
+
+    #[test]
+    fn test_resolve_fallback_target_model_explicit() {
+        // 显式指定目标 model → 返回它（对齐 omp selector 的 provider/model 联合切换）
+        assert_eq!(
+            resolve_fallback_target_model("gemini-pro", "claude-sonnet-4"),
+            "gemini-pro"
+        );
+    }
+
+    #[test]
+    fn test_resolve_fallback_target_model_wildcard() {
+        // '*' 或空 → 保留当前请求的 model（切 provider 不切 model，向后兼容）
+        assert_eq!(
+            resolve_fallback_target_model("*", "claude-sonnet-4"),
+            "claude-sonnet-4"
+        );
+        assert_eq!(
+            resolve_fallback_target_model("", "claude-sonnet-4"),
+            "claude-sonnet-4"
+        );
+    }
+
+    #[test]
+    fn test_resolve_fallback_model_map_exact_model_key_wins() {
+        use crate::database::FallbackChainEntry;
+        let mut chains = HashMap::new();
+        // default 链：provider B 保留当前 model
+        chains.insert(
+            "default".to_string(),
+            vec![FallbackChainEntry {
+                selector_raw: "provider-b".to_string(),
+                provider_id: "provider-b".to_string(),
+                model_id: "*".to_string(),
+            }],
+        );
+        // 精确 model 链：provider A 拒了切 provider C 用 gemini-pro
+        chains.insert(
+            "claude-sonnet-4".to_string(),
+            vec![FallbackChainEntry {
+                selector_raw: "provider-c".to_string(),
+                provider_id: "provider-c".to_string(),
+                model_id: "gemini-pro".to_string(),
+            }],
+        );
+
+        let map = resolve_fallback_model_map(&chains, "claude-sonnet-4");
+        // 精确 key 优先：provider-c → gemini-pro
+        assert_eq!(map.get("provider-c").map(String::as_str), Some("gemini-pro"));
+        // default 链不参与（被精确 key 覆盖）
+        assert!(map.get("provider-b").is_none());
+    }
+
+    #[test]
+    fn test_resolve_fallback_model_map_default_keeps_current_model() {
+        use crate::database::FallbackChainEntry;
+        let mut chains = HashMap::new();
+        chains.insert(
+            "default".to_string(),
+            vec![FallbackChainEntry {
+                selector_raw: "provider-b".to_string(),
+                provider_id: "provider-b".to_string(),
+                model_id: "*".to_string(),
+            }],
+        );
+
+        let map = resolve_fallback_model_map(&chains, "claude-opus-4");
+        assert_eq!(map.get("provider-b").map(String::as_str), Some("claude-opus-4"));
+    }
+
+    #[test]
+    fn test_resolve_fallback_model_map_empty() {
+        let chains = HashMap::new();
+        let map = resolve_fallback_model_map(&chains, "claude-opus-4");
+        assert!(map.is_empty());
     }
 
     #[test]
