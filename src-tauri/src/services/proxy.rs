@@ -10,7 +10,8 @@ use crate::proxy::server::ProxyServer;
 use crate::proxy::switch_lock::SwitchLockManager;
 use crate::proxy::types::*;
 use crate::services::provider::{
-    build_effective_settings_with_common_config, write_live_with_common_config,
+    build_effective_settings_with_common_config, merge_common_config_into_settings,
+    write_live_with_common_config,
 };
 use serde_json::{json, Map, Value};
 use std::str::FromStr;
@@ -1853,6 +1854,7 @@ impl ProxyService {
                     "{app_type_str} 备份本身已是代理占位符（异常历史状态），跳过备份，改走 SSOT 重建 Live"
                 );
             } else {
+                let config = self.merge_common_config_into_live_backup(app_type, config)?;
                 self.write_live_config_for_app(app_type, &config)?;
                 log::info!("{app_type_str} Live 配置已从备份恢复");
                 return Ok(());
@@ -1886,6 +1888,48 @@ impl ProxyService {
         self.cleanup_takeover_placeholders_in_live_for_app(app_type)?;
         log::info!("{app_type_str} Live 接管占位符已清理（无备份兜底）");
         Ok(())
+    }
+
+    fn merge_common_config_into_live_backup(
+        &self,
+        app_type: &AppType,
+        config: Value,
+    ) -> Result<Value, String> {
+        let current_id = match crate::settings::get_effective_current_provider(&self.db, app_type) {
+            Ok(Some(current_id)) => current_id,
+            Ok(None) => {
+                log::warn!("{app_type:?} 没有有效的当前供应商，保留原始 Live 备份，不合并通用配置");
+                return Ok(config);
+            }
+            Err(error) => {
+                log::warn!("获取 {app_type:?} 当前供应商失败，保留原始 Live 备份继续恢复: {error}");
+                return Ok(config);
+            }
+        };
+
+        let providers = match self.db.get_all_providers(app_type.as_str()) {
+            Ok(providers) => providers,
+            Err(error) => {
+                log::warn!("读取 {app_type:?} 供应商列表失败，保留原始 Live 备份继续恢复: {error}");
+                return Ok(config);
+            }
+        };
+        let Some(provider) = providers.get(&current_id) else {
+            log::warn!(
+                "{app_type:?} 当前供应商 {current_id} 不在数据库中，保留原始 Live 备份，不合并通用配置"
+            );
+            return Ok(config);
+        };
+
+        match merge_common_config_into_settings(self.db.as_ref(), app_type, provider, &config) {
+            Ok(merged) => Ok(merged),
+            Err(error) => {
+                // A malformed optional snippet must not prevent crash recovery
+                // from restoring the user's last known-good Live snapshot.
+                log::warn!("合并 {app_type:?} 通用配置失败，将保留原始 Live 备份继续恢复: {error}");
+                Ok(config)
+            }
+        }
     }
 
     fn write_live_config_for_app(&self, app_type: &AppType, config: &Value) -> Result<(), String> {
@@ -6538,6 +6582,206 @@ requires_openai_auth = true
         assert!(
             config_text.contains(r#"command = "shared-command""#),
             "config.toml must include common config content after switch"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn crash_restore_merges_common_config_into_existing_codex_backup() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = crate::store::AppState::new(db.clone());
+
+        db.set_config_snippet(
+            "codex",
+            Some(
+                r#"sandbox_mode = "workspace-write"
+web_search = "live"
+
+[sandbox_workspace_write]
+writable_roots = ["C:/workspace"]
+
+[mcp_servers.shared]
+command = "shared-command"
+"#
+                .to_string(),
+            ),
+        )
+        .expect("set common config snippet");
+
+        let mut provider = Provider::with_id(
+            "codex-provider".to_string(),
+            "Codex Provider".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "provider-key" },
+                "config": r#"model_provider = "provider"
+model = "backup-model"
+
+[model_providers.provider]
+base_url = "https://provider.example/v1"
+wire_api = "responses"
+"#
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        db.save_provider("codex", &provider)
+            .expect("save current provider");
+        db.set_current_provider("codex", provider.id.as_str())
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some(&provider.id))
+            .expect("set local current provider");
+
+        let backup = json!({
+            "auth": { "OPENAI_API_KEY": "backup-key" },
+            "config": r#"model_provider = "provider"
+model = "backup-model"
+
+[model_providers.provider]
+base_url = "https://provider.example/v1"
+wire_api = "responses"
+
+[mcp_servers.user]
+command = "user-command"
+"#
+        });
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&backup).expect("serialize backup"),
+        )
+        .await
+        .expect("save live backup");
+
+        state
+            .proxy_service
+            .recover_from_crash()
+            .await
+            .expect("recover Codex live config from crash");
+
+        let restored = crate::codex_config::read_codex_live_settings()
+            .expect("read restored Codex live config");
+        assert_eq!(restored["auth"]["OPENAI_API_KEY"], "backup-key");
+        let restored_config = restored["config"]
+            .as_str()
+            .expect("restored Codex config text");
+        let parsed: toml::Value = toml::from_str(restored_config).expect("parse restored config");
+        assert_eq!(parsed["model"].as_str(), Some("backup-model"));
+        assert_eq!(
+            parsed["mcp_servers"]["user"]["command"].as_str(),
+            Some("user-command")
+        );
+        assert_eq!(
+            parsed["mcp_servers"]["shared"]["command"].as_str(),
+            Some("shared-command")
+        );
+        assert_eq!(parsed["sandbox_mode"].as_str(), Some("workspace-write"));
+        assert_eq!(parsed["web_search"].as_str(), Some("live"));
+        assert_eq!(
+            parsed["sandbox_workspace_write"]["writable_roots"][0].as_str(),
+            Some("C:/workspace")
+        );
+        assert!(
+            db.get_live_backup("codex")
+                .await
+                .expect("read deleted backup")
+                .is_none(),
+            "crash recovery should delete the consumed backup"
+        );
+        assert!(
+            !db.is_live_takeover_active()
+                .await
+                .expect("read takeover state"),
+            "crash recovery should clear the takeover flag"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn restore_keeps_backup_when_provider_lookup_fails() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = crate::store::AppState::new(db.clone());
+
+        db.set_config_snippet(
+            "codex",
+            Some(
+                r#"[mcp_servers.shared]
+command = "shared-command"
+"#
+                .to_string(),
+            ),
+        )
+        .expect("set common config snippet");
+
+        let mut provider = Provider::with_id(
+            "codex-provider".to_string(),
+            "Codex Provider".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "provider-key" },
+                "config": "model = \"provider-model\""
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        db.save_provider("codex", &provider)
+            .expect("save current provider");
+        db.set_current_provider("codex", provider.id.as_str())
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some(&provider.id))
+            .expect("set local current provider");
+
+        let backup = json!({
+            "auth": { "OPENAI_API_KEY": "backup-key" },
+            "config": "model = \"backup-model\"\n\n[mcp_servers.user]\ncommand = \"user-command\"\n"
+        });
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&backup).expect("serialize backup"),
+        )
+        .await
+        .expect("save live backup");
+
+        // Simulate a provider lookup failure after the backup has already been read.
+        db.conn
+            .lock()
+            .expect("lock database")
+            .execute("DROP TABLE providers", [])
+            .expect("drop providers table");
+
+        state
+            .proxy_service
+            .restore_live_config_for_app_with_fallback(&AppType::Codex)
+            .await
+            .expect("restore should keep the last-known-good backup");
+
+        let restored = crate::codex_config::read_codex_live_settings()
+            .expect("read restored Codex live config");
+        assert_eq!(restored["auth"]["OPENAI_API_KEY"], "backup-key");
+        let restored_config = restored["config"]
+            .as_str()
+            .expect("restored Codex config text");
+        let parsed: toml::Value = toml::from_str(restored_config).expect("parse restored config");
+        assert_eq!(parsed["model"].as_str(), Some("backup-model"));
+        assert_eq!(
+            parsed["mcp_servers"]["user"]["command"].as_str(),
+            Some("user-command")
+        );
+        assert!(
+            parsed
+                .get("mcp_servers")
+                .and_then(|servers| servers.get("shared"))
+                .is_none(),
+            "provider lookup failure must not partially apply common config"
         );
     }
 
