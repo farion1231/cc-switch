@@ -3041,6 +3041,8 @@
     "credits": "額度",
     "copilotPremium": "進階請求",
     "utilization": "{{value}}%",
+    "utilizationWithTime": "{{used}}%-{{elapsed}}%",
+    "utilizationWithTimeHint": "用量%-時間%（視窗已流逝占比）",
     "resetsIn": "{{time}} 後重設",
     "extraUsage": "超額用量",
     "expired": "工作階段已過期",

@@ -3040,6 +3040,8 @@
     "credits": "クレジット",
     "copilotPremium": "プレミアム",
     "utilization": "{{value}}%",
+    "utilizationWithTime": "{{used}}%-{{elapsed}}%",
+    "utilizationWithTimeHint": "使用量%-時間%（ウィンドウ経過割合）",
     "resetsIn": "{{time}}後にリセット",
     "extraUsage": "超過使用量",
     "expired": "セッション期限切れ",

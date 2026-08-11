@@ -4,6 +4,10 @@ import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
 import { useSubscriptionQuota } from "@/lib/query/subscription";
 import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
+import {
+  formatUsedElapsedPercent,
+  tierElapsedPercent,
+} from "@/utils/quotaWindow";
 
 interface SubscriptionQuotaFooterProps {
   appId: AppId;
@@ -315,6 +319,8 @@ export const TierBadge: React.FC<{
     ? t(TIER_I18N_KEYS[tier.name])
     : tier.name;
   const countdown = countdownStr(tier.resetsAt);
+  const elapsed = tierElapsedPercent(tier.name, tier.resetsAt);
+  const usedElapsed = formatUsedElapsedPercent(tier.utilization, elapsed);
 
   const hasUsd = tier.usedValueUsd != null && tier.maxValueUsd != null;
 
@@ -323,8 +329,17 @@ export const TierBadge: React.FC<{
       <span className="text-gray-500 dark:text-gray-400">{label}:</span>
       <span
         className={`font-semibold tabular-nums ${utilizationColor(tier.utilization)}`}
+        title={
+          elapsed !== undefined
+            ? t("subscription.utilizationWithTimeHint")
+            : undefined
+        }
       >
-        {t("subscription.utilization", { value: Math.round(tier.utilization) })}
+        {elapsed !== undefined
+          ? usedElapsed
+          : t("subscription.utilization", {
+              value: Math.round(tier.utilization),
+            })}
       </span>
       {hasUsd && (
         <span className="text-muted-foreground/60">
@@ -380,8 +395,16 @@ const TierBar: React.FC<{
       >
         <span
           className={`font-semibold tabular-nums ${utilizationColor(tier.utilization)}`}
+          title={
+            tierElapsedPercent(tier.name, tier.resetsAt) !== undefined
+              ? t("subscription.utilizationWithTimeHint")
+              : undefined
+          }
         >
-          {Math.round(tier.utilization)}%
+          {formatUsedElapsedPercent(
+            tier.utilization,
+            tierElapsedPercent(tier.name, tier.resetsAt),
+          )}
         </span>
         {resetText && (
           <span

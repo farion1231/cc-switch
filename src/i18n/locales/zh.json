@@ -3040,6 +3040,8 @@
     "credits": "额度",
     "copilotPremium": "高级请求",
     "utilization": "{{value}}%",
+    "utilizationWithTime": "{{used}}%-{{elapsed}}%",
+    "utilizationWithTimeHint": "用量%-时间%（窗口已流逝占比）",
     "resetsIn": "{{time}}后重置",
     "extraUsage": "超额用量",
     "expired": "会话已过期",
