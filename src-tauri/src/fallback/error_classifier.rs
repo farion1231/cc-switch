@@ -4,6 +4,7 @@
 //! 驱动回退链路中的后续决策（是否重试、是否抑制、是否固定）。
 
 use bitflags::bitflags;
+use crate::proxy::error::ProxyError;
 use std::collections::HashMap;
 
 bitflags! {
@@ -298,9 +299,64 @@ pub fn detect_classifier_refusal(
     None
 }
 
+/// 将 cc-switch 的 `ProxyError` 分类为多维错误标志。
+///
+/// 这是 fallback chain 与现有转发循环的桥接函数：把重试循环捕获的
+/// 上游/网络错误映射为 ErrorFlags，驱动后续的抑制/退避/固定决策。
+pub fn classify_proxy_error(error: &crate::proxy::error::ProxyError, selector_identity: String) -> ClassifiedError {
+    match error {
+        ProxyError::UpstreamError { status, body } => {
+            let headers = HashMap::new();
+            let body_text = body.clone().unwrap_or_default();
+            classify_http_error(*status, &headers, &body_text, selector_identity)
+        }
+        ProxyError::Timeout(_) => ClassifiedError {
+            flags: ErrorFlags::NETWORK_ERROR | ErrorFlags::TRANSIENT,
+            status_code: None,
+            message: error.to_string(),
+            retry_after_seconds: None,
+            selector_identity,
+        },
+        ProxyError::ForwardFailed(_) | ProxyError::ProviderUnhealthy(_) => ClassifiedError {
+            flags: ErrorFlags::NETWORK_ERROR,
+            status_code: None,
+            message: error.to_string(),
+            retry_after_seconds: None,
+            selector_identity,
+        },
+        ProxyError::StreamIdleTimeout(_) => ClassifiedError {
+            flags: ErrorFlags::TRANSIENT,
+            status_code: None,
+            message: error.to_string(),
+            retry_after_seconds: None,
+            selector_identity,
+        },
+        ProxyError::AuthError(_) => ClassifiedError {
+            flags: ErrorFlags::AUTH_FAILED,
+            status_code: Some(401),
+            message: error.to_string(),
+            retry_after_seconds: None,
+            selector_identity,
+        },
+        ProxyError::ConfigError(_) | ProxyError::TransformError(_) => ClassifiedError {
+            flags: ErrorFlags::TRANSIENT,
+            status_code: None,
+            message: error.to_string(),
+            retry_after_seconds: None,
+            selector_identity,
+        },
+        _ => ClassifiedError {
+            flags: ErrorFlags::UNKNOWN,
+            status_code: None,
+            message: error.to_string(),
+            retry_after_seconds: None,
+            selector_identity,
+        },
+    }
+}
+
 /// 从 HTTP 响应头中解析 Retry-After 值。
-fn parse_retry_after(headers: &HashMap<String, String>) -> Option<u64> {
-    // 首先检查 retry-after-ms 自定义头
+fn parse_retry_after(headers: &HashMap<String, String>) -> Option<u64> {    // 首先检查 retry-after-ms 自定义头
     for key in &["retry-after-ms", "x-ratelimit-reset-ms"] {
         if let Some(value) = headers.get(&key.to_lowercase()) {
             if let Ok(ms) = value.parse::<u64>() {
@@ -501,5 +557,48 @@ mod tests {
             false,
         );
         assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_classify_proxy_error_429_quota() {
+        let error = crate::proxy::error::ProxyError::UpstreamError {
+            status: 429,
+            body: Some(r#"{"error":{"message":"quota exceeded"}}"#.to_string()),
+        };
+        let classified = classify_proxy_error(&error, "test:model".into());
+        assert!(classified.flags.contains(ErrorFlags::USAGE_LIMIT));
+        assert!(classified.is_retryable());
+        assert!(classified.should_suppress());
+        assert!(classified.should_rotate_credentials());
+    }
+
+    #[test]
+    fn test_classify_proxy_error_503_server() {
+        let error = crate::proxy::error::ProxyError::UpstreamError {
+            status: 503,
+            body: Some("Service Unavailable".to_string()),
+        };
+        let classified = classify_proxy_error(&error, "test:model".into());
+        assert!(classified.flags.contains(ErrorFlags::SERVER_ERROR));
+        assert!(classified.is_retryable());
+        assert!(classified.should_suppress());
+    }
+
+    #[test]
+    fn test_classify_proxy_error_auth() {
+        let error = crate::proxy::error::ProxyError::AuthError("invalid key".into());
+        let classified = classify_proxy_error(&error, "test:model".into());
+        assert!(classified.flags.contains(ErrorFlags::AUTH_FAILED));
+        assert!(!classified.is_retryable());
+        assert!(!classified.should_suppress());
+    }
+
+    #[test]
+    fn test_classify_proxy_error_timeout() {
+        let error = crate::proxy::error::ProxyError::Timeout("request timed out".into());
+        let classified = classify_proxy_error(&error, "test:model".into());
+        assert!(classified.flags.contains(ErrorFlags::NETWORK_ERROR));
+        assert!(classified.is_retryable());
+        assert!(classified.should_suppress());
     }
 }

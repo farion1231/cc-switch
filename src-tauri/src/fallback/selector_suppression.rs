@@ -112,6 +112,18 @@ impl SelectorSuppression {
         }
     }
 
+    /// 获取 Selector 当前的连续失败次数。
+    ///
+    /// 未抑制或已清除返回 0。调用方用 `count + 1` 作为下一次 `suppress` 的
+    /// `consecutive_count`，实现渐进式抑制时长。
+    pub async fn consecutive_count(&self, selector_identity: &str) -> u32 {
+        let entries = self.entries.read().await;
+        entries
+            .get(selector_identity)
+            .map(|entry| entry.consecutive_count)
+            .unwrap_or(0)
+    }
+
     /// 清理过期的抑制条目。
     ///
     /// 应当定期调用（如每 60 秒）。

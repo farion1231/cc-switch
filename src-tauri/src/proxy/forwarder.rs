@@ -30,6 +30,8 @@ use crate::{
     app_config::AppType,
     provider::{LocalProxyRequestOverrides, Provider},
 };
+use crate::fallback::error_classifier::classify_proxy_error;
+use crate::fallback::fallback_chain::format_selector_identity;
 use bytes::Bytes;
 use futures::StreamExt;
 use http::Extensions;
@@ -140,6 +142,10 @@ pub struct RequestForwarder {
     guardrail_config: GuardrailConfig,
     /// 围栏检测器实例（如果配置启用）
     guardrail_detector: Option<super::guardrail_detector::GuardrailDetector>,
+    /// fallback chain 运行时配置（None/disabled = 走旧 failover 路径）
+    fallback_config: Option<crate::fallback::fallback_chain::FallbackRuntimeConfig>,
+    /// Selector 级抑制管理器（跨请求共享，持有渐进式冷却状态）
+    fallback_suppression: Arc<crate::fallback::selector_suppression::SelectorSuppression>,
     /// 非流式请求超时（秒）
     non_streaming_timeout: std::time::Duration,
     /// 流式请求响应头等待超时（秒）
@@ -253,6 +259,8 @@ impl RequestForwarder {
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
         guardrail_config: GuardrailConfig,
+        fallback_config: Option<crate::fallback::fallback_chain::FallbackRuntimeConfig>,
+        fallback_suppression: Arc<crate::fallback::selector_suppression::SelectorSuppression>,
         max_retries: u32,
     ) -> Self {
         // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
@@ -288,6 +296,8 @@ impl RequestForwarder {
             copilot_optimizer_config,
             guardrail_config,
             guardrail_detector,
+            fallback_config,
+            fallback_suppression,
             non_streaming_timeout: std::time::Duration::from_secs(non_streaming_timeout),
             streaming_first_byte_timeout: std::time::Duration::from_secs(
                 streaming_first_byte_timeout,
@@ -469,6 +479,24 @@ impl RequestForwarder {
         // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
         let bypass_circuit_breaker = providers.len() == 1;
 
+        // fallback chain 运行时参数（仅启用时生效）
+        let fallback_active = self
+            .fallback_config
+            .as_ref()
+            .map(|cfg| cfg.enabled)
+            .unwrap_or(false);
+        let suppression_config =
+            crate::fallback::selector_suppression::SuppressionConfig::default();
+        let backoff_engine = self.fallback_config.as_ref().map(|cfg| {
+            crate::fallback::backoff::BackoffEngine::new(
+                cfg.retry_base_delay_ms,
+                cfg.retry_max_delay_ms,
+            )
+        });
+        // 本回退周期累计退避等待（fail-fast 上限 5 分钟）
+        let mut cumulative_backoff = std::time::Duration::ZERO;
+        let fail_fast_cap = std::time::Duration::from_secs(300);
+
         // 依次尝试每个供应商
         for provider in providers.iter() {
             // 整流器重试标记：每个 provider 独立持有，避免标记跨 provider 短路故障转移
@@ -476,6 +504,16 @@ impl RequestForwarder {
             let mut rectifier_retried = false;
             let mut budget_rectifier_retried = false;
             let mut media_rectifier_retried = false;
+
+            // fallback chain：跳过被抑制的 Selector（冷却未过期的 provider 不参与候选）。
+            // 这直接解决「拒绝后仍反复尝试同一家导致卡住」的问题。
+            if fallback_active && self.fallback_suppression.is_suppressed(&provider.id).await {
+                log::debug!(
+                    "[{app_type_str}] [Fallback] 跳过被抑制的 provider: {}",
+                    provider.name
+                );
+                continue;
+            }
 
             // 上限检查：尊重用户在 AppProxyConfig.max_retries 上配置的「重试次数」。
             // 放在熔断器 allow 检查之前，避免在已经超限时还占用 HalfOpen 探测名额。
@@ -548,10 +586,46 @@ impl RequestForwarder {
                 .await
             {
                 Ok((response, claude_api_format, outbound_model)) => {
+                    // 围栏拒绝检测：LLM 返回拒绝内容 → 不视为成功，切换到下一候选。
+                    // 这解决「检测到拒绝后仍卡在同一家 provider」的问题。
+                    if let Some(reason) = self.check_guardrail_refusal(&response) {
+                        log::warn!(
+                            "[{app_type_str}] [Guardrail] 检测到拒绝: {reason}，触发故障转移"
+                        );
+                        // 释放 HalfOpen permit，但不计入熔断器失败（内容拒绝不是健康问题）
+                        self.router
+                            .release_permit_neutral(&provider.id, app_type_str, used_half_open_permit)
+                            .await;
+                        // fallback chain：拒绝类错误 → 固定（长期抑制）该 Selector
+                        if fallback_active {
+                            let count = self
+                                .fallback_suppression
+                                .consecutive_count(&provider.id)
+                                .await
+                                + 1;
+                            let pin_config =
+                                crate::fallback::selector_suppression::SuppressionConfig {
+                                    base_duration: suppression_config.max_duration,
+                                    ..suppression_config.clone()
+                                };
+                            self.fallback_suppression
+                                .suppress(&provider.id, count, &pin_config)
+                                .await;
+                        }
+                        last_error = Some(ProxyError::TransformError(reason));
+                        last_provider = Some(provider.clone());
+                        continue;
+                    }
+
                     // 成功：普通闭合熔断状态异步记录，避免阻塞流式首包返回；
                     // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
                     self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
                         .await;
+
+                    // fallback chain：成功后清除该 provider 的抑制状态（冷却恢复，自动切回原主）
+                    if fallback_active {
+                        self.fallback_suppression.clear(&provider.id).await;
+                    }
 
                     // 更新当前应用类型使用的 provider
                     {
@@ -1089,6 +1163,51 @@ impl RequestForwarder {
                                 &e,
                             );
                             log::warn!("[{app_type_str}] [{log_code}] {log_message}");
+
+                            // fallback chain：错误感知的抑制 + 退避
+                            if fallback_active {
+                                let classified = classify_proxy_error(
+                                    &e,
+                                    format_selector_identity(&provider.id, "*"),
+                                );
+
+                                // 健康类错误 → 渐进式抑制该 Selector，下次请求跳过
+                                if classified.should_suppress() {
+                                    let count = self
+                                        .fallback_suppression
+                                        .consecutive_count(&provider.id)
+                                        .await
+                                        + 1;
+                                    self.fallback_suppression
+                                        .suppress(&provider.id, count, &suppression_config)
+                                        .await;
+                                }
+
+                                // 退避等待（尊重 Retry-After），累计超过 5 分钟 fail-fast
+                                if let Some(engine) = &backoff_engine {
+                                    let attempt = attempted_providers as u32 + 1;
+                                    let delay = engine.compute_with_retry_after(
+                                        attempt,
+                                        classified.retry_after_seconds,
+                                    );
+                                    cumulative_backoff += delay;
+                                    if engine.would_exceed_cap(cumulative_backoff, fail_fast_cap) {
+                                        log::warn!(
+                                            "[{app_type_str}] [Fallback] 累计退避超过 5 分钟，停止重试"
+                                        );
+                                        last_error = Some(e);
+                                        last_provider = Some(provider.clone());
+                                        break;
+                                    }
+                                    if !delay.is_zero() {
+                                        log::info!(
+                                            "[{app_type_str}] [Fallback] 退避 {}ms 后重试下一候选",
+                                            delay.as_millis()
+                                        );
+                                        tokio::time::sleep(delay).await;
+                                    }
+                                }
+                            }
 
                             last_error = Some(e);
                             last_provider = Some(provider.clone());
@@ -3696,6 +3815,8 @@ mod tests {
             copilot_optimizer_config: CopilotOptimizerConfig::default(),
             guardrail_config: GuardrailConfig::default(),
             guardrail_detector: None,
+            fallback_config: None,
+            fallback_suppression: Arc::new(crate::fallback::selector_suppression::SelectorSuppression::new()),
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,

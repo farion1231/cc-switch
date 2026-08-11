@@ -227,6 +227,14 @@ impl RequestContext {
             0
         };
 
+        // 加载 fallback chain 运行时配置（仅当启用时返回 Some）
+        let fallback_config = state
+            .db
+            .get_fallback_proxy_config(self.app_type_str)
+            .ok()
+            .map(|cfg| crate::fallback::fallback_chain::FallbackRuntimeConfig::from_dao(&cfg))
+            .filter(|runtime| runtime.enabled);
+
         RequestForwarder::new(
             state.provider_router.clone(),
             non_streaming_timeout,
@@ -245,6 +253,8 @@ impl RequestContext {
             self.optimizer_config.clone(),
             self.copilot_optimizer_config.clone(),
             self.guardrail_config.clone(),
+            fallback_config,
+            state.fallback_suppression.clone(),
             max_retries,
         )
     }

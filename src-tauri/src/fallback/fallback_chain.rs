@@ -64,6 +64,48 @@ impl Default for FallbackConfig {
     }
 }
 
+/// 运行时回退配置（forwarder 每请求从 proxy_config 加载的快照）。
+///
+/// 与 [`FallbackConfig`] 不同，它只包含重试循环需要的标量参数，
+/// 不含链路定义（链路从 fallback_chain_config 表按需读取）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FallbackRuntimeConfig {
+    /// 是否启用 fallback chain 逻辑
+    pub enabled: bool,
+    /// 主模型恢复策略
+    pub revert_policy: FallbackRevertPolicy,
+    /// 重试基础退避（毫秒）
+    pub retry_base_delay_ms: u64,
+    /// 重试最大退避（毫秒）
+    pub retry_max_delay_ms: u64,
+}
+
+impl Default for FallbackRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            revert_policy: FallbackRevertPolicy::default(),
+            retry_base_delay_ms: 500,
+            retry_max_delay_ms: 8000,
+        }
+    }
+}
+
+impl FallbackRuntimeConfig {
+    /// 从 DAO 类型转换（解析 revert_policy 字符串）。
+    pub fn from_dao(config: &crate::database::FallbackProxyConfig) -> Self {
+        Self {
+            enabled: config.fallback_enabled,
+            revert_policy: match config.fallback_revert_policy.as_str() {
+                "never" => FallbackRevertPolicy::Never,
+                _ => FallbackRevertPolicy::CooldownExpiry,
+            },
+            retry_base_delay_ms: config.retry_base_delay_ms,
+            retry_max_delay_ms: config.retry_max_delay_ms,
+        }
+    }
+}
+
 /// 链路Key匹配优先级
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ChainKeyMatchKind {
