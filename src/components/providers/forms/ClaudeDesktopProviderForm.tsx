@@ -945,7 +945,7 @@ export function ClaudeDesktopProviderForm({
                   <div className="space-y-2">
                     <Label>
                       {t("providerForm.apiFormat", {
-                        defaultValue: "API 格式",
+                        defaultValue: "上游格式",
                       })}
                     </Label>
                     <Select

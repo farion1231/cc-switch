@@ -29,7 +29,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
   onChange,
   placeholder: placeholderText = "",
   darkMode = false,
-  rows = 12,
+  rows = 3,
   showValidation = true,
   language = "json",
   height,
