@@ -27,7 +27,7 @@ use tokio::task::spawn_blocking;
 use tokio::time::timeout;
 
 use crate::services::skill::{
-    DiscoverableSkill, MAX_ARCHIVE_DOWNLOAD_BYTES, MAX_ARCHIVE_TOTAL_BYTES, SkillRepo, SkillService,
+    DiscoverableSkill, SkillRepo, SkillService, MAX_ARCHIVE_DOWNLOAD_BYTES, MAX_ARCHIVE_TOTAL_BYTES,
 };
 
 // ========== 常量 ==========
@@ -157,7 +157,12 @@ impl LargeRepoBackend for GitBackend {
         Err(last_error.unwrap_or_else(|| anyhow!("所有候选分支 clone 失败")))
     }
 
-    async fn fetch_file(&self, repo: &SkillRepo, _branch: &str, file: &RepoFile) -> Result<Vec<u8>> {
+    async fn fetch_file(
+        &self,
+        repo: &SkillRepo,
+        _branch: &str,
+        file: &RepoFile,
+    ) -> Result<Vec<u8>> {
         let expected_key = format!("{}/{}", repo.owner, repo.name);
         let (repo_key, workdir) = {
             let guard = self.clone.lock().unwrap();
@@ -189,7 +194,13 @@ impl LargeRepoBackend for GitBackend {
 /// - `--branch=<b>` 等号形式 + 位置参数前 `--end-of-options`（git ≥2.24）
 /// - 应用配置了代理时传 `-c http.proxy` / `-c https.proxy`（无代理不传）
 /// - `GIT_TERMINAL_PROMPT=0` + `-c credential.helper=`：禁用凭据提示，防挂起/弹窗
-async fn clone_repo(git: &Path, base_url: &str, repo: &SkillRepo, branch: &str, dest: &Path) -> Result<()> {
+async fn clone_repo(
+    git: &Path,
+    base_url: &str,
+    repo: &SkillRepo,
+    branch: &str,
+    dest: &Path,
+) -> Result<()> {
     let url = format!("{base_url}/{}/{}.git", repo.owner, repo.name);
     let mut cmd = Command::new(git);
     cmd.arg("-c").arg("credential.helper=");
@@ -228,20 +239,23 @@ async fn clone_repo(git: &Path, base_url: &str, repo: &SkillRepo, branch: &str, 
 async fn run_git_ls_tree(git: &Path, workdir: &Path) -> Result<Vec<u8>> {
     let git = git.to_path_buf();
     let workdir = workdir.to_path_buf();
-    timeout(Duration::from_secs(30), spawn_blocking(move || {
-        let output = Command::new(&git)
-            .arg("ls-tree")
-            .arg("-r")
-            .arg("-l")
-            .arg("-z")
-            .arg("HEAD")
-            .current_dir(&workdir)
-            .output()?;
-        if !output.status.success() {
-            return Err(anyhow!("git ls-tree 失败"));
-        }
-        Ok(output.stdout)
-    }))
+    timeout(
+        Duration::from_secs(30),
+        spawn_blocking(move || {
+            let output = Command::new(&git)
+                .arg("ls-tree")
+                .arg("-r")
+                .arg("-l")
+                .arg("-z")
+                .arg("HEAD")
+                .current_dir(&workdir)
+                .output()?;
+            if !output.status.success() {
+                return Err(anyhow!("git ls-tree 失败"));
+            }
+            Ok(output.stdout)
+        }),
+    )
     .await
     .map_err(|_| anyhow!("git ls-tree 超时"))?
     .map_err(|e| anyhow!("git ls-tree 任务失败: {e}"))?
@@ -357,7 +371,10 @@ impl LargeRepoBackend for ApiBackend {
 
             let resp = match timeout(
                 Duration::from_secs(API_TIMEOUT_SECS),
-                self.client.get(url).header("User-Agent", "cc-switch").send(),
+                self.client
+                    .get(url)
+                    .header("User-Agent", "cc-switch")
+                    .send(),
             )
             .await
             {
@@ -381,7 +398,9 @@ impl LargeRepoBackend for ApiBackend {
                     let (files, truncated) =
                         parse_tree_api_response(&String::from_utf8_lossy(&body))?;
                     if truncated {
-                        return Err(anyhow!("tree 响应被截断（truncated=true），请回退 git 后端"));
+                        return Err(anyhow!(
+                            "tree 响应被截断（truncated=true），请回退 git 后端"
+                        ));
                     }
                     if files.len() > TREE_ENTRY_LIMIT {
                         return Err(anyhow!("tree 条目数超过上限"));
@@ -409,7 +428,10 @@ impl LargeRepoBackend for ApiBackend {
         }
         let resp = timeout(
             Duration::from_secs(API_TIMEOUT_SECS),
-            self.client.get(url).header("User-Agent", "cc-switch").send(),
+            self.client
+                .get(url)
+                .header("User-Agent", "cc-switch")
+                .send(),
         )
         .await
         .map_err(|_| anyhow!("raw 文件获取超时"))??;
@@ -725,14 +747,19 @@ pub async fn fetch_repo_size_kb(owner: &str, name: &str) -> Result<Option<u64>> 
     )
     .await
     {
-        Ok(Ok(resp)) if resp.status().is_success() => match resp.json::<serde_json::Value>().await {
-            Ok(json) => json.get("size").and_then(|v| v.as_u64()),
-            Err(_) => None,
-        },
+        Ok(Ok(resp)) if resp.status().is_success() => {
+            match resp.json::<serde_json::Value>().await {
+                Ok(json) => json.get("size").and_then(|v| v.as_u64()),
+                Err(_) => None,
+            }
+        }
         _ => None,
     };
     if let Some(size) = size {
-        SIZE_CACHE.lock().unwrap().insert(key, (Instant::now(), size));
+        SIZE_CACHE
+            .lock()
+            .unwrap()
+            .insert(key, (Instant::now(), size));
         Ok(Some(size))
     } else {
         Ok(None)
@@ -919,12 +946,15 @@ fn match_install_name<'a>(
     install_name: &str,
     repo_name: &str,
 ) -> Option<&'a str> {
-    skill_dirs.iter().find(|d| {
-        d.rsplit('/')
-            .next()
-            .is_some_and(|last| last.eq_ignore_ascii_case(install_name))
-            || (d.is_empty() && install_name.eq_ignore_ascii_case(repo_name))
-    }).map(|x| x.as_str())
+    skill_dirs
+        .iter()
+        .find(|d| {
+            d.rsplit('/')
+                .next()
+                .is_some_and(|last| last.eq_ignore_ascii_case(install_name))
+                || (d.is_empty() && install_name.eq_ignore_ascii_case(repo_name))
+        })
+        .map(|x| x.as_str())
 }
 
 /// 计算多个安装名的远端 blob 哈希（未匹配的安装名跳过）。
@@ -950,7 +980,9 @@ pub async fn skill_dir_hashes(
         let Some(dir) = match_install_name(&skill_dirs, name, &repo.name) else {
             continue;
         };
-        let Some(h) = dir_blob_hash(&files, dir) else { continue };
+        let Some(h) = dir_blob_hash(&files, dir) else {
+            continue;
+        };
         let key = if dir.is_empty() {
             repo.name.clone()
         } else {
@@ -1067,7 +1099,10 @@ mod tests {
             enabled: true,
         };
         // 配置分支 → main → master
-        assert_eq!(branch_candidates(&repo("dev")), vec!["dev", "main", "master"]);
+        assert_eq!(
+            branch_candidates(&repo("dev")),
+            vec!["dev", "main", "master"]
+        );
         // 配置分支就是 main：不重复
         assert_eq!(branch_candidates(&repo("main")), vec!["main", "master"]);
         // 配置分支就是 master：main 补在后面
@@ -1080,18 +1115,25 @@ mod tests {
     #[test]
     fn parse_ls_tree_output_parses_blobs_and_skips_trees() {
         let mut out = Vec::new();
-        out.extend_from_slice(b"100644 blob 3b18e512dba79e4c8300dd08aeb37f8e728b8dad 15\tREADME.md");
+        out.extend_from_slice(
+            b"100644 blob 3b18e512dba79e4c8300dd08aeb37f8e728b8dad 15\tREADME.md",
+        );
         out.push(0);
         out.extend_from_slice(b"040000 tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -\tdir");
         out.push(0);
-        out.extend_from_slice(b"100755 blob 9daeafb9864cf43055ae93beb0afd6c7d144bfa4 4\tscripts/run.sh");
+        out.extend_from_slice(
+            b"100755 blob 9daeafb9864cf43055ae93beb0afd6c7d144bfa4 4\tscripts/run.sh",
+        );
         out.push(0);
         let files = parse_ls_tree_output(&out).unwrap();
         assert_eq!(files.len(), 2);
         assert_eq!(files[0].path, "README.md");
         assert_eq!(files[0].mode, 0o100644);
         assert_eq!(files[0].size, 15);
-        assert_eq!(files[0].blob_sha, "3b18e512dba79e4c8300dd08aeb37f8e728b8dad");
+        assert_eq!(
+            files[0].blob_sha,
+            "3b18e512dba79e4c8300dd08aeb37f8e728b8dad"
+        );
         assert_eq!(files[1].path, "scripts/run.sh");
         assert_eq!(files[1].mode, 0o100755);
         assert_eq!(files[1].size, 4);
@@ -1148,13 +1190,38 @@ mod tests {
     #[test]
     fn filter_skill_md_paths_matches_exact_suffix() {
         let files = vec![
-            RepoFile { path: "SKILL.md".into(), blob_sha: "a".into(), size: 1, mode: 0o100644 },
-            RepoFile { path: "skills/foo/SKILL.md".into(), blob_sha: "b".into(), size: 1, mode: 0o100644 },
-            RepoFile { path: "skills/foo/README.md".into(), blob_sha: "c".into(), size: 1, mode: 0o100644 },
+            RepoFile {
+                path: "SKILL.md".into(),
+                blob_sha: "a".into(),
+                size: 1,
+                mode: 0o100644,
+            },
+            RepoFile {
+                path: "skills/foo/SKILL.md".into(),
+                blob_sha: "b".into(),
+                size: 1,
+                mode: 0o100644,
+            },
+            RepoFile {
+                path: "skills/foo/README.md".into(),
+                blob_sha: "c".into(),
+                size: 1,
+                mode: 0o100644,
+            },
             // 大小写敏感：skill.md 不匹配
-            RepoFile { path: "skills/foo/skill.md".into(), blob_sha: "d".into(), size: 1, mode: 0o100644 },
+            RepoFile {
+                path: "skills/foo/skill.md".into(),
+                blob_sha: "d".into(),
+                size: 1,
+                mode: 0o100644,
+            },
             // 非精确后缀：xSKILL.md 不匹配
-            RepoFile { path: "xSKILL.md".into(), blob_sha: "e".into(), size: 1, mode: 0o100644 },
+            RepoFile {
+                path: "xSKILL.md".into(),
+                blob_sha: "e".into(),
+                size: 1,
+                mode: 0o100644,
+            },
         ];
         let matched = filter_skill_md_paths(&files);
         let paths: Vec<&str> = matched.iter().map(|f| f.path.as_str()).collect();
@@ -1164,11 +1231,31 @@ mod tests {
     #[test]
     fn skill_dirs_from_tree_derives_parent_dirs_and_dedups() {
         let files = vec![
-            RepoFile { path: "SKILL.md".into(), blob_sha: "a".into(), size: 1, mode: 0o100644 },
-            RepoFile { path: "skills/foo/SKILL.md".into(), blob_sha: "b".into(), size: 1, mode: 0o100644 },
-            RepoFile { path: "skills/foo/helper.py".into(), blob_sha: "c".into(), size: 1, mode: 0o100644 },
+            RepoFile {
+                path: "SKILL.md".into(),
+                blob_sha: "a".into(),
+                size: 1,
+                mode: 0o100644,
+            },
+            RepoFile {
+                path: "skills/foo/SKILL.md".into(),
+                blob_sha: "b".into(),
+                size: 1,
+                mode: 0o100644,
+            },
+            RepoFile {
+                path: "skills/foo/helper.py".into(),
+                blob_sha: "c".into(),
+                size: 1,
+                mode: 0o100644,
+            },
             // 同一目录下的另一个 SKILL.md 不应产生重复目录
-            RepoFile { path: "skills/foo/docs/SKILL.md".into(), blob_sha: "d".into(), size: 1, mode: 0o100644 },
+            RepoFile {
+                path: "skills/foo/docs/SKILL.md".into(),
+                blob_sha: "d".into(),
+                size: 1,
+                mode: 0o100644,
+            },
         ];
         let mut dirs = skill_dirs_from_tree(&files);
         dirs.sort();
@@ -1213,30 +1300,68 @@ mod tests {
     #[test]
     fn dir_blob_hash_known_input() {
         let files = vec![
-            RepoFile { path: "d/b.txt".into(), blob_sha: "bbbb".into(), size: 1, mode: 0o100644 },
-            RepoFile { path: "d/a.txt".into(), blob_sha: "aaaa".into(), size: 1, mode: 0o100644 },
+            RepoFile {
+                path: "d/b.txt".into(),
+                blob_sha: "bbbb".into(),
+                size: 1,
+                mode: 0o100644,
+            },
+            RepoFile {
+                path: "d/a.txt".into(),
+                blob_sha: "aaaa".into(),
+                size: 1,
+                mode: 0o100644,
+            },
         ];
         let h = dir_blob_hash(&files, "d").unwrap();
         // 独立计算：SHA-256("a.txt\0aaaa\0b.txt\0bbbb\0")
-        assert_eq!(h, "83b218eff0b62707a78e62d34465ecdf2ac7b6cb19b13c6f194c53ae4dd02b56");
+        assert_eq!(
+            h,
+            "83b218eff0b62707a78e62d34465ecdf2ac7b6cb19b13c6f194c53ae4dd02b56"
+        );
     }
 
     #[test]
     fn dir_blob_hash_sort_order_independent() {
         let files_a = vec![
-            RepoFile { path: "d/b.txt".into(), blob_sha: "bbbb".into(), size: 1, mode: 0o100644 },
-            RepoFile { path: "d/a.txt".into(), blob_sha: "aaaa".into(), size: 1, mode: 0o100644 },
+            RepoFile {
+                path: "d/b.txt".into(),
+                blob_sha: "bbbb".into(),
+                size: 1,
+                mode: 0o100644,
+            },
+            RepoFile {
+                path: "d/a.txt".into(),
+                blob_sha: "aaaa".into(),
+                size: 1,
+                mode: 0o100644,
+            },
         ];
         let files_b = vec![
-            RepoFile { path: "d/a.txt".into(), blob_sha: "aaaa".into(), size: 1, mode: 0o100644 },
-            RepoFile { path: "d/b.txt".into(), blob_sha: "bbbb".into(), size: 1, mode: 0o100644 },
+            RepoFile {
+                path: "d/a.txt".into(),
+                blob_sha: "aaaa".into(),
+                size: 1,
+                mode: 0o100644,
+            },
+            RepoFile {
+                path: "d/b.txt".into(),
+                blob_sha: "bbbb".into(),
+                size: 1,
+                mode: 0o100644,
+            },
         ];
         assert_eq!(dir_blob_hash(&files_a, "d"), dir_blob_hash(&files_b, "d"));
     }
 
     #[test]
     fn dir_blob_hash_none_for_missing_dir() {
-        let files = vec![RepoFile { path: "d/a.txt".into(), blob_sha: "a".into(), size: 1, mode: 0o100644 }];
+        let files = vec![RepoFile {
+            path: "d/a.txt".into(),
+            blob_sha: "a".into(),
+            size: 1,
+            mode: 0o100644,
+        }];
         assert!(dir_blob_hash(&files, "missing").is_none());
         // 目录存在但无文件（空清单）→ None
         assert!(dir_blob_hash(&[], "").is_none());
@@ -1247,31 +1372,63 @@ mod tests {
     #[test]
     fn dir_blob_hash_case_insensitive_dir_match() {
         let files = vec![
-            RepoFile { path: "Skills/Foo/SKILL.md".into(), blob_sha: "s".into(), size: 1, mode: 0o100644 },
-            RepoFile { path: "Skills/Foo/scripts/x.py".into(), blob_sha: "x".into(), size: 1, mode: 0o100644 },
+            RepoFile {
+                path: "Skills/Foo/SKILL.md".into(),
+                blob_sha: "s".into(),
+                size: 1,
+                mode: 0o100644,
+            },
+            RepoFile {
+                path: "Skills/Foo/scripts/x.py".into(),
+                blob_sha: "x".into(),
+                size: 1,
+                mode: 0o100644,
+            },
         ];
         let h = dir_blob_hash(&files, "skills/foo").unwrap();
         // rel path 用真实路径：SHA-256("SKILL.md\0s\0scripts/x.py\0x\0")
-        assert_eq!(h, "576f410eeb559e6107c7f1f2279e553301347c841beb5ab52134633a4bb811ab");
+        assert_eq!(
+            h,
+            "576f410eeb559e6107c7f1f2279e553301347c841beb5ab52134633a4bb811ab"
+        );
     }
 
     #[test]
     fn dir_blob_hash_filters_submodules() {
         let files = vec![
-            RepoFile { path: "d/a.txt".into(), blob_sha: "a".into(), size: 1, mode: 0o100644 },
-            RepoFile { path: "d/sub".into(), blob_sha: "s".into(), size: 1, mode: 0o160000 },
+            RepoFile {
+                path: "d/a.txt".into(),
+                blob_sha: "a".into(),
+                size: 1,
+                mode: 0o100644,
+            },
+            RepoFile {
+                path: "d/sub".into(),
+                blob_sha: "s".into(),
+                size: 1,
+                mode: 0o160000,
+            },
         ];
         let h = dir_blob_hash(&files, "d").unwrap();
         // SHA-256("a.txt\0a\0")
-        assert_eq!(h, "db57b2cfc22ddf1949369bc3220597ec48f5f1a3c5181925552aee84d2a45fac");
+        assert_eq!(
+            h,
+            "db57b2cfc22ddf1949369bc3220597ec48f5f1a3c5181925552aee84d2a45fac"
+        );
     }
 
     #[test]
     fn git_blob_sha_matches_git_hash_object() {
         // SHA-1("blob 4\0test")，与 git hash-object 输出一致
-        assert_eq!(git_blob_sha(b"test"), "30d74d258442c7c65512eafab474568dd706c430");
+        assert_eq!(
+            git_blob_sha(b"test"),
+            "30d74d258442c7c65512eafab474568dd706c430"
+        );
         // 空 blob：SHA-1("blob 0\0")
-        assert_eq!(git_blob_sha(b""), "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391");
+        assert_eq!(
+            git_blob_sha(b""),
+            "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+        );
     }
 
     #[test]
@@ -1287,9 +1444,24 @@ mod tests {
 
         // 等价 RepoFile 列表（根目录 ""）
         let files = vec![
-            RepoFile { path: ".hidden".into(), blob_sha: git_blob_sha(b"secret"), size: 6, mode: 0o100644 },
-            RepoFile { path: "b.txt".into(), blob_sha: git_blob_sha(b"hello"), size: 5, mode: 0o100644 },
-            RepoFile { path: "sub/a.txt".into(), blob_sha: git_blob_sha(b"world"), size: 5, mode: 0o100644 },
+            RepoFile {
+                path: ".hidden".into(),
+                blob_sha: git_blob_sha(b"secret"),
+                size: 6,
+                mode: 0o100644,
+            },
+            RepoFile {
+                path: "b.txt".into(),
+                blob_sha: git_blob_sha(b"hello"),
+                size: 5,
+                mode: 0o100644,
+            },
+            RepoFile {
+                path: "sub/a.txt".into(),
+                blob_sha: git_blob_sha(b"world"),
+                size: 5,
+                mode: 0o100644,
+            },
         ];
         let remote = dir_blob_hash(&files, "").unwrap();
         assert_eq!(local, remote);
@@ -1297,9 +1469,24 @@ mod tests {
         // SHA-256 方案：每个文件用 SHA-256("blob <size>\0<content>")
         let local256 = compute_local_blob_hash(dir.path(), BlobHashScheme::Sha256).unwrap();
         let files256 = vec![
-            RepoFile { path: ".hidden".into(), blob_sha: git_blob_sha256(b"secret"), size: 6, mode: 0o100644 },
-            RepoFile { path: "b.txt".into(), blob_sha: git_blob_sha256(b"hello"), size: 5, mode: 0o100644 },
-            RepoFile { path: "sub/a.txt".into(), blob_sha: git_blob_sha256(b"world"), size: 5, mode: 0o100644 },
+            RepoFile {
+                path: ".hidden".into(),
+                blob_sha: git_blob_sha256(b"secret"),
+                size: 6,
+                mode: 0o100644,
+            },
+            RepoFile {
+                path: "b.txt".into(),
+                blob_sha: git_blob_sha256(b"hello"),
+                size: 5,
+                mode: 0o100644,
+            },
+            RepoFile {
+                path: "sub/a.txt".into(),
+                blob_sha: git_blob_sha256(b"world"),
+                size: 5,
+                mode: 0o100644,
+            },
         ];
         assert_eq!(local256, dir_blob_hash(&files256, "").unwrap());
     }
@@ -1421,7 +1608,11 @@ mod tests {
             "---\nname: Skill A\ndescription: Skill A description\n---\n# A\n",
         )
         .unwrap();
-        fs::write(repo_dir.join("skills/skill-a/helper.py"), "print('hello')\n").unwrap();
+        fs::write(
+            repo_dir.join("skills/skill-a/helper.py"),
+            "print('hello')\n",
+        )
+        .unwrap();
         fs::create_dir_all(repo_dir.join("skills/skill-b/data")).unwrap();
         fs::write(
             repo_dir.join("skills/skill-b/SKILL.md"),
@@ -1443,7 +1634,11 @@ mod tests {
 
     /// 执行 git 命令并断言成功
     fn run_git(git: &Path, cwd: &Path, args: &[&str]) {
-        let output = Command::new(git).args(args).current_dir(cwd).output().unwrap();
+        let output = Command::new(git)
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .unwrap();
         assert!(
             output.status.success(),
             "git {args:?} 失败: {}",
@@ -1610,7 +1805,11 @@ mod tests {
     }
 
     /// 处理单个 HTTP 连接：读请求头 → 路由 → 响应
-    fn handle_http(mut stream: TcpStream, repo_root: &Path, tree_json: &str) -> std::io::Result<()> {
+    fn handle_http(
+        mut stream: TcpStream,
+        repo_root: &Path,
+        tree_json: &str,
+    ) -> std::io::Result<()> {
         let mut buf = Vec::new();
         let mut tmp = [0u8; 4096];
         loop {
@@ -1770,7 +1969,10 @@ mod tests {
             skill_a.readme_url.as_deref(),
             Some("https://github.com/test-owner/fixture-repo/blob/main/skills/skill-a/SKILL.md")
         );
-        let root_skill = skills.iter().find(|s| s.directory == "fixture-repo").unwrap();
+        let root_skill = skills
+            .iter()
+            .find(|s| s.directory == "fixture-repo")
+            .unwrap();
         assert_eq!(root_skill.name, "Root Skill");
         assert_eq!(
             root_skill.readme_url.as_deref(),
@@ -1790,7 +1992,9 @@ mod tests {
             "skill-b".to_string(),
             ".hidden".to_string(),
         ];
-        let hashes = skill_dir_hashes(&backend, &repo, &install_names).await.unwrap();
+        let hashes = skill_dir_hashes(&backend, &repo, &install_names)
+            .await
+            .unwrap();
         assert_eq!(hashes.len(), 3);
         for (dir, hash) in &hashes {
             assert!(
@@ -1800,8 +2004,7 @@ mod tests {
             // 返回的目录键是仓库相对路径（嵌套目录原样返回）
             assert!(dir.starts_with("skills/") || dir == ".hidden", "{dir}");
             // 与本地 compute_local_blob_hash 一致（同一 fixture 内容）
-            let local =
-                compute_local_blob_hash(&repo_dir.join(dir), BlobHashScheme::Sha1).unwrap();
+            let local = compute_local_blob_hash(&repo_dir.join(dir), BlobHashScheme::Sha1).unwrap();
             assert_eq!(hash, &format!("{BLOB_SHA1_PREFIX}{local}"));
         }
     }
@@ -1837,10 +2040,9 @@ mod tests {
         let backend = git_backend_for(&git, &root);
         let repo = fixture_repo();
         // 根级 skill 的 directory 是仓库名哨兵，应解析为 tree 根
-        let (temp_dir, used_branch, scheme) =
-            materialize_skill_dir(&backend, &repo, FIXTURE_NAME)
-                .await
-                .unwrap();
+        let (temp_dir, used_branch, scheme) = materialize_skill_dir(&backend, &repo, FIXTURE_NAME)
+            .await
+            .unwrap();
         assert_eq!(used_branch, FIXTURE_BRANCH);
         assert_eq!(scheme, BlobHashScheme::Sha1);
         // 仓库根与嵌套目录都物化（根级 skill 的范围是整仓）
@@ -1938,7 +2140,9 @@ mod tests {
             "skill-b".to_string(),
             ".hidden".to_string(),
         ];
-        let hashes = skill_dir_hashes(&backend, &repo, &install_names).await.unwrap();
+        let hashes = skill_dir_hashes(&backend, &repo, &install_names)
+            .await
+            .unwrap();
         assert_eq!(hashes.len(), 3);
         for (dir, hash) in &hashes {
             assert!(
@@ -1947,8 +2151,7 @@ mod tests {
             );
             // 返回的目录键是仓库相对路径（嵌套目录原样返回）
             assert!(dir.starts_with("skills/") || dir == ".hidden", "{dir}");
-            let local =
-                compute_local_blob_hash(&repo_dir.join(dir), BlobHashScheme::Sha1).unwrap();
+            let local = compute_local_blob_hash(&repo_dir.join(dir), BlobHashScheme::Sha1).unwrap();
             assert_eq!(hash, &format!("{BLOB_SHA1_PREFIX}{local}"));
         }
     }
@@ -1982,10 +2185,9 @@ mod tests {
         let backend = ApiBackend::with_bases(&server.api_base(), &server.raw_base());
         let repo = fixture_repo();
         // 根级 skill 的 directory 是仓库名哨兵，应解析为 tree 根
-        let (temp_dir, used_branch, scheme) =
-            materialize_skill_dir(&backend, &repo, FIXTURE_NAME)
-                .await
-                .unwrap();
+        let (temp_dir, used_branch, scheme) = materialize_skill_dir(&backend, &repo, FIXTURE_NAME)
+            .await
+            .unwrap();
         assert_eq!(used_branch, FIXTURE_BRANCH);
         assert_eq!(scheme, BlobHashScheme::Sha1);
         assert_eq!(
@@ -2039,8 +2241,12 @@ mod tests {
             "skill-b".to_string(),
             ".hidden".to_string(),
         ];
-        let git_hashes = skill_dir_hashes(&git_backend, &repo, &install_names).await.unwrap();
-        let api_hashes = skill_dir_hashes(&api_backend, &repo, &install_names).await.unwrap();
+        let git_hashes = skill_dir_hashes(&git_backend, &repo, &install_names)
+            .await
+            .unwrap();
+        let api_hashes = skill_dir_hashes(&api_backend, &repo, &install_names)
+            .await
+            .unwrap();
         assert_eq!(git_hashes, api_hashes);
 
         // 4. materialize_skill_dir 内容一致（逐字节）

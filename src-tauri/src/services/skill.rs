@@ -700,7 +700,9 @@ impl SkillService {
             };
 
             // 大仓库判定：size 超过 32MB，或 size 探测失败（限流/阻断）时走 git CLI / GitHub REST API 路径
-            let size_kb = fetch_repo_size_kb(&repo.owner, &repo.name).await.unwrap_or(None);
+            let size_kb = fetch_repo_size_kb(&repo.owner, &repo.name)
+                .await
+                .unwrap_or(None);
             let (temp_guard, used_branch, scheme) = if !should_use_large_repo_path(size_kb) {
                 // 旧路径：ZIP 下载
                 let (temp_guard, used_branch) = timeout(
@@ -1125,11 +1127,7 @@ impl SkillService {
                         break;
                     }
                     Ok(Err(e)) => {
-                        log::warn!(
-                            "检查更新时大仓库路径失败（{}/{}）: {e:#}",
-                            owner,
-                            name
-                        );
+                        log::warn!("检查更新时大仓库路径失败（{}/{}）: {e:#}", owner, name);
                         last_error = Some(e);
                     }
                     Err(_) => {
@@ -1151,8 +1149,7 @@ impl SkillService {
                             continue;
                         };
                         // 双向对齐：远端 blob 方案 → 本地重算成 blob 方案
-                        let local_hash =
-                            Self::align_local_hash(db, skill, &ssot_dir, remote_hash);
+                        let local_hash = Self::align_local_hash(db, skill, &ssot_dir, remote_hash);
                         if local_hash.as_deref() != Some(remote_hash.as_str()) {
                             updates.push(SkillUpdateInfo {
                                 id: skill.id.clone(),
@@ -1207,22 +1204,18 @@ impl SkillService {
         updates: &mut Vec<SkillUpdateInfo>,
     ) -> bool {
         // 下载仓库 ZIP
-        let (temp_guard, _used_branch) = match timeout(
-            std::time::Duration::from_secs(60),
-            self.download_repo(repo),
-        )
-        .await
-        {
-            Ok(Ok(result)) => result,
-            Ok(Err(e)) => {
-                log::warn!("检查更新时下载 {}/{} 失败: {e}", owner, name);
-                return false;
-            }
-            Err(_) => {
-                log::warn!("检查更新时下载 {}/{} 超时", owner, name);
-                return false;
-            }
-        };
+        let (temp_guard, _used_branch) =
+            match timeout(std::time::Duration::from_secs(60), self.download_repo(repo)).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(e)) => {
+                    log::warn!("检查更新时下载 {}/{} 失败: {e}", owner, name);
+                    return false;
+                }
+                Err(_) => {
+                    log::warn!("检查更新时下载 {}/{} 超时", owner, name);
+                    return false;
+                }
+            };
         let temp_dir = temp_guard.path();
 
         // 扫描仓库中的所有 Skill 目录
@@ -1233,8 +1226,7 @@ impl SkillService {
             // 在远程仓库中找到匹配的 Skill 目录
             let remote_match = remote_skills.iter().find(|rs| {
                 // 匹配方式：安装名称的最后一段
-                let remote_install_name =
-                    rs.directory.rsplit('/').next().unwrap_or(&rs.directory);
+                let remote_install_name = rs.directory.rsplit('/').next().unwrap_or(&rs.directory);
                 remote_install_name.eq_ignore_ascii_case(&skill.directory)
             });
 
@@ -1343,8 +1335,7 @@ impl SkillService {
             } else {
                 BlobHashScheme::Sha256
             };
-            compute_local_blob_hash(&local_dir, blob_scheme)
-                .map(|h| format!("{remote_scheme}{h}"))
+            compute_local_blob_hash(&local_dir, blob_scheme).map(|h| format!("{remote_scheme}{h}"))
         };
 
         match recomputed {
@@ -2447,7 +2438,9 @@ impl SkillService {
     /// 从仓库获取技能列表
     async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
         // 大仓库判定：size 超过 32MB，或 size 探测失败（限流/阻断）时走 git CLI / GitHub REST API 路径
-        let size_kb = fetch_repo_size_kb(&repo.owner, &repo.name).await.unwrap_or(None);
+        let size_kb = fetch_repo_size_kb(&repo.owner, &repo.name)
+            .await
+            .unwrap_or(None);
         if !should_use_large_repo_path(size_kb) {
             // 旧路径：ZIP 下载 + 扫描
             let (temp_guard, resolved_branch) =
