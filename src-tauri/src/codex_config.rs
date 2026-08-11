@@ -1899,22 +1899,28 @@ fn codex_official_vendor_catalog_models(
     None
 }
 
-/// Build one catalog entry from an official vendor catalog: match the user's
-/// model id against the vendor entries by slug; an unknown id clones the
-/// vendor's first (flagship) entry so it keeps the gateway's capability
-/// profile without impersonating the flagship. The official entry is
-/// authoritative — no tool-profile stripping — but explicit per-row user
-/// overrides still win.
+/// Build one catalog entry from an official vendor catalog. `template_model`
+/// selects the vendor row whose capabilities should be cloned; normal provider
+/// catalogs omit it and match `spec.model`, while aggregate aliases pass their
+/// actual upstream model. An unknown id clones the vendor's first (flagship)
+/// entry. The public identity always comes from `spec`, and explicit per-row
+/// user overrides still win.
 fn codex_vendor_catalog_model_entry(
     vendor_models: &[Value],
     spec: &CodexCatalogModelSpec,
     priority: usize,
+    template_model: Option<&str>,
 ) -> Value {
+    let preserve_public_identity = template_model.is_some();
+    let template_model = template_model
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .unwrap_or(&spec.model);
     let matched = vendor_models.iter().find(|entry| {
         entry
             .get("slug")
             .and_then(|slug| slug.as_str())
-            .is_some_and(|slug| slug.eq_ignore_ascii_case(&spec.model))
+            .is_some_and(|slug| slug.eq_ignore_ascii_case(template_model))
     });
     let mut entry = match matched {
         Some(found) => found.clone(),
@@ -1924,7 +1930,7 @@ fn codex_vendor_catalog_model_entry(
         return json!({});
     };
 
-    if matched.is_none() {
+    if matched.is_none() || preserve_public_identity {
         let display_name = spec.display_name.as_deref().unwrap_or(&spec.model);
         entry_obj.insert("slug".to_string(), json!(spec.model));
         entry_obj.insert("display_name".to_string(), json!(display_name));
@@ -2070,8 +2076,6 @@ pub(crate) fn codex_custom_catalog_entries(
     }
     let native_template = load_codex_native_responses_template();
     let mut proxy_chat_template = None;
-    let default_context_window =
-        extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
     let mut catalog_entries = Vec::with_capacity(entries.len());
 
     for (index, entry) in entries.iter().enumerate() {
@@ -2093,17 +2097,18 @@ pub(crate) fn codex_custom_catalog_entries(
             .as_ref()
             .map(crate::proxy::providers::resolve_codex_catalog_tool_profile)
             .unwrap_or(fallback_profile);
-        let template = match profile {
-            CodexCatalogToolProfile::ProxyChat => {
-                if proxy_chat_template.is_none() {
-                    proxy_chat_template = Some(load_codex_model_catalog_template()?);
-                }
-                proxy_chat_template
-                    .as_ref()
-                    .expect("ProxyChat template initialized")
-            }
-            CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
-                &native_template
+        let bound_config_text = bound_provider.as_ref().and_then(|provider| {
+            provider
+                .settings_config
+                .get("config")
+                .and_then(Value::as_str)
+        });
+        let default_context_window = match bound_provider.as_ref() {
+            Some(_) => bound_config_text
+                .and_then(|text| extract_codex_top_level_u64(text, "model_context_window"))
+                .unwrap_or(128_000),
+            None => {
+                extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000)
             }
         };
         let provider_default_model = bound_provider
@@ -2135,6 +2140,31 @@ pub(crate) fn codex_custom_catalog_entries(
                 })
             }),
             base_instructions: entry.base_instructions.clone(),
+        };
+        if let Some(vendor_models) =
+            bound_config_text.and_then(|text| codex_official_vendor_catalog_models(text, profile))
+        {
+            catalog_entries.push(codex_vendor_catalog_model_entry(
+                &vendor_models,
+                &spec,
+                index,
+                capability_model,
+            ));
+            continue;
+        }
+
+        let template = match profile {
+            CodexCatalogToolProfile::ProxyChat => {
+                if proxy_chat_template.is_none() {
+                    proxy_chat_template = Some(load_codex_model_catalog_template()?);
+                }
+                proxy_chat_template
+                    .as_ref()
+                    .expect("ProxyChat template initialized")
+            }
+            CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
+                &native_template
+            }
         };
         catalog_entries.push(codex_catalog_model_entry(
             template,
@@ -2188,7 +2218,9 @@ fn codex_model_catalog_from_settings(
         let entries: Vec<Value> = specs
             .iter()
             .enumerate()
-            .map(|(index, spec)| codex_vendor_catalog_model_entry(&vendor_models, spec, index))
+            .map(|(index, spec)| {
+                codex_vendor_catalog_model_entry(&vendor_models, spec, index, None)
+            })
             .collect();
         return Ok(Some(json!({ "models": entries })));
     }
@@ -4600,6 +4632,160 @@ base_url = "https://production.api/v1"
             entries[1].get("apply_patch_tool_type").is_none(),
             "a native Responses route must suppress freeform apply_patch"
         );
+    }
+
+    #[test]
+    fn aggregate_catalog_preserves_bound_providers_official_vendor_capabilities() {
+        let mut provider = Provider::with_id(
+            "deepseek-provider".to_string(),
+            "DeepSeek Provider".to_string(),
+            json!({
+                "apiFormat": "openai_responses",
+                "model": "deepseek-v4-pro",
+                "config": DEEPSEEK_NATIVE_CONFIG
+            }),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("openai_responses".to_string()),
+            ..Default::default()
+        });
+        let settings = json!({
+            "codexCustomModels": [{
+                "model": "gpt-5.2",
+                "providerId": "deepseek-provider",
+                "upstreamModel": "deepseek-v4-pro"
+            }]
+        });
+        let resolve_provider =
+            |provider_id: &str| (provider_id == provider.id).then(|| provider.clone());
+
+        let entries = codex_custom_catalog_entries(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+            Some(&resolve_provider),
+        )
+        .expect("build aggregate catalog entries");
+
+        let entry = &entries[0];
+        assert_eq!(entry.get("slug"), Some(&json!("gpt-5.2")));
+        assert_eq!(entry.get("display_name"), Some(&json!("gpt-5.2")));
+        assert_eq!(entry.get("apply_patch_tool_type"), Some(&json!("freeform")));
+        assert!(entry
+            .get("base_instructions")
+            .and_then(Value::as_str)
+            .is_some_and(|text| text.starts_with("You are Codex, an agent based on GPT-5")));
+        assert_eq!(entry.get("context_window"), Some(&json!(1_048_576)));
+    }
+
+    #[test]
+    fn aggregate_vendor_catalog_preserves_case_sensitive_public_slot_identity() {
+        let mut provider = Provider::with_id(
+            "deepseek-provider".to_string(),
+            "DeepSeek Provider".to_string(),
+            json!({
+                "apiFormat": "openai_responses",
+                "model": "deepseek-v4-pro",
+                "config": DEEPSEEK_NATIVE_CONFIG
+            }),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("openai_responses".to_string()),
+            ..Default::default()
+        });
+        let settings = json!({
+            "codexCustomModels": [{
+                "model": "DEEPSEEK-V4-PRO",
+                "providerId": "deepseek-provider"
+            }]
+        });
+        let resolve_provider =
+            |provider_id: &str| (provider_id == provider.id).then(|| provider.clone());
+
+        let entries = codex_custom_catalog_entries(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+            Some(&resolve_provider),
+        )
+        .expect("build aggregate catalog entries");
+
+        assert_eq!(entries[0].get("slug"), Some(&json!("DEEPSEEK-V4-PRO")));
+        assert_eq!(
+            entries[0].get("display_name"),
+            Some(&json!("DEEPSEEK-V4-PRO"))
+        );
+    }
+
+    #[test]
+    fn vendor_catalog_alias_selects_template_by_upstream_model() {
+        let vendor_models = vec![
+            json!({
+                "slug": "vendor-flash",
+                "display_name": "Vendor Flash",
+                "description": "Vendor Flash",
+                "vendor_capability": "flash"
+            }),
+            json!({
+                "slug": "vendor-pro",
+                "display_name": "Vendor Pro",
+                "description": "Vendor Pro",
+                "vendor_capability": "pro"
+            }),
+        ];
+        let spec = CodexCatalogModelSpec {
+            model: "gpt-5.2".to_string(),
+            display_name: None,
+            context_window: None,
+            supports_parallel_tool_calls: None,
+            input_modalities: None,
+            base_instructions: None,
+        };
+
+        let entry = codex_vendor_catalog_model_entry(&vendor_models, &spec, 0, Some("vendor-pro"));
+
+        assert_eq!(entry.get("slug"), Some(&json!("gpt-5.2")));
+        assert_eq!(entry.get("vendor_capability"), Some(&json!("pro")));
+    }
+
+    #[test]
+    fn aggregate_catalog_uses_bound_providers_default_context_window() {
+        let mut provider = Provider::with_id(
+            "native-provider".to_string(),
+            "Native Provider".to_string(),
+            json!({
+                "apiFormat": "openai_responses",
+                "model": "native-model",
+                "config": "model = \"native-model\"\nmodel_context_window = 262144\n"
+            }),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("openai_responses".to_string()),
+            ..Default::default()
+        });
+        let settings = json!({
+            "codexCustomModels": [{
+                "model": "gpt-5.2",
+                "providerId": "native-provider",
+                "upstreamModel": "native-model"
+            }]
+        });
+        let resolve_provider =
+            |provider_id: &str| (provider_id == provider.id).then(|| provider.clone());
+
+        let entries = codex_custom_catalog_entries(
+            &settings,
+            "model_context_window = 999999\n",
+            CodexCatalogToolProfile::NativeResponses,
+            Some(&resolve_provider),
+        )
+        .expect("build aggregate catalog entries");
+
+        assert_eq!(entries[0].get("context_window"), Some(&json!(262_144)));
+        assert_eq!(entries[0].get("max_context_window"), Some(&json!(262_144)));
     }
 
     #[test]
