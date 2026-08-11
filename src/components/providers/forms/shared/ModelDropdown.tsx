@@ -56,7 +56,11 @@ export function ModelDropdown({
         collisionPadding={8}
         className="z-[200] w-72 p-0"
       >
-        <Command>
+        <Command
+          label={t("providerForm.searchModelPlaceholder", {
+            defaultValue: "Search models...",
+          })}
+        >
           <CommandInput
             placeholder={t("providerForm.searchModelPlaceholder", {
               defaultValue: "Search models...",
