@@ -601,11 +601,15 @@ fn handle_provider_click(
     if let Some(app_state) = app.try_state::<AppState>() {
         let app_type_str = app_type.as_str();
 
-        // 获取当前 proxy 状态，保持 enabled 不变，只关闭 auto_failover
-        let (proxy_enabled, _) = app_state.db.get_proxy_flags_sync(app_type_str);
+        // 获取当前 proxy 状态。手动切换供应商不应改变用户配置的
+        // auto_failover_enabled；故障转移队列和托盘 provider 切换是两个独立操作。
+        let (proxy_enabled, auto_failover_enabled) =
+            app_state.db.get_proxy_flags_sync(app_type_str);
+        // Persist the pair before switching. The synchronous setter also refreshes
+        // updated_at, so this intentionally is not removed as a no-op write.
         app_state
             .db
-            .set_proxy_flags_sync(app_type_str, proxy_enabled, false)?;
+            .set_proxy_flags_sync(app_type_str, proxy_enabled, auto_failover_enabled)?;
 
         // 切换供应商。需要本地路由的供应商也不在这里自动启动代理，
         // 由用户在页面/设置中手动开启。
@@ -622,7 +626,7 @@ fn handle_provider_click(
         let event_data = serde_json::json!({
             "appType": app_type_str,
             "proxyEnabled": proxy_enabled,
-            "autoFailoverEnabled": false,
+            "autoFailoverEnabled": auto_failover_enabled,
             "providerId": provider_id
         });
         if let Err(e) = app.emit("proxy-flags-changed", event_data.clone()) {

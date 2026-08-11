@@ -7,7 +7,7 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -33,7 +33,7 @@ impl ProviderRouter {
     ///
     /// 返回按优先级排序的可用供应商列表：
     /// - 故障转移关闭时：仅返回当前供应商
-    /// - 故障转移开启时：仅使用故障转移队列，按队列顺序依次尝试（P1 → P2 → ...）
+    /// - 故障转移开启时：当前供应商优先，其后按故障转移队列顺序依次尝试
     pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
         let mut result = Vec::new();
         let mut total_providers = 0usize;
@@ -49,20 +49,46 @@ impl ProviderRouter {
         };
 
         if auto_failover_enabled {
-            // 故障转移开启：仅按队列顺序依次尝试（P1 → P2 → ...）
+            // 故障转移开启：先尝试当前供应商，再按队列顺序依次回退。
+            // 托盘切换不会修改故障转移队列，因此当前供应商可能不在队列中。
             let all_providers = self.db.get_all_providers(app_type)?;
 
             // 使用 DAO 返回的排序结果，确保和前端展示一致
-            let ordered_ids: Vec<String> = self
+            let queued_ids: Vec<String> = self
                 .db
                 .get_failover_queue(app_type)?
                 .into_iter()
                 .map(|item| item.provider_id)
                 .collect();
 
-            total_providers = ordered_ids.len();
+            let current_id = AppType::from_str(app_type)
+                .ok()
+                .and_then(|app_enum| {
+                    crate::settings::get_effective_current_provider(&self.db, &app_enum)
+                        .ok()
+                        .flatten()
+                })
+                .or_else(|| self.db.get_current_provider(app_type).ok().flatten());
 
-            for provider_id in ordered_ids {
+            let mut candidate_ids = Vec::with_capacity(queued_ids.len() + 1);
+            let mut seen_provider_ids = HashSet::with_capacity(queued_ids.len() + 1);
+
+            if let Some(current_id) = current_id {
+                if all_providers.contains_key(&current_id) {
+                    seen_provider_ids.insert(current_id.clone());
+                    candidate_ids.push(current_id);
+                }
+            }
+
+            for provider_id in queued_ids {
+                if seen_provider_ids.insert(provider_id.clone()) {
+                    candidate_ids.push(provider_id);
+                }
+            }
+
+            total_providers = candidate_ids.len();
+
+            for provider_id in candidate_ids {
                 let Some(provider) = all_providers.get(&provider_id).cloned() else {
                     continue;
                 };
@@ -362,7 +388,7 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn test_failover_enabled_uses_queue_order_ignoring_current() {
+    async fn test_failover_enabled_uses_current_before_queue_and_deduplicates_it() {
         let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
 
@@ -390,14 +416,14 @@ mod tests {
         let providers = router.select_providers("claude").await.unwrap();
 
         assert_eq!(providers.len(), 2);
-        // 故障转移开启时：仅按队列顺序选择（忽略当前供应商）
-        assert_eq!(providers[0].id, "b");
-        assert_eq!(providers[1].id, "a");
+        // 当前供应商优先，即使它在队列的较后位置，也不能被重复尝试。
+        assert_eq!(providers[0].id, "a");
+        assert_eq!(providers[1].id, "b");
     }
 
     #[tokio::test]
     #[serial]
-    async fn test_failover_enabled_uses_queue_only_even_if_current_not_in_queue() {
+    async fn test_failover_enabled_uses_current_before_queue_when_not_in_queue() {
         let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
 
@@ -419,6 +445,46 @@ mod tests {
         db.update_proxy_config_for_app(config).await.unwrap();
 
         let router = ProviderRouter::new(db.clone());
+        let providers = router.select_providers("claude").await.unwrap();
+
+        assert_eq!(providers.len(), 2);
+        assert_eq!(providers[0].id, "a");
+        assert_eq!(providers[1].id, "b");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_failover_enabled_skips_circuit_open_current_and_uses_queue() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let provider_a =
+            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
+        let provider_b =
+            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
+
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("claude", &provider_b).unwrap();
+        db.set_current_provider("claude", "a").unwrap();
+        db.add_to_failover_queue("claude", "b").unwrap();
+
+        db.update_circuit_breaker_config(&CircuitBreakerConfig {
+            failure_threshold: 1,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+        router
+            .record_result("a", "claude", false, false, Some("fail".to_string()))
+            .await
+            .unwrap();
+
         let providers = router.select_providers("claude").await.unwrap();
 
         assert_eq!(providers.len(), 1);
