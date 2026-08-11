@@ -5,7 +5,9 @@ use serde_json::Value;
 
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::utils::{parse_timestamp_to_ms, path_basename, truncate_summary};
+use super::utils::{
+    parse_timestamp_to_ms, path_basename, truncate_message_content, truncate_summary,
+};
 
 const PROVIDER_ID: &str = "opencode";
 
@@ -216,7 +218,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
         .into_iter()
         .map(|(ts, _, role, content)| SessionMessage {
             role,
-            content,
+            content: truncate_message_content(content),
             ts: if ts > 0 { Some(ts) } else { None },
         })
         .collect();
@@ -305,7 +307,7 @@ pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String>
 
         messages.push(SessionMessage {
             role,
-            content,
+            content: truncate_message_content(content),
             ts: Some(ts),
         });
     }

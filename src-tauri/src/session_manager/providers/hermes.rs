@@ -9,7 +9,8 @@ use crate::hermes_config::get_hermes_dir;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, read_head_tail_lines, truncate_summary, TITLE_MAX_CHARS,
+    extract_text, parse_timestamp_to_ms, read_head_tail_lines, truncate_message_content,
+    truncate_summary, TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "hermes";
@@ -221,7 +222,7 @@ pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String>
         let ts_ms = ts.and_then(|v| parse_timestamp_to_ms(&Value::Number(v.into())));
         messages.push(SessionMessage {
             role,
-            content,
+            content: truncate_message_content(content),
             ts: ts_ms,
         });
     }
@@ -478,7 +479,11 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
         }
 
         let ts = ts_val.and_then(parse_timestamp_to_ms);
-        messages.push(SessionMessage { role, content, ts });
+        messages.push(SessionMessage {
+            role,
+            content: truncate_message_content(content),
+            ts,
+        });
     }
 
     Ok(messages)

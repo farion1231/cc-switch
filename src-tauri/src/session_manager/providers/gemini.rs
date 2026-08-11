@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::utils::{parse_timestamp_to_ms, truncate_summary};
+use super::utils::{parse_timestamp_to_ms, truncate_message_content, truncate_summary};
 
 const PROVIDER_ID: &str = "gemini";
 
@@ -104,7 +104,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 
         result.push(SessionMessage {
             role: role.to_string(),
-            content,
+            content: truncate_message_content(content),
             ts,
         });
     }
