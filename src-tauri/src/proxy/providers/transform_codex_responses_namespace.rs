@@ -428,6 +428,33 @@ fn restore_sse_block(block: &str, map: &HashMap<String, NamespacedName>) -> Byte
     Bytes::from(out)
 }
 
+/// Strip `namespace` from every object in the `input` array of a native
+/// Responses request body.
+///
+/// Codex 0.142+ sends `namespace` on `function_call` items in the `input`
+/// history when the client is configured with a custom `model_provider`.
+/// The official ChatGPT backend (`chatgpt.com/backend-api/codex`) rejects
+/// this redundant field with `unknown_parameter: input[N].namespace`.
+/// The `namespace` for a function call can be inferred from the `tools`
+/// array, so stripping it from `input` items is safe and does not break
+/// tool matching.
+///
+/// Returns `true` if any `namespace` field was removed.
+pub(crate) fn strip_namespace_from_input_items(body: &mut Value) -> bool {
+    let Some(input) = body.get_mut("input").and_then(|v| v.as_array_mut()) else {
+        return false;
+    };
+    let mut changed = false;
+    for item in input.iter_mut() {
+        if let Some(obj) = item.as_object_mut() {
+            if obj.remove("namespace").is_some() {
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -619,5 +646,54 @@ mod tests {
         // Unrelated events preserved verbatim.
         assert!(collected.contains("\"delta\":\"hi\""));
         assert!(collected.contains("[DONE]"));
+    }
+
+    #[test]
+    fn strip_namespace_from_input_items_removes_namespace_fields() {
+        let mut body = json!({
+            "model": "gpt-5",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "c1",
+                    "name": "read",
+                    "namespace": "mcp__files__",
+                    "arguments": "{}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "c1",
+                    "output": "file content"
+                },
+                {
+                    "type": "message",
+                    "content": "hello"
+                }
+            ]
+        });
+        assert!(strip_namespace_from_input_items(&mut body));
+        let input = body["input"].as_array().unwrap();
+        assert!(input[0].get("namespace").is_none());
+        assert_eq!(input[0]["name"], "read");
+        assert_eq!(input[0]["call_id"], "c1");
+        // Non-function_call items are untouched
+        assert_eq!(input[1]["type"], "function_call_output");
+        assert_eq!(input[2]["type"], "message");
+    }
+
+    #[test]
+    fn strip_namespace_noop_when_no_input_or_no_namespace() {
+        let mut no_input = json!({"model": "gpt-5"});
+        assert!(!strip_namespace_from_input_items(&mut no_input));
+
+        let mut no_namespace = json!({
+            "input": [
+                {"type": "function_call", "call_id": "c1", "name": "read", "arguments": "{}"}
+            ]
+        });
+        assert!(!strip_namespace_from_input_items(&mut no_namespace));
+
+        let mut empty_input = json!({"input": []});
+        assert!(!strip_namespace_from_input_items(&mut empty_input));
     }
 }
