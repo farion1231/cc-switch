@@ -1501,11 +1501,18 @@ impl RequestForwarder {
                     system_type
                 );
 
-                // DEBUG: Log the actual system field structure
+                // Log a content fingerprint (not the prompt itself) so troubleshooting
+                // can correlate runs without persisting workspace instructions, paths,
+                // or credentials that the system prompt may contain.
                 if let Some(system) = normalized.get("system") {
+                    use std::collections::hash_map::DefaultHasher;
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = DefaultHasher::new();
+                    system.to_string().hash(&mut hasher);
                     log::debug!(
-                        "[Rectifier] Normalized system field: {}",
-                        serde_json::to_string_pretty(system).unwrap_or_else(|_| format!("{:?}", system))
+                        "[Rectifier] Normalized system field fingerprint: {:016x} (type: {})",
+                        hasher.finish(),
+                        system_type
                     );
                 }
             }
