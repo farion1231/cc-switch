@@ -27,6 +27,7 @@ const WINDOWS_TERMINALS = [
     labelKey: "settings.terminal.options.windows.powershell",
   },
   { value: "wt", labelKey: "settings.terminal.options.windows.wt" },
+  { value: "wezterm", labelKey: "settings.terminal.options.windows.wezterm" },
 ] as const;
 
 const LINUX_TERMINALS = [

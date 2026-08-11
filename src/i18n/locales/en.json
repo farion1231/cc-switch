@@ -743,7 +743,8 @@
         "windows": {
           "cmd": "Command Prompt",
           "powershell": "PowerShell",
-          "wt": "Windows Terminal"
+          "wt": "Windows Terminal",
+          "wezterm": "WezTerm"
         },
         "linux": {
           "gnomeTerminal": "GNOME Terminal",
