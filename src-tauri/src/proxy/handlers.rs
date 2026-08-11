@@ -105,7 +105,9 @@ pub async fn handle_models(
             &official.settings_config,
             &config_text,
         );
-        return Ok(Json(json!({ "models": models })).into_response());
+        return Ok(cc_switch_codex_models_response(json!({
+            "models": models
+        })));
     }
 
     let config_dir = crate::codex_config::get_codex_config_dir();
@@ -134,7 +136,7 @@ pub async fn handle_models(
         }
         json!({"models": []})
     };
-    Ok(Json(catalog).into_response())
+    Ok(cc_switch_codex_models_response(catalog))
 }
 
 /// 当前 Codex 供应商是内置官方供应商时返回它。
@@ -247,25 +249,32 @@ async fn forward_codex_official_models(
                 }
             }
         }
-        mark_codex_models_catalog_as_cc_switch_merged(&mut catalog);
+        return Ok(cc_switch_codex_models_response(catalog));
     }
     Ok(Json(catalog).into_response())
 }
 
-fn mark_codex_models_catalog_as_cc_switch_merged(catalog: &mut Value) {
+fn cc_switch_codex_models_response(mut catalog: Value) -> axum::response::Response {
+    let etag = mark_codex_models_catalog_as_cc_switch_merged(&mut catalog);
+    let mut response = Json(catalog).into_response();
+    response.headers_mut().insert(
+        axum::http::header::ETAG,
+        etag.parse()
+            .expect("generated cc-switch ETag must be valid"),
+    );
+    response
+}
+
+fn mark_codex_models_catalog_as_cc_switch_merged(catalog: &mut Value) -> String {
+    let etag = format!("W/\"cc-switch-merged-{}\"", chrono::Utc::now().timestamp());
     if let Some(object) = catalog.as_object_mut() {
         object.insert(
             crate::codex_config::CODEX_OFFICIAL_MODELS_MERGED_KEY.to_string(),
             Value::Bool(true),
         );
-        object.insert(
-            "etag".to_string(),
-            Value::String(format!(
-                "W/\"cc-switch-merged-{}\"",
-                chrono::Utc::now().timestamp()
-            )),
-        );
+        object.insert("etag".to_string(), Value::String(etag.clone()));
     }
+    etag
 }
 
 fn codex_models_query(
@@ -2856,10 +2865,10 @@ async fn log_usage(
 #[cfg(test)]
 mod tests {
     use super::{
-        body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
-        codex_models_query, codex_proxy_error_json, mark_codex_models_catalog_as_cc_switch_merged,
-        responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
-        upstream_body_parse_error,
+        body_looks_like_sse, cc_switch_codex_models_response, chat_sse_to_response_value,
+        classify_body_for_diagnostics, codex_models_query, codex_proxy_error_json,
+        mark_codex_models_catalog_as_cc_switch_merged, responses_sse_to_response_value,
+        should_use_claude_transform_streaming, transform, upstream_body_parse_error,
     };
     use crate::proxy::ProxyError;
     use serde_json::json;
@@ -2893,6 +2902,30 @@ mod tests {
         assert!(catalog
             .get("etag")
             .and_then(|value| value.as_str())
+            .is_some_and(|etag| etag.starts_with("W/\"cc-switch-")));
+    }
+
+    #[test]
+    fn cc_switch_codex_catalog_response_sets_cache_ownership_header() {
+        let response = cc_switch_codex_models_response(json!({
+            "models": [{"slug": "custom-slot"}]
+        }));
+
+        assert!(response
+            .headers()
+            .get(axum::http::header::ETAG)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|etag| etag.starts_with("W/\"cc-switch-")));
+    }
+
+    #[test]
+    fn cc_switch_codex_catalog_response_marks_non_object_without_panicking() {
+        let response = cc_switch_codex_models_response(json!([]));
+
+        assert!(response
+            .headers()
+            .get(axum::http::header::ETAG)
+            .and_then(|value| value.to_str().ok())
             .is_some_and(|etag| etag.starts_with("W/\"cc-switch-")));
     }
 

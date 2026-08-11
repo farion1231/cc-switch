@@ -1015,6 +1015,75 @@ fn codex_cache_is_reliable_official_baseline(cache: &Value) -> bool {
             .unwrap_or(false)
 }
 
+/// Whether the live cache contains cc-switch-owned state that must be restored
+/// or cleared when Codex takeover ends.
+///
+/// Starting takeover is not sufficient evidence: the process can stop before
+/// publishing a replacement cache, in which case the existing official cache
+/// must remain untouched.
+fn codex_model_label_key(label: &str) -> String {
+    label
+        .chars()
+        .flat_map(char::to_lowercase)
+        .filter(|ch| ch.is_alphanumeric())
+        .collect()
+}
+
+fn codex_cache_has_legacy_custom_models(cache: &Value, provider_settings: Option<&Value>) -> bool {
+    let Some(models) = cache.get("models").and_then(Value::as_array) else {
+        return false;
+    };
+    if models.iter().any(|model| {
+        model
+            .get("priority")
+            .and_then(Value::as_u64)
+            .is_some_and(|priority| priority >= 1000)
+    }) {
+        return true;
+    }
+
+    let Some(settings) = provider_settings else {
+        return false;
+    };
+    codex_custom_model_entries(settings).iter().any(|entry| {
+        let Some(display_name) = entry.display_name.as_deref() else {
+            return false;
+        };
+        if codex_model_label_key(display_name) == codex_model_label_key(&entry.model) {
+            return false;
+        }
+        models.iter().any(|model| {
+            model.get("slug").and_then(Value::as_str) == Some(entry.model.as_str())
+                && model.get("display_name").and_then(Value::as_str) == Some(display_name)
+        })
+    })
+}
+
+pub(crate) fn codex_models_cache_needs_takeover_cleanup(
+    codex_dir: &Path,
+    provider_settings: Option<&Value>,
+) -> bool {
+    let baseline_exists = codex_dir
+        .join(CC_SWITCH_CODEX_OFFICIAL_MODELS_CACHE_FILENAME)
+        .exists();
+    let live_cache = fs::read_to_string(codex_dir.join("models_cache.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+
+    match live_cache {
+        Some(cache) => {
+            codex_cache_has_cc_switch_etag(&cache)
+                || cache
+                    .get(CODEX_OFFICIAL_MODELS_MERGED_KEY)
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                || codex_cache_has_legacy_custom_models(&cache, provider_settings)
+                || (baseline_exists && !codex_cache_is_reliable_official_baseline(&cache))
+        }
+        None => baseline_exists,
+    }
+}
+
 #[derive(Debug)]
 enum CodexOfficialBaseline {
     Ready(Value),
