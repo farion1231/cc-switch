@@ -722,10 +722,10 @@ fn build_tool_action_line(
             }
             // Uninstall anchors to the install the command line actually resolves to and
             // uses the matching package manager / official CLI to remove it. When no
-            // anchor is found and the install is not a "not auto-uninstallable" native
-            // install (hermes / grok native), it falls back to the static
-            // `npm uninstall -g`; otherwise `uninstall_command_for` returns Err (see its
-            // doc).
+            // anchor is found, `uninstall_command_for` decides between: a known-but-unowned
+            // native install (grok/opencode native — not auto-uninstallable, returns Err),
+            // and a best-effort static `npm uninstall -g` when no default install could be
+            // determined at all (see `uninstall_plan`).
             ToolLifecycleAction::Uninstall => {
                 let installs = enumerate_tool_installations(tool);
                 uninstall_command_for(tool, &installs)?
@@ -757,8 +757,9 @@ fn build_tool_action_line(
             ToolLifecycleAction::Install => install_command_for(tool),
             // Uninstall anchors to the command-line default install like update, but
             // generates an uninstall command; when no anchor is found it decides between
-            // "not auto-uninstallable" and a static `npm uninstall -g` (see
-            // `uninstall_command_for`).
+            // a known-but-unowned native install (not auto-uninstallable) and a best-effort
+            // static `npm uninstall -g` when no default install could be determined (see
+            // `uninstall_plan` / `uninstall_command_for`).
             ToolLifecycleAction::Uninstall => {
                 let installs = enumerate_tool_installations(tool);
                 uninstall_command_for(tool, &installs)?
@@ -3510,16 +3511,41 @@ fn static_uninstall_command_for(tool: &str) -> String {
 /// `build_tool_action_line`); this only decides on the result.
 ///
 /// Decision order (first hit wins):
-/// 1. Anchor to the command-line default install and build the source-specific
+/// 1. Windows + WSL override (`\\wsl$\<distro>\...`): `enumerate_tool_installations`
+///    only inspects the Windows host, so `installs` is empty and the host-side anchor
+///    below would report hermes as unsupported (no npm package). Mirror the WSL special
+///    case in `plan_command_for`: use the POSIX uninstall command
+///    (`wsl_tool_action_shell_command`) — e.g. `hermes uninstall --yes` — which is what
+///    `build_tool_action_line` actually executes across the `wsl.exe` boundary.
+/// 2. Anchor to the command-line default install and build the source-specific
 ///    uninstall command (`anchored_uninstall_command`). Covers the official CLI
-///    uninstall (claude/grok native, hermes — preferred) and the package-manager
-///    uninstall (Homebrew/Volta/Bun/pnpm/anchored npm) for the rest.
-/// 2. No anchor (default install couldn't be determined) and the tool has an npm
-///    package -> static `npm uninstall -g <pkg>` (best-effort, mirroring the
-///    install/update static fallback).
-/// 3. No anchor and no npm package (no tool currently hits this — hermes has an
-///    official CLI uninstall that always anchors) -> not supported.
+///    uninstall (claude native, hermes — preferred) and the package-manager uninstall
+///    (Homebrew/Volta/Bun/pnpm/anchored npm) for the rest.
+/// 3. Known but unowned native install (default identified, but no package manager
+///    could be proven to own it — e.g. grok/opencode native with no sibling npm). A
+///    bare `npm uninstall -g` would resolve to the first npm on PATH and delete a
+///    *different* npm-managed copy while leaving the selected native install
+///    untouched, so require manual removal. (OpenClaw hits the same outcome via the
+///    dedicated branch above, since its service cleanup must not pair with a bare npm
+///    that may own a different prefix.)
+/// 4. No anchor (default install couldn't be determined — empty or ambiguous) and
+///    the tool has an npm package -> static `npm uninstall -g <pkg>` (best-effort,
+///    mirroring the install/update static fallback).
+/// 5. No anchor and no npm package -> not supported.
 fn uninstall_plan(tool: &str, installs: &[ToolInstallation]) -> (String, bool) {
+    #[cfg(target_os = "windows")]
+    {
+        // WSL override: enumerate sees only the Windows host, so `installs` is empty
+        // and the host-side anchor below would misreport hermes (no npm package) as
+        // unsupported. Use the POSIX uninstall command that actually runs across the
+        // wsl.exe boundary, mirroring `plan_command_for`'s WSL special case.
+        if wsl_distro_for_tool(tool).is_some() {
+            return match wsl_tool_action_shell_command(tool, ToolLifecycleAction::Uninstall) {
+                Some(cmd) => (cmd, true),
+                None => (String::new(), false),
+            };
+        }
+    }
     if let Some(cmd) = anchored_uninstall_command(tool, installs) {
         return (cmd, true);
     }
@@ -3528,6 +3554,15 @@ fn uninstall_plan(tool: &str, installs: &[ToolInstallation]) -> (String, bool) {
     if tool == "openclaw" {
         return (String::new(), false);
     }
+    // Known but unowned native install: the default install was identified, but no
+    // package manager could be proven to own it (e.g. grok/opencode native with no
+    // sibling npm). A bare `npm uninstall -g` would delete a separate npm-managed copy
+    // while leaving the selected native install untouched -> require manual removal.
+    if default_install(installs).is_some() {
+        return (String::new(), false);
+    }
+    // No default install could be determined (empty or ambiguous) -> best-effort
+    // static `npm uninstall -g`, mirroring the install/update static fallback.
     let static_cmd = static_uninstall_command_for(tool);
     if !static_cmd.is_empty() {
         return (static_cmd, true);
@@ -5591,9 +5626,11 @@ mod tests {
 
     /// Windows anchored uninstall command generation: symmetric with
     /// `anchored_upgrade_windows`. Pins each install source's Windows uninstall command
-    /// (volta/pnpm/npm sibling) and the hermes / grok-native "not auto-uninstallable"
-    /// contract. Helpers are duplicated from `anchored_upgrade_windows` to keep each
-    /// module self-contained (same per-module pattern used elsewhere in this file).
+    /// (volta/pnpm/npm sibling, official CLI for hermes/claude/codex) and the openclaw
+    /// "not auto-uninstallable" contract. Native installs without a sibling npm (grok /
+    /// opencode / gemini) hit the same not-auto-uninstallable outcome via `uninstall_plan`.
+    /// Helpers are duplicated from `anchored_upgrade_windows` to keep each module
+    /// self-contained (same per-module pattern used elsewhere in this file).
     #[cfg(target_os = "windows")]
     mod anchored_uninstall_windows {
         use super::super::*;
@@ -5926,6 +5963,32 @@ mod tests {
         fn wsl_openclaw_uninstall_requires_manual_owner_resolution() {
             assert!(
                 wsl_tool_action_shell_command("openclaw", ToolLifecycleAction::Uninstall).is_none()
+            );
+        }
+
+        #[test]
+        fn wsl_distro_from_path_recognizes_unc_prefixes() {
+            // `uninstall_plan` / `plan_command_for` gate their WSL special case on this
+            // recognition: a hermes override pointing into WSL must surface as a distro so
+            // the report uses `hermes uninstall --yes` instead of reporting not-supported.
+            use std::path::Path;
+            assert_eq!(
+                wsl_distro_from_path(Path::new(r"\\wsl$\Ubuntu\home\user\.hermes")),
+                Some("Ubuntu".to_string())
+            );
+            assert_eq!(
+                wsl_distro_from_path(Path::new(r"\\wsl.localhost\Ubuntu-22.04\home\user\.hermes")),
+                Some("Ubuntu-22.04".to_string())
+            );
+            assert_eq!(
+                wsl_distro_from_path(Path::new(r"C:\Users\me\.hermes")),
+                None,
+                "plain Windows path is not a WSL override"
+            );
+            assert_eq!(
+                wsl_distro_from_path(Path::new(r"\\server\share\path")),
+                None,
+                "non-WSL UNC share is not a WSL override"
             );
         }
 
@@ -6663,8 +6726,10 @@ mod tests {
     /// Anchored uninstall command generation: symmetric with `anchored_upgrade`, pinning
     /// each install source's uninstall command as a regression assertion. Any break in
     /// `claude uninstall` / `brew uninstall` / `npm uninstall -g` / `volta uninstall` /
-    /// `bun remove -g` is caught here; it also locks the contract that hermes and grok
-    /// native return None as "not auto-uninstallable".
+    /// `bun remove -g` is caught here; it also locks the contract that grok/opencode
+    /// native return None as "not auto-uninstallable" (a known but unowned native install
+    /// must not fall back to a bare `npm uninstall -g` that would delete a different
+    /// npm-managed copy — see `uninstall_plan`).
     #[cfg(not(target_os = "windows"))]
     mod anchored_uninstall {
         use super::super::*;
@@ -6698,11 +6763,12 @@ mod tests {
         }
 
         #[test]
-        fn grok_native_anchored_falls_through_to_static_npm() {
+        fn grok_native_anchored_is_none_so_not_auto_uninstallable() {
             // grok native (~/.grok/bin) has no special branch and no sibling npm (system
-            // source) -> the anchored package-manager path returns None; `uninstall_plan`
-            // then falls back to the static `npm uninstall -g @xai-official/grok`. This is
-            // the requested npm-based uninstall for grok.
+            // source) -> the anchored package-manager path returns None. `uninstall_plan`
+            // treats this known-but-unowned install as not auto-uninstallable (a bare
+            // `npm uninstall -g` would delete a different npm copy), so manual removal is
+            // required. See `uninstall_plan_grok_native_is_not_supported`.
             let cmd = anchored_uninstall_command_from_paths(
                 "grok",
                 "/Users/me/.grok/bin/grok",
@@ -6882,8 +6948,10 @@ mod tests {
         #[test]
         fn opencode_native_install_not_anchored() {
             // ~/.opencode/bin has no sibling npm and opencode has no confirmed uninstall
-            // subcommand -> anchor is None; `uninstall_plan` then falls back to the static
-            // `npm uninstall -g opencode-ai` (best-effort).
+            // subcommand -> anchor is None. `uninstall_plan` treats this known-but-unowned
+            // native install as not auto-uninstallable (a bare `npm uninstall -g opencode-ai`
+            // would delete a different npm copy); see
+            // `uninstall_plan_opencode_native_is_not_supported`.
             let cmd = anchored_uninstall_command_from_paths(
                 "opencode",
                 "/Users/me/.opencode/bin/opencode",
@@ -6919,27 +6987,42 @@ mod tests {
         }
 
         #[test]
-        fn uninstall_plan_grok_native_uses_static_npm() {
-            // grok native (~/.grok/bin) anchors to None (no sibling npm) and grok is not in
-            // tool_prefers_official_uninstall, so the plan falls back to the static
-            // `npm uninstall -g @xai-official/grok` — the requested npm-based uninstall.
+        fn uninstall_plan_grok_native_is_not_supported() {
+            // grok native (~/.grok/bin) is the known default but has no package-manager
+            // owner (no sibling npm, grok is not in tool_prefers_official_uninstall). A
+            // bare `npm uninstall -g @xai-official/grok` would delete a *different*
+            // npm-managed copy while leaving the selected native install untouched, so
+            // the plan reports it as not auto-uninstallable (manual removal required).
             let installs = vec![inst("/Users/me/.grok/bin/grok", true)];
             let mut installs = installs;
             installs[0].real =
                 std::path::PathBuf::from("/Users/me/.grok/downloads/grok-macos-aarch64");
             let (cmd, supported) = uninstall_plan("grok", &installs);
-            assert!(supported);
-            assert_eq!(cmd, "npm uninstall -g @xai-official/grok");
+            assert!(!supported);
+            assert!(cmd.is_empty());
         }
 
         #[test]
-        fn uninstall_plan_opencode_native_falls_back_to_static_npm() {
-            // No anchor (opencode native has no sibling npm) and opencode has no official
-            // uninstall subcommand -> static npm uninstall (best-effort).
+        fn uninstall_plan_opencode_native_is_not_supported() {
+            // opencode native (~/.opencode/bin) is the known default but unowned (no
+            // sibling npm, no official uninstall subcommand). Bare
+            // `npm uninstall -g opencode-ai` would target a different npm copy -> not
+            // auto-uninstallable (manual removal required).
             let installs = vec![inst("/Users/me/.opencode/bin/opencode", true)];
             let (cmd, supported) = uninstall_plan("opencode", &installs);
+            assert!(!supported);
+            assert!(cmd.is_empty());
+        }
+
+        #[test]
+        fn uninstall_plan_without_install_info_falls_back_to_static_npm() {
+            // No default install could be determined (enumerate found nothing) ->
+            // best-effort static `npm uninstall -g <pkg>`, mirroring the install/update
+            // static fallback. This is distinct from a *known* unowned native install
+            // (grok/opencode native), which is not auto-uninstallable.
+            let (cmd, supported) = uninstall_plan("grok", &[]);
             assert!(supported);
-            assert_eq!(cmd, "npm uninstall -g opencode-ai");
+            assert_eq!(cmd, "npm uninstall -g @xai-official/grok");
         }
 
         #[test]
