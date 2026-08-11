@@ -573,7 +573,7 @@ export function GrokBuildProviderForm({
                 onChange={handleRawConfigChange}
                 placeholder=""
                 darkMode={isDarkMode}
-                rows={12}
+                rows={3}
                 showValidation={false}
                 language="javascript"
               />
