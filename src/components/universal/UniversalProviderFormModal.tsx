@@ -53,6 +53,10 @@ export function UniversalProviderFormModal({
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const effectivePreviewBaseUrl = isCcSwitch
+    ? "http://127.0.0.1:15721"
+    : baseUrl;
+  const effectivePreviewApiKey = isCcSwitch ? "localhost" : apiKey;
   const [showApiKey, setShowApiKey] = useState(false);
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [notes, setNotes] = useState("");
@@ -126,9 +130,9 @@ export function UniversalProviderFormModal({
         setGeminiEnabled(preset.defaultApps.gemini);
         setModels(deepClone(preset.defaultModels));
         setRoutes([]);
-        if (preset.providerType === "cc_switch") {
-          setBaseUrl("http://127.0.0.1:15721");
-        }
+        setBaseUrl(
+          preset.providerType === "cc_switch" ? "http://127.0.0.1:15721" : "",
+        );
       }
     },
     [isEditMode],
@@ -157,15 +161,20 @@ export function UniversalProviderFormModal({
     const opus = models.claude?.opusModel || "claude-sonnet-4-20250514";
     return {
       env: {
-        ANTHROPIC_BASE_URL: baseUrl,
-        ANTHROPIC_AUTH_TOKEN: apiKey,
+        ANTHROPIC_BASE_URL: effectivePreviewBaseUrl,
+        ANTHROPIC_AUTH_TOKEN: effectivePreviewApiKey,
         ANTHROPIC_MODEL: model,
         ANTHROPIC_DEFAULT_HAIKU_MODEL: haiku,
         ANTHROPIC_DEFAULT_SONNET_MODEL: sonnet,
         ANTHROPIC_DEFAULT_OPUS_MODEL: opus,
       },
     };
-  }, [claudeEnabled, baseUrl, apiKey, models.claude]);
+    }, [
+    claudeEnabled,
+    effectivePreviewBaseUrl,
+    effectivePreviewApiKey,
+    models.claude,
+  ]);
 
   // 计算 Codex 配置 JSON 预览
   const codexConfigJson = useMemo(() => {
@@ -173,9 +182,9 @@ export function UniversalProviderFormModal({
     const model = models.codex?.model || "gpt-5.6-sol";
     const reasoningEffort = models.codex?.reasoningEffort || "high";
     // 确保 base_url 以 /v1 结尾（Codex 使用 OpenAI 兼容 API）
-    const codexBaseUrl = baseUrl.endsWith("/v1")
-      ? baseUrl
-      : `${baseUrl.replace(/\/+$/, "")}/v1`;
+    const codexBaseUrl = effectivePreviewBaseUrl.endsWith("/v1")
+      ? effectivePreviewBaseUrl
+      : `${effectivePreviewBaseUrl.replace(/\/+$/, "")}/v1`;
     const configToml = `model_provider = "custom"
 model = "${model}"
 model_reasoning_effort = "${reasoningEffort}"
@@ -188,11 +197,16 @@ wire_api = "responses"
 requires_openai_auth = true`;
     return {
       auth: {
-        OPENAI_API_KEY: apiKey,
+        OPENAI_API_KEY: effectivePreviewApiKey,
       },
       config: configToml,
     };
-  }, [codexEnabled, baseUrl, apiKey, models.codex]);
+    }, [
+    codexEnabled,
+    effectivePreviewBaseUrl,
+    effectivePreviewApiKey,
+    models.codex,
+  ]);
 
   // 计算 Gemini 配置 JSON 预览
   const geminiConfigJson = useMemo(() => {
@@ -200,12 +214,17 @@ requires_openai_auth = true`;
     const model = models.gemini?.model || "gemini-2.5-pro";
     return {
       env: {
-        GOOGLE_GEMINI_BASE_URL: baseUrl,
-        GEMINI_API_KEY: apiKey,
+        GOOGLE_GEMINI_BASE_URL: effectivePreviewBaseUrl,
+        GEMINI_API_KEY: effectivePreviewApiKey,
         GEMINI_MODEL: model,
       },
     };
-  }, [geminiEnabled, baseUrl, apiKey, models.gemini]);
+    }, [
+    geminiEnabled,
+    effectivePreviewBaseUrl,
+    effectivePreviewApiKey,
+    models.gemini,
+  ]);
 
   // 提交表单
   const handleSubmit = useCallback(() => {
