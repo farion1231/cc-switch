@@ -703,6 +703,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["stepfun", "step", "jieyue", "阶跃星辰"],
     defaultColor: "#005AFF",
   },
+  ppio: {
+    name: "ppio",
+    displayName: "PPIO",
+    category: "ai-provider",
+    keywords: ["ppio", "派欧云"],
+    defaultColor: "#2874FF",
+  },
 };
 
 export function getIconMetadata(name: string): IconMetadata | undefined {
