@@ -2024,6 +2024,8 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
     #[cfg(not(target_os = "windows"))]
     use std::process::Command;
 
+    #[cfg(target_os = "windows")]
+    let home = dirs::home_dir().unwrap_or_default();
     let search_paths = build_tool_search_paths(tool);
     let current_path = std::env::var_os("PATH")
         .map(|value| value.to_string_lossy().into_owned())
@@ -2098,6 +2100,11 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
         }
     }
 
+    #[cfg(target_os = "windows")]
+    if tool == "grok" {
+        installs = dedupe_grok_npm_canonical_installations(&home, installs);
+    }
+
     // PATH 默认那处排最前，UI 一眼看到"命令行默认用的是哪处"。
     installs.sort_by_key(|i| std::cmp::Reverse(i.is_path_default));
     installs
@@ -2160,6 +2167,85 @@ fn is_grok_native_install(bin_path: &str, real_target: &str) -> bool {
         let normalized = path.replace('\\', "/").to_ascii_lowercase();
         normalized.contains("/.grok/bin/") || normalized.contains("/.grok/downloads/grok-")
     })
+}
+
+#[cfg(target_os = "windows")]
+fn is_grok_npm_global_launcher(path: &Path) -> bool {
+    let is_grok_cmd = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| stem.eq_ignore_ascii_case("grok"))
+        && path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("cmd"));
+    if !is_grok_cmd {
+        return false;
+    }
+
+    let Some(prefix) = path.parent() else {
+        return false;
+    };
+    prefix
+        .join("node_modules")
+        .join("@xai-official")
+        .join("grok")
+        .is_dir()
+}
+
+/// Grok's npm package installs its native payload into the canonical
+/// `~/.grok/bin` directory. The npm launcher and that payload are therefore
+/// one installation even though they live in different directories.
+#[cfg(target_os = "windows")]
+fn dedupe_grok_npm_canonical_installations(
+    home: &Path,
+    installs: Vec<ToolInstallation>,
+) -> Vec<ToolInstallation> {
+    let canonical_native = home.join(".grok").join("bin").join("grok.exe");
+    let Ok(canonical_native) = std::fs::canonicalize(canonical_native) else {
+        return installs;
+    };
+
+    let Some(native_index) = installs
+        .iter()
+        .position(|install| install.runnable && install.real == canonical_native)
+    else {
+        return installs;
+    };
+    let native_version = installs[native_index].version.as_ref();
+
+    let mut related = vec![native_index];
+    for (index, install) in installs.iter().enumerate() {
+        if index == native_index
+            || !install.runnable
+            || install.version.as_ref() != native_version
+            || !is_grok_npm_global_launcher(Path::new(&install.path))
+        {
+            continue;
+        }
+        related.push(index);
+    }
+    if related.len() < 2 {
+        return installs;
+    }
+
+    let representative = related
+        .iter()
+        .copied()
+        .max_by_key(|index| (installs[*index].is_path_default, installs[*index].runnable))
+        .expect("related Grok installations should not be empty");
+
+    installs
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, install)| {
+            if index == representative || !related.contains(&index) {
+                Some(install)
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// 含空格才用 POSIX 单引号包一层,否则保持裸路径——命令展示更干净。
@@ -6177,6 +6263,84 @@ mod tests {
         let preferred = windows_runnable_sibling_for_extensionless_tool(&extensionless);
 
         assert_eq!(preferred.as_deref(), Some(cmd.as_path()));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn grok_npm_launcher_and_canonical_binary_are_one_installation() {
+        let root = tempfile::tempdir().expect("temp dir should be created");
+        let home = root.path().join("home");
+        let native_bin = home.join(".grok").join("bin").join("grok.exe");
+        std::fs::create_dir_all(native_bin.parent().unwrap())
+            .expect("native Grok directory should be created");
+        std::fs::write(&native_bin, "native binary fixture")
+            .expect("native Grok fixture should be created");
+
+        let npm_prefix = root.path().join("nodejs").join("npm-global");
+        let npm_package = npm_prefix
+            .join("node_modules")
+            .join("@xai-official")
+            .join("grok");
+        std::fs::create_dir_all(&npm_package).expect("npm package fixture should be created");
+        let npm_launcher = npm_prefix.join("grok.cmd");
+        std::fs::create_dir_all(&npm_prefix).expect("npm prefix should be created");
+        std::fs::write(&npm_launcher, "@echo off\r\n").expect("npm launcher should be created");
+
+        let native_real =
+            std::fs::canonicalize(&native_bin).expect("native fixture should resolve");
+        let npm_real = std::fs::canonicalize(&npm_launcher).expect("npm fixture should resolve");
+        let installs = vec![
+            ToolInstallation {
+                path: npm_launcher.to_string_lossy().into_owned(),
+                version: Some("0.2.106".to_string()),
+                runnable: true,
+                error: None,
+                source: "system".to_string(),
+                is_path_default: true,
+                real: npm_real.clone(),
+            },
+            ToolInstallation {
+                path: native_bin.to_string_lossy().into_owned(),
+                version: Some("0.2.106".to_string()),
+                runnable: true,
+                error: None,
+                source: "system".to_string(),
+                is_path_default: false,
+                real: native_real.clone(),
+            },
+        ];
+
+        let deduped = dedupe_grok_npm_canonical_installations(&home, installs);
+
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0].path, npm_launcher.to_string_lossy());
+        assert!(deduped[0].is_path_default);
+
+        let different_versions = vec![
+            ToolInstallation {
+                path: npm_launcher.to_string_lossy().into_owned(),
+                version: Some("0.2.107".to_string()),
+                runnable: true,
+                error: None,
+                source: "system".to_string(),
+                is_path_default: true,
+                real: npm_real,
+            },
+            ToolInstallation {
+                path: native_bin.to_string_lossy().into_owned(),
+                version: Some("0.2.106".to_string()),
+                runnable: true,
+                error: None,
+                source: "system".to_string(),
+                is_path_default: false,
+                real: native_real,
+            },
+        ];
+
+        assert_eq!(
+            dedupe_grok_npm_canonical_installations(&home, different_versions).len(),
+            2
+        );
     }
 
     #[test]
