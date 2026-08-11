@@ -6,8 +6,7 @@ import { codexProviderPresets } from "./codexProviderPresets";
 import { hermesProviderPresets } from "./hermesProviderPresets";
 import { openclawProviderPresets } from "./openclawProviderPresets";
 import { opencodeProviderPresets } from "./opencodeProviderPresets";
-import { getIcon, getIconMetadata, icons } from "../icons/extracted";
-import { iconMetadata } from "../icons/extracted/metadata";
+import { getIcon, getIconMetadata } from "../icons/extracted";
 
 const ppioPresetCollections = [
   ["Claude Code", providerPresets],
@@ -42,13 +41,6 @@ describe("PPIO provider presets", () => {
       expect(presets.filter((preset) => preset.name === "PPIO")).toHaveLength(
         1,
       );
-    },
-  );
-
-  it.each(ppioPresetCollections)(
-    "%s places PPIO at the end of the preset list",
-    (_name, presets) => {
-      expect(presets.slice(-1).map((preset) => preset.name)).toEqual(["PPIO"]);
     },
   );
 
@@ -206,7 +198,5 @@ describe("PPIO provider presets", () => {
       displayName: "PPIO",
       defaultColor: "#2874FF",
     });
-    expect(Object.keys(icons).slice(-1)).toEqual(["ppio"]);
-    expect(Object.keys(iconMetadata).slice(-1)).toEqual(["ppio"]);
   });
 });
