@@ -307,6 +307,29 @@ impl Database {
         self.set_setting("copilot_optimizer_config", &json)
     }
 
+    // --- 围栏（Guardrail）配置 ---
+
+    /// 获取围栏配置
+    ///
+    /// 返回围栏配置，如果不存在则返回默认值（默认关闭）
+    pub fn get_guardrail_config(&self) -> Result<crate::proxy::types::GuardrailConfig, AppError> {
+        match self.get_setting("guardrail_config")? {
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| AppError::Database(format!("解析围栏配置失败: {e}"))),
+            None => Ok(crate::proxy::types::GuardrailConfig::default()),
+        }
+    }
+
+    /// 更新围栏配置
+    pub fn set_guardrail_config(
+        &self,
+        config: &crate::proxy::types::GuardrailConfig,
+    ) -> Result<(), AppError> {
+        let json = serde_json::to_string(config)
+            .map_err(|e| AppError::Database(format!("序列化围栏配置失败: {e}")))?;
+        self.set_setting("guardrail_config", &json)
+    }
+
     // --- 日志配置 ---
 
     /// 获取日志配置

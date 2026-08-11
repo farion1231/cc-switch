@@ -12,6 +12,7 @@ mod config;
 mod database;
 mod deeplink;
 mod error;
+mod fallback;
 mod gemini_config;
 mod gemini_mcp;
 mod grok_config;

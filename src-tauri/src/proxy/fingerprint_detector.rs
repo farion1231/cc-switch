@@ -130,8 +130,13 @@ impl FingerprintDetector {
         }
 
         // 使用 llm-fingerprint-detector 命令行工具进行检测
-        let result = tokio::task::spawn_blocking(|| {
-            Self::run_fingerprint_command(claimed_model, base_url, api_key)
+        // 先 clone 需要跨线程捕获的数据（spawn_blocking 要求 'static）
+        let config = self.config.clone();
+        let claimed_model = claimed_model.to_string();
+        let base_url = base_url.to_string();
+        let api_key = api_key.to_string();
+        let result = tokio::task::spawn_blocking(move || {
+            Self::run_fingerprint_command(&config, &claimed_model, &base_url, &api_key)
         })
         .await
         .unwrap_or_else(|_| FingerprintVerificationResult {
@@ -147,13 +152,14 @@ impl FingerprintDetector {
 
     /// 执行指纹检测命令
     fn run_fingerprint_command(
+        config: &FingerprintDetectorConfig,
         claimed_model: &str,
         base_url: &str,
         api_key: &str,
     ) -> FingerprintVerificationResult {
         // 构造命令
         let output = Command::new("npx")
-            .arg(&self.config.command_path)
+            .arg(&config.command_path)
             .arg("verify")
             .arg("--base-url")
             .arg(base_url)
@@ -164,8 +170,19 @@ impl FingerprintDetector {
             .output();
 
         match output {
-            Ok(stdout) => {
-                let json_str = String::from_utf8_lossy(&stdout);
+            Ok(output) => {
+                // 命令非零退出 → 返回 stderr 作为错误信息
+                if !output.status.success() {
+                    return FingerprintVerificationResult {
+                        is_match: false,
+                        jsd: 1.0,
+                        verdict: "error".to_string(),
+                        detected_model: None,
+                        error: Some(String::from_utf8_lossy(&output.stderr).to_string()),
+                    };
+                }
+
+                let json_str = String::from_utf8_lossy(&output.stdout);
                 if let Ok(result) = serde_json::from_str::<serde_json::Value>(&json_str) {
                     FingerprintVerificationResult {
                         is_match: result["is_match"].as_bool().unwrap_or(false),
@@ -185,14 +202,13 @@ impl FingerprintDetector {
                     }
                 }
             }
-            Err(stderr) => {
-                let error_msg = String::from_utf8_lossy(&stderr.to_bytes());
+            Err(e) => {
                 FingerprintVerificationResult {
                     is_match: false,
                     jsd: 1.0,
                     verdict: "error".to_string(),
                     detected_model: None,
-                    error: Some(error_msg),
+                    error: Some(format!("Command execution failed: {}", e)),
                 }
             }
         }
@@ -219,13 +235,18 @@ impl FingerprintDetector {
             .output();
 
         match output {
-            Ok(stdout) => {
-                let json_str = String::from_utf8_lossy(&stdout);
+            Ok(output) => {
+                // 命令非零退出 → 返回 stderr 作为错误信息
+                if !output.status.success() {
+                    return Err(format!(
+                        "Command failed: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    ));
+                }
+                let json_str = String::from_utf8_lossy(&output.stdout);
                 serde_json::from_str(&json_str).map_err(|e| format!("Failed to parse fingerprint: {}", e))
             }
-            Err(stderr) => {
-                Err(format!("Command failed: {}", String::from_utf8_lossy(&stderr.to_bytes())))
-            }
+            Err(e) => Err(format!("Command failed: {}", e)),
         }
     }
 

@@ -74,14 +74,12 @@ impl GuardrailDetector {
         // 编译自定义规则
         let mut compiled_patterns = Vec::new();
         for rule in &config.custom_rules {
-            let flags = if rule.case_insensitive {
-                regex::RegexBuilder::new(&rule.pattern)
-                    .case_insensitive(true)
-            } else {
-                regex::RegexBuilder::new(&rule.pattern)
-            };
+            let mut builder = regex::RegexBuilder::new(&rule.pattern);
+            if rule.case_insensitive {
+                builder.case_insensitive(true);
+            }
 
-            match flags.build() {
+            match builder.build() {
                 Ok(re) => {
                     compiled_patterns.push((rule.name.clone(), re));
                 }
@@ -169,7 +167,7 @@ impl GuardrailDetector {
 
                     // 按优先级排序
                     if best_verdict.is_none()
-                        || rule.priority > best_verdict.as_ref().map(|(_, p)| p).unwrap_or(&0)
+                        || rule.priority > *best_verdict.as_ref().map(|(_, p)| p).unwrap_or(&0)
                     {
                         best_verdict = Some((verdict, rule.priority));
                     }

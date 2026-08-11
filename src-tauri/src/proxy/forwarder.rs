@@ -3694,6 +3694,8 @@ mod tests {
             rectifier_config: RectifierConfig::default(),
             optimizer_config: OptimizerConfig::default(),
             copilot_optimizer_config: CopilotOptimizerConfig::default(),
+            guardrail_config: GuardrailConfig::default(),
+            guardrail_detector: None,
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,

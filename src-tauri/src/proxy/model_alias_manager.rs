@@ -316,8 +316,8 @@ mod tests {
         assert!(!manager.is_unified_alias("gpt-4"));
     }
 
-    #[test]
-    fn test_provider_rotation() {
+    #[tokio::test]
+    async fn test_provider_rotation() {
         let config = UnifiedAliasConfig {
             enabled: true,
             alias_name: "auto".to_string(),
