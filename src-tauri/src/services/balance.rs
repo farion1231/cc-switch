@@ -1,6 +1,6 @@
 //! 供应商余额查询服务
 //!
-//! 支持 DeepSeek、StepFun、SiliconFlow、OpenRouter、Novita AI 的账户余额查询。
+//! 支持 DeepSeek、StepFun、SiliconFlow、OpenRouter、Novita AI、OpenCode Go 的账户余额查询。
 //! 返回 UsageResult 格式，与现有用量系统无缝对接。
 //!
 //! 错误通道语义（与 coding_plan / subscription 两个服务保持一致）：
@@ -21,6 +21,7 @@ enum BalanceProvider {
     SiliconFlowEn,
     OpenRouter,
     NovitaAI,
+    OpenCodeGo,
 }
 
 fn detect_provider(base_url: &str) -> Option<BalanceProvider> {
@@ -37,6 +38,8 @@ fn detect_provider(base_url: &str) -> Option<BalanceProvider> {
         Some(BalanceProvider::OpenRouter)
     } else if url.contains("api.novita.ai") {
         Some(BalanceProvider::NovitaAI)
+    } else if url.contains("opencode.ai/zen/go") {
+        Some(BalanceProvider::OpenCodeGo)
     } else {
         None
     }
@@ -409,6 +412,87 @@ async fn query_novita(api_key: &str) -> Result<UsageResult, String> {
     })
 }
 
+// ── OpenCode Go ────────────────────────────────────────────
+// GET https://opencode.ai/zen/go/v1/usage
+// Response: { plan, windows: [{ name, status, usagePercent, resetInSec, used, limit }], useBalance }
+
+fn parse_opencode_go_usage(body: &serde_json::Value) -> UsageResult {
+    let windows = match body.get("windows").and_then(|v| v.as_array()) {
+        Some(windows) => windows,
+        None => return make_error("Missing 'windows' field in response".to_string()),
+    };
+
+    let data = windows
+        .iter()
+        .filter_map(|window| {
+            let name = window.get("name")?.as_str()?;
+            let used = parse_f64_field(window, "used")?;
+            let total = parse_f64_field(window, "limit")?;
+            let remaining = (total - used).max(0.0);
+            let reset_in_sec = window
+                .get("resetInSec")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+                .max(0);
+            let rate_limited = window
+                .get("status")
+                .and_then(|v| v.as_str())
+                .is_some_and(|status| status == "rate-limited");
+
+            Some(UsageData {
+                plan_name: Some(name.to_string()),
+                remaining: Some(remaining),
+                total: Some(total),
+                used: Some(used),
+                unit: Some("USD".to_string()),
+                is_valid: Some(!rate_limited),
+                invalid_message: rate_limited.then(|| "Usage limit reached".to_string()),
+                extra: Some(format!("Resets in {reset_in_sec}s")),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    UsageResult {
+        success: true,
+        data: if data.is_empty() { None } else { Some(data) },
+        error: None,
+    }
+}
+
+async fn query_opencode_go(api_key: &str) -> Result<UsageResult, String> {
+    let client = crate::proxy::http_client::get();
+    let resp = client
+        .get("https://opencode.ai/zen/go/v1/usage")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Accept", "application/json")
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return Err(format!("Network error: {e}")),
+    };
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Ok(make_auth_error(status));
+    }
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
+    }
+
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
+        Ok(v) => v,
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+    };
+    Ok(parse_opencode_go_usage(&body))
+}
+
 // ── 工具函数 ────────────────────────────────────────────────
 
 /// 解析 JSON 字段为 f64，兼容数字和字符串格式
@@ -450,5 +534,57 @@ pub async fn get_balance(base_url: &str, api_key: &str) -> Result<UsageResult, S
         BalanceProvider::SiliconFlowEn => query_siliconflow(api_key, false).await,
         BalanceProvider::OpenRouter => query_openrouter(api_key).await,
         BalanceProvider::NovitaAI => query_novita(api_key).await,
+        BalanceProvider::OpenCodeGo => query_opencode_go(api_key).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_opencode_go_base_url() {
+        assert!(matches!(
+            detect_provider("https://opencode.ai/zen/go/v1"),
+            Some(BalanceProvider::OpenCodeGo)
+        ));
+    }
+
+    #[test]
+    fn parses_opencode_go_quota_windows() {
+        let body = serde_json::json!({
+            "plan": "lite",
+            "windows": [
+                {
+                    "name": "5-hour",
+                    "status": "ok",
+                    "usagePercent": 25,
+                    "resetInSec": 3600,
+                    "used": 3,
+                    "limit": 12
+                },
+                {
+                    "name": "weekly",
+                    "status": "rate-limited",
+                    "usagePercent": 100,
+                    "resetInSec": 7200,
+                    "used": 30,
+                    "limit": 30
+                }
+            ],
+            "useBalance": false
+        });
+
+        let result = parse_opencode_go_usage(&body);
+        let data = result.data.expect("quota windows");
+        assert!(result.success);
+        assert_eq!(data.len(), 2);
+        assert_eq!(data[0].remaining, Some(9.0));
+        assert_eq!(data[0].extra.as_deref(), Some("Resets in 3600s"));
+        assert_eq!(data[1].is_valid, Some(false));
+        assert_eq!(
+            data[1].invalid_message.as_deref(),
+            Some("Usage limit reached")
+        );
     }
 }
