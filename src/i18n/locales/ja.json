@@ -3042,6 +3042,7 @@
     "utilization": "{{value}}%",
     "utilizationWithTime": "{{used}}%-{{elapsed}}%",
     "utilizationWithTimeHint": "使用量%-時間%（ウィンドウ経過割合）",
+    "overPaceHint": "使用量が時間より先行（消費が速い）— 使用量%を太字表示",
     "resetsIn": "{{time}}後にリセット",
     "extraUsage": "超過使用量",
     "expired": "セッション期限切れ",

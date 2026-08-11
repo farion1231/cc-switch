@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   elapsedPercent,
   formatUsedElapsedPercent,
+  isOverPace,
+  splitUsedElapsedPercent,
   tierElapsedPercent,
   tierWindowSeconds,
 } from "@/utils/quotaWindow";
@@ -27,11 +29,32 @@ describe("quotaWindow", () => {
 
   it("returns undefined without reset or window", () => {
     expect(elapsedPercent(5 * 3600, null, Date.now())).toBeUndefined();
-    expect(tierElapsedPercent("gemini_pro", new Date().toISOString())).toBeUndefined();
+    expect(
+      tierElapsedPercent("gemini_pro", new Date().toISOString()),
+    ).toBeUndefined();
   });
 
   it("formats used%-elapsed%", () => {
     expect(formatUsedElapsedPercent(9.4, 40.2)).toBe("9%-40%");
     expect(formatUsedElapsedPercent(9.4, undefined)).toBe("9%");
+  });
+
+  it("detects over-pace when usage exceeds elapsed time", () => {
+    expect(isOverPace(80, 20)).toBe(true);
+    expect(isOverPace(20, 80)).toBe(false);
+    expect(isOverPace(50, 50)).toBe(false);
+    expect(isOverPace(50, undefined)).toBe(false);
+  });
+
+  it("splitUsedElapsedPercent marks overPace for bold UI", () => {
+    const over = splitUsedElapsedPercent(80, 20);
+    expect(over.usedText).toBe("80%");
+    expect(over.elapsedText).toBe("20%");
+    expect(over.plain).toBe("80%-20%");
+    expect(over.overPace).toBe(true);
+
+    const under = splitUsedElapsedPercent(10, 20);
+    expect(under.overPace).toBe(false);
+    expect(under.plain).toBe("10%-20%");
   });
 });

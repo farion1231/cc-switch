@@ -211,11 +211,40 @@ struct TierSummaryPart {
     elapsed_percent: Option<f64>,
 }
 
+/// 用量是否跑赢时间进度（烧得比时间快）——对齐 vscode-gptx `isOverPace`。
+fn is_over_pace(used_percent: f64, elapsed_percent: Option<f64>) -> bool {
+    match elapsed_percent {
+        Some(elapsed) if used_percent.is_finite() && elapsed.is_finite() => {
+            used_percent > elapsed
+        }
+        _ => false,
+    }
+}
+
+/// 托盘菜单是纯文本，无法 CSS 加粗；用量超进度时用数学粗体数字（𝟎-𝟗）提醒。
+fn math_bold_digits(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '0'..='9' => {
+                // U+1D7CE MATHEMATICAL BOLD DIGIT ZERO
+                char::from_u32(0x1D7CE + (c as u32 - '0' as u32)).unwrap_or(c)
+            }
+            _ => c,
+        })
+        .collect()
+}
+
 fn format_tier_summary_part(part: &TierSummaryPart) -> String {
     let used = part.used_percent.round() as i64;
+    let used_text = format!("{used}%");
+    let used_fmt = if is_over_pace(part.used_percent, part.elapsed_percent) {
+        math_bold_digits(&used_text)
+    } else {
+        used_text
+    };
     match part.elapsed_percent {
-        Some(elapsed) => format!("{}{}%-{}%", part.label, used, elapsed.round() as i64),
-        None => format!("{}{}%", part.label, used),
+        Some(elapsed) => format!("{}{}-{}%", part.label, used_fmt, elapsed.round() as i64),
+        None => format!("{}{}", part.label, used_fmt),
     }
 }
 
@@ -1744,6 +1773,43 @@ mod tests {
         let s = format_subscription_summary_at(&quota, now).expect("should format");
         assert!(s.contains("h9%-40%"), "expected h9%-40% in {s}");
         assert!(s.contains("w27%-50%"), "expected w27%-50% in {s}");
+    }
+
+    #[test]
+    fn subscription_summary_bolds_used_when_over_pace() {
+        // 用量 80% > 时间 20% → 用量数字用数学粗体
+        let now = 1_700_000_000_000_i64;
+        // 5h 窗口还剩 4h → 已流逝 20%
+        let h_reset = chrono::DateTime::from_timestamp_millis(now + 4 * 3600 * 1000)
+            .unwrap()
+            .to_rfc3339();
+        let quota = make_quota(
+            "claude",
+            true,
+            vec![tier_with_reset(TIER_FIVE_HOUR, 80.0, Some(&h_reset))],
+        );
+        let s = format_subscription_summary_at(&quota, now).expect("should format");
+        let bold_80: String = ['8', '0']
+            .into_iter()
+            .map(|c| char::from_u32(0x1D7CE + (c as u32 - '0' as u32)).unwrap())
+            .collect();
+        assert!(
+            s.contains(&format!("h{bold_80}%")),
+            "expected bold used digits h{bold_80}%-20% in {s}"
+        );
+        assert!(s.contains("-20%"), "expected time% in {s}");
+
+        // 未超进度：用量 10% < 时间 20% → 保持 ASCII
+        let under = make_quota(
+            "claude",
+            true,
+            vec![tier_with_reset(TIER_FIVE_HOUR, 10.0, Some(&h_reset))],
+        );
+        let s2 = format_subscription_summary_at(&under, now).expect("should format");
+        assert!(
+            s2.contains("h10%-20%"),
+            "under-pace should stay plain ASCII: {s2}"
+        );
     }
 
     #[test]

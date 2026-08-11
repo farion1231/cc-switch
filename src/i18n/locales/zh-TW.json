@@ -3043,6 +3043,7 @@
     "utilization": "{{value}}%",
     "utilizationWithTime": "{{used}}%-{{elapsed}}%",
     "utilizationWithTimeHint": "用量%-時間%（視窗已流逝占比）",
+    "overPaceHint": "用量超過時間進度（消耗偏快），已加粗用量%",
     "resetsIn": "{{time}} 後重設",
     "extraUsage": "超額用量",
     "expired": "工作階段已過期",

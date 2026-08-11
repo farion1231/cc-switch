@@ -3,6 +3,8 @@
  *
  * 时间% = 窗口已流逝占比：(窗口长 - 距重置) / 窗口长。
  * 用量 90% 时，时间 10% 与 99% 意义完全不同——这是双百分比展示的核心动机。
+ *
+ * 「超进度」：用量% > 时间%（烧得比时间快），UI 对用量数字加粗提醒。
  */
 
 const FIVE_HOUR_SECONDS = 5 * 3600;
@@ -73,7 +75,56 @@ export function tierElapsedPercent(
 }
 
 /**
- * 用量%-时间% 展示文本。
+ * 用量是否跑赢时间进度（烧得比时间快）。
+ * 与 vscode-gptx `isOverPace` 一致：两边都有值且 used > elapsed。
+ */
+export function isOverPace(
+  usedPercent: number,
+  elapsedPercent: number | undefined,
+): boolean {
+  return (
+    elapsedPercent !== undefined &&
+    Number.isFinite(elapsedPercent) &&
+    Number.isFinite(usedPercent) &&
+    usedPercent > elapsedPercent
+  );
+}
+
+export interface UsedElapsedParts {
+  /** 圆整后的用量数字文案，如 "39%" */
+  usedText: string;
+  /** 圆整后的时间数字文案，如 "70%"；无时间% 时为 undefined */
+  elapsedText?: string;
+  /** 纯文本：`39%-70%` 或 `39%` */
+  plain: string;
+  /** 用量是否超过时间进度，应用加粗 */
+  overPace: boolean;
+}
+
+/** 拆成可分别加粗的用量/时间片段，供 React 渲染 */
+export function splitUsedElapsedPercent(
+  usedPercent: number,
+  elapsed: number | undefined,
+): UsedElapsedParts {
+  const usedText = `${Math.round(usedPercent)}%`;
+  if (elapsed === undefined || !Number.isFinite(elapsed)) {
+    return {
+      usedText,
+      plain: usedText,
+      overPace: false,
+    };
+  }
+  const elapsedText = `${Math.round(elapsed)}%`;
+  return {
+    usedText,
+    elapsedText,
+    plain: `${usedText}-${elapsedText}`,
+    overPace: isOverPace(usedPercent, elapsed),
+  };
+}
+
+/**
+ * 用量%-时间% 纯文本。
  * - 有时间%：`3%-37%`
  * - 仅用量：`3%`
  */
@@ -81,9 +132,5 @@ export function formatUsedElapsedPercent(
   usedPercent: number,
   elapsed: number | undefined,
 ): string {
-  const used = Math.round(usedPercent);
-  if (elapsed === undefined || !Number.isFinite(elapsed)) {
-    return `${used}%`;
-  }
-  return `${used}%-${Math.round(elapsed)}%`;
+  return splitUsedElapsedPercent(usedPercent, elapsed).plain;
 }
