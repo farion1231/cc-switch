@@ -62,13 +62,17 @@ impl Database {
 
     /// 添加供应商到故障转移队列
     pub fn add_to_failover_queue(&self, app_type: &str, provider_id: &str) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
+        {
+            let conn = lock_conn!(self.conn);
+            conn.execute(
+                "UPDATE providers SET in_failover_queue = 1 WHERE id = ?1 AND app_type = ?2",
+                rusqlite::params![provider_id, app_type],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
 
-        conn.execute(
-            "UPDATE providers SET in_failover_queue = 1 WHERE id = ?1 AND app_type = ?2",
-            rusqlite::params![provider_id, app_type],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        // 同步重建 default 回退链路，保持新旧路径候选数据一致
+        let _ = self.sync_default_chain_from_queue(app_type);
 
         Ok(())
     }
@@ -79,23 +83,28 @@ impl Database {
         app_type: &str,
         provider_id: &str,
     ) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
+        {
+            let conn = lock_conn!(self.conn);
 
-        // 1. 从队列中移除
-        conn.execute(
-            "UPDATE providers SET in_failover_queue = 0 WHERE id = ?1 AND app_type = ?2",
-            rusqlite::params![provider_id, app_type],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
+            // 1. 从队列中移除
+            conn.execute(
+                "UPDATE providers SET in_failover_queue = 0 WHERE id = ?1 AND app_type = ?2",
+                rusqlite::params![provider_id, app_type],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 2. 清除该供应商的健康状态（退出队列后不再需要健康监控）
-        conn.execute(
-            "DELETE FROM provider_health WHERE provider_id = ?1 AND app_type = ?2",
-            rusqlite::params![provider_id, app_type],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
+            // 2. 清除该供应商的健康状态（退出队列后不再需要健康监控）
+            conn.execute(
+                "DELETE FROM provider_health WHERE provider_id = ?1 AND app_type = ?2",
+                rusqlite::params![provider_id, app_type],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
 
         log::info!("已从故障转移队列移除供应商 {provider_id} ({app_type}), 并清除其健康状态");
+
+        // 同步重建 default 回退链路
+        let _ = self.sync_default_chain_from_queue(app_type);
 
         Ok(())
     }

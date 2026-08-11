@@ -207,6 +207,41 @@ impl Database {
         Ok(keys)
     }
 
+    /// 从故障转移队列重建 `chain_key='default'` 的回退链路。
+    ///
+    /// 旧 failover 命令（add/remove_from_failover_queue）修改队列后调用，
+    /// 确保 default 链路与队列保持一致（fallback 与旧路径共用同一份候选数据）。
+    pub fn sync_default_chain_from_queue(&self, app_type: &str) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        tx.execute(
+            "DELETE FROM fallback_chain_config WHERE app_type = ?1 AND chain_key = 'default'",
+            params![app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        tx.execute(
+            "INSERT INTO fallback_chain_config
+                (app_type, chain_key, selector_index, selector_raw, provider_id, model_id)
+             SELECT ?1, 'default',
+                    ROW_NUMBER() OVER (
+                        PARTITION BY app_type
+                        ORDER BY COALESCE(sort_index, 2147483647), id ASC
+                    ) - 1,
+                    id, id, '*'
+             FROM providers
+             WHERE app_type = ?1 AND in_failover_queue = 1",
+            params![app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("提交 default 链路重建失败: {e}")))
+    }
+
     // ---- fallback 配置列（proxy_config） ----
 
     /// 获取 proxy_config 中的 fallback 配置

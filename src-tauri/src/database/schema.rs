@@ -402,6 +402,63 @@ impl Database {
             [],
         );
 
+        // 20. Fallback Chain 配置表（v17 oh-my-pi Fallback Chain 架构）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS fallback_chain_config (
+                app_type TEXT NOT NULL,
+                chain_key TEXT NOT NULL,
+                selector_index INTEGER NOT NULL,
+                selector_raw TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                model_id TEXT NOT NULL DEFAULT '*',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (app_type, chain_key, selector_index)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 21. Selector 抑制状态表
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS selector_suppression (
+                selector_identity TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                suppressed_until TEXT NOT NULL,
+                consecutive_count INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY (selector_identity, app_type)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 22. Fallback 配置列（proxy_config）— 兼容已存在的库
+        if Self::table_exists(conn, "proxy_config")? {
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "fallback_enabled",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "fallback_revert_policy",
+                "TEXT NOT NULL DEFAULT 'cooldown-expiry'",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "retry_base_delay_ms",
+                "INTEGER NOT NULL DEFAULT 500",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "retry_max_delay_ms",
+                "INTEGER NOT NULL DEFAULT 8000",
+            )?;
+        }
+
         Ok(())
     }
 

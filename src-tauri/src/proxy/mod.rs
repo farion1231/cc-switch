@@ -46,6 +46,8 @@ pub use circuit_breaker::{
     CircuitBreaker, CircuitBreakerConfig, CircuitBreakerStats, CircuitState,
 };
 #[allow(unused_imports)]
+// 已被 fallback::selector_suppression 替代（v17 Fallback Chain 架构）。
+// 保留导出以兼容旧的外部引用；新代码请使用 fallback 模块。
 pub use cooldown_manager::{CooldownManagerConfig, CooldownStats, ProviderCooldownManager, ProviderCooldownState, AutoRecoveryTask};
 #[allow(unused_imports)]
 pub use error::ProxyError;
