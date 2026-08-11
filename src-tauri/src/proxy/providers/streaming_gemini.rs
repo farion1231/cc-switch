@@ -588,7 +588,8 @@ mod tests {
                 .into_iter()
                 .map(|chunk| Ok::<Bytes, std::io::Error>(Bytes::from(chunk))),
         );
-        let converted = create_anthropic_sse_stream_from_gemini(stream, None, None, None, None, None);
+        let converted =
+            create_anthropic_sse_stream_from_gemini(stream, None, None, None, None, None);
         futures::executor::block_on(async move {
             converted
                 .collect::<Vec<_>>()
@@ -695,7 +696,8 @@ mod tests {
             Ok::<Bytes, std::io::Error>(Bytes::from(chunk_bytes[..split_at].to_vec())),
             Ok::<Bytes, std::io::Error>(Bytes::from(chunk_bytes[split_at..].to_vec())),
         ]);
-        let converted = create_anthropic_sse_stream_from_gemini(stream, None, None, None, None, None);
+        let converted =
+            create_anthropic_sse_stream_from_gemini(stream, None, None, None, None, None);
         let output = futures::executor::block_on(async move {
             converted
                 .collect::<Vec<_>>()

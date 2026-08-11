@@ -695,7 +695,11 @@ async fn handle_claude_transform(
     // OpenAI 兼容格式下，上游响应的 model 字段通常是上游自己的模型 id（如 gpt-4o）。
     // 只有 Claude Science 会严格校验会话中的模型名并因此报错，故仅对 Science 把响应
     // model 重写为请求时使用的路由 id；Claude Code/Desktop 保持原有上游回显行为。
-    maybe_normalize_response_model(ctx.app_type.clone(), &ctx.request_model, &mut anthropic_response);
+    maybe_normalize_response_model(
+        ctx.app_type.clone(),
+        &ctx.request_model,
+        &mut anthropic_response,
+    );
 
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
@@ -3438,11 +3442,7 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
             "stop_reason": "end_turn",
             "usage": {"input_tokens": 10, "output_tokens": 2}
         });
-        maybe_normalize_response_model(
-            AppType::ClaudeScience,
-            "claude-opus-5",
-            &mut response,
-        );
+        maybe_normalize_response_model(AppType::ClaudeScience, "claude-opus-5", &mut response);
         assert_eq!(response["model"], "claude-opus-5");
     }
 
@@ -3472,11 +3472,7 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
             "stop_reason": "end_turn",
             "usage": {"input_tokens": 10, "output_tokens": 2}
         });
-        maybe_normalize_response_model(
-            AppType::ClaudeDesktop,
-            "claude-opus-5",
-            &mut response,
-        );
+        maybe_normalize_response_model(AppType::ClaudeDesktop, "claude-opus-5", &mut response);
         assert_eq!(response["model"], "glm-5.2");
     }
 }
