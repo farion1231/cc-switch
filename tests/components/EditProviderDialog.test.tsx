@@ -159,6 +159,65 @@ describe("EditProviderDialog", () => {
     });
   });
 
+  it("编辑当前 Codex 供应商时从 live experimental_bearer_token 还原真实 API Key", async () => {
+    const provider: Provider = {
+      id: "katixiya",
+      name: "Katixiya",
+      category: "custom",
+      settingsConfig: {
+        auth: {
+          OPENAI_API_KEY: "db-key",
+        },
+        config:
+          'model_provider = "katixiya"\n[model_providers.katixiya]\nbase_url = "https://new.sharedchat.cc/codex"\n',
+      },
+    };
+    const liveSettings = {
+      auth: {
+        OPENAI_API_KEY: "old-live-auth-key",
+      },
+      config:
+        'model_provider = "katixiya"\n[model_providers.katixiya]\nbase_url = "https://new.sharedchat.cc/codex"\nexperimental_bearer_token = "real-provider-key"\n',
+    };
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+    apiMocks.getCurrent.mockResolvedValue(provider.id);
+    apiMocks.getLiveProviderSettings.mockResolvedValue(liveSettings);
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={handleSubmit}
+        appId="codex"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual({
+        auth: {
+          OPENAI_API_KEY: "real-provider-key",
+        },
+        config:
+          'model_provider = "katixiya"\n[model_providers.katixiya]\nbase_url = "https://new.sharedchat.cc/codex"\n',
+      });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+    expect(handleSubmit.mock.calls[0][0].provider.settingsConfig).toEqual({
+      auth: {
+        OPENAI_API_KEY: "real-provider-key",
+      },
+      config:
+        'model_provider = "katixiya"\n[model_providers.katixiya]\nbase_url = "https://new.sharedchat.cc/codex"\n',
+    });
+  });
+
   it("代理接管中编辑 Codex 供应商时展示数据库配置而不是读取 live 代理配置", async () => {
     const provider: Provider = {
       id: "deepseek",
