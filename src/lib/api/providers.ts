@@ -190,6 +190,21 @@ export const providersApi = {
   },
 
   /**
+   * 获取 Kimi live 配置中的供应商 ID 列表
+   * 用于前端判断供应商是否已添加到 Kimi 配置
+   */
+  async getKimiLiveProviderIds(): Promise<string[]> {
+    return await invoke("get_kimi_live_provider_ids");
+  },
+
+  /**
+   * 获取 Kimi live 配置中的默认模型
+   */
+  async getKimiDefaultModel(): Promise<string | null> {
+    return await invoke("get_kimi_default_model");
+  },
+
+  /**
    * 从 OpenClaw live 配置导入供应商到数据库
    * OpenClaw 特有功能：由于累加模式，用户可能已在 openclaw.json 中配置供应商
    */
@@ -203,6 +218,14 @@ export const providersApi = {
    */
   async importHermesFromLive(): Promise<number> {
     return await invoke("import_hermes_providers_from_live");
+  },
+
+  /**
+   * 从 Kimi live 配置导入供应商到数据库
+   * Kimi 特有功能：由于累加模式，用户可能已在 config.toml 中配置供应商
+   */
+  async importKimiFromLive(): Promise<number> {
+    return await invoke("import_kimi_providers_from_live");
   },
 };
 

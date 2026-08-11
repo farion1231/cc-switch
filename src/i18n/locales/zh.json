@@ -890,7 +890,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "kimi": "Kimi"
   },
   "appSwitcher": {
     "more": "更多应用"
@@ -1944,6 +1945,9 @@
         "name": "@upstash/context7-mcp",
         "description": "Context7 文档搜索工具，提供最新的库文档和代码示例，配置 key 会有更高限额"
       }
+    },
+    "apps": {
+      "kimi": "Kimi"
     }
   },
   "prompts": {
@@ -3049,5 +3053,43 @@
     "expiredHint": "请运行 {{tool}} 命令刷新登录",
     "queryFailed": "查询失败",
     "refresh": "刷新"
+  },
+  "kimi": {
+    "form": {
+      "type": "协议类型",
+      "typeKimi": "Kimi",
+      "typeOpenai": "OpenAI",
+      "typeOpenaiResponses": "OpenAI Responses",
+      "typeAnthropic": "Anthropic",
+      "typeGoogleGenai": "Google GenAI",
+      "typeVertexai": "Vertex AI",
+      "typeHint": "供应商 API 协议（写入 [providers.<name>].type）。",
+      "baseUrl": "API 端点",
+      "baseUrlRequired": "请输入 API 端点",
+      "baseUrlScheme": "API 端点必须以 http:// 或 https:// 开头",
+      "baseUrlInvalid": "API 端点格式无效",
+      "baseUrlHint": "供应商的 API 端点地址。",
+      "models": "模型列表",
+      "addModel": "添加模型",
+      "noModels": "暂无模型配置。切换到此供应商时将无默认模型。",
+      "modelId": "模型别名",
+      "modelIdPlaceholder": "kimi-k2.7-code",
+      "modelName": "显示名称",
+      "modelNamePlaceholder": "Kimi K2.7 Code",
+      "defaultModel": "默认模型",
+      "fallbackModel": "备选模型",
+      "setDefault": "设为默认",
+      "advancedOptions": "高级选项",
+      "contextLength": "上下文长度（token）",
+      "capabilities": "能力标签（逗号分隔）",
+      "modelsHint": "切换到此供应商时，默认模型会写入顶层 default_model。",
+      "providerKey": "Provider Key",
+      "providerKeyPlaceholder": "my-provider",
+      "providerKeyRequired": "请输入 Provider Key",
+      "providerKeyInvalid": "仅限小写字母、数字和连字符",
+      "providerKeyDuplicate": "该 Provider Key 已存在",
+      "providerKeyLockedHint": "该供应商已添加到 Kimi 配置中，供应商标识不可修改",
+      "providerKeyHint": "仅限小写字母、数字和连字符。将用作 config.toml 中的提供商名称。"
+    }
   }
 }

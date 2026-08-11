@@ -152,6 +152,7 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
+        AppType::Kimi => build_kimi_settings(request),
     };
 
     // Build usage script configuration if provided
@@ -578,6 +579,43 @@ fn build_hermes_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
             "models".to_string(),
             json!([{ "id": model, "name": model }]),
         );
+    }
+
+    json!(config)
+}
+
+/// Build Kimi provider settings (snake_case TOML-native fields).
+///
+/// Kimi's `[providers.<name>]` entries use `type` / `base_url` / `api_key`,
+/// and `[models."<alias>"]` entries carry `provider` / `model` /
+/// `max_context_size` / `capabilities`. Deeplinks have no field to carry a
+/// protocol type, so we default to `openai` (the most widely compatible
+/// protocol); the user can adjust via the UI after import.
+fn build_kimi_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let endpoint = get_primary_endpoint(request);
+
+    let mut config = serde_json::Map::new();
+
+    if let Some(name) = request.name.as_deref().filter(|s| !s.is_empty()) {
+        config.insert("name".to_string(), json!(name));
+    }
+
+    config.insert("type".to_string(), json!("openai"));
+
+    if !endpoint.is_empty() {
+        config.insert("base_url".to_string(), json!(endpoint));
+    }
+
+    if let Some(api_key) = &request.api_key {
+        config.insert("api_key".to_string(), json!(api_key));
+    }
+
+    if let Some(model) = &request.model {
+        config.insert(
+            "models".to_string(),
+            json!([{ "id": model, "name": model }]),
+        );
+        config.insert("default_model".to_string(), json!(model));
     }
 
     json!(config)

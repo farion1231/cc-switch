@@ -138,6 +138,9 @@ impl ConfigService {
             AppType::Hermes => {
                 // Hermes uses additive mode, no live sync needed
             }
+            AppType::Kimi => {
+                // Kimi uses additive mode, no live sync needed
+            }
         }
 
         Ok(())

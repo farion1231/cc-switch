@@ -81,6 +81,16 @@ pub(crate) const OFFICIAL_SEEDS: &[OfficialProviderSeed] = &[
         // 空 config = 不写自定义模型表，Grok CLI 回落到自带的 xAI OAuth 登录
         settings_config_json: r#"{"config":""}"#,
     },
+    OfficialProviderSeed {
+        id: "kimi-official",
+        app_type: AppType::Kimi,
+        name: "Kimi Official",
+        website_url: "https://www.kimi.com/code",
+        icon: "kimi",
+        icon_color: "#1783FF",
+        // 空 provider 配置 = 让用户走 Kimi CLI 自带的 /login OAuth 或平台 API key
+        settings_config_json: r#"{"name":"kimi-official","type":"kimi","base_url":"https://api.kimi.com/coding/v1","api_key":"","models":[{"id":"kimi-code/k3","name":"Kimi K3","max_context_size":1048576,"capabilities":["thinking","always_thinking","image_in","video_in","tool_use"]}],"default_model":"kimi-code/k3"}"#,
+    },
 ];
 
 /// 判断给定的 provider id 是否属于内置官方种子。

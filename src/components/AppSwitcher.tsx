@@ -33,6 +33,7 @@ const ALL_APPS: AppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "kimi",
 ];
 const STORAGE_KEY = "cc-switch-last-app";
 
@@ -45,6 +46,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   opencode: "opencode",
   openclaw: "openclaw",
   hermes: "hermes",
+  kimi: "kimi",
 };
 
 const APP_DISPLAY_NAME: Record<AppId, string> = {
@@ -56,6 +58,7 @@ const APP_DISPLAY_NAME: Record<AppId, string> = {
   opencode: "OpenCode",
   openclaw: "OpenClaw",
   hermes: "Hermes",
+  kimi: "Kimi",
 };
 
 /** 应用图标 + 角标（Claude Code / Desktop 用角标区分终端与桌面） */

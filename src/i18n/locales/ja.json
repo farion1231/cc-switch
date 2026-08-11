@@ -890,7 +890,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "kimi": "Kimi"
   },
   "appSwitcher": {
     "more": "その他のアプリ"
@@ -1944,6 +1945,9 @@
         "name": "@upstash/context7-mcp",
         "description": "最新のライブラリドキュメントとコード例を提供する Context7 ドキュメント検索ツール。キー設定で上限が拡張されます"
       }
+    },
+    "apps": {
+      "kimi": "Kimi"
     }
   },
   "prompts": {
@@ -3049,5 +3053,43 @@
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
+  },
+  "kimi": {
+    "form": {
+      "type": "プロトコルタイプ",
+      "typeKimi": "Kimi",
+      "typeOpenai": "OpenAI",
+      "typeOpenaiResponses": "OpenAI Responses",
+      "typeAnthropic": "Anthropic",
+      "typeGoogleGenai": "Google GenAI",
+      "typeVertexai": "Vertex AI",
+      "typeHint": "プロバイダー API プロトコル（[providers.<name>].type に書き込まれます）。",
+      "baseUrl": "API ベース URL",
+      "baseUrlRequired": "API ベース URL を入力してください",
+      "baseUrlScheme": "API ベース URL は http:// または https:// で始まる必要があります",
+      "baseUrlInvalid": "API ベース URL の形式が無効です",
+      "baseUrlHint": "プロバイダーの API エンドポイントアドレス。",
+      "models": "モデルリスト",
+      "addModel": "モデルを追加",
+      "noModels": "モデルが設定されていません。このプロバイダーに切り替えてもデフォルトモデルはありません。",
+      "modelId": "モデルエイリアス",
+      "modelIdPlaceholder": "kimi-k2.7-code",
+      "modelName": "表示名",
+      "modelNamePlaceholder": "Kimi K2.7 Code",
+      "defaultModel": "デフォルトモデル",
+      "fallbackModel": "代替モデル",
+      "setDefault": "デフォルトに設定",
+      "advancedOptions": "詳細オプション",
+      "contextLength": "コンテキスト長（トークン）",
+      "capabilities": "機能タグ（カンマ区切り）",
+      "modelsHint": "このプロバイダーに切り替えると、デフォルトモデルがトップレベルの default_model に書き込まれます。",
+      "providerKey": "Provider Key",
+      "providerKeyPlaceholder": "my-provider",
+      "providerKeyRequired": "Provider Key を入力してください",
+      "providerKeyInvalid": "小文字・数字・ハイフンのみ使用できます",
+      "providerKeyDuplicate": "この Provider Key は既に存在します",
+      "providerKeyLockedHint": "このプロバイダーは Kimi 設定に既に追加されています。識別子は変更できません。",
+      "providerKeyHint": "小文字・数字・ハイフンのみ使用できます。config.toml のプロバイダー名として使用されます。"
+    }
   }
 }
