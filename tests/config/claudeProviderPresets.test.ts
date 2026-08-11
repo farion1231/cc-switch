@@ -1,6 +1,34 @@
 import { describe, expect, it } from "vitest";
 import { providerPresets } from "@/config/claudeProviderPresets";
 
+describe("StepFun Provider Presets", () => {
+  const stepFunPresets = providerPresets.filter((p) =>
+    ["StepFun", "StepFun en"].includes(p.name),
+  );
+
+  it("should include both regional presets", () => {
+    expect(stepFunPresets).toHaveLength(2);
+  });
+
+  it.each(["StepFun", "StepFun en"])(
+    "%s should pin the model context and compact before the hard limit",
+    (name) => {
+      const preset = providerPresets.find((p) => p.name === name)!;
+      const env = (preset.settingsConfig as any).env;
+
+      expect(env).toMatchObject({
+        ANTHROPIC_MODEL: "step-3.5-flash-2603",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "step-3.5-flash-2603",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "step-3.5-flash-2603",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "step-3.5-flash-2603",
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "262144",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "220000",
+      });
+      expect(preset.templateValues).toBeUndefined();
+    },
+  );
+});
+
 describe("Kimi For Coding Provider Preset", () => {
   const kimiForCoding = providerPresets.find(
     (p) => p.name === "Kimi For Coding",
