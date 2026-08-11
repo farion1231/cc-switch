@@ -28,12 +28,13 @@ const SEARCH_CONTEXT_LENGTH = 80;
 const getHiddenSearchSnippet = (content: string, searchQuery?: string) => {
   if (!searchQuery) return null;
 
+  const searchStart = Math.max(0, COLLAPSED_LENGTH - searchQuery.length + 1);
   const matchIndex = content
     .toLowerCase()
-    .indexOf(searchQuery.toLowerCase(), COLLAPSED_LENGTH);
+    .indexOf(searchQuery.toLowerCase(), searchStart);
   if (matchIndex < 0) return null;
 
-  const start = Math.max(COLLAPSED_LENGTH, matchIndex - SEARCH_CONTEXT_LENGTH);
+  const start = Math.max(0, matchIndex - SEARCH_CONTEXT_LENGTH);
   const end = Math.min(
     content.length,
     matchIndex + searchQuery.length + SEARCH_CONTEXT_LENGTH,

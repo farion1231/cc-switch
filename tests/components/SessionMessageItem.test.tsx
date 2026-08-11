@@ -63,6 +63,35 @@ describe("SessionMessageItem", () => {
     expect(container).not.toHaveTextContent("**safe mode**");
   });
 
+  it("renders every line in an indented code block", () => {
+    const { container } = renderMessage("    first\n    second");
+
+    expect(container.querySelector("code")).toHaveTextContent("first\nsecond", {
+      normalizeWhitespace: false,
+    });
+  });
+
+  it("resolves reference-style links through their definitions", () => {
+    const { container } = renderMessage(
+      '[docs][reference]\n\n[reference]: https://example.com "Documentation"',
+    );
+
+    expect(screen.getByRole("link", { name: "docs" })).toHaveAttribute(
+      "href",
+      "https://example.com",
+    );
+    expect(container).not.toHaveTextContent("[reference]:");
+  });
+
+  it("removes subscript and superscript delimiter markers", () => {
+    const { container } = renderMessage("H~2~O and x^2^");
+
+    expect(container.querySelector("sub")).toHaveTextContent("2");
+    expect(container.querySelector("sup")).toHaveTextContent("2");
+    expect(container).not.toHaveTextContent("~2~");
+    expect(container).not.toHaveTextContent("^2^");
+  });
+
   it("keeps search matches highlighted inside rendered Markdown", () => {
     renderMessage("The **important result** is ready.", "result");
 
@@ -96,6 +125,30 @@ describe("SessionMessageItem", () => {
       "src",
       "https://tracker.example/unique-id",
     );
+  });
+
+  it("requires new consent when a rendered remote image URL changes", async () => {
+    const user = userEvent.setup();
+    const { container, rerender } = render(
+      <SessionMarkdown content="![first](https://tracker.example/first)" />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /加载远程图片.*first/ }),
+    );
+    expect(screen.getByRole("img", { name: "first" })).toHaveAttribute(
+      "src",
+      "https://tracker.example/first",
+    );
+
+    rerender(
+      <SessionMarkdown content="![second](https://tracker.example/second)" />,
+    );
+
+    expect(container.querySelector("img")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /加载远程图片.*second/ }),
+    ).toBeInTheDocument();
   });
 
   it("renders table rows using only semantic cell elements", () => {
@@ -142,6 +195,13 @@ describe("SessionMessageItem", () => {
     expect(
       screen.getByRole("button", { name: /展开完整内容/ }),
     ).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("shows search context when a match crosses the collapse boundary", () => {
+    renderMessage(`${"a".repeat(1497)}needle${"b".repeat(1600)}`, "needle");
+
+    expect(screen.getByText("needle").tagName).toBe("MARK");
+    expect(screen.getByText("折叠内容中的匹配")).toBeInTheDocument();
   });
 
   it("closes a truncated code fence before rendering the preview ellipsis", () => {

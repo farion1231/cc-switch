@@ -20,6 +20,8 @@ const MARKER_NODES = new Set([
   "ListMark",
   "QuoteMark",
   "StrikethroughMark",
+  "SubscriptMark",
+  "SuperscriptMark",
   "TaskMarker",
 ]);
 
@@ -65,6 +67,38 @@ const childNodes = (node: MarkdownNode) => {
   return children;
 };
 
+type LinkReferences = ReadonlyMap<string, string>;
+const EMPTY_LINK_REFERENCES: LinkReferences = new Map();
+
+const normalizeReferenceLabel = (value: string) => {
+  const label =
+    value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value;
+  return label.trim().replace(/\s+/g, " ").toLowerCase();
+};
+
+const collectLinkReferences = (root: MarkdownNode, source: string) => {
+  const references = new Map<string, string>();
+
+  const visit = (node: MarkdownNode) => {
+    if (node.name === "LinkReference") {
+      const labelNode = node.getChild("LinkLabel");
+      const urlNode = node.getChild("URL");
+      if (labelNode && urlNode) {
+        const label = normalizeReferenceLabel(
+          source.slice(labelNode.from, labelNode.to),
+        );
+        const href = safeExternalUrl(source.slice(urlNode.from, urlNode.to));
+        if (href && !references.has(label)) references.set(label, href);
+      }
+    }
+
+    childNodes(node).forEach(visit);
+  };
+
+  visit(root);
+  return references;
+};
+
 const findUnclosedFence = (
   node: MarkdownNode,
   source: string,
@@ -99,6 +133,7 @@ const renderChildren = (
   node: MarkdownNode,
   source: string,
   searchQuery?: string,
+  linkReferences: LinkReferences = EMPTY_LINK_REFERENCES,
   skippedNodes = MARKER_NODES,
 ): ReactNode[] => {
   const result: ReactNode[] = [];
@@ -116,7 +151,7 @@ const renderChildren = (
     if (!skippedNodes.has(child.name)) {
       result.push(
         <Fragment key={`${child.name}-${child.from}-${index}`}>
-          {renderNode(child, source, searchQuery)}
+          {renderNode(child, source, searchQuery, linkReferences)}
         </Fragment>,
       );
     }
@@ -139,9 +174,13 @@ const renderCode = (
   source: string,
   searchQuery?: string,
 ) => {
-  const codeNode = node.getChild("CodeText");
+  const codeNodes = childNodes(node).filter(
+    (child) => child.name === "CodeText",
+  );
   const languageNode = node.getChild("CodeInfo");
-  const code = codeNode ? source.slice(codeNode.from, codeNode.to) : "";
+  const code = codeNodes
+    .map((codeNode) => source.slice(codeNode.from, codeNode.to))
+    .join("");
   const language = languageNode
     ? source.slice(languageNode.from, languageNode.to).trim()
     : undefined;
@@ -181,15 +220,29 @@ const renderLink = (
   node: MarkdownNode,
   source: string,
   searchQuery?: string,
+  linkReferences: LinkReferences = EMPTY_LINK_REFERENCES,
 ) => {
   const urlNode = node.getChild("URL");
+  const referenceLabelNode = node.getChild("LinkLabel");
   const href = urlNode
     ? safeExternalUrl(source.slice(urlNode.from, urlNode.to))
-    : null;
+    : referenceLabelNode
+      ? linkReferences.get(
+          normalizeReferenceLabel(
+            source.slice(referenceLabelNode.from, referenceLabelNode.to),
+          ),
+        )
+      : null;
   const label =
     node.name === "Autolink" && urlNode
       ? renderText(source.slice(urlNode.from, urlNode.to), searchQuery)
-      : renderChildren(node, source, searchQuery, LINK_METADATA_NODES);
+      : renderChildren(
+          node,
+          source,
+          searchQuery,
+          linkReferences,
+          LINK_METADATA_NODES,
+        );
 
   if (!href) return <>{label}</>;
 
@@ -213,9 +266,9 @@ interface RemoteImageProps {
 
 const RemoteImage = ({ src, alt, searchQuery }: RemoteImageProps) => {
   const { t } = useTranslation();
-  const [shouldLoad, setShouldLoad] = useState(false);
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
 
-  if (shouldLoad) {
+  if (loadedSrc === src) {
     return (
       <img
         src={src}
@@ -239,7 +292,7 @@ const RemoteImage = ({ src, alt, searchQuery }: RemoteImageProps) => {
     <button
       type="button"
       aria-label={`${loadLabel}: ${label}`}
-      onClick={() => setShouldLoad(true)}
+      onClick={() => setLoadedSrc(src)}
       className="my-2 flex max-w-full flex-col items-start rounded-md border border-dashed border-border/70 bg-muted/40 px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
     >
       <span className="max-w-full truncate font-medium">
@@ -271,6 +324,7 @@ const renderTable = (
   node: MarkdownNode,
   source: string,
   searchQuery?: string,
+  linkReferences: LinkReferences = EMPTY_LINK_REFERENCES,
 ) => {
   const header = node.getChild("TableHeader");
   const rows = childNodes(node).filter((child) => child.name === "TableRow");
@@ -278,12 +332,16 @@ const renderTable = (
   return (
     <div className="my-2 max-w-full overflow-x-auto">
       <table className="w-full border-collapse text-left text-xs">
-        {header && <thead>{renderNode(header, source, searchQuery)}</thead>}
+        {header && (
+          <thead>
+            {renderNode(header, source, searchQuery, linkReferences)}
+          </thead>
+        )}
         {rows.length > 0 && (
           <tbody>
             {rows.map((row) => (
               <Fragment key={row.from}>
-                {renderNode(row, source, searchQuery)}
+                {renderNode(row, source, searchQuery, linkReferences)}
               </Fragment>
             ))}
           </tbody>
@@ -297,13 +355,14 @@ const renderTableRow = (
   node: MarkdownNode,
   source: string,
   searchQuery?: string,
+  linkReferences: LinkReferences = EMPTY_LINK_REFERENCES,
 ) => (
   <tr>
     {childNodes(node)
       .filter((child) => child.name === "TableCell")
       .map((cell) => (
         <Fragment key={cell.from}>
-          {renderNode(cell, source, searchQuery)}
+          {renderNode(cell, source, searchQuery, linkReferences)}
         </Fragment>
       ))}
   </tr>
@@ -313,8 +372,10 @@ const renderNode = (
   node: MarkdownNode,
   source: string,
   searchQuery?: string,
+  linkReferences: LinkReferences = EMPTY_LINK_REFERENCES,
 ): ReactNode => {
-  const children = () => renderChildren(node, source, searchQuery);
+  const children = () =>
+    renderChildren(node, source, searchQuery, linkReferences);
 
   if (/^(ATX|Setext)Heading[1-6]$/.test(node.name)) {
     const level = Number(node.name.at(-1));
@@ -397,10 +458,10 @@ const renderNode = (
     case "HorizontalRule":
       return <hr className="my-3 border-border/70" />;
     case "Table":
-      return renderTable(node, source, searchQuery);
+      return renderTable(node, source, searchQuery, linkReferences);
     case "TableHeader":
     case "TableRow":
-      return renderTableRow(node, source, searchQuery);
+      return renderTableRow(node, source, searchQuery, linkReferences);
     case "TableCell": {
       const Cell = node.parent?.name === "TableHeader" ? "th" : "td";
       return (
@@ -414,7 +475,7 @@ const renderNode = (
       return null;
     case "Link":
     case "Autolink":
-      return renderLink(node, source, searchQuery);
+      return renderLink(node, source, searchQuery, linkReferences);
     case "URL": {
       const label = source.slice(node.from, node.to);
       const href = safeExternalUrl(label);
@@ -453,9 +514,13 @@ export const SessionMarkdown = memo(function SessionMarkdown({
   searchQuery,
 }: SessionMarkdownProps) {
   const tree = useMemo(() => markdownLanguage.parser.parse(content), [content]);
+  const linkReferences = useMemo(
+    () => collectLinkReferences(tree.topNode, content),
+    [content, tree],
+  );
   const rendered = useMemo(
-    () => renderNode(tree.topNode, content, searchQuery),
-    [content, searchQuery, tree],
+    () => renderNode(tree.topNode, content, searchQuery, linkReferences),
+    [content, linkReferences, searchQuery, tree],
   );
 
   return (
