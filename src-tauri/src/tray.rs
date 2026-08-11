@@ -300,8 +300,9 @@ fn elapsed_percent_from_reset(window_seconds: i64, resets_at: &str, now_ms: i64)
     }
     let reset_ms = parse_resets_at_ms(resets_at)?;
     let window_ms = (window_seconds as f64) * 1000.0;
+    // ratio 为 0–1 的流逝占比，再换成 0–100 的百分比
     let ratio = (window_ms - (reset_ms - now_ms) as f64) / window_ms;
-    Some(ratio.clamp(0.0, 100.0))
+    Some((ratio * 100.0).clamp(0.0, 100.0))
 }
 
 fn parse_resets_at_ms(resets_at: &str) -> Option<i64> {
