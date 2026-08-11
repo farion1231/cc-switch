@@ -1012,6 +1012,12 @@ pub async fn materialize_skill_dir(
         // 代表仓库根而不是 <仓库名>/ 子目录；先把哨兵解析为 tree 根。
         let dir = resolve_materialize_dir(dir, &repo.name);
         let mut materialized_skill_md = false;
+        // mode 120000 的符号链接条目：blob 内容是目标路径文本，不能当普通文件写。
+        // 第一遍物化所有普通文件并收集 symlink 条目，第二遍（普通文件全部落盘后）
+        // 调用 SkillService::resolve_symlinks_in_dir 把目标内容复制到链接位置。
+        // 语义与 skill.rs 的 ZIP 路径（extract_repo_archive）完全一致，确保两条
+        // 路径产出逐字节等价的自包含副本。
+        let mut symlinks: Vec<(PathBuf, String)> = Vec::new();
         for f in &files {
             if f.mode == 0o160000 {
                 continue;
@@ -1028,12 +1034,26 @@ pub async fn materialize_skill_dir(
                 fs::create_dir_all(parent)?;
             }
             let bytes = backend.fetch_file(repo, &branch, f).await?;
+            if f.mode == 0o120000 {
+                // symlink：bytes 是目标路径文本。用 read_symlink_target 复用 ZIP
+                // 路径的限长 + 计费语义（超长/非 UTF-8 返回 None → 跳过）。
+                let mut cursor = std::io::Cursor::new(&bytes);
+                match SkillService::read_symlink_target(&mut cursor, &mut total_bytes)? {
+                    Some(target) => symlinks.push((dest, target)),
+                    None => log::warn!("跳过目标不合法的 symlink 条目: {}", f.path),
+                }
+                continue;
+            }
             total_bytes = total_bytes.saturating_add(bytes.len() as u64);
             if total_bytes > MAX_ARCHIVE_TOTAL_BYTES {
                 return Err(anyhow!("物化目录超过字节上限"));
             }
             fs::write(&dest, &bytes)?;
         }
+        // 第二遍：解析 symlink 到目标内容。必须在所有普通文件落盘之后调用，
+        // 确保 symlink target 已存在可供 canonicalize。复用 skill.rs 的实现，
+        // 含越界守卫、self-containing 守卫与共享 total_bytes 预算计费。
+        SkillService::resolve_symlinks_in_dir(temp_dir.path(), &symlinks, &mut total_bytes)?;
         // 目录里没有 SKILL.md 说明不是合法 skill 目录（dir 未命中或错配），
         // 必须显式报错让调用方的后端回退链继续，而不是静默返回空目录。
         if !materialized_skill_md {
@@ -1077,6 +1097,115 @@ fn resolve_materialize_dir<'a>(dir: &'a str, repo_name: &str) -> &'a str {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    /// Mock 后端：用预构造的 RepoFile 列表 + blob 内容映射模拟仓库，
+    /// 专门测试 materialize_skill_dir 对 mode 120000 symlink 的处理。
+    /// 跨平台：不依赖文件系统 symlink，blob 内容由测试直接提供。
+    struct MockSymlinkBackend {
+        files: Vec<RepoFile>,
+        /// blob_sha → 文件字节（普通文件）或目标路径文本（symlink）
+        blobs: HashMap<String, Vec<u8>>,
+        branch: String,
+    }
+
+    #[async_trait::async_trait]
+    impl LargeRepoBackend for MockSymlinkBackend {
+        async fn fetch_tree(&self, _repo: &SkillRepo) -> Result<(Vec<RepoFile>, String)> {
+            Ok((self.files.clone(), self.branch.clone()))
+        }
+
+        async fn fetch_file(
+            &self,
+            _repo: &SkillRepo,
+            _branch: &str,
+            file: &RepoFile,
+        ) -> Result<Vec<u8>> {
+            self.blobs
+                .get(&file.blob_sha)
+                .cloned()
+                .ok_or_else(|| anyhow!("mock 缺少 blob: {}", file.blob_sha))
+        }
+    }
+
+    /// 构造含 symlink 的 mock 仓库：
+    /// - SKILL.md（普通文件，满足合法 skill 校验）
+    /// - target.txt（普通文件，作为 symlink 目标）
+    /// - shared/（普通目录，作为 symlink 目标）
+    /// - shared/nested.txt
+    /// - link-to-file → target.txt（mode 120000）
+    /// - link-to-dir → shared（mode 120000）
+    /// - link-self → .（mode 120000，self-containing，应跳过）
+    /// - link-escape → ../../etc/passwd（mode 120000，越界，应跳过）
+    fn mock_symlink_backend() -> MockSymlinkBackend {
+        let skill_md_sha = "skillmd".to_string();
+        let target_sha = "target".to_string();
+        let nested_sha = "nested".to_string();
+        let link_file_sha = "linkfile".to_string();
+        let link_dir_sha = "linkdir".to_string();
+        let link_self_sha = "linkself".to_string();
+        let link_escape_sha = "linkescape".to_string();
+
+        let files = vec![
+            RepoFile {
+                path: "SKILL.md".to_string(),
+                blob_sha: skill_md_sha.clone(),
+                size: 10,
+                mode: 0o100644,
+            },
+            RepoFile {
+                path: "target.txt".to_string(),
+                blob_sha: target_sha.clone(),
+                size: 7,
+                mode: 0o100644,
+            },
+            RepoFile {
+                path: "shared/nested.txt".to_string(),
+                blob_sha: nested_sha.clone(),
+                size: 8,
+                mode: 0o100644,
+            },
+            RepoFile {
+                path: "link-to-file".to_string(),
+                blob_sha: link_file_sha.clone(),
+                size: 10,
+                mode: 0o120000,
+            },
+            RepoFile {
+                path: "link-to-dir".to_string(),
+                blob_sha: link_dir_sha.clone(),
+                size: 6,
+                mode: 0o120000,
+            },
+            RepoFile {
+                path: "link-self".to_string(),
+                blob_sha: link_self_sha.clone(),
+                size: 1,
+                mode: 0o120000,
+            },
+            RepoFile {
+                path: "link-escape".to_string(),
+                blob_sha: link_escape_sha.clone(),
+                size: 20,
+                mode: 0o120000,
+            },
+        ];
+
+        let mut blobs = HashMap::new();
+        blobs.insert(skill_md_sha, b"---\nname: t\n---\n".to_vec());
+        blobs.insert(target_sha, b"content".to_vec());
+        blobs.insert(nested_sha, b"nested\n".to_vec());
+        // symlink blob 内容是目标路径文本
+        blobs.insert(link_file_sha, b"target.txt".to_vec());
+        blobs.insert(link_dir_sha, b"shared".to_vec());
+        blobs.insert(link_self_sha, b".".to_vec());
+        blobs.insert(link_escape_sha, b"../../etc/passwd".to_vec());
+
+        MockSymlinkBackend {
+            files,
+            blobs,
+            branch: "main".to_string(),
+        }
+    }
 
     #[test]
     fn should_use_large_repo_path_threshold() {
@@ -2268,5 +2397,90 @@ mod tests {
             fs::read(git_temp.path().join("data/config.json")).unwrap(),
             fs::read(api_temp.path().join("data/config.json")).unwrap()
         );
+    }
+
+    /// symlink 指向文件：物化后 link 位置应是目标文件内容副本，而非路径文本。
+    #[tokio::test]
+    async fn materialize_resolves_symlink_to_file_content() {
+        let backend = mock_symlink_backend();
+        let repo = SkillRepo {
+            owner: "o".to_string(),
+            name: "r".to_string(),
+            branch: "main".to_string(),
+            enabled: true,
+        };
+        // 根级 skill（directory == 仓库名哨兵 → tree 根）
+        let (temp_dir, _branch, _scheme) =
+            materialize_skill_dir(&backend, &repo, "r").await.unwrap();
+
+        // 普通文件照常物化
+        assert_eq!(
+            fs::read(temp_dir.path().join("SKILL.md")).unwrap(),
+            b"---\nname: t\n---\n"
+        );
+        assert_eq!(
+            fs::read(temp_dir.path().join("target.txt")).unwrap(),
+            b"content"
+        );
+
+        // symlink 物化为目标内容副本（关键断言：不是路径文本 "target.txt"）
+        assert_eq!(
+            fs::read(temp_dir.path().join("link-to-file")).unwrap(),
+            b"content",
+            "指向文件的 symlink 应物化为目标文件内容，而非路径文本"
+        );
+    }
+
+    /// symlink 指向目录：物化后 link 位置应是目标目录的递归副本。
+    #[tokio::test]
+    async fn materialize_resolves_symlink_to_dir_content() {
+        let backend = mock_symlink_backend();
+        let repo = SkillRepo {
+            owner: "o".to_string(),
+            name: "r".to_string(),
+            branch: "main".to_string(),
+            enabled: true,
+        };
+        let (temp_dir, _branch, _scheme) =
+            materialize_skill_dir(&backend, &repo, "r").await.unwrap();
+
+        // symlink → shared 目录：link-to-dir/nested.txt 应为目录副本
+        assert!(
+            temp_dir.path().join("link-to-dir").is_dir(),
+            "指向目录的 symlink 应物化为目录副本"
+        );
+        assert_eq!(
+            fs::read(temp_dir.path().join("link-to-dir/nested.txt")).unwrap(),
+            b"nested\n",
+            "目录 symlink 的子文件应为目标内容副本"
+        );
+    }
+
+    /// self-containing symlink（target == "."）与越界 symlink（target 含 ../../）
+    /// 应被跳过，不物化、不报错（非致命语义，对齐 skill.rs 的 ZIP 路径）。
+    #[tokio::test]
+    async fn materialize_skips_self_containing_and_escaping_symlinks() {
+        let backend = mock_symlink_backend();
+        let repo = SkillRepo {
+            owner: "o".to_string(),
+            name: "r".to_string(),
+            branch: "main".to_string(),
+            enabled: true,
+        };
+        let (temp_dir, _branch, _scheme) =
+            materialize_skill_dir(&backend, &repo, "r").await.unwrap();
+
+        // self-containing 与越界 symlink 不应物化（文件不存在）
+        assert!(
+            !temp_dir.path().join("link-self").exists(),
+            "self-containing symlink 应被跳过"
+        );
+        assert!(
+            !temp_dir.path().join("link-escape").exists(),
+            "越界 symlink 应被跳过"
+        );
+        // 其他合法条目仍正常物化
+        assert!(temp_dir.path().join("SKILL.md").is_file());
+        assert!(temp_dir.path().join("link-to-file").is_file());
     }
 }

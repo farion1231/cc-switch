@@ -282,7 +282,7 @@ pub(crate) const MAX_ARCHIVE_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
 /// 必须有这个上限：zip 2.4.2 的 `make_reader` 不按声明的 uncompressed_size
 /// 截断读取，所以一个打了 symlink 标志、deflate 流却能膨胀到数 GB 的条目，
 /// 会被 `read_to_string` 整个读进内存。
-const MAX_SYMLINK_TARGET_BYTES: u64 = 4 * 1024;
+pub(crate) const MAX_SYMLINK_TARGET_BYTES: u64 = 4 * 1024;
 /// 物化一个目录按一个目录块计费。空目录不写内容字节，但照样吃 inode 和磁盘块，
 /// 不计费就等于允许无限量地造目录。
 const DIRECTORY_BUDGET_COST: u64 = 4096;
@@ -3065,7 +3065,7 @@ impl SkillService {
     ///
     /// 超长或非 UTF-8 一律返回 `None` 让调用方跳过：合法的 symlink 目标是一条
     /// 路径，这两种形状都不可能是真实数据。
-    fn read_symlink_target<R: std::io::Read>(
+    pub(crate) fn read_symlink_target<R: std::io::Read>(
         reader: &mut R,
         total_bytes: &mut u64,
     ) -> Result<Option<String>> {
@@ -3088,7 +3088,7 @@ impl SkillService {
     /// `a/a/…/a/f.txt` 可以隐式造出几百层目录。只在 symlink 物化那条路径上给目录
     /// 计费是不够的：常规解压这条路上，不到 10_000 个条目照样能造出数百万目录，
     /// 而内容字节几乎为零。
-    fn create_dir_all_within_budget(path: &Path, total_bytes: &mut u64) -> Result<()> {
+    pub(crate) fn create_dir_all_within_budget(path: &Path, total_bytes: &mut u64) -> Result<()> {
         let missing = path.ancestors().take_while(|p| !p.exists()).count() as u64;
         if missing > 0 {
             Self::charge_archive_budget(total_bytes, missing * DIRECTORY_BUDGET_COST)?;
@@ -3103,7 +3103,7 @@ impl SkillService {
     /// 目录一个字节都不写，但每一个都要占 inode 与一个目录块，而第二遍的
     /// symlink 解析可以让目录数量按层数指数增长。只按内容字节计费时，一个全是
     /// 空目录的归档能把预算读数一直停在 0。
-    fn charge_archive_budget(total_bytes: &mut u64, amount: u64) -> Result<()> {
+    pub(crate) fn charge_archive_budget(total_bytes: &mut u64, amount: u64) -> Result<()> {
         if total_bytes.saturating_add(amount) > MAX_ARCHIVE_TOTAL_BYTES {
             let limit_mb = (MAX_ARCHIVE_TOTAL_BYTES / 1024 / 1024).to_string();
             return Err(anyhow::anyhow!(format_skill_error(
@@ -3214,7 +3214,11 @@ impl SkillService {
     /// 与 `copy_dir_recursive` 同语义，但把写出的字节计入归档总预算。
     /// 仅用于解压期间物化 symlink——常规的目录复制（安装、备份、迁移）不该受
     /// 归档预算约束，所以两个函数刻意不合并。
-    fn copy_dir_within_budget(src: &Path, dest: &Path, total_bytes: &mut u64) -> Result<()> {
+    pub(crate) fn copy_dir_within_budget(
+        src: &Path,
+        dest: &Path,
+        total_bytes: &mut u64,
+    ) -> Result<()> {
         Self::create_dir_all_within_budget(dest, total_bytes)?;
 
         for entry in fs::read_dir(src)? {
@@ -3234,7 +3238,11 @@ impl SkillService {
 
     /// 复制单个文件并计入归档总预算，复用 `copy_entry_within_budget` 以保证
     /// 上限与报错文案只有一处定义。
-    fn copy_file_within_budget(src: &Path, dest: &Path, total_bytes: &mut u64) -> Result<()> {
+    pub(crate) fn copy_file_within_budget(
+        src: &Path,
+        dest: &Path,
+        total_bytes: &mut u64,
+    ) -> Result<()> {
         let mut reader = fs::File::open(src)?;
         let mut writer = fs::File::create(dest)?;
         Self::copy_entry_within_budget(&mut reader, &mut writer, total_bytes)
@@ -3406,7 +3414,7 @@ impl SkillService {
     /// GitHub ZIP 归档保留了 symlink 元数据，解压时可通过 `is_symlink()` 检测。
     /// 此方法将 symlink 解析为实际文件/目录内容（而非创建真实 symlink），
     /// 以确保跨平台兼容且 skill 内容自包含。
-    fn resolve_symlinks_in_dir(
+    pub(crate) fn resolve_symlinks_in_dir(
         base_dir: &Path,
         symlinks: &[(PathBuf, String)],
         total_bytes: &mut u64,
