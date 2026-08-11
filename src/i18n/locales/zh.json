@@ -983,7 +983,10 @@
     "messageCopied": "已复制消息内容",
     "conversationHistory": "对话记录",
     "expandContent": "展开完整内容",
-    "collapseContent": "收起"
+    "collapseContent": "收起",
+    "remoteImage": "远程图片",
+    "loadRemoteImage": "加载远程图片",
+    "hiddenSearchMatch": "折叠内容中的匹配"
   },
   "console": {
     "providerSwitchReceived": "收到供应商切换事件:",

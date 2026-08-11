@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Copy } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -10,7 +10,10 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { SessionMessage } from "@/types";
-import { SessionMarkdown } from "./SessionMarkdown";
+import {
+  createCollapsedMarkdownPreview,
+  SessionMarkdown,
+} from "./SessionMarkdown";
 import {
   formatTimestamp,
   getRoleLabel,
@@ -20,6 +23,26 @@ import {
 
 const COLLAPSE_THRESHOLD = 3000;
 const COLLAPSED_LENGTH = 1500;
+const SEARCH_CONTEXT_LENGTH = 80;
+
+const getHiddenSearchSnippet = (content: string, searchQuery?: string) => {
+  if (!searchQuery) return null;
+
+  const matchIndex = content
+    .toLowerCase()
+    .indexOf(searchQuery.toLowerCase(), COLLAPSED_LENGTH);
+  if (matchIndex < 0) return null;
+
+  const start = Math.max(COLLAPSED_LENGTH, matchIndex - SEARCH_CONTEXT_LENGTH);
+  const end = Math.min(
+    content.length,
+    matchIndex + searchQuery.length + SEARCH_CONTEXT_LENGTH,
+  );
+
+  return `${start > 0 ? "…" : ""}${content.slice(start, end)}${
+    end < content.length ? "…" : ""
+  }`;
+};
 
 interface SessionMessageItemProps {
   message: SessionMessage;
@@ -41,9 +64,17 @@ export const SessionMessageItem = memo(function SessionMessageItem({
   const shouldRenderMarkdown = role === "assistant";
   const isLong = message.content.length > COLLAPSE_THRESHOLD;
   const collapsed = isLong && !expanded;
-  const displayContent = collapsed
-    ? message.content.slice(0, COLLAPSED_LENGTH) + "…"
-    : message.content;
+  const displayContent = useMemo(() => {
+    if (!collapsed) return message.content;
+    return shouldRenderMarkdown
+      ? createCollapsedMarkdownPreview(message.content, COLLAPSED_LENGTH)
+      : `${message.content.slice(0, COLLAPSED_LENGTH)}…`;
+  }, [collapsed, message.content, shouldRenderMarkdown]);
+  const hiddenSearchSnippet = useMemo(
+    () =>
+      collapsed ? getHiddenSearchSnippet(message.content, searchQuery) : null,
+    [collapsed, message.content, searchQuery],
+  );
 
   return (
     <div
@@ -91,6 +122,18 @@ export const SessionMessageItem = memo(function SessionMessageItem({
           {searchQuery
             ? highlightText(displayContent, searchQuery)
             : displayContent}
+        </div>
+      )}
+      {hiddenSearchSnippet && searchQuery && (
+        <div className="mt-2 rounded-md border border-primary/20 bg-primary/5 px-2.5 py-2 text-xs">
+          <div className="mb-1 font-medium text-muted-foreground">
+            {t("sessionManager.hiddenSearchMatch", {
+              defaultValue: "折叠内容中的匹配",
+            })}
+          </div>
+          <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+            {highlightText(hiddenSearchSnippet, searchQuery)}
+          </div>
         </div>
       )}
       {isLong && (

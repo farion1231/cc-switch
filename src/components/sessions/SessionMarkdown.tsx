@@ -1,5 +1,6 @@
 import { markdownLanguage } from "@codemirror/lang-markdown";
-import { Fragment, memo, type ReactNode, useMemo } from "react";
+import { Fragment, memo, type ReactNode, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
 import { highlightText } from "./utils";
@@ -37,6 +38,22 @@ const safeExternalUrl = (value: string) => {
   return null;
 };
 
+const safeRemoteImageUrl = (value: string) => {
+  const candidate = value.trim();
+  const normalized = /^www\./i.test(candidate)
+    ? `https://${candidate}`
+    : candidate;
+
+  try {
+    const url = new URL(normalized);
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? normalized
+      : null;
+  } catch {
+    return null;
+  }
+};
+
 const renderText = (text: string, searchQuery?: string) =>
   searchQuery ? highlightText(text, searchQuery) : text;
 
@@ -46,6 +63,36 @@ const childNodes = (node: MarkdownNode) => {
     children.push(child);
   }
   return children;
+};
+
+const findUnclosedFence = (
+  node: MarkdownNode,
+  source: string,
+): string | null => {
+  if (node.name === "FencedCode" && node.to === source.length) {
+    const marks = childNodes(node).filter((child) => child.name === "CodeMark");
+    if (marks.length === 1) {
+      return source.slice(marks[0].from, marks[0].to);
+    }
+  }
+
+  for (const child of childNodes(node)) {
+    const fence = findUnclosedFence(child, source);
+    if (fence) return fence;
+  }
+
+  return null;
+};
+
+export const createCollapsedMarkdownPreview = (
+  content: string,
+  maxLength: number,
+) => {
+  const preview = content.slice(0, maxLength);
+  const tree = markdownLanguage.parser.parse(preview);
+  const unclosedFence = findUnclosedFence(tree.topNode, preview);
+
+  return unclosedFence ? `${preview}\n${unclosedFence}\n\n…` : `${preview}…`;
 };
 
 const renderChildren = (
@@ -158,6 +205,51 @@ const renderLink = (
   );
 };
 
+interface RemoteImageProps {
+  src: string;
+  alt: string;
+  searchQuery?: string;
+}
+
+const RemoteImage = ({ src, alt, searchQuery }: RemoteImageProps) => {
+  const { t } = useTranslation();
+  const [shouldLoad, setShouldLoad] = useState(false);
+
+  if (shouldLoad) {
+    return (
+      <img
+        src={src}
+        alt={alt}
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        className="my-2 max-h-96 max-w-full rounded-md border border-border/60 object-contain"
+      />
+    );
+  }
+
+  const label =
+    alt ||
+    t("sessionManager.remoteImage", {
+      defaultValue: "远程图片",
+    });
+  const loadLabel = t("sessionManager.loadRemoteImage", {
+    defaultValue: "加载远程图片",
+  });
+  return (
+    <button
+      type="button"
+      aria-label={`${loadLabel}: ${label}`}
+      onClick={() => setShouldLoad(true)}
+      className="my-2 flex max-w-full flex-col items-start rounded-md border border-dashed border-border/70 bg-muted/40 px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+    >
+      <span className="max-w-full truncate font-medium">
+        {renderText(label, searchQuery)}
+      </span>
+      <span>{loadLabel}</span>
+    </button>
+  );
+};
+
 const renderImage = (
   node: MarkdownNode,
   source: string,
@@ -167,20 +259,12 @@ const renderImage = (
   const alt = /^!\[([^\]]*)\]/.exec(raw)?.[1] ?? "";
   const urlNode = node.getChild("URL");
   const src = urlNode
-    ? safeExternalUrl(source.slice(urlNode.from, urlNode.to))
+    ? safeRemoteImageUrl(source.slice(urlNode.from, urlNode.to))
     : null;
 
   if (!src) return renderText(alt, searchQuery);
 
-  return (
-    <img
-      src={src}
-      alt={alt}
-      loading="lazy"
-      referrerPolicy="no-referrer"
-      className="my-2 max-h-96 max-w-full rounded-md border border-border/60 object-contain"
-    />
-  );
+  return <RemoteImage src={src} alt={alt} searchQuery={searchQuery} />;
 };
 
 const renderTable = (
@@ -208,6 +292,22 @@ const renderTable = (
     </div>
   );
 };
+
+const renderTableRow = (
+  node: MarkdownNode,
+  source: string,
+  searchQuery?: string,
+) => (
+  <tr>
+    {childNodes(node)
+      .filter((child) => child.name === "TableCell")
+      .map((cell) => (
+        <Fragment key={cell.from}>
+          {renderNode(cell, source, searchQuery)}
+        </Fragment>
+      ))}
+  </tr>
+);
 
 const renderNode = (
   node: MarkdownNode,
@@ -300,7 +400,7 @@ const renderNode = (
       return renderTable(node, source, searchQuery);
     case "TableHeader":
     case "TableRow":
-      return <tr>{children()}</tr>;
+      return renderTableRow(node, source, searchQuery);
     case "TableCell": {
       const Cell = node.parent?.name === "TableHeader" ? "th" : "td";
       return (

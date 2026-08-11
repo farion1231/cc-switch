@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { markdownLanguage } from "@codemirror/lang-markdown";
 import { describe, expect, it, vi } from "vitest";
 
@@ -79,6 +80,44 @@ describe("SessionMessageItem", () => {
     expect(container).toHaveTextContent('<script>alert("xss")</script>');
   });
 
+  it("does not request remote images until the user chooses to load them", async () => {
+    const user = userEvent.setup();
+    const { container } = renderMessage(
+      "![tracking pixel](https://tracker.example/unique-id)",
+    );
+
+    expect(container.querySelector("img")).toBeNull();
+
+    await user.click(
+      screen.getByRole("button", { name: /加载远程图片.*tracking pixel/ }),
+    );
+
+    expect(screen.getByRole("img", { name: "tracking pixel" })).toHaveAttribute(
+      "src",
+      "https://tracker.example/unique-id",
+    );
+  });
+
+  it("renders table rows using only semantic cell elements", () => {
+    const { container } = renderMessage(
+      ["| Name | Status |", "| --- | --- |", "| CC Switch | Ready |"].join(
+        "\n",
+      ),
+    );
+    const rows = Array.from(container.querySelectorAll("tr"));
+
+    expect(rows).toHaveLength(2);
+    expect(Array.from(rows[0].children).map((cell) => cell.tagName)).toEqual([
+      "TH",
+      "TH",
+    ]);
+    expect(Array.from(rows[1].children).map((cell) => cell.tagName)).toEqual([
+      "TD",
+      "TD",
+    ]);
+    rows.forEach((row) => expect(row).not.toHaveTextContent("|"));
+  });
+
   it("keeps non-assistant messages in fast plain-text mode", () => {
     const { container } = renderMessage(
       "## Context\n\nKeep **literal markers** here.",
@@ -92,16 +131,34 @@ describe("SessionMessageItem", () => {
     expect(container).toHaveTextContent("**literal markers**");
   });
 
-  it("keeps long messages collapsed even when the search matches hidden text", () => {
+  it("shows search context when a match is inside collapsed content", () => {
     renderMessage(
       `# Result\n\n${"a".repeat(1800)}needle${"b".repeat(1800)}`,
       "needle",
     );
 
-    expect(screen.queryByText("needle")).not.toBeInTheDocument();
+    expect(screen.getByText("needle").tagName).toBe("MARK");
+    expect(screen.getByText("折叠内容中的匹配")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /展开完整内容/ }),
     ).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("closes a truncated code fence before rendering the preview ellipsis", () => {
+    const { container } = renderMessage(
+      [
+        "Before",
+        "",
+        "```ts",
+        `const value = "${"x".repeat(3200)}";`,
+        "```",
+      ].join("\n"),
+    );
+    const codeBlock = container.querySelector("pre");
+
+    expect(codeBlock).not.toBeNull();
+    expect(codeBlock).not.toHaveTextContent("…");
+    expect(container).toHaveTextContent("…");
   });
 
   it("does not reparse Markdown when only search highlighting changes", () => {
