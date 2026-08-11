@@ -155,10 +155,7 @@ impl ChatToResponsesState {
 
             if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
                 if !content.is_empty() {
-                    // When reasoning_content was extracted from this delta,
-                    // the content field may mirror the reasoning (some providers
-                    // send both).  Strip think tags and skip if it duplicates
-                    // the reasoning text to prevent output_text duplication.
+                    // Same-frame dedup: reasoning_content in this delta.
                     let content = if let Some(ref reasoning) = reasoning_extracted {
                         let stripped = strip_all_think_tags(content);
                         let stripped_trimmed = stripped.trim();
@@ -169,6 +166,17 @@ impl ChatToResponsesState {
                             String::new()
                         } else {
                             stripped
+                        }
+                    } else if !self.reasoning.text.trim().is_empty() {
+                        // Cross-frame dedup: content mirrors reasoning emitted
+                        // in earlier deltas. push_content_delta handles inline
+                        // tags; only skip when accumulated content is a substring
+                        // of the accumulated reasoning (verbatim repetition).
+                        let accumulated = format!("{}{}", self.text.text, content);
+                        if self.reasoning.text.contains(accumulated.trim()) {
+                            String::new()
+                        } else {
+                            content.to_string()
                         }
                     } else {
                         content.to_string()
@@ -1547,6 +1555,65 @@ mod tests {
         }
         assert!(output.contains("答案"));
         assert!(output.contains("完整"));
+    }
+
+
+    /// GLM-5.2 sends reasoning_content in delta N, then mirrors the same
+    /// text as plain content in delta N+1 (no reasoning_content in that
+    /// delta). The same-frame dedup misses this; the cross-frame path
+    /// must catch it by checking accumulated content vs accumulated
+    /// reasoning text.
+    #[tokio::test]
+    async fn dedup_content_when_reasoning_mirrors_across_frames() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_xfd\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Let me analyze.\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_xfd\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"content\":\"Let me analyze.\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_xfd\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"content\":\"Answer is 42.\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        let delta_lines: Vec<&str> = output
+            .lines()
+            .filter(|l| l.contains("response.output_text.delta"))
+            .collect();
+        for delta_line in &delta_lines {
+            assert!(
+                !delta_line.contains("Let me analyze"),
+                "reasoning text leaked into output_text via cross-frame echo: {delta_line}"
+            );
+        }
+        assert!(output.contains("Answer is 42"));
+    }
+
+    /// GLM sometimes wraps the mirrored reasoning in think tags in the
+    /// content field across frames. The cross-frame dedup should still
+    /// prevent the text from reaching output_text.
+    #[tokio::test]
+    async fn dedup_content_when_reasoning_mirrors_across_frames_with_think_tags() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_xft\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Done thinking.\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_xft\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"content\":\"<think>Done thinking.</think>\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_xft\",\"created\":123,\"model\":\"glm-5.2\",\"choices\":[{\"delta\":{\"content\":\"Final answer.\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        let delta_lines: Vec<&str> = output
+            .lines()
+            .filter(|l| l.contains("response.output_text.delta"))
+            .collect();
+        for delta_line in &delta_lines {
+            assert!(
+                !delta_line.contains("Done thinking"),
+                "tagged reasoning text leaked into output_text: {delta_line}"
+            );
+            assert!(
+                !delta_line.contains("think"),
+                "think tag leaked into output_text: {delta_line}"
+            );
+        }
+        assert!(output.contains("Final answer"));
     }
 
 }
