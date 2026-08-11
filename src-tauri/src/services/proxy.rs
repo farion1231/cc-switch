@@ -146,8 +146,8 @@ async fn refresh_codex_models_cache_once_inner(
                 .unwrap_or("")
                 .to_string(),
         };
-        let resolve_profile = |provider_id: &str| {
-            crate::codex_config::resolve_codex_custom_catalog_profile_from_db(
+        let resolve_provider = |provider_id: &str| {
+            crate::codex_config::resolve_codex_custom_catalog_provider_from_db(
                 db.as_ref(),
                 provider_id,
             )
@@ -155,7 +155,7 @@ async fn refresh_codex_models_cache_once_inner(
         crate::codex_config::write_codex_models_cache_for_provider(
             &provider,
             &config_text,
-            Some(&resolve_profile),
+            Some(&resolve_provider),
         )?;
         Ok(true)
     })
@@ -515,8 +515,8 @@ impl ProxyService {
             .get("config")
             .and_then(|value| value.as_str())
             .unwrap_or("");
-        let resolve_profile = |provider_id: &str| {
-            crate::codex_config::resolve_codex_custom_catalog_profile_from_db(
+        let resolve_provider = |provider_id: &str| {
+            crate::codex_config::resolve_codex_custom_catalog_provider_from_db(
                 self.db.as_ref(),
                 provider_id,
             )
@@ -524,7 +524,7 @@ impl ProxyService {
         if let Err(e) = crate::codex_config::write_codex_models_cache_for_provider(
             provider,
             config_text,
-            Some(&resolve_profile),
+            Some(&resolve_provider),
         ) {
             log::warn!("[codex] 刷新 models_cache.json 失败: {e}");
         }
@@ -2777,8 +2777,8 @@ impl ProxyService {
                 let config_str = effective_settings.get("config").and_then(|v| v.as_str());
                 let profile =
                     crate::proxy::providers::resolve_codex_catalog_tool_profile(&provider);
-                let resolve_profile = |provider_id: &str| {
-                    crate::codex_config::resolve_codex_custom_catalog_profile_from_db(
+                let resolve_provider = |provider_id: &str| {
+                    crate::codex_config::resolve_codex_custom_catalog_provider_from_db(
                         self.db.as_ref(),
                         provider_id,
                     )
@@ -2790,7 +2790,7 @@ impl ProxyService {
                     auth,
                     config_str,
                     profile,
-                    Some(&resolve_profile),
+                    Some(&resolve_provider),
                 )
                 .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
             }
@@ -3148,8 +3148,8 @@ impl ProxyService {
             .ok_or_else(|| "Codex 配置缺少 auth 字段".to_string())?;
         let config_str = config.get("config").and_then(|v| v.as_str());
         let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
-        let resolve_profile = |provider_id: &str| {
-            crate::codex_config::resolve_codex_custom_catalog_profile_from_db(
+        let resolve_provider = |provider_id: &str| {
+            crate::codex_config::resolve_codex_custom_catalog_provider_from_db(
                 self.db.as_ref(),
                 provider_id,
             )
@@ -3161,7 +3161,7 @@ impl ProxyService {
             auth,
             config_str,
             profile,
-            Some(&resolve_profile),
+            Some(&resolve_provider),
         )
         .map_err(|e| format!("写入 Codex 配置失败: {e}"))
     }
@@ -3190,8 +3190,8 @@ impl ProxyService {
             let profile = provider
                 .map(crate::proxy::providers::resolve_codex_catalog_tool_profile)
                 .unwrap_or(crate::codex_config::CodexCatalogToolProfile::ProxyChat);
-            let resolve_profile = |provider_id: &str| {
-                crate::codex_config::resolve_codex_custom_catalog_profile_from_db(
+            let resolve_provider = |provider_id: &str| {
+                crate::codex_config::resolve_codex_custom_catalog_provider_from_db(
                     self.db.as_ref(),
                     provider_id,
                 )
@@ -3201,7 +3201,7 @@ impl ProxyService {
                     config,
                     config_str,
                     profile,
-                    Some(&resolve_profile),
+                    Some(&resolve_provider),
                 )
                 .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
             let live_config = if official_passthrough {
@@ -3248,8 +3248,8 @@ impl ProxyService {
         // limitation (restore-of-deleted-provider-backup only).
         let prepared_cfg = config_str
             .map(|cfg| {
-                let resolve_profile = |provider_id: &str| {
-                    crate::codex_config::resolve_codex_custom_catalog_profile_from_db(
+                let resolve_provider = |provider_id: &str| {
+                    crate::codex_config::resolve_codex_custom_catalog_provider_from_db(
                         self.db.as_ref(),
                         provider_id,
                     )
@@ -3258,7 +3258,7 @@ impl ProxyService {
                     config,
                     cfg,
                     crate::codex_config::CodexCatalogToolProfile::ProxyChat,
-                    Some(&resolve_profile),
+                    Some(&resolve_provider),
                 )
             })
             .transpose()

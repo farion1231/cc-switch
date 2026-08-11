@@ -7,7 +7,10 @@ use crate::config::{
 };
 use crate::database::Database;
 use crate::error::AppError;
-use crate::model_capabilities::{image_input_capability_from_modalities, ImageInputCapability};
+use crate::model_capabilities::{
+    image_input_capability_from_modalities, image_input_capability_from_settings,
+    ImageInputCapability,
+};
 use crate::provider::Provider;
 use once_cell::sync::OnceCell;
 use serde_json::{json, Value};
@@ -152,21 +155,18 @@ pub enum CodexCatalogToolProfile {
     Anthropic,
 }
 
-pub type CodexCustomCatalogProfileResolver<'a> =
-    dyn Fn(&str) -> Option<CodexCatalogToolProfile> + 'a;
+pub type CodexCustomCatalogProviderResolver<'a> = dyn Fn(&str) -> Option<Provider> + 'a;
 
-pub(crate) fn resolve_codex_custom_catalog_profile_from_db(
+pub(crate) fn resolve_codex_custom_catalog_provider_from_db(
     db: &Database,
     provider_id: &str,
-) -> Option<CodexCatalogToolProfile> {
+) -> Option<Provider> {
     match db.get_provider_by_id(provider_id, "codex") {
-        Ok(Some(provider)) => Some(crate::proxy::providers::resolve_codex_catalog_tool_profile(
-            &provider,
-        )),
+        Ok(Some(provider)) => Some(provider),
         Ok(None) => None,
         Err(error) => {
             log::warn!(
-                "[codex] 读取自定义模型绑定供应商 `{provider_id}` 失败，目录使用安全档案: {error}"
+                "[codex] 读取自定义模型绑定供应商 `{provider_id}` 失败，将忽略对应目录条目: {error}"
             );
             None
         }
@@ -619,7 +619,14 @@ fn codex_catalog_input_modalities(
     model: &str,
     declared_modalities: Option<&[String]>,
 ) -> Vec<String> {
-    let modalities = match image_input_capability_from_modalities(model, declared_modalities) {
+    codex_catalog_input_modalities_from_capability(image_input_capability_from_modalities(
+        model,
+        declared_modalities,
+    ))
+}
+
+fn codex_catalog_input_modalities_from_capability(capability: ImageInputCapability) -> Vec<String> {
+    let modalities = match capability {
         ImageInputCapability::Unsupported => &["text"][..],
         ImageInputCapability::Supported | ImageInputCapability::Unknown => &["text", "image"][..],
     };
@@ -911,6 +918,56 @@ pub(crate) fn codex_custom_models_nonempty(settings: &Value) -> bool {
     !codex_custom_model_entries(settings).is_empty()
 }
 
+pub(crate) fn merge_codex_custom_catalog_entries(
+    models: &mut Vec<Value>,
+    settings: &Value,
+    custom_entries: Vec<Value>,
+) -> bool {
+    let custom_slots: HashSet<String> = codex_custom_model_entries(settings)
+        .into_iter()
+        .map(|entry| {
+            crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(&entry.model).to_string()
+        })
+        .collect();
+
+    // A configured custom slot owns the public model name even when its bound
+    // provider is unavailable. Otherwise a colliding official row would remain
+    // visible even though request routing cannot serve it.
+    let mut pending: Vec<(String, Value)> = custom_entries
+        .into_iter()
+        .filter_map(|entry| {
+            let slug = entry.get("slug").and_then(Value::as_str)?;
+            let normalized =
+                crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(slug).to_string();
+            Some((normalized, entry))
+        })
+        .collect();
+
+    let mut changed = false;
+    models.retain_mut(|model| {
+        let Some(slug) = model.get("slug").and_then(Value::as_str) else {
+            return true;
+        };
+        let normalized = crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(slug);
+        if let Some(index) = pending
+            .iter()
+            .position(|(custom_slug, _)| custom_slug == normalized)
+        {
+            let replacement = pending.remove(index).1;
+            changed |= *model != replacement;
+            *model = replacement;
+            true
+        } else {
+            let keep = !custom_slots.contains(normalized);
+            changed |= !keep;
+            keep
+        }
+    });
+    changed |= !pending.is_empty();
+    models.extend(pending.into_iter().map(|(_, entry)| entry));
+    changed
+}
+
 /// 官方 Codex 供应商是否启用官方登录（缺省开启，保持既有行为）。
 pub(crate) fn codex_official_login_enabled(settings: &Value) -> bool {
     settings
@@ -935,29 +992,20 @@ fn write_codex_models_cache_for_aggregate_at(
     codex_dir: PathBuf,
     settings: &Value,
     config_text: &str,
-    custom_profile_resolver: Option<&CodexCustomCatalogProfileResolver<'_>>,
+    custom_provider_resolver: Option<&CodexCustomCatalogProviderResolver<'_>>,
 ) -> Result<(), AppError> {
     if codex_official_login_enabled(settings) {
         return Ok(());
     }
 
     let mut models: Vec<Value> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
-    let fallback_resolver = |_: &str| Some(CodexCatalogToolProfile::NativeResponses);
-    let resolver = custom_profile_resolver.unwrap_or(&fallback_resolver);
-    for entry in codex_custom_catalog_entries(settings, config_text, resolver)? {
-        let Some(slug) = entry.get("slug").and_then(|slug| slug.as_str()) else {
-            continue;
-        };
-        if seen.insert(slug.to_string()) {
-            models.push(entry);
-        } else if let Some(existing) = models
-            .iter_mut()
-            .find(|model| model.get("slug").and_then(|s| s.as_str()) == Some(slug))
-        {
-            *existing = entry;
-        }
-    }
+    let custom_entries = codex_custom_catalog_entries(
+        settings,
+        config_text,
+        CodexCatalogToolProfile::NativeResponses,
+        custom_provider_resolver,
+    )?;
+    merge_codex_custom_catalog_entries(&mut models, settings, custom_entries);
 
     write_models_cache_json(&codex_dir, models)?;
     log::info!("[codex] models_cache.json refreshed for aggregate mode");
@@ -978,7 +1026,7 @@ fn write_codex_models_cache_for_official_login_at(
     codex_dir: PathBuf,
     settings: &Value,
     config_text: &str,
-    custom_profile_resolver: Option<&CodexCustomCatalogProfileResolver<'_>>,
+    custom_provider_resolver: Option<&CodexCustomCatalogProviderResolver<'_>>,
 ) -> Result<(), AppError> {
     let live_cache: Value = fs::read_to_string(codex_dir.join("models_cache.json"))
         .ok()
@@ -995,30 +1043,19 @@ fn write_codex_models_cache_for_official_login_at(
         .and_then(|models| models.as_array())
         .cloned()
         .unwrap_or_default();
-    let mut seen: HashSet<String> = models
-        .iter()
-        .filter_map(|model| model.get("slug").and_then(|slug| slug.as_str()))
-        .map(str::to_string)
-        .collect();
-
-    let fallback_resolver = |_: &str| Some(CodexCatalogToolProfile::NativeResponses);
-    let resolver = custom_profile_resolver.unwrap_or(&fallback_resolver);
-    for entry in codex_custom_catalog_entries(settings, config_text, resolver)? {
-        let Some(slug) = entry.get("slug").and_then(|slug| slug.as_str()) else {
-            continue;
-        };
-        if seen.insert(slug.to_string()) {
-            models.push(entry);
-        } else if let Some(existing) = models
-            .iter_mut()
-            .find(|model| model.get("slug").and_then(|s| s.as_str()) == Some(slug))
-        {
-            *existing = entry;
-        }
+    let custom_entries = codex_custom_catalog_entries(
+        settings,
+        config_text,
+        CodexCatalogToolProfile::NativeResponses,
+        custom_provider_resolver,
+    )?;
+    if merge_codex_custom_catalog_entries(&mut models, settings, custom_entries) {
+        write_models_cache_json(&codex_dir, models)?;
+        log::info!("[codex] models_cache.json refreshed for official-login aggregation");
+    } else if !codex_cache_is_reliable_official_baseline(&live_cache) {
+        crate::config::write_json_file(&codex_dir.join("models_cache.json"), &cache)?;
+        log::info!("[codex] official-login aggregation restored the clean official cache");
     }
-
-    write_models_cache_json(&codex_dir, models)?;
-    log::info!("[codex] models_cache.json refreshed for official-login aggregation");
     Ok(())
 }
 
@@ -1428,13 +1465,13 @@ fn write_models_cache_json_with_client_version(
 pub fn write_codex_models_cache_for_provider(
     provider: &Provider,
     config_text: &str,
-    custom_profile_resolver: Option<&CodexCustomCatalogProfileResolver<'_>>,
+    custom_provider_resolver: Option<&CodexCustomCatalogProviderResolver<'_>>,
 ) -> Result<(), AppError> {
     write_codex_models_cache_for_provider_at(
         get_codex_config_dir(),
         provider,
         config_text,
-        custom_profile_resolver,
+        custom_provider_resolver,
     )
 }
 
@@ -1442,7 +1479,7 @@ fn write_codex_models_cache_for_provider_at(
     codex_dir: PathBuf,
     provider: &Provider,
     config_text: &str,
-    custom_profile_resolver: Option<&CodexCustomCatalogProfileResolver<'_>>,
+    custom_provider_resolver: Option<&CodexCustomCatalogProviderResolver<'_>>,
 ) -> Result<(), AppError> {
     let settings = &provider.settings_config;
 
@@ -1455,7 +1492,7 @@ fn write_codex_models_cache_for_provider_at(
                     codex_dir,
                     settings,
                     config_text,
-                    custom_profile_resolver,
+                    custom_provider_resolver,
                 );
             }
             return restore_or_clear_codex_official_models_cache(&codex_dir);
@@ -1464,7 +1501,7 @@ fn write_codex_models_cache_for_provider_at(
             codex_dir,
             settings,
             config_text,
-            custom_profile_resolver,
+            custom_provider_resolver,
         );
     }
 
@@ -2024,7 +2061,8 @@ fn codex_model_catalog_from_specs(
 pub(crate) fn codex_custom_catalog_entries(
     settings: &Value,
     config_text: &str,
-    resolve_profile: &CodexCustomCatalogProfileResolver<'_>,
+    fallback_profile: CodexCatalogToolProfile,
+    resolve_provider: Option<&CodexCustomCatalogProviderResolver<'_>>,
 ) -> Result<Vec<Value>, AppError> {
     let entries = codex_custom_model_entries(settings);
     if entries.is_empty() {
@@ -2037,14 +2075,24 @@ pub(crate) fn codex_custom_catalog_entries(
     let mut catalog_entries = Vec::with_capacity(entries.len());
 
     for (index, entry) in entries.iter().enumerate() {
-        let profile = resolve_profile(&entry.provider_id).unwrap_or_else(|| {
-            log::warn!(
-                "[codex] 自定义模型 `{}` 的绑定供应商 `{}` 不存在，目录使用安全的 NativeResponses 档案",
-                entry.model,
-                entry.provider_id
-            );
-            CodexCatalogToolProfile::NativeResponses
-        });
+        let bound_provider = match resolve_provider {
+            Some(resolve) => {
+                let Some(provider) = resolve(&entry.provider_id) else {
+                    log::warn!(
+                        "[codex] 忽略自定义模型 `{}`：绑定供应商 `{}` 不存在",
+                        entry.model,
+                        entry.provider_id
+                    );
+                    continue;
+                };
+                Some(provider)
+            }
+            None => None,
+        };
+        let profile = bound_provider
+            .as_ref()
+            .map(crate::proxy::providers::resolve_codex_catalog_tool_profile)
+            .unwrap_or(fallback_profile);
         let template = match profile {
             CodexCatalogToolProfile::ProxyChat => {
                 if proxy_chat_template.is_none() {
@@ -2058,12 +2106,34 @@ pub(crate) fn codex_custom_catalog_entries(
                 &native_template
             }
         };
+        let provider_default_model = bound_provider
+            .as_ref()
+            .and_then(crate::proxy::providers::codex_provider_upstream_model);
+        let capability_model = entry
+            .upstream_model
+            .as_deref()
+            .or(provider_default_model.as_deref());
         let spec = CodexCatalogModelSpec {
             model: entry.model.clone(),
             display_name: entry.display_name.clone(),
             context_window: entry.context_window,
             supports_parallel_tool_calls: entry.supports_parallel_tool_calls,
-            input_modalities: entry.input_modalities.clone(),
+            input_modalities: entry.input_modalities.clone().or_else(|| {
+                capability_model.map(|model| {
+                    bound_provider.as_ref().map_or_else(
+                        || codex_catalog_input_modalities(model, None),
+                        |provider| {
+                            codex_catalog_input_modalities_from_capability(
+                                image_input_capability_from_settings(
+                                    &provider.settings_config,
+                                    model,
+                                    true,
+                                ),
+                            )
+                        },
+                    )
+                })
+            }),
             base_instructions: entry.base_instructions.clone(),
         };
         catalog_entries.push(codex_catalog_model_entry(
@@ -2082,16 +2152,19 @@ fn codex_model_catalog_from_settings(
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
-    custom_profile_resolver: Option<&CodexCustomCatalogProfileResolver<'_>>,
+    custom_provider_resolver: Option<&CodexCustomCatalogProviderResolver<'_>>,
 ) -> Result<Option<Value>, AppError> {
     // 官方 Codex 供应商带自定义模型。
     if codex_custom_models_nonempty(settings) {
         // 未启用官方登录：聚合模式，目录只包含下方配置的供应商模型（多供应商切换）。
         if !codex_official_login_enabled(settings) {
-            let fallback_resolver = |_: &str| Some(CodexCatalogToolProfile::NativeResponses);
-            let resolver = custom_profile_resolver.unwrap_or(&fallback_resolver);
             return Ok(Some(json!({
-                "models": codex_custom_catalog_entries(settings, config_text, resolver)?
+                "models": codex_custom_catalog_entries(
+                    settings,
+                    config_text,
+                    CodexCatalogToolProfile::NativeResponses,
+                    custom_provider_resolver,
+                )?
             })));
         }
         // 官方登录模式：不写 model_catalog_json，让 Codex 直接走 /v1/models，
@@ -2222,12 +2295,12 @@ pub fn prepare_codex_config_text_with_model_catalog(
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
-    custom_profile_resolver: Option<&CodexCustomCatalogProfileResolver<'_>>,
+    custom_provider_resolver: Option<&CodexCustomCatalogProviderResolver<'_>>,
 ) -> Result<String, AppError> {
     let catalog_path = get_codex_model_catalog_path();
 
     if let Some(catalog) =
-        codex_model_catalog_from_settings(settings, config_text, profile, custom_profile_resolver)?
+        codex_model_catalog_from_settings(settings, config_text, profile, custom_provider_resolver)?
     {
         let config_text = set_codex_model_catalog_json_field(config_text, Some(&catalog_path))?;
         // Disable web_search only for native gateways on the reject blacklist
@@ -2505,14 +2578,14 @@ pub fn prepare_codex_live_config_text_with_optional_catalog(
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
-    custom_profile_resolver: Option<&CodexCustomCatalogProfileResolver<'_>>,
+    custom_provider_resolver: Option<&CodexCustomCatalogProviderResolver<'_>>,
 ) -> Result<String, AppError> {
     if settings.get("modelCatalog").is_some() || codex_custom_models_nonempty(settings) {
         prepare_codex_config_text_with_model_catalog(
             settings,
             config_text,
             profile,
-            custom_profile_resolver,
+            custom_provider_resolver,
         )
     } else {
         Ok(config_text.to_string())
@@ -2525,7 +2598,7 @@ pub fn write_codex_provider_live_with_catalog(
     auth: &Value,
     config_text: Option<&str>,
     profile: CodexCatalogToolProfile,
-    custom_profile_resolver: Option<&CodexCustomCatalogProfileResolver<'_>>,
+    custom_provider_resolver: Option<&CodexCustomCatalogProviderResolver<'_>>,
 ) -> Result<(), AppError> {
     let prepared_config = config_text
         .map(|text| {
@@ -2533,7 +2606,7 @@ pub fn write_codex_provider_live_with_catalog(
                 settings,
                 text,
                 profile,
-                custom_profile_resolver,
+                custom_provider_resolver,
             )
         })
         .transpose()?;
@@ -4507,10 +4580,15 @@ base_url = "https://production.api/v1"
             ]
         });
 
-        let resolve_profile =
-            |provider_id: &str| resolve_codex_custom_catalog_profile_from_db(&db, provider_id);
-        let entries = codex_custom_catalog_entries(&settings, "", &resolve_profile)
-            .expect("build aggregate catalog entries");
+        let resolve_provider =
+            |provider_id: &str| resolve_codex_custom_catalog_provider_from_db(&db, provider_id);
+        let entries = codex_custom_catalog_entries(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+            Some(&resolve_provider),
+        )
+        .expect("build aggregate catalog entries");
         assert_eq!(
             entries[0]
                 .get("apply_patch_tool_type")
@@ -4521,6 +4599,157 @@ base_url = "https://production.api/v1"
         assert!(
             entries[1].get("apply_patch_tool_type").is_none(),
             "a native Responses route must suppress freeform apply_patch"
+        );
+    }
+
+    #[test]
+    fn aggregate_catalog_omits_mapping_when_bound_provider_is_missing() {
+        let settings = json!({
+            "codexCustomModels": [{
+                "model": "gpt-5.2",
+                "providerId": "deleted-provider",
+                "upstreamModel": "deepseek-v4-flash"
+            }]
+        });
+        let resolve_provider = |_: &str| -> Option<Provider> { None };
+
+        let entries = codex_custom_catalog_entries(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+            Some(&resolve_provider),
+        )
+        .expect("build aggregate catalog entries");
+
+        assert!(
+            entries.is_empty(),
+            "a stale mapping must not advertise an unroutable slot"
+        );
+    }
+
+    #[test]
+    fn aggregate_catalog_infers_modalities_from_the_actual_upstream_model() {
+        let db = crate::database::Database::memory().expect("create in-memory database");
+        let provider = Provider::with_id(
+            "deepseek-provider".to_string(),
+            "DeepSeek Provider".to_string(),
+            json!({
+                "apiFormat": "openai_responses",
+                "model": "deepseek-v4-flash",
+                "config": "model = \"deepseek-v4-flash\""
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider)
+            .expect("save bound provider");
+        let settings = json!({
+            "codexCustomModels": [{
+                "model": "gpt-5.2",
+                "providerId": "deepseek-provider",
+                "upstreamModel": "deepseek-v4-flash"
+            }]
+        });
+        let resolve_provider =
+            |provider_id: &str| resolve_codex_custom_catalog_provider_from_db(&db, provider_id);
+
+        let entries = codex_custom_catalog_entries(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+            Some(&resolve_provider),
+        )
+        .expect("build aggregate catalog entries");
+
+        assert_eq!(entries[0].get("slug"), Some(&json!("gpt-5.2")));
+        assert_eq!(
+            entries[0].get("input_modalities"),
+            Some(&json!(["text"])),
+            "capabilities must follow the routed upstream model, not the public slot"
+        );
+    }
+
+    #[test]
+    fn aggregate_catalog_infers_modalities_from_the_bound_providers_default_model() {
+        let db = crate::database::Database::memory().expect("create in-memory database");
+        let provider = Provider::with_id(
+            "deepseek-provider".to_string(),
+            "DeepSeek Provider".to_string(),
+            json!({
+                "apiFormat": "openai_responses",
+                "model": "deepseek-v4-flash",
+                "config": "model = \"deepseek-v4-flash\""
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider)
+            .expect("save bound provider");
+        let settings = json!({
+            "codexCustomModels": [{
+                "model": "gpt-5.2",
+                "providerId": "deepseek-provider"
+            }]
+        });
+        let resolve_provider =
+            |provider_id: &str| resolve_codex_custom_catalog_provider_from_db(&db, provider_id);
+
+        let entries = codex_custom_catalog_entries(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+            Some(&resolve_provider),
+        )
+        .expect("build aggregate catalog entries");
+
+        assert_eq!(
+            entries[0].get("input_modalities"),
+            Some(&json!(["text"])),
+            "an omitted upstream override must inherit the bound provider's routed model"
+        );
+    }
+
+    #[test]
+    fn aggregate_catalog_prefers_bound_provider_declared_modalities() {
+        let db = crate::database::Database::memory().expect("create in-memory database");
+        let provider = Provider::with_id(
+            "declared-provider".to_string(),
+            "Declared Provider".to_string(),
+            json!({
+                "apiFormat": "openai_responses",
+                "model": "custom-text-upstream",
+                "config": "model = \"custom-text-upstream\"",
+                "modelCatalog": {
+                    "models": [{
+                        "model": "custom-text-upstream",
+                        "inputModalities": ["text"]
+                    }]
+                }
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider)
+            .expect("save bound provider");
+        let settings = json!({
+            "codexCustomModels": [{
+                "model": "gpt-5.2",
+                "providerId": "declared-provider",
+                "upstreamModel": "custom-text-upstream"
+            }]
+        });
+        let resolve_provider =
+            |provider_id: &str| resolve_codex_custom_catalog_provider_from_db(&db, provider_id);
+
+        let entries = codex_custom_catalog_entries(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+            Some(&resolve_provider),
+        )
+        .expect("build aggregate catalog entries");
+
+        assert_eq!(
+            entries[0].get("input_modalities"),
+            Some(&json!(["text"])),
+            "the bound provider's explicit capability declaration must win"
         );
     }
 
@@ -5854,6 +6083,121 @@ web_search = "disabled"
             .collect();
         assert!(repeated_slugs.contains(&"gpt-5.5"));
         assert!(repeated_slugs.contains(&"gpt-5.2"));
+    }
+
+    #[test]
+    fn official_login_cache_omits_official_slot_with_missing_custom_provider() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        let official_cache = json!({
+            "fetched_at": "2026-08-11T00:00:00Z",
+            "etag": "W/\"official\"",
+            "client_version": "0.147.0",
+            "models": [
+                {"slug": "gpt-5.5", "display_name": "GPT-5.5"},
+                {"slug": "gpt-5.2", "display_name": "GPT-5.2"}
+            ]
+        });
+        for filename in [
+            "models_cache.json",
+            CC_SWITCH_CODEX_OFFICIAL_MODELS_CACHE_FILENAME,
+        ] {
+            std::fs::write(
+                codex_dir.join(filename),
+                serde_json::to_string(&official_cache).expect("serialize official cache"),
+            )
+            .expect("write official cache");
+        }
+        let settings = json!({
+            "enableOfficialLogin": true,
+            "codexCustomModels": [{
+                "model": "gpt-5.2",
+                "providerId": "deleted-provider",
+                "upstreamModel": "deepseek-v4-flash"
+            }]
+        });
+        let resolve_provider = |_: &str| -> Option<Provider> { None };
+
+        write_codex_models_cache_for_official_login_at(
+            codex_dir.clone(),
+            &settings,
+            "",
+            Some(&resolve_provider),
+        )
+        .expect("render official-login cache");
+
+        let written: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("models_cache.json")).expect("read cache"),
+        )
+        .expect("parse cache");
+        let slugs: Vec<&str> = written["models"]
+            .as_array()
+            .expect("models array")
+            .iter()
+            .filter_map(|model| model.get("slug").and_then(Value::as_str))
+            .collect();
+
+        assert_eq!(
+            slugs,
+            vec!["gpt-5.5"],
+            "a missing custom binding must also suppress its colliding official slot"
+        );
+        assert!(
+            written
+                .get("etag")
+                .and_then(Value::as_str)
+                .is_some_and(|etag| etag.starts_with("W/\"cc-switch-")),
+            "suppressing a colliding official row must mark the cache as rewritten"
+        );
+    }
+
+    #[test]
+    fn official_login_cache_preserves_clean_baseline_for_missing_noncolliding_provider() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        let official_cache = json!({
+            "fetched_at": "2026-08-11T00:00:00Z",
+            "etag": "W/\"official\"",
+            "client_version": "0.147.0",
+            "models": [{"slug": "gpt-5.5", "display_name": "GPT-5.5"}]
+        });
+        for filename in [
+            "models_cache.json",
+            CC_SWITCH_CODEX_OFFICIAL_MODELS_CACHE_FILENAME,
+        ] {
+            std::fs::write(
+                codex_dir.join(filename),
+                serde_json::to_string(&official_cache).expect("serialize official cache"),
+            )
+            .expect("write official cache");
+        }
+        let settings = json!({
+            "enableOfficialLogin": true,
+            "codexCustomModels": [{
+                "model": "custom-only-slot",
+                "providerId": "deleted-provider"
+            }]
+        });
+        let resolve_provider = |_: &str| -> Option<Provider> { None };
+
+        write_codex_models_cache_for_official_login_at(
+            codex_dir.clone(),
+            &settings,
+            "",
+            Some(&resolve_provider),
+        )
+        .expect("process official-login cache");
+
+        let written: Value = serde_json::from_str(
+            &std::fs::read_to_string(codex_dir.join("models_cache.json")).expect("read cache"),
+        )
+        .expect("parse cache");
+        assert_eq!(
+            written, official_cache,
+            "a skipped noncolliding mapping must not rewrite a clean official cache"
+        );
     }
 
     #[test]

@@ -1046,8 +1046,8 @@ pub(crate) fn write_live_snapshot(
             // providers keep the default tool set. Uses the same Anthropic detection as
             // the proxy router (apiFormat meta/settings + TOML wire_api).
             let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
-            let resolve_profile = |provider_id: &str| {
-                crate::codex_config::resolve_codex_custom_catalog_profile_from_db(db, provider_id)
+            let resolve_provider = |provider_id: &str| {
+                crate::codex_config::resolve_codex_custom_catalog_provider_from_db(db, provider_id)
             };
 
             crate::codex_config::write_codex_provider_live_with_catalog(
@@ -1056,7 +1056,7 @@ pub(crate) fn write_live_snapshot(
                 auth,
                 config_str,
                 profile,
-                Some(&resolve_profile),
+                Some(&resolve_provider),
             )?;
         }
         AppType::Gemini => {

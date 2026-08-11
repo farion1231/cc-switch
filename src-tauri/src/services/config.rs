@@ -164,11 +164,11 @@ impl ConfigService {
         let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
 
         {
-            let resolve_profile = |bound_provider_id: &str| {
+            let resolve_provider = |bound_provider_id: &str| {
                 config
                     .get_manager(&AppType::Codex)
                     .and_then(|manager| manager.providers.get(bound_provider_id))
-                    .map(crate::proxy::providers::resolve_codex_catalog_tool_profile)
+                    .cloned()
             };
             crate::codex_config::write_codex_provider_live_with_catalog(
                 &provider.settings_config,
@@ -176,7 +176,7 @@ impl ConfigService {
                 auth,
                 cfg_text,
                 profile,
-                Some(&resolve_profile),
+                Some(&resolve_provider),
             )?;
         }
         // 注意：MCP 同步在 v3.7.0 中已通过 McpService 进行，不再在此调用

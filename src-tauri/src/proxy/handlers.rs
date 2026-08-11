@@ -107,8 +107,8 @@ pub async fn handle_models(
             .await;
         }
         // 未启用官方登录：聚合模式，目录只包含下方配置的供应商模型
-        let resolve_profile = |provider_id: &str| {
-            crate::codex_config::resolve_codex_custom_catalog_profile_from_db(
+        let resolve_provider = |provider_id: &str| {
+            crate::codex_config::resolve_codex_custom_catalog_provider_from_db(
                 state.db.as_ref(),
                 provider_id,
             )
@@ -116,7 +116,8 @@ pub async fn handle_models(
         let models = crate::codex_config::codex_custom_catalog_entries(
             &official.settings_config,
             &config_text,
-            &resolve_profile,
+            crate::codex_config::CodexCatalogToolProfile::NativeResponses,
+            Some(&resolve_provider),
         )
         .map_err(|error| ProxyError::Internal(error.to_string()))?;
         return Ok(cc_switch_codex_models_response(json!({
@@ -231,49 +232,57 @@ async fn forward_codex_official_models(
 
     let mut catalog: Value =
         serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({ "models": [] }));
-    let resolve_profile = |provider_id: &str| {
-        crate::codex_config::resolve_codex_custom_catalog_profile_from_db(db, provider_id)
+    let resolve_provider = |provider_id: &str| {
+        crate::codex_config::resolve_codex_custom_catalog_provider_from_db(db, provider_id)
     };
     let custom_entries = crate::codex_config::codex_custom_catalog_entries(
         &official.settings_config,
         config_text,
-        &resolve_profile,
+        crate::codex_config::CodexCatalogToolProfile::NativeResponses,
+        Some(&resolve_provider),
     )
     .map_err(|error| ProxyError::Internal(error.to_string()))?;
-    if !custom_entries.is_empty() {
-        // 上游 /models 响应的数组键可能是 `models` 或 `data`：优先合并到
-        // 已存在的那个数组，都不存在时落到 `models`，避免自定义模型合并静默失效。
-        let key = if catalog.get("models").is_some() {
-            "models"
-        } else if catalog.get("data").is_some() {
-            "data"
-        } else {
-            "models"
-        };
-        if catalog.get(key).is_none() {
-            catalog[key] = json!([]);
-        }
-        if let Some(models) = catalog.get_mut(key).and_then(|m| m.as_array_mut()) {
-            for entry in custom_entries {
-                let Some(slug) = entry.get("slug").and_then(|s| s.as_str()) else {
-                    continue;
-                };
-                // 自定义条目使用官方插槽名（如 gpt-5.4-mini）：同名官方条目被
-                // 自定义条目覆盖（显示名换成绑定的供应商模型）；不在官方列表的
-                // 插槽则追加。否则绑定到官方已存在插槽的模型永远显示不出来。
-                if let Some(existing) = models
-                    .iter_mut()
-                    .find(|m| m.get("slug").and_then(|s| s.as_str()) == Some(slug))
-                {
-                    *existing = entry;
-                } else {
-                    models.push(entry);
-                }
-            }
-        }
+    if merge_codex_official_models_catalog(&mut catalog, &official.settings_config, custom_entries)
+    {
         return Ok(cc_switch_codex_models_response(catalog));
     }
     Ok(Json(catalog).into_response())
+}
+
+fn merge_codex_official_models_catalog(
+    catalog: &mut Value,
+    settings: &Value,
+    custom_entries: Vec<Value>,
+) -> bool {
+    if !crate::codex_config::codex_custom_models_nonempty(settings) {
+        return false;
+    }
+
+    // 上游 /models 响应的数组键可能是 `models` 或 `data`：优先合并到
+    // 已存在的数组，都不存在时仅为可用的自定义条目创建 `models`。
+    let key = if catalog.get("models").is_some_and(Value::is_array) {
+        "models"
+    } else if catalog.get("data").is_some_and(Value::is_array) {
+        "data"
+    } else if custom_entries.is_empty() {
+        return false;
+    } else {
+        "models"
+    };
+    if !catalog.get(key).is_some_and(Value::is_array) {
+        catalog[key] = json!([]);
+    }
+    if let Some(models) = catalog
+        .get_mut(key)
+        .and_then(|models| models.as_array_mut())
+    {
+        return crate::codex_config::merge_codex_custom_catalog_entries(
+            models,
+            settings,
+            custom_entries,
+        );
+    }
+    false
 }
 
 fn cc_switch_codex_models_response(mut catalog: Value) -> axum::response::Response {
@@ -2889,8 +2898,9 @@ mod tests {
     use super::{
         body_looks_like_sse, cc_switch_codex_models_response, chat_sse_to_response_value,
         classify_body_for_diagnostics, codex_models_query, codex_proxy_error_json,
-        mark_codex_models_catalog_as_cc_switch_merged, responses_sse_to_response_value,
-        should_use_claude_transform_streaming, transform, upstream_body_parse_error,
+        mark_codex_models_catalog_as_cc_switch_merged, merge_codex_official_models_catalog,
+        responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
+        upstream_body_parse_error,
     };
     use crate::proxy::ProxyError;
     use serde_json::json;
@@ -2949,6 +2959,73 @@ mod tests {
             .get(axum::http::header::ETAG)
             .and_then(|value| value.to_str().ok())
             .is_some_and(|etag| etag.starts_with("W/\"cc-switch-")));
+    }
+
+    #[test]
+    fn official_models_merge_omits_slot_with_missing_custom_provider() {
+        let mut catalog = json!({
+            "models": [
+                {"slug": "gpt-5.5", "display_name": "GPT-5.5"},
+                {"slug": "gpt-5.2", "display_name": "GPT-5.2"}
+            ]
+        });
+        let settings = json!({
+            "codexCustomModels": [{
+                "model": "gpt-5.2",
+                "providerId": "deleted-provider",
+                "upstreamModel": "deepseek-v4-flash"
+            }]
+        });
+
+        let merged = merge_codex_official_models_catalog(&mut catalog, &settings, Vec::new());
+
+        assert!(
+            merged,
+            "configured custom slots must mark the response as merged"
+        );
+        assert_eq!(
+            catalog["models"],
+            json!([{"slug": "gpt-5.5", "display_name": "GPT-5.5"}]),
+            "an unresolved custom mapping must suppress the colliding official row"
+        );
+
+        let mut data_catalog = json!({
+            "data": [
+                {"slug": "gpt-5.5", "display_name": "GPT-5.5"},
+                {"slug": "gpt-5.2", "display_name": "GPT-5.2"}
+            ]
+        });
+        assert!(merge_codex_official_models_catalog(
+            &mut data_catalog,
+            &settings,
+            Vec::new()
+        ));
+        assert_eq!(
+            data_catalog["data"],
+            json!([{"slug": "gpt-5.5", "display_name": "GPT-5.5"}])
+        );
+    }
+
+    #[test]
+    fn official_models_merge_is_noop_for_missing_noncolliding_provider() {
+        let mut catalog = json!({
+            "models": [{"slug": "gpt-5.5", "display_name": "GPT-5.5"}]
+        });
+        let original = catalog.clone();
+        let settings = json!({
+            "codexCustomModels": [{
+                "model": "custom-only-slot",
+                "providerId": "deleted-provider"
+            }]
+        });
+
+        let merged = merge_codex_official_models_catalog(&mut catalog, &settings, Vec::new());
+
+        assert!(
+            !merged,
+            "an unchanged official response must keep its ownership"
+        );
+        assert_eq!(catalog, original);
     }
 
     #[test]
