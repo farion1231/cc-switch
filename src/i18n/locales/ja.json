@@ -840,7 +840,7 @@
     "toolUninstallNotSupportedHint": "{{tool}} は cc-switch で自動アンインストールできません。公式のアンインストール手順に従ってください。",
     "toolUninstallVerifyFailed": "アンインストールコマンドは終了しましたが、ツールが削除されたことを確認できませんでした。",
     "toolUninstallIncompleteTitle": "アンインストール後もツールが検出されます",
-    "toolUninstallIncompleteHint": "複数のインストールが存在する可能性があり、既定の箇所のみ削除されました。「インストールの診断」を実行して残りのインストールを確認してください。",
+    "toolUninstallIncompleteHint": "既定のインストールは削除されましたが、別のインストールがまだ検出されています。そのツールの公式手順に従って残りのインストールを手動でアンインストールしてください。",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",

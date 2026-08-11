@@ -840,7 +840,7 @@
     "toolUninstallNotSupportedHint": "{{tool}} 的当前安装方式不支持通过 cc-switch 自动卸载，请按照该工具的官方说明进行卸载。",
     "toolUninstallVerifyFailed": "卸载命令已结束，但 cc-switch 无法确认该工具是否已移除。",
     "toolUninstallIncompleteTitle": "卸载后仍检测到该工具",
-    "toolUninstallIncompleteHint": "可能存在多处安装，仅移除了命令行默认使用的那处。请点击「诊断安装冲突」查看其余安装。",
+    "toolUninstallIncompleteHint": "已移除命令行默认使用的那处安装，但仍有另一处安装被检测到。请按照该工具的官方说明手动卸载剩余安装。",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
