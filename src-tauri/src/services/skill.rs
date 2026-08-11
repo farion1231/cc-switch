@@ -913,6 +913,47 @@ impl SkillService {
         Ok(())
     }
 
+    /// 判定 check_updates 应使用的本地哈希。
+    ///
+    /// 次序关键：必须先确认 SSOT 目录存在，再信任数据库缓存的 content_hash。
+    /// 换机恢复数据库备份后 Skill 文件不随库迁移，此时缓存哈希仍在而目录已
+    /// 缺失；若先取缓存会把这类 Skill 误报成「无更新」，缺失状态被永久掩盖。
+    /// 目录缺失 → 返回 None，与远端哈希必然不等，Skill 进入更新列表，
+    /// update_skill 对缺失目录本就容忍（存在才删、随后整体复制），点更新即可重建。
+    ///
+    /// 返回 `(hash, freshly_computed)`；freshly_computed 表示哈希是现场算出的，
+    /// 调用方应回填数据库缓存。
+    fn local_hash_for_update_check(
+        ssot_dir: &Path,
+        raw_directory: &str,
+        cached_hash: Option<&str>,
+    ) -> Option<(String, bool)> {
+        // 脏 directory 会让 compute_dir_hash 递归遍历任意目录，且哈希结果经
+        // 「有无更新」的界面状态泄露少量信息；无法安全拼路径时也不能报
+        // 「可更新」——update_skill 会在同一校验上硬报错，只能沿用缓存。
+        let directory = match Self::require_valid_directory(raw_directory) {
+            Ok(d) => d,
+            Err(err) => {
+                log::warn!("Skill directory 非法，跳过本地目录检查: {err}");
+                return cached_hash.map(|h| (h.to_string(), false));
+            }
+        };
+
+        let local_dir = ssot_dir.join(&directory);
+        if !local_dir.exists() {
+            return None;
+        }
+
+        if let Some(h) = cached_hash {
+            return Some((h.to_string(), false));
+        }
+
+        match Self::compute_dir_hash(&local_dir) {
+            Ok(h) => Some((h, true)),
+            Err(_) => None,
+        }
+    }
+
     /// 检查所有已安装 Skill 的更新
     ///
     /// 仅检查有 repo_owner 的 Skill（本地 Skill 跳过），
@@ -996,31 +1037,18 @@ impl SkillService {
                     }
                 };
 
-                // 本地哈希：优先数据库，否则实时计算
-                let local_hash = match &skill.content_hash {
-                    Some(h) => Some(h.clone()),
-                    // 脏 directory 会让 compute_dir_hash 递归遍历任意目录，
-                    // 且哈希结果经「有无更新」的界面状态泄露少量信息。
-                    None => match Self::require_valid_directory(&skill.directory) {
-                        Err(err) => {
-                            log::warn!("跳过非法 directory 的哈希计算: {err}");
-                            None
+                let local_hash = match Self::local_hash_for_update_check(
+                    &ssot_dir,
+                    &skill.directory,
+                    skill.content_hash.as_deref(),
+                ) {
+                    Some((h, freshly_computed)) => {
+                        if freshly_computed {
+                            let _ = db.update_skill_hash(&skill.id, &h, 0);
                         }
-                        Ok(directory) => {
-                            let local_dir = ssot_dir.join(&directory);
-                            if local_dir.exists() {
-                                match Self::compute_dir_hash(&local_dir) {
-                                    Ok(h) => {
-                                        let _ = db.update_skill_hash(&skill.id, &h, 0);
-                                        Some(h)
-                                    }
-                                    Err(_) => None,
-                                }
-                            } else {
-                                None
-                            }
-                        }
-                    },
+                        Some(h)
+                    }
+                    None => None,
                 };
 
                 if local_hash.as_deref() != Some(&remote_hash) {
@@ -4316,6 +4344,58 @@ mod tests {
                 "must reject: {bad:?}"
             );
         }
+    }
+
+    #[test]
+    fn local_hash_for_update_check_ignores_cached_hash_when_dir_missing() {
+        // 换机恢复数据库备份的现场：content_hash 还在库里，SSOT 目录已不在。
+        // 必须无视缓存返回 None，让 Skill 进入更新列表以便重建文件；
+        // 若信任缓存则界面显示「无更新」，缺失状态被永久掩盖。
+        let ssot = tempdir().expect("tempdir");
+        assert_eq!(
+            SkillService::local_hash_for_update_check(ssot.path(), "my-skill", Some("cached")),
+            None
+        );
+    }
+
+    #[test]
+    fn local_hash_for_update_check_uses_cache_when_dir_exists() {
+        let ssot = tempdir().expect("tempdir");
+        fs::create_dir(ssot.path().join("my-skill")).expect("create skill dir");
+        assert_eq!(
+            SkillService::local_hash_for_update_check(ssot.path(), "my-skill", Some("cached")),
+            Some(("cached".to_string(), false))
+        );
+    }
+
+    #[test]
+    fn local_hash_for_update_check_computes_and_backfills_when_cache_empty() {
+        let ssot = tempdir().expect("tempdir");
+        let dir = ssot.path().join("my-skill");
+        fs::create_dir(&dir).expect("create skill dir");
+        fs::write(dir.join("SKILL.md"), "---\nname: x\n---\n").expect("write skill");
+
+        let expected = SkillService::compute_dir_hash(&dir).expect("hash");
+        assert_eq!(
+            SkillService::local_hash_for_update_check(ssot.path(), "my-skill", None),
+            Some((expected, true))
+        );
+    }
+
+    #[test]
+    fn local_hash_for_update_check_keeps_cache_for_invalid_directory() {
+        // 非法 directory 无法安全拼路径，做不了存在性检查：有缓存沿用缓存
+        // （维持修复前行为），无缓存返回 None。不能因非法值报「可更新」，
+        // 否则用户点更新会在 update_skill 的同一校验上硬报错。
+        let ssot = tempdir().expect("tempdir");
+        assert_eq!(
+            SkillService::local_hash_for_update_check(ssot.path(), "../evil", Some("cached")),
+            Some(("cached".to_string(), false))
+        );
+        assert_eq!(
+            SkillService::local_hash_for_update_check(ssot.path(), "../evil", None),
+            None
+        );
     }
 
     #[test]

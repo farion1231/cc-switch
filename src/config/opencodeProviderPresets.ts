@@ -2091,4 +2091,33 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     iconColor: "#6366F1",
     isCustomTemplate: true,
   },
+  {
+    name: "PPIO",
+    websiteUrl: "https://ppio.com",
+    apiKeyUrl: "https://ppio.com/settings/key-management",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "PPIO",
+      options: {
+        baseURL: "https://api.ppio.com/openai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "deepseek/deepseek-v4-flash-0731": {
+          name: "Deepseek V4 Flash 0731",
+        },
+      },
+    },
+    category: "aggregator",
+    icon: "ppio",
+    iconColor: "#2874FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
 ];
