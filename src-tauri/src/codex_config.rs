@@ -1217,6 +1217,80 @@ fn codex_official_baseline_with_capture_time(
     saved
 }
 
+pub(crate) fn capture_forwarded_codex_official_models_baseline(
+    catalog: &Value,
+    client_version: &str,
+    etag: Option<&str>,
+) -> Result<bool, AppError> {
+    capture_forwarded_codex_official_models_baseline_at(
+        &get_codex_config_dir(),
+        catalog,
+        client_version,
+        etag,
+    )
+}
+
+fn capture_forwarded_codex_official_models_baseline_at(
+    codex_dir: &Path,
+    catalog: &Value,
+    client_version: &str,
+    etag: Option<&str>,
+) -> Result<bool, AppError> {
+    let client_version = client_version.trim();
+    if codex_cache_has_cc_switch_etag(catalog)
+        || catalog
+            .get(CODEX_OFFICIAL_MODELS_MERGED_KEY)
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
+        return Ok(false);
+    }
+    let models = catalog
+        .get("models")
+        .and_then(Value::as_array)
+        .or_else(|| catalog.get("data").and_then(Value::as_array))
+        .filter(|models| !models.is_empty())
+        .cloned();
+    let (Some(models), Some(mut baseline)) = (models, catalog.as_object().cloned()) else {
+        return Ok(false);
+    };
+    if client_version.is_empty() {
+        return Ok(false);
+    }
+
+    let now = chrono::Utc::now();
+    baseline.insert("models".to_string(), Value::Array(models));
+    baseline.remove("data");
+    baseline.remove(CODEX_OFFICIAL_MODELS_MERGED_KEY);
+    baseline.remove(CODEX_OFFICIAL_BASELINE_STATE_KEY);
+    baseline.remove("rejected_fingerprint");
+    baseline.insert(
+        "fetched_at".to_string(),
+        Value::String(
+            now.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+                .to_string(),
+        ),
+    );
+    baseline.insert(
+        "client_version".to_string(),
+        Value::String(client_version.to_string()),
+    );
+    if let Some(etag) = etag.map(str::trim).filter(|etag| !etag.is_empty()) {
+        baseline.insert("etag".to_string(), Value::String(etag.to_string()));
+    }
+
+    let baseline = Value::Object(baseline);
+    if !codex_cache_is_reliable_official_baseline(&baseline) {
+        return Ok(false);
+    }
+    let captured = codex_official_baseline_with_capture_time(&baseline, now);
+    crate::config::write_json_file(
+        &codex_dir.join(CC_SWITCH_CODEX_OFFICIAL_MODELS_CACHE_FILENAME),
+        &captured,
+    )?;
+    Ok(true)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CodexOfficialBaselineCaptureState {
     Missing,
@@ -6797,6 +6871,108 @@ web_search = "disabled"
             vec!["gpt-5.5"],
             "a proxy-merged catalog must never become the official baseline"
         );
+    }
+
+    #[test]
+    fn forwarded_official_catalog_replaces_awaiting_baseline_before_merge() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        std::fs::write(
+            codex_dir.join(CC_SWITCH_CODEX_OFFICIAL_MODELS_CACHE_FILENAME),
+            serde_json::to_string(&json!({
+                "cc_switch_state": "awaiting_official_refresh"
+            }))
+            .expect("serialize awaiting baseline"),
+        )
+        .expect("write awaiting baseline");
+
+        let clean_catalog = json!({
+            "models": [{"slug": "gpt-5.5", "display_name": "GPT-5.5"}]
+        });
+        capture_forwarded_codex_official_models_baseline_at(
+            &codex_dir,
+            &clean_catalog,
+            "0.147.0",
+            Some("W/\"official-catalog\""),
+        )
+        .expect("capture clean forwarded catalog");
+
+        let baseline: Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                codex_dir.join(CC_SWITCH_CODEX_OFFICIAL_MODELS_CACHE_FILENAME),
+            )
+            .expect("read captured baseline"),
+        )
+        .expect("parse captured baseline");
+        assert_eq!(baseline["models"], clean_catalog["models"]);
+        assert_eq!(baseline["client_version"], "0.147.0");
+        assert_eq!(baseline["etag"], "W/\"official-catalog\"");
+        assert!(baseline.get("fetched_at").and_then(Value::as_str).is_some());
+        assert!(baseline
+            .get(CODEX_OFFICIAL_BASELINE_CAPTURED_AT_KEY)
+            .and_then(Value::as_str)
+            .is_some());
+        assert!(baseline.get(CODEX_OFFICIAL_MODELS_MERGED_KEY).is_none());
+        assert!(baseline.get(CODEX_OFFICIAL_BASELINE_STATE_KEY).is_none());
+    }
+
+    #[test]
+    fn forwarded_merged_catalog_cannot_replace_the_official_baseline() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        let awaiting = json!({
+            "cc_switch_state": "awaiting_official_refresh"
+        });
+        std::fs::write(
+            codex_dir.join(CC_SWITCH_CODEX_OFFICIAL_MODELS_CACHE_FILENAME),
+            serde_json::to_string(&awaiting).expect("serialize awaiting baseline"),
+        )
+        .expect("write awaiting baseline");
+
+        let captured = capture_forwarded_codex_official_models_baseline_at(
+            &codex_dir,
+            &json!({
+                "cc_switch_merged": true,
+                "models": [{"slug": "custom-slot"}]
+            }),
+            "0.147.0",
+            Some("W/\"cc-switch-merged\""),
+        )
+        .expect("reject merged catalog without an IO error");
+
+        assert!(!captured);
+        let saved: Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                codex_dir.join(CC_SWITCH_CODEX_OFFICIAL_MODELS_CACHE_FILENAME),
+            )
+            .expect("read unchanged baseline"),
+        )
+        .expect("parse unchanged baseline");
+        assert_eq!(saved, awaiting);
+    }
+
+    #[test]
+    fn forwarded_catalog_with_cc_switch_body_etag_cannot_be_laundered() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let codex_dir = temp_home.path().join(".codex");
+
+        let captured = capture_forwarded_codex_official_models_baseline_at(
+            &codex_dir,
+            &json!({
+                "etag": "W/\"cc-switch-merged-1\"",
+                "models": [{"slug": "custom-slot"}]
+            }),
+            "0.147.0",
+            Some("W/\"official-http-etag\""),
+        )
+        .expect("reject cc-switch body ETag without an IO error");
+
+        assert!(!captured);
+        assert!(!codex_dir
+            .join(CC_SWITCH_CODEX_OFFICIAL_MODELS_CACHE_FILENAME)
+            .exists());
     }
 
     #[test]

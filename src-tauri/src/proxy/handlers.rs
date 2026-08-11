@@ -195,15 +195,8 @@ async fn forward_codex_official_models(
     };
     url.push('?');
     url.push_str(&effective_query);
-    let mut builder = client.get(&url).timeout(Duration::from_secs(30));
-    if let Some(auth) = headers.get(axum::http::header::AUTHORIZATION) {
-        builder = builder.header(axum::http::header::AUTHORIZATION, auth);
-    }
-    // ChatGPT 多账号/workspace 需要 ChatGPT-Account-Id 才能拿到正确的模型目录，
-    // 与正常 /responses 转发一致透传，否则官方登录聚合会返回 401/403 或错误账号目录。
-    if let Some(account_id) = headers.get("chatgpt-account-id") {
-        builder = builder.header("chatgpt-account-id", account_id);
-    }
+    let builder =
+        forward_codex_models_headers(client.get(&url).timeout(Duration::from_secs(30)), headers);
     let upstream = builder
         .send()
         .await
@@ -214,6 +207,11 @@ async fn forward_codex_official_models(
         .headers()
         .get(axum::http::header::CONTENT_TYPE)
         .cloned();
+    let upstream_etag = upstream
+        .headers()
+        .get(axum::http::header::ETAG)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
     let bytes = upstream
         .bytes()
         .await
@@ -232,6 +230,7 @@ async fn forward_codex_official_models(
 
     let mut catalog: Value =
         serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({ "models": [] }));
+    let mut clean_catalog = catalog.clone();
     let resolve_provider = |provider_id: &str| {
         crate::codex_config::resolve_codex_custom_catalog_provider_from_db(db, provider_id)
     };
@@ -244,9 +243,40 @@ async fn forward_codex_official_models(
     .map_err(|error| ProxyError::Internal(error.to_string()))?;
     if merge_codex_official_models_catalog(&mut catalog, &official.settings_config, custom_entries)
     {
+        let client_version = codex_models_client_version(&effective_query).ok_or_else(|| {
+            ProxyError::Internal("有效的 Codex client_version 在转发后丢失".to_string())
+        })?;
+        let captured = crate::codex_config::capture_forwarded_codex_official_models_baseline(
+            &clean_catalog,
+            client_version,
+            upstream_etag.as_deref(),
+        )
+        .map_err(|error| ProxyError::Internal(format!("保存官方模型基线失败: {error}")))?;
+        if !captured {
+            remove_cc_switch_codex_models_ownership(&mut clean_catalog);
+            return Ok(Json(clean_catalog).into_response());
+        }
         return Ok(cc_switch_codex_models_response(catalog));
     }
     Ok(Json(catalog).into_response())
+}
+
+fn forward_codex_models_headers(
+    mut builder: reqwest::RequestBuilder,
+    headers: &axum::http::HeaderMap,
+) -> reqwest::RequestBuilder {
+    // 官方登录目录必须保留客户端身份以及多账号/workspace 选择，否则 ChatGPT
+    // 后端可能返回不同的模型 cohort，或因账号上下文缺失而拒绝请求。
+    for name in [
+        axum::http::header::AUTHORIZATION,
+        axum::http::HeaderName::from_static("chatgpt-account-id"),
+        axum::http::HeaderName::from_static("originator"),
+    ] {
+        if let Some(value) = headers.get(&name) {
+            builder = builder.header(name, value);
+        }
+    }
+    builder
 }
 
 fn merge_codex_official_models_catalog(
@@ -308,16 +338,26 @@ fn mark_codex_models_catalog_as_cc_switch_merged(catalog: &mut Value) -> String 
     etag
 }
 
+fn remove_cc_switch_codex_models_ownership(catalog: &mut Value) {
+    let Some(object) = catalog.as_object_mut() else {
+        return;
+    };
+    object.remove(crate::codex_config::CODEX_OFFICIAL_MODELS_MERGED_KEY);
+    let has_cc_switch_etag = object
+        .get("etag")
+        .and_then(Value::as_str)
+        .is_some_and(|etag| etag.starts_with("W/\"cc-switch-"));
+    if has_cc_switch_etag {
+        object.remove("etag");
+    }
+}
+
 fn codex_models_query(
     query: Option<&str>,
     fallback_client_version: Option<&str>,
 ) -> Result<String, ProxyError> {
     let query = query.unwrap_or("");
-    let has_client_version = query.split('&').any(|part| {
-        part.split_once('=')
-            .is_some_and(|(key, value)| key == "client_version" && !value.trim().is_empty())
-    });
-    if has_client_version {
+    if codex_models_client_version(query).is_some() {
         return Ok(query.to_string());
     }
 
@@ -342,6 +382,14 @@ fn codex_models_query(
         .collect::<Vec<_>>();
     parts.push(format!("client_version={version}"));
     Ok(parts.join("&"))
+}
+
+fn codex_models_client_version(query: &str) -> Option<&str> {
+    query.split('&').find_map(|part| {
+        let (key, value) = part.split_once('=')?;
+        let value = value.trim();
+        (key == "client_version" && !value.is_empty()).then_some(value)
+    })
 }
 
 // ============================================================================
@@ -2897,10 +2945,11 @@ async fn log_usage(
 mod tests {
     use super::{
         body_looks_like_sse, cc_switch_codex_models_response, chat_sse_to_response_value,
-        classify_body_for_diagnostics, codex_models_query, codex_proxy_error_json,
+        classify_body_for_diagnostics, codex_models_client_version, codex_models_query,
+        codex_proxy_error_json, forward_codex_models_headers,
         mark_codex_models_catalog_as_cc_switch_merged, merge_codex_official_models_catalog,
-        responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
-        upstream_body_parse_error,
+        remove_cc_switch_codex_models_ownership, responses_sse_to_response_value,
+        should_use_claude_transform_streaming, transform, upstream_body_parse_error,
     };
     use crate::proxy::ProxyError;
     use serde_json::json;
@@ -2917,6 +2966,51 @@ mod tests {
             "foo=bar&client_version=0.148.1"
         );
         assert!(codex_models_query(None, None).is_err());
+    }
+
+    #[test]
+    fn codex_models_client_version_can_follow_other_query_parameters() {
+        assert_eq!(
+            codex_models_client_version("foo=bar&client_version=0.148.1"),
+            Some("0.148.1")
+        );
+        assert_eq!(codex_models_client_version("client_version=&foo=bar"), None);
+    }
+
+    #[test]
+    fn official_models_forwarding_preserves_the_client_originator() {
+        let mut incoming = axum::http::HeaderMap::new();
+        incoming.insert("originator", "codex_cli_rs".parse().expect("originator"));
+
+        let request = forward_codex_models_headers(
+            reqwest::Client::new().get("https://example.invalid/models"),
+            &incoming,
+        )
+        .build()
+        .expect("build forwarded request");
+
+        assert_eq!(
+            request
+                .headers()
+                .get("originator")
+                .and_then(|value| value.to_str().ok()),
+            Some("codex_cli_rs")
+        );
+    }
+
+    #[test]
+    fn official_models_fallback_removes_cc_switch_ownership_markers() {
+        let mut catalog = json!({
+            "cc_switch_merged": true,
+            "etag": "W/\"cc-switch-merged-1\"",
+            "models": [{"slug": "gpt-5.5"}]
+        });
+
+        remove_cc_switch_codex_models_ownership(&mut catalog);
+
+        assert!(catalog.get("cc_switch_merged").is_none());
+        assert!(catalog.get("etag").is_none());
+        assert_eq!(catalog["models"], json!([{"slug": "gpt-5.5"}]));
     }
 
     #[test]
