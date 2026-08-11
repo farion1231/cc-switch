@@ -885,22 +885,73 @@ pub async fn list_skill_mds(
     Ok(skills)
 }
 
-/// 计算多个目录的远端 blob 哈希（None 的目录跳过）。
+/// 从 tree 文件清单枚举所有技能目录（含 SKILL.md 的目录）。
 ///
-/// 返回的哈希带方案前缀（`blob-sha1:` / `blob-sha256:`），方案由 tree 内
-/// blob id 长度推断（40 hex = SHA-1，64 hex = SHA-256）。
+/// 嵌套 SKILL.md → 父目录（仓库相对路径，如 `skills/foo`）；
+/// 根级 SKILL.md → 空字符串（表示仓库根，哈希范围是整个仓库）。
+/// 与 `build_discoverable_skill` / `scan_dir_recursive` 的目录推导一致。
+pub fn skill_dirs_from_tree(files: &[RepoFile]) -> Vec<String> {
+    let mut dirs = Vec::new();
+    for f in filter_skill_md_paths(files) {
+        let dir = f
+            .path
+            .rsplit_once('/')
+            .map(|(parent, _)| parent.to_string())
+            .unwrap_or_default();
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    }
+    dirs
+}
+
+/// 将安装名（SSOT 落盘名，目录最后一段）匹配到枚举出的技能目录。
+///
+/// 嵌套 skill 的安装名只是目录最后一段（`foo` 对应仓库里的 `skills/foo`），
+/// 按最后一段匹配才能命中；根级 skill（空串目录）用仓库名作键。
+fn match_install_name<'a>(
+    skill_dirs: &'a [String],
+    install_name: &str,
+    repo_name: &str,
+) -> Option<&'a str> {
+    skill_dirs.iter().find(|d| {
+        d.rsplit('/')
+            .next()
+            .is_some_and(|last| last.eq_ignore_ascii_case(install_name))
+            || (d.is_empty() && install_name.eq_ignore_ascii_case(repo_name))
+    }).map(|x| x.as_str())
+}
+
+/// 计算多个安装名的远端 blob 哈希（未匹配的安装名跳过）。
+///
+/// `install_names` 是 SSOT 落盘名（目录最后一段，如 `foo`），仓库里实际可能是
+/// 嵌套路径（如 `skills/foo`）。因此先枚举 tree 中所有技能目录，再按**目录最后
+/// 一段**匹配安装名，嵌套 skill 也能命中——与旧 ZIP 路径 `check_updates_via_zip`
+/// 的扫描 + 末段匹配行为一致。
+///
+/// 返回 `(目录, 哈希)` 对，目录是仓库相对路径（根级 skill 用仓库名作键），
+/// 哈希带方案前缀（`blob-sha1:` / `blob-sha256:`），方案由 tree 内 blob id
+/// 长度推断（40 hex = SHA-1，64 hex = SHA-256）。
 pub async fn skill_dir_hashes(
     backend: &dyn LargeRepoBackend,
     repo: &SkillRepo,
-    dirs: &[String],
+    install_names: &[String],
 ) -> Result<Vec<(String, String)>> {
     let (files, _branch) = backend.fetch_tree(repo).await?;
     let scheme = tree_blob_scheme(&files);
+    let skill_dirs = skill_dirs_from_tree(&files);
     let mut out = Vec::new();
-    for dir in dirs {
-        if let Some(h) = dir_blob_hash(&files, dir) {
-            out.push((dir.clone(), format!("{}{}", scheme.prefix(), h)));
-        }
+    for name in install_names {
+        let Some(dir) = match_install_name(&skill_dirs, name, &repo.name) else {
+            continue;
+        };
+        let Some(h) = dir_blob_hash(&files, dir) else { continue };
+        let key = if dir.is_empty() {
+            repo.name.clone()
+        } else {
+            dir.to_string()
+        };
+        out.push((key, format!("{}{}", scheme.prefix(), h)));
     }
     Ok(out)
 }
@@ -1079,6 +1130,40 @@ mod tests {
         let matched = filter_skill_md_paths(&files);
         let paths: Vec<&str> = matched.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(paths, vec!["SKILL.md", "skills/foo/SKILL.md"]);
+    }
+
+    #[test]
+    fn skill_dirs_from_tree_derives_parent_dirs_and_dedups() {
+        let files = vec![
+            RepoFile { path: "SKILL.md".into(), blob_sha: "a".into(), size: 1, mode: 0o100644 },
+            RepoFile { path: "skills/foo/SKILL.md".into(), blob_sha: "b".into(), size: 1, mode: 0o100644 },
+            RepoFile { path: "skills/foo/helper.py".into(), blob_sha: "c".into(), size: 1, mode: 0o100644 },
+            // 同一目录下的另一个 SKILL.md 不应产生重复目录
+            RepoFile { path: "skills/foo/docs/SKILL.md".into(), blob_sha: "d".into(), size: 1, mode: 0o100644 },
+        ];
+        let mut dirs = skill_dirs_from_tree(&files);
+        dirs.sort();
+        // 根级 SKILL.md → ""（仓库根）；嵌套 SKILL.md → 父目录
+        assert_eq!(dirs, vec!["", "skills/foo", "skills/foo/docs"]);
+    }
+
+    #[test]
+    fn match_install_name_finds_nested_dir_by_last_segment() {
+        let dirs = vec![
+            "skills/foo".to_string(),
+            "skills/bar".to_string(),
+            "".to_string(),
+        ];
+        // 安装名是落盘名（最后一段），仓库里是嵌套路径
+        assert_eq!(match_install_name(&dirs, "foo", "repo"), Some("skills/foo"));
+        // 大小写不敏感
+        assert_eq!(match_install_name(&dirs, "FOO", "repo"), Some("skills/foo"));
+        // 根级 skill 用仓库名作键
+        assert_eq!(match_install_name(&dirs, "repo", "repo"), Some(""));
+        // 未命中返回 None
+        assert_eq!(match_install_name(&dirs, "nope", "repo"), None);
+        // 空清单返回 None
+        assert_eq!(match_install_name(&[], "foo", "repo"), None);
     }
 
     #[test]
@@ -1647,18 +1732,21 @@ mod tests {
         let (root, repo_dir, _o, _n, _b) = create_fixture_repo(&git);
         let backend = git_backend_for(&git, &root);
         let repo = fixture_repo();
-        let dirs = vec![
-            "skills/skill-a".to_string(),
-            "skills/skill-b".to_string(),
+        // 安装名是落盘名（目录最后一段），仓库里实际是嵌套路径
+        let install_names = vec![
+            "skill-a".to_string(),
+            "skill-b".to_string(),
             ".hidden".to_string(),
         ];
-        let hashes = skill_dir_hashes(&backend, &repo, &dirs).await.unwrap();
+        let hashes = skill_dir_hashes(&backend, &repo, &install_names).await.unwrap();
         assert_eq!(hashes.len(), 3);
         for (dir, hash) in &hashes {
             assert!(
                 hash.starts_with(BLOB_SHA1_PREFIX),
                 "{dir} 哈希缺少 blob-sha1: 前缀: {hash}"
             );
+            // 返回的目录键是仓库相对路径（嵌套目录原样返回）
+            assert!(dir.starts_with("skills/") || dir == ".hidden", "{dir}");
             // 与本地 compute_local_blob_hash 一致（同一 fixture 内容）
             let local =
                 compute_local_blob_hash(&repo_dir.join(dir), BlobHashScheme::Sha1).unwrap();
@@ -1751,18 +1839,21 @@ mod tests {
         let (_root, repo_dir, server) = fixture_with_mock(&git);
         let backend = ApiBackend::with_bases(&server.api_base(), &server.raw_base());
         let repo = fixture_repo();
-        let dirs = vec![
-            "skills/skill-a".to_string(),
-            "skills/skill-b".to_string(),
+        // 安装名是落盘名（目录最后一段），仓库里实际是嵌套路径
+        let install_names = vec![
+            "skill-a".to_string(),
+            "skill-b".to_string(),
             ".hidden".to_string(),
         ];
-        let hashes = skill_dir_hashes(&backend, &repo, &dirs).await.unwrap();
+        let hashes = skill_dir_hashes(&backend, &repo, &install_names).await.unwrap();
         assert_eq!(hashes.len(), 3);
         for (dir, hash) in &hashes {
             assert!(
                 hash.starts_with(BLOB_SHA1_PREFIX),
                 "{dir} 哈希缺少 blob-sha1: 前缀: {hash}"
             );
+            // 返回的目录键是仓库相对路径（嵌套目录原样返回）
+            assert!(dir.starts_with("skills/") || dir == ".hidden", "{dir}");
             let local =
                 compute_local_blob_hash(&repo_dir.join(dir), BlobHashScheme::Sha1).unwrap();
             assert_eq!(hash, &format!("{BLOB_SHA1_PREFIX}{local}"));
@@ -1826,14 +1917,14 @@ mod tests {
             assert_eq!(g.repo_branch, a.repo_branch);
         }
 
-        // 3. skill_dir_hashes 一致
-        let dirs = vec![
-            "skills/skill-a".to_string(),
-            "skills/skill-b".to_string(),
+        // 3. skill_dir_hashes 一致（安装名是落盘名，仓库里是嵌套路径）
+        let install_names = vec![
+            "skill-a".to_string(),
+            "skill-b".to_string(),
             ".hidden".to_string(),
         ];
-        let git_hashes = skill_dir_hashes(&git_backend, &repo, &dirs).await.unwrap();
-        let api_hashes = skill_dir_hashes(&api_backend, &repo, &dirs).await.unwrap();
+        let git_hashes = skill_dir_hashes(&git_backend, &repo, &install_names).await.unwrap();
+        let api_hashes = skill_dir_hashes(&api_backend, &repo, &install_names).await.unwrap();
         assert_eq!(git_hashes, api_hashes);
 
         // 4. materialize_skill_dir 内容一致（逐字节）
