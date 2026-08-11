@@ -36,10 +36,13 @@ const CODEX_OAUTH_CLIENT_VERSION: &str = "0.144.1";
 /// 供 handler/forwarder 外部使用的公开函数。
 /// 优先级：meta.apiFormat > settings_config.api_format > openrouter_compat_mode > 默认 "anthropic"
 pub fn get_claude_api_format(provider: &Provider) -> &'static str {
-    // 0) Managed Responses OAuth providers force their wire protocol. This is
-    // an invariant, not a preset default: editable metadata must not be able to
-    // send an Anthropic Messages body to a Responses-only upstream.
+    // 0) Managed OAuth providers force their wire protocol. These are
+    // invariants, not preset defaults: editable metadata must not be able to
+    // select a protocol the managed upstream does not speak.
     if let Some(meta) = provider.meta.as_ref() {
+        if meta.provider_type.as_deref() == Some("kimi_oauth") {
+            return "anthropic";
+        }
         if matches!(
             meta.provider_type.as_deref(),
             Some("codex_oauth" | "xai_oauth")
@@ -496,6 +499,10 @@ impl ClaudeAdapter {
             return ProviderType::XaiOAuth;
         }
 
+        if self.is_kimi_oauth(provider) {
+            return ProviderType::KimiOAuth;
+        }
+
         // 检测 GitHub Copilot
         if self.is_github_copilot(provider) {
             return ProviderType::GitHubCopilot;
@@ -526,6 +533,10 @@ impl ClaudeAdapter {
 
     fn is_xai_oauth(&self, provider: &Provider) -> bool {
         provider.is_xai_oauth()
+    }
+
+    fn is_kimi_oauth(&self, provider: &Provider) -> bool {
+        provider.is_kimi_oauth()
     }
 
     /// 检测是否为 GitHub Copilot 供应商
@@ -712,6 +723,10 @@ impl ProviderAdapter for ClaudeAdapter {
             return Ok(super::XAI_API_BASE_URL.to_string());
         }
 
+        if self.is_kimi_oauth(provider) {
+            return Ok(super::KIMI_API_BASE_URL.to_string());
+        }
+
         // 1. 从 env 中获取
         if let Some(env) = provider.settings_config.get("env") {
             if let Some(url) = env.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()) {
@@ -775,6 +790,13 @@ impl ProviderAdapter for ClaudeAdapter {
             return Some(AuthInfo::new(
                 "xai_oauth_placeholder".to_string(),
                 AuthStrategy::XaiOAuth,
+            ));
+        }
+
+        if provider_type == ProviderType::KimiOAuth {
+            return Some(AuthInfo::new(
+                "kimi_oauth_placeholder".to_string(),
+                AuthStrategy::KimiOAuth,
             ));
         }
 
@@ -842,6 +864,22 @@ impl ProviderAdapter for ClaudeAdapter {
                 }
                 _ => format!("{}/responses", super::XAI_API_BASE_URL),
             };
+        }
+
+        // Managed Kimi Code speaks the Anthropic Messages protocol at a
+        // beta-qualified endpoint. Pin only the Messages route so future
+        // native endpoints (for example token counting) retain their path.
+        if base_url.trim_end_matches('/') == super::KIMI_API_BASE_URL.trim_end_matches('/')
+            && endpoint
+                .split_once('?')
+                .map_or(endpoint, |(path, _)| path)
+                .trim_end_matches('/')
+                .ends_with("/v1/messages")
+        {
+            return format!(
+                "{}/v1/messages?beta=true",
+                super::KIMI_API_BASE_URL.trim_end_matches('/')
+            );
         }
 
         // NOTE:
@@ -914,6 +952,9 @@ impl ProviderAdapter for ClaudeAdapter {
             }
             AuthStrategy::XaiOAuth => {
                 vec![(HeaderName::from_static("authorization"), hv(&bearer)?)]
+            }
+            AuthStrategy::KimiOAuth => {
+                vec![(HeaderName::from_static("x-api-key"), hv(&auth.api_key)?)]
             }
             AuthStrategy::GitHubCopilot => {
                 // 生成请求追踪 ID
@@ -1988,6 +2029,43 @@ mod tests {
             transformed["include"],
             json!(["reasoning.encrypted_content"])
         );
+    }
+
+    #[test]
+    fn kimi_oauth_invariants_use_native_anthropic_wire_and_api_key_auth() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://attacker.example/anthropic",
+                    "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED"
+                }
+            }),
+            ProviderMeta {
+                provider_type: Some("kimi_oauth".to_string()),
+                api_format: Some("openai_responses".to_string()),
+                is_full_url: Some(true),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(get_claude_api_format(&provider), "anthropic");
+        assert_eq!(adapter.provider_type(&provider), ProviderType::KimiOAuth);
+        assert_eq!(
+            adapter.extract_base_url(&provider).unwrap(),
+            super::super::KIMI_API_BASE_URL
+        );
+        assert!(!adapter.needs_transform(&provider));
+        assert_eq!(
+            adapter.build_url(super::super::KIMI_API_BASE_URL, "/v1/messages"),
+            "https://api.kimi.com/coding/v1/messages?beta=true"
+        );
+
+        let auth = AuthInfo::new("oauth-access-token".to_string(), AuthStrategy::KimiOAuth);
+        let headers = adapter.get_auth_headers(&auth).unwrap();
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0.as_str(), "x-api-key");
+        assert_eq!(headers[0].1, "oauth-access-token");
     }
 
     #[test]

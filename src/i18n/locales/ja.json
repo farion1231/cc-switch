@@ -335,7 +335,8 @@
       "beta": "Beta",
       "copilotDescription": "GitHub Copilot アカウントを管理します",
       "codexOauthDescription": "ChatGPT アカウントを管理します",
-      "xaiOauthDescription": "xAI / Grok アカウントを管理します"
+      "xaiOauthDescription": "xAI / Grok アカウントを管理します",
+      "kimiOauthDescription": "Kimi Code アカウントを管理します"
     },
     "advanced": {
       "configDir": {
@@ -1260,6 +1261,27 @@
     "retry": "再試行",
     "logoutAll": "すべての xAI アカウントを削除",
     "loginRequired": "先に xAI アカウントへログインしてください"
+  },
+  "kimiOauth": {
+    "authStatus": "Kimi Code OAuth 認証",
+    "accountCount": "利用可能なアカウント: {{count}}",
+    "reauthRequired": "再ログインが必要です",
+    "notAuthenticated": "未認証",
+    "selectAccount": "アカウントを選択",
+    "selectAccountPlaceholder": "Kimi Code アカウントを選択",
+    "useDefaultAccount": "デフォルトアカウントを使用",
+    "accounts": "Kimi Code アカウント",
+    "defaultAccount": "デフォルト",
+    "expired": "資格情報の有効期限が切れました",
+    "setAsDefault": "デフォルトに設定",
+    "removeAccount": "アカウントを削除",
+    "addOrReauth": "アカウントを追加または再ログイン",
+    "login": "Kimi Code でサインイン",
+    "waitingForAuth": "Kimi Code の認証を待機中…",
+    "enterCode": "ブラウザに自動入力されない場合は入力してください:",
+    "retry": "再試行",
+    "logoutAll": "すべての Kimi Code アカウントを削除",
+    "loginRequired": "最初に Kimi Code アカウントにサインインしてください"
   },
   "managedAuth": {
     "selectedAccountNeedsReauth": "リンクされたアカウントが存在しないか、再ログインが必要です",

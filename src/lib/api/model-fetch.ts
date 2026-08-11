@@ -61,6 +61,14 @@ export async function fetchXaiOauthModels(
   });
 }
 
+export async function fetchKimiOauthModels(
+  accountId?: string | null,
+): Promise<FetchedModel[]> {
+  return invoke("get_kimi_oauth_models", {
+    accountId: accountId ?? null,
+  });
+}
+
 /**
  * 根据错误类型显示对应的 toast 提示
  */

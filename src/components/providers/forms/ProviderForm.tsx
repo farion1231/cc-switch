@@ -108,6 +108,7 @@ import {
   useCopilotAuth,
   useCodexOauth,
   useXaiOauth,
+  useKimiOauth,
 } from "./hooks";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useSettingsQuery } from "@/lib/query";
@@ -529,6 +530,11 @@ function ProviderFormFull({
     accounts: xaiOauthAccounts,
   } = useXaiOauth();
 
+  const {
+    isAuthenticated: isKimiOauthAuthenticated,
+    accounts: kimiOauthAccounts,
+  } = useKimiOauth();
+
   // 选中的 GitHub 账号 ID（多账号支持）
   const [selectedGitHubAccountId, setSelectedGitHubAccountId] = useState<
     string | null
@@ -541,6 +547,9 @@ function ProviderFormFull({
   const [selectedXaiAccountId, setSelectedXaiAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "xai_oauth"));
+  const [selectedKimiAccountId, setSelectedKimiAccountId] = useState<
+    string | null
+  >(() => resolveManagedAccountId(initialData?.meta, "kimi_oauth"));
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
   );
@@ -1173,6 +1182,10 @@ function ProviderFormFull({
     const isXaiOauthProvider =
       presetProviderType === "xai_oauth" ||
       initialData?.meta?.providerType === "xai_oauth";
+    const isKimiOauthProvider =
+      appId === "claude" &&
+      (presetProviderType === "kimi_oauth" ||
+        initialData?.meta?.providerType === "kimi_oauth");
     if (isCopilotProvider && !isCopilotAuthenticated) {
       toast.error(
         t("copilot.loginRequired", {
@@ -1193,6 +1206,14 @@ function ProviderFormFull({
       toast.error(
         t("xaiOauth.loginRequired", {
           defaultValue: "请先登录 xAI 账号",
+        }),
+      );
+      return;
+    }
+    if (isKimiOauthProvider && !isKimiOauthAuthenticated) {
+      toast.error(
+        t("kimiOauth.loginRequired", {
+          defaultValue: "请先登录 Kimi Code 账号",
         }),
       );
       return;
@@ -1239,6 +1260,17 @@ function ProviderFormFull({
       );
       return;
     }
+    if (
+      isKimiOauthProvider &&
+      !selectedAccountIsUsable(selectedKimiAccountId, kimiOauthAccounts)
+    ) {
+      toast.error(
+        t("managedAuth.selectedAccountNeedsReauth", {
+          defaultValue: "已绑定 Kimi 账号不存在或需要重新登录",
+        }),
+      );
+      return;
+    }
 
     // OMO Other Fields JSON：B 类（格式错了保存下去数据就坏了）
     if (
@@ -1275,7 +1307,12 @@ function ProviderFormFull({
     // cloud_provider（如 Bedrock）通过模板变量处理认证，跳过通用校验
     if (category !== "official" && category !== "cloud_provider") {
       if (appId === "claude") {
-        if (!isCodexOauthProvider && !isXaiOauthProvider && !baseUrl.trim()) {
+        if (
+          !isCodexOauthProvider &&
+          !isXaiOauthProvider &&
+          !isKimiOauthProvider &&
+          !baseUrl.trim()
+        ) {
           issues.push(
             t("providerForm.endpointRequired", {
               defaultValue: "非官方供应商请填写 API 端点",
@@ -1286,6 +1323,7 @@ function ProviderFormFull({
           !isCopilotProvider &&
           !isCodexOauthProvider &&
           !isXaiOauthProvider &&
+          !isKimiOauthProvider &&
           !apiKey.trim()
         ) {
           issues.push(
@@ -1295,7 +1333,7 @@ function ProviderFormFull({
           );
         }
       } else if (appId === "codex") {
-        // 托管 OAuth 预设（xAI）：端点由 adapter 硬定向、token 由代理注入，
+        // xAI 托管 OAuth 的端点由 adapter 硬定向、token 由代理注入，
         // 两项都不需要用户填写
         if (!isXaiOauthProvider && !codexBaseUrl.trim()) {
           issues.push(
@@ -1365,6 +1403,10 @@ function ProviderFormFull({
     const isXaiOauthProvider =
       presetProviderType === "xai_oauth" ||
       initialData?.meta?.providerType === "xai_oauth";
+    const isKimiOauthProvider =
+      appId === "claude" &&
+      (presetProviderType === "kimi_oauth" ||
+        initialData?.meta?.providerType === "kimi_oauth");
 
     let settingsConfig: string;
 
@@ -1575,7 +1617,13 @@ function ProviderFormFull({
                 authProvider: "xai_oauth",
                 accountId: selectedXaiAccountId ?? undefined,
               }
-            : undefined,
+            : isKimiOauthProvider
+              ? {
+                  source: "managed_account",
+                  authProvider: "kimi_oauth",
+                  accountId: selectedKimiAccountId ?? undefined,
+                }
+              : undefined,
       // GitHub Copilot 多账号：保存关联的账号 ID
       githubAccountId:
         isCopilotProvider && selectedGitHubAccountId
@@ -1651,6 +1699,7 @@ function ProviderFormFull({
         supportsFullUrl &&
         category !== "official" &&
         !isXaiOauthProvider &&
+        !isKimiOauthProvider &&
         localIsFullUrl
           ? true
           : undefined,
@@ -2212,6 +2261,10 @@ function ProviderFormFull({
                 presetProviderType === "xai_oauth" ||
                 initialData?.meta?.providerType === "xai_oauth"
               }
+              isKimiOauthPreset={
+                presetProviderType === "kimi_oauth" ||
+                initialData?.meta?.providerType === "kimi_oauth"
+              }
               usesOAuth={
                 templatePreset?.requiresOAuth === true ||
                 presetProviderType === "github_copilot" ||
@@ -2220,7 +2273,9 @@ function ProviderFormFull({
                 presetProviderType === "codex_oauth" ||
                 initialData?.meta?.providerType === "codex_oauth" ||
                 presetProviderType === "xai_oauth" ||
-                initialData?.meta?.providerType === "xai_oauth"
+                initialData?.meta?.providerType === "xai_oauth" ||
+                presetProviderType === "kimi_oauth" ||
+                initialData?.meta?.providerType === "kimi_oauth"
               }
               isCopilotAuthenticated={isCopilotAuthenticated}
               selectedGitHubAccountId={selectedGitHubAccountId}
@@ -2233,6 +2288,9 @@ function ProviderFormFull({
               isXaiOauthAuthenticated={isXaiOauthAuthenticated}
               selectedXaiAccountId={selectedXaiAccountId}
               onXaiAccountSelect={setSelectedXaiAccountId}
+              isKimiOauthAuthenticated={isKimiOauthAuthenticated}
+              selectedKimiAccountId={selectedKimiAccountId}
+              onKimiAccountSelect={setSelectedKimiAccountId}
               templateValueEntries={templateValueEntries}
               templateValues={templateValues}
               templatePresetName={templatePreset?.name || ""}

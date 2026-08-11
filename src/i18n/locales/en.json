@@ -335,7 +335,8 @@
       "beta": "Beta",
       "copilotDescription": "Manage GitHub Copilot accounts",
       "codexOauthDescription": "Manage ChatGPT accounts",
-      "xaiOauthDescription": "Manage xAI / Grok accounts"
+      "xaiOauthDescription": "Manage xAI / Grok accounts",
+      "kimiOauthDescription": "Manage Kimi Code accounts"
     },
     "advanced": {
       "configDir": {
@@ -1260,6 +1261,27 @@
     "retry": "Retry",
     "logoutAll": "Remove all xAI accounts",
     "loginRequired": "Sign in to an xAI account first"
+  },
+  "kimiOauth": {
+    "authStatus": "Kimi Code OAuth authentication",
+    "accountCount": "Usable accounts: {{count}}",
+    "reauthRequired": "Sign-in required",
+    "notAuthenticated": "Not authenticated",
+    "selectAccount": "Select account",
+    "selectAccountPlaceholder": "Select a Kimi Code account",
+    "useDefaultAccount": "Use default account",
+    "accounts": "Kimi Code accounts",
+    "defaultAccount": "Default",
+    "expired": "Credentials expired",
+    "setAsDefault": "Set as default",
+    "removeAccount": "Remove account",
+    "addOrReauth": "Add account or sign in again",
+    "login": "Sign in with Kimi Code",
+    "waitingForAuth": "Waiting for Kimi Code authorization…",
+    "enterCode": "If the browser did not fill it in automatically, enter:",
+    "retry": "Retry",
+    "logoutAll": "Remove all Kimi Code accounts",
+    "loginRequired": "Sign in to a Kimi Code account first"
   },
   "managedAuth": {
     "selectedAccountNeedsReauth": "The linked account is missing or needs you to sign in again",

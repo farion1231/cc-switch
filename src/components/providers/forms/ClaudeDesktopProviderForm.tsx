@@ -259,9 +259,11 @@ export function ClaudeDesktopProviderForm({
   showButtons = true,
 }: ClaudeDesktopProviderFormProps) {
   const { t } = useTranslation();
-  const initialMode = isOAuthProviderType(initialData?.meta?.providerType)
-    ? "proxy"
-    : (initialData?.meta?.claudeDesktopMode ?? "direct");
+  const initialMode =
+    initialData?.meta?.providerType !== "kimi_oauth" &&
+    isOAuthProviderType(initialData?.meta?.providerType)
+      ? "proxy"
+      : (initialData?.meta?.claudeDesktopMode ?? "direct");
   const [mode, setMode] = useState<"direct" | "proxy">(initialMode);
   const [apiFormat, setApiFormat] = useState<ClaudeApiFormat>(
     initialData?.meta?.apiFormat ?? "anthropic",
@@ -398,8 +400,9 @@ export function ClaudeDesktopProviderForm({
     initialData?.category === "official" ||
     activePreset?.category === "official";
   const usesManagedOAuth =
-    activePreset?.requiresOAuth === true ||
-    isOAuthProviderType(activeProviderType);
+    activeProviderType !== "kimi_oauth" &&
+    (activePreset?.requiresOAuth === true ||
+      isOAuthProviderType(activeProviderType));
   const effectiveMode: "direct" | "proxy" = usesManagedOAuth ? "proxy" : mode;
   const needsModelMapping = effectiveMode === "proxy";
 

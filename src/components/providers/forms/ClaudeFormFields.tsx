@@ -34,6 +34,7 @@ import {
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import { CodexOAuthSection } from "./CodexOAuthSection";
 import { XaiOAuthSection } from "./XaiOAuthSection";
+import { KimiOAuthSection } from "./KimiOAuthSection";
 import {
   copilotGetModels,
   copilotGetModelsForAccount,
@@ -42,6 +43,7 @@ import type { CopilotModel } from "@/lib/api/copilot";
 import {
   fetchCodexOauthModels,
   fetchXaiOauthModels,
+  fetchKimiOauthModels,
   fetchModelsForConfig,
   showFetchModelsError,
   type FetchedModel,
@@ -102,6 +104,12 @@ interface ClaudeFormFieldsProps {
   isXaiOauthAuthenticated?: boolean;
   selectedXaiAccountId?: string | null;
   onXaiAccountSelect?: (accountId: string | null) => void;
+
+  // Kimi OAuth
+  isKimiOauthPreset?: boolean;
+  isKimiOauthAuthenticated?: boolean;
+  selectedKimiAccountId?: string | null;
+  onKimiAccountSelect?: (accountId: string | null) => void;
 
   // Template Values
   templateValueEntries: Array<[string, TemplateValueConfig]>;
@@ -183,6 +191,10 @@ export function ClaudeFormFields({
   isXaiOauthAuthenticated,
   selectedXaiAccountId,
   onXaiAccountSelect,
+  isKimiOauthPreset,
+  isKimiOauthAuthenticated,
+  selectedKimiAccountId,
+  onKimiAccountSelect,
   templateValueEntries,
   templateValues,
   templatePresetName,
@@ -233,23 +245,23 @@ export function ClaudeFormFields({
     defaultOpusModel ||
     defaultFableModel ||
     subagentModel ||
-    (!isXaiOauthPreset && apiFormat !== "anthropic") ||
+    (!isXaiOauthPreset && !isKimiOauthPreset && apiFormat !== "anthropic") ||
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
     customUserAgent ||
     hasRequestOverrides
   );
   const [advancedExpanded, setAdvancedExpanded] = useState(
-    isXaiOauthPreset ? false : hasAnyAdvancedValue,
+    isXaiOauthPreset || isKimiOauthPreset ? false : hasAnyAdvancedValue,
   );
 
   // 预设填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
   useEffect(() => {
-    if (isXaiOauthPreset) {
+    if (isXaiOauthPreset || isKimiOauthPreset) {
       setAdvancedExpanded(false);
     } else if (hasAnyAdvancedValue) {
       setAdvancedExpanded(true);
     }
-  }, [hasAnyAdvancedValue, isXaiOauthPreset]);
+  }, [hasAnyAdvancedValue, isXaiOauthPreset, isKimiOauthPreset]);
 
   // Copilot 可用模型列表
   const [copilotModels, setCopilotModels] = useState<CopilotModel[]>([]);
@@ -264,6 +276,10 @@ export function ClaudeFormFields({
   const [xaiOauthModels, setXaiOauthModels] = useState<FetchedModel[]>([]);
   const [xaiOauthModelsLoading, setXaiOauthModelsLoading] = useState(false);
   const xaiOauthModelsRequestRef = useRef(0);
+
+  const [kimiOauthModels, setKimiOauthModels] = useState<FetchedModel[]>([]);
+  const [kimiOauthModelsLoading, setKimiOauthModelsLoading] = useState(false);
+  const kimiOauthModelsRequestRef = useRef(0);
   const fallbackUsesOneM = hasClaudeOneMMarker(claudeModel);
 
   // 通用模型获取（非 Copilot 供应商）
@@ -421,6 +437,42 @@ export function ClaudeFormFields({
       });
   }, [isXaiOauthAuthenticated, selectedXaiAccountId, showModelFetchResult, t]);
 
+  const handleFetchKimiOauthModels = useCallback(() => {
+    if (!isKimiOauthAuthenticated) {
+      toast.error(
+        t("kimiOauth.loginRequired", {
+          defaultValue: "请先登录 Kimi Code 账号",
+        }),
+      );
+      return;
+    }
+
+    const requestId = kimiOauthModelsRequestRef.current + 1;
+    kimiOauthModelsRequestRef.current = requestId;
+    setKimiOauthModelsLoading(true);
+    fetchKimiOauthModels(selectedKimiAccountId)
+      .then((models) => {
+        if (kimiOauthModelsRequestRef.current !== requestId) return;
+        setKimiOauthModels(models);
+        showModelFetchResult(models.length);
+      })
+      .catch((err) => {
+        if (kimiOauthModelsRequestRef.current !== requestId) return;
+        console.warn("[KimiOAuth] Failed to fetch models:", err);
+        showFetchModelsError(err, t);
+      })
+      .finally(() => {
+        if (kimiOauthModelsRequestRef.current === requestId) {
+          setKimiOauthModelsLoading(false);
+        }
+      });
+  }, [
+    isKimiOauthAuthenticated,
+    selectedKimiAccountId,
+    showModelFetchResult,
+    t,
+  ]);
+
   useEffect(() => {
     copilotModelsRequestRef.current += 1;
     setCopilotModels([]);
@@ -439,20 +491,30 @@ export function ClaudeFormFields({
     setXaiOauthModelsLoading(false);
   }, [isXaiOauthPreset, isXaiOauthAuthenticated, selectedXaiAccountId]);
 
+  useEffect(() => {
+    kimiOauthModelsRequestRef.current += 1;
+    setKimiOauthModels([]);
+    setKimiOauthModelsLoading(false);
+  }, [isKimiOauthPreset, isKimiOauthAuthenticated, selectedKimiAccountId]);
+
   const modelFetchLoading = isCopilotPreset
     ? modelsLoading
     : isCodexOauthPreset
       ? codexOauthModelsLoading
       : isXaiOauthPreset
         ? xaiOauthModelsLoading
-        : isFetchingModels;
+        : isKimiOauthPreset
+          ? kimiOauthModelsLoading
+          : isFetchingModels;
   const handleModelFetchClick = isCopilotPreset
     ? handleFetchCopilotModels
     : isCodexOauthPreset
       ? handleFetchCodexOauthModels
       : isXaiOauthPreset
         ? handleFetchXaiOauthModels
-        : handleFetchModels;
+        : isKimiOauthPreset
+          ? handleFetchKimiOauthModels
+          : handleFetchModels;
 
   // 模型输入框：支持手动输入 + 下拉选择
   const renderModelInput = (
@@ -487,6 +549,19 @@ export function ClaudeFormFields({
           placeholder={placeholder}
           fetchedModels={xaiOauthModels}
           isLoading={xaiOauthModelsLoading}
+        />
+      );
+    }
+
+    if (isKimiOauthPreset) {
+      return (
+        <ModelInputWithFetch
+          id={id}
+          value={value}
+          onChange={updateValue}
+          placeholder={placeholder}
+          fetchedModels={kimiOauthModels}
+          isLoading={kimiOauthModelsLoading}
         />
       );
     }
@@ -669,6 +744,13 @@ export function ClaudeFormFields({
         />
       )}
 
+      {isKimiOauthPreset && (
+        <KimiOAuthSection
+          selectedAccountId={selectedKimiAccountId}
+          onAccountSelect={onKimiAccountSelect}
+        />
+      )}
+
       {/* API Key 输入框（非 OAuth 预设时显示） */}
       {shouldShowApiKey && !usesOAuth && (
         <ApiKeySection
@@ -743,7 +825,9 @@ export function ClaudeFormFields({
           onManageClick={
             showEndpointTools ? () => onEndpointModalToggle(true) : undefined
           }
-          showFullUrlToggle={showEndpointTools && !isXaiOauthPreset}
+          showFullUrlToggle={
+            showEndpointTools && !isXaiOauthPreset && !isKimiOauthPreset
+          }
           isFullUrl={isFullUrl}
           onFullUrlChange={onFullUrlChange}
         />
@@ -793,46 +877,49 @@ export function ClaudeFormFields({
           )}
           <CollapsibleContent className="space-y-4 pt-2">
             {/* 上游格式选择（仅非云服务商显示） */}
-            {category !== "cloud_provider" && !isXaiOauthPreset && (
-              <div className="space-y-2">
-                <FormLabel htmlFor="apiFormat">
-                  {t("providerForm.apiFormat", { defaultValue: "上游格式" })}
-                </FormLabel>
-                <Select value={apiFormat} onValueChange={onApiFormatChange}>
-                  <SelectTrigger id="apiFormat" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="anthropic">
-                      {t("providerForm.apiFormatAnthropic", {
-                        defaultValue: "Anthropic Messages (原生)",
-                      })}
-                    </SelectItem>
-                    <SelectItem value="openai_chat">
-                      {t("providerForm.apiFormatOpenAIChat", {
-                        defaultValue: "OpenAI Chat Completions (需转换)",
-                      })}
-                    </SelectItem>
-                    <SelectItem value="openai_responses">
-                      {t("providerForm.apiFormatOpenAIResponses", {
-                        defaultValue: "OpenAI Responses API (需转换)",
-                      })}
-                    </SelectItem>
-                    <SelectItem value="gemini_native">
-                      {t("providerForm.apiFormatGeminiNative", {
-                        defaultValue: "Gemini Native generateContent (需转换)",
-                      })}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  {t("providerForm.apiFormatHint", {
-                    defaultValue:
-                      "供应商原生为 Anthropic Messages API 就选 Anthropic Messages（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；使用 Responses API 就选 Responses；使用 Gemini generateContent 协议就选 Gemini Native。Chat、Responses 与 Gemini Native 均需开启路由接管才能转换为 Anthropic Messages。",
-                  })}
-                </p>
-              </div>
-            )}
+            {category !== "cloud_provider" &&
+              !isXaiOauthPreset &&
+              !isKimiOauthPreset && (
+                <div className="space-y-2">
+                  <FormLabel htmlFor="apiFormat">
+                    {t("providerForm.apiFormat", { defaultValue: "上游格式" })}
+                  </FormLabel>
+                  <Select value={apiFormat} onValueChange={onApiFormatChange}>
+                    <SelectTrigger id="apiFormat" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="anthropic">
+                        {t("providerForm.apiFormatAnthropic", {
+                          defaultValue: "Anthropic Messages (原生)",
+                        })}
+                      </SelectItem>
+                      <SelectItem value="openai_chat">
+                        {t("providerForm.apiFormatOpenAIChat", {
+                          defaultValue: "OpenAI Chat Completions (需转换)",
+                        })}
+                      </SelectItem>
+                      <SelectItem value="openai_responses">
+                        {t("providerForm.apiFormatOpenAIResponses", {
+                          defaultValue: "OpenAI Responses API (需转换)",
+                        })}
+                      </SelectItem>
+                      <SelectItem value="gemini_native">
+                        {t("providerForm.apiFormatGeminiNative", {
+                          defaultValue:
+                            "Gemini Native generateContent (需转换)",
+                        })}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {t("providerForm.apiFormatHint", {
+                      defaultValue:
+                        "供应商原生为 Anthropic Messages API 就选 Anthropic Messages（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；使用 Responses API 就选 Responses；使用 Gemini generateContent 协议就选 Gemini Native。Chat、Responses 与 Gemini Native 均需开启路由接管才能转换为 Anthropic Messages。",
+                    })}
+                  </p>
+                </div>
+              )}
 
             {/* 认证字段选择器 */}
             <div className="space-y-2">

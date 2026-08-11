@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
-import { subscriptionApi } from "@/lib/api/subscription";
+import { subscriptionApi, getKimiOauthQuota } from "@/lib/api/subscription";
 import type { AppId } from "@/lib/api/types";
 import type { ProviderMeta } from "@/types";
 import type { SubscriptionQuota } from "@/types/subscription";
@@ -169,6 +169,25 @@ export function useXaiOauthQuota(
   const query = useQuery({
     queryKey: ["xai_oauth", "quota", accountId ?? "default"],
     queryFn: () => subscriptionApi.getXaiOauthQuota(accountId),
+    enabled,
+    refetchInterval: autoQuery ? REFETCH_INTERVAL : false,
+    refetchIntervalInBackground: autoQuery,
+    refetchOnWindowFocus: autoQuery,
+    staleTime: REFETCH_INTERVAL,
+    retry: 1,
+  });
+
+  return useQuotaKeepLastGood(query, accountId ?? "default");
+}
+
+export function useKimiOauthQuotaByAccountId(
+  accountId: string | null,
+  options: UseCodexOauthQuotaOptions = {},
+) {
+  const { enabled = true, autoQuery = false } = options;
+  const query = useQuery({
+    queryKey: ["kimi_oauth", "quota", accountId ?? "default"],
+    queryFn: () => getKimiOauthQuota(accountId),
     enabled,
     refetchInterval: autoQuery ? REFETCH_INTERVAL : false,
     refetchIntervalInBackground: autoQuery,

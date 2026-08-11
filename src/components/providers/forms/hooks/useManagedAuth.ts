@@ -10,6 +10,20 @@ import type {
 
 type PollingState = "idle" | "polling" | "success" | "error";
 
+const HOT_PATH_STATUS_REFETCH_INTERVAL_MS = 15_000;
+
+/**
+ * Returns the status refresh cadence for providers whose proxy path can mark
+ * an account as requiring login without a foreground Auth Center action.
+ */
+export function managedAuthStatusRefetchInterval(
+  authProvider: ManagedAuthProvider,
+): number | false {
+  return authProvider === "xai_oauth" || authProvider === "kimi_oauth"
+    ? HOT_PATH_STATUS_REFETCH_INTERVAL_MS
+    : false;
+}
+
 export function useManagedAuth(
   authProvider: ManagedAuthProvider,
   githubDomain?: string,
@@ -35,10 +49,9 @@ export function useManagedAuth(
     queryKey,
     queryFn: () => authApi.authGetStatus(authProvider),
     staleTime: 30000,
-    // A rejected xAI refresh token is persisted as `requires_reauth` by the
-    // proxy hot path. Periodically refresh local status so an already-open Auth
-    // Center stops showing the account as logged in without requiring a reload.
-    refetchInterval: authProvider === "xai_oauth" ? 15_000 : false,
+    // A rejected refresh token can be persisted by a provider's proxy hot path.
+    // Refresh local status so an open Auth Center reflects that transition.
+    refetchInterval: managedAuthStatusRefetchInterval(authProvider),
   });
 
   const stopPolling = useCallback(() => {
