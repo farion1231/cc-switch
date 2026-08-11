@@ -1,0 +1,11 @@
+--- a/src-tauri/src/proxy/forwarder.rs
++++ b/src-tauri/src/proxy/forwarder.rs
+@@ -1437,6 +1437,8 @@
+                 mapped_body,
+                 reasoning_config.as_ref(),
+             )?;
++            // Normalize message content for strict upstream Chat parsers
++            super::providers::transform_codex_chat_sanitize::sanitize_chat_message_content(&mut chat_body);
+             super::providers::inject_codex_chat_prompt_cache_key(
+                 provider,
+                 &mut chat_body,
