@@ -2731,7 +2731,7 @@ function ProviderFormFull({
               </div>
               {settingsConfigErrorField}
             </>
-          ) : appId === "openclaw" || appId === "hermes" ? (
+          ) : appId === "openclaw" || appId === "hermes" || appId === "kimi" ? (
             <>
               <div className="space-y-2">
                 <Label htmlFor="settingsConfig">
@@ -2747,7 +2747,18 @@ function ProviderFormFull({
   "base_url": "https://api.example.com/v1",
   "api_key": ""
 }`
-                      : `{
+                      : appId === "kimi"
+                        ? `{
+  "name": "my-provider",
+  "type": "openai",
+  "base_url": "https://api.moonshot.cn/v1",
+  "api_key": "",
+  "models": [
+    { "id": "kimi-k2.7-code", "model": "kimi-k2.7-code", "max_context_size": 262144 }
+  ],
+  "default_model": "kimi-k2.7-code"
+}`
+                        : `{
   "baseUrl": "https://api.example.com/v1",
   "apiKey": "your-api-key-here",
   "api": "openai-completions",

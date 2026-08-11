@@ -3089,7 +3089,14 @@
       "providerKeyInvalid": "仅限小写字母、数字和连字符",
       "providerKeyDuplicate": "该 Provider Key 已存在",
       "providerKeyLockedHint": "该供应商已添加到 Kimi 配置中，供应商标识不可修改",
-      "providerKeyHint": "仅限小写字母、数字和连字符。将用作 config.toml 中的提供商名称。"
+      "providerKeyHint": "仅限小写字母、数字和连字符。将用作 config.toml 中的提供商名称。",
+      "wireModel": "模型 ID（请求时发送）",
+      "wireModelPlaceholder": "kimi-k2.7-code",
+      "maxInputSize": "输入上限（token）",
+      "maxOutputSize": "输出上限（token）",
+      "supportEfforts": "支持的推理强度（逗号分隔）",
+      "defaultEffort": "默认推理强度",
+      "modelBaseUrl": "模型级端点覆盖"
     }
   }
 }

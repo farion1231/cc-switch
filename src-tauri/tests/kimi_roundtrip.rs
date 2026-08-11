@@ -246,3 +246,55 @@ fn validate_settings_rejects_bad_type_and_accepts_known_types() {
         );
     }
 }
+
+#[test]
+fn model_official_fields_roundtrip() {
+    with_temp_kimi_dir(|dir| {
+        // Kimi 官方字段：wire model 名与别名不同、input/output 上限、efforts、per-model base_url
+        let settings = serde_json::json!({
+            "name": "kimi_coding",
+            "type": "kimi",
+            "base_url": "https://api.kimi.com/coding/v1",
+            "api_key": "",
+            "models": [{
+                "id": "kimi-code/k3",
+                "model": "k3",
+                "name": "Kimi K3",
+                "max_context_size": 1048576,
+                "max_input_size": 900000,
+                "max_output_size": 16384,
+                "support_efforts": ["max"],
+                "default_effort": "max",
+                "base_url": "https://gateway.example.com/v1",
+                "capabilities": ["thinking", "always_thinking", "tool_use"]
+            }],
+            "default_model": "kimi-code/k3"
+        });
+        kimi_config::set_provider("kimi_coding", settings).expect("set_provider");
+
+        let content = std::fs::read_to_string(dir.join("config.toml")).expect("read back");
+        assert!(content.contains("[models.\"kimi-code/k3\"]"), "{content}");
+        assert!(content.contains("model = \"k3\""), "{content}");
+        assert!(content.contains("max_input_size = 900000"), "{content}");
+        assert!(content.contains("max_output_size = 16384"), "{content}");
+        assert!(content.contains("support_efforts = [\"max\"]"), "{content}");
+        assert!(content.contains("default_effort = \"max\""), "{content}");
+        assert!(
+            content.contains("base_url = \"https://gateway.example.com/v1\""),
+            "{content}"
+        );
+
+        // 读回
+        let providers = kimi_config::get_providers().expect("get_providers");
+        let entry = providers.get("kimi_coding").expect("provider");
+        let models = entry["models"].as_array().expect("models");
+        let m = &models[0];
+        assert_eq!(m["model"], "k3", "wire model must be distinct from alias");
+        assert_eq!(m["max_input_size"], 900000);
+        assert_eq!(m["max_output_size"], 16384);
+        assert_eq!(m["support_efforts"][0], "max");
+        assert_eq!(m["default_effort"], "max");
+        assert_eq!(m["base_url"], "https://gateway.example.com/v1");
+        assert_eq!(m["id"], "kimi-code/k3");
+    });
+}

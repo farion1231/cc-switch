@@ -460,6 +460,22 @@ export function KimiFormFields({
                   </div>
                   <div className="flex-1 space-y-1">
                     <label className="text-xs text-muted-foreground">
+                      {t("kimi.form.wireModel", {
+                        defaultValue: "模型 ID（请求时发送）",
+                      })}
+                    </label>
+                    <Input
+                      value={model.model ?? ""}
+                      onChange={(e) =>
+                        handleModelChange(index, "model", e.target.value)
+                      }
+                      placeholder={t("kimi.form.wireModelPlaceholder", {
+                        defaultValue: "kimi-k2.7-code",
+                      })}
+                    />
+                  </div>
+                  <div className="flex-1 space-y-1">
+                    <label className="text-xs text-muted-foreground">
                       {t("kimi.form.modelName", { defaultValue: "显示名称" })}
                     </label>
                     <Input
@@ -507,6 +523,99 @@ export function KimiFormFields({
                         )
                       }
                       placeholder="262144"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted-foreground">
+                        {t("kimi.form.maxInputSize", {
+                          defaultValue: "输入上限（token）",
+                        })}
+                      </label>
+                      <Input
+                        type="number"
+                        value={model.max_input_size ?? ""}
+                        onChange={(e) =>
+                          handleModelChange(
+                            index,
+                            "max_input_size",
+                            e.target.value
+                              ? parseInt(e.target.value)
+                              : undefined,
+                          )
+                        }
+                        placeholder="272000"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted-foreground">
+                        {t("kimi.form.maxOutputSize", {
+                          defaultValue: "输出上限（token）",
+                        })}
+                      </label>
+                      <Input
+                        type="number"
+                        value={model.max_output_size ?? ""}
+                        onChange={(e) =>
+                          handleModelChange(
+                            index,
+                            "max_output_size",
+                            e.target.value
+                              ? parseInt(e.target.value)
+                              : undefined,
+                          )
+                        }
+                        placeholder="32768"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">
+                      {t("kimi.form.supportEfforts", {
+                        defaultValue: "支持的推理强度（逗号分隔）",
+                      })}
+                    </label>
+                    <Input
+                      value={model.support_efforts?.join(", ") ?? ""}
+                      onChange={(e) =>
+                        handleModelChange(
+                          index,
+                          "support_efforts",
+                          e.target.value
+                            .split(",")
+                            .map((s) => s.trim())
+                            .filter(Boolean),
+                        )
+                      }
+                      placeholder="low, medium, high, max"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">
+                      {t("kimi.form.defaultEffort", {
+                        defaultValue: "默认推理强度",
+                      })}
+                    </label>
+                    <Input
+                      value={model.default_effort ?? ""}
+                      onChange={(e) =>
+                        handleModelChange(index, "default_effort", e.target.value)
+                      }
+                      placeholder="high"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">
+                      {t("kimi.form.modelBaseUrl", {
+                        defaultValue: "模型级端点覆盖",
+                      })}
+                    </label>
+                    <Input
+                      value={model.base_url ?? ""}
+                      onChange={(e) =>
+                        handleModelChange(index, "base_url", e.target.value)
+                      }
+                      placeholder="https://gateway.example.com/v1"
                     />
                   </div>
                   <div className="space-y-1">

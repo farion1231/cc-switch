@@ -50,10 +50,22 @@ export const kimiApiTypes: Array<{
 export interface KimiModel {
   /** Model alias — becomes the TOML key and the value written to top-level default_model. */
   id: string;
+  /** Wire model identifier sent to the server (`model` field). Falls back to `id`. */
+  model?: string;
   /** Optional display label (written to `display_name`). */
   name?: string;
   /** Context window in tokens (written to `max_context_size`). */
   max_context_size?: number;
+  /** Declared per-request input limit (written to `max_input_size`). */
+  max_input_size?: number;
+  /** Per-request output token cap (written to `max_output_size`). */
+  max_output_size?: number;
+  /** Thinking effort levels the model accepts (written to `support_efforts`). */
+  support_efforts?: string[];
+  /** Default thinking effort (written to `default_effort`). */
+  default_effort?: string;
+  /** Per-model endpoint override (written to `base_url`). */
+  base_url?: string;
   /** Capability tags (thinking / tool_use / ...). */
   capabilities?: string[];
 }
@@ -102,6 +114,7 @@ export const kimiProviderPresets: KimiProviderPreset[] = [
       models: [
         {
           id: "kimi-code/k3",
+          model: "k3",
           name: "Kimi K3",
           max_context_size: 1048576,
           capabilities: [
@@ -111,9 +124,12 @@ export const kimiProviderPresets: KimiProviderPreset[] = [
             "video_in",
             "tool_use",
           ],
+          support_efforts: ["max"],
+          default_effort: "max",
         },
         {
           id: "kimi-code/kimi-for-coding",
+          model: "kimi-for-coding",
           name: "Kimi For Coding",
           max_context_size: 262144,
           capabilities: [
@@ -126,6 +142,7 @@ export const kimiProviderPresets: KimiProviderPreset[] = [
         },
         {
           id: "kimi-code/kimi-for-coding-highspeed",
+          model: "kimi-for-coding-highspeed",
           name: "Kimi For Coding (High-Speed)",
           max_context_size: 262144,
           capabilities: [

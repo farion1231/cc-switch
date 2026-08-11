@@ -3089,7 +3089,14 @@
       "providerKeyInvalid": "小文字・数字・ハイフンのみ使用できます",
       "providerKeyDuplicate": "この Provider Key は既に存在します",
       "providerKeyLockedHint": "このプロバイダーは Kimi 設定に既に追加されています。識別子は変更できません。",
-      "providerKeyHint": "小文字・数字・ハイフンのみ使用できます。config.toml のプロバイダー名として使用されます。"
+      "providerKeyHint": "小文字・数字・ハイフンのみ使用できます。config.toml のプロバイダー名として使用されます。",
+      "wireModel": "モデル ID（リクエスト時に送信）",
+      "wireModelPlaceholder": "kimi-k2.7-code",
+      "maxInputSize": "入力上限（トークン）",
+      "maxOutputSize": "出力上限（トークン）",
+      "supportEfforts": "対応する思考強度（カンマ区切り）",
+      "defaultEffort": "デフォルト思考強度",
+      "modelBaseUrl": "モデル別エンドポイント上書き"
     }
   }
 }

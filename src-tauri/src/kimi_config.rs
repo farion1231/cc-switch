@@ -294,10 +294,39 @@ pub fn set_provider(name: &str, settings: Value) -> Result<(), AppError> {
             if let Some(ctx) = model.get("max_context_size").and_then(Value::as_u64) {
                 entry_t.insert("max_context_size", Item::Value((ctx as i64).into()));
             }
+            if let Some(v) = model.get("max_input_size").and_then(Value::as_u64) {
+                entry_t.insert("max_input_size", Item::Value((v as i64).into()));
+            }
+            if let Some(v) = model.get("max_output_size").and_then(Value::as_u64) {
+                entry_t.insert("max_output_size", Item::Value((v as i64).into()));
+            }
             if let Some(display) = model.get("name").and_then(Value::as_str) {
                 let display = display.trim();
                 if !display.is_empty() && display != wire_model {
                     entry_t.insert("display_name", Item::Value(display.to_string().into()));
+                }
+            }
+            if let Some(efforts) = model.get("support_efforts").and_then(Value::as_array) {
+                let mut arr = Array::new();
+                for e in efforts {
+                    if let Some(s) = e.as_str() {
+                        arr.push(TomlValue::from(s.to_string()));
+                    }
+                }
+                if !arr.is_empty() {
+                    entry_t.insert("support_efforts", Item::Value(TomlValue::Array(arr)));
+                }
+            }
+            if let Some(effort) = model.get("default_effort").and_then(Value::as_str) {
+                let effort = effort.trim();
+                if !effort.is_empty() {
+                    entry_t.insert("default_effort", Item::Value(effort.to_string().into()));
+                }
+            }
+            if let Some(base_url) = model.get("base_url").and_then(Value::as_str) {
+                let base_url = base_url.trim();
+                if !base_url.is_empty() {
+                    entry_t.insert("base_url", Item::Value(base_url.to_string().into()));
                 }
             }
             if let Some(caps) = model.get("capabilities").and_then(Value::as_array) {
@@ -574,8 +603,32 @@ fn collect_models_for_provider(doc: &DocumentMut, provider: &str) -> Vec<Value> 
         if let Some(ctx) = table.get("max_context_size").and_then(|v| v.as_integer()) {
             model.insert("max_context_size".to_string(), Value::Number(ctx.into()));
         }
+        if let Some(v) = table.get("max_input_size").and_then(|v| v.as_integer()) {
+            model.insert("max_input_size".to_string(), Value::Number(v.into()));
+        }
+        if let Some(v) = table.get("max_output_size").and_then(|v| v.as_integer()) {
+            model.insert("max_output_size".to_string(), Value::Number(v.into()));
+        }
         if let Some(display) = table.get("display_name").and_then(|v| v.as_str()) {
             model.insert("name".to_string(), Value::String(display.to_string()));
+        }
+        if let Some(efforts) = table.get("support_efforts").and_then(|v| v.as_array()) {
+            let arr: Vec<Value> = efforts
+                .iter()
+                .filter_map(|e| e.as_str().map(|s| Value::String(s.to_string())))
+                .collect();
+            if !arr.is_empty() {
+                model.insert("support_efforts".to_string(), Value::Array(arr));
+            }
+        }
+        if let Some(effort) = table.get("default_effort").and_then(|v| v.as_str()) {
+            model.insert(
+                "default_effort".to_string(),
+                Value::String(effort.to_string()),
+            );
+        }
+        if let Some(base_url) = table.get("base_url").and_then(|v| v.as_str()) {
+            model.insert("base_url".to_string(), Value::String(base_url.to_string()));
         }
         if let Some(caps) = table.get("capabilities").and_then(|v| v.as_array()) {
             let arr: Vec<Value> = caps

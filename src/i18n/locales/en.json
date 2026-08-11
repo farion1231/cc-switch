@@ -3089,7 +3089,14 @@
       "providerKeyInvalid": "Lowercase letters, numbers, and hyphens only",
       "providerKeyDuplicate": "This Provider Key already exists",
       "providerKeyLockedHint": "This provider is already in Kimi config; key is locked.",
-      "providerKeyHint": "Lowercase letters, numbers, and hyphens only. Used as the provider name in config.toml."
+      "providerKeyHint": "Lowercase letters, numbers, and hyphens only. Used as the provider name in config.toml.",
+      "wireModel": "Model ID (sent on request)",
+      "wireModelPlaceholder": "kimi-k2.7-code",
+      "maxInputSize": "Max input size (tokens)",
+      "maxOutputSize": "Max output size (tokens)",
+      "supportEfforts": "Supported thinking efforts (comma separated)",
+      "defaultEffort": "Default thinking effort",
+      "modelBaseUrl": "Per-model endpoint override"
     }
   }
 }
