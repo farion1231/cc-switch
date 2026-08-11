@@ -223,6 +223,22 @@ function createCustomModelRow(
   };
 }
 
+export function applyCodexCustomModelCatalogSelection<
+  T extends CodexCustomModel,
+>(row: T, upstreamModel: string, match?: CodexCatalogModel): T {
+  return {
+    ...row,
+    upstreamModel,
+    displayName: match?.displayName?.trim() || "",
+    contextWindow: match?.contextWindow ?? "",
+    supportsParallelToolCalls: match?.supportsParallelToolCalls,
+    inputModalities: match?.inputModalities
+      ? [...match.inputModalities]
+      : undefined,
+    baseInstructions: match?.baseInstructions,
+  };
+}
+
 export function customRowsMatchModels(
   rows: CodexCustomModel[],
   models: CodexCustomModel[],
@@ -495,15 +511,11 @@ export function CodexFormFields({
       setCustomRows((current) =>
         current.map((row, i) =>
           i === index
-            ? {
-                ...row,
-                providerId,
-                upstreamModel: defaultUpstreamModel,
-                // 菜单显示名始终读目标供应商目录中该模型的显示名
-                displayName: match?.displayName?.trim() || "",
-                // 上下文窗口只读继承自供应商模型目录，不由用户手填
-                contextWindow: match?.contextWindow ?? "",
-              }
+            ? applyCodexCustomModelCatalogSelection(
+                { ...row, providerId },
+                defaultUpstreamModel,
+                match,
+              )
             : row,
         ),
       );
@@ -522,12 +534,7 @@ export function CodexFormFields({
         );
         return current.map((r, i) =>
           i === index
-            ? {
-                ...r,
-                upstreamModel: model,
-                displayName: match?.displayName?.trim() || "",
-                contextWindow: match?.contextWindow ?? "",
-              }
+            ? applyCodexCustomModelCatalogSelection(r, model, match)
             : r,
         );
       });

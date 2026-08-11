@@ -146,7 +146,17 @@ async fn refresh_codex_models_cache_once_inner(
                 .unwrap_or("")
                 .to_string(),
         };
-        crate::codex_config::write_codex_models_cache_for_provider(&provider, &config_text)?;
+        let resolve_profile = |provider_id: &str| {
+            crate::codex_config::resolve_codex_custom_catalog_profile_from_db(
+                db.as_ref(),
+                provider_id,
+            )
+        };
+        crate::codex_config::write_codex_models_cache_for_provider(
+            &provider,
+            &config_text,
+            Some(&resolve_profile),
+        )?;
         Ok(true)
     })
     .await
@@ -463,10 +473,20 @@ impl ProxyService {
         )
         .map_err(|e| format!("构建 codex 有效配置失败: {e}"))?;
         if let Some(existing_live) = existing_live.as_ref() {
-            Self::preserve_toml_mcp_servers_from_existing_config(
-                &mut effective_settings,
-                existing_live,
-            )?;
+            if crate::proxy::providers::is_codex_official_provider(provider) {
+                // The built-in official provider intentionally stores an empty
+                // config snapshot. During takeover, keep the user's live TOML as
+                // the source of truth (sandbox, approvals, reasoning, features,
+                // etc.) while retaining aggregation-only fields from the DB row.
+                if let Some(config) = existing_live.get("config") {
+                    effective_settings["config"] = config.clone();
+                }
+            } else {
+                Self::preserve_toml_mcp_servers_from_existing_config(
+                    &mut effective_settings,
+                    existing_live,
+                )?;
+            }
         }
         let (_, proxy_codex_base_url) = self.build_proxy_urls().await?;
 
@@ -480,20 +500,32 @@ impl ProxyService {
         // 桌面端模型列表只认 models_cache.json：接管时同步重建缓存，否则它
         // 读到的永远是过期条目（旧供应商的官方/自定义模型残留）并回退到
         // 内置官方模型。
-        Self::refresh_codex_models_cache_after_takeover(&effective_settings, provider);
+        self.refresh_codex_models_cache_after_takeover(&effective_settings, provider);
         Ok(())
     }
 
     /// Codex 供应商接管/热切换后重建 `models_cache.json`（桌面端模型列表的来源）。
     /// 失败只告警，不影响接管本身。
-    fn refresh_codex_models_cache_after_takeover(effective_settings: &Value, provider: &Provider) {
+    fn refresh_codex_models_cache_after_takeover(
+        &self,
+        effective_settings: &Value,
+        provider: &Provider,
+    ) {
         let config_text = effective_settings
             .get("config")
             .and_then(|value| value.as_str())
             .unwrap_or("");
-        if let Err(e) =
-            crate::codex_config::write_codex_models_cache_for_provider(provider, config_text)
-        {
+        let resolve_profile = |provider_id: &str| {
+            crate::codex_config::resolve_codex_custom_catalog_profile_from_db(
+                self.db.as_ref(),
+                provider_id,
+            )
+        };
+        if let Err(e) = crate::codex_config::write_codex_models_cache_for_provider(
+            provider,
+            config_text,
+            Some(&resolve_profile),
+        ) {
             log::warn!("[codex] 刷新 models_cache.json 失败: {e}");
         }
     }
@@ -2745,6 +2777,12 @@ impl ProxyService {
                 let config_str = effective_settings.get("config").and_then(|v| v.as_str());
                 let profile =
                     crate::proxy::providers::resolve_codex_catalog_tool_profile(&provider);
+                let resolve_profile = |provider_id: &str| {
+                    crate::codex_config::resolve_codex_custom_catalog_profile_from_db(
+                        self.db.as_ref(),
+                        provider_id,
+                    )
+                };
 
                 crate::codex_config::write_codex_provider_live_with_catalog(
                     &effective_settings,
@@ -2752,6 +2790,7 @@ impl ProxyService {
                     auth,
                     config_str,
                     profile,
+                    Some(&resolve_profile),
                 )
                 .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
             }
@@ -3109,6 +3148,12 @@ impl ProxyService {
             .ok_or_else(|| "Codex 配置缺少 auth 字段".to_string())?;
         let config_str = config.get("config").and_then(|v| v.as_str());
         let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
+        let resolve_profile = |provider_id: &str| {
+            crate::codex_config::resolve_codex_custom_catalog_profile_from_db(
+                self.db.as_ref(),
+                provider_id,
+            )
+        };
 
         crate::codex_config::write_codex_provider_live_with_catalog(
             config,
@@ -3116,6 +3161,7 @@ impl ProxyService {
             auth,
             config_str,
             profile,
+            Some(&resolve_profile),
         )
         .map_err(|e| format!("写入 Codex 配置失败: {e}"))
     }
@@ -3144,9 +3190,18 @@ impl ProxyService {
             let profile = provider
                 .map(crate::proxy::providers::resolve_codex_catalog_tool_profile)
                 .unwrap_or(crate::codex_config::CodexCatalogToolProfile::ProxyChat);
+            let resolve_profile = |provider_id: &str| {
+                crate::codex_config::resolve_codex_custom_catalog_profile_from_db(
+                    self.db.as_ref(),
+                    provider_id,
+                )
+            };
             let prepared_config =
                 crate::codex_config::prepare_codex_live_config_text_with_optional_catalog(
-                    config, config_str, profile,
+                    config,
+                    config_str,
+                    profile,
+                    Some(&resolve_profile),
                 )
                 .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
             let live_config = if official_passthrough {
@@ -3193,10 +3248,17 @@ impl ProxyService {
         // limitation (restore-of-deleted-provider-backup only).
         let prepared_cfg = config_str
             .map(|cfg| {
+                let resolve_profile = |provider_id: &str| {
+                    crate::codex_config::resolve_codex_custom_catalog_profile_from_db(
+                        self.db.as_ref(),
+                        provider_id,
+                    )
+                };
                 crate::codex_config::prepare_codex_live_config_text_with_optional_catalog(
                     config,
                     cfg,
                     crate::codex_config::CodexCatalogToolProfile::ProxyChat,
+                    Some(&resolve_profile),
                 )
             })
             .transpose()
@@ -4680,6 +4742,82 @@ wire_api = "responses"
 
         crate::settings::update_settings(crate::settings::AppSettings::default())
             .expect("reset settings");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_builtin_official_takeover_preserves_user_live_toml_settings() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let oauth_auth = json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "id_token": "oauth-id",
+                "access_token": "oauth-access"
+            }
+        });
+        let user_live_config = r#"model = "gpt-5.4"
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+model_reasoning_effort = "high"
+
+[features]
+goals = true
+experimental_resume = true
+"#;
+        crate::codex_config::write_codex_live_atomic(&oauth_auth, Some(user_live_config))
+            .expect("seed official live config");
+
+        let mut official = Provider::with_id(
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "OpenAI Official".to_string(),
+            json!({ "auth": {}, "config": "" }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        db.save_provider("codex", &official)
+            .expect("save official provider");
+        db.set_current_provider("codex", crate::database::CODEX_OFFICIAL_PROVIDER_ID)
+            .expect("set current provider");
+        crate::settings::set_current_provider(
+            &AppType::Codex,
+            Some(crate::database::CODEX_OFFICIAL_PROVIDER_ID),
+        )
+        .expect("set local current provider");
+
+        service
+            .takeover_live_config_strict(&AppType::Codex)
+            .await
+            .expect("enable official takeover");
+
+        let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read official takeover config");
+        let parsed: toml::Value = toml::from_str(&live_config).expect("parse takeover config");
+        assert_eq!(
+            parsed.get("approval_policy").and_then(|v| v.as_str()),
+            Some("never")
+        );
+        assert_eq!(
+            parsed.get("sandbox_mode").and_then(|v| v.as_str()),
+            Some("workspace-write")
+        );
+        assert_eq!(
+            parsed
+                .get("model_reasoning_effort")
+                .and_then(|v| v.as_str()),
+            Some("high")
+        );
+        assert_eq!(parsed["features"]["goals"].as_bool(), Some(true));
+        assert_eq!(
+            parsed["features"]["experimental_resume"].as_bool(),
+            Some(true)
+        );
+        assert!(crate::codex_config::codex_config_has_official_proxy_route(
+            &live_config
+        ));
     }
 
     #[tokio::test]

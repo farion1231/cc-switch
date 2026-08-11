@@ -5,6 +5,7 @@ use crate::config::{
     atomic_write, delete_file, get_home_dir, path_is_within, read_json_file,
     sanitize_provider_name, write_json_file, write_text_file,
 };
+use crate::database::Database;
 use crate::error::AppError;
 use crate::model_capabilities::{image_input_capability_from_modalities, ImageInputCapability};
 use crate::provider::Provider;
@@ -149,6 +150,27 @@ pub enum CodexCatalogToolProfile {
     /// (the transform drops it), so it is always disabled — see
     /// `prepare_codex_config_text_with_model_catalog`.
     Anthropic,
+}
+
+pub type CodexCustomCatalogProfileResolver<'a> =
+    dyn Fn(&str) -> Option<CodexCatalogToolProfile> + 'a;
+
+pub(crate) fn resolve_codex_custom_catalog_profile_from_db(
+    db: &Database,
+    provider_id: &str,
+) -> Option<CodexCatalogToolProfile> {
+    match db.get_provider_by_id(provider_id, "codex") {
+        Ok(Some(provider)) => Some(crate::proxy::providers::resolve_codex_catalog_tool_profile(
+            &provider,
+        )),
+        Ok(None) => None,
+        Err(error) => {
+            log::warn!(
+                "[codex] 读取自定义模型绑定供应商 `{provider_id}` 失败，目录使用安全档案: {error}"
+            );
+            None
+        }
+    }
 }
 
 impl CodexCatalogToolProfile {
@@ -913,6 +935,7 @@ fn write_codex_models_cache_for_aggregate_at(
     codex_dir: PathBuf,
     settings: &Value,
     config_text: &str,
+    custom_profile_resolver: Option<&CodexCustomCatalogProfileResolver<'_>>,
 ) -> Result<(), AppError> {
     if codex_official_login_enabled(settings) {
         return Ok(());
@@ -920,7 +943,9 @@ fn write_codex_models_cache_for_aggregate_at(
 
     let mut models: Vec<Value> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    for entry in codex_custom_catalog_entries(settings, config_text) {
+    let fallback_resolver = |_: &str| Some(CodexCatalogToolProfile::NativeResponses);
+    let resolver = custom_profile_resolver.unwrap_or(&fallback_resolver);
+    for entry in codex_custom_catalog_entries(settings, config_text, resolver)? {
         let Some(slug) = entry.get("slug").and_then(|slug| slug.as_str()) else {
             continue;
         };
@@ -953,6 +978,7 @@ fn write_codex_models_cache_for_official_login_at(
     codex_dir: PathBuf,
     settings: &Value,
     config_text: &str,
+    custom_profile_resolver: Option<&CodexCustomCatalogProfileResolver<'_>>,
 ) -> Result<(), AppError> {
     let live_cache: Value = fs::read_to_string(codex_dir.join("models_cache.json"))
         .ok()
@@ -975,7 +1001,9 @@ fn write_codex_models_cache_for_official_login_at(
         .map(str::to_string)
         .collect();
 
-    for entry in codex_custom_catalog_entries(settings, config_text) {
+    let fallback_resolver = |_: &str| Some(CodexCatalogToolProfile::NativeResponses);
+    let resolver = custom_profile_resolver.unwrap_or(&fallback_resolver);
+    for entry in codex_custom_catalog_entries(settings, config_text, resolver)? {
         let Some(slug) = entry.get("slug").and_then(|slug| slug.as_str()) else {
             continue;
         };
@@ -1400,14 +1428,21 @@ fn write_models_cache_json_with_client_version(
 pub fn write_codex_models_cache_for_provider(
     provider: &Provider,
     config_text: &str,
+    custom_profile_resolver: Option<&CodexCustomCatalogProfileResolver<'_>>,
 ) -> Result<(), AppError> {
-    write_codex_models_cache_for_provider_at(get_codex_config_dir(), provider, config_text)
+    write_codex_models_cache_for_provider_at(
+        get_codex_config_dir(),
+        provider,
+        config_text,
+        custom_profile_resolver,
+    )
 }
 
 fn write_codex_models_cache_for_provider_at(
     codex_dir: PathBuf,
     provider: &Provider,
     config_text: &str,
+    custom_profile_resolver: Option<&CodexCustomCatalogProfileResolver<'_>>,
 ) -> Result<(), AppError> {
     let settings = &provider.settings_config;
 
@@ -1420,15 +1455,21 @@ fn write_codex_models_cache_for_provider_at(
                     codex_dir,
                     settings,
                     config_text,
+                    custom_profile_resolver,
                 );
             }
             return restore_or_clear_codex_official_models_cache(&codex_dir);
         }
-        return write_codex_models_cache_for_aggregate_at(codex_dir, settings, config_text);
+        return write_codex_models_cache_for_aggregate_at(
+            codex_dir,
+            settings,
+            config_text,
+            custom_profile_resolver,
+        );
     }
 
     let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
-    let catalog = codex_model_catalog_from_settings(settings, config_text, profile)?;
+    let catalog = codex_model_catalog_from_settings(settings, config_text, profile, None)?;
     match catalog {
         Some(catalog) => {
             let models: Vec<Value> = catalog
@@ -1980,48 +2021,77 @@ fn codex_model_catalog_from_specs(
 }
 
 /// 为 Codex 自定义模型构建原生 Responses 目录条目（官方供应商场景）。
-pub(crate) fn codex_custom_catalog_entries(settings: &Value, config_text: &str) -> Vec<Value> {
+pub(crate) fn codex_custom_catalog_entries(
+    settings: &Value,
+    config_text: &str,
+    resolve_profile: &CodexCustomCatalogProfileResolver<'_>,
+) -> Result<Vec<Value>, AppError> {
     let entries = codex_custom_model_entries(settings);
     if entries.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    let template = load_codex_native_responses_template();
+    let native_template = load_codex_native_responses_template();
+    let mut proxy_chat_template = None;
     let default_context_window =
         extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
-    entries
-        .iter()
-        .enumerate()
-        .map(|(index, entry)| {
-            let spec = CodexCatalogModelSpec {
-                model: entry.model.clone(),
-                display_name: entry.display_name.clone(),
-                context_window: entry.context_window,
-                supports_parallel_tool_calls: entry.supports_parallel_tool_calls,
-                input_modalities: entry.input_modalities.clone(),
-                base_instructions: entry.base_instructions.clone(),
-            };
-            codex_catalog_model_entry(
-                &template,
-                &spec,
-                index,
-                CodexCatalogToolProfile::NativeResponses,
-                default_context_window,
-            )
-        })
-        .collect()
+    let mut catalog_entries = Vec::with_capacity(entries.len());
+
+    for (index, entry) in entries.iter().enumerate() {
+        let profile = resolve_profile(&entry.provider_id).unwrap_or_else(|| {
+            log::warn!(
+                "[codex] 自定义模型 `{}` 的绑定供应商 `{}` 不存在，目录使用安全的 NativeResponses 档案",
+                entry.model,
+                entry.provider_id
+            );
+            CodexCatalogToolProfile::NativeResponses
+        });
+        let template = match profile {
+            CodexCatalogToolProfile::ProxyChat => {
+                if proxy_chat_template.is_none() {
+                    proxy_chat_template = Some(load_codex_model_catalog_template()?);
+                }
+                proxy_chat_template
+                    .as_ref()
+                    .expect("ProxyChat template initialized")
+            }
+            CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
+                &native_template
+            }
+        };
+        let spec = CodexCatalogModelSpec {
+            model: entry.model.clone(),
+            display_name: entry.display_name.clone(),
+            context_window: entry.context_window,
+            supports_parallel_tool_calls: entry.supports_parallel_tool_calls,
+            input_modalities: entry.input_modalities.clone(),
+            base_instructions: entry.base_instructions.clone(),
+        };
+        catalog_entries.push(codex_catalog_model_entry(
+            template,
+            &spec,
+            index,
+            profile,
+            default_context_window,
+        ));
+    }
+
+    Ok(catalog_entries)
 }
 
 fn codex_model_catalog_from_settings(
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
+    custom_profile_resolver: Option<&CodexCustomCatalogProfileResolver<'_>>,
 ) -> Result<Option<Value>, AppError> {
     // 官方 Codex 供应商带自定义模型。
     if codex_custom_models_nonempty(settings) {
         // 未启用官方登录：聚合模式，目录只包含下方配置的供应商模型（多供应商切换）。
         if !codex_official_login_enabled(settings) {
+            let fallback_resolver = |_: &str| Some(CodexCatalogToolProfile::NativeResponses);
+            let resolver = custom_profile_resolver.unwrap_or(&fallback_resolver);
             return Ok(Some(json!({
-                "models": codex_custom_catalog_entries(settings, config_text)
+                "models": codex_custom_catalog_entries(settings, config_text, resolver)?
             })));
         }
         // 官方登录模式：不写 model_catalog_json，让 Codex 直接走 /v1/models，
@@ -2152,10 +2222,13 @@ pub fn prepare_codex_config_text_with_model_catalog(
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
+    custom_profile_resolver: Option<&CodexCustomCatalogProfileResolver<'_>>,
 ) -> Result<String, AppError> {
     let catalog_path = get_codex_model_catalog_path();
 
-    if let Some(catalog) = codex_model_catalog_from_settings(settings, config_text, profile)? {
+    if let Some(catalog) =
+        codex_model_catalog_from_settings(settings, config_text, profile, custom_profile_resolver)?
+    {
         let config_text = set_codex_model_catalog_json_field(config_text, Some(&catalog_path))?;
         // Disable web_search only for native gateways on the reject blacklist
         // (MiMo/LongCat/MiniMax by host or model brand; Qwen3-Coder by model).
@@ -2432,9 +2505,15 @@ pub fn prepare_codex_live_config_text_with_optional_catalog(
     settings: &Value,
     config_text: &str,
     profile: CodexCatalogToolProfile,
+    custom_profile_resolver: Option<&CodexCustomCatalogProfileResolver<'_>>,
 ) -> Result<String, AppError> {
     if settings.get("modelCatalog").is_some() || codex_custom_models_nonempty(settings) {
-        prepare_codex_config_text_with_model_catalog(settings, config_text, profile)
+        prepare_codex_config_text_with_model_catalog(
+            settings,
+            config_text,
+            profile,
+            custom_profile_resolver,
+        )
     } else {
         Ok(config_text.to_string())
     }
@@ -2446,9 +2525,17 @@ pub fn write_codex_provider_live_with_catalog(
     auth: &Value,
     config_text: Option<&str>,
     profile: CodexCatalogToolProfile,
+    custom_profile_resolver: Option<&CodexCustomCatalogProfileResolver<'_>>,
 ) -> Result<(), AppError> {
     let prepared_config = config_text
-        .map(|text| prepare_codex_config_text_with_model_catalog(settings, text, profile))
+        .map(|text| {
+            prepare_codex_config_text_with_model_catalog(
+                settings,
+                text,
+                profile,
+                custom_profile_resolver,
+            )
+        })
         .transpose()?;
 
     write_codex_live_for_provider(category, auth, prepared_config.as_deref())
@@ -4330,6 +4417,7 @@ base_url = "https://production.api/v1"
             &settings,
             "",
             CodexCatalogToolProfile::NativeResponses,
+            None,
         )
         .expect("native catalog generation should not error")
         .expect("non-empty modelCatalog must yield a catalog");
@@ -4373,6 +4461,66 @@ base_url = "https://production.api/v1"
         assert_eq!(
             entry.get("context_window").and_then(|v| v.as_u64()),
             Some(1_000_000)
+        );
+    }
+
+    #[test]
+    fn aggregate_catalog_uses_each_bound_providers_tool_profile() {
+        let db = crate::database::Database::memory().expect("create in-memory database");
+        let mut chat = Provider::with_id(
+            "chat-provider".to_string(),
+            "Chat Provider".to_string(),
+            json!({ "apiFormat": "openai_chat" }),
+            None,
+        );
+        chat.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("openai_chat".to_string()),
+            ..Default::default()
+        });
+        let mut native = Provider::with_id(
+            "native-provider".to_string(),
+            "Native Provider".to_string(),
+            json!({ "apiFormat": "openai_responses" }),
+            None,
+        );
+        native.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("openai_responses".to_string()),
+            ..Default::default()
+        });
+        db.save_provider("codex", &chat)
+            .expect("save chat provider");
+        db.save_provider("codex", &native)
+            .expect("save native provider");
+
+        let settings = json!({
+            "codexCustomModels": [
+                {
+                    "model": "gpt-5.4-mini",
+                    "providerId": "chat-provider",
+                    "upstreamModel": "chat-model"
+                },
+                {
+                    "model": "gpt-5.2",
+                    "providerId": "native-provider",
+                    "upstreamModel": "native-model"
+                }
+            ]
+        });
+
+        let resolve_profile =
+            |provider_id: &str| resolve_codex_custom_catalog_profile_from_db(&db, provider_id);
+        let entries = codex_custom_catalog_entries(&settings, "", &resolve_profile)
+            .expect("build aggregate catalog entries");
+        assert_eq!(
+            entries[0]
+                .get("apply_patch_tool_type")
+                .and_then(|value| value.as_str()),
+            Some("freeform"),
+            "a Chat route must keep the freeform apply_patch surface"
+        );
+        assert!(
+            entries[1].get("apply_patch_tool_type").is_none(),
+            "a native Responses route must suppress freeform apply_patch"
         );
     }
 
@@ -4470,6 +4618,7 @@ base_url = "https://production.api/v1"
             &settings,
             "",
             CodexCatalogToolProfile::NativeResponses,
+            None,
         )
         .expect("native catalog generation should not error")
         .expect("non-empty modelCatalog must yield a catalog");
@@ -4513,6 +4662,7 @@ wire_api = "responses"
             &settings,
             DEEPSEEK_NATIVE_CONFIG,
             CodexCatalogToolProfile::NativeResponses,
+            None,
         )
         .expect("vendor catalog generation should not error")
         .expect("non-empty modelCatalog must yield a catalog");
@@ -4602,6 +4752,7 @@ wire_api = "responses"
             &settings,
             DEEPSEEK_NATIVE_CONFIG,
             CodexCatalogToolProfile::NativeResponses,
+            None,
         )
         .expect("vendor catalog generation should not error")
         .expect("non-empty modelCatalog must yield a catalog");
@@ -4811,6 +4962,7 @@ web_search = "disabled"
             &settings,
             config,
             CodexCatalogToolProfile::Anthropic,
+            None,
         )
         .unwrap();
         let parsed: toml::Value = toml::from_str(&anthropic).unwrap();
@@ -4825,6 +4977,7 @@ web_search = "disabled"
             &settings,
             config,
             CodexCatalogToolProfile::ProxyChat,
+            None,
         )
         .unwrap();
         let parsed: toml::Value = toml::from_str(&proxy).unwrap();
@@ -5249,7 +5402,7 @@ web_search = "disabled"
             }]
         });
 
-        write_codex_models_cache_for_aggregate_at(codex_dir.clone(), &settings, "")
+        write_codex_models_cache_for_aggregate_at(codex_dir.clone(), &settings, "", None)
             .expect("aggregate cache write must succeed");
 
         let written: Value = serde_json::from_str(
@@ -5427,7 +5580,7 @@ web_search = "disabled"
             ]
         });
 
-        write_codex_models_cache_for_aggregate_at(codex_dir.clone(), &settings, "")
+        write_codex_models_cache_for_aggregate_at(codex_dir.clone(), &settings, "", None)
             .expect("aggregate cache write must succeed");
 
         let written: Value = serde_json::from_str(
@@ -5489,7 +5642,7 @@ web_search = "disabled"
                 "upstreamModel": "deepseek-v4-flash"
             }]
         });
-        write_codex_models_cache_for_aggregate_at(codex_dir.clone(), &settings, "")
+        write_codex_models_cache_for_aggregate_at(codex_dir.clone(), &settings, "", None)
             .expect("write aggregate cache");
 
         let baseline: Value = serde_json::from_str(
@@ -5553,7 +5706,7 @@ web_search = "disabled"
             in_failover_queue: false,
         };
 
-        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, "")
+        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, "", None)
             .expect("rebuild must succeed");
 
         let written: Value = serde_json::from_str(
@@ -5636,7 +5789,7 @@ web_search = "disabled"
             in_failover_queue: false,
         };
 
-        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, "")
+        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, "", None)
             .expect("official-login aggregation write must succeed");
 
         let written: Value = serde_json::from_str(
@@ -5685,7 +5838,7 @@ web_search = "disabled"
             "the sidecar must retain the clean official catalog without custom entries"
         );
 
-        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, "")
+        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, "", None)
             .expect("repeated official-login aggregation must reuse the saved baseline");
         let repeated: Value = serde_json::from_str(
             &std::fs::read_to_string(codex_dir.join("models_cache.json"))
@@ -5744,7 +5897,7 @@ web_search = "disabled"
             in_failover_queue: false,
         };
 
-        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, "")
+        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, "", None)
             .expect("trusted official cache handling must not error");
 
         let written: Value = serde_json::from_str(
@@ -5805,7 +5958,7 @@ web_search = "disabled"
             in_failover_queue: false,
         };
 
-        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, "")
+        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, "", None)
             .expect("restore official baseline");
 
         let restored: Value = serde_json::from_str(
@@ -5867,7 +6020,7 @@ web_search = "disabled"
             in_failover_queue: false,
         };
 
-        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, "")
+        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, "", None)
             .expect("aggregate write must succeed");
 
         let written: Value = serde_json::from_str(
@@ -5921,7 +6074,7 @@ web_search = "disabled"
             }]
         });
 
-        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "")
+        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "", None)
             .expect("clear must not error");
 
         assert!(
@@ -5960,7 +6113,7 @@ web_search = "disabled"
             }]
         });
 
-        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "")
+        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "", None)
             .expect("clear must not error");
 
         assert!(
@@ -5999,7 +6152,7 @@ web_search = "disabled"
                 "displayName": "DeepSeek V4 Flash"
             }]
         });
-        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "")
+        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "", None)
             .expect("quarantine legacy cache");
         assert!(
             !codex_dir.join("models_cache.json").exists(),
@@ -6020,7 +6173,7 @@ web_search = "disabled"
             serde_json::to_string(&refetched_official).expect("serialize refetched cache"),
         )
         .expect("write refetched cache");
-        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "")
+        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "", None)
             .expect("merge after official refetch");
 
         let baseline: Value = serde_json::from_str(
@@ -6092,7 +6245,7 @@ web_search = "disabled"
                 "displayName": "DeepSeek V4 Flash"
             }]
         });
-        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "")
+        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "", None)
             .expect("render official-login cache");
 
         let baseline: Value = serde_json::from_str(
@@ -6154,7 +6307,7 @@ web_search = "disabled"
                 "upstreamModel": "deepseek-v4-flash"
             }]
         });
-        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "")
+        write_codex_models_cache_for_official_login_at(codex_dir.clone(), &settings, "", None)
             .expect("expire official baseline");
 
         assert!(
@@ -6337,7 +6490,7 @@ web_search = "disabled"
             in_failover_queue: false,
         };
 
-        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, config_text)
+        write_codex_models_cache_for_provider_at(codex_dir.clone(), &provider, config_text, None)
             .expect("write must succeed");
 
         let written: Value = serde_json::from_str(

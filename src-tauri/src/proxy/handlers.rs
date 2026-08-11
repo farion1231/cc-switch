@@ -97,14 +97,28 @@ pub async fn handle_models(
         // models_cache.json 保持一致；读取失败时回退为空串。
         let config_text = crate::codex_config::read_codex_config_text().unwrap_or_default();
         if crate::codex_config::codex_official_login_enabled(&official.settings_config) {
-            return forward_codex_official_models(&official, &headers, uri.query(), &config_text)
-                .await;
+            return forward_codex_official_models(
+                state.db.as_ref(),
+                &official,
+                &headers,
+                uri.query(),
+                &config_text,
+            )
+            .await;
         }
         // 未启用官方登录：聚合模式，目录只包含下方配置的供应商模型
+        let resolve_profile = |provider_id: &str| {
+            crate::codex_config::resolve_codex_custom_catalog_profile_from_db(
+                state.db.as_ref(),
+                provider_id,
+            )
+        };
         let models = crate::codex_config::codex_custom_catalog_entries(
             &official.settings_config,
             &config_text,
-        );
+            &resolve_profile,
+        )
+        .map_err(|error| ProxyError::Internal(error.to_string()))?;
         return Ok(cc_switch_codex_models_response(json!({
             "models": models
         })));
@@ -155,6 +169,7 @@ fn resolve_codex_official_provider(state: &ProxyState) -> Option<crate::provider
 
 /// 转发官方 Codex 的 /models 到 ChatGPT 后端；登录成功后在响应里合并自定义模型。
 async fn forward_codex_official_models(
+    db: &crate::database::Database,
     official: &crate::provider::Provider,
     headers: &axum::http::HeaderMap,
     query: Option<&str>,
@@ -216,8 +231,15 @@ async fn forward_codex_official_models(
 
     let mut catalog: Value =
         serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({ "models": [] }));
-    let custom_entries =
-        crate::codex_config::codex_custom_catalog_entries(&official.settings_config, config_text);
+    let resolve_profile = |provider_id: &str| {
+        crate::codex_config::resolve_codex_custom_catalog_profile_from_db(db, provider_id)
+    };
+    let custom_entries = crate::codex_config::codex_custom_catalog_entries(
+        &official.settings_config,
+        config_text,
+        &resolve_profile,
+    )
+    .map_err(|error| ProxyError::Internal(error.to_string()))?;
     if !custom_entries.is_empty() {
         // 上游 /models 响应的数组键可能是 `models` 或 `data`：优先合并到
         // 已存在的那个数组，都不存在时落到 `models`，避免自定义模型合并静默失效。
