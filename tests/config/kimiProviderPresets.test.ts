@@ -3,7 +3,6 @@ import {
   kimiProviderPresets,
   KIMI_DEFAULT_API_TYPE,
   kimiApiTypes,
-  type KimiProviderPreset,
 } from "@/config/kimiProviderPresets";
 
 describe("Kimi Provider Presets", () => {
