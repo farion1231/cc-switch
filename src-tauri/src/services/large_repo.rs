@@ -691,10 +691,15 @@ pub fn sanitize_tree_path(path: &str) -> Result<String> {
     Ok(path.to_string())
 }
 
-/// 大仓库路径判定：None → false（回退旧路径）；Some(s) → s > 32MB
+/// 大仓库路径判定：None → true（size 探测失败时优先尝试大仓库后端，
+/// 后端全失败后仍有 ZIP 兜底）；Some(s) → s > 32MB
+///
+/// size 探测请求（GitHub REST API）可能被限流/阻断/瞬时不可用，此时返回 None。
+/// 若直接走旧 ZIP 路径，恰恰是本次要支持的超大仓库会在 128MiB 预算处失败，
+/// 而 git 后端（smart HTTP 协议，不吃 REST 限流）仍可用。
 pub fn should_use_large_repo_path(size_kb: Option<u64>) -> bool {
     match size_kb {
-        None => false,
+        None => true,
         Some(s) => s > LARGE_REPO_THRESHOLD_KB,
     }
 }
@@ -704,7 +709,7 @@ const SIZE_CACHE_TTL: Duration = Duration::from_secs(3600);
 type SizeCache = HashMap<(String, String), (Instant, u64)>;
 static SIZE_CACHE: LazyLock<Mutex<SizeCache>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// 获取仓库 size（KB）。失败返回 Ok(None)（上层回退旧路径）。1h TTL 缓存。
+/// 获取仓库 size（KB）。失败返回 Ok(None)（上层优先尝试大仓库后端）。1h TTL 缓存。
 pub async fn fetch_repo_size_kb(owner: &str, name: &str) -> Result<Option<u64>> {
     let key = (owner.to_string(), name.to_string());
     if let Some((ts, size)) = SIZE_CACHE.lock().unwrap().get(&key) {
@@ -1043,8 +1048,8 @@ mod tests {
 
     #[test]
     fn should_use_large_repo_path_threshold() {
-        // None → false（回退旧路径）
-        assert!(!should_use_large_repo_path(None));
+        // None（size 探测失败）→ true（优先尝试大仓库后端，ZIP 兜底仍可用）
+        assert!(should_use_large_repo_path(None));
         // 边界：正好 32MB → false
         assert!(!should_use_large_repo_path(Some(32 * 1024)));
         assert!(!should_use_large_repo_path(Some(0)));

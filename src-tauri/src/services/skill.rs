@@ -699,7 +699,7 @@ impl SkillService {
                 enabled: true,
             };
 
-            // 大仓库判定：size 超过 32MB 走 git CLI / GitHub REST API 路径
+            // 大仓库判定：size 超过 32MB，或 size 探测失败（限流/阻断）时走 git CLI / GitHub REST API 路径
             let size_kb = fetch_repo_size_kb(&repo.owner, &repo.name).await.unwrap_or(None);
             let (temp_guard, used_branch, scheme) = if !should_use_large_repo_path(size_kb) {
                 // 旧路径：ZIP 下载
@@ -1086,7 +1086,7 @@ impl SkillService {
                 enabled: true,
             };
 
-            // 大仓库判定：size 超过 32MB 走 git CLI / GitHub REST API 路径
+            // 大仓库判定：size 超过 32MB，或 size 探测失败（限流/阻断）时走 git CLI / GitHub REST API 路径
             let size_kb = fetch_repo_size_kb(owner, name).await.unwrap_or(None);
             if !should_use_large_repo_path(size_kb) {
                 // 旧路径：ZIP 下载 + 扫描 + 双向对齐比较
@@ -1408,7 +1408,7 @@ impl SkillService {
 
         let ssot_dir = Self::get_ssot_dir()?;
 
-        // 大仓库判定：size 超过 32MB 走 git CLI / GitHub REST API 路径
+        // 大仓库判定：size 超过 32MB，或 size 探测失败（限流/阻断）时走 git CLI / GitHub REST API 路径
         let size_kb = fetch_repo_size_kb(&owner, &name).await.unwrap_or(None);
         let (temp_guard, used_branch, blob_scheme) = if !should_use_large_repo_path(size_kb) {
             // 旧路径：ZIP 下载
@@ -2446,7 +2446,7 @@ impl SkillService {
 
     /// 从仓库获取技能列表
     async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
-        // 大仓库判定：size 超过 32MB 走 git CLI / GitHub REST API 路径
+        // 大仓库判定：size 超过 32MB，或 size 探测失败（限流/阻断）时走 git CLI / GitHub REST API 路径
         let size_kb = fetch_repo_size_kb(&repo.owner, &repo.name).await.unwrap_or(None);
         if !should_use_large_repo_path(size_kb) {
             // 旧路径：ZIP 下载 + 扫描
