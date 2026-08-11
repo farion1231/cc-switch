@@ -324,8 +324,7 @@ pub fn set_provider(name: &str, settings: Value) -> Result<(), AppError> {
             .filter(|s| !s.is_empty())
     });
     if let Some(dm) = effective_default {
-        doc.as_table_mut()
-            .insert("default_model", Item::Value(dm.into()));
+        upsert_default_model(&mut doc, &dm);
     }
 
     write_kimi_config(&doc)
@@ -380,13 +379,12 @@ pub fn remove_provider(name: &str) -> Result<(), AppError> {
         .unwrap_or(false);
     if default_removed {
         let fallback = first_remaining_model_id(&doc);
-        let root = doc.as_table_mut();
         match fallback {
             Some(fb) => {
-                root.insert("default_model", Item::Value(fb.into()));
+                upsert_default_model(&mut doc, &fb);
             }
             None => {
-                root.remove("default_model");
+                doc.as_table_mut().remove("default_model");
             }
         }
     }
@@ -420,8 +418,7 @@ pub fn apply_switch_defaults(provider_id: &str, settings_config: &Value) -> Resu
 
     if let Some(dm) = default_model {
         let mut doc = read_kimi_config()?;
-        doc.as_table_mut()
-            .insert("default_model", Item::Value(dm.into()));
+        upsert_default_model(&mut doc, &dm);
         write_kimi_config(&doc)?;
     }
     let _ = provider_id; // 目前仅用于语义一致性；default_model 已足够
@@ -601,6 +598,25 @@ fn first_remaining_model_id(doc: &DocumentMut) -> Option<String> {
         .and_then(Item::as_table)
         .map(|t| t.iter().next().map(|(alias, _)| alias.to_string()))
         .flatten()
+}
+
+/// 更新顶层 `default_model`，保留既有键的前导注释（如文件头说明）。
+///
+/// `Table::insert` 替换键时会丢掉旧键 decor 上的前缀注释——真实用户的
+/// config.toml 常在 `default_model` 之前放几行文件说明，直接 insert 会
+/// 在每次切换/保存时把这段说明抹掉。这里在值变更时把旧前缀拷贝回来。
+fn upsert_default_model(doc: &mut DocumentMut, value: &str) {
+    let root = doc.as_table_mut();
+    let prefix = root
+        .get_key_value("default_model")
+        .map(|(key, _)| key.decor().prefix().cloned())
+        .flatten();
+    root.remove("default_model");
+    let mut key = toml_edit::Key::new("default_model");
+    if let Some(prefix) = prefix {
+        key.decor_mut().set_prefix(prefix);
+    }
+    root.insert_formatted(&key, Item::Value(value.to_string().into()));
 }
 
 /// 将 toml_edit 的 Item 转为 serde_json::Value（仅支持标量）。

@@ -108,7 +108,10 @@ fn set_provider_preserves_unrelated_toml_sections() {
         let config_path = dir.join("config.toml");
         std::fs::write(
             &config_path,
-            r#"default_model = "pre-existing"
+            r#"# Kimi Code CLI configuration
+# Provider: DeepSeek V4 Flash 0731 via New API gateway
+
+default_model = "pre-existing"
 
 [thinking]
 enabled = true
@@ -134,6 +137,15 @@ timeout = 5
         assert!(
             content.contains("default_model = \"kimi-k2.7-code\""),
             "{content}"
+        );
+        // 文件头注释必须保留（挂在 default_model 键的前缀 decor 上）
+        assert!(
+            content.contains("Kimi Code CLI configuration"),
+            "header comment lost after set_provider:\n{content}"
+        );
+        assert!(
+            content.contains("via New API gateway"),
+            "header comment lost after set_provider:\n{content}"
         );
     });
 }
