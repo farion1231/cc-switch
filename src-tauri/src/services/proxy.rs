@@ -2953,6 +2953,44 @@ impl ProxyService {
         self.write_codex_live_for_provider(config, provider)
     }
 
+    /// 备份里的 Codex OAuth 登录材料是否比当前 `~/.codex/auth.json` 更旧。
+    ///
+    /// Codex 客户端会自行刷新 `auth.json`（token 轮换 + `last_refresh` 更新），而
+    /// CC Switch 的接管备份只在「接管激活 / 切换供应商」时生成，不随刷新更新。恢复时
+    /// 若无条件用备份覆盖，会用过期 OAuth token 冲掉本地仍有效的登录——表现为每次
+    /// 重新编译/重启后，Codex、CodexBar 等直接读 `auth.json` 的工具集体失效并要求重登。
+    ///
+    /// 判定：备份与当前 `auth.json` 都携带 OAuth 登录材料（`tokens.*`），且当前
+    /// `last_refresh` 晚于备份时，视为「本地更新」，恢复应保留本地、只写 `config.toml`。
+    fn codex_backup_auth_is_staler_than_live(
+        backup_auth: &Value,
+        current_live_auth: Option<&Value>,
+    ) -> bool {
+        if !crate::codex_config::codex_auth_has_oauth_login_material(backup_auth) {
+            return false;
+        }
+        let Some(live_auth) = current_live_auth else {
+            return false;
+        };
+        if !crate::codex_config::codex_auth_has_oauth_login_material(live_auth) {
+            return false;
+        }
+
+        let parse_last_refresh = |auth: &Value| {
+            auth.get("last_refresh")
+                .and_then(Value::as_str)
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        };
+        match (
+            parse_last_refresh(live_auth),
+            parse_last_refresh(backup_auth),
+        ) {
+            (Some(live), Some(backup)) => live > backup,
+            (Some(_), None) => true,
+            _ => false,
+        }
+    }
+
     fn write_codex_live_verbatim(&self, config: &Value) -> Result<(), String> {
         use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
 
@@ -2989,13 +3027,23 @@ impl ProxyService {
             .transpose()
             .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
 
+        // The Codex CLI refreshes `~/.codex/auth.json` on its own (token rotation
+        // + `last_refresh` bump), while CC Switch only snapshots it into the live
+        // backup when takeover is (re)activated or a provider is switched. A
+        // restore that unconditionally overwrites auth.json with a stale snapshot
+        // wipes the user's still-valid login (every client that reads auth.json —
+        // Codex, CodexBar, ... — then demands re-login). Read the current live
+        // auth once so every auth-writing branch below can keep the fresher one.
+        let current_live_auth = read_json_file::<Value>(&get_codex_auth_path()).ok();
+
         match (auth, prepared_cfg.as_deref()) {
             (Some(auth), Some(cfg)) => {
-                if auth.as_object().is_some_and(|obj| obj.is_empty()) {
-                    // An empty provider snapshot must not destroy an existing
-                    // Codex login. This is especially important when takeover
-                    // switches from an API-key-backed official session to the
-                    // built-in empty `codex-official` seed.
+                if auth.as_object().is_some_and(|obj| obj.is_empty())
+                    || Self::codex_backup_auth_is_staler_than_live(auth, current_live_auth.as_ref())
+                {
+                    // Empty provider snapshot, or the backup's OAuth material is
+                    // older than the current login: never destroy the live
+                    // `auth.json`, only restore `config.toml`.
                     let config_path = get_codex_config_path();
                     crate::config::write_text_file(&config_path, cfg)
                         .map_err(|e| format!("写入 Codex config 失败: {e}"))?;
@@ -3005,9 +3053,11 @@ impl ProxyService {
                 }
             }
             (Some(auth), None) => {
-                let auth_path = get_codex_auth_path();
-                write_json_file(&auth_path, auth)
-                    .map_err(|e| format!("写入 Codex auth 失败: {e}"))?;
+                if !Self::codex_backup_auth_is_staler_than_live(auth, current_live_auth.as_ref()) {
+                    let auth_path = get_codex_auth_path();
+                    write_json_file(&auth_path, auth)
+                        .map_err(|e| format!("写入 Codex auth 失败: {e}"))?;
+                }
             }
             (None, Some(cfg)) => {
                 let config_path = get_codex_config_path();
@@ -3856,6 +3906,94 @@ mod tests {
             .stop_with_restore()
             .await
             .expect("stop proxy and restore live config");
+    }
+
+    #[test]
+    fn codex_backup_auth_is_staler_than_live_keeps_fresher_login() {
+        let backup_old = json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "last_refresh": "2026-06-01T03:02:07.656713Z",
+            "tokens": {
+                "access_token": "old-access",
+                "refresh_token": "rt_old",
+                "id_token": "old-id",
+                "account_id": "acc",
+            },
+        });
+        let live_new = json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "last_refresh": "2026-08-11T12:08:10.305720Z",
+            "tokens": {
+                "access_token": "new-access",
+                "refresh_token": "rt_new",
+                "id_token": "new-id",
+                "account_id": "acc",
+            },
+        });
+
+        // 备份旧、本地新 → 保留本地（防止过期备份覆盖仍有效的登录）
+        assert!(ProxyService::codex_backup_auth_is_staler_than_live(
+            &backup_old,
+            Some(&live_new)
+        ));
+
+        // 备份新、本地旧 → 正常用备份恢复
+        assert!(!ProxyService::codex_backup_auth_is_staler_than_live(
+            &live_new,
+            Some(&backup_old)
+        ));
+
+        // 当前无 auth.json → 用备份恢复
+        assert!(!ProxyService::codex_backup_auth_is_staler_than_live(
+            &backup_old,
+            None
+        ));
+
+        // 备份无 OAuth 材料（仅 API key）→ 不干预原有覆盖逻辑
+        let api_key_backup = json!({ "OPENAI_API_KEY": "sk-test" });
+        assert!(!ProxyService::codex_backup_auth_is_staler_than_live(
+            &api_key_backup,
+            Some(&live_new)
+        ));
+
+        // 本地无 OAuth 材料 → 用备份恢复
+        let api_key_live = json!({ "OPENAI_API_KEY": "sk-live" });
+        assert!(!ProxyService::codex_backup_auth_is_staler_than_live(
+            &backup_old,
+            Some(&api_key_live)
+        ));
+
+        // 备份缺 last_refresh、本地有 → 本地更新
+        let backup_no_refresh = json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": "old-access",
+                "refresh_token": "rt_old",
+                "id_token": "old-id",
+                "account_id": "acc",
+            },
+        });
+        assert!(ProxyService::codex_backup_auth_is_staler_than_live(
+            &backup_no_refresh,
+            Some(&live_new)
+        ));
+
+        // 两者都缺 last_refresh → 保守用备份（保持原行为）
+        let live_no_refresh = json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": "new-access",
+                "refresh_token": "rt_new",
+                "id_token": "new-id",
+                "account_id": "acc",
+            },
+        });
+        assert!(!ProxyService::codex_backup_auth_is_staler_than_live(
+            &backup_no_refresh,
+            Some(&live_no_refresh)
+        ));
     }
 
     #[test]
