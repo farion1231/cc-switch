@@ -1284,34 +1284,20 @@ impl SkillService {
             ""
         };
 
-        // 本地哈希：优先数据库，否则实时计算
-        let local_hash = match &skill.content_hash {
-            Some(h) => Some(h.clone()),
-            // 脏 directory 会让 compute_dir_hash 递归遍历任意目录，
-            // 且哈希结果经「有无更新」的界面状态泄露少量信息。
-            None => match Self::require_valid_directory(&skill.directory) {
-                Err(err) => {
-                    log::warn!("跳过非法 directory 的哈希计算: {err}");
-                    None
-                }
-                Ok(directory) => {
-                    let local_dir = ssot_dir.join(&directory);
-                    if local_dir.exists() {
-                        match Self::compute_dir_hash(&local_dir) {
-                            Ok(h) => {
-                                let _ = db.update_skill_hash(&skill.id, &h, 0);
-                                Some(h)
-                            }
-                            Err(_) => None,
-                        }
-                    } else {
-                        None
-                    }
-                }
-            },
+        // 本地哈希：复用 check_updates 的判定次序——先校验目录名、再查 SSOT
+        // 目录是否存在、最后才信任缓存（目录缺失返回 None，与远端必然不等，
+        // Skill 进入更新列表，点更新即可重建）。
+        let (local, freshly_computed) = match Self::local_hash_for_update_check(
+            ssot_dir,
+            &skill.directory,
+            skill.content_hash.as_deref(),
+        ) {
+            Some(h) => h,
+            None => return None,
         };
-
-        let local = local_hash?;
+        if freshly_computed {
+            let _ = db.update_skill_hash(&skill.id, &local, 0);
+        }
 
         // 方案一致则直接用
         if !hash_needs_recompute(&local, remote_scheme) {
