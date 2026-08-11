@@ -425,4 +425,43 @@ mod tests {
         let result = strip_one_m_suffix_for_upstream_from_body(body);
         assert_eq!(result["model"], "deepseek-v4-pro");
     }
+
+    // Reproduces the user's Zhipu GLM provider (anthropic native mode) from the
+    // screenshot: Opus/Fable→glm-5.2, Sonnet/Haiku→glm-5.1. Confirms what model
+    // string is actually sent upstream when Science picks a first-party tier name.
+    #[test]
+    fn glm_takeover_first_party_tier_to_upstream_model() {
+        let provider = Provider {
+            id: "zhipu-glm".to_string(),
+            name: "Zhipu GLM".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.2",
+                    "ANTHROPIC_DEFAULT_FABLE_MODEL": "glm-5.2",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.1",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-5.1"
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        // Science's model list only has first-party route ids (claude-opus-5 etc.).
+        let opus_req = json!({"model": "claude-opus-5"});
+        let (result, original, mapped) = apply_model_mapping(opus_req, &provider);
+        assert_eq!(original.as_deref(), Some("claude-opus-5"));
+        assert_eq!(result["model"], "glm-5.2");
+        assert_eq!(mapped.as_deref(), Some("glm-5.2"));
+
+        let sonnet_req = json!({"model": "claude-sonnet-5"});
+        let (result, _, _) = apply_model_mapping(sonnet_req, &provider);
+        assert_eq!(result["model"], "glm-5.1");
+    }
 }
