@@ -290,9 +290,6 @@ pub(crate) fn strip_all_think_tags_with_pending(text: &str) -> (String, String) 
         }
     }
 
-    (result, String::new())
-}
-
 /// Split `text` into `(clean, pending)` where `pending` is a trailing
 /// prefix of `THINK_CLOSE_TAG` (e.g. `<`, `</`, `</t`, …).  Returns
 /// `(text, "")` if the text does not end with such a fragment.
