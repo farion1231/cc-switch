@@ -971,6 +971,10 @@ pub async fn materialize_skill_dir(
         let scheme = tree_blob_scheme(&files);
         let temp_dir = tempfile::tempdir()?;
         let mut total_bytes: u64 = 0;
+        // 根级 skill 的 directory 是仓库名哨兵（见 build_discoverable_skill），
+        // 代表仓库根而不是 <仓库名>/ 子目录；先把哨兵解析为 tree 根。
+        let dir = resolve_materialize_dir(dir, &repo.name);
+        let mut materialized_skill_md = false;
         for f in &files {
             if f.mode == 0o160000 {
                 continue;
@@ -979,6 +983,9 @@ pub async fn materialize_skill_dir(
                 continue;
             };
             let rel = sanitize_tree_path(rel)?;
+            if rel == "SKILL.md" {
+                materialized_skill_md = true;
+            }
             let dest = temp_dir.path().join(&rel);
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent)?;
@@ -989,6 +996,11 @@ pub async fn materialize_skill_dir(
                 return Err(anyhow!("物化目录超过字节上限"));
             }
             fs::write(&dest, &bytes)?;
+        }
+        // 目录里没有 SKILL.md 说明不是合法 skill 目录（dir 未命中或错配），
+        // 必须显式报错让调用方的后端回退链继续，而不是静默返回空目录。
+        if !materialized_skill_md {
+            return Err(anyhow!("物化目录未找到 SKILL.md"));
         }
         Ok((temp_dir, branch, scheme))
     })
@@ -1007,6 +1019,18 @@ fn rel_path_in_dir<'a>(path: &'a str, dir: &str) -> Option<&'a str> {
         Some(&path[prefix.len()..])
     } else {
         None
+    }
+}
+
+/// 解析物化目标目录为 tree 相对路径。
+///
+/// 根级 skill 的 `directory` 是仓库名哨兵（见 `build_discoverable_skill`），
+/// 表示仓库根而不是 `<仓库名>/` 子目录；嵌套 skill 原样返回。
+fn resolve_materialize_dir<'a>(dir: &'a str, repo_name: &str) -> &'a str {
+    if dir.eq_ignore_ascii_case(repo_name) {
+        ""
+    } else {
+        dir
     }
 }
 
@@ -1164,6 +1188,21 @@ mod tests {
         assert_eq!(match_install_name(&dirs, "nope", "repo"), None);
         // 空清单返回 None
         assert_eq!(match_install_name(&[], "foo", "repo"), None);
+    }
+
+    #[test]
+    fn resolve_materialize_dir_treats_repo_name_sentinel_as_tree_root() {
+        // 根级 skill 的 directory 是仓库名哨兵 → tree 根
+        assert_eq!(resolve_materialize_dir("fixture-repo", "fixture-repo"), "");
+        // 大小写不敏感
+        assert_eq!(resolve_materialize_dir("FIXTURE-REPO", "fixture-repo"), "");
+        // 嵌套目录原样返回
+        assert_eq!(
+            resolve_materialize_dir("skills/skill-a", "fixture-repo"),
+            "skills/skill-a"
+        );
+        // 空目录（已是 tree 根）保持空
+        assert_eq!(resolve_materialize_dir("", "fixture-repo"), "");
     }
 
     #[test]
@@ -1570,16 +1609,24 @@ mod tests {
         let mut buf = Vec::new();
         let mut tmp = [0u8; 4096];
         loop {
-            let n = stream.read(&mut tmp)?;
-            if n == 0 {
-                return Ok(());
-            }
-            buf.extend_from_slice(&tmp[..n]);
-            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
-                break;
-            }
-            if buf.len() > 64 * 1024 {
-                return Ok(());
+            match stream.read(&mut tmp) {
+                Ok(n) if n == 0 => return Ok(()),
+                Ok(n) => {
+                    buf.extend_from_slice(&tmp[..n]);
+                    if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                        break;
+                    }
+                    if buf.len() > 64 * 1024 {
+                        return Ok(());
+                    }
+                }
+                // Windows 上 accept 出的流会继承 listener 的非阻塞标记：请求数据
+                // 尚未到达时 read 立即返回 WouldBlock，若直接退出连接会被静默丢弃
+                // （并发跑多个 mock 测试时偶发，导致 API 后端回退到下一个分支）。
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                Err(e) => return Err(e),
             }
         }
         let request = String::from_utf8_lossy(&buf);
@@ -1779,6 +1826,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn git_backend_materialize_root_skill_materializes_whole_tree() {
+        let Some(git) = git_available() else { return };
+        let (root, _repo_dir, _o, _n, _b) = create_fixture_repo(&git);
+        let backend = git_backend_for(&git, &root);
+        let repo = fixture_repo();
+        // 根级 skill 的 directory 是仓库名哨兵，应解析为 tree 根
+        let (temp_dir, used_branch, scheme) =
+            materialize_skill_dir(&backend, &repo, FIXTURE_NAME)
+                .await
+                .unwrap();
+        assert_eq!(used_branch, FIXTURE_BRANCH);
+        assert_eq!(scheme, BlobHashScheme::Sha1);
+        // 仓库根与嵌套目录都物化（根级 skill 的范围是整仓）
+        assert_eq!(
+            fs::read(temp_dir.path().join("SKILL.md")).unwrap(),
+            b"---\nname: Root Skill\ndescription: Root level skill\n---\n# Root\n"
+        );
+        assert_eq!(
+            fs::read(temp_dir.path().join("skills/skill-a/SKILL.md")).unwrap(),
+            b"---\nname: Skill A\ndescription: Skill A description\n---\n# A\n"
+        );
+        assert_eq!(
+            fs::read(temp_dir.path().join("skills/skill-b/data/config.json")).unwrap(),
+            b"{\"key\": \"value\"}\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn git_backend_materialize_missing_dir_errors_instead_of_silent_empty() {
+        let Some(git) = git_available() else { return };
+        let (root, _repo_dir, _o, _n, _b) = create_fixture_repo(&git);
+        let backend = git_backend_for(&git, &root);
+        let repo = fixture_repo();
+        // dir 未命中任何 tree 路径：必须显式报错，而不是静默返回空目录
+        let err = materialize_skill_dir(&backend, &repo, "no/such/dir")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("SKILL.md"), "{err:#}");
+    }
+
+    #[tokio::test]
     async fn api_backend_fetch_tree_matches_real_ls_tree() {
         let Some(git) = git_available() else { return };
         let (_root, repo_dir, server) = fixture_with_mock(&git);
@@ -1879,6 +1967,29 @@ mod tests {
         assert_eq!(
             fs::read(temp_dir.path().join("helper.py")).unwrap(),
             b"print('hello')\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn api_backend_materialize_root_skill_materializes_whole_tree() {
+        let Some(git) = git_available() else { return };
+        let (_root, _repo_dir, server) = fixture_with_mock(&git);
+        let backend = ApiBackend::with_bases(&server.api_base(), &server.raw_base());
+        let repo = fixture_repo();
+        // 根级 skill 的 directory 是仓库名哨兵，应解析为 tree 根
+        let (temp_dir, used_branch, scheme) =
+            materialize_skill_dir(&backend, &repo, FIXTURE_NAME)
+                .await
+                .unwrap();
+        assert_eq!(used_branch, FIXTURE_BRANCH);
+        assert_eq!(scheme, BlobHashScheme::Sha1);
+        assert_eq!(
+            fs::read(temp_dir.path().join("SKILL.md")).unwrap(),
+            b"---\nname: Root Skill\ndescription: Root level skill\n---\n# Root\n"
+        );
+        assert_eq!(
+            fs::read(temp_dir.path().join("skills/skill-a/SKILL.md")).unwrap(),
+            b"---\nname: Skill A\ndescription: Skill A description\n---\n# A\n"
         );
     }
 
