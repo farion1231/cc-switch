@@ -841,7 +841,7 @@
     "toolUninstallNotSupportedHint": "{{tool}} 的目前安裝方式不支援由 cc-switch 自動解除安裝，請依照該工具的官方說明解除安裝。",
     "toolUninstallVerifyFailed": "解除安裝命令已結束，但 cc-switch 無法確認該工具是否已移除。",
     "toolUninstallIncompleteTitle": "解除安裝後仍偵測到該工具",
-    "toolUninstallIncompleteHint": "已移除命令列預設使用的那處安裝，但仍有另一處安裝被偵測到。請依照該工具的官方說明手動解除安裝剩餘安裝。",
+    "toolUninstallIncompleteHint": "已移除命令列預設使用的那處安裝，但仍偵測到其他安裝。請再次點擊「解除安裝」，查看並移除剩餘安裝。",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",

@@ -840,7 +840,7 @@
     "toolUninstallNotSupportedHint": "{{tool}} cannot be auto-uninstalled by cc-switch. Follow the tool's official uninstall instructions.",
     "toolUninstallVerifyFailed": "The uninstall command finished, but cc-switch could not verify that the tool was removed.",
     "toolUninstallIncompleteTitle": "Tool still detected after uninstall",
-    "toolUninstallIncompleteHint": "The default installation was removed, but another installation is still detected. Please manually uninstall the remaining one(s) following that tool's official instructions.",
+    "toolUninstallIncompleteHint": "The default installation was removed, but another installation is still detected. Click Uninstall again to review and remove the remaining installation(s).",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
