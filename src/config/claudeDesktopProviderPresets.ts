@@ -1192,4 +1192,21 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "ppio",
     iconColor: "#2874FF",
   },
+  {
+    name: "JieKou AI",
+    websiteUrl: "https://jiekou.ai/#model-library",
+    apiKeyUrl: "https://jiekou.ai/settings/key-management",
+    category: "aggregator",
+    baseUrl: "https://api.jiekou.ai/anthropic",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "minimax/minimax-m2.7",
+      "minimax/minimax-m2.7",
+      "minimax/minimax-m2.7",
+    ),
+    endpointCandidates: ["https://api.jiekou.ai/anthropic"],
+    icon: "jiekou",
+    iconColor: "#000000",
+  },
 ];

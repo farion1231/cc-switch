@@ -2590,4 +2590,41 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
   },
+  {
+    name: "JieKou AI",
+    websiteUrl: "https://jiekou.ai/#model-library",
+    apiKeyUrl: "https://jiekou.ai/settings/key-management",
+    settingsConfig: {
+      baseUrl: "https://api.jiekou.ai/openai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "minimax/minimax-m2.7",
+          name: "MiniMax M2.7",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 204800,
+          maxTokens: 131100,
+          cost: { input: 0.3, output: 1.2 },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "jiekou",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "jiekou/minimax/minimax-m2.7" },
+      modelCatalog: {
+        "jiekou/minimax/minimax-m2.7": { alias: "MiniMax M2.7" },
+      },
+    },
+  },
 ];

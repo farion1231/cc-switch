@@ -1695,4 +1695,28 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     icon: "ppio",
     iconColor: "#2874FF",
   },
+  {
+    name: "JieKou AI",
+    websiteUrl: "https://jiekou.ai/#model-library",
+    apiKeyUrl: "https://jiekou.ai/settings/key-management",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "jiekou",
+      "https://api.jiekou.ai/openai/v1",
+      "minimax/minimax-m2.7",
+    ),
+    endpointCandidates: ["https://api.jiekou.ai/openai/v1"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      {
+        model: "minimax/minimax-m2.7",
+        displayName: "MiniMax M2.7",
+        contextWindow: 204800,
+        inputModalities: ["text"],
+      },
+    ]),
+    category: "aggregator",
+    icon: "jiekou",
+    iconColor: "#000000",
+  },
 ];

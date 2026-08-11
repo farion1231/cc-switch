@@ -1578,4 +1578,28 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       },
     },
   },
+  {
+    name: "JieKou AI",
+    websiteUrl: "https://jiekou.ai/#model-library",
+    apiKeyUrl: "https://jiekou.ai/settings/key-management",
+    settingsConfig: {
+      name: "jiekou",
+      base_url: "https://api.jiekou.ai/openai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "minimax/minimax-m2.7",
+          name: "MiniMax M2.7",
+          context_length: 204800,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "jiekou",
+    iconColor: "#000000",
+    suggestedDefaults: {
+      model: { default: "minimax/minimax-m2.7", provider: "jiekou" },
+    },
+  },
 ];
