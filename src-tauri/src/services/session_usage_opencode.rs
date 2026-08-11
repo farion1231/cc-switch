@@ -34,6 +34,7 @@ struct OpenCodeMessageData {
     cost: f64,
     model_id: String,
     timestamp_ms: i64,
+    completed_ms: Option<i64>,
 }
 
 struct OpenCodeMessageQueryResult {
@@ -302,6 +303,13 @@ fn parse_message_data(value: &serde_json::Value) -> Option<OpenCodeMessageData> 
         .and_then(|v| v.as_i64())
         .unwrap_or(0);
 
+    // 已完成消息才会走到这里（time.completed 缺失的在上游被跳过），
+    // 但防御性保留 None 以便调用方安全处理。
+    let completed_ms = value
+        .get("time")
+        .and_then(|t| t.get("completed"))
+        .and_then(|v| v.as_i64());
+
     Some(OpenCodeMessageData {
         input_tokens,
         output_tokens,
@@ -311,7 +319,21 @@ fn parse_message_data(value: &serde_json::Value) -> Option<OpenCodeMessageData> 
         cost,
         model_id,
         timestamp_ms,
+        completed_ms,
     })
+}
+
+/// 计算 opencode 消息的总时长（毫秒）：completed - created。
+///
+/// opencode 只记录 created/completed，没有"首字时间"粒度，因此这里只能
+/// 提供总时长。created/completed 任一缺失或 created 为 0 时返回 None，
+/// 调用方应回退到 0，避免用伪造数据误导请求日志。
+fn opencode_latency_ms(msg: &OpenCodeMessageData) -> Option<i64> {
+    if msg.timestamp_ms <= 0 {
+        return None;
+    }
+    let completed = msg.completed_ms?;
+    Some((completed - msg.timestamp_ms).max(0))
 }
 
 /// 插入单条 OpenCode 消息记录到 proxy_request_logs
@@ -335,6 +357,11 @@ fn insert_opencode_message(
     // OpenCode 使用 Anthropic 风格：input 是新鲜输入，cache 单独计
     // output 包含 reasoning tokens（按输出计费）
     let output_with_reasoning = msg.output_tokens + msg.reasoning_tokens;
+
+    // opencode 只记录 created/completed，没有"首字时间"粒度；
+    // 总时长 = completed - created（毫秒）。completed 缺失时保持 0，
+    // 与之前硬编码行为一致，避免伪造数据。
+    let latency_ms = opencode_latency_ms(msg).unwrap_or(0);
 
     let dedup_key = DedupKey {
         app_type: "opencode",
@@ -420,9 +447,9 @@ fn insert_opencode_message(
             output_cost,
             cache_read_cost,
             cache_creation_cost,
-            total_cost,
-            0i64,                  // latency_ms
-            Option::<i64>::None,   // first_token_ms
+             total_cost,
+             latency_ms,
+             Option::<i64>::None,   // first_token_ms（opencode 无首字时间粒度）
             200i64,                // status_code
             Option::<String>::None,// error_message
             Some(session_id.to_string()),
@@ -473,6 +500,7 @@ mod tests {
         assert!((data.cost - 0.0023113).abs() < 1e-10);
         assert_eq!(data.model_id, "deepseek-v4-pro");
         assert_eq!(data.timestamp_ms, 1779755333700);
+        assert_eq!(data.completed_ms, Some(1779755350639));
     }
 
     #[test]
@@ -493,6 +521,39 @@ mod tests {
         assert_eq!(data.reasoning_tokens, 0);
         assert_eq!(data.cache_read_tokens, 0);
         assert_eq!(data.cache_write_tokens, 0);
+        assert_eq!(data.completed_ms, None);
+    }
+
+    #[test]
+    fn test_insert_latency_from_created_to_completed() {
+        let msg = OpenCodeMessageData {
+            input_tokens: 100,
+            output_tokens: 50,
+            reasoning_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            cost: 0.0,
+            model_id: "test".to_string(),
+            timestamp_ms: 1000,
+            completed_ms: Some(4500),
+        };
+        assert_eq!(opencode_latency_ms(&msg), Some(3500));
+    }
+
+    #[test]
+    fn test_insert_latency_missing_completed_stays_zero() {
+        let msg = OpenCodeMessageData {
+            input_tokens: 100,
+            output_tokens: 50,
+            reasoning_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            cost: 0.0,
+            model_id: "test".to_string(),
+            timestamp_ms: 1000,
+            completed_ms: None,
+        };
+        assert_eq!(opencode_latency_ms(&msg), None);
     }
 
     #[test]
