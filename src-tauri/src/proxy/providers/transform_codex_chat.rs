@@ -1794,6 +1794,7 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
     let Some(usage) = usage.filter(|value| value.is_object() && !value.is_null()) else {
         return json!({
             "input_tokens": 0,
+            "input_tokens_details": { "cached_tokens": 0 },
             "output_tokens": 0,
             "total_tokens": 0,
             "output_tokens_details": { "reasoning_tokens": 0 }
@@ -1836,12 +1837,13 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
                 .and_then(|v| v.as_u64())
         })
         .unwrap_or(0);
-    if cached > 0 || cache_write > 0 {
-        result["input_tokens_details"] = json!({
-            "cached_tokens": cached,
-            "cache_write_tokens": cache_write
-        });
+    // Responses clients deserialize this object as a required field. Preserve
+    // the shape even when the upstream explicitly reports zero cached tokens.
+    let mut input_details = json!({ "cached_tokens": cached });
+    if cache_write > 0 {
+        input_details["cache_write_tokens"] = json!(cache_write);
     }
+    result["input_tokens_details"] = input_details;
 
     if let Some(details) = usage
         .get("completion_tokens_details")
@@ -3855,6 +3857,55 @@ mod tests {
         assert_eq!(
             result["usage"]["input_tokens_details"]["cache_write_tokens"],
             2
+        );
+    }
+
+    #[test]
+    fn chat_response_to_responses_includes_zero_input_cache_details() {
+        let input = json!({
+            "id": "chatcmpl_zero_cache",
+            "model": "glm-5.2",
+            "choices": [{
+                "message": {"role": "assistant", "content": "Done."},
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 13,
+                "completion_tokens": 2,
+                "total_tokens": 15,
+                "prompt_tokens_details": {"cached_tokens": 0}
+            }
+        });
+
+        let result = chat_completion_to_response(input).unwrap();
+
+        assert_eq!(
+            result["usage"]["input_tokens_details"],
+            json!({"cached_tokens": 0})
+        );
+    }
+
+    #[test]
+    fn chat_response_to_responses_defaults_zero_cache_details_when_upstream_omits_them() {
+        let input = json!({
+            "id": "chatcmpl_missing_cache_details",
+            "model": "glm-5.2",
+            "choices": [{
+                "message": {"role": "assistant", "content": "Done."},
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 13,
+                "completion_tokens": 2,
+                "total_tokens": 15
+            }
+        });
+
+        let result = chat_completion_to_response(input).unwrap();
+
+        assert_eq!(
+            result["usage"]["input_tokens_details"],
+            json!({"cached_tokens": 0})
         );
     }
 
