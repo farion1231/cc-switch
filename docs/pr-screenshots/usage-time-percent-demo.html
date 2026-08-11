@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"/>
+<title>cc-switch usage%-time% demo</title>
+<style>
+  body{font-family:Segoe UI,Microsoft YaHei,sans-serif;background:#f3f4f6;margin:0;padding:32px;color:#111827}
+  h1{font-size:22px;margin:0 0 8px}
+  p{color:#6b7280;margin:0 0 24px}
+  .row{display:flex;gap:24px;flex-wrap:wrap}
+  .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px 24px;min-width:320px;flex:1}
+  .card h2{font-size:14px;margin:0 0 16px;color:#374151}
+  .name{font:600 16px Cascadia Mono,Consolas,monospace;color:#6b7280}
+  .val{font:700 22px Cascadia Mono,Consolas,monospace;margin:12px 0}
+  .after .val{color:#059669}
+  .note{font-size:13px;color:#6b7280;line-height:1.5}
+  .pill{display:inline-block;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;padding:10px 12px;margin-top:8px}
+  .pass{margin-top:28px;padding:12px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;font-size:13px}
+</style>
+<h1>cc-switch tray · 用量%-时间%</h1>
+<p>PR #6339 demo · 本地单测通过后的格式预览（非实机托盘截图）</p>
+<div class="row">
+  <div class="card before">
+    <h2>Before · 仅用量%</h2>
+    <div class="name">Claude · Claude Official</div>
+    <div class="val">🟢 h3% w39%</div>
+    <div class="note">看不出窗口时间进度：用量 39% 时，时间走了 10% 还是 90%？无法判断是否烧得比时间快。</div>
+  </div>
+  <div class="card after">
+    <h2>After · 用量%-时间%</h2>
+    <div class="name">Claude · Claude Official</div>
+    <div class="val">🟢 h3%-37% w39%-70%</div>
+    <div class="pill note">h：5h 窗 · 用量 3% / 时间已过 37%<br/>w：7d 窗 · 用量 39% / 时间已过 70%</div>
+    <div class="note" style="margin-top:12px">语义对齐 vscode-gptx：usage%-time%</div>
+  </div>
+</div>
+<div class="pass">
+  ✅ <code>pnpm exec vitest run tests/utils/quotaWindow.test.ts</code> — 4/4 passed<br/>
+  ⏳ cargo tray::tests — 需本机 Rust toolchain<br/>
+  Fallback：无 resets_at 时仍显示 <code>h3% w39%</code>
+</div>
+</html>
