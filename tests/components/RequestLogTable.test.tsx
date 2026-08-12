@@ -220,10 +220,6 @@ describe("RequestLogTable", () => {
       name: /429.*usage\.clickToCopy|usage\.clickToCopy.*429/,
     });
     expect(statusButton).toHaveTextContent("429");
-    expect(statusButton).toHaveAttribute(
-      "title",
-      "Rate limit exceeded: retry after 60s",
-    );
 
     // 点击状态码触发复制并弹出成功提示
     fireEvent.click(statusButton);

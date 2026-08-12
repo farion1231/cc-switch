@@ -323,7 +323,6 @@ export function RequestLogTable({
                                 <button
                                   type="button"
                                   onClick={() => handleCopyError(errorMessage)}
-                                  title={errorMessage}
                                   aria-label={`${log.statusCode} – ${t("usage.clickToCopy")}`}
                                   className={`${statusClass} cursor-pointer underline decoration-dotted underline-offset-2 hover:decoration-solid`}
                                 >
