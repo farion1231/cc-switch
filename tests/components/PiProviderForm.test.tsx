@@ -993,7 +993,7 @@ describe("PiProviderForm", () => {
       within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
     );
     await user.click(
-      await screen.findByRole("menuitem", { name: "remote-model-b" }),
+      await screen.findByRole("option", { name: "remote-model-b" }),
     );
     expect(modelIdInput).toHaveValue("remote-model-b");
     expect(screen.getByLabelText("pi.form.modelName")).toHaveValue(
@@ -1067,7 +1067,7 @@ describe("PiProviderForm", () => {
       within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
     );
     await user.click(
-      await screen.findByRole("menuitem", { name: "current-model" }),
+      await screen.findByRole("option", { name: "current-model" }),
     );
     expect(modelIdInput).toHaveValue("current-model");
 
@@ -1077,10 +1077,10 @@ describe("PiProviderForm", () => {
       within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
     );
     expect(
-      await screen.findByRole("menuitem", { name: "current-model" }),
+      await screen.findByRole("option", { name: "current-model" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("menuitem", { name: "stale-model" }),
+      screen.queryByRole("option", { name: "stale-model" }),
     ).not.toBeInTheDocument();
   });
 
@@ -1120,7 +1120,7 @@ describe("PiProviderForm", () => {
     await user.click(
       within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
     );
-    await user.click(await screen.findByRole("menuitem", { name: "first" }));
+    await user.click(await screen.findByRole("option", { name: "first" }));
     await waitFor(() =>
       expect(screen.getByLabelText("pi.form.modelName")).toHaveValue("first"),
     );
@@ -1171,7 +1171,7 @@ describe("PiProviderForm", () => {
     await user.click(
       within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
     );
-    await user.click(await screen.findByRole("menuitem", { name: "shared" }));
+    await user.click(await screen.findByRole("option", { name: "shared" }));
     await waitFor(() =>
       expect(screen.getByLabelText("pi.form.modelName")).toHaveValue("shared"),
     );
@@ -1224,7 +1224,7 @@ describe("PiProviderForm", () => {
     await user.click(
       within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
     );
-    await user.click(await screen.findByRole("menuitem", { name: "shared" }));
+    await user.click(await screen.findByRole("option", { name: "shared" }));
     expect(screen.getByLabelText("pi.form.modelName")).toHaveValue("");
 
     fireEvent.change(
@@ -1287,7 +1287,7 @@ describe("PiProviderForm", () => {
       within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
     );
     await user.click(
-      await screen.findByRole("menuitem", { name: "gpt-5.6-sol" }),
+      await screen.findByRole("option", { name: "gpt-5.6-sol" }),
     );
 
     const modelNameInput = screen.getByLabelText("pi.form.modelName");
