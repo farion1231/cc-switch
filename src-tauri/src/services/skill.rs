@@ -1287,14 +1287,11 @@ impl SkillService {
         // 本地哈希：复用 check_updates 的判定次序——先校验目录名、再查 SSOT
         // 目录是否存在、最后才信任缓存（目录缺失返回 None，与远端必然不等，
         // Skill 进入更新列表，点更新即可重建）。
-        let (local, freshly_computed) = match Self::local_hash_for_update_check(
+        let (local, freshly_computed) = Self::local_hash_for_update_check(
             ssot_dir,
             &skill.directory,
             skill.content_hash.as_deref(),
-        ) {
-            Some(h) => h,
-            None => return None,
-        };
+        )?;
         if freshly_computed {
             let _ = db.update_skill_hash(&skill.id, &local, 0);
         }

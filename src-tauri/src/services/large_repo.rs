@@ -389,6 +389,12 @@ impl LargeRepoBackend for ApiBackend {
                     last_error = Some(anyhow!("分支不存在: {branch}"));
                     continue;
                 }
+                Ok(r) if observe_rate_limit(&r) => {
+                    // 命中 GitHub 限流：已标记，本轮后续分支不再走 REST API；
+                    // 继续尝试其他分支无意义，直接失败冒泡由上层回退。
+                    last_error = Some(anyhow!("tree API 限流(403): {}", r.status()));
+                    break;
+                }
                 Ok(r) if !r.status().is_success() => {
                     last_error = Some(anyhow!("tree API 失败: {}", r.status()));
                     continue;
@@ -435,6 +441,10 @@ impl LargeRepoBackend for ApiBackend {
         )
         .await
         .map_err(|_| anyhow!("raw 文件获取超时"))??;
+        if observe_rate_limit(&resp) {
+            // 命中 GitHub 限流：已标记，本次操作失败冒泡回退ZIP/GitBackend。
+            return Err(anyhow!("raw 文件获取限流(403): {}", resp.status()));
+        }
         if !resp.status().is_success() {
             return Err(anyhow!("raw 文件获取失败: {}", resp.status()));
         }
@@ -731,6 +741,50 @@ const SIZE_CACHE_TTL: Duration = Duration::from_secs(3600);
 type SizeCache = HashMap<(String, String), (Instant, u64)>;
 static SIZE_CACHE: LazyLock<Mutex<SizeCache>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// GitHub 匿名 REST API 限流冷却窗口：1 小时（对齐匿名配额窗口）。
+/// 窗口内命中限流后，跳过所有 GitHub REST API 后端，让位给 git 后端或回退 ZIP。
+const RATE_LIMIT_COOLDOWN: Duration = Duration::from_secs(3600);
+/// 上次遇到 GitHub REST API 限流的时间戳（全局共享，按 IP 配额计，不区分 owner/端点）。
+static RATE_LIMITED_AT: LazyLock<Mutex<Option<Instant>>> = LazyLock::new(|| Mutex::new(None));
+
+/// 标记 GitHub REST API 限流：记录当前时刻。后续 1 小时内的裁决会跳过 ApiBackend。
+pub fn mark_rate_limited() {
+    *RATE_LIMITED_AT.lock().unwrap() = Some(Instant::now());
+}
+
+/// 是否处于限流冷却窗口内（限流时间戳存在且未过期）。
+pub fn is_rate_limited() -> bool {
+    match *RATE_LIMITED_AT.lock().unwrap() {
+        Some(ts) => ts.elapsed() < RATE_LIMIT_COOLDOWN,
+        None => false,
+    }
+}
+
+/// 解析 GitHub 限流剩余配额响应头 `X-RateLimit-Remaining`。
+fn rate_limit_remaining(resp: &reqwest::Response) -> Option<u64> {
+    resp.headers()
+        .get("X-RateLimit-Remaining")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+}
+
+/// 判定响应是否为 GitHub 限流信号：HTTP 403 + `X-RateLimit-Remaining: 0`。
+///
+/// 仅双条件同时满足才视为限流，避免把「无权限 403」「其他非 2xx」误判成限流。
+fn is_rate_limited_response(resp: &reqwest::Response) -> bool {
+    resp.status().as_u16() == 403 && rate_limit_remaining(resp) == Some(0)
+}
+
+/// 检测并消费一个限流响应：命中则标记并返回 true。
+fn observe_rate_limit(resp: &reqwest::Response) -> bool {
+    if is_rate_limited_response(resp) {
+        mark_rate_limited();
+        true
+    } else {
+        false
+    }
+}
+
 /// 获取仓库 size（KB）。失败返回 Ok(None)（上层优先尝试大仓库后端）。1h TTL 缓存。
 pub async fn fetch_repo_size_kb(owner: &str, name: &str) -> Result<Option<u64>> {
     let key = (owner.to_string(), name.to_string());
@@ -738,6 +792,12 @@ pub async fn fetch_repo_size_kb(owner: &str, name: &str) -> Result<Option<u64>> 
         if ts.elapsed() < SIZE_CACHE_TTL {
             return Ok(Some(*size));
         }
+    }
+    // 限流冷却窗口内：不再发起无谓的 GitHub REST 请求，直接返回 None。
+    // None → should_use_large_repo_path → true → 进大仓库路径；此时 backend_chain
+    // 已剔除 ApiBackend，落到 GitBackend 或回退 ZIP。符合「size 限流后无需再用 REST API」。
+    if is_rate_limited() {
+        return Ok(None);
     }
     let url = format!("https://api.github.com/repos/{owner}/{name}");
     let client = crate::proxy::http_client::get();
@@ -747,10 +807,17 @@ pub async fn fetch_repo_size_kb(owner: &str, name: &str) -> Result<Option<u64>> 
     )
     .await
     {
-        Ok(Ok(resp)) if resp.status().is_success() => {
-            match resp.json::<serde_json::Value>().await {
-                Ok(json) => json.get("size").and_then(|v| v.as_u64()),
-                Err(_) => None,
+        Ok(Ok(resp)) => {
+            if observe_rate_limit(&resp) {
+                // 命中限流：已标记，返回 None 让下游裁决（不再走 REST API）。
+                None
+            } else if resp.status().is_success() {
+                match resp.json::<serde_json::Value>().await {
+                    Ok(json) => json.get("size").and_then(|v| v.as_u64()),
+                    Err(_) => None,
+                }
+            } else {
+                None
             }
         }
         _ => None,
@@ -835,12 +902,21 @@ pub fn select_backend() -> Box<dyn LargeRepoBackend> {
 /// 后端回退链：git 可用 → [Git, API]；git 不可用 → [API]。
 ///
 /// 上层按序尝试，全部失败后再回退旧 ZIP 路径。
+///
+/// 限流冷却窗口内：剔除 ApiBackend（GitHub REST API 已被限流，再试必然失败且浪费配额）。
+/// 此时 git 可用 → [Git]（git 走 smart HTTP，不吃 REST 限流）；git 不可用 → 空链，
+/// 调用方收到空链即视为「大仓库后端全失败」→ 回退旧 ZIP 路径（codeload 域独立配额）。
 pub fn backend_chain() -> Vec<Box<dyn LargeRepoBackend>> {
-    if detect_git().is_some() {
-        vec![Box::new(GitBackend::new()), Box::new(ApiBackend::new())]
-    } else {
-        vec![Box::new(ApiBackend::new())]
+    let git = detect_git().is_some();
+    let use_api = !is_rate_limited();
+    let mut chain: Vec<Box<dyn LargeRepoBackend>> = Vec::new();
+    if git {
+        chain.push(Box::new(GitBackend::new()));
     }
+    if use_api {
+        chain.push(Box::new(ApiBackend::new()));
+    }
+    chain
 }
 
 /// 本地存储哈希是否需要按远端方案重算
