@@ -335,6 +335,32 @@ async fn profile_and_usage_send_identity_headers() {
 }
 
 #[tokio::test]
+async fn profile_retries_transient_transport_and_server_failures() {
+    let transport = Arc::new(RecordingTransport::with_responses(vec![
+        Err(KimiOAuthError::NetworkError("timeout".to_string())),
+        Ok(raw_response(503, "temporarily unavailable")),
+        Ok(json_response(
+            200,
+            serde_json::json!({"user_id":"u-1","nickname":"Moon Walker"}),
+        )),
+    ]));
+    let sleeper = Arc::new(RecordingSleeper::default());
+    let client = KimiOAuthApiClient::new(transport.clone(), sleeper.clone());
+
+    let profile = client
+        .fetch_profile("access-token", &identity())
+        .await
+        .expect("transient profile failures should be retried");
+
+    assert_eq!(profile.user_id, "u-1");
+    assert_eq!(transport.requests().len(), 3);
+    assert_eq!(
+        *sleeper.durations.lock().unwrap(),
+        vec![Duration::from_secs(1), Duration::from_secs(2)]
+    );
+}
+
+#[tokio::test]
 async fn models_require_positive_context_and_return_only_anthropic_protocol() {
     let transport = Arc::new(RecordingTransport::with_responses(vec![Ok(json_response(
         200,

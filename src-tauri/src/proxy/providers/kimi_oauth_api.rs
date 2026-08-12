@@ -30,6 +30,7 @@ const MANAGEMENT_TIMEOUT: Duration = Duration::from_secs(8);
 const MAX_OAUTH_RESPONSE_BYTES: usize = 64 * 1024;
 const MAX_MANAGEMENT_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_REFRESH_ATTEMPTS: usize = 3;
+const MAX_PROFILE_ATTEMPTS: usize = 3;
 
 /// Injectable clock used by the OAuth manager.
 pub(crate) trait KimiClock: Send + Sync {
@@ -628,10 +629,24 @@ impl KimiOAuthApiClient {
         access_token: &str,
         identity: &KimiClientIdentity,
     ) -> Result<KimiUserProfile, KimiOAuthError> {
-        let value = self
-            .get_management_json("me", access_token, identity.headers())
-            .await?;
-        parse_profile(&value)
+        for attempt in 0..MAX_PROFILE_ATTEMPTS {
+            match self
+                .get_management_json("me", access_token, identity.headers())
+                .await
+            {
+                Ok(value) => return parse_profile(&value),
+                Err(error)
+                    if is_retryable_management_error(&error)
+                        && attempt + 1 < MAX_PROFILE_ATTEMPTS =>
+                {
+                    self.sleep_before_retry(attempt).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(KimiOAuthError::TokenFetchFailed(
+            "profile lookup exhausted retries".to_string(),
+        ))
     }
 
     /// Fetches, validates, sorts, and deduplicates Anthropic-protocol models.
@@ -837,6 +852,14 @@ fn oauth_error_code(value: &Value) -> Option<String> {
 
 fn is_retryable_status(status: u16) -> bool {
     matches!(status, 429 | 500 | 502 | 503 | 504)
+}
+
+fn is_retryable_management_error(error: &KimiOAuthError) -> bool {
+    match error {
+        KimiOAuthError::NetworkError(_) => true,
+        KimiOAuthError::UpstreamRejected { status, .. } => is_retryable_status(*status),
+        _ => false,
+    }
 }
 
 fn parse_profile(value: &Value) -> Result<KimiUserProfile, KimiOAuthError> {
