@@ -19,8 +19,14 @@ interface ProxyToggleProps {
 
 export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
   const { t } = useTranslation();
-  const { isRunning, takeoverStatus, setTakeoverForApp, isPending, status } =
-    useProxyStatus();
+  const {
+    isRunning,
+    takeoverStatus,
+    setTakeoverForApp,
+    isPending,
+    isInitialStatusPending,
+    status,
+  } = useProxyStatus();
 
   const handleToggle = async (checked: boolean) => {
     try {
@@ -83,7 +89,7 @@ export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
       <Switch
         checked={takeoverEnabled}
         onCheckedChange={handleToggle}
-        disabled={isPending}
+        disabled={isPending || isInitialStatusPending}
       />
     </div>
   );
