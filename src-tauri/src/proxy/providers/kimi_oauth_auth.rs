@@ -488,6 +488,24 @@ impl KimiOAuthManager {
         self.get_valid_access_context_for_account(&account_id).await
     }
 
+    /// Forces a refresh after the inference endpoint rejects an access token.
+    pub(crate) async fn refresh_after_inference_auth_rejection(
+        &self,
+        account_id: Option<&str>,
+    ) -> Result<String, KimiOAuthError> {
+        let account_id = self.resolve_inference_account_id(account_id).await?;
+        self.force_refresh_for_account(&account_id).await?;
+        Ok(account_id)
+    }
+
+    /// Persists a reauthentication requirement after a refreshed token is rejected.
+    pub(crate) async fn require_reauthentication_after_inference_rejection(
+        &self,
+        account_id: &str,
+    ) -> Result<(), KimiOAuthError> {
+        self.mark_reauth_required(account_id).await
+    }
+
     /// Fetches the live Anthropic-protocol model catalog for an account.
     pub(crate) async fn fetch_models_for_account(
         &self,
@@ -924,6 +942,18 @@ impl KimiOAuthManager {
         match stored {
             Some(id) if Self::is_usable_account(&accounts, &id) => Some(id),
             _ => Self::fallback_default_account_id(&accounts),
+        }
+    }
+
+    async fn resolve_inference_account_id(
+        &self,
+        account_id: Option<&str>,
+    ) -> Result<String, KimiOAuthError> {
+        match account_id {
+            Some(account_id) => Ok(account_id.to_string()),
+            None => self.resolve_default_account_id().await.ok_or_else(|| {
+                KimiOAuthError::AccountNotFound("无可用的 Kimi 账号，请登录或重新登录".to_string())
+            }),
         }
     }
 
@@ -1767,6 +1797,80 @@ mod tests {
 
         assert!(matches!(result, Err(KimiOAuthError::ReauthRequired(_))));
         assert_eq!(transport.requests.lock().unwrap().len(), 3);
+        assert!(
+            manager
+                .accounts
+                .read()
+                .await
+                .get("account-one")
+                .unwrap()
+                .requires_reauth
+        );
+        assert!(!manager
+            .access_tokens
+            .read()
+            .await
+            .contains_key("account-one"));
+    }
+
+    #[tokio::test]
+    async fn inference_auth_rejection_forces_refresh_of_a_fresh_cached_token() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let (manager, transport) = test_manager(
+            data_dir.path().to_path_buf(),
+            vec![Ok(json_response(
+                200,
+                serde_json::json!({
+                    "access_token":"refreshed-access",
+                    "refresh_token":"refreshed-refresh",
+                    "expires_in":900
+                }),
+            ))],
+        );
+        manager
+            .add_account_internal(
+                "account-one".to_string(),
+                None,
+                "initial-refresh".to_string(),
+                None,
+                Some(cached_access("rejected-access")),
+            )
+            .await
+            .unwrap();
+
+        let refreshed_account = manager
+            .refresh_after_inference_auth_rejection(None)
+            .await
+            .expect("upstream rejection should force a token refresh");
+
+        assert_eq!(refreshed_account, "account-one");
+        assert_eq!(
+            manager.access_tokens.read().await["account-one"].token,
+            "refreshed-access"
+        );
+        assert_eq!(transport.requests.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn repeated_inference_auth_rejection_requires_reauthentication() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let (manager, _) = test_manager(data_dir.path().to_path_buf(), Vec::new());
+        manager
+            .add_account_internal(
+                "account-one".to_string(),
+                None,
+                "initial-refresh".to_string(),
+                None,
+                Some(cached_access("rejected-access")),
+            )
+            .await
+            .unwrap();
+
+        manager
+            .require_reauthentication_after_inference_rejection("account-one")
+            .await
+            .expect("repeated rejection should persist reauthentication state");
+
         assert!(
             manager
                 .accounts

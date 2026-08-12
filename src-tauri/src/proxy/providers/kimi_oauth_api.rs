@@ -5,7 +5,8 @@
 //! wall-clock delays.
 
 use super::kimi_oauth_auth::KimiOAuthError;
-use futures::future::BoxFuture;
+use bytes::Bytes;
+use futures::{future::BoxFuture, Stream, StreamExt};
 use serde_json::Value;
 use std::process::Command;
 use std::sync::Arc;
@@ -324,6 +325,30 @@ pub(crate) trait KimiHttpTransport: Send + Sync {
 /// Production Kimi transport backed by the shared reqwest client.
 pub(crate) struct ReqwestKimiHttpTransport;
 
+async fn read_response_body_with_limit<S>(
+    stream: S,
+    max_response_bytes: usize,
+) -> Result<Vec<u8>, KimiOAuthError>
+where
+    S: Stream<Item = Result<Bytes, KimiOAuthError>>,
+{
+    let mut stream = Box::pin(stream);
+    let mut body = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        let length = body.len().checked_add(chunk.len()).ok_or_else(|| {
+            KimiOAuthError::ParseError("Kimi response exceeded the size limit".to_string())
+        })?;
+        if length > max_response_bytes {
+            return Err(KimiOAuthError::ParseError(
+                "Kimi response exceeded the size limit".to_string(),
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 impl KimiHttpTransport for ReqwestKimiHttpTransport {
     fn execute<'a>(
         &'a self,
@@ -352,12 +377,10 @@ impl KimiHttpTransport for ReqwestKimiHttpTransport {
                 ));
             }
             let status = response.status().as_u16();
-            let body = response.bytes().await?.to_vec();
-            if body.len() > request.max_response_bytes {
-                return Err(KimiOAuthError::ParseError(
-                    "Kimi response exceeded the size limit".to_string(),
-                ));
-            }
+            let stream = response
+                .bytes_stream()
+                .map(|chunk| chunk.map_err(KimiOAuthError::from));
+            let body = read_response_body_with_limit(stream, request.max_response_bytes).await?;
             Ok(KimiHttpResponse { status, body })
         })
     }
@@ -961,4 +984,51 @@ fn parse_money(value: Option<&Value>) -> Option<f64> {
 
 fn money_currency(value: Option<&Value>) -> Option<String> {
     value.and_then(|value| optional_string(value, "currency"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use futures::{stream, StreamExt};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn response_body_reader_accepts_a_body_at_the_limit() {
+        let body = read_response_body_with_limit(
+            stream::iter([
+                Ok(Bytes::from_static(b"123")),
+                Ok(Bytes::from_static(b"456")),
+            ]),
+            6,
+        )
+        .await
+        .expect("body at the configured limit should be accepted");
+
+        assert_eq!(body, b"123456");
+    }
+
+    #[tokio::test]
+    async fn response_body_reader_stops_at_the_first_oversized_chunk() {
+        let polled = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&polled);
+        let stream = stream::iter([
+            Ok(Bytes::from_static(b"1234")),
+            Ok(Bytes::from_static(b"5678")),
+            Ok(Bytes::from_static(b"unused")),
+        ])
+        .inspect(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+
+        let error = read_response_body_with_limit(stream, 6)
+            .await
+            .expect_err("body exceeding the configured limit should be rejected");
+
+        assert!(
+            matches!(error, KimiOAuthError::ParseError(message) if message.contains("size limit"))
+        );
+        assert_eq!(polled.load(Ordering::SeqCst), 2);
+    }
 }

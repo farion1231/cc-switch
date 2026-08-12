@@ -1108,12 +1108,89 @@ impl RequestForwarder {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn forward(
+        &self,
+        app_type: &AppType,
+        method: &http::Method,
+        provider: &Provider,
+        endpoint: &str,
+        body: &Value,
+        headers: &axum::http::HeaderMap,
+        extensions: &Extensions,
+        adapter: &dyn ProviderAdapter,
+    ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+        let first_result = self
+            .forward_once(
+                app_type, method, provider, endpoint, body, headers, extensions, adapter,
+            )
+            .await;
+        let first_error = match first_result {
+            Ok(result) => return Ok(result),
+            Err(error) if is_kimi_upstream_auth_rejection(provider, &error) => error,
+            Err(error) => return Err(error),
+        };
+
+        let Some(app_handle) = &self.app_handle else {
+            return Err(first_error);
+        };
+        let requested_account_id = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.managed_account_id_for("kimi_oauth"));
+        let kimi_state = app_handle.state::<KimiOAuthState>();
+        let resolved_account_id = {
+            let kimi_auth = kimi_state.0.read().await;
+            kimi_auth
+                .refresh_after_inference_auth_rejection(requested_account_id.as_deref())
+                .await
+                .map_err(|error| {
+                    ProxyError::AuthError(format!(
+                        "Kimi OAuth token refresh after upstream rejection failed: {error}"
+                    ))
+                })?
+        };
+        let retry_provider = pin_kimi_managed_account(provider, &resolved_account_id);
+
+        let retry_result = self
+            .forward_once(
+                app_type,
+                method,
+                &retry_provider,
+                endpoint,
+                body,
+                headers,
+                extensions,
+                adapter,
+            )
+            .await;
+        if retry_result
+            .as_ref()
+            .is_err_and(|error| is_kimi_upstream_auth_rejection(provider, error))
+        {
+            let kimi_auth = kimi_state.0.read().await;
+            kimi_auth
+                .require_reauthentication_after_inference_rejection(&resolved_account_id)
+                .await
+                .map_err(|error| {
+                    ProxyError::AuthError(format!(
+                        "Kimi OAuth reauthentication state could not be saved: {error}"
+                    ))
+                })?;
+            return Err(ProxyError::AuthError(
+                "Kimi OAuth credential was rejected after refresh; sign in again".to_string(),
+            ));
+        }
+
+        retry_result
+    }
+
     /// 转发单个请求（使用适配器）
     ///
     /// 成功时返回 `(response, claude_api_format, outbound_model)`，其中
     /// `outbound_model` 是最终发往上游的模型名（所有映射/改写之后）。
     #[allow(clippy::too_many_arguments)]
-    async fn forward(
+    async fn forward_once(
         &self,
         app_type: &AppType,
         method: &http::Method,
@@ -2730,12 +2807,12 @@ impl RequestForwarder {
             return ErrorCategory::NonRetryable;
         }
 
-        // xAI OAuth mirrors the same rule for token acquisition: a local
-        // AuthError means the managed account needs re-login. Failing over
-        // would silently move the conversation off the selected Grok account
-        // and poison the provider's health state for an account-level issue.
-        if (provider.is_xai_oauth() || provider.is_kimi_oauth())
-            && matches!(error, ProxyError::AuthError(_))
+        // Managed OAuth failures are account-local. Kimi 401/403 responses have
+        // already exhausted the one refresh attempt; local xAI/Kimi AuthErrors
+        // likewise need account recovery rather than provider failover.
+        if is_kimi_upstream_auth_rejection(provider, error)
+            || ((provider.is_xai_oauth() || provider.is_kimi_oauth())
+                && matches!(error, ProxyError::AuthError(_)))
         {
             return ErrorCategory::NonRetryable;
         }
@@ -2772,6 +2849,29 @@ impl RequestForwarder {
             _ => ErrorCategory::NonRetryable,
         }
     }
+}
+
+fn is_kimi_upstream_auth_rejection(provider: &Provider, error: &ProxyError) -> bool {
+    provider.is_kimi_oauth()
+        && matches!(
+            error,
+            ProxyError::UpstreamError {
+                status: 401 | 403,
+                ..
+            }
+        )
+}
+
+fn pin_kimi_managed_account(provider: &Provider, account_id: &str) -> Provider {
+    let mut provider = provider.clone();
+    if let Some(meta) = provider.meta.as_mut() {
+        meta.auth_binding = Some(crate::provider::AuthBinding {
+            source: crate::provider::AuthBindingSource::ManagedAccount,
+            auth_provider: Some("kimi_oauth".to_string()),
+            account_id: Some(account_id.to_string()),
+        });
+    }
+    provider
 }
 
 /// 从 ProxyError 中提取错误消息
@@ -4620,6 +4720,41 @@ mod tests {
                 &provider,
             ),
             ErrorCategory::Retryable
+        );
+    }
+
+    #[test]
+    fn kimi_oauth_upstream_auth_rejections_never_fail_over() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let provider = test_provider_with_type(Some("kimi_oauth"));
+
+        for status in [401, 403] {
+            let error = ProxyError::UpstreamError { status, body: None };
+            assert!(is_kimi_upstream_auth_rejection(&provider, &error));
+            assert_eq!(
+                forwarder.categorize_proxy_error(&error, &provider),
+                ErrorCategory::NonRetryable
+            );
+        }
+
+        let ordinary_provider = test_provider_with_type(None);
+        let unauthorized = ProxyError::UpstreamError {
+            status: 401,
+            body: None,
+        };
+        assert!(!is_kimi_upstream_auth_rejection(
+            &ordinary_provider,
+            &unauthorized
+        ));
+
+        let pinned = pin_kimi_managed_account(&provider, "account-one");
+        assert_eq!(
+            pinned
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.managed_account_id_for("kimi_oauth"))
+                .as_deref(),
+            Some("account-one")
         );
     }
 
