@@ -130,8 +130,45 @@ impl LargeRepoBackend for GitBackend {
             repo.branch
         );
         SkillService::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)?;
+        let candidates = branch_candidates(repo);
+        // 轻量预检：用一次 ls-remote --heads 拿到远端真实存在的分支。
+        // 若候选分支在远端全都不存在（如 "Remote branch main not found"），
+        // 直接快速失败，避免对每个候选分支都跑一遍完整 clone。
+        match ls_remote_branches(&self.git, &self.base_url, repo).await {
+            Ok(remote_branches) => {
+                let existing: Vec<String> = candidates
+                    .iter()
+                    .filter(|b| remote_branches.iter().any(|rb| rb.eq_ignore_ascii_case(b)))
+                    .cloned()
+                    .collect();
+                if existing.is_empty() {
+                    let err = anyhow!(
+                        "远端不存在候选分支 {} (远端可用分支: {})",
+                        candidates.join("/"),
+                        remote_branches.join("/")
+                    );
+                    log::info!(
+                        "[large_repo][GitBackend] fetch_tree 快速失败: {}/{}: {err:#}",
+                        repo.owner,
+                        repo.name
+                    );
+                    return Err(err);
+                }
+                log::debug!(
+                    "[large_repo][GitBackend] ls-remote 命中可用分支: {:?}（候选 {:?}）",
+                    existing,
+                    candidates
+                );
+            }
+            Err(e) => {
+                // ls-remote 自身失败（如无网络）时不阻断，退化为原逻辑逐个 clone。
+                log::debug!(
+                    "[large_repo][GitBackend] ls-remote 预检失败，退化为逐个 clone: {e:#}"
+                );
+            }
+        }
         let mut last_error = None;
-        for branch in branch_candidates(repo) {
+        for branch in candidates {
             log::debug!("[large_repo][GitBackend] fetch_tree 尝试分支: {branch}");
             let temp_dir = tempfile::tempdir()?;
             match clone_repo(&self.git, &self.base_url, repo, &branch, temp_dir.path()).await {
@@ -243,6 +280,56 @@ impl LargeRepoBackend for GitBackend {
     }
 }
 
+/// 轻量预检：列出远端仓库的 head 分支名（`git ls-remote --heads <url>`）。
+///
+/// 仅做一次网络往返拿分支列表，用于在 `fetch_tree` 中快速判断候选分支是否存在，
+/// 避免对不存在的分支反复触发完整 clone。失败（如无网络/超时）时返回 Err 由调用方
+/// 退化为原逻辑，不应阻断主流程。
+async fn ls_remote_branches(git: &Path, base_url: &str, repo: &SkillRepo) -> Result<Vec<String>> {
+    let url = format!("{base_url}/{}/{}.git", repo.owner, repo.name);
+    log::debug!("[large_repo][ls-remote] 开始: url={url}");
+    let mut cmd = Command::new(git);
+    cmd.arg("-c").arg("credential.helper=");
+    if let Some(proxy) = crate::proxy::http_client::get_current_proxy_url() {
+        cmd.arg("-c").arg(format!("http.proxy={proxy}"));
+        cmd.arg("-c").arg(format!("https.proxy={proxy}"));
+    }
+    cmd.arg("ls-remote")
+        .arg("--heads")
+        .arg("--end-of-options")
+        .arg(&url)
+        .env("GIT_TERMINAL_PROMPT", "0");
+
+    let output = timeout(
+        Duration::from_secs(GIT_TIMEOUT_SECS),
+        spawn_blocking(move || cmd.output()),
+    )
+    .await
+    .map_err(|_| anyhow!("git ls-remote 超时"))?
+    .map_err(|e| anyhow!("git 任务失败: {e}"))??;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        log::debug!("[large_repo][ls-remote] 失败: url={url}: {stderr}");
+        return Err(anyhow!("git ls-remote 失败: {stderr}"));
+    }
+    // 每行格式：`\t<sha>\trefs/heads/<branch>`
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut branches = Vec::new();
+    for line in stdout.lines() {
+        if let Some(rest) = line.split('\t').nth(1) {
+            if let Some(branch) = rest.strip_prefix("refs/heads/") {
+                branches.push(branch.to_string());
+            }
+        }
+    }
+    log::debug!(
+        "[large_repo][ls-remote] 成功: url={url} 分支数={}",
+        branches.len()
+    );
+    Ok(branches)
+}
+
 /// 执行 `git clone --depth 1 --filter=blob:none --branch=<b> <url> <dest>`
 ///
 /// 安全要点：
@@ -280,6 +367,14 @@ async fn clone_repo(
         .arg(&url)
         .arg(dest)
         .env("GIT_TERMINAL_PROMPT", "0");
+
+    let argv: Vec<String> = std::iter::once(git.to_string_lossy().into_owned())
+        .chain(cmd.get_args().map(|a| a.to_string_lossy().into_owned()))
+        .collect();
+    log::debug!(
+        "[large_repo][clone_repo] 原始 argv: {}",
+        argv.join(" ")
+    );
 
     let output = timeout(
         Duration::from_secs(GIT_TIMEOUT_SECS),
@@ -328,6 +423,13 @@ async fn run_git_ls_tree(git: &Path, workdir: &Path, proxy: Option<&str>) -> Res
                 .arg("HEAD")
                 .current_dir(&workdir)
                 .output()?;
+            let argv: Vec<String> = std::iter::once(git.to_string_lossy().into_owned())
+                .chain(cmd.get_args().map(|a| a.to_string_lossy().into_owned()))
+                .collect();
+            log::debug!(
+                "[large_repo][ls-tree] 原始 argv: {}",
+                argv.join(" ")
+            );
             if !output.status.success() {
                 log::info!("[large_repo][ls-tree] 失败: workdir={}", workdir.display());
                 return Err(anyhow!("git ls-tree 失败"));
@@ -373,6 +475,13 @@ fn cat_file_with_budget(git: &Path, workdir: &Path, sha: &str, proxy: Option<&st
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()?;
+    let argv: Vec<String> = std::iter::once(git.to_string_lossy().into_owned())
+        .chain(cmd.get_args().map(|a| a.to_string_lossy().into_owned()))
+        .collect();
+    log::debug!(
+        "[large_repo][cat-file] 原始 argv: {}",
+        argv.join(" ")
+    );
     let mut stdout = child
         .stdout
         .take()
@@ -2853,5 +2962,67 @@ mod tests {
         // 其他合法条目仍正常物化
         assert!(temp_dir.path().join("SKILL.md").is_file());
         assert!(temp_dir.path().join("link-to-file").is_file());
+    }
+
+    /// ls-remote 预检：正确解析本地 fixture 仓库的分支列表。
+    #[tokio::test]
+    async fn ls_remote_branches_lists_fixture_heads() {
+        let Some(git) = git_available() else { return };
+        let (root, _repo_dir, _o, _n, branch) = create_fixture_repo(&git);
+        let base_url = file_url_for(root.path());
+        let repo = fixture_repo();
+        let branches = ls_remote_branches(&git, &base_url, &repo).await.unwrap();
+        assert!(
+            branches.iter().any(|b| b == &branch),
+            "ls-remote 应列出 fixture 分支 {branch}，实际: {branches:?}"
+        );
+    }
+
+    /// 快速失败：候选分支在远端全都不存在时，fetch_tree 应通过 ls-remote 预检直接失败，
+    /// 而不对每个候选分支逐一触发完整 clone。构造一个仅含 weird-branch、无 main/master
+    /// 的仓库，并请求一个不存在的分支。
+    #[tokio::test]
+    async fn fetch_tree_quick_fails_when_no_candidate_branch_exists() {
+        let Some(git) = git_available() else { return };
+        let root = tempdir().unwrap();
+        let repo_dir = root
+            .path()
+            .join("qowner")
+            .join("qrepo.git");
+        fs::create_dir_all(&repo_dir).unwrap();
+        write_fixture(&repo_dir);
+        run_git(&git, &repo_dir, &["init", "-b", "weird-branch"]);
+        run_git(&git, &repo_dir, &["add", "-A"]);
+        run_git(&git, &repo_dir, &["commit", "-m", "init"]);
+
+        let backend = git_backend_for(&git, &root);
+        // 请求一个不存在的分支；候选仅 ["missing-branch"]（不含 main/master，
+        // 因 weird-branch 已作为配置分支占用，main/master 不会被追加；且 weird-branch
+        // 与 missing-branch 不匹配，故 ls-remote 预检交集为空 → 快速失败）。
+        let repo = SkillRepo {
+            owner: "qowner".to_string(),
+            name: "qrepo".to_string(),
+            branch: "missing-branch".to_string(),
+            enabled: true,
+        };
+        let err = backend.fetch_tree(&repo).await.unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("远端不存在候选分支"),
+            "应快速失败提示候选分支不存在，实际: {msg}"
+        );
+    }
+
+    /// 预检不阻断正常路径：配置分支存在于远端时仍应 clone 成功（退化为逐个 clone 的
+    /// 场景之外，ls-remote 命中后应继续正常 clone）。
+    #[tokio::test]
+    async fn fetch_tree_succeeds_when_config_branch_exists() {
+        let Some(git) = git_available() else { return };
+        let (root, _repo_dir, _o, _n, _b) = create_fixture_repo(&git);
+        let backend = git_backend_for(&git, &root);
+        let repo = fixture_repo(); // branch = main，fixture 含 main
+        let (files, used_branch) = backend.fetch_tree(&repo).await.unwrap();
+        assert_eq!(used_branch, FIXTURE_BRANCH);
+        assert!(!files.is_empty());
     }
 }
