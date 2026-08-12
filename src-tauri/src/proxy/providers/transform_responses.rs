@@ -385,7 +385,7 @@ pub fn anthropic_to_responses(
     }
 
     if let Some(v) = body.get("tool_choice") {
-        result["tool_choice"] = map_tool_choice_to_responses(v);
+        result["tool_choice"] = map_tool_choice_to_responses(v, body.get("tools"));
     }
 
     // Inject prompt_cache_key for improved cache routing on OpenAI-compatible endpoints
@@ -468,7 +468,15 @@ fn is_anthropic_web_search_tool(tool: &Value) -> bool {
     )
 }
 
-fn map_tool_choice_to_responses(tool_choice: &Value) -> Value {
+/// Map an Anthropic forced/auto tool_choice to the Responses equivalent.
+///
+/// `tools` is the original Anthropic request's `tools` array (if any). For a
+/// forced `{"type":"tool","name":...}` choice, the selector follows the matching
+/// tool declaration: a server-side web_search tool maps to Responses' built-in
+/// `{"type":"web_search"}`, while a user-defined function (even one named
+/// "web_search") keeps a `function` selector so the declaration and the choice
+/// stay consistent.
+fn map_tool_choice_to_responses(tool_choice: &Value, tools: Option<&Value>) -> Value {
     match tool_choice {
         Value::String(_) => tool_choice.clone(),
         Value::Object(obj) => match obj.get("type").and_then(|t| t.as_str()) {
@@ -479,11 +487,19 @@ fn map_tool_choice_to_responses(tool_choice: &Value) -> Value {
             // Anthropic forced tool -> Responses tool selector
             Some("tool") => {
                 let name = obj.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                // Anthropic server-side web_search tool. DeepSeek and other
-                // Responses gateways only accept {"type":"web_search"} here;
-                // a function-style selector is rejected with a 400 while
-                // thinking is enabled.
-                if name == "web_search" {
+                // Only map to Responses' built-in web_search when the forced
+                // tool's declaration in `tools` is Anthropic's server-side
+                // web_search tool. DeepSeek and other Responses gateways
+                // reject a function-style selector for it with a 400 while
+                // thinking is enabled; conversely, a user-defined function
+                // named "web_search" must keep its function selector.
+                let is_server_web_search = tools.and_then(|t| t.as_array()).is_some_and(|arr| {
+                    arr.iter().any(|t| {
+                        t.get("name").and_then(Value::as_str) == Some(name)
+                            && is_anthropic_web_search_tool(t)
+                    })
+                });
+                if is_server_web_search {
                     json!({"type": "web_search"})
                 } else {
                     json!({
@@ -1334,6 +1350,33 @@ mod tests {
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["tool_choice"]["type"], "function");
         assert_eq!(result["tool_choice"]["name"], "get_weather");
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_forced_choice_for_custom_web_search_function_keeps_function_selector(
+    ) {
+        // A user-defined function named "web_search" (type custom/missing) that
+        // is forced via tool_choice must keep a function selector, matching its
+        // function declaration. Only Anthropic's server-side web_search tool
+        // (versioned type) maps to {"type":"web_search"}.
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Use my tool"}],
+            "tools": [{
+                "name": "web_search",
+                "description": "custom wrapper",
+                "input_schema": {"type": "object", "properties": {"q": {"type": "string"}}}
+            }],
+            "tool_choice": {"type": "tool", "name": "web_search"}
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["tools"][0]["type"], "function");
+        assert_eq!(
+            result["tool_choice"],
+            json!({"type": "function", "name": "web_search"})
+        );
     }
 
     #[test]
