@@ -1181,22 +1181,24 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                 <TooltipTrigger asChild>
                                   <SelectTrigger
                                     className="h-7 max-w-44 border-0 bg-transparent px-2 text-xs hover:bg-muted"
-                                    aria-label="Claude account filter"
+                                    aria-label={t(
+                                      "sessionManager.accountFilterTooltip",
+                                    )}
                                   >
                                     <span className="truncate">
                                       {accountFilter === "all"
-                                        ? "All Claude accounts"
+                                        ? t("sessionManager.accountFilterAll")
                                         : accountFilter}
                                     </span>
                                   </SelectTrigger>
                                 </TooltipTrigger>
                                 <TooltipContent>
-                                  Claude account filter
+                                  {t("sessionManager.accountFilterTooltip")}
                                 </TooltipContent>
                               </Tooltip>
                               <SelectContent>
                                 <SelectItem value="all">
-                                  All Claude accounts
+                                  {t("sessionManager.accountFilterAll")}
                                 </SelectItem>
                                 {accountOptions.map((account) => (
                                   <SelectItem key={account} value={account}>

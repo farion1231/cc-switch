@@ -912,6 +912,8 @@
     "searchSessions": "搜尋工作階段",
     "providerFilterAll": "全部",
     "providerFilterTooltip": "供應商篩選",
+    "accountFilterAll": "全部 Claude 帳號",
+    "accountFilterTooltip": "Claude 帳號篩選",
     "sessionList": "工作階段清單",
     "viewModeTooltip": "檢視方式",
     "viewModeFlat": "清單",

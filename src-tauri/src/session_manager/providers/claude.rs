@@ -43,6 +43,7 @@ pub fn session_roots() -> Vec<PathBuf> {
 pub fn scan_sessions() -> Vec<SessionMeta> {
     let mut sessions = Vec::new();
     let mut seen_paths = std::collections::HashSet::new();
+    let mut seen_account_sessions = std::collections::HashSet::new();
     for root in session_roots() {
         let mut files = Vec::new();
         collect_jsonl_files(&root, &mut files);
@@ -52,6 +53,11 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
                 continue;
             }
             if let Some(meta) = parse_session(&path) {
+                if let Some(key) = account_session_key(&meta) {
+                    if !seen_account_sessions.insert(key) {
+                        continue;
+                    }
+                }
                 sessions.push(meta);
             }
         }
@@ -317,6 +323,12 @@ fn is_agent_session(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn account_session_key(meta: &SessionMeta) -> Option<(String, String)> {
+    meta.account_label
+        .as_ref()
+        .map(|account| (account.clone(), meta.session_id.clone()))
+}
+
 fn infer_session_id_from_filename(path: &Path) -> Option<String> {
     path.file_stem()
         .and_then(|stem| stem.to_str())
@@ -491,6 +503,38 @@ mod tests {
         )
         .expect("write queue");
         assert!(parse_session(&path).is_none());
+    }
+
+    #[test]
+    fn scan_key_keeps_standard_sessions_and_deduplicates_account_sessions() {
+        let standard_a = SessionMeta {
+            provider_id: PROVIDER_ID.to_string(),
+            session_id: "same-id".to_string(),
+            title: None,
+            summary: None,
+            project_dir: None,
+            created_at: None,
+            last_active_at: None,
+            source_path: None,
+            resume_command: None,
+            account_label: None,
+        };
+        let mut desktop_a = standard_a.clone();
+        desktop_a.account_label = Some("account@example.com".to_string());
+        let desktop_b = desktop_a.clone();
+
+        assert_eq!(account_session_key(&standard_a), None);
+        assert_eq!(
+            account_session_key(&desktop_a),
+            account_session_key(&desktop_b)
+        );
+
+        let mut other_account = desktop_a.clone();
+        other_account.account_label = Some("other@example.com".to_string());
+        assert_ne!(
+            account_session_key(&desktop_a),
+            account_session_key(&other_account)
+        );
     }
 
     #[test]

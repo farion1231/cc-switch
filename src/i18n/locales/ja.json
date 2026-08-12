@@ -911,6 +911,8 @@
     "searchSessions": "セッションを検索",
     "providerFilterAll": "すべて",
     "providerFilterTooltip": "プロバイダーフィルター",
+    "accountFilterAll": "すべての Claude アカウント",
+    "accountFilterTooltip": "Claude アカウントフィルター",
     "sessionList": "セッション一覧",
     "viewModeTooltip": "表示方式",
     "viewModeFlat": "一覧",
