@@ -80,6 +80,25 @@ const BASE_URL_ERROR_I18N_KEY: Record<BaseUrlErrorCode, string> = {
 
 const TEMPLATE_TOKEN_RE = /\$\{[^}]+\}/g;
 
+/** 上下文长度预设（大部分模型为 1M）。选中 custom 时显示自由输入框。 */
+const CONTEXT_SIZE_PRESETS: Array<{ value: number; label: string }> = [
+  { value: 1048576, label: "1M (1048576)" },
+  { value: 524288, label: "512K (524288)" },
+  { value: 262144, label: "256K (262144)" },
+  { value: 131072, label: "128K (131072)" },
+  { value: 65536, label: "64K (65536)" },
+  { value: 32768, label: "32K (32768)" },
+];
+
+const CUSTOM_OPTION = "custom";
+
+function isPresetContextSize(v?: number): boolean {
+  return v !== undefined && CONTEXT_SIZE_PRESETS.some((p) => p.value === v);
+}
+
+/** 推理强度预设 */
+const EFFORT_PRESETS = ["low", "medium", "high", "xhigh", "max"];
+
 function validateBaseUrl(raw: string): BaseUrlErrorCode | null {
   const trimmed = raw.trim();
   if (!trimmed) return "empty";
@@ -335,11 +354,33 @@ export function KimiFormFields({
       />
 
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <FormLabel>
+        <div className="flex items-center justify-between gap-2">
+          <FormLabel className="shrink-0">
             {t("kimi.form.models", { defaultValue: "模型列表" })}
           </FormLabel>
-          <div className="flex gap-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {models.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <FormLabel className="text-xs text-muted-foreground font-normal">
+                  {t("kimi.form.defaultModel", { defaultValue: "默认模型" })}
+                </FormLabel>
+                <Select
+                  value={defaultModel}
+                  onValueChange={(v) => onDefaultModelChange(v)}
+                >
+                  <SelectTrigger className="h-7 w-44 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {models.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.name || m.id}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <Button
               type="button"
               variant="outline"
@@ -376,31 +417,37 @@ export function KimiFormFields({
           </p>
         ) : (
           <div className="space-y-4">
-            {models.map((model, index) => (
-              <div
-                key={modelKeys[index]}
-                className="p-3 border border-border/50 rounded-lg space-y-3"
-              >
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
-                      defaultModel === model.id
-                        ? "bg-blue-500/15 text-blue-600 dark:text-blue-400"
-                        : "bg-muted text-muted-foreground"
-                    }`}
-                  >
-                    {defaultModel === model.id
-                      ? t("kimi.form.defaultModel", { defaultValue: "默认模型" })
-                      : t("kimi.form.fallbackModel", { defaultValue: "备选模型" })}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => onDefaultModelChange(model.id)}
-                    className="text-[10px] text-muted-foreground hover:text-foreground underline"
-                  >
-                    {t("kimi.form.setDefault", { defaultValue: "设为默认" })}
-                  </button>
-                </div>
+            {models.map((model, index) => {
+              const isDefault = defaultModel === model.id;
+              return (
+                <div
+                  key={modelKeys[index]}
+                  className={`p-3 rounded-lg space-y-3 border ${
+                    isDefault
+                      ? "border-blue-500/40 bg-blue-500/[0.04]"
+                      : "border-border/50"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${
+                        isDefault
+                          ? "bg-blue-500 text-white"
+                          : "bg-muted text-muted-foreground"
+                      }`}
+                    >
+                      {isDefault
+                        ? t("kimi.form.defaultModel", { defaultValue: "默认模型" })
+                        : t("kimi.form.fallbackModel", { defaultValue: "备选模型" })}
+                    </span>
+                    {isDefault && (
+                      <span className="text-[10px] text-blue-600 dark:text-blue-400">
+                        {t("kimi.form.defaultModelHint", {
+                          defaultValue: "切换到此供应商时使用",
+                        })}
+                      </span>
+                    )}
+                  </div>
 
                 <div className="flex items-center gap-2">
                   <div className="flex-1 space-y-1">
@@ -510,20 +557,65 @@ export function KimiFormFields({
                         defaultValue: "上下文长度（token）",
                       })}
                     </label>
-                    <Input
-                      type="number"
-                      value={model.max_context_size ?? ""}
-                      onChange={(e) =>
-                        handleModelChange(
-                          index,
-                          "max_context_size",
-                          e.target.value
-                            ? parseInt(e.target.value)
-                            : undefined,
-                        )
-                      }
-                      placeholder="262144"
-                    />
+                    <div className="flex gap-1.5">
+                      <Select
+                        value={
+                          isPresetContextSize(model.max_context_size)
+                            ? String(model.max_context_size)
+                            : CUSTOM_OPTION
+                        }
+                        onValueChange={(v) => {
+                          if (v === CUSTOM_OPTION) {
+                            // 保留当前值，切到自定义输入框
+                            handleModelChange(
+                              index,
+                              "max_context_size",
+                              model.max_context_size,
+                            );
+                          } else {
+                            handleModelChange(
+                              index,
+                              "max_context_size",
+                              parseInt(v),
+                            );
+                          }
+                        }}
+                      >
+                        <SelectTrigger className="flex-1">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {CONTEXT_SIZE_PRESETS.map((p) => (
+                            <SelectItem
+                              key={p.value}
+                              value={String(p.value)}
+                            >
+                              {p.label}
+                            </SelectItem>
+                          ))}
+                          <SelectItem value={CUSTOM_OPTION}>
+                            {t("kimi.form.custom", { defaultValue: "自定义…" })}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {!isPresetContextSize(model.max_context_size) && (
+                        <Input
+                          type="number"
+                          className="w-36"
+                          value={model.max_context_size ?? ""}
+                          onChange={(e) =>
+                            handleModelChange(
+                              index,
+                              "max_context_size",
+                              e.target.value
+                                ? parseInt(e.target.value)
+                                : undefined,
+                            )
+                          }
+                          placeholder="262144"
+                        />
+                      )}
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
@@ -596,13 +688,52 @@ export function KimiFormFields({
                         defaultValue: "默认推理强度",
                       })}
                     </label>
-                    <Input
-                      value={model.default_effort ?? ""}
-                      onChange={(e) =>
-                        handleModelChange(index, "default_effort", e.target.value)
-                      }
-                      placeholder="high"
-                    />
+                    <div className="flex gap-1.5">
+                      <Select
+                        value={
+                          model.default_effort &&
+                          EFFORT_PRESETS.includes(model.default_effort)
+                            ? model.default_effort
+                            : CUSTOM_OPTION
+                        }
+                        onValueChange={(v) => {
+                          handleModelChange(
+                            index,
+                            "default_effort",
+                            v === CUSTOM_OPTION ? "" : v,
+                          );
+                        }}
+                      >
+                        <SelectTrigger className="flex-1">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {EFFORT_PRESETS.map((e) => (
+                            <SelectItem key={e} value={e}>
+                              {e}
+                            </SelectItem>
+                          ))}
+                          <SelectItem value={CUSTOM_OPTION}>
+                            {t("kimi.form.custom", { defaultValue: "自定义…" })}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {model.default_effort &&
+                        !EFFORT_PRESETS.includes(model.default_effort) && (
+                          <Input
+                            className="w-36"
+                            value={model.default_effort ?? ""}
+                            onChange={(e) =>
+                              handleModelChange(
+                                index,
+                                "default_effort",
+                                e.target.value,
+                              )
+                            }
+                            placeholder="high"
+                          />
+                        )}
+                    </div>
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs text-muted-foreground">
@@ -641,7 +772,8 @@ export function KimiFormFields({
                   </div>
                 </AdvancedSection>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
 

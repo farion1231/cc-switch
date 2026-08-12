@@ -3097,7 +3097,9 @@
       "maxOutputSize": "輸出上限（token）",
       "supportEfforts": "支援的推理強度（逗號分隔）",
       "defaultEffort": "預設推理強度",
-      "modelBaseUrl": "模型級端點覆寫"
+      "modelBaseUrl": "模型級端點覆寫",
+      "custom": "自訂…",
+      "defaultModelHint": "切換到此供應商時使用"
     }
   }
 }

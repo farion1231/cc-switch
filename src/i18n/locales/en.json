@@ -3096,7 +3096,9 @@
       "maxOutputSize": "Max output size (tokens)",
       "supportEfforts": "Supported thinking efforts (comma separated)",
       "defaultEffort": "Default thinking effort",
-      "modelBaseUrl": "Per-model endpoint override"
+      "modelBaseUrl": "Per-model endpoint override",
+      "custom": "Custom…",
+      "defaultModelHint": "Used when switching to this provider"
     }
   }
 }

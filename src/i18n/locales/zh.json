@@ -3096,7 +3096,9 @@
       "maxOutputSize": "输出上限（token）",
       "supportEfforts": "支持的推理强度（逗号分隔）",
       "defaultEffort": "默认推理强度",
-      "modelBaseUrl": "模型级端点覆盖"
+      "modelBaseUrl": "模型级端点覆盖",
+      "custom": "自定义…",
+      "defaultModelHint": "切换到此供应商时使用"
     }
   }
 }
