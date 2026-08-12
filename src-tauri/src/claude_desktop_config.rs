@@ -1239,8 +1239,14 @@ fn current_platform_paths() -> Result<ClaudeDesktopPaths, AppError> {
 }
 
 /// Flatpak keeps an app's XDG_CONFIG_HOME inside its sandbox. Claude Desktop
-/// installed natively still stores its profile in the host's ~/.config, which
-/// must be exposed through the Flatpak filesystem permissions.
+/// installed natively uses the host's ~/.config by default, which must be
+/// exposed through the Flatpak filesystem permissions.
+///
+/// This is intentionally the host *default* configuration directory. We do
+/// not expose a directory override or attempt to recover a host-custom
+/// XDG_CONFIG_HOME: Flatpak replaces that variable with its private path, so
+/// its original host value is not available reliably from the sandbox. Users
+/// with a custom host XDG_CONFIG_HOME should run the native CC Switch package.
 #[cfg(target_os = "linux")]
 fn linux_config_dir() -> PathBuf {
     let xdg_config_home = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
