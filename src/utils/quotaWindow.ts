@@ -41,8 +41,19 @@ export function tierWindowSeconds(tierName: string): number | undefined {
 }
 
 /**
+ * 允许「距重置」略超窗口长的容差（刚重置 + 客户端时钟偏差）。
+ * 与 tray.rs `WINDOW_OVERSHOOT_TOLERANCE` 保持一致。
+ */
+const WINDOW_OVERSHOOT_TOLERANCE = 0.05;
+
+/**
  * 窗口时间流逝百分比 0–100。
  * 缺少重置时间或窗口时长时返回 undefined。
+ *
+ * 若「距重置」明显超过窗口长，说明该 tier 的窗口时长只是启发式猜测
+ * （如 Grok 按重置距离反推的 `weekly_limit` / `monthly`，见
+ * `subscription_grok::tier_name_for_reset`），此时返回 undefined 退化为只显示
+ * 用量%——而不是 clamp 成 0% 后把任何非零用量都误判成「超进度」。
  */
 export function elapsedPercent(
   windowSeconds: number,
@@ -57,7 +68,11 @@ export function elapsedPercent(
     return undefined;
   }
   const windowMs = windowSeconds * 1000;
-  const ratio = (windowMs - (resetMs - nowMs)) / windowMs;
+  const remainingMs = resetMs - nowMs;
+  if (remainingMs > windowMs * (1 + WINDOW_OVERSHOOT_TOLERANCE)) {
+    return undefined;
+  }
+  const ratio = (windowMs - remainingMs) / windowMs;
   return Math.min(100, Math.max(0, ratio * 100));
 }
 

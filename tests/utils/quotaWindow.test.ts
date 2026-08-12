@@ -27,6 +27,20 @@ describe("quotaWindow", () => {
     expect(tierElapsedPercent("five_hour", resetsAt, now)).toBeCloseTo(80, 5);
   });
 
+  it("omits elapsed when reset is farther out than the assumed window", () => {
+    // Grok 把 4–12 天后的重置都标成 weekly_limit；10 天后重置配 7 天窗口
+    // 会算出负剩余 → 旧实现 clamp 成 0%，让任何非零用量都被误判超进度。
+    const now = 1_700_000_000_000;
+    const tenDays = new Date(now + 10 * 24 * 3600 * 1000).toISOString();
+    expect(tierElapsedPercent("weekly_limit", tenDays, now)).toBeUndefined();
+    // 刚重置（剩余 ≈ 窗口长）落在容差内，仍算 0%
+    const justReset = new Date(now + 7 * 24 * 3600 * 1000).toISOString();
+    expect(tierElapsedPercent("weekly_limit", justReset, now)).toBeCloseTo(
+      0,
+      5,
+    );
+  });
+
   it("returns undefined without reset or window", () => {
     expect(elapsedPercent(5 * 3600, null, Date.now())).toBeUndefined();
     expect(

@@ -291,15 +291,29 @@ fn parse_dynamic_window_seconds(name: &str) -> Option<i64> {
     None
 }
 
+/// 允许「距重置」略超窗口长的容差（刚重置 + 客户端时钟偏差）。
+/// 与前端 `src/utils/quotaWindow.ts` 的同名常量保持一致。
+const WINDOW_OVERSHOOT_TOLERANCE: f64 = 0.05;
+
 /// 窗口时间流逝百分比：(窗口长 - 距重置) / 窗口长，clamp 到 [0,100]。
+///
+/// 若「距重置」明显超过窗口长，说明该 tier 的窗口时长只是启发式猜测
+/// （如 Grok 按重置距离反推的 `weekly_limit` / `monthly`，见
+/// `subscription_grok::tier_name_for_reset` 把 4–12 天都标成周窗口），此时返回
+/// None 退化为只显示用量%——而不是 clamp 成 0% 后把任何非零用量都误判成
+/// 「超进度」并加粗。
 fn elapsed_percent_from_reset(window_seconds: i64, resets_at: &str, now_ms: i64) -> Option<f64> {
     if window_seconds <= 0 {
         return None;
     }
     let reset_ms = parse_resets_at_ms(resets_at)?;
     let window_ms = (window_seconds as f64) * 1000.0;
+    let remaining_ms = (reset_ms - now_ms) as f64;
+    if remaining_ms > window_ms * (1.0 + WINDOW_OVERSHOOT_TOLERANCE) {
+        return None;
+    }
     // ratio 为 0–1 的流逝占比，再换成 0–100 的百分比
-    let ratio = (window_ms - (reset_ms - now_ms) as f64) / window_ms;
+    let ratio = (window_ms - remaining_ms) / window_ms;
     Some((ratio * 100.0).clamp(0.0, 100.0))
 }
 
@@ -1735,6 +1749,26 @@ mod tests {
             .to_rfc3339();
         let elapsed = elapsed_percent_from_reset(5 * 3600, &resets, now).unwrap();
         assert!((elapsed - 80.0).abs() < 0.01, "elapsed={elapsed}");
+    }
+
+    #[test]
+    fn elapsed_percent_omits_when_reset_exceeds_assumed_window() {
+        // Grok 的 tier 名是启发式：4–12 天后重置都叫 weekly_limit。
+        // 10 天后重置搭 7 天窗口算不出有意义的时间%，应返回 None 而非 clamp 到 0。
+        let now = 1_700_000_000_000_i64;
+        let ten_days = chrono::DateTime::from_timestamp_millis(now + 10 * 24 * 3600 * 1000)
+            .unwrap()
+            .to_rfc3339();
+        assert_eq!(
+            elapsed_percent_from_reset(7 * 24 * 3600, &ten_days, now),
+            None
+        );
+        // 刚重置（剩余 ≈ 窗口长）落在容差内，仍算 0%
+        let just_reset = chrono::DateTime::from_timestamp_millis(now + 7 * 24 * 3600 * 1000)
+            .unwrap()
+            .to_rfc3339();
+        let elapsed = elapsed_percent_from_reset(7 * 24 * 3600, &just_reset, now).unwrap();
+        assert!(elapsed.abs() < 0.01, "elapsed={elapsed}");
     }
 
     #[test]
