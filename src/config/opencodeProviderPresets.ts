@@ -2091,4 +2091,64 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     iconColor: "#6366F1",
     isCustomTemplate: true,
   },
+  {
+    name: "PPIO",
+    websiteUrl: "https://ppio.com",
+    apiKeyUrl: "https://ppio.com/settings/key-management",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "PPIO",
+      options: {
+        baseURL: "https://api.ppio.com/openai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "deepseek/deepseek-v4-flash-0731": {
+          name: "Deepseek V4 Flash 0731",
+        },
+      },
+    },
+    category: "aggregator",
+    icon: "ppio",
+    iconColor: "#2874FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "JieKou AI",
+    websiteUrl: "https://jiekou.ai/#model-library",
+    apiKeyUrl: "https://jiekou.ai/settings/key-management",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "JieKou AI",
+      options: {
+        baseURL: "https://api.jiekou.ai/openai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "claude-fable-5": {
+          name: "Claude Fable 5",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    icon: "jiekou",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
 ];
