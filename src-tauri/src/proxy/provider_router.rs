@@ -229,6 +229,15 @@ impl ProviderRouter {
         }
     }
 
+    /// 取出已创建的熔断器（不创建新的）
+    ///
+    /// 与 [`get_or_create_circuit_breaker`] 不同，若该 provider 从未发生过请求（未创建熔断器），
+    /// 返回 `None`；调用方据此把状态视为 Closed（未熔断）。供 [`crate::proxy::health::HealthChecker`] 使用。
+    pub async fn get_breaker(&self, circuit_key: &str) -> Option<Arc<CircuitBreaker>> {
+        let breakers = self.circuit_breakers.read().await;
+        breakers.get(circuit_key).cloned()
+    }
+
     /// 获取或创建熔断器
     async fn get_or_create_circuit_breaker(&self, key: &str) -> Arc<CircuitBreaker> {
         // 先尝试读锁获取
@@ -273,6 +282,7 @@ impl ProviderRouter {
 mod tests {
     use super::*;
     use crate::database::Database;
+    use crate::proxy::circuit_breaker::CircuitState;
     use serde_json::json;
     use serial_test::serial;
     use std::env;
@@ -519,5 +529,31 @@ mod tests {
         let third = router.allow_provider_request("a", "claude").await;
         assert!(third.allowed);
         assert!(third.used_half_open_permit);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn get_breaker_returns_none_before_creation() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let router = ProviderRouter::new(db);
+
+        // 从未创建过 breaker
+        assert!(router.get_breaker("claude:unknown").await.is_none());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn get_breaker_returns_some_after_creation() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let router = ProviderRouter::new(db);
+
+        // 通过任意触发 get_or_create 的路径创建后即可取出
+        let _ = router.get_or_create_circuit_breaker("claude:p1").await;
+        let breaker = router.get_breaker("claude:p1").await;
+        assert!(breaker.is_some());
+        // 与 select_providers 用的是同一个 Arc 实例
+        assert_eq!(breaker.unwrap().get_state().await, CircuitState::Closed);
     }
 }
