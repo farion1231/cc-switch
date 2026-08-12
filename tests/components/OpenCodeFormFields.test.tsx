@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ComponentProps, PropsWithChildren } from "react";
 import { useForm } from "react-hook-form";
 import { describe, expect, it, vi } from "vitest";
@@ -140,6 +140,39 @@ describe("OpenCodeFormFields", () => {
 
     expect(screen.getByDisplayValue("option-mode")).toBeInTheDocument();
     expect(screen.getByDisplayValue("legacy")).toBeInTheDocument();
+  });
+
+  it("shows extra options as an always-visible addable section", () => {
+    const onExtraOptionsChange = vi.fn();
+    renderOpenCodeForm({ onExtraOptionsChange });
+
+    const heading = screen.getByText("Extra SDK Options");
+    const section = heading.closest("div.border-l");
+    expect(section).not.toBeNull();
+    expect(
+      within(section as HTMLElement).getByText(
+        "No extra SDK options configured",
+      ),
+    ).toBeVisible();
+    expect(
+      within(section as HTMLElement).queryByRole("button", {
+        name: /Extra SDK Options/,
+      }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      within(section as HTMLElement).getByRole("button", { name: "Add" }),
+    );
+
+    const nextOptions = onExtraOptionsChange.mock.calls[0][0];
+    expect(Object.keys(nextOptions)[0]).toMatch(/^draft-option:/);
+  });
+
+  it("uses the family section divider for model configuration", () => {
+    renderOpenCodeForm();
+
+    const section = screen.getByText("Models").closest("div.border-l");
+    expect(section).toHaveClass("border-border-default", "pl-3");
   });
 
   it("surfaces existing model token limits", () => {
