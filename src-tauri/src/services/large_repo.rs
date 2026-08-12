@@ -147,7 +147,13 @@ impl LargeRepoBackend for GitBackend {
                         last_error = Some(anyhow!("clone 的 .git 目录超过磁盘上限"));
                         continue;
                     }
-                    match run_git_ls_tree(&self.git, temp_dir.path()).await {
+                    match run_git_ls_tree(
+                        &self.git,
+                        temp_dir.path(),
+                        crate::proxy::http_client::get_current_proxy_url().as_deref(),
+                    )
+                    .await
+                    {
                         Ok(output) => {
                             let files = parse_ls_tree_output(&output)?;
                             log::debug!(
@@ -216,9 +222,12 @@ impl LargeRepoBackend for GitBackend {
         }
         let git = self.git.clone();
         let sha = file.blob_sha.clone();
+        let proxy = crate::proxy::http_client::get_current_proxy_url();
         let bytes = timeout(
             Duration::from_secs(GIT_TIMEOUT_SECS),
-            spawn_blocking(move || cat_file_with_budget(&git, &workdir, &sha)),
+            spawn_blocking(move || {
+                cat_file_with_budget(&git, &workdir, &sha, proxy.as_deref())
+            }),
         )
         .await
         .map_err(|_| anyhow!("git cat-file 超时"))?
@@ -292,9 +301,10 @@ async fn clone_repo(
 }
 
 /// 在 clone 目录里执行 `git ls-tree -r -l -z HEAD`（30s 超时）
-async fn run_git_ls_tree(git: &Path, workdir: &Path) -> Result<Vec<u8>> {
+async fn run_git_ls_tree(git: &Path, workdir: &Path, proxy: Option<&str>) -> Result<Vec<u8>> {
     let git = git.to_path_buf();
     let workdir = workdir.to_path_buf();
+    let proxy = proxy.map(|p| p.to_string());
     timeout(
         Duration::from_secs(30),
         spawn_blocking(move || {
@@ -302,7 +312,15 @@ async fn run_git_ls_tree(git: &Path, workdir: &Path) -> Result<Vec<u8>> {
                 "[large_repo][ls-tree] 开始: workdir={}",
                 workdir.display()
             );
-            let output = Command::new(&git)
+            let mut cmd = Command::new(&git);
+            if let Some(proxy) = &proxy {
+                log::debug!("[large_repo][ls-tree] 使用代理: {proxy}");
+                cmd.arg("-c").arg(format!("http.proxy={proxy}"));
+                cmd.arg("-c").arg(format!("https.proxy={proxy}"));
+            } else {
+                log::debug!("[large_repo][ls-tree] 未配置代理");
+            }
+            let output = cmd
                 .arg("ls-tree")
                 .arg("-r")
                 .arg("-l")
@@ -332,14 +350,22 @@ async fn run_git_ls_tree(git: &Path, workdir: &Path) -> Result<Vec<u8>> {
 
 /// `git cat-file blob <sha>` 流式读取，带 `MAX_ARCHIVE_DOWNLOAD_BYTES` 预算
 ///
-/// partial clone 下 blob 缺失时会触发 lazy fetch（走 clone 时配置的代理）。
-fn cat_file_with_budget(git: &Path, workdir: &Path, sha: &str) -> Result<Vec<u8>> {
+/// partial clone 下 blob 缺失时会触发 lazy fetch（显式传代理，与 clone/ls-tree 一致）。
+fn cat_file_with_budget(git: &Path, workdir: &Path, sha: &str, proxy: Option<&str>) -> Result<Vec<u8>> {
     use std::io::Read;
     log::debug!(
         "[large_repo][cat-file] 开始: sha={sha} workdir={}",
         workdir.display()
     );
-    let mut child = Command::new(git)
+    let mut cmd = Command::new(git);
+    if let Some(proxy) = proxy {
+        log::debug!("[large_repo][cat-file] 使用代理: {proxy}");
+        cmd.arg("-c").arg(format!("http.proxy={proxy}"));
+        cmd.arg("-c").arg(format!("https.proxy={proxy}"));
+    } else {
+        log::debug!("[large_repo][cat-file] 未配置代理");
+    }
+    let mut child = cmd
         .arg("cat-file")
         .arg("blob")
         .arg(sha)
