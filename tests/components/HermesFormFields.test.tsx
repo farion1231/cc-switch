@@ -57,9 +57,17 @@ describe("HermesFormFields", () => {
     expect(screen.queryByText("高级选项")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("上下文长度")).not.toBeInTheDocument();
 
-    fireEvent.click(
-      screen.getAllByRole("button", { name: "展开或收起模型详情" })[0],
-    );
+    const detailsButton = screen.getAllByRole("button", {
+      name: "展开或收起模型详情",
+    })[0];
+    expect(detailsButton).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(detailsButton);
+
+    expect(detailsButton).toHaveAttribute("aria-expanded", "true");
+    expect(
+      document.getElementById(detailsButton.getAttribute("aria-controls")!),
+    ).toBeInTheDocument();
 
     const contextLength = screen.getByLabelText("上下文长度");
     expect(contextLength).toHaveAttribute("type", "text");

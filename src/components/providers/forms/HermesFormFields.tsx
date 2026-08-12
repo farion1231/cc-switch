@@ -307,6 +307,7 @@ export function HermesFormFields({
             {models.map((model, index) => {
               const modelKey = modelKeys[index];
               const isExpanded = expandedModelKeys.has(modelKey);
+              const detailsId = `hermes-model-details-${modelKey}`;
               return (
                 <div key={modelKey} className="space-y-2">
                   <div className="flex items-center gap-2">
@@ -318,6 +319,8 @@ export function HermesFormFields({
                       aria-label={t("hermes.form.toggleModelDetails", {
                         defaultValue: "展开或收起模型详情",
                       })}
+                      aria-expanded={isExpanded}
+                      aria-controls={detailsId}
                       className="h-9 w-9 shrink-0"
                     >
                       <ChevronRight
@@ -377,7 +380,10 @@ export function HermesFormFields({
                   </div>
 
                   {isExpanded && (
-                    <div className="ml-9 grid gap-3 border-l border-border-default pl-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.25rem]">
+                    <div
+                      id={detailsId}
+                      className="ml-9 grid gap-3 border-l border-border-default pl-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.25rem]"
+                    >
                       <div className="space-y-1">
                         <Label
                           htmlFor={`hermes-model-context-${modelKey}`}
