@@ -2637,6 +2637,12 @@ impl ProxyService {
         }
 
         let app_type_str = app_type.as_str();
+        // 快照的读-改-写走和热切换、接管开关同一把 per-app 锁。不加锁会和
+        // update_live_backup_from_provider_inner 交错：它先读快照，再用
+        // preserve_toml_mcp_servers_from_existing_config 把读到的 [mcp_servers] 带进新快照，
+        // 中间发生的删除因此被原样写回，条目又回到快照里。
+        let _guard = self.switch_locks.lock_for_app(app_type_str).await;
+
         let Some(backup) = self
             .db
             .get_live_backup(app_type_str)
@@ -2646,8 +2652,13 @@ impl ProxyService {
             return Ok(());
         };
 
-        let mut settings: Value = serde_json::from_str(&backup.original_config)
-            .map_err(|e| format!("解析 {app_type_str} Live 备份失败: {e}"))?;
+        // 快照解析失败一律告警跳过：调用方 delete_server 在此之前已经删掉库表行、改完 live
+        // 配置，这里再抛错只会让整条命令报失败，而重试时行已不在，直接返回 false。坏快照也
+        // 复活不了任何东西：restore_live_config_for_app_inner 同样解析失败，不会写回 live。
+        let Ok(mut settings) = serde_json::from_str::<Value>(&backup.original_config) else {
+            log::warn!("解析 {app_type_str} Live 备份失败，跳过快照清理");
+            return Ok(());
+        };
         let Some(config_text) = settings
             .get("config")
             .and_then(|value| value.as_str())
@@ -2659,7 +2670,7 @@ impl ProxyService {
             return Ok(());
         }
 
-        // 解析失败与 live 侧删除保持一致：告警跳过，不让一份坏快照挡住删除操作本身。
+        // 同上，也与 live 侧删除保持一致：坏快照不该挡住删除操作本身。
         let Ok(mut doc) = config_text.parse::<toml_edit::DocumentMut>() else {
             log::warn!("解析 {app_type_str} Live 备份中的 config.toml 失败，跳过快照清理");
             return Ok(());
@@ -4453,6 +4464,95 @@ wire_api = "responses"
             "got: {config}"
         );
         assert!(config.contains("default = \"grok-4.5\""), "got: {config}");
+    }
+
+    async fn codex_backup_config_text(db: &Database) -> String {
+        let backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("read backup")
+            .expect("backup exists");
+        let value: Value = serde_json::from_str(&backup.original_config).expect("parse backup");
+        value["config"].as_str().expect("config text").to_string()
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn live_backup_mcp_removal_waits_for_the_app_switch_lock() {
+        use tokio::time::{sleep, Duration};
+
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": {},
+                "config": "[mcp_servers.context7]\ntype = \"stdio\"\ncommand = \"npx\"\n"
+            }))
+            .expect("serialize backup"),
+        )
+        .await
+        .expect("save backup");
+
+        let service = ProxyService::new(db.clone());
+        let guard = service.lock_switch_for_test("codex").await;
+
+        let service_for_removal = service.clone();
+        let removal = tokio::spawn(async move {
+            service_for_removal
+                .remove_mcp_server_from_live_backup(&AppType::Codex, "context7")
+                .await
+                .expect("remove from live backup")
+        });
+
+        sleep(Duration::from_millis(20)).await;
+        assert!(
+            codex_backup_config_text(&db).await.contains("context7"),
+            "removal must queue behind the per-app switch lock, otherwise a hot switch \
+             holding it writes back the snapshot it read before the delete"
+        );
+
+        drop(guard);
+        removal.await.expect("join removal");
+        assert!(!codex_backup_config_text(&db).await.contains("context7"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn delete_mcp_server_survives_a_live_backup_that_is_not_valid_json() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().expect("init db"));
+
+        let apps = crate::app_config::McpApps {
+            codex: true,
+            ..Default::default()
+        };
+        db.save_mcp_server(&mcp_server_for_test("context7", apps))
+            .expect("seed mcp server");
+        db.save_live_backup("codex", "{ not json")
+            .await
+            .expect("save backup");
+
+        let state = crate::store::AppState::new(db.clone());
+        // 库表行和 live 配置在快照清理之前就已经改掉了，这里再报错等于命令失败但删除已生效，
+        // 而重试会因为行不在而返回 false，用户没有任何办法把它删干净。
+        assert!(
+            crate::services::mcp::McpService::delete_server(&state, "context7")
+                .expect("an unreadable snapshot must not fail the delete")
+        );
+        assert!(!db
+            .get_all_mcp_servers()
+            .expect("read servers")
+            .contains_key("context7"));
+
+        let backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("read backup")
+            .expect("backup exists");
+        assert_eq!(backup.original_config, "{ not json");
     }
 
     #[test]
