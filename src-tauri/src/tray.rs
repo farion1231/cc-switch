@@ -1752,6 +1752,22 @@ mod tests {
     }
 
     #[test]
+    fn elapsed_percent_parses_offset_free_reset_as_utc() {
+        // 12:00Z 起算的 5h 窗口，此刻 13:00Z，重置写成无时区的 16:00 → 已流逝 40%。
+        // 前端 `parseResetsAtMs` 与此保持一致，两处显示才不会差一个时区。
+        let now = chrono::DateTime::parse_from_rfc3339("2026-08-12T13:00:00Z")
+            .unwrap()
+            .timestamp_millis();
+        for reset in ["2026-08-12T16:00:00", "2026-08-12 16:00:00"] {
+            let elapsed = elapsed_percent_from_reset(5 * 3600, reset, now).unwrap();
+            assert!(
+                (elapsed - 40.0).abs() < 0.01,
+                "reset={reset} elapsed={elapsed}"
+            );
+        }
+    }
+
+    #[test]
     fn elapsed_percent_omits_when_reset_exceeds_assumed_window() {
         // Grok 的 tier 名是启发式：4–12 天后重置都叫 weekly_limit。
         // 10 天后重置搭 7 天窗口算不出有意义的时间%，应返回 None 而非 clamp 到 0。

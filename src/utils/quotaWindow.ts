@@ -40,6 +40,27 @@ export function tierWindowSeconds(tierName: string): number | undefined {
   return undefined;
 }
 
+/** 末尾已带时区标记（`Z` 或 `±HH:MM` / `±HHMM`） */
+const HAS_TZ_OFFSET = /(?:Z|[+-]\d{2}:?\d{2})$/i;
+
+/** 无时区的日期时间：`2026-08-12T12:00:00(.123)` 或空格分隔变体 */
+const NAIVE_DATETIME =
+  /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/;
+
+/**
+ * 解析重置时间戳，与 tray.rs `parse_resets_at_ms` 语义一致：
+ * 不带时区的形式按 **UTC** 解释，而非 WebView 本地时区。
+ * 裸 `Date.parse("2026-08-12T12:00:00")` 会当成本地时间，东八区就会偏 8 小时，
+ * 对 5 小时窗口直接被 clamp 成 0% / 100%，且与托盘显示不一致。
+ */
+export function parseResetsAtMs(resetsAt: string): number {
+  const trimmed = resetsAt.trim();
+  if (!HAS_TZ_OFFSET.test(trimmed) && NAIVE_DATETIME.test(trimmed)) {
+    return Date.parse(`${trimmed.replace(" ", "T")}Z`);
+  }
+  return Date.parse(trimmed);
+}
+
 /**
  * 允许「距重置」略超窗口长的容差（刚重置 + 客户端时钟偏差）。
  * 与 tray.rs `WINDOW_OVERSHOOT_TOLERANCE` 保持一致。
@@ -63,7 +84,7 @@ export function elapsedPercent(
   if (!resetsAt || windowSeconds <= 0) {
     return undefined;
   }
-  const resetMs = Date.parse(resetsAt);
+  const resetMs = parseResetsAtMs(resetsAt);
   if (!Number.isFinite(resetMs)) {
     return undefined;
   }

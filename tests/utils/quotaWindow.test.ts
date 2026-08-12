@@ -27,6 +27,24 @@ describe("quotaWindow", () => {
     expect(tierElapsedPercent("five_hour", resetsAt, now)).toBeCloseTo(80, 5);
   });
 
+  it("parses offset-free timestamps as UTC like tray.rs", () => {
+    // 12:00Z 起算的 5h 窗口，此刻 13:00Z，重置写成无时区的 16:00 → 已流逝 40%
+    const now = Date.parse("2026-08-12T13:00:00Z");
+    expect(elapsedPercent(5 * 3600, "2026-08-12T16:00:00", now)).toBeCloseTo(
+      40,
+      5,
+    );
+    // 空格分隔的变体同样按 UTC
+    expect(elapsedPercent(5 * 3600, "2026-08-12 16:00:00", now)).toBeCloseTo(
+      40,
+      5,
+    );
+    // 带时区的仍按其自身 offset
+    expect(
+      elapsedPercent(5 * 3600, "2026-08-13T00:00:00+08:00", now),
+    ).toBeCloseTo(40, 5);
+  });
+
   it("omits elapsed when reset is farther out than the assumed window", () => {
     // Grok 把 4–12 天后的重置都标成 weekly_limit；10 天后重置配 7 天窗口
     // 会算出负剩余 → 旧实现 clamp 成 0%，让任何非零用量都被误判超进度。

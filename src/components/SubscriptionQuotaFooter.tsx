@@ -6,6 +6,7 @@ import { useSubscriptionQuota } from "@/lib/query/subscription";
 import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
 import {
   isOverPace,
+  parseResetsAtMs,
   splitUsedElapsedPercent,
   tierElapsedPercent,
 } from "@/utils/quotaWindow";
@@ -58,7 +59,9 @@ export function utilizationColor(utilization: number): string {
 /** 计算倒计时的纯时间字符串，如 "2h30m"、"3d12h" */
 export function countdownStr(resetsAt: string | null): string | null {
   if (!resetsAt) return null;
-  const diffMs = new Date(resetsAt).getTime() - Date.now();
+  // 走 parseResetsAtMs 而非裸 new Date()：无时区的重置时间按 UTC 解释，
+  // 与托盘 tray.rs / 时间% 保持一致，避免倒计时整体偏一个时区。
+  const diffMs = parseResetsAtMs(resetsAt) - Date.now();
   if (diffMs <= 0) return null;
 
   const hours = Math.floor(diffMs / (1000 * 60 * 60));
@@ -310,7 +313,6 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
     </div>
   );
 };
-
 
 /** 用量%-时间%：超进度时只加粗用量数字 */
 export const UsedElapsedText: React.FC<{
