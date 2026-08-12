@@ -7,7 +7,7 @@ pub struct ProxyConfig {
     pub listen_address: String,
     /// 监听端口
     pub listen_port: u16,
-    /// 最大重试次数
+    /// 每个供应商的额外重试次数
     pub max_retries: u8,
     /// 请求超时时间（秒）- 已废弃，保留兼容
     pub request_timeout: u64,
@@ -166,7 +166,7 @@ pub struct AppProxyConfig {
     pub enabled: bool,
     /// 该 app 自动故障转移开关
     pub auto_failover_enabled: bool,
-    /// 最大重试次数
+    /// 每个供应商的额外重试次数
     pub max_retries: u32,
     /// 流式首字超时（秒）
     pub streaming_first_byte_timeout: u32,

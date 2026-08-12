@@ -105,7 +105,7 @@ export function AutoFailoverConfigPanel({
     checkRange(
       raw.maxRetries,
       ranges.maxRetries,
-      t("proxy.autoFailover.maxRetries", "最大重试次数"),
+      t("proxy.autoFailover.maxRetries", "每个供应商额外重试次数"),
     );
     checkRange(
       raw.streamingFirstByteTimeout,
@@ -241,7 +241,7 @@ export function AutoFailoverConfigPanel({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor={`maxRetries-${appType}`}>
-                {t("proxy.autoFailover.maxRetries", "最大重试次数")}
+                {t("proxy.autoFailover.maxRetries", "每个供应商额外重试次数")}
               </Label>
               <Input
                 id={`maxRetries-${appType}`}
@@ -257,7 +257,7 @@ export function AutoFailoverConfigPanel({
               <p className="text-xs text-muted-foreground">
                 {t(
                   "proxy.autoFailover.maxRetriesHint",
-                  "请求失败时的重试次数（0-10）",
+                  "每个供应商额外重试次数（0-10），每次间隔 1 秒",
                 )}
               </p>
             </div>
