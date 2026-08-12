@@ -851,7 +851,11 @@ impl KimiOAuthManager {
             .get_mut(account_id)
             .ok_or_else(|| KimiOAuthError::AccountNotFound(account_id.to_string()))?;
         account.requires_reauth = true;
-        let default_account_id = Self::fallback_default_account_id(&accounts);
+        let stored_default = self.default_account_id.read().await.clone();
+        let default_account_id = match stored_default {
+            Some(id) if Self::is_usable_account(&accounts, &id) => Some(id),
+            _ => Self::fallback_default_account_id(&accounts),
+        };
         self.persist_and_commit(accounts, default_account_id)
             .await?;
         self.access_tokens.write().await.remove(account_id);
@@ -1509,6 +1513,45 @@ mod tests {
                 & 0o777;
             assert_eq!(mode, 0o600);
         }
+    }
+
+    #[tokio::test]
+    async fn rejecting_non_default_account_preserves_usable_default() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let (manager, _) = test_manager(data_dir.path().to_path_buf(), Vec::new());
+        for account_id in ["account-one", "account-two", "account-three"] {
+            manager
+                .add_account_internal(
+                    account_id.to_string(),
+                    None,
+                    format!("refresh-{account_id}"),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+        manager
+            .accounts
+            .write()
+            .await
+            .get_mut("account-three")
+            .unwrap()
+            .authenticated_at += 1;
+        manager.set_default_account("account-one").await.unwrap();
+
+        manager
+            .require_reauthentication_after_inference_rejection("account-two")
+            .await
+            .unwrap();
+
+        let status = manager.get_status().await;
+        assert_eq!(status.default_account_id.as_deref(), Some("account-one"));
+        let (reloaded, _) = test_manager(data_dir.path().to_path_buf(), Vec::new());
+        assert_eq!(
+            reloaded.get_status().await.default_account_id.as_deref(),
+            Some("account-one")
+        );
     }
 
     #[tokio::test]
