@@ -1719,4 +1719,17 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     icon: "jiekou",
     iconColor: "#000000",
   },
+  {
+    name: "EveryAPI",
+    websiteUrl: "https://everyapi.ai",
+    apiKeyUrl: "https://app.everyapi.ai/keys",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig("EveryAPI", "https://api.everyapi.ai/v1"),
+    // 第二项为中国大陆加速边缘节点，指向同一网关
+    endpointCandidates: [
+      "https://api.everyapi.ai/v1",
+      "https://api-cn.everyapi.ai/v1",
+    ],
+    category: "aggregator",
+  },
 ];

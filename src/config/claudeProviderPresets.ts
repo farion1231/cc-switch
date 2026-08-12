@@ -1475,4 +1475,22 @@ export const providerPresets: ProviderPreset[] = [
     icon: "jiekou",
     iconColor: "#000000",
   },
+  {
+    name: "EveryAPI",
+    websiteUrl: "https://everyapi.ai",
+    apiKeyUrl: "https://app.everyapi.ai/keys",
+    settingsConfig: {
+      env: {
+        // 裸 origin，不带 /v1：Anthropic 客户端会自行追加版本路径
+        ANTHROPIC_BASE_URL: "https://api.everyapi.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    // 第二项为中国大陆加速边缘节点，指向同一网关
+    endpointCandidates: [
+      "https://api.everyapi.ai",
+      "https://api-cn.everyapi.ai",
+    ],
+  },
 ];
