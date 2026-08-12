@@ -23,6 +23,7 @@ use std::process::{Command, Stdio};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
+use tokio::sync::Semaphore;
 use tokio::task::spawn_blocking;
 use tokio::time::timeout;
 
@@ -32,8 +33,8 @@ use crate::services::skill::{
 
 // ========== 常量 ==========
 
-/// 大仓库判定阈值：仓库 size（KB）超过该值走本模块路径（32MB）
-pub const LARGE_REPO_THRESHOLD_KB: u64 = 32 * 1024;
+/// 大仓库判定阈值：仓库 size（KB）超过该值走本模块路径（4MB）
+pub const LARGE_REPO_THRESHOLD_KB: u64 = 4 * 1024;
 
 /// 本地哈希存储前缀：SHA-1 blob 方案
 pub const BLOB_SHA1_PREFIX: &str = "blob-sha1:";
@@ -48,9 +49,52 @@ pub const TREE_RESPONSE_BYTES_LIMIT: u64 = 64 * 1024 * 1024;
 pub const CLONE_DISK_LIMIT: u64 = 512 * 1024 * 1024;
 
 /// git 命令超时（秒）
-const GIT_TIMEOUT_SECS: u64 = 60;
+const GIT_TIMEOUT_SECS: u64 = 30;
 /// GitHub REST/raw API 请求超时（秒）
-const API_TIMEOUT_SECS: u64 = 60;
+const API_TIMEOUT_SECS: u64 = 30;
+
+/// 统一构造 git CLI 命令。
+///
+/// 集中注入所有 git 子命令共享的全局配置，避免各处重复：
+/// - `-c credential.helper=`：禁用凭据交互提示，防止挂起/弹窗
+/// - `-c http.version=HTTP/1.1`：回退到 HTTP/1.1，缓解部分网络下 HTTP/2
+///   多路复用导致的 SSL 超时
+/// - `-c http.proxy` / `-c https.proxy`：应用配置了代理时透传（无代理不传）
+/// - `GIT_TERMINAL_PROMPT=0`：禁用终端凭据提示
+///
+/// 调用方拿到 `Command` 后自行 `.arg(...)` 子命令与参数、设置 `current_dir`、
+/// 超时与输出处理。
+fn git_command(git: &Path) -> Command {
+    let mut cmd = Command::new(git);
+    cmd.arg("-c").arg("credential.helper=")
+        .arg("-c")
+        .arg("http.version=HTTP/1.1");
+    if let Some(proxy) = crate::proxy::http_client::get_current_proxy_url() {
+        cmd.arg("-c").arg(format!("http.proxy={proxy}"))
+            .arg("-c")
+            .arg(format!("https.proxy={proxy}"));
+    }
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
+    cmd
+}
+
+/// 并行 `fetch_file` 的并发上限。
+///
+/// 无限制并行时，`list_skill_mds` / `materialize_skill_dir` 会瞬间为每个文件
+/// spawn 一个 `git cat-file` 子进程（或一次 raw API 请求），大仓库可能有上百
+/// 个文件，会压垮本机或触发 GitHub 限流。用全局 Semaphore 把同时在飞的
+/// fetch 数量收敛到一个合理上限（默认 8）。
+///
+/// 注意：这是**进程级**共享信号量。跨仓库并行（`check_updates` 的 join_all）
+/// 与单仓库内多文件并行会共用这个预算，因此取值偏保守。
+static FETCH_FILE_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| {
+    let n = std::env::var("CC_SWITCH_LARGE_REPO_FETCH_CONCURRENCY")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(8);
+    Semaphore::new(n)
+});
 
 // ========== 数据结构 ==========
 
@@ -184,12 +228,7 @@ impl LargeRepoBackend for GitBackend {
                         last_error = Some(anyhow!("clone 的 .git 目录超过磁盘上限"));
                         continue;
                     }
-                    match run_git_ls_tree(
-                        &self.git,
-                        temp_dir.path(),
-                        crate::proxy::http_client::get_current_proxy_url().as_deref(),
-                    )
-                    .await
+                    match run_git_ls_tree(&self.git, temp_dir.path()).await
                     {
                         Ok(output) => {
                             let files = parse_ls_tree_output(&output)?;
@@ -259,12 +298,9 @@ impl LargeRepoBackend for GitBackend {
         }
         let git = self.git.clone();
         let sha = file.blob_sha.clone();
-        let proxy = crate::proxy::http_client::get_current_proxy_url();
         let bytes = timeout(
             Duration::from_secs(GIT_TIMEOUT_SECS),
-            spawn_blocking(move || {
-                cat_file_with_budget(&git, &workdir, &sha, proxy.as_deref())
-            }),
+            spawn_blocking(move || cat_file_with_budget(&git, &workdir, &sha)),
         )
         .await
         .map_err(|_| anyhow!("git cat-file 超时"))?
@@ -288,17 +324,11 @@ impl LargeRepoBackend for GitBackend {
 async fn ls_remote_branches(git: &Path, base_url: &str, repo: &SkillRepo) -> Result<Vec<String>> {
     let url = format!("{base_url}/{}/{}.git", repo.owner, repo.name);
     log::debug!("[large_repo][ls-remote] 开始: url={url}");
-    let mut cmd = Command::new(git);
-    cmd.arg("-c").arg("credential.helper=");
-    if let Some(proxy) = crate::proxy::http_client::get_current_proxy_url() {
-        cmd.arg("-c").arg(format!("http.proxy={proxy}"));
-        cmd.arg("-c").arg(format!("https.proxy={proxy}"));
-    }
+    let mut cmd = git_command(git);
     cmd.arg("ls-remote")
         .arg("--heads")
         .arg("--end-of-options")
-        .arg(&url)
-        .env("GIT_TERMINAL_PROMPT", "0");
+        .arg(&url);
 
     let output = timeout(
         Duration::from_secs(GIT_TIMEOUT_SECS),
@@ -349,12 +379,9 @@ async fn clone_repo(
         "[large_repo][clone_repo] clone 开始: url={url} branch={branch} dest={}",
         dest.display()
     );
-    let mut cmd = Command::new(git);
-    cmd.arg("-c").arg("credential.helper=");
-    if let Some(proxy) = crate::proxy::http_client::get_current_proxy_url() {
-        log::debug!("[large_repo][clone_repo] 使用代理: {proxy}");
-        cmd.arg("-c").arg(format!("http.proxy={proxy}"));
-        cmd.arg("-c").arg(format!("https.proxy={proxy}"));
+    let mut cmd = git_command(git);
+    if crate::proxy::http_client::get_current_proxy_url().is_some() {
+        log::debug!("[large_repo][clone_repo] 使用代理");
     } else {
         log::debug!("[large_repo][clone_repo] 未配置代理");
     }
@@ -396,10 +423,9 @@ async fn clone_repo(
 }
 
 /// 在 clone 目录里执行 `git ls-tree -r -l -z HEAD`（30s 超时）
-async fn run_git_ls_tree(git: &Path, workdir: &Path, proxy: Option<&str>) -> Result<Vec<u8>> {
+async fn run_git_ls_tree(git: &Path, workdir: &Path) -> Result<Vec<u8>> {
     let git = git.to_path_buf();
     let workdir = workdir.to_path_buf();
-    let proxy = proxy.map(|p| p.to_string());
     timeout(
         Duration::from_secs(30),
         spawn_blocking(move || {
@@ -407,14 +433,7 @@ async fn run_git_ls_tree(git: &Path, workdir: &Path, proxy: Option<&str>) -> Res
                 "[large_repo][ls-tree] 开始: workdir={}",
                 workdir.display()
             );
-            let mut cmd = Command::new(&git);
-            if let Some(proxy) = &proxy {
-                log::debug!("[large_repo][ls-tree] 使用代理: {proxy}");
-                cmd.arg("-c").arg(format!("http.proxy={proxy}"));
-                cmd.arg("-c").arg(format!("https.proxy={proxy}"));
-            } else {
-                log::debug!("[large_repo][ls-tree] 未配置代理");
-            }
+            let mut cmd = git_command(&git);
             let output = cmd
                 .arg("ls-tree")
                 .arg("-r")
@@ -452,18 +471,16 @@ async fn run_git_ls_tree(git: &Path, workdir: &Path, proxy: Option<&str>) -> Res
 
 /// `git cat-file blob <sha>` 流式读取，带 `MAX_ARCHIVE_DOWNLOAD_BYTES` 预算
 ///
-/// partial clone 下 blob 缺失时会触发 lazy fetch（显式传代理，与 clone/ls-tree 一致）。
-fn cat_file_with_budget(git: &Path, workdir: &Path, sha: &str, proxy: Option<&str>) -> Result<Vec<u8>> {
+/// partial clone 下 blob 缺失时会触发 lazy fetch（代理由统一 `git_command` 注入）。
+fn cat_file_with_budget(git: &Path, workdir: &Path, sha: &str) -> Result<Vec<u8>> {
     use std::io::Read;
     log::debug!(
         "[large_repo][cat-file] 开始: sha={sha} workdir={}",
         workdir.display()
     );
-    let mut cmd = Command::new(git);
-    if let Some(proxy) = proxy {
-        log::debug!("[large_repo][cat-file] 使用代理: {proxy}");
-        cmd.arg("-c").arg(format!("http.proxy={proxy}"));
-        cmd.arg("-c").arg(format!("https.proxy={proxy}"));
+    let mut cmd = git_command(git);
+    if crate::proxy::http_client::get_current_proxy_url().is_some() {
+        log::debug!("[large_repo][cat-file] 使用代理");
     } else {
         log::debug!("[large_repo][cat-file] 未配置代理");
     }
@@ -581,8 +598,27 @@ impl LargeRepoBackend for ApiBackend {
             repo.branch
         );
         SkillService::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)?;
+        if is_rate_limited() {
+            // 全局冷却窗口内：跳过所有 REST API 请求，让位给 git 后端或回退 ZIP。
+            // 覆盖并发场景——即使本仓库已通过 backend_chain 入口检查，限流标记
+            // 可能在飞行期间被其他并发仓库触发，这里兜底拦截，避免浪费 GitHub 配额。
+            log::info!(
+                "[large_repo][ApiBackend] fetch_tree 跳过: 限流冷却窗口内 {}/{}",
+                repo.owner,
+                repo.name
+            );
+            return Err(anyhow!("GitHub REST API 限流冷却中，已跳过 tree 请求"));
+        }
         let mut last_error = None;
         for branch in branch_candidates(repo) {
+            if is_rate_limited() {
+                // 前一个分支的响应可能已触发限流标记，后续分支直接跳过，不再打 REST API。
+                log::debug!(
+                    "[large_repo][ApiBackend] fetch_tree 分支循环跳过: 限流冷却窗口内 {branch}"
+                );
+                last_error = Some(anyhow!("GitHub REST API 限流冷却中"));
+                break;
+            }
             log::debug!("[large_repo][ApiBackend] fetch_tree 尝试分支: {branch}");
             let mut url = url::Url::parse(&format!(
                 "{}/repos/{}/{}/git/trees/",
@@ -683,6 +719,17 @@ impl LargeRepoBackend for ApiBackend {
             branch,
             file.path
         );
+        if is_rate_limited() {
+            // 全局冷却窗口内：跳过所有 REST API 请求，让位给 git 后端或回退 ZIP。
+            // 覆盖 fetch_files_batch 并发取文件时，限流标记被飞行请求触发后的后续任务。
+            log::info!(
+                "[large_repo][ApiBackend] fetch_file 跳过: 限流冷却窗口内 {}/{} file={}",
+                repo.owner,
+                repo.name,
+                file.path
+            );
+            return Err(anyhow!("GitHub REST API 限流冷却中，已跳过 raw 文件请求"));
+        }
         let mut url = url::Url::parse(&format!(
             "{}/{}/{}/{}/",
             self.raw_base, repo.owner, repo.name, branch
@@ -1232,13 +1279,18 @@ pub fn select_backend() -> Box<dyn LargeRepoBackend> {
     }
 }
 
-/// 后端回退链：git 可用 → [Git, API]；git 不可用 → [API]。
+/// 后端回退链（**单仓库内串行回退**，不是并发竞速）。
 ///
-/// 上层按序尝试，全部失败后再回退旧 ZIP 路径。
+/// 顺序固定为 `[API, Git]`：API 优先（tree API 只拿清单、不下载内容、通常最快），
+/// Git 作为兜底（smart HTTP 不吃 REST 限流、能处理被 API 截断的大仓库）。
 ///
-/// 限流冷却窗口内：剔除 ApiBackend（GitHub REST API 已被限流，再试必然失败且浪费配额）。
-/// 此时 git 可用 → [Git]（git 走 smart HTTP，不吃 REST 限流）；git 不可用 → 空链，
-/// 调用方收到空链即视为「大仓库后端全失败」→ 回退旧 ZIP 路径（codeload 域独立配额）。
+/// 并发单位是**仓库**，不是后端：调用方（skill.rs 的 `repo_futures`）已对多个仓库
+/// 做 `join_all` 并发，单仓库内部不应再让 git 与 api 同时跑——否则赢家已定、输家
+/// 仍在白做整仓 clone（数十秒、抢占代理/TCP），既浪费又拖慢整体。
+///
+/// 限流冷却窗口内：剔除 ApiBackend（GitHub REST API 已被限流，再试必然失败且浪费配额），
+/// 此时链退化为 `[Git]`（git 走 smart HTTP，不吃 REST 限流）；git 不可用且 API 限流
+/// 时链为空，调用方收到空链即视为「大仓库后端全失败」→ 回退旧 ZIP 路径（codeload 域独立配额）。
 pub fn backend_chain() -> Vec<Box<dyn LargeRepoBackend>> {
     let git = detect_git().is_some();
     let use_api = !is_rate_limited();
@@ -1247,14 +1299,56 @@ pub fn backend_chain() -> Vec<Box<dyn LargeRepoBackend>> {
         is_rate_limited()
     );
     let mut chain: Vec<Box<dyn LargeRepoBackend>> = Vec::new();
-    if git {
-        chain.push(Box::new(GitBackend::new()));
-    }
+    // API 优先：快、轻量；git 作兜底。
     if use_api {
         chain.push(Box::new(ApiBackend::new()));
     }
+    if git {
+        chain.push(Box::new(GitBackend::new()));
+    }
     log::debug!("[large_repo][backend_chain] 回退链长度={}", chain.len());
     chain
+}
+
+/// 单仓库内**串行回退**整条后端链，返回第一个成功结果。
+///
+/// 注意：并发单位是**仓库**而非**后端**。调用方（skill.rs 的 `repo_futures`）已对多个
+/// 仓库做 `join_all` 并发；单仓库内部若再让 git 与 api 同时跑，会出现「一个后端已成功、
+/// 另一个后端仍在白做整仓 clone」的浪费（抢占代理/TCP、拖慢其余在飞仓库）。因此这里
+/// 改为**按 `backend_chain()` 顺序逐个尝试**，命中即返回，后续后端不再启动。
+///
+/// `backend_chain()` 已把顺序定为 `[API, Git]`：API 优先（轻量、最快），git 兜底。
+/// 这保留了旧 race 设计想要的「快路径优先」，但消除了 backend 级并行带来的资源放大。
+///
+/// - `chain`：由 `backend_chain()` 得到的后端链（调用方持有所有权，本函数只借用）。
+/// - `op`：针对单个后端构造操作 future（如 `|b| skill_dir_hashes(b, repo, dirs)`）。
+///   返回的 future 生命周期须能覆盖 `chain` 的借用期（即不能捕获比后端更短的生命）。
+/// - 返回首个 `Ok`；全部失败则返回最后一个错误，由调用方据此回退 ZIP 路径。
+/// - 空链（git 不可用 + API 限流）视为「全部失败」→ 返回 Err，调用方回退 ZIP。
+///
+/// 调用方应自行用 `timeout(LARGE_REPO_TIMEOUT_SECS, race_backend_chain(&chain, ...))` 包裹，
+/// 给整次回退一个统一上限（而非每个后端各 180s）。
+pub async fn race_backend_chain<'a, F, Fut, T>(
+    chain: &'a [Box<dyn LargeRepoBackend>],
+    op: F,
+) -> Result<T>
+where
+    F: Fn(&'a dyn LargeRepoBackend) -> Fut,
+    Fut: std::future::Future<Output = Result<T>> + 'a,
+{
+    if chain.is_empty() {
+        return Err(anyhow!(
+            "大仓库后端链为空（git 不可用且 API 限流中），请回退 ZIP 路径"
+        ));
+    }
+    let mut last_err = None;
+    for b in chain.iter() {
+        match op(b.as_ref()).await {
+            Ok(v) => return Ok(v),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow!("大仓库后端链全部失败")))
 }
 
 /// 本地存储哈希是否需要按远端方案重算
@@ -1311,6 +1405,38 @@ pub fn build_discoverable_skill(
 
 // ========== 派生操作（泛型 over backend） ==========
 
+/// 受信号量限流的批量 `fetch_file`。
+///
+/// 同时最多 `FETCH_FILE_SEMAPHORE` 个文件在飞，避免大仓库一次性 spawn 上百个
+/// git 子进程 / raw API 请求。返回结果**顺序与 `files` 一致**，单个文件失败在
+/// 对应槽位返回 `Err`，由调用方决定如何聚合（list_skill_mds 直接 ? 中断，
+/// materialize_skill_dir 则按预算跳过）。
+pub async fn fetch_files_batch(
+    backend: &dyn LargeRepoBackend,
+    repo: &SkillRepo,
+    branch: &str,
+    files: &[&RepoFile],
+) -> Vec<Result<Vec<u8>>> {
+    let mut tasks = Vec::with_capacity(files.len());
+    for f in files {
+        let permit = match FETCH_FILE_SEMAPHORE.acquire().await {
+            Ok(p) => p,
+            Err(_) => {
+                // 信号量被关闭（理论上不会发生）：全部返回失败，保持顺序
+                return files.iter().map(|_| Err(anyhow!("fetch 信号量已关闭"))).collect();
+            }
+        };
+        let res = backend.fetch_file(repo, branch, *f);
+        tasks.push(async move {
+            let out = res.await;
+            drop(permit);
+            out
+        });
+    }
+    // 用 join_all 并发等待；信号量已在 spawn 前逐个获取，确保同时在飞数受限。
+    futures::future::join_all(tasks).await
+}
+
 /// 列出仓库内所有 skill（SKILL.md → DiscoverableSkill）
 pub async fn list_skill_mds(
     backend: &dyn LargeRepoBackend,
@@ -1328,8 +1454,18 @@ pub async fn list_skill_mds(
         md_files.len()
     );
     let mut skills = Vec::new();
-    for f in md_files {
-        let content = backend.fetch_file(repo, &branch, f).await?;
+    if md_files.is_empty() {
+        log::info!(
+            "[large_repo][list_skill_mds] 完成: {}/{} 解析出 skill 数=0",
+            repo.owner,
+            repo.name
+        );
+        return Ok(skills);
+    }
+    // 并行取所有 SKILL.md 内容（受全局 Semaphore 限流），保留顺序。
+    let contents = fetch_files_batch(backend, repo, &branch, &md_files).await;
+    for (f, content) in md_files.iter().zip(contents) {
+        let content = content?;
         let content = String::from_utf8_lossy(&content);
         if let Ok(skill) =
             build_discoverable_skill(&repo.owner, &repo.name, &branch, &f.path, &content)
@@ -1472,13 +1608,19 @@ pub async fn materialize_skill_dir(
         // 语义与 skill.rs 的 ZIP 路径（extract_repo_archive）完全一致，确保两条
         // 路径产出逐字节等价的自包含副本。
         let mut symlinks: Vec<(PathBuf, String)> = Vec::new();
-        for f in &files {
-            if f.mode == 0o160000 {
-                continue;
-            }
-            let Some(rel) = rel_path_in_dir(&f.path, dir) else {
-                continue;
-            };
+        // 先筛出本目录待物化的文件（跳过 gitlink 0o160000，且必须在 dir 之下）。
+        // fetch 与 write 解耦：fetch 阶段并行（受全局 Semaphore 限流），write 阶段
+        // 串行，以保证 total_bytes 预算计费顺序确定、symlink 两阶段依赖不被破坏。
+        let to_fetch: Vec<&RepoFile> = files
+            .iter()
+            .filter(|f| f.mode != 0o160000)
+            .filter(|f| rel_path_in_dir(&f.path, dir).is_some())
+            .collect();
+        // 并行取所有文件内容（顺序与 to_fetch 一致）。
+        let contents = fetch_files_batch(backend, repo, &branch, &to_fetch).await;
+        for (f, bytes) in to_fetch.into_iter().zip(contents) {
+            let bytes = bytes?;
+            let rel = rel_path_in_dir(&f.path, dir).unwrap();
             let rel = sanitize_tree_path(rel)?;
             if rel == "SKILL.md" {
                 materialized_skill_md = true;
@@ -1487,7 +1629,6 @@ pub async fn materialize_skill_dir(
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent)?;
             }
-            let bytes = backend.fetch_file(repo, &branch, f).await?;
             if f.mode == 0o120000 {
                 // symlink：bytes 是目标路径文本。用 read_symlink_target 复用 ZIP
                 // 路径的限长 + 计费语义（超长/非 UTF-8 返回 None → 跳过）。
