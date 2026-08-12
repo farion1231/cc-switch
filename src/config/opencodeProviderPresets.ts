@@ -2133,10 +2133,10 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "minimax/minimax-m2.7": {
-          name: "MiniMax M2.7",
-          limit: { context: 204800, output: 131100 },
-          modalities: { input: ["text"], output: ["text"] },
+        "claude-fable-5": {
+          name: "Claude Fable 5",
+          limit: { context: 1000000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
         },
       },
     },

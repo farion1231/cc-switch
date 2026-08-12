@@ -1589,9 +1589,9 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "chat_completions",
       models: [
         {
-          id: "minimax/minimax-m2.7",
-          name: "MiniMax M2.7",
-          context_length: 204800,
+          id: "claude-fable-5",
+          name: "Claude Fable 5",
+          context_length: 1000000,
         },
       ],
     },
@@ -1599,7 +1599,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "jiekou",
     iconColor: "#000000",
     suggestedDefaults: {
-      model: { default: "minimax/minimax-m2.7", provider: "jiekou" },
+      model: { default: "claude-fable-5", provider: "jiekou" },
     },
   },
 ];

@@ -2600,13 +2600,13 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "minimax/minimax-m2.7",
-          name: "MiniMax M2.7",
+          id: "claude-fable-5",
+          name: "Claude Fable 5",
           reasoning: true,
-          input: ["text"],
-          contextWindow: 204800,
-          maxTokens: 131100,
-          cost: { input: 0.3, output: 1.2 },
+          input: ["text", "image"],
+          contextWindow: 1000000,
+          maxTokens: 128000,
+          cost: { input: 10, output: 50 },
         },
       ],
     },
@@ -2621,9 +2621,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "jiekou/minimax/minimax-m2.7" },
+      model: { primary: "jiekou/claude-fable-5" },
       modelCatalog: {
-        "jiekou/minimax/minimax-m2.7": { alias: "MiniMax M2.7" },
+        "jiekou/claude-fable-5": { alias: "Claude Fable 5" },
       },
     },
   },

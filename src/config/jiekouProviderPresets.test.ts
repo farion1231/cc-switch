@@ -17,8 +17,8 @@ const allJieKouPresetGroups = [
   ["Hermes", hermesProviderPresets],
 ] as const;
 
-const defaultModelId = "minimax/minimax-m2.7";
-const defaultModelName = "MiniMax M2.7";
+const defaultModelId = "claude-fable-5";
+const defaultModelName = "Claude Fable 5";
 const anthropicBaseUrl = "https://api.jiekou.ai/anthropic";
 const openAiBaseUrl = "https://api.jiekou.ai/openai/v1";
 const brandDetails = {
@@ -70,10 +70,9 @@ describe("JieKou AI provider presets", () => {
       apiFormat: "anthropic",
       modelRoutes: [
         {
-          routeId: "claude-sonnet-5",
+          routeId: "claude-fable-5",
           upstreamModel: defaultModelId,
-          labelOverride: defaultModelId,
-          supports1m: false,
+          supports1m: true,
         },
       ],
       endpointCandidates: [anthropicBaseUrl],
@@ -91,8 +90,8 @@ describe("JieKou AI provider presets", () => {
         {
           model: defaultModelId,
           displayName: defaultModelName,
-          contextWindow: 204800,
-          inputModalities: ["text"],
+          contextWindow: 1000000,
+          inputModalities: ["text", "image"],
         },
       ],
     });
@@ -119,8 +118,8 @@ describe("JieKou AI provider presets", () => {
         models: {
           [defaultModelId]: {
             name: defaultModelName,
-            limit: { context: 204800, output: 131100 },
-            modalities: { input: ["text"], output: ["text"] },
+            limit: { context: 1000000, output: 128000 },
+            modalities: { input: ["text", "image"], output: ["text"] },
           },
         },
       },
@@ -147,10 +146,10 @@ describe("JieKou AI provider presets", () => {
             id: defaultModelId,
             name: defaultModelName,
             reasoning: true,
-            input: ["text"],
-            contextWindow: 204800,
-            maxTokens: 131100,
-            cost: { input: 0.3, output: 1.2 },
+            input: ["text", "image"],
+            contextWindow: 1000000,
+            maxTokens: 128000,
+            cost: { input: 10, output: 50 },
           },
         ],
       },
@@ -182,7 +181,7 @@ describe("JieKou AI provider presets", () => {
           {
             id: defaultModelId,
             name: defaultModelName,
-            context_length: 204800,
+            context_length: 1000000,
           },
         ],
       },

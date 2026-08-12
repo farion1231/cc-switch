@@ -1200,11 +1200,13 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.jiekou.ai/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes(
-      "minimax/minimax-m2.7",
-      "minimax/minimax-m2.7",
-      "minimax/minimax-m2.7",
-    ),
+    modelRoutes: [
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.fable,
+        upstreamModel: "claude-fable-5",
+        supports1m: true,
+      },
+    ],
     endpointCandidates: ["https://api.jiekou.ai/anthropic"],
     icon: "jiekou",
     iconColor: "#000000",
