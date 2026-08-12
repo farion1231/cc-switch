@@ -28,6 +28,7 @@ pub mod skill;
 mod stream_check;
 mod subscription;
 mod sync_support;
+mod system_prompt;
 mod xai_oauth;
 
 mod lightweight;
@@ -63,6 +64,7 @@ pub use settings::*;
 pub use skill::*;
 pub use stream_check::*;
 pub use subscription::*;
+pub use system_prompt::*;
 pub use xai_oauth::*;
 
 pub use lightweight::*;

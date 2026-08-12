@@ -1107,6 +1107,87 @@ impl RequestForwarder {
         })
     }
 
+    fn inject_system_prompt(app_type: &AppType, body: &mut serde_json::Value) {
+        let toggle = crate::settings::get_injection_toggle(app_type.as_str());
+        if !toggle.enabled {
+            return;
+        }
+        let mut parts = Vec::new();
+        if let Some(ref p) = toggle.custom_file_path {
+            let path = std::path::PathBuf::from(p);
+            if path.exists() {
+                if let Ok(c) = std::fs::read_to_string(&path) {
+                    let t = c.trim();
+                    if !t.is_empty() {
+                        parts.push(t.to_string());
+                    }
+                }
+            }
+        } else if let Ok(path) = crate::prompt_files::prompt_file_path(app_type) {
+            if path.exists() {
+                if let Ok(c) = std::fs::read_to_string(&path) {
+                    let t = c.trim();
+                    if !t.is_empty() {
+                        parts.push(t.to_string());
+                    }
+                }
+            }
+        }
+        if toggle.receive_shared {
+            let s = crate::settings::load_shared_prompt();
+            let t = s.trim();
+            if !t.is_empty() {
+                parts.push(t.to_string());
+            }
+        }
+        if parts.is_empty() {
+            return;
+        }
+        let extra = parts.join("\n\n---\n\n");
+        log::info!(
+            "[{}] System 注入已生效, {} chars",
+            app_type.as_str(),
+            extra.len()
+        );
+
+        // Chat Completions 格式 (OpenAI): message[0].role="system"
+        if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
+            if let Some(first) = messages.first_mut() {
+                if first.get("role").and_then(|r| r.as_str()) == Some("system") {
+                    if let Some(content) = first.get_mut("content").and_then(|c| c.as_str()) {
+                        let new = format!("{}\n\n---\n\n{}", content, extra);
+                        first["content"] = serde_json::Value::String(new);
+                        return;
+                    }
+                }
+            }
+            // 没有 system message 则插入
+            messages.insert(0, serde_json::json!({"role":"system","content":extra}));
+            return;
+        }
+
+        // Anthropic 格式: 顶层 system 字段
+        if let Some(system) = body.get("system") {
+            let mut val = system.clone();
+            match &mut val {
+                serde_json::Value::String(s) => {
+                    s.push_str("\n\n---\n\n");
+                    s.push_str(&extra);
+                }
+                serde_json::Value::Array(arr) => {
+                    arr.push(serde_json::json!({"type":"text","text":extra}));
+                }
+                _ => {
+                    val = serde_json::Value::String(extra);
+                }
+            }
+            body.as_object_mut().map(|o| o.insert("system".into(), val));
+        } else {
+            body.as_object_mut()
+                .map(|o| o.insert("system".into(), serde_json::Value::String(extra)));
+        }
+    }
+
     /// 转发单个请求（使用适配器）
     ///
     /// 成功时返回 `(response, claude_api_format, outbound_model)`，其中
@@ -1453,6 +1534,7 @@ impl RequestForwarder {
                 self.session_client_provided
                     .then_some(self.session_id.as_str()),
             );
+            Self::inject_system_prompt(app_type, &mut chat_body);
             chat_body
         } else if codex_responses_to_anthropic {
             let mut mapped_body = mapped_body;
@@ -1509,8 +1591,10 @@ impl RequestForwarder {
                 &mut anthropic_body,
                 &codex_anthropic_cache_config(&self.optimizer_config),
             );
+            Self::inject_system_prompt(app_type, &mut anthropic_body);
             anthropic_body
         } else if needs_transform {
+            Self::inject_system_prompt(app_type, &mut mapped_body);
             if adapter.name() == "Claude" {
                 let api_format = resolved_claude_api_format
                     .as_deref()
@@ -1527,6 +1611,7 @@ impl RequestForwarder {
                 adapter.transform_request(mapped_body, provider)?
             }
         } else {
+            Self::inject_system_prompt(app_type, &mut mapped_body);
             mapped_body
         };
 

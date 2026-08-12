@@ -25,6 +25,7 @@ import {
   Shield,
   Cpu,
   LayoutDashboard,
+  FileText,
   Loader2,
   RefreshCw,
 } from "lucide-react";
@@ -81,6 +82,7 @@ import {
 import UnifiedSkillsPanel, {
   type SkillsCheckUpdatesState,
 } from "@/components/skills/UnifiedSkillsPanel";
+import SystemPromptPanel from "@/components/system-prompt/SystemPromptPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
@@ -113,7 +115,8 @@ type View =
   | "openclawEnv"
   | "openclawTools"
   | "openclawAgents"
-  | "hermesMemory";
+  | "hermesMemory"
+  | "systemPrompt";
 
 interface SyncStatusUpdatedPayload {
   source?: string;
@@ -968,6 +971,14 @@ function App() {
               onInteractionBlockedChange={setMcpManagementBusy}
             />
           );
+        case "systemPrompt":
+          return (
+            <SystemPromptPanel
+              open={true}
+              onOpenChange={() => setCurrentView("providers")}
+              appId={sharedFeatureApp}
+            />
+          );
         case "agents":
           return (
             <AgentsPanel onOpenChange={() => setCurrentView("providers")} />
@@ -1623,6 +1634,15 @@ function App() {
                                 title={t("mcp.title")}
                               >
                                 <McpIcon size={16} />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("systemPrompt")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title="System 注入"
+                              >
+                                <FileText className="w-4 h-4" />
                               </Button>
                             </>
                           )}
