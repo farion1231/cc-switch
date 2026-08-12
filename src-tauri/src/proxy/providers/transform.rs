@@ -528,13 +528,13 @@ fn convert_message_to_openai(
 /// The function is a no-op when no `role: "system"` messages are present.
 pub fn normalize_system_messages(mut body: Value) -> Value {
     // Quick check: are there any system messages in the array?
-    let has_system_in_messages = body
-        .get("messages")
-        .and_then(|m| m.as_array())
-        .is_some_and(|msgs| {
-            msgs.iter()
-                .any(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
-        });
+    let has_system_in_messages =
+        body.get("messages")
+            .and_then(|m| m.as_array())
+            .is_some_and(|msgs| {
+                msgs.iter()
+                    .any(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+            });
 
     if !has_system_in_messages {
         return body;
@@ -587,10 +587,8 @@ pub fn normalize_system_messages(mut body: Value) -> Value {
 
     // Add existing system text
     match existing_system {
-        Some(Value::String(text)) => {
-            if !text.is_empty() {
-                all_texts.push(text);
-            }
+        Some(Value::String(text)) if !text.is_empty() => {
+            all_texts.push(text);
         }
         Some(Value::Array(arr)) => {
             for part in arr {

@@ -1461,7 +1461,9 @@ impl RequestForwarder {
         // as `role: "system"` messages inside `messages` instead of the top-level
         // `system` field. Normalize to the top-level field so all transform paths
         // and passthrough upstream providers handle it correctly.
-        let mapped_body = if self.rectifier_config.enabled && self.rectifier_config.normalize_system_messages {
+        let mapped_body = if self.rectifier_config.enabled
+            && self.rectifier_config.normalize_system_messages
+        {
             // Cheap pre-scan: only clone + normalize when there are actually
             // role:system messages to move. Request bodies can be large, so avoid
             // cloning the whole thing on the common (no system-role) path.
@@ -1475,47 +1477,50 @@ impl RequestForwarder {
 
             if has_system_in_messages {
                 let before = mapped_body.clone();
-                let normalized = super::providers::transform::normalize_system_messages(mapped_body);
+                let normalized =
+                    super::providers::transform::normalize_system_messages(mapped_body);
 
-            // Log if normalization actually happened
-            if before != normalized {
-                let system_count = before
-                    .get("messages")
-                    .and_then(|m| m.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter(|msg| msg.get("role").and_then(|r| r.as_str()) == Some("system"))
-                            .count()
-                    })
-                    .unwrap_or(0);
+                // Log if normalization actually happened
+                if before != normalized {
+                    let system_count = before
+                        .get("messages")
+                        .and_then(|m| m.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter(|msg| {
+                                    msg.get("role").and_then(|r| r.as_str()) == Some("system")
+                                })
+                                .count()
+                        })
+                        .unwrap_or(0);
 
-                let system_type = match normalized.get("system") {
-                    Some(serde_json::Value::String(_)) => "string",
-                    Some(serde_json::Value::Array(_)) => "array",
-                    _ => "none",
-                };
+                    let system_type = match normalized.get("system") {
+                        Some(serde_json::Value::String(_)) => "string",
+                        Some(serde_json::Value::Array(_)) => "array",
+                        _ => "none",
+                    };
 
-                log::info!(
+                    log::info!(
                     "[Rectifier] System messages normalized: moved {} system message(s) from messages array to top-level system field (system type: {})",
                     system_count,
                     system_type
                 );
 
-                // Log a content fingerprint (not the prompt itself) so troubleshooting
-                // can correlate runs without persisting workspace instructions, paths,
-                // or credentials that the system prompt may contain.
-                if let Some(system) = normalized.get("system") {
-                    use std::collections::hash_map::DefaultHasher;
-                    use std::hash::{Hash, Hasher};
-                    let mut hasher = DefaultHasher::new();
-                    system.to_string().hash(&mut hasher);
-                    log::debug!(
-                        "[Rectifier] Normalized system field fingerprint: {:016x} (type: {})",
-                        hasher.finish(),
-                        system_type
-                    );
+                    // Log a content fingerprint (not the prompt itself) so troubleshooting
+                    // can correlate runs without persisting workspace instructions, paths,
+                    // or credentials that the system prompt may contain.
+                    if let Some(system) = normalized.get("system") {
+                        use std::collections::hash_map::DefaultHasher;
+                        use std::hash::{Hash, Hasher};
+                        let mut hasher = DefaultHasher::new();
+                        system.to_string().hash(&mut hasher);
+                        log::debug!(
+                            "[Rectifier] Normalized system field fingerprint: {:016x} (type: {})",
+                            hasher.finish(),
+                            system_type
+                        );
+                    }
                 }
-            }
 
                 normalized
             } else {
