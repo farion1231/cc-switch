@@ -247,7 +247,7 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
                 "Windows 更新安装失败: {e}。已执行退出前清理，代理或 Live 接管可能已暂停；请重启应用或重新开启代理后再试。"
             )
         })?;
-        return Ok(true);
+        Ok(true)
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -661,15 +661,6 @@ pub async fn set_optimizer_config(
     state: tauri::State<'_, crate::AppState>,
     config: crate::proxy::types::OptimizerConfig,
 ) -> Result<bool, String> {
-    // Validate cache_ttl: only allow known values
-    match config.cache_ttl.as_str() {
-        "5m" | "1h" => {}
-        other => {
-            return Err(format!(
-                "Invalid cache_ttl value: '{other}'. Allowed values: '5m', '1h'"
-            ))
-        }
-    }
     state
         .db
         .set_optimizer_config(&config)

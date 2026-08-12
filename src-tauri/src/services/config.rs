@@ -88,6 +88,7 @@ impl ConfigService {
         Self::sync_current_provider_for_app(config, &AppType::Claude)?;
         Self::sync_current_provider_for_app(config, &AppType::Codex)?;
         Self::sync_current_provider_for_app(config, &AppType::Gemini)?;
+        Self::sync_current_provider_for_app(config, &AppType::GrokBuild)?;
         Ok(())
     }
 
@@ -125,6 +126,7 @@ impl ConfigService {
                 // Claude Desktop 3P profiles are managed by claude_desktop_config.
             }
             AppType::Gemini => Self::sync_gemini_live(config, &current_id, &provider)?,
+            AppType::GrokBuild => crate::grok_config::write_grok_provider_live(&provider)?,
             AppType::OpenCode => {
                 // OpenCode uses additive mode, no live sync needed
                 // OpenCode providers are managed directly in the config file
@@ -159,9 +161,7 @@ impl ConfigService {
         }
         let cfg_text = settings.get("config").and_then(Value::as_str);
 
-        let profile = crate::codex_config::CodexCatalogToolProfile::from_api_format(
-            provider.meta.as_ref().and_then(|m| m.api_format.as_deref()),
-        );
+        let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
 
         crate::codex_config::write_codex_provider_live_with_catalog(
             &provider.settings_config,

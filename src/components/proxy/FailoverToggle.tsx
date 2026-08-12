@@ -38,7 +38,9 @@ export function FailoverToggle({ className, activeApp }: FailoverToggleProps) {
       ? "Claude"
       : activeApp === "codex"
         ? "Codex"
-        : "Gemini";
+        : activeApp === "grokbuild"
+          ? "Grok Build"
+          : "Gemini";
 
   const tooltipText = !takeoverEnabled
     ? t("failover.tooltip.takeoverRequired", {
@@ -70,7 +72,7 @@ export function FailoverToggle({ className, activeApp }: FailoverToggleProps) {
           className={cn(
             "h-4 w-4 transition-colors",
             isEnabled
-              ? "text-emerald-500 animate-pulse"
+              ? "text-emerald-500 status-heartbeat"
               : "text-muted-foreground",
           )}
         />

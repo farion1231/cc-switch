@@ -72,6 +72,10 @@ fn global_hyper_client() -> &'static HyperClient {
     })
 }
 
+/// 响应体读取上限（128 MiB）。正常非流式补全响应只有几十到几百 KiB；超过则视为
+/// 上游异常或恶意 payload，直接拒绝，避免代理进程被超大响应体/压缩炸弹耗尽内存。
+pub(crate) const MAX_RESPONSE_BODY_BYTES: usize = 128 * 1024 * 1024;
+
 /// Unified response wrapper that can hold either a hyper or reqwest response.
 ///
 /// The hyper variant is used for the main (direct) path with header-case preservation.
@@ -142,25 +146,46 @@ impl ProxyResponse {
             .unwrap_or(false)
     }
 
-    /// Consume the response and collect the full body into `Bytes`.
-    pub async fn bytes(self) -> Result<Bytes, ProxyError> {
+    /// Check whether the response explicitly declares a JSON media type.
+    pub fn is_json(&self) -> bool {
+        self.content_type()
+            .map(|content_type| {
+                let media_type = content_type
+                    .split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase();
+                media_type == "application/json" || media_type.ends_with("+json")
+            })
+            .unwrap_or(false)
+    }
+
+    /// Consume the response and collect the full body into `Bytes`, aborting the
+    /// read as soon as the accumulated body exceeds `max_bytes`.
+    ///
+    /// 所有变体都在累积过程中逐块检查、超限即断开（drop stream 中止上游连接），
+    /// 而不是先收满再比较——否则超大明文 body 仍会完整进入内存，限制形同虚设。
+    pub async fn bytes_with_limit(self, max_bytes: usize) -> Result<Bytes, ProxyError> {
         match self {
-            Self::Hyper(r) => {
-                let collected = r.into_body().collect().await.map_err(|e| {
-                    ProxyError::ForwardFailed(format!("Failed to read response body: {e}"))
-                })?;
-                Ok(collected.to_bytes())
+            Self::Buffered { body, .. } => {
+                // 调用方已把 body 完整缓冲，无法中途截停，只能事后比较
+                if body.len() > max_bytes {
+                    return Err(ProxyError::ResponseBodyTooLarge(body.len()));
+                }
+                Ok(body)
             }
-            Self::Reqwest(r) => r.bytes().await.map_err(|e| {
-                ProxyError::ForwardFailed(format!("Failed to read response body: {e}"))
-            }),
-            Self::Buffered { body, .. } => Ok(body),
-            Self::Streamed { mut stream, .. } => {
+            response => {
+                // Hyper / Reqwest / Streamed 统一走逐块流式累积，超预算立即报错
+                let mut stream = response.bytes_stream();
                 let mut body = bytes::BytesMut::new();
                 while let Some(chunk) = stream.next().await {
                     let chunk = chunk.map_err(|e| {
                         ProxyError::ForwardFailed(format!("Failed to read response body: {e}"))
                     })?;
+                    if body.len() + chunk.len() > max_bytes {
+                        return Err(ProxyError::ResponseBodyTooLarge(body.len() + chunk.len()));
+                    }
                     body.extend_from_slice(&chunk);
                 }
                 Ok(body.freeze())
@@ -226,8 +251,13 @@ impl ProxyResponse {
 /// `proxy_url`: optional upstream HTTP proxy URL (e.g. `http://127.0.0.1:7890`).
 /// When set, the raw write path uses HTTP CONNECT tunneling through the proxy,
 /// so header-case preservation works even when an upstream proxy is configured.
+///
+/// `log_display` is a caller-supplied, already-sanitized string used only for
+/// logging; this layer never derives a log value from the raw `uri`.
+#[allow(clippy::too_many_arguments)]
 pub async fn send_request(
     uri: http::Uri,
+    log_display: &str,
     method: http::Method,
     headers: http::HeaderMap,
     original_extensions: http::Extensions,
@@ -241,13 +271,13 @@ pub async fn send_request(
         .as_ref()
         .map(|c| !c.cases.is_empty())
         .unwrap_or(false);
-
     log::debug!(
-        "[HyperClient] Sending request: uri={uri}, header_count={}, \
+        "[HyperClient] Sending request: target={}, header_count={}, \
          has_host={}, has_original_cases={has_cases}, proxy={:?}",
+        log_display,
         headers.len(),
         headers.contains_key(http::header::HOST),
-        proxy_url,
+        proxy_url.map(super::http_client::mask_url),
     );
 
     if let Some(original_cases) = original_cases
@@ -735,5 +765,178 @@ impl<S: Unpin> tokio::io::AsyncWrite for WriteFilter<S> {
         _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         std::task::Poll::Ready(Ok(()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn buffered_with_content_type(content_type: Option<&str>) -> ProxyResponse {
+        let mut headers = http::HeaderMap::new();
+        if let Some(content_type) = content_type {
+            headers.insert(
+                http::header::CONTENT_TYPE,
+                http::HeaderValue::from_str(content_type).unwrap(),
+            );
+        }
+        ProxyResponse::buffered(http::StatusCode::OK, headers, Bytes::new())
+    }
+
+    #[test]
+    fn json_content_type_detection_accepts_json_suffixes() {
+        assert!(buffered_with_content_type(Some("application/json; charset=utf-8")).is_json());
+        assert!(buffered_with_content_type(Some("application/problem+json")).is_json());
+        assert!(!buffered_with_content_type(Some("text/event-stream")).is_json());
+        assert!(!buffered_with_content_type(None).is_json());
+    }
+
+    #[tokio::test]
+    async fn bytes_with_limit_rejects_oversized_buffered_response() {
+        let oversized = Bytes::from(vec![0u8; MAX_RESPONSE_BODY_BYTES + 1]);
+        let response =
+            ProxyResponse::buffered(http::StatusCode::OK, http::HeaderMap::new(), oversized);
+
+        let result = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES).await;
+        assert!(matches!(result, Err(ProxyError::ResponseBodyTooLarge(_))));
+    }
+
+    #[tokio::test]
+    async fn bytes_with_limit_rejects_oversized_streamed_response() {
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(2);
+        let stream = futures::stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|item| (item, rx))
+        });
+        let response =
+            ProxyResponse::streamed(http::StatusCode::OK, http::HeaderMap::new(), stream);
+
+        tokio::spawn(async move {
+            let _ = tx.send(Ok(Bytes::from(vec![0u8; 64 * 1024]))).await;
+            let _ = tx
+                .send(Ok(Bytes::from(vec![0u8; MAX_RESPONSE_BODY_BYTES])))
+                .await;
+        });
+
+        let result = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES).await;
+        assert!(matches!(result, Err(ProxyError::ResponseBodyTooLarge(_))));
+    }
+
+    /// 启动一个最小 HTTP/1.1 服务器：响应 `Content-Length: body_len` 的全零 body，
+    /// 分块写出并统计实际写成功的字节数（客户端断开后写入失败即停）。
+    async fn spawn_fixed_body_server(
+        body_len: usize,
+    ) -> (u16, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let written = Arc::new(AtomicUsize::new(0));
+        let written_report = written.clone();
+
+        tokio::spawn(async move {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            // 读完请求头（内容不重要）
+            let mut buf = [0u8; 4096];
+            let mut filled = 0;
+            loop {
+                if buf[..filled].windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+                let Ok(n) = socket.read(&mut buf[filled..]).await else {
+                    return;
+                };
+                if n == 0 {
+                    return;
+                }
+                filled += n;
+            }
+            let header = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/octet-stream\r\ncontent-length: {body_len}\r\nconnection: close\r\n\r\n"
+            );
+            if socket.write_all(header.as_bytes()).await.is_err() {
+                return;
+            }
+            let chunk = [0u8; 16 * 1024];
+            let mut remaining = body_len;
+            while remaining > 0 {
+                let n = remaining.min(chunk.len());
+                if socket.write_all(&chunk[..n]).await.is_err() {
+                    break;
+                }
+                written.fetch_add(n, Ordering::SeqCst);
+                remaining -= n;
+            }
+        });
+
+        (port, written_report)
+    }
+
+    /// 客户端断开到服务器写入失败之间有时延（loopback 缓冲区会再吞一部分），
+    /// 稍等再读计数。只要客户端真的中途截停，服务器绝不可能写出大半个 body。
+    async fn assert_server_aborted_early(
+        written: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        body_len: usize,
+    ) {
+        use std::sync::atomic::Ordering;
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let written = written.load(Ordering::SeqCst);
+        assert!(
+            written < body_len / 2,
+            "客户端应在预算耗尽后立即断开，服务器不应写出大部分 body（实际已写 {written}/{body_len} 字节）"
+        );
+    }
+
+    #[tokio::test]
+    async fn bytes_with_limit_aborts_hyper_response_before_full_body_arrives() {
+        const BODY_LEN: usize = 16 * 1024 * 1024;
+        const LIMIT: usize = 64 * 1024;
+        let (port, written) = spawn_fixed_body_server(BODY_LEN).await;
+
+        // 构造真实的 hyper::Response<Incoming>：手工建立 http1 客户端连接
+        let stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let io = hyper_util::rt::TokioIo::new(stream);
+        let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
+        tokio::spawn(async move {
+            let _ = conn.await;
+        });
+        let request = http::Request::builder()
+            .uri(format!("http://127.0.0.1:{port}/"))
+            .body(http_body_util::Empty::<Bytes>::new())
+            .unwrap();
+        let response = sender.send_request(request).await.unwrap();
+        assert_eq!(response.status(), http::StatusCode::OK);
+
+        let result = ProxyResponse::Hyper(response).bytes_with_limit(LIMIT).await;
+        assert!(matches!(result, Err(ProxyError::ResponseBodyTooLarge(_))));
+
+        // 关键断言：若退回"先 collect 收满再比较"，服务器会把 16 MiB 全部写完
+        assert_server_aborted_early(written, BODY_LEN).await;
+    }
+
+    #[tokio::test]
+    async fn bytes_with_limit_aborts_reqwest_response_before_full_body_arrives() {
+        const BODY_LEN: usize = 16 * 1024 * 1024;
+        const LIMIT: usize = 64 * 1024;
+        let (port, written) = spawn_fixed_body_server(BODY_LEN).await;
+
+        let response = reqwest::Client::new()
+            .get(format!("http://127.0.0.1:{port}/"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+
+        let result = ProxyResponse::Reqwest(response)
+            .bytes_with_limit(LIMIT)
+            .await;
+        assert!(matches!(result, Err(ProxyError::ResponseBodyTooLarge(_))));
+
+        assert_server_aborted_early(written, BODY_LEN).await;
     }
 }

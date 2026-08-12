@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import { useDragSort } from "@/hooks/useDragSort";
 import {
   useOpenClawLiveProviderIds,
@@ -66,7 +67,7 @@ interface ProviderListProps {
   isProxyRunning?: boolean; // 代理服务运行状态
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管）
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
-  onSetAsDefault?: (provider: Provider) => void; // OpenClaw: set as default model
+  onSetAsDefault?: (provider: Provider, modelId?: string) => void; // OpenClaw: set as default model
 }
 
 export function ProviderList({
@@ -239,8 +240,13 @@ export function ProviderList({
         toast.info(t("provider.noProviders"));
       }
     },
-    onError: (error: Error) => {
-      toast.error(error.message);
+    onError: (error: unknown) => {
+      // Tauri invoke 的 reject 值是后端序列化出的纯字符串而非 Error 对象，
+      // 取 .message 只会得到 undefined（空 toast）。
+      toast.error(extractErrorMessage(error) || t("settings.importFailed"));
+      // 导入失败前也可能已产生需要上屏的副作用：GrokBuild 官方登录态下点
+      // 导入，命令层会先补种官方条目、随后才因 live 不可导入而报错。
+      queryClient.invalidateQueries({ queryKey: ["providers", appId] });
     },
   });
 
@@ -432,7 +438,9 @@ export function ProviderList({
                     : isProviderDefaultModel(provider.id)
                 }
                 onSetAsDefault={
-                  onSetAsDefault ? () => onSetAsDefault(provider) : undefined
+                  onSetAsDefault
+                    ? (modelId) => onSetAsDefault(provider, modelId)
+                    : undefined
                 }
               />
             );
@@ -564,7 +572,7 @@ interface SortableProviderCardProps {
   activeProviderId?: string;
   // OpenClaw: default model
   isDefaultModel?: boolean;
-  onSetAsDefault?: () => void;
+  onSetAsDefault?: (modelId?: string) => void;
 }
 
 function SortableProviderCard({

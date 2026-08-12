@@ -9,8 +9,43 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+fn openai_cache_read_tokens(usage: &Value) -> u32 {
+    usage
+        .get("cache_read_input_tokens")
+        .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
+        .or_else(|| usage.pointer("/prompt_tokens_details/cached_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32
+}
+
+fn openai_cache_write_tokens(usage: &Value) -> u32 {
+    usage
+        .get("cache_creation_input_tokens")
+        .or_else(|| usage.pointer("/input_tokens_details/cache_write_tokens"))
+        .or_else(|| usage.pointer("/prompt_tokens_details/cache_write_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32
+}
+
 /// Session 日志 request_id 前缀，与 `session_usage.rs` 中的格式保持一致
 pub const SESSION_REQUEST_ID_PREFIX: &str = "session:";
+
+/// Claude Code and Claude Desktop share Claude message ids with the session
+/// importer, so both use the bare `session:{message_id}` namespace. Other
+/// apps retain app/provider scoping to avoid collisions between upstreams.
+pub fn dedup_scope_for_app<'a>(
+    app_type: &'a str,
+    provider_id: &'a str,
+) -> Option<(&'a str, &'a str)> {
+    (!matches!(app_type, "claude" | "claude-desktop")).then_some((app_type, provider_id))
+}
+
+fn response_id(body: &Value, field: &str) -> Option<String> {
+    body.get(field)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
 
 /// Token 使用量统计
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -29,12 +64,18 @@ pub struct TokenUsage {
 }
 
 impl TokenUsage {
-    /// 生成与 session 日志共享的 request_id，用于跨源去重。
-    /// 有 message_id 时返回 `session:{id}`，否则回退到随机 UUID。
-    pub fn dedup_request_id(&self) -> String {
+    /// 生成稳定 request_id。Claude 不加作用域，以便继续与 session JSONL 的
+    /// `session:{message_id}` 主键收敛；其他协议加入 app/provider 作用域，避免
+    /// 不同上游复用 envelope id 时互相覆盖。
+    pub fn dedup_request_id(&self, scope: Option<(&str, &str)>) -> String {
         self.message_id
             .as_ref()
-            .map(|mid| format!("{SESSION_REQUEST_ID_PREFIX}{mid}"))
+            .map(|message_id| match scope {
+                Some((app_type, provider_id)) => {
+                    format!("{SESSION_REQUEST_ID_PREFIX}{app_type}:{provider_id}:{message_id}")
+                }
+                None => format!("{SESSION_REQUEST_ID_PREFIX}{message_id}"),
+            })
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
     }
 
@@ -51,16 +92,6 @@ impl TokenUsage {
     }
 }
 
-/// API 类型
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum ApiType {
-    Claude,
-    OpenRouter,
-    Codex,
-    Gemini,
-}
-
 impl TokenUsage {
     /// 从 Claude API 非流式响应解析
     pub fn from_claude_response(body: &Value) -> Option<Self> {
@@ -70,10 +101,7 @@ impl TokenUsage {
             .get("model")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let message_id = body
-            .get("id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+        let message_id = response_id(body, "id");
 
         Some(Self {
             input_tokens: usage.get("input_tokens")?.as_u64()? as u32,
@@ -110,8 +138,8 @@ impl TokenUsage {
                                 }
                             }
                             if message_id.is_none() {
-                                if let Some(id) = message.get("id").and_then(|v| v.as_str()) {
-                                    message_id = Some(id.to_string());
+                                if let Some(id) = response_id(message, "id") {
+                                    message_id = Some(id);
                                 }
                             }
                         }
@@ -210,20 +238,6 @@ impl TokenUsage {
         }
     }
 
-    /// 从 OpenRouter 响应解析 (OpenAI 格式)
-    #[allow(dead_code)]
-    pub fn from_openrouter_response(body: &Value) -> Option<Self> {
-        let usage = body.get("usage")?;
-        Some(Self {
-            input_tokens: usage.get("prompt_tokens")?.as_u64()? as u32,
-            output_tokens: usage.get("completion_tokens")?.as_u64()? as u32,
-            cache_read_tokens: 0,
-            cache_creation_tokens: 0,
-            model: None,
-            message_id: None,
-        })
-    }
-
     /// 从 Codex API 非流式响应解析
     pub fn from_codex_response(body: &Value) -> Option<Self> {
         let usage = body.get("usage");
@@ -250,91 +264,17 @@ impl TokenUsage {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let cached_tokens = usage
-            .get("cache_read_input_tokens")
-            .and_then(|v| v.as_u64())
-            .or_else(|| {
-                usage
-                    .get("input_tokens_details")
-                    .and_then(|d| d.get("cached_tokens"))
-                    .and_then(|v| v.as_u64())
-            })
-            .unwrap_or(0) as u32;
+        let cached_tokens = openai_cache_read_tokens(usage);
+        let cache_write_tokens = openai_cache_write_tokens(usage);
 
         Some(Self {
             input_tokens: input_tokens? as u32,
             output_tokens: output_tokens? as u32,
             cache_read_tokens: cached_tokens,
-            cache_creation_tokens: usage
-                .get("cache_creation_input_tokens")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
+            cache_creation_tokens: cache_write_tokens,
             model,
-            message_id: None,
+            message_id: response_id(body, "id"),
         })
-    }
-
-    /// 从 Codex API 响应解析并调整 input_tokens
-    ///
-    /// Codex 的 input_tokens 需要减去 cached_tokens 以获得实际计费的 token 数
-    /// 公式: adjusted_input = max(input_tokens - cached_tokens, 0)
-    #[allow(dead_code)]
-    pub fn from_codex_response_adjusted(body: &Value) -> Option<Self> {
-        let usage = body.get("usage")?;
-        let input_tokens = usage.get("input_tokens")?.as_u64()? as u32;
-        let output_tokens = usage.get("output_tokens")?.as_u64()? as u32;
-
-        // 获取 cached_tokens (可能在 cache_read_input_tokens 或 input_tokens_details 中)
-        let cached_tokens = usage
-            .get("cache_read_input_tokens")
-            .and_then(|v| v.as_u64())
-            .or_else(|| {
-                usage
-                    .get("input_tokens_details")
-                    .and_then(|d| d.get("cached_tokens"))
-                    .and_then(|v| v.as_u64())
-            })
-            .unwrap_or(0) as u32;
-
-        // 调整 input_tokens: 减去 cached_tokens
-        let adjusted_input = input_tokens.saturating_sub(cached_tokens);
-
-        // 提取响应中的模型名称
-        let model = body
-            .get("model")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        Some(Self {
-            input_tokens: adjusted_input,
-            output_tokens,
-            cache_read_tokens: cached_tokens,
-            cache_creation_tokens: usage
-                .get("cache_creation_input_tokens")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
-            model,
-            message_id: None,
-        })
-    }
-
-    /// 从 Codex API 流式响应解析
-    #[allow(dead_code)]
-    pub fn from_codex_stream_events(events: &[Value]) -> Option<Self> {
-        log::debug!("[Codex] 解析流式事件，共 {} 个事件", events.len());
-        for event in events {
-            if let Some(event_type) = event.get("type").and_then(|v| v.as_str()) {
-                log::debug!("[Codex] 事件类型: {event_type}");
-                if event_type == "response.completed" {
-                    if let Some(response) = event.get("response") {
-                        log::debug!("[Codex] 找到 response.completed 事件，解析 usage");
-                        return Self::from_codex_response_adjusted(response);
-                    }
-                }
-            }
-        }
-        log::debug!("[Codex] 未找到 response.completed 事件");
-        None
     }
 
     /// 智能 Codex 响应解析 - 自动检测 OpenAI 或 Codex 格式
@@ -391,11 +331,8 @@ impl TokenUsage {
         let completion_tokens = usage.get("completion_tokens").and_then(|v| v.as_u64())?;
 
         // 获取 cached_tokens (可能在 prompt_tokens_details 中)
-        let cached_tokens = usage
-            .get("prompt_tokens_details")
-            .and_then(|d| d.get("cached_tokens"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
+        let cached_tokens = openai_cache_read_tokens(usage);
+        let cache_write_tokens = openai_cache_write_tokens(usage);
 
         // 提取响应中的模型名称
         let model = body
@@ -407,9 +344,9 @@ impl TokenUsage {
             input_tokens: prompt_tokens as u32,
             output_tokens: completion_tokens as u32,
             cache_read_tokens: cached_tokens,
-            cache_creation_tokens: 0,
+            cache_creation_tokens: cache_write_tokens,
             model,
-            message_id: None,
+            message_id: response_id(body, "id"),
         })
     }
 
@@ -421,7 +358,12 @@ impl TokenUsage {
             if let Some(usage) = event.get("usage") {
                 if !usage.is_null() {
                     log::debug!("[Codex] 找到 usage: {usage:?}");
-                    return Self::from_openai_response(event);
+                    let mut parsed = Self::from_openai_response(event)?;
+                    if parsed.message_id.is_none() {
+                        parsed.message_id =
+                            events.iter().find_map(|chunk| response_id(chunk, "id"));
+                    }
+                    return Some(parsed);
                 }
             }
         }
@@ -454,7 +396,7 @@ impl TokenUsage {
                 .unwrap_or(0) as u32,
             cache_creation_tokens: 0,
             model,
-            message_id: None,
+            message_id: response_id(body, "responseId"),
         })
     }
 
@@ -465,6 +407,7 @@ impl TokenUsage {
         let mut total_tokens = 0u32;
         let mut total_cache_read = 0u32;
         let mut model: Option<String> = None;
+        let mut message_id: Option<String> = None;
 
         for chunk in chunks {
             if let Some(usage) = chunk.get("usageMetadata") {
@@ -493,6 +436,9 @@ impl TokenUsage {
                     model = Some(model_version.to_string());
                 }
             }
+            if message_id.is_none() {
+                message_id = response_id(chunk, "responseId");
+            }
         }
 
         // 输出 tokens = 总 tokens - 输入 tokens
@@ -505,7 +451,7 @@ impl TokenUsage {
                 cache_read_tokens: total_cache_read,
                 cache_creation_tokens: 0,
                 model,
-                message_id: None,
+                message_id,
             })
         } else {
             None
@@ -517,6 +463,80 @@ impl TokenUsage {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn response_ids_produce_scoped_dedup_keys_and_empty_ids_fall_back() {
+        let response = json!({
+            "id": "resp_123",
+            "model": "gpt-5.6",
+            "usage": { "input_tokens": 10, "output_tokens": 2 }
+        });
+        let usage = TokenUsage::from_codex_response(&response).unwrap();
+        assert_eq!(usage.message_id.as_deref(), Some("resp_123"));
+        assert_eq!(
+            usage.dedup_request_id(Some(("codex", "provider-a"))),
+            "session:codex:provider-a:resp_123"
+        );
+
+        let empty = json!({
+            "id": "",
+            "usage": { "input_tokens": 10, "output_tokens": 2 }
+        });
+        let empty_usage = TokenUsage::from_codex_response(&empty).unwrap();
+        assert!(empty_usage.message_id.is_none());
+        assert!(!empty_usage
+            .dedup_request_id(Some(("codex", "provider-a")))
+            .starts_with("session:"));
+    }
+
+    #[test]
+    fn claude_apps_share_the_session_request_id_namespace() {
+        let usage = TokenUsage {
+            message_id: Some("msg_123".to_string()),
+            ..Default::default()
+        };
+
+        for app_type in ["claude", "claude-desktop"] {
+            assert_eq!(
+                usage.dedup_request_id(dedup_scope_for_app(app_type, "provider-a")),
+                "session:msg_123"
+            );
+        }
+        assert_eq!(
+            usage.dedup_request_id(dedup_scope_for_app("codex", "provider-a")),
+            "session:codex:provider-a:msg_123"
+        );
+    }
+
+    #[test]
+    fn stream_parsers_recover_ids_from_envelope_chunks() {
+        let openai = vec![
+            json!({"id": "chatcmpl_123", "choices": []}),
+            json!({
+                "usage": { "prompt_tokens": 10, "completion_tokens": 2 },
+                "choices": []
+            }),
+        ];
+        assert_eq!(
+            TokenUsage::from_openai_stream_events(&openai)
+                .unwrap()
+                .message_id
+                .as_deref(),
+            Some("chatcmpl_123")
+        );
+
+        let gemini = vec![json!({
+            "responseId": "gemini_123",
+            "usageMetadata": { "promptTokenCount": 10, "totalTokenCount": 12 }
+        })];
+        assert_eq!(
+            TokenUsage::from_gemini_stream_chunks(&gemini)
+                .unwrap()
+                .message_id
+                .as_deref(),
+            Some("gemini_123")
+        );
+    }
 
     #[test]
     fn test_claude_response_parsing() {
@@ -682,22 +702,6 @@ mod tests {
     }
 
     #[test]
-    fn test_openrouter_response_parsing() {
-        let response = json!({
-            "usage": {
-                "prompt_tokens": 100,
-                "completion_tokens": 50
-            }
-        });
-
-        let usage = TokenUsage::from_openrouter_response(&response).unwrap();
-        assert_eq!(usage.input_tokens, 100);
-        assert_eq!(usage.output_tokens, 50);
-        assert_eq!(usage.cache_read_tokens, 0);
-        assert_eq!(usage.cache_creation_tokens, 0);
-    }
-
-    #[test]
     fn test_gemini_response_parsing() {
         let response = json!({
             "modelVersion": "gemini-3-pro-high",
@@ -798,73 +802,22 @@ mod tests {
     }
 
     #[test]
-    fn test_codex_response_adjusted() {
+    fn test_codex_response_parsing_cache_write_tokens_in_details() {
         let response = json!({
             "usage": {
                 "input_tokens": 1000,
                 "output_tokens": 500,
                 "input_tokens_details": {
-                    "cached_tokens": 300
+                    "cached_tokens": 300,
+                    "cache_write_tokens": 200
                 }
             }
         });
 
-        let usage = TokenUsage::from_codex_response_adjusted(&response).unwrap();
-        // input_tokens 应该被调整: 1000 - 300 = 700
-        assert_eq!(usage.input_tokens, 700);
-        assert_eq!(usage.output_tokens, 500);
-        assert_eq!(usage.cache_read_tokens, 300);
-    }
-
-    #[test]
-    fn test_codex_response_adjusted_no_cache() {
-        let response = json!({
-            "usage": {
-                "input_tokens": 1000,
-                "output_tokens": 500
-            }
-        });
-
-        let usage = TokenUsage::from_codex_response_adjusted(&response).unwrap();
-        // 没有 cached_tokens，input_tokens 保持不变
+        let usage = TokenUsage::from_codex_response(&response).unwrap();
         assert_eq!(usage.input_tokens, 1000);
-        assert_eq!(usage.output_tokens, 500);
-        assert_eq!(usage.cache_read_tokens, 0);
-    }
-
-    #[test]
-    fn test_codex_response_adjusted_cache_read_input_tokens() {
-        let response = json!({
-            "usage": {
-                "input_tokens": 1000,
-                "output_tokens": 500,
-                "cache_read_input_tokens": 200
-            }
-        });
-
-        let usage = TokenUsage::from_codex_response_adjusted(&response).unwrap();
-        assert_eq!(usage.input_tokens, 800);
-        assert_eq!(usage.output_tokens, 500);
-        assert_eq!(usage.cache_read_tokens, 200);
-    }
-
-    #[test]
-    fn test_codex_response_adjusted_saturating_sub() {
-        // 测试 cached_tokens > input_tokens 的边界情况
-        let response = json!({
-            "usage": {
-                "input_tokens": 100,
-                "output_tokens": 50,
-                "input_tokens_details": {
-                    "cached_tokens": 200
-                }
-            }
-        });
-
-        let usage = TokenUsage::from_codex_response_adjusted(&response).unwrap();
-        // saturating_sub 确保不会下溢
-        assert_eq!(usage.input_tokens, 0);
-        assert_eq!(usage.cache_read_tokens, 200);
+        assert_eq!(usage.cache_read_tokens, 300);
+        assert_eq!(usage.cache_creation_tokens, 200);
     }
 
     #[test]

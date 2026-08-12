@@ -758,7 +758,7 @@ dependencies = [
 
 [[package]]
 name = "cc-switch"
-version = "3.16.5"
+version = "3.19.2"
 dependencies = [
  "anyhow",
  "arboard",
@@ -783,6 +783,7 @@ dependencies = [
  "indexmap 2.13.0",
  "json-five",
  "json5",
+ "libc",
  "log",
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
@@ -799,6 +800,7 @@ dependencies = [
  "serde_yaml",
  "serial_test",
  "sha2",
+ "sys-locale",
  "tauri",
  "tauri-build",
  "tauri-plugin-deep-link",
@@ -5436,6 +5438,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "sys-locale"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
