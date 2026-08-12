@@ -66,11 +66,13 @@ const API_TIMEOUT_SECS: u64 = 30;
 /// 超时与输出处理。
 fn git_command(git: &Path) -> Command {
     let mut cmd = Command::new(git);
-    cmd.arg("-c").arg("credential.helper=")
+    cmd.arg("-c")
+        .arg("credential.helper=")
         .arg("-c")
         .arg("http.version=HTTP/1.1");
     if let Some(proxy) = crate::proxy::http_client::get_current_proxy_url() {
-        cmd.arg("-c").arg(format!("http.proxy={proxy}"))
+        cmd.arg("-c")
+            .arg(format!("http.proxy={proxy}"))
             .arg("-c")
             .arg(format!("https.proxy={proxy}"));
     }
@@ -206,9 +208,7 @@ impl LargeRepoBackend for GitBackend {
             }
             Err(e) => {
                 // ls-remote 自身失败（如无网络）时不阻断，退化为原逻辑逐个 clone。
-                log::debug!(
-                    "[large_repo][GitBackend] ls-remote 预检失败，退化为逐个 clone: {e:#}"
-                );
+                log::debug!("[large_repo][GitBackend] ls-remote 预检失败，退化为逐个 clone: {e:#}");
             }
         }
         let mut last_error = None;
@@ -228,8 +228,7 @@ impl LargeRepoBackend for GitBackend {
                         last_error = Some(anyhow!("clone 的 .git 目录超过磁盘上限"));
                         continue;
                     }
-                    match run_git_ls_tree(&self.git, temp_dir.path()).await
-                    {
+                    match run_git_ls_tree(&self.git, temp_dir.path()).await {
                         Ok(output) => {
                             let files = parse_ls_tree_output(&output)?;
                             log::debug!(
@@ -398,10 +397,7 @@ async fn clone_repo(
     let argv: Vec<String> = std::iter::once(git.to_string_lossy().into_owned())
         .chain(cmd.get_args().map(|a| a.to_string_lossy().into_owned()))
         .collect();
-    log::debug!(
-        "[large_repo][clone_repo] 原始 argv: {}",
-        argv.join(" ")
-    );
+    log::debug!("[large_repo][clone_repo] 原始 argv: {}", argv.join(" "));
 
     let output = timeout(
         Duration::from_secs(GIT_TIMEOUT_SECS),
@@ -413,9 +409,7 @@ async fn clone_repo(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        log::info!(
-            "[large_repo][clone_repo] clone 失败: url={url} branch={branch}: {stderr}"
-        );
+        log::info!("[large_repo][clone_repo] clone 失败: url={url} branch={branch}: {stderr}");
         return Err(anyhow!("git clone 失败: {stderr}"));
     }
     log::debug!("[large_repo][clone_repo] clone 命令成功: url={url} branch={branch}");
@@ -429,10 +423,7 @@ async fn run_git_ls_tree(git: &Path, workdir: &Path) -> Result<Vec<u8>> {
     timeout(
         Duration::from_secs(30),
         spawn_blocking(move || {
-            log::debug!(
-                "[large_repo][ls-tree] 开始: workdir={}",
-                workdir.display()
-            );
+            log::debug!("[large_repo][ls-tree] 开始: workdir={}", workdir.display());
             let mut cmd = git_command(&git);
             let output = cmd
                 .arg("ls-tree")
@@ -445,10 +436,7 @@ async fn run_git_ls_tree(git: &Path, workdir: &Path) -> Result<Vec<u8>> {
             let argv: Vec<String> = std::iter::once(git.to_string_lossy().into_owned())
                 .chain(cmd.get_args().map(|a| a.to_string_lossy().into_owned()))
                 .collect();
-            log::debug!(
-                "[large_repo][ls-tree] 原始 argv: {}",
-                argv.join(" ")
-            );
+            log::debug!("[large_repo][ls-tree] 原始 argv: {}", argv.join(" "));
             if !output.status.success() {
                 log::info!("[large_repo][ls-tree] 失败: workdir={}", workdir.display());
                 return Err(anyhow!("git ls-tree 失败"));
@@ -495,10 +483,7 @@ fn cat_file_with_budget(git: &Path, workdir: &Path, sha: &str) -> Result<Vec<u8>
     let argv: Vec<String> = std::iter::once(git.to_string_lossy().into_owned())
         .chain(cmd.get_args().map(|a| a.to_string_lossy().into_owned()))
         .collect();
-    log::debug!(
-        "[large_repo][cat-file] 原始 argv: {}",
-        argv.join(" ")
-    );
+    log::debug!("[large_repo][cat-file] 原始 argv: {}", argv.join(" "));
     let mut stdout = child
         .stdout
         .take()
@@ -785,7 +770,10 @@ async fn read_body_limited(mut resp: reqwest::Response, limit: u64) -> Result<Ve
     let mut body = Vec::new();
     while let Some(chunk) = resp.chunk().await? {
         if body.len().saturating_add(chunk.len()) as u64 > limit {
-            log::info!("[large_repo][read_body] 失败: 响应体超过大小上限 ({}MB)", limit / 1024 / 1024);
+            log::info!(
+                "[large_repo][read_body] 失败: 响应体超过大小上限 ({}MB)",
+                limit / 1024 / 1024
+            );
             return Err(anyhow!("响应体超过大小上限"));
         }
         body.extend_from_slice(&chunk);
@@ -862,10 +850,7 @@ pub fn parse_ls_tree_output(output: &[u8]) -> Result<Vec<RepoFile>> {
 ///
 /// 返回 (文件清单, truncated)。只保留 type=blob 的条目。
 pub fn parse_tree_api_response(json: &str) -> Result<(Vec<RepoFile>, bool)> {
-    log::debug!(
-        "[large_repo][parse_tree_api] 开始: 输入长度={}",
-        json.len()
-    );
+    log::debug!("[large_repo][parse_tree_api] 开始: 输入长度={}", json.len());
     let value: serde_json::Value = serde_json::from_str(json)?;
     let truncated = value
         .get("truncated")
@@ -1423,10 +1408,13 @@ pub async fn fetch_files_batch(
             Ok(p) => p,
             Err(_) => {
                 // 信号量被关闭（理论上不会发生）：全部返回失败，保持顺序
-                return files.iter().map(|_| Err(anyhow!("fetch 信号量已关闭"))).collect();
+                return files
+                    .iter()
+                    .map(|_| Err(anyhow!("fetch 信号量已关闭")))
+                    .collect();
             }
         };
-        let res = backend.fetch_file(repo, branch, *f);
+        let res = backend.fetch_file(repo, branch, f);
         tasks.push(async move {
             let out = res.await;
             drop(permit);
@@ -3126,10 +3114,7 @@ mod tests {
     async fn fetch_tree_quick_fails_when_no_candidate_branch_exists() {
         let Some(git) = git_available() else { return };
         let root = tempdir().unwrap();
-        let repo_dir = root
-            .path()
-            .join("qowner")
-            .join("qrepo.git");
+        let repo_dir = root.path().join("qowner").join("qrepo.git");
         fs::create_dir_all(&repo_dir).unwrap();
         write_fixture(&repo_dir);
         run_git(&git, &repo_dir, &["init", "-b", "weird-branch"]);

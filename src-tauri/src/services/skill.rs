@@ -1126,8 +1126,7 @@ impl SkillService {
                     log::warn!("检查更新时仓库坐标非法（{}/{}）: {e}", owner, name);
                     return local_updates;
                 }
-                let dirs: Vec<String> =
-                    group_skills.iter().map(|s| s.directory.clone()).collect();
+                let dirs: Vec<String> = group_skills.iter().map(|s| s.directory.clone()).collect();
 
                 let mut remote_hashes: Option<Vec<(String, String)>> = None;
                 let mut last_error: Option<anyhow::Error> = None;
@@ -1430,33 +1429,32 @@ impl SkillService {
             // 大仓库路径：只物化 skill 目录，不下载整仓
             Self::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)?;
             let mut last_error: Option<anyhow::Error> = None;
-            let materialized: Option<(tempfile::TempDir, String, BlobHashScheme)> =
-                match timeout(
-                    std::time::Duration::from_secs(LARGE_REPO_TIMEOUT_SECS),
-                    // 单仓库内串行回退整条后端链（顺序 [API, Git]，命中即返回；
-                    // 并发单位是仓库，由外层 repo_futures 提供）
-                    async {
-                        let chain = backend_chain();
-                        race_backend_chain(&chain, |b| {
-                            materialize_skill_dir(b, &repo, &skill.directory)
-                        })
-                        .await
-                    },
-                )
-                .await
-                {
-                    Ok(Ok(result)) => Some(result),
-                    Ok(Err(e)) => {
-                        log::warn!("更新 skill 时大仓库路径失败（{}/{}）: {e:#}", owner, name);
-                        last_error = Some(e);
-                        None
-                    }
-                    Err(_) => {
-                        log::warn!("更新 skill 时大仓库路径超时（{}/{}）", owner, name);
-                        last_error = Some(anyhow!("大仓库路径物化 skill 目录超时"));
-                        None
-                    }
-                };
+            let materialized: Option<(tempfile::TempDir, String, BlobHashScheme)> = match timeout(
+                std::time::Duration::from_secs(LARGE_REPO_TIMEOUT_SECS),
+                // 单仓库内串行回退整条后端链（顺序 [API, Git]，命中即返回；
+                // 并发单位是仓库，由外层 repo_futures 提供）
+                async {
+                    let chain = backend_chain();
+                    race_backend_chain(&chain, |b| {
+                        materialize_skill_dir(b, &repo, &skill.directory)
+                    })
+                    .await
+                },
+            )
+            .await
+            {
+                Ok(Ok(result)) => Some(result),
+                Ok(Err(e)) => {
+                    log::warn!("更新 skill 时大仓库路径失败（{}/{}）: {e:#}", owner, name);
+                    last_error = Some(e);
+                    None
+                }
+                Err(_) => {
+                    log::warn!("更新 skill 时大仓库路径超时（{}/{}）", owner, name);
+                    last_error = Some(anyhow!("大仓库路径物化 skill 目录超时"));
+                    None
+                }
+            };
             match materialized {
                 Some((temp_guard, used_branch, scheme)) => (temp_guard, used_branch, Some(scheme)),
                 None => {
