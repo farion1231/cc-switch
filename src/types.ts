@@ -461,6 +461,7 @@ export interface SessionMeta {
   lastActiveAt?: number;
   sourcePath?: string;
   resumeCommand?: string;
+  accountLabel?: string;
 }
 
 export interface SessionMessage {

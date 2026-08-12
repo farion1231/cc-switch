@@ -14,15 +14,46 @@ use super::utils::{
 
 const PROVIDER_ID: &str = "claude";
 
-pub fn scan_sessions() -> Vec<SessionMeta> {
-    let root = get_claude_config_dir().join("projects");
-    let mut files = Vec::new();
-    collect_jsonl_files(&root, &mut files);
+/// All Claude transcript roots on the host. Claude Desktop/Cowork keeps a
+/// separate `.claude/projects` tree inside each local-agent session, while
+/// Claude Code uses the standard `~/.claude/projects` tree.
+pub fn session_roots() -> Vec<PathBuf> {
+    let mut roots = vec![get_claude_config_dir().join("projects")];
 
+    #[cfg(target_os = "macos")]
+    {
+        let home = crate::config::get_home_dir();
+        for app_dir in [
+            home.join("Library/Application Support/Claude/local-agent-mode-sessions"),
+            home.join("Library/Application Support/Claude-3p/local-agent-mode-sessions"),
+        ] {
+            collect_nested_project_roots(&app_dir, &mut roots);
+        }
+    }
+
+    let mut unique = Vec::with_capacity(roots.len());
+    for root in roots {
+        if !unique.iter().any(|existing: &PathBuf| existing == &root) {
+            unique.push(root);
+        }
+    }
+    unique
+}
+
+pub fn scan_sessions() -> Vec<SessionMeta> {
     let mut sessions = Vec::new();
-    for path in files {
-        if let Some(meta) = parse_session(&path) {
-            sessions.push(meta);
+    let mut seen_paths = std::collections::HashSet::new();
+    for root in session_roots() {
+        let mut files = Vec::new();
+        collect_jsonl_files(&root, &mut files);
+        for path in files {
+            let key = path.canonicalize().unwrap_or_else(|_| path.clone());
+            if !seen_paths.insert(key) {
+                continue;
+            }
+            if let Some(meta) = parse_session(&path) {
+                sessions.push(meta);
+            }
         }
     }
 
@@ -131,6 +162,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     let mut project_dir: Option<String> = None;
     let mut created_at: Option<i64> = None;
     let mut first_user_message: Option<String> = None;
+    let mut has_conversation_record = false;
 
     // Extract metadata and first user message from head lines
     for line in &head {
@@ -138,6 +170,14 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
             Ok(parsed) => parsed,
             Err(_) => continue,
         };
+        if value.get("message").is_some()
+            || matches!(
+                value.get("type").and_then(Value::as_str),
+                Some("user" | "assistant" | "custom-title")
+            )
+        {
+            has_conversation_record = true;
+        }
         if session_id.is_none() {
             session_id = value
                 .get("sessionId")
@@ -223,8 +263,24 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         }
     }
 
+    if !has_conversation_record {
+        has_conversation_record = tail.iter().any(|line| {
+            let Ok(value) = serde_json::from_str::<Value>(line) else {
+                return false;
+            };
+            value.get("message").is_some()
+                || matches!(
+                    value.get("type").and_then(Value::as_str),
+                    Some("user" | "assistant" | "custom-title")
+                )
+        });
+    }
+
     let session_id = session_id.or_else(|| infer_session_id_from_filename(path));
     let session_id = session_id?;
+    if !has_conversation_record {
+        return None;
+    }
 
     // Title priority: custom-title > first user message > directory basename
     let title = custom_title
@@ -238,6 +294,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         });
 
     let summary = summary.map(|text| truncate_summary(&text, 160));
+    let account_label = account_label_from_path(path);
 
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
@@ -249,6 +306,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
         resume_command: Some(format!("claude --resume {session_id}")),
+        account_label,
     })
 }
 
@@ -283,6 +341,77 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
             files.push(path);
         }
     }
+}
+
+fn collect_nested_project_roots(root: &Path, roots: &mut Vec<PathBuf>) {
+    if !root.exists() {
+        return;
+    }
+
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        if path.file_name().and_then(|name| name.to_str()) == Some("projects")
+            && path
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .and_then(|name| name.to_str())
+                == Some(".claude")
+        {
+            roots.push(path);
+            continue;
+        }
+        collect_nested_project_roots(&path, roots);
+    }
+}
+
+fn account_label_from_path(path: &Path) -> Option<String> {
+    let mut current = path.parent();
+    while let Some(dir) = current {
+        if dir.file_name().and_then(|name| name.to_str()) == Some(".claude") {
+            let session_dir = dir.parent()?;
+            let session_id = session_dir.file_name()?.to_str()?;
+            let metadata_path = session_dir.parent()?.join(format!("{session_id}.json"));
+            if let Ok(contents) = std::fs::read_to_string(metadata_path) {
+                if let Ok(value) = serde_json::from_str::<Value>(&contents) {
+                    if let Some(email) = value
+                        .get("emailAddress")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        return Some(email.to_string());
+                    }
+                    if let Some(account) = value
+                        .get("accountName")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        return Some(account.to_string());
+                    }
+                }
+            }
+            let account_root = session_dir
+                .parent()
+                .and_then(|organization_dir| organization_dir.parent())
+                .and_then(|account_dir| account_dir.file_name())
+                .and_then(|name| name.to_str())?;
+            return Some(account_root.to_string());
+        }
+        current = dir.parent();
+    }
+    None
 }
 
 fn remove_path_if_exists(path: &Path) -> std::io::Result<()> {
@@ -329,6 +458,39 @@ mod tests {
 
         assert!(!path.exists());
         assert!(!sidecar.exists());
+    }
+
+    #[test]
+    fn account_label_reads_desktop_session_email() {
+        let temp = tempdir().expect("tempdir");
+        let account = temp.path().join("account-uuid");
+        let organization = account.join("organization-uuid");
+        let local_session = organization.join("local_session");
+        let projects = local_session.join(".claude/projects/project");
+        std::fs::create_dir_all(&projects).expect("create project");
+        std::fs::write(
+            organization.join("local_session.json"),
+            r#"{"emailAddress":"architecture@example.com"}"#,
+        )
+        .expect("write metadata");
+
+        let transcript = projects.join("session.jsonl");
+        assert_eq!(
+            account_label_from_path(&transcript).as_deref(),
+            Some("architecture@example.com")
+        );
+    }
+
+    #[test]
+    fn parse_session_skips_queue_only_jsonl() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("queued.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"type":"queue-operation","operation":"enqueue","sessionId":"queued"}"#,
+        )
+        .expect("write queue");
+        assert!(parse_session(&path).is_none());
     }
 
     #[test]

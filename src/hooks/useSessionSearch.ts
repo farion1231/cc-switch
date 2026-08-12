@@ -37,6 +37,7 @@ export function useSessionSearch({
         session.summary,
         session.projectDir,
         session.sourcePath,
+        session.accountLabel,
       ]
         .filter(Boolean)
         .join(" ");
