@@ -214,9 +214,7 @@ struct TierSummaryPart {
 /// 用量是否跑赢时间进度（烧得比时间快）——对齐 vscode-gptx `isOverPace`。
 fn is_over_pace(used_percent: f64, elapsed_percent: Option<f64>) -> bool {
     match elapsed_percent {
-        Some(elapsed) if used_percent.is_finite() && elapsed.is_finite() => {
-            used_percent > elapsed
-        }
+        Some(elapsed) if used_percent.is_finite() && elapsed.is_finite() => used_percent > elapsed,
         _ => false,
     }
 }
@@ -391,10 +389,7 @@ fn format_subscription_summary_at(
     Some(format!("{} {}", emoji, format_tier_summary_body(&parts)))
 }
 
-fn labeled_tier_parts(
-    entries: &[(&str, f64, Option<&str>)],
-    now_ms: i64,
-) -> Vec<TierSummaryPart> {
+fn labeled_tier_parts(entries: &[(&str, f64, Option<&str>)], now_ms: i64) -> Vec<TierSummaryPart> {
     let mut parts = Vec::new();
     for &(label, tier_names) in TIER_LABEL_GROUPS {
         // 同组取最高用量；时间%取该胜出条目的 resets_at（同窗时长下应接近）。
@@ -429,10 +424,7 @@ fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String
     format_script_summary_at(result, now_millis())
 }
 
-fn format_script_summary_at(
-    result: &crate::provider::UsageResult,
-    now_ms: i64,
-) -> Option<String> {
+fn format_script_summary_at(result: &crate::provider::UsageResult, now_ms: i64) -> Option<String> {
     if !result.success {
         return None;
     }
@@ -453,13 +445,7 @@ fn format_script_summary_at(
     let entries: Vec<(&str, f64, Option<&str>)> = data
         .iter()
         .zip(owned_resets.iter())
-        .filter_map(|(d, reset)| {
-            Some((
-                d.plan_name.as_deref()?,
-                tier_pct(d)?,
-                reset.as_deref(),
-            ))
-        })
+        .filter_map(|(d, reset)| Some((d.plan_name.as_deref()?, tier_pct(d)?, reset.as_deref())))
         .collect();
     let parts = labeled_tier_parts(&entries, now_ms);
     if !parts.is_empty() {
@@ -1823,7 +1809,10 @@ mod tests {
         let s = format_subscription_summary(&quota).expect("should format");
         assert!(s.contains("h9%"), "expected h9% in {s}");
         assert!(s.contains("w27%"), "expected w27% in {s}");
-        assert!(!s.contains("h9%-"), "must not invent time% without reset: {s}");
+        assert!(
+            !s.contains("h9%-"),
+            "must not invent time% without reset: {s}"
+        );
     }
 
     #[test]
