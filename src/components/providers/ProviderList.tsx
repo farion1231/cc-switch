@@ -30,6 +30,10 @@ import {
   useHermesLiveProviderIds,
   useHermesModelConfig,
 } from "@/hooks/useHermes";
+import {
+  useKimiLiveProviderIds,
+  useKimiCurrentProviderId,
+} from "@/hooks/useKimi";
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
@@ -112,11 +116,26 @@ export function ProviderList({
   // Hermes: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
   const { data: hermesLiveIds } = useHermesLiveProviderIds(appId === "hermes");
 
+  // Kimi: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
+  const { data: kimiLiveIds } = useKimiLiveProviderIds(appId === "kimi");
+
   // Hermes: 读取当前 model.provider，用于判断哪个供应商是"当前激活"（高亮）
   const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
   const hermesCurrentProviderId = hermesModelConfig?.provider;
 
-  // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes）
+  // Kimi: 读取 live config 中持有 default_model 的 provider id（唯一归属）
+  const { data: kimiCurrentProviderId } = useKimiCurrentProviderId(
+    appId === "kimi",
+  );
+  const isKimiCurrent = useCallback(
+    (providerId: string): boolean => {
+      if (appId !== "kimi") return false;
+      return kimiCurrentProviderId === providerId;
+    },
+    [appId, kimiCurrentProviderId],
+  );
+
+  // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes/Kimi）
   const isProviderInConfig = useCallback(
     (providerId: string): boolean => {
       if (appId === "opencode") {
@@ -128,9 +147,12 @@ export function ProviderList({
       if (appId === "hermes") {
         return hermesLiveIds?.includes(providerId) ?? false;
       }
+      if (appId === "kimi") {
+        return kimiLiveIds?.includes(providerId) ?? false;
+      }
       return true; // 其他应用始终返回 true
     },
-    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds],
+    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds, kimiLiveIds],
   );
 
   // OpenClaw: query default model to determine which provider is default
@@ -221,6 +243,10 @@ export function ProviderList({
       }
       if (appId === "hermes") {
         const count = await providersApi.importHermesFromLive();
+        return count > 0;
+      }
+      if (appId === "kimi") {
+        const count = await providersApi.importKimiFromLive();
         return count > 0;
       }
       if (appId === "claude-desktop") {
@@ -393,6 +419,7 @@ export function ProviderList({
               isOmoSlim && provider.id === (currentOmoSlimId || "");
             const isHermesCurrent =
               appId === "hermes" && hermesCurrentProviderId === provider.id;
+            const isKimiActive = isKimiCurrent(provider.id);
             return (
               <SortableProviderCard
                 key={provider.id}
@@ -404,7 +431,9 @@ export function ProviderList({
                       ? isOmoSlimCurrent
                       : appId === "hermes"
                         ? isHermesCurrent
-                        : provider.id === currentProviderId
+                        : appId === "kimi"
+                          ? isKimiActive
+                          : provider.id === currentProviderId
                 }
                 appId={appId}
                 isInConfig={isProviderInConfig(provider.id)}
@@ -431,11 +460,13 @@ export function ProviderList({
                   handleToggleFailover(provider.id, enabled)
                 }
                 activeProviderId={activeProviderId}
-                // OpenClaw: default model / Hermes: model.provider === provider.id
+                // OpenClaw: default model / Hermes: model.provider === provider.id / Kimi: default_model 归属
                 isDefaultModel={
                   appId === "hermes"
                     ? isHermesCurrent
-                    : isProviderDefaultModel(provider.id)
+                    : appId === "kimi"
+                      ? isKimiActive
+                      : isProviderDefaultModel(provider.id)
                 }
                 onSetAsDefault={
                   onSetAsDefault

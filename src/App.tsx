@@ -42,6 +42,7 @@ import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
+import { invalidateKimiProviderCaches } from "@/hooks/useKimi";
 import { hermesApi } from "@/lib/api/hermes";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
@@ -212,6 +213,7 @@ function App() {
     opencode: true,
     openclaw: true,
     hermes: true,
+    kimi: true,
   };
 
   const getFirstVisibleApp = (): AppId => {
@@ -223,6 +225,7 @@ function App() {
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";
+    if (visibleApps.kimi) return "kimi";
     return "claude"; // fallback
   };
 
@@ -242,7 +245,8 @@ function App() {
       sharedFeatureApp !== "opencode" &&
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
-      sharedFeatureApp !== "hermes"
+      sharedFeatureApp !== "hermes" &&
+      sharedFeatureApp !== "kimi"
     ) {
       setCurrentView("providers");
     }
@@ -309,7 +313,8 @@ function App() {
     sharedFeatureApp === "opencode" ||
     sharedFeatureApp === "openclaw" ||
     sharedFeatureApp === "gemini" ||
-    sharedFeatureApp === "hermes";
+    sharedFeatureApp === "hermes" ||
+    sharedFeatureApp === "kimi";
 
   const {
     addProvider,
@@ -698,6 +703,8 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: hermesKeys.liveProviderIds,
         });
+      } else if (activeApp === "kimi") {
+        await invalidateKimiProviderCaches(queryClient);
       }
       toast.success(
         t("notifications.removeFromConfigSuccess", {
@@ -749,7 +756,8 @@ function App() {
     if (
       activeApp === "opencode" ||
       activeApp === "openclaw" ||
-      activeApp === "hermes"
+      activeApp === "hermes" ||
+      activeApp === "kimi"
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -1027,7 +1035,8 @@ function App() {
                       onRemoveFromConfig={
                         activeApp === "opencode" ||
                         activeApp === "openclaw" ||
-                        activeApp === "hermes"
+                        activeApp === "hermes" ||
+                        activeApp === "kimi"
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
                           : undefined
@@ -1050,7 +1059,7 @@ function App() {
                       onSetAsDefault={
                         activeApp === "openclaw"
                           ? setAsDefaultModel
-                          : activeApp === "hermes"
+                          : activeApp === "hermes" || activeApp === "kimi"
                             ? switchProvider
                             : undefined
                       }
@@ -1281,7 +1290,8 @@ function App() {
             {currentView === "providers" &&
               activeApp !== "opencode" &&
               activeApp !== "openclaw" &&
-              activeApp !== "hermes" && (
+              activeApp !== "hermes" &&
+              activeApp !== "kimi" && (
                 <div
                   className="flex shrink-0 items-center gap-1.5"
                   style={{ WebkitAppRegion: "no-drag" } as any}

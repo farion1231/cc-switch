@@ -891,7 +891,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "kimi": "Kimi"
   },
   "appSwitcher": {
     "more": "More apps"
@@ -1945,6 +1946,9 @@
         "name": "@upstash/context7-mcp",
         "description": "Context7 documentation search tool providing latest library docs and code examples, with higher limits when configured with a key"
       }
+    },
+    "apps": {
+      "kimi": "Kimi"
     }
   },
   "prompts": {
@@ -3047,5 +3051,52 @@
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
+  },
+  "kimi": {
+    "form": {
+      "type": "Protocol type",
+      "typeKimi": "Kimi",
+      "typeOpenai": "OpenAI",
+      "typeOpenaiResponses": "OpenAI Responses",
+      "typeAnthropic": "Anthropic",
+      "typeGoogleGenai": "Google GenAI",
+      "typeVertexai": "Vertex AI",
+      "typeHint": "Provider API protocol (written to [providers.<name>].type).",
+      "baseUrl": "API Base URL",
+      "baseUrlRequired": "Please enter an API base URL",
+      "baseUrlScheme": "API base URL must start with http:// or https://",
+      "baseUrlInvalid": "Invalid API base URL format",
+      "baseUrlHint": "The provider's API endpoint address.",
+      "models": "Models",
+      "addModel": "Add model",
+      "noModels": "No models configured. Switching to this provider will have no default model.",
+      "modelId": "Model alias",
+      "modelIdPlaceholder": "kimi-k2.7-code",
+      "modelName": "Display name",
+      "modelNamePlaceholder": "Kimi K2.7 Code",
+      "defaultModel": "Default model",
+      "fallbackModel": "Fallback model",
+      "setDefault": "Set default",
+      "advancedOptions": "Advanced options",
+      "contextLength": "Context length (tokens)",
+      "capabilities": "Capabilities (comma separated)",
+      "modelsHint": "Switching to this provider writes the default model to the top-level default_model.",
+      "providerKey": "Provider Key",
+      "providerKeyPlaceholder": "my-provider",
+      "providerKeyRequired": "Provider Key is required",
+      "providerKeyInvalid": "Lowercase letters, numbers, and hyphens only",
+      "providerKeyDuplicate": "This Provider Key already exists",
+      "providerKeyLockedHint": "This provider is already in Kimi config; key is locked.",
+      "providerKeyHint": "Lowercase letters, numbers, and hyphens only. Used as the provider name in config.toml.",
+      "wireModel": "Model ID (sent on request)",
+      "wireModelPlaceholder": "kimi-k2.7-code",
+      "maxInputSize": "Max input size (tokens)",
+      "maxOutputSize": "Max output size (tokens)",
+      "supportEfforts": "Supported thinking efforts (comma separated)",
+      "defaultEffort": "Default thinking effort",
+      "modelBaseUrl": "Per-model endpoint override",
+      "custom": "Custom…",
+      "defaultModelHint": "Used when switching to this provider"
+    }
   }
 }
