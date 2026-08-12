@@ -510,7 +510,11 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "claude" => Some("npm i -g @anthropic-ai/claude-code@latest"),
         "codex" => Some("npm i -g @openai/codex@latest"),
         "gemini" => Some("npm i -g @google/gemini-cli@latest"),
-        "grok" => Some("npm i -g @xai-official/grok@latest"),
+        // grok 特例：xAI 从未更新 `latest` dist-tag（长期停在 0.1.4，仅 darwin/arm64），
+        // `@latest` 会让 Windows/Linux 直接 EBADPLATFORM。显式钉在支持 win32/x64 的 1.x 线，
+        // 与 npm_package_spec / fetch_npm_max_version 保持一致；若 xAI 修好 dist-tag，
+        // ^1.0.1 也会自动跟进 1.x 内更新。
+        "grok" => Some("npm i -g @xai-official/grok@^1.0.1"),
         "opencode" => Some("npm i -g opencode-ai@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
         _ => None,
@@ -795,7 +799,15 @@ async fn get_single_tool_version_impl(
         }
         "codex" => fetch_npm_latest_for_tool(&client, "@openai/codex", tool, local).await,
         "gemini" => fetch_npm_latest_for_tool(&client, "@google/gemini-cli", tool, local).await,
-        "grok" => fetch_npm_latest_for_tool(&client, "@xai-official/grok", tool, local).await,
+        // grok 的 `latest` dist-tag 长期停在 0.1.4（仅 darwin/arm64），dist-tags
+        // 探测会误报远古版本；改用 versions 数组取最高稳定版，失败时退回 dist-tags。
+        "grok" => {
+            if let Some(v) = fetch_npm_max_version(&client, "@xai-official/grok").await {
+                Some(v)
+            } else {
+                fetch_npm_latest_for_tool(&client, "@xai-official/grok", tool, local).await
+            }
+        }
         "opencode" => {
             if let Some(version) =
                 fetch_npm_latest_for_tool(&client, "opencode-ai", tool, local).await
@@ -936,6 +948,24 @@ async fn fetch_npm_dist_tags(
     let resp = client.get(&url).send().await.ok()?;
     let json = resp.json::<serde_json::Value>().await.ok()?;
     json.get("dist-tags")?.as_object().cloned()
+}
+
+/// 拉取 npm 包 versions 数组里最高的**稳定**版本（忽略预发布）。
+///
+/// grok 专用：xAI 从未更新 `latest` dist-tag（停在 0.1.4，仅 darwin/arm64），
+/// dist-tags 探测会误导 UI 显示远古版本；versions 数组不受 dist-tag 影响。
+/// 其他工具仍走 `fetch_npm_latest_for_tool` 的 dist-tags 逻辑（作者有意发布的
+/// "latest" 就是他们想展示的版本）。
+async fn fetch_npm_max_version(client: &reqwest::Client, package: &str) -> Option<String> {
+    let url = format!("https://registry.npmjs.org/{package}");
+    let resp = client.get(&url).send().await.ok()?;
+    let json = resp.json::<serde_json::Value>().await.ok()?;
+    let versions = json.get("versions")?.as_object()?;
+    versions
+        .keys()
+        .filter(|v| !v.contains('-'))
+        .max_by(|a, b| compare_semver(a, b).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|v| v.to_string())
 }
 
 /// 查询某 npm 工具要展示的"最新版本":取 `latest`,并在本地版本领先时按工具的
@@ -2124,6 +2154,21 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
     }
 }
 
+/// npm 包安装 spec（包名 + 版本约束）。除 grok 外一律 `@latest`。
+///
+/// grok 特例：xAI 从未更新过 `latest` dist-tag，长期停在 0.1.4（仅 darwin/arm64，
+/// 见 npm_install_command_for 注释），`@latest` 在 Windows/Linux 上必然 EBADPLATFORM。
+/// 显式钉在支持 win32/x64 的最高稳定线 1.x；该线内更新可被 `^` 自动跟进。
+fn npm_package_spec(tool: &str) -> Option<String> {
+    npm_package_for(tool).map(|pkg| {
+        if pkg == "@xai-official/grok" {
+            format!("{pkg}@^1.0.1")
+        } else {
+            format!("{pkg}@latest")
+        }
+    })
+}
+
 /// 取路径的父目录(纯字符串截断,不碰 fs):`/a/b/npm` → `/a/b`、`C:\a\b\npm.cmd`
 /// → `C:\a\b`、混合分隔符 `C:\a/b\npm` → `C:\a/b`。无父目录返回空串。
 ///
@@ -2417,6 +2462,16 @@ fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String
 /// nvm/homebrew 下的 node+npm 均不可见 → grok 内部 spawn 得到 ENOENT，只向用户抛出
 /// 费解的 `Error: No such file or directory (os error 2)`（实测复现）。
 ///
+/// **2026-08 新增的第三个失败模式：`latest` dist-tag 事故**。xAI 在 0.1.4 之后
+/// 发布的所有版本（0.2.x/1.0.x）都**没有更新 npm `latest` dist-tag**——它至今仍指向
+/// 0.1.4（仅 darwin/arm64）。于是 `grok update` 内部的 `npm view ... version` 查到
+/// 0.1.4、再 `npm i -g @xai-official/grok@0.1.4`，Windows/Linux 上直接 EBADPLATFORM。
+/// 本函数保留官方 installer fallback 正是解法：官方 install 会覆写
+/// `~/.grok/config.toml` 的 `installer = "internal"`，此后 `grok update` 改走
+/// node-free 直连下载，彻底绕开 npm dist-tag。ccs 侧其它 npm 命令一律显式钉
+/// `^1.0.1`（见 `npm_install_command_for` / `npm_package_spec`），版本探测走
+/// `fetch_npm_max_version`（versions 数组），均不再读 `latest` tag。
+///
 /// **这是上游换了机制**：0.2.111 及更早版本自更新是直接下载二进制到 `~/.grok/downloads/`
 /// （彼时 `is_grok_native_install` 假设的 "native = 不碰 npm" 成立），0.2.112 起改走上述 npm
 /// 管道（落点随之从 `downloads/` 变为 `bin/`）。**副作用**：npm 全局包那一处安装是
@@ -2553,16 +2608,16 @@ fn package_manager_anchored_command_from_paths(
         let brew = sibling_bin(bin_path, "brew")?;
         return Some(format!("{} upgrade {formula}", quote_path_if_spaced(&brew)));
     }
-    let pkg = npm_package_for(tool)?;
+    let spec = npm_package_spec(tool)?;
     match infer_install_source(Path::new(bin_path)) {
         "volta" => {
             let volta = sibling_bin(bin_path, "volta")?;
-            return Some(format!("{} install {pkg}", quote_path_if_spaced(&volta)));
+            return Some(format!("{} install {spec}", quote_path_if_spaced(&volta)));
         }
         "bun" => {
             let bun = sibling_bin(bin_path, "bun")?;
             return Some(format!(
-                "{} add -g {pkg}@latest",
+                "{} add -g {spec}",
                 quote_path_if_spaced(&bun)
             ));
         }
@@ -2572,7 +2627,7 @@ fn package_manager_anchored_command_from_paths(
         // self-update，上层会直接锚到 CLI 自身；否则返回 None 走静态兜底。
         _ => return None,
     }
-    anchored_npm_command(bin_path, &format!("i -g {pkg}@latest"))
+    anchored_npm_command(bin_path, &format!("i -g {spec}"))
 }
 
 /// 给定工具、原始 bin 路径（命令行命中的入口）、canonicalize 后的真身路径，
@@ -2637,20 +2692,20 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
 
 #[cfg(target_os = "windows")]
 fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Option<String> {
-    let pkg = npm_package_for(tool)?;
+    let spec = npm_package_spec(tool)?;
 
     match infer_install_source(Path::new(bin_path)) {
         "volta" => {
             let volta = sibling_bin_with_ext(bin_path, "volta", &["exe", "cmd"])?;
             Some(format!(
-                "{} install {pkg}",
+                "{} install {spec}",
                 win_quote_path_for_batch(&volta)
             ))
         }
         "pnpm" => {
             let pnpm = sibling_bin_with_ext(bin_path, "pnpm", &["cmd", "exe"])?;
             Some(format!(
-                "{} add -g {pkg}@latest",
+                "{} add -g {spec}",
                 win_quote_path_for_batch(&pnpm)
             ))
         }
@@ -2659,7 +2714,7 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
         _ => {
             let npm = sibling_bin_with_ext(bin_path, "npm", &["cmd", "exe"])?;
             Some(format!(
-                "{} i -g {pkg}@latest",
+                "{} i -g {spec}",
                 win_quote_path_for_batch(&npm)
             ))
         }
@@ -4528,7 +4583,7 @@ mod tests {
         assert_eq!(npm_package_for("grok"), Some("@xai-official/grok"));
         assert_eq!(
             npm_install_command_for("grok"),
-            Some("npm i -g @xai-official/grok@latest")
+            Some("npm i -g @xai-official/grok@^1.0.1")
         );
         assert_eq!(official_update_args("grok"), Some("update"));
 
@@ -4536,7 +4591,7 @@ mod tests {
             assert_eq!(
                 tool_action_shell_command_for_shell("grok", action, LifecycleCommandShell::Posix)
                     .as_deref(),
-                Some("npm i -g @xai-official/grok@latest")
+                Some("npm i -g @xai-official/grok@^1.0.1")
             );
         }
 
@@ -4549,7 +4604,7 @@ mod tests {
                 LifecycleCommandShell::WindowsBatch,
             )
             .as_deref(),
-            Some("npm i -g @xai-official/grok@latest")
+            Some("npm i -g @xai-official/grok@^1.0.1")
         );
     }
 
@@ -4802,7 +4857,7 @@ mod tests {
             let cmd = anchored_command_from_paths("grok", &bin_path, &bin_path);
             let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
             let expected = format!(
-                "{} i -g @xai-official/grok@latest",
+                "{} i -g @xai-official/grok@^1.0.1",
                 expect_quoted_path(&npm_full)
             );
             assert_eq!(cmd.as_deref(), Some(expected.as_str()));
@@ -4838,7 +4893,7 @@ mod tests {
                 "native installer first: {install}"
             );
             assert!(
-                install.ends_with("|| call npm i -g @xai-official/grok@latest"),
+                install.ends_with("|| call npm i -g @xai-official/grok@^1.0.1"),
                 "npm fallback should remain available: {install}"
             );
             let expected_encoded = powershell_encoded_command(GROK_INSTALL_WINDOWS_SCRIPT);
@@ -5175,7 +5230,7 @@ mod tests {
             assert!(
                 grok.starts_with(
                     "bash -c 'tmp=$(mktemp) && curl -fsSL https://x.ai/cli/install.sh "
-                ) && grok.contains(" || npm i -g @xai-official/grok@latest"),
+                ) && grok.contains(" || npm i -g @xai-official/grok@^1.0.1"),
                 "WSL grok install should prefer native POSIX installer with npm fallback: {grok}"
             );
             assert!(!grok.contains("| bash"));
@@ -5392,7 +5447,7 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some(
-                    "PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @xai-official/grok@latest"
+                    "PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @xai-official/grok@^1.0.1"
                 )
             );
         }
@@ -5939,7 +5994,7 @@ mod tests {
                 "should include official installer URL: {cmd}"
             );
             assert!(
-                cmd.contains("@xai-official/grok@latest"),
+                cmd.contains("@xai-official/grok@^1.0.1"),
                 "should keep npm package as fallback: {cmd}"
             );
             let parts: Vec<&str> = cmd.split("||").collect();
@@ -5976,7 +6031,7 @@ mod tests {
             assert!(!static_fallback_command("gemini").contains("gemini update"));
             assert_eq!(
                 static_fallback_command("grok"),
-                "npm i -g @xai-official/grok@latest"
+                "npm i -g @xai-official/grok@^1.0.1"
             );
             assert!(!static_fallback_command("grok").contains("grok update"));
             assert_eq!(
