@@ -157,6 +157,9 @@ export function GrokBuildProviderForm({
   const [endpointAutoSelect, setEndpointAutoSelect] = useState(
     initialData?.meta?.endpointAutoSelect ?? true,
   );
+  const [unifySessionHistory, setUnifySessionHistory] = useState<boolean>(
+    initialData?.meta?.unifySessionHistory ?? false,
+  );
   const [isEndpointModalOpen, setIsEndpointModalOpen] = useState(false);
   const [presetEndpoints, setPresetEndpoints] = useState<string[]>([]);
   const [draftCustomEndpoints, setDraftCustomEndpoints] = useState<string[]>(
@@ -403,6 +406,7 @@ export function GrokBuildProviderForm({
       impersonateClaudeCode,
       promptCacheRouting,
       codexChatReasoning,
+      unifySessionHistory,
       customUserAgent: customUserAgent.trim() || undefined,
       localProxyRequestOverrides: requestOverrides.overrides,
       maxOutputTokens:
@@ -555,6 +559,8 @@ export function GrokBuildProviderForm({
               onCodexChatReasoningChange={setCodexChatReasoning}
               promptCacheRouting={promptCacheRouting}
               onPromptCacheRoutingChange={setPromptCacheRouting}
+              unifySessionHistory={unifySessionHistory}
+              onUnifySessionHistoryChange={setUnifySessionHistory}
               speedTestEndpoints={speedTestEndpoints}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}
