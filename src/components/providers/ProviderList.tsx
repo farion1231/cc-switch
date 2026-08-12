@@ -420,6 +420,14 @@ export function ProviderList({
             const isHermesCurrent =
               appId === "hermes" && hermesCurrentProviderId === provider.id;
             const isKimiActive = isKimiCurrent(provider.id);
+            // Kimi: 卡片上显示该 provider 的默认模型（settings 或首个模型）
+            const kimiModelLabel =
+              appId === "kimi"
+                ? ((provider.settingsConfig as { default_model?: string } | undefined)
+                    ?.default_model ||
+                    (provider.settingsConfig as { models?: Array<{ id?: string }> } | undefined)
+                      ?.models?.[0]?.id)
+                : undefined;
             return (
               <SortableProviderCard
                 key={provider.id}
@@ -471,6 +479,7 @@ export function ProviderList({
                 onSetAsDefault={
                   onSetAsDefault ? () => onSetAsDefault(provider) : undefined
                 }
+                modelLabel={kimiModelLabel}
               />
             );
           })}
@@ -602,6 +611,7 @@ interface SortableProviderCardProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  modelLabel?: string;
 }
 
 function SortableProviderCard({
@@ -632,6 +642,7 @@ function SortableProviderCard({
   activeProviderId,
   isDefaultModel,
   onSetAsDefault,
+  modelLabel,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -685,6 +696,7 @@ function SortableProviderCard({
         // OpenClaw: default model
         isDefaultModel={isDefaultModel}
         onSetAsDefault={onSetAsDefault}
+        modelLabel={modelLabel}
       />
     </div>
   );

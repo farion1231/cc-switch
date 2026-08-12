@@ -67,6 +67,8 @@ interface ProviderCardProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  /** 可选：显示在卡片上的模型名（如 Kimi 当前默认模型） */
+  modelLabel?: string;
 }
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
@@ -166,6 +168,7 @@ export function ProviderCard({
   // OpenClaw: default model
   isDefaultModel,
   onSetAsDefault,
+  modelLabel,
 }: ProviderCardProps) {
   const { t } = useTranslation();
 
@@ -477,6 +480,20 @@ export function ProviderCard({
               >
                 <span className="min-w-0 truncate">{displayUrl}</span>
               </button>
+            )}
+
+            {modelLabel && (
+              <div
+                className="inline-flex max-w-full items-center overflow-hidden text-xs text-muted-foreground"
+                title={modelLabel}
+              >
+                <span className="min-w-0 truncate">
+                  {t("provider.currentModelLabel", {
+                    defaultValue: "模型",
+                  })}
+                  : {modelLabel}
+                </span>
+              </div>
             )}
           </div>
         </div>

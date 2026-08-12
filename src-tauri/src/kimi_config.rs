@@ -208,7 +208,9 @@ pub fn get_default_model_provider() -> Result<Option<String>, AppError> {
 ///
 /// - 写入 `[providers.<name>]`（type / base_url / api_key，保留 env 等既有字段）
 /// - 重建该 provider 名下的 `[models."<alias>"]` 条目（先删除旧的再写入新的）
-/// - 更新顶层 `default_model`：优先取 settings.default_model，缺失时取首个模型 id
+///
+/// 注意：**不**更新顶层 `default_model`——全局默认只由"切换/设为默认"
+/// （`apply_switch_defaults`）更新，保存任意 provider 不应改动正在使用的模型。
 ///
 /// 整个读-改-写在写锁内进行，防止 TOCTOU 竞态。
 pub fn set_provider(name: &str, settings: Value) -> Result<(), AppError> {
@@ -948,6 +950,52 @@ command = "echo hello"
         assert_eq!(
             get_kimi_config_path().file_name().and_then(|s| s.to_str()),
             Some("config.toml")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn default_model_provider_resolves_unique_owner() {
+        let _home = TempKimiHome::new();
+
+        // 模型别名在 config.toml 全局唯一：各 provider 使用不同别名，
+        // 切换后 get_default_model_provider 反查 [models."<alias>"].provider。
+        let provider_a = serde_json::json!({
+            "name": "a",
+            "type": "openai",
+            "base_url": "https://a.example.com/v1",
+            "api_key": "",
+            "models": [{"id": "model-a", "name": "A", "max_context_size": 65536}],
+            "default_model": "model-a"
+        });
+        let provider_b = serde_json::json!({
+            "name": "b",
+            "type": "openai",
+            "base_url": "https://b.example.com/v1",
+            "api_key": "",
+            "models": [{"id": "model-b", "name": "B", "max_context_size": 131072}],
+            "default_model": "model-b"
+        });
+        set_provider("a", provider_a).expect("set a");
+        set_provider("b", provider_b).expect("set b");
+
+        // 未切换：无 default_model
+        assert_eq!(get_default_model_provider().expect("none"), None);
+
+        // 切到 b：default_model = model-b，归属 b
+        apply_switch_defaults("b", &serde_json::json!({"default_model": "model-b"}))
+            .expect("switch b");
+        assert_eq!(
+            get_default_model_provider().expect("owner"),
+            Some("b".to_string())
+        );
+
+        // 切到 a：归属变为 a
+        apply_switch_defaults("a", &serde_json::json!({"default_model": "model-a"}))
+            .expect("switch a");
+        assert_eq!(
+            get_default_model_provider().expect("owner"),
+            Some("a".to_string())
         );
     }
 }
