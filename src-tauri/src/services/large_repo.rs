@@ -123,38 +123,68 @@ impl GitBackend {
 #[async_trait::async_trait]
 impl LargeRepoBackend for GitBackend {
     async fn fetch_tree(&self, repo: &SkillRepo) -> Result<(Vec<RepoFile>, String)> {
+        log::debug!(
+            "[large_repo][GitBackend] fetch_tree 开始: {}/{} branch_config={}",
+            repo.owner,
+            repo.name,
+            repo.branch
+        );
         SkillService::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)?;
         let mut last_error = None;
         for branch in branch_candidates(repo) {
+            log::debug!("[large_repo][GitBackend] fetch_tree 尝试分支: {branch}");
             let temp_dir = tempfile::tempdir()?;
             match clone_repo(&self.git, &self.base_url, repo, &branch, temp_dir.path()).await {
                 Ok(()) => {
+                    log::debug!("[large_repo][GitBackend] clone 成功: {branch}");
                     // clone 成功后检查 .git 目录大小，超限丢弃该 clone 报错
                     let git_dir = temp_dir.path().join(".git");
                     if dir_size(&git_dir) > CLONE_DISK_LIMIT {
+                        log::info!(
+                            "[large_repo][GitBackend] clone 的 .git 目录超过磁盘上限({}MB): {branch}",
+                            CLONE_DISK_LIMIT / 1024 / 1024
+                        );
                         last_error = Some(anyhow!("clone 的 .git 目录超过磁盘上限"));
                         continue;
                     }
                     match run_git_ls_tree(&self.git, temp_dir.path()).await {
                         Ok(output) => {
                             let files = parse_ls_tree_output(&output)?;
+                            log::debug!(
+                                "[large_repo][GitBackend] ls-tree 成功: {branch}, 文件数={}",
+                                files.len()
+                            );
                             let repo_key = format!("{}/{}", repo.owner, repo.name);
                             *self.clone.lock().unwrap() = Some((repo_key, temp_dir));
+                            log::info!(
+                                "[large_repo][GitBackend] fetch_tree 成功: {}/{} 命中分支={branch} 文件数={}",
+                                repo.owner,
+                                repo.name,
+                                files.len()
+                            );
                             return Ok((files, branch));
                         }
                         Err(e) => {
+                            log::debug!("[large_repo][GitBackend] ls-tree 失败: {branch}: {e:#}");
                             last_error = Some(e);
                             continue;
                         }
                     }
                 }
                 Err(e) => {
+                    log::debug!("[large_repo][GitBackend] clone 失败: {branch}: {e:#}");
                     last_error = Some(e);
                     continue;
                 }
             }
         }
-        Err(last_error.unwrap_or_else(|| anyhow!("所有候选分支 clone 失败")))
+        let err = last_error.unwrap_or_else(|| anyhow!("所有候选分支 clone 失败"));
+        log::info!(
+            "[large_repo][GitBackend] fetch_tree 失败: {}/{}: {err:#}",
+            repo.owner,
+            repo.name
+        );
+        Err(err)
     }
 
     async fn fetch_file(
@@ -163,6 +193,13 @@ impl LargeRepoBackend for GitBackend {
         _branch: &str,
         file: &RepoFile,
     ) -> Result<Vec<u8>> {
+        log::debug!(
+            "[large_repo][GitBackend] fetch_file 开始: {}/{} file={} blob_sha={}",
+            repo.owner,
+            repo.name,
+            file.path,
+            file.blob_sha
+        );
         let expected_key = format!("{}/{}", repo.owner, repo.name);
         let (repo_key, workdir) = {
             let guard = self.clone.lock().unwrap();
@@ -172,6 +209,9 @@ impl LargeRepoBackend for GitBackend {
             (key.clone(), dir.path().to_path_buf())
         };
         if repo_key != expected_key {
+            log::info!(
+                "[large_repo][GitBackend] fetch_file 失败: 持有的 clone 与请求仓库不匹配 (持有={repo_key} 期望={expected_key})"
+            );
             return Err(anyhow!("持有的 clone 与请求仓库不匹配"));
         }
         let git = self.git.clone();
@@ -183,6 +223,13 @@ impl LargeRepoBackend for GitBackend {
         .await
         .map_err(|_| anyhow!("git cat-file 超时"))?
         .map_err(|e| anyhow!("git 任务失败: {e}"))??;
+        log::debug!(
+            "[large_repo][GitBackend] fetch_file 成功: {}/{} file={} 字节数={}",
+            repo.owner,
+            repo.name,
+            file.path,
+            bytes.len()
+        );
         Ok(bytes)
     }
 }
@@ -202,11 +249,18 @@ async fn clone_repo(
     dest: &Path,
 ) -> Result<()> {
     let url = format!("{base_url}/{}/{}.git", repo.owner, repo.name);
+    log::debug!(
+        "[large_repo][clone_repo] clone 开始: url={url} branch={branch} dest={}",
+        dest.display()
+    );
     let mut cmd = Command::new(git);
     cmd.arg("-c").arg("credential.helper=");
     if let Some(proxy) = crate::proxy::http_client::get_current_proxy_url() {
+        log::debug!("[large_repo][clone_repo] 使用代理: {proxy}");
         cmd.arg("-c").arg(format!("http.proxy={proxy}"));
         cmd.arg("-c").arg(format!("https.proxy={proxy}"));
+    } else {
+        log::debug!("[large_repo][clone_repo] 未配置代理");
     }
     cmd.arg("clone")
         .arg("--depth")
@@ -227,11 +281,13 @@ async fn clone_repo(
     .map_err(|e| anyhow!("git 任务失败: {e}"))??;
 
     if !output.status.success() {
-        return Err(anyhow!(
-            "git clone 失败: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        log::info!(
+            "[large_repo][clone_repo] clone 失败: url={url} branch={branch}: {stderr}"
+        );
+        return Err(anyhow!("git clone 失败: {stderr}"));
     }
+    log::debug!("[large_repo][clone_repo] clone 命令成功: url={url} branch={branch}");
     Ok(())
 }
 
@@ -242,6 +298,10 @@ async fn run_git_ls_tree(git: &Path, workdir: &Path) -> Result<Vec<u8>> {
     timeout(
         Duration::from_secs(30),
         spawn_blocking(move || {
+            log::debug!(
+                "[large_repo][ls-tree] 开始: workdir={}",
+                workdir.display()
+            );
             let output = Command::new(&git)
                 .arg("ls-tree")
                 .arg("-r")
@@ -251,13 +311,22 @@ async fn run_git_ls_tree(git: &Path, workdir: &Path) -> Result<Vec<u8>> {
                 .current_dir(&workdir)
                 .output()?;
             if !output.status.success() {
+                log::info!("[large_repo][ls-tree] 失败: workdir={}", workdir.display());
                 return Err(anyhow!("git ls-tree 失败"));
             }
+            log::debug!(
+                "[large_repo][ls-tree] 成功: workdir={} 输出字节数={}",
+                workdir.display(),
+                output.stdout.len()
+            );
             Ok(output.stdout)
         }),
     )
     .await
-    .map_err(|_| anyhow!("git ls-tree 超时"))?
+    .map_err(|_| {
+        log::info!("[large_repo][ls-tree] 超时");
+        anyhow!("git ls-tree 超时")
+    })?
     .map_err(|e| anyhow!("git ls-tree 任务失败: {e}"))?
 }
 
@@ -266,6 +335,10 @@ async fn run_git_ls_tree(git: &Path, workdir: &Path) -> Result<Vec<u8>> {
 /// partial clone 下 blob 缺失时会触发 lazy fetch（走 clone 时配置的代理）。
 fn cat_file_with_budget(git: &Path, workdir: &Path, sha: &str) -> Result<Vec<u8>> {
     use std::io::Read;
+    log::debug!(
+        "[large_repo][cat-file] 开始: sha={sha} workdir={}",
+        workdir.display()
+    );
     let mut child = Command::new(git)
         .arg("cat-file")
         .arg("blob")
@@ -287,14 +360,23 @@ fn cat_file_with_budget(git: &Path, workdir: &Path, sha: &str) -> Result<Vec<u8>
         }
         if buf.len().saturating_add(n) as u64 > MAX_ARCHIVE_DOWNLOAD_BYTES {
             let _ = child.kill();
+            log::info!(
+                "[large_repo][cat-file] 失败: sha={sha} 文件超过大小上限 ({}MB)",
+                MAX_ARCHIVE_DOWNLOAD_BYTES / 1024 / 1024
+            );
             return Err(anyhow!("文件超过大小上限"));
         }
         buf.extend_from_slice(&chunk[..n]);
     }
     let status = child.wait()?;
     if !status.success() {
+        log::info!("[large_repo][cat-file] 失败: sha={sha} git 退出非 0");
         return Err(anyhow!("git cat-file 失败"));
     }
+    log::debug!(
+        "[large_repo][cat-file] 成功: sha={sha} 字节数={}",
+        buf.len()
+    );
     Ok(buf)
 }
 
@@ -357,9 +439,16 @@ impl ApiBackend {
 #[async_trait::async_trait]
 impl LargeRepoBackend for ApiBackend {
     async fn fetch_tree(&self, repo: &SkillRepo) -> Result<(Vec<RepoFile>, String)> {
+        log::debug!(
+            "[large_repo][ApiBackend] fetch_tree 开始: {}/{} branch_config={}",
+            repo.owner,
+            repo.name,
+            repo.branch
+        );
         SkillService::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)?;
         let mut last_error = None;
         for branch in branch_candidates(repo) {
+            log::debug!("[large_repo][ApiBackend] fetch_tree 尝试分支: {branch}");
             let mut url = url::Url::parse(&format!(
                 "{}/repos/{}/{}/git/trees/",
                 self.api_base, repo.owner, repo.name
@@ -386,16 +475,25 @@ impl LargeRepoBackend for ApiBackend {
             };
             match resp {
                 Ok(r) if r.status().as_u16() == 404 => {
+                    log::debug!("[large_repo][ApiBackend] tree API 404: 分支不存在 {branch}");
                     last_error = Some(anyhow!("分支不存在: {branch}"));
                     continue;
                 }
                 Ok(r) if observe_rate_limit(&r) => {
                     // 命中 GitHub 限流：已标记，本轮后续分支不再走 REST API；
                     // 继续尝试其他分支无意义，直接失败冒泡由上层回退。
+                    log::info!(
+                        "[large_repo][ApiBackend] fetch_tree 失败: tree API 限流(403) {branch}"
+                    );
                     last_error = Some(anyhow!("tree API 限流(403): {}", r.status()));
                     break;
                 }
                 Ok(r) if !r.status().is_success() => {
+                    log::debug!(
+                        "[large_repo][ApiBackend] tree API 非成功状态: {} {}",
+                        r.status(),
+                        branch
+                    );
                     last_error = Some(anyhow!("tree API 失败: {}", r.status()));
                     continue;
                 }
@@ -404,25 +502,52 @@ impl LargeRepoBackend for ApiBackend {
                     let (files, truncated) =
                         parse_tree_api_response(&String::from_utf8_lossy(&body))?;
                     if truncated {
+                        log::info!(
+                            "[large_repo][ApiBackend] fetch_tree 失败: tree 响应被截断，需回退 git 后端: {branch}"
+                        );
                         return Err(anyhow!(
                             "tree 响应被截断（truncated=true），请回退 git 后端"
                         ));
                     }
                     if files.len() > TREE_ENTRY_LIMIT {
+                        log::info!(
+                            "[large_repo][ApiBackend] fetch_tree 失败: tree 条目数超过上限({}): {branch}",
+                            TREE_ENTRY_LIMIT
+                        );
                         return Err(anyhow!("tree 条目数超过上限"));
                     }
+                    log::info!(
+                        "[large_repo][ApiBackend] fetch_tree 成功: {}/{} 命中分支={branch} 文件数={}",
+                        repo.owner,
+                        repo.name,
+                        files.len()
+                    );
                     return Ok((files, branch));
                 }
                 Err(e) => {
+                    log::debug!("[large_repo][ApiBackend] tree API 请求失败: {branch}: {e}");
                     last_error = Some(anyhow!("tree API 请求失败: {e}"));
                     continue;
                 }
             }
         }
-        Err(last_error.unwrap_or_else(|| anyhow!("所有候选分支 tree 请求失败")))
+        let err = last_error.unwrap_or_else(|| anyhow!("所有候选分支 tree 请求失败"));
+        log::info!(
+            "[large_repo][ApiBackend] fetch_tree 失败: {}/{}: {err:#}",
+            repo.owner,
+            repo.name
+        );
+        Err(err)
     }
 
     async fn fetch_file(&self, repo: &SkillRepo, branch: &str, file: &RepoFile) -> Result<Vec<u8>> {
+        log::debug!(
+            "[large_repo][ApiBackend] fetch_file 开始: {}/{} branch={} file={}",
+            repo.owner,
+            repo.name,
+            branch,
+            file.path
+        );
         let mut url = url::Url::parse(&format!(
             "{}/{}/{}/{}/",
             self.raw_base, repo.owner, repo.name, branch
@@ -443,12 +568,33 @@ impl LargeRepoBackend for ApiBackend {
         .map_err(|_| anyhow!("raw 文件获取超时"))??;
         if observe_rate_limit(&resp) {
             // 命中 GitHub 限流：已标记，本次操作失败冒泡回退ZIP/GitBackend。
+            log::info!(
+                "[large_repo][ApiBackend] fetch_file 失败: raw 限流(403): {}/{} file={}",
+                repo.owner,
+                repo.name,
+                file.path
+            );
             return Err(anyhow!("raw 文件获取限流(403): {}", resp.status()));
         }
         if !resp.status().is_success() {
+            log::info!(
+                "[large_repo][ApiBackend] fetch_file 失败: raw 状态 {}: {}/{} file={}",
+                resp.status(),
+                repo.owner,
+                repo.name,
+                file.path
+            );
             return Err(anyhow!("raw 文件获取失败: {}", resp.status()));
         }
-        read_body_limited(resp, MAX_ARCHIVE_DOWNLOAD_BYTES).await
+        let bytes = read_body_limited(resp, MAX_ARCHIVE_DOWNLOAD_BYTES).await?;
+        log::debug!(
+            "[large_repo][ApiBackend] fetch_file 成功: {}/{} file={} 字节数={}",
+            repo.owner,
+            repo.name,
+            file.path,
+            bytes.len()
+        );
+        Ok(bytes)
     }
 }
 
@@ -457,6 +603,7 @@ async fn read_body_limited(mut resp: reqwest::Response, limit: u64) -> Result<Ve
     let mut body = Vec::new();
     while let Some(chunk) = resp.chunk().await? {
         if body.len().saturating_add(chunk.len()) as u64 > limit {
+            log::info!("[large_repo][read_body] 失败: 响应体超过大小上限 ({}MB)", limit / 1024 / 1024);
             return Err(anyhow!("响应体超过大小上限"));
         }
         body.extend_from_slice(&chunk);
@@ -468,6 +615,11 @@ async fn read_body_limited(mut resp: reqwest::Response, limit: u64) -> Result<Ve
 
 /// 分支候选：配置分支（非空且非 HEAD）→ main → master，去重
 pub fn branch_candidates(repo: &SkillRepo) -> Vec<String> {
+    log::debug!(
+        "[large_repo][branch_candidates] 配置分支={} 是否HEAD={}",
+        repo.branch,
+        repo.branch.eq_ignore_ascii_case("HEAD")
+    );
     let mut out = Vec::new();
     if !repo.branch.is_empty() && !repo.branch.eq_ignore_ascii_case("HEAD") {
         out.push(repo.branch.clone());
@@ -478,6 +630,7 @@ pub fn branch_candidates(repo: &SkillRepo) -> Vec<String> {
     if !out.iter().any(|b| b == "master") {
         out.push("master".to_string());
     }
+    log::debug!("[large_repo][branch_candidates] 候选顺序={:?}", out);
     out
 }
 
@@ -486,6 +639,10 @@ pub fn branch_candidates(repo: &SkillRepo) -> Vec<String> {
 /// 每行格式：`<mode> <type> <sha> <size>\t<path>`。只保留 type=blob 的条目。
 /// 非 UTF-8 文件名按字节做 lossy 转换，不能直接丢弃。
 pub fn parse_ls_tree_output(output: &[u8]) -> Result<Vec<RepoFile>> {
+    log::debug!(
+        "[large_repo][parse_ls_tree] 开始: 输入字节数={}",
+        output.len()
+    );
     let mut files = Vec::new();
     for entry in output.split(|&b| b == 0) {
         if entry.is_empty() {
@@ -512,6 +669,10 @@ pub fn parse_ls_tree_output(output: &[u8]) -> Result<Vec<RepoFile>> {
             mode: u32::from_str_radix(mode, 8).unwrap_or(0),
         });
     }
+    log::debug!(
+        "[large_repo][parse_ls_tree] 完成: 解析出 blob 文件数={}",
+        files.len()
+    );
     Ok(files)
 }
 
@@ -519,6 +680,10 @@ pub fn parse_ls_tree_output(output: &[u8]) -> Result<Vec<RepoFile>> {
 ///
 /// 返回 (文件清单, truncated)。只保留 type=blob 的条目。
 pub fn parse_tree_api_response(json: &str) -> Result<(Vec<RepoFile>, bool)> {
+    log::debug!(
+        "[large_repo][parse_tree_api] 开始: 输入长度={}",
+        json.len()
+    );
     let value: serde_json::Value = serde_json::from_str(json)?;
     let truncated = value
         .get("truncated")
@@ -556,6 +721,10 @@ pub fn parse_tree_api_response(json: &str) -> Result<(Vec<RepoFile>, bool)> {
             mode: u32::from_str_radix(&mode, 8).unwrap_or(0),
         });
     }
+    log::debug!(
+        "[large_repo][parse_tree_api] 完成: 解析出 blob 文件数={} truncated={truncated}",
+        files.len()
+    );
     Ok((files, truncated))
 }
 
@@ -730,10 +899,16 @@ pub fn sanitize_tree_path(path: &str) -> Result<String> {
 /// 若直接走旧 ZIP 路径，恰恰是本次要支持的超大仓库会在 128MiB 预算处失败，
 /// 而 git 后端（smart HTTP 协议，不吃 REST 限流）仍可用。
 pub fn should_use_large_repo_path(size_kb: Option<u64>) -> bool {
-    match size_kb {
+    let result = match size_kb {
         None => true,
         Some(s) => s > LARGE_REPO_THRESHOLD_KB,
-    }
+    };
+    log::debug!(
+        "[large_repo][should_use_large_repo_path] size_kb={:?} 阈值={}KB => {result}",
+        size_kb,
+        LARGE_REPO_THRESHOLD_KB
+    );
+    result
 }
 
 /// 仓库 size 缓存 TTL：1 小时
@@ -778,6 +953,9 @@ fn is_rate_limited_response(resp: &reqwest::Response) -> bool {
 /// 检测并消费一个限流响应：命中则标记并返回 true。
 fn observe_rate_limit(resp: &reqwest::Response) -> bool {
     if is_rate_limited_response(resp) {
+        log::info!(
+            "[large_repo][observe_rate_limit] 命中 GitHub REST 限流 (403 remaining=0)，进入 1h 冷却窗口"
+        );
         mark_rate_limited();
         true
     } else {
@@ -787,9 +965,11 @@ fn observe_rate_limit(resp: &reqwest::Response) -> bool {
 
 /// 获取仓库 size（KB）。失败返回 Ok(None)（上层优先尝试大仓库后端）。1h TTL 缓存。
 pub async fn fetch_repo_size_kb(owner: &str, name: &str) -> Result<Option<u64>> {
+    log::debug!("[large_repo][size] 开始: {owner}/{name}");
     let key = (owner.to_string(), name.to_string());
     if let Some((ts, size)) = SIZE_CACHE.lock().unwrap().get(&key) {
         if ts.elapsed() < SIZE_CACHE_TTL {
+            log::debug!("[large_repo][size] 命中缓存: {owner}/{name} size={size}KB");
             return Ok(Some(*size));
         }
     }
@@ -797,6 +977,7 @@ pub async fn fetch_repo_size_kb(owner: &str, name: &str) -> Result<Option<u64>> 
     // None → should_use_large_repo_path → true → 进大仓库路径；此时 backend_chain
     // 已剔除 ApiBackend，落到 GitBackend 或回退 ZIP。符合「size 限流后无需再用 REST API」。
     if is_rate_limited() {
+        log::debug!("[large_repo][size] 限流冷却窗口内，跳过 size 探测返回 None");
         return Ok(None);
     }
     let url = format!("https://api.github.com/repos/{owner}/{name}");
@@ -810,17 +991,32 @@ pub async fn fetch_repo_size_kb(owner: &str, name: &str) -> Result<Option<u64>> 
         Ok(Ok(resp)) => {
             if observe_rate_limit(&resp) {
                 // 命中限流：已标记，返回 None 让下游裁决（不再走 REST API）。
+                log::info!("[large_repo][size] 限流，size 探测返回 None: {owner}/{name}");
                 None
             } else if resp.status().is_success() {
                 match resp.json::<serde_json::Value>().await {
-                    Ok(json) => json.get("size").and_then(|v| v.as_u64()),
-                    Err(_) => None,
+                    Ok(json) => {
+                        let s = json.get("size").and_then(|v| v.as_u64());
+                        log::debug!("[large_repo][size] 探测成功: {owner}/{name} size={:?}KB", s);
+                        s
+                    }
+                    Err(_) => {
+                        log::debug!("[large_repo][size] 响应 JSON 解析失败: {owner}/{name}");
+                        None
+                    }
                 }
             } else {
+                log::debug!(
+                    "[large_repo][size] 非成功状态 {}: {owner}/{name}",
+                    resp.status()
+                );
                 None
             }
         }
-        _ => None,
+        _ => {
+            log::debug!("[large_repo][size] 请求超时或失败: {owner}/{name}");
+            None
+        }
     };
     if let Some(size) = size {
         SIZE_CACHE
@@ -892,7 +1088,9 @@ fn detect_git_uncached() -> Option<PathBuf> {
 
 /// 选择后端：有 git → GitBackend，无 → ApiBackend
 pub fn select_backend() -> Box<dyn LargeRepoBackend> {
-    if detect_git().is_some() {
+    let git = detect_git().is_some();
+    log::debug!("[large_repo][select_backend] git 可用={git}");
+    if git {
         Box::new(GitBackend::new())
     } else {
         Box::new(ApiBackend::new())
@@ -909,6 +1107,10 @@ pub fn select_backend() -> Box<dyn LargeRepoBackend> {
 pub fn backend_chain() -> Vec<Box<dyn LargeRepoBackend>> {
     let git = detect_git().is_some();
     let use_api = !is_rate_limited();
+    log::debug!(
+        "[large_repo][backend_chain] git={git} use_api={use_api} (限流冷却={})",
+        is_rate_limited()
+    );
     let mut chain: Vec<Box<dyn LargeRepoBackend>> = Vec::new();
     if git {
         chain.push(Box::new(GitBackend::new()));
@@ -916,6 +1118,7 @@ pub fn backend_chain() -> Vec<Box<dyn LargeRepoBackend>> {
     if use_api {
         chain.push(Box::new(ApiBackend::new()));
     }
+    log::debug!("[large_repo][backend_chain] 回退链长度={}", chain.len());
     chain
 }
 
@@ -978,8 +1181,17 @@ pub async fn list_skill_mds(
     backend: &dyn LargeRepoBackend,
     repo: &SkillRepo,
 ) -> Result<Vec<DiscoverableSkill>> {
+    log::debug!(
+        "[large_repo][list_skill_mds] 开始: {}/{}",
+        repo.owner,
+        repo.name
+    );
     let (files, branch) = backend.fetch_tree(repo).await?;
     let md_files = filter_skill_md_paths(&files);
+    log::debug!(
+        "[large_repo][list_skill_mds] 发现 SKILL.md 文件数={} branch={branch}",
+        md_files.len()
+    );
     let mut skills = Vec::new();
     for f in md_files {
         let content = backend.fetch_file(repo, &branch, f).await?;
@@ -990,6 +1202,12 @@ pub async fn list_skill_mds(
             skills.push(skill);
         }
     }
+    log::info!(
+        "[large_repo][list_skill_mds] 完成: {}/{} 解析出 skill 数={}",
+        repo.owner,
+        repo.name,
+        skills.len()
+    );
     Ok(skills)
 }
 
@@ -1048,15 +1266,28 @@ pub async fn skill_dir_hashes(
     repo: &SkillRepo,
     install_names: &[String],
 ) -> Result<Vec<(String, String)>> {
+    log::debug!(
+        "[large_repo][skill_dir_hashes] 开始: {}/{} 安装名数={}",
+        repo.owner,
+        repo.name,
+        install_names.len()
+    );
     let (files, _branch) = backend.fetch_tree(repo).await?;
     let scheme = tree_blob_scheme(&files);
     let skill_dirs = skill_dirs_from_tree(&files);
+    log::debug!(
+        "[large_repo][skill_dir_hashes] 枚举技能目录数={} 方案={}",
+        skill_dirs.len(),
+        scheme.prefix()
+    );
     let mut out = Vec::new();
     for name in install_names {
         let Some(dir) = match_install_name(&skill_dirs, name, &repo.name) else {
+            log::debug!("[large_repo][skill_dir_hashes] 安装名未匹配: {name}");
             continue;
         };
         let Some(h) = dir_blob_hash(&files, dir) else {
+            log::debug!("[large_repo][skill_dir_hashes] 目录无 blob 哈希: {dir}");
             continue;
         };
         let key = if dir.is_empty() {
@@ -1066,6 +1297,12 @@ pub async fn skill_dir_hashes(
         };
         out.push((key, format!("{}{}", scheme.prefix(), h)));
     }
+    log::info!(
+        "[large_repo][skill_dir_hashes] 完成: {}/{} 计算出哈希数={}",
+        repo.owner,
+        repo.name,
+        out.len()
+    );
     Ok(out)
 }
 
@@ -1079,6 +1316,12 @@ pub async fn materialize_skill_dir(
     repo: &SkillRepo,
     dir: &str,
 ) -> Result<(TempDir, String, BlobHashScheme)> {
+    log::debug!(
+        "[large_repo][materialize] 开始: {}/{} dir={}",
+        repo.owner,
+        repo.name,
+        dir
+    );
     timeout(Duration::from_secs(60), async {
         let (files, branch) = backend.fetch_tree(repo).await?;
         let scheme = tree_blob_scheme(&files);
@@ -1122,6 +1365,10 @@ pub async fn materialize_skill_dir(
             }
             total_bytes = total_bytes.saturating_add(bytes.len() as u64);
             if total_bytes > MAX_ARCHIVE_TOTAL_BYTES {
+                log::info!(
+                    "[large_repo][materialize] 失败: 物化目录超过字节上限({}MB)",
+                    MAX_ARCHIVE_TOTAL_BYTES / 1024 / 1024
+                );
                 return Err(anyhow!("物化目录超过字节上限"));
             }
             fs::write(&dest, &bytes)?;
@@ -1133,12 +1380,34 @@ pub async fn materialize_skill_dir(
         // 目录里没有 SKILL.md 说明不是合法 skill 目录（dir 未命中或错配），
         // 必须显式报错让调用方的后端回退链继续，而不是静默返回空目录。
         if !materialized_skill_md {
+            log::info!(
+                "[large_repo][materialize] 失败: 物化目录未找到 SKILL.md: {}/{} dir={}",
+                repo.owner,
+                repo.name,
+                dir
+            );
             return Err(anyhow!("物化目录未找到 SKILL.md"));
         }
+        log::info!(
+            "[large_repo][materialize] 成功: {}/{} dir={} branch={branch} 方案={} 总字节数={}",
+            repo.owner,
+            repo.name,
+            dir,
+            scheme.prefix(),
+            total_bytes
+        );
         Ok((temp_dir, branch, scheme))
     })
     .await
-    .map_err(|_| anyhow!("物化 skill 目录超时"))?
+    .map_err(|_| {
+        log::info!(
+            "[large_repo][materialize] 失败: 物化超时(60s): {}/{} dir={}",
+            repo.owner,
+            repo.name,
+            dir
+        );
+        anyhow!("物化 skill 目录超时")
+    })?
 }
 
 /// 返回 path 相对 dir 的路径；不在 dir 下返回 None（大小写不敏感匹配目录前缀）
