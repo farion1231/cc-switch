@@ -1192,4 +1192,23 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "ppio",
     iconColor: "#2874FF",
   },
+  {
+    name: "JieKou AI",
+    websiteUrl: "https://jiekou.ai/#model-library",
+    apiKeyUrl: "https://jiekou.ai/settings/key-management",
+    category: "aggregator",
+    baseUrl: "https://api.jiekou.ai/anthropic",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: [
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.fable,
+        upstreamModel: "claude-fable-5",
+        supports1m: true,
+      },
+    ],
+    endpointCandidates: ["https://api.jiekou.ai/anthropic"],
+    icon: "jiekou",
+    iconColor: "#000000",
+  },
 ];

@@ -710,6 +710,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["ppio", "派欧云"],
     defaultColor: "#2874FF",
   },
+  jiekou: {
+    name: "jiekou",
+    displayName: "JieKou AI",
+    category: "ai-provider",
+    keywords: ["jiekou", "jiekou ai", "interface ai", "aggregator"],
+    defaultColor: "#000000",
+  },
 };
 
 export function getIconMetadata(name: string): IconMetadata | undefined {

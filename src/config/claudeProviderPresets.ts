@@ -1456,4 +1456,23 @@ export const providerPresets: ProviderPreset[] = [
     icon: "ppio",
     iconColor: "#2874FF",
   },
+  {
+    name: "JieKou AI",
+    websiteUrl: "https://jiekou.ai/#model-library",
+    apiKeyUrl: "https://jiekou.ai/settings/key-management",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.jiekou.ai/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "claude-fable-5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-fable-5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-fable-5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-fable-5",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://api.jiekou.ai/anthropic"],
+    icon: "jiekou",
+    iconColor: "#000000",
+  },
 ];

@@ -1695,4 +1695,28 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     icon: "ppio",
     iconColor: "#2874FF",
   },
+  {
+    name: "JieKou AI",
+    websiteUrl: "https://jiekou.ai/#model-library",
+    apiKeyUrl: "https://jiekou.ai/settings/key-management",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "jiekou",
+      "https://api.jiekou.ai/openai/v1",
+      "claude-fable-5",
+    ),
+    endpointCandidates: ["https://api.jiekou.ai/openai/v1"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      {
+        model: "claude-fable-5",
+        displayName: "Claude Fable 5",
+        contextWindow: 1000000,
+        inputModalities: ["text", "image"],
+      },
+    ]),
+    category: "aggregator",
+    icon: "jiekou",
+    iconColor: "#000000",
+  },
 ];
