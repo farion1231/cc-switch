@@ -125,6 +125,19 @@ export function useSettingsForm(): UseSettingsFormResult {
       grokConfigDir: sanitizeDir(data.grokConfigDir),
       opencodeConfigDir: sanitizeDir(data.opencodeConfigDir),
       openclawConfigDir: sanitizeDir(data.openclawConfigDir),
+      // 补全可见性默认：旧配置缺失或字段被清空时，保存设置不会把
+      // 新应用的可见性一起丢成 false/undefined（如 Kimi）
+      visibleApps: {
+        claude: data.visibleApps?.claude ?? true,
+        "claude-desktop": data.visibleApps?.["claude-desktop"] ?? true,
+        codex: data.visibleApps?.codex ?? true,
+        gemini: data.visibleApps?.gemini ?? true,
+        grokbuild: data.visibleApps?.grokbuild ?? true,
+        opencode: data.visibleApps?.opencode ?? true,
+        openclaw: data.visibleApps?.openclaw ?? true,
+        hermes: data.visibleApps?.hermes ?? true,
+        kimi: data.visibleApps?.kimi ?? true,
+      },
       language: normalizedLanguage,
     };
 

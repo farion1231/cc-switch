@@ -176,7 +176,9 @@
         "apiKeyPlaceholder": "Enter Gemini API Key"
       }
     },
-    "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again"
+    "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again",
+    "setAsDefaultNoModels": "This provider has no models configured, cannot set as default",
+    "noModelsWarning": "No models configured"
   },
   "claudeCode": {
     "needsRouting": "Needs Routing",
@@ -3098,7 +3100,8 @@
       "defaultEffort": "Default thinking effort",
       "modelBaseUrl": "Per-model endpoint override",
       "custom": "Custom…",
-      "defaultModelHint": "Used when switching to this provider"
+      "defaultModelHint": "Used when switching to this provider",
+      "duplicateModelId": "Duplicate alias — will overwrite each other in config.toml"
     }
   }
 }

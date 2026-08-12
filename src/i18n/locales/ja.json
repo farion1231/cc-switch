@@ -176,7 +176,9 @@
         "apiKeyPlaceholder": "Gemini API Key を入力"
       }
     },
-    "duplicateLiveIdsLoadFailed": "設定内のプロバイダー識別子を読み込めませんでした。設定を修正してから再度お試しください"
+    "duplicateLiveIdsLoadFailed": "設定内のプロバイダー識別子を読み込めませんでした。設定を修正してから再度お試しください",
+    "setAsDefaultNoModels": "このプロバイダーにモデルが設定されていないため、デフォルトに設定できません",
+    "noModelsWarning": "モデル未設定"
   },
   "claudeCode": {
     "needsRouting": "ルーティングが必要",
@@ -3098,7 +3100,8 @@
       "defaultEffort": "デフォルト思考強度",
       "modelBaseUrl": "モデル別エンドポイント上書き",
       "custom": "カスタム…",
-      "defaultModelHint": "このプロバイダーへの切り替え時に使用"
+      "defaultModelHint": "このプロバイダーへの切り替え時に使用",
+      "duplicateModelId": "エイリアス重複 — config.toml で互いに上書きされます"
     }
   }
 }

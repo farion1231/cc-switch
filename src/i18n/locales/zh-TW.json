@@ -176,7 +176,9 @@
         "apiKeyPlaceholder": "請輸入 Gemini API Key"
       }
     },
-    "duplicateLiveIdsLoadFailed": "讀取設定中的供應商識別碼失敗，請先修復設定後再試"
+    "duplicateLiveIdsLoadFailed": "讀取設定中的供應商識別碼失敗，請先修復設定後再試",
+    "setAsDefaultNoModels": "此供應商未設定模型，無法設為預設",
+    "noModelsWarning": "未設定模型"
   },
   "claudeCode": {
     "needsRouting": "需要路由",
@@ -3099,7 +3101,8 @@
       "defaultEffort": "預設推理強度",
       "modelBaseUrl": "模型級端點覆寫",
       "custom": "自訂…",
-      "defaultModelHint": "切換到此供應商時使用"
+      "defaultModelHint": "切換到此供應商時使用",
+      "duplicateModelId": "別名重複，config.toml 中會互相覆蓋"
     }
   }
 }

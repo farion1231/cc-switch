@@ -42,6 +42,8 @@ interface ProviderActionsProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  /** 无可用模型（如 Kimi provider 未配置任何模型）：禁用"设为默认"并提示 */
+  setAsDefaultDisabled?: boolean;
 }
 
 // 主按钮的呈现状态。title 用于 disabled 态向用户解释为何不可点击；
@@ -80,6 +82,7 @@ export function ProviderActions({
   // OpenClaw: default model
   isDefaultModel = false,
   onSetAsDefault,
+  setAsDefaultDisabled,
 }: ProviderActionsProps) {
   const { t } = useTranslation();
   const iconButtonClass = "h-8 w-8 p-1";
@@ -245,10 +248,17 @@ export function ProviderActions({
               size="sm"
               variant={isDefaultModel ? "secondary" : "default"}
               onClick={isDefaultModel ? undefined : onSetAsDefault}
-              disabled={isDefaultModel}
+              disabled={isDefaultModel || setAsDefaultDisabled}
+              title={
+                setAsDefaultDisabled
+                  ? t("provider.setAsDefaultNoModels", {
+                      defaultValue: "该供应商未配置模型，无法设为默认",
+                    })
+                  : undefined
+              }
               className={cn(
                 "w-fit px-2.5",
-                isDefaultModel
+                isDefaultModel || setAsDefaultDisabled
                   ? "bg-gray-200 text-muted-foreground dark:bg-gray-700 opacity-60 cursor-not-allowed"
                   : "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
               )}

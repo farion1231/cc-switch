@@ -399,6 +399,10 @@ export function KimiFormFields({
           <div className="space-y-4">
             {models.map((model, index) => {
               const isDefault = defaultModel === model.id;
+              // 表单内重复别名：config.toml 中 [models."<alias>"] 全局唯一，重复会互相覆盖
+              const isDuplicateId =
+                model.id.trim() !== "" &&
+                models.filter((m) => m.id.trim() === model.id.trim()).length > 1;
               return (
                 <div
                   key={modelKeys[index]}
@@ -426,6 +430,22 @@ export function KimiFormFields({
                           defaultValue: "切换到此供应商时使用",
                         })}
                       </span>
+                    )}
+                    {isDuplicateId && (
+                      <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                        {t("kimi.form.duplicateModelId", {
+                          defaultValue: "别名重复，config.toml 中会互相覆盖",
+                        })}
+                      </span>
+                    )}
+                    {!isDefault && model.id.trim() !== "" && (
+                      <button
+                        type="button"
+                        onClick={() => onDefaultModelChange(model.id)}
+                        className="ml-auto text-[10px] text-muted-foreground hover:text-foreground underline"
+                      >
+                        {t("kimi.form.setDefault", { defaultValue: "设为默认" })}
+                      </button>
                     )}
                   </div>
 

@@ -428,6 +428,13 @@ export function ProviderList({
                     (provider.settingsConfig as { models?: Array<{ id?: string }> } | undefined)
                       ?.models?.[0]?.id)
                 : undefined;
+            // Kimi: 无任何模型时禁用"设为默认"并提示
+            const kimiHasNoModels =
+              appId === "kimi" &&
+              !(
+                (provider.settingsConfig as { models?: unknown[] } | undefined)
+                  ?.models?.length
+              );
             return (
               <SortableProviderCard
                 key={provider.id}
@@ -480,6 +487,7 @@ export function ProviderList({
                   onSetAsDefault ? () => onSetAsDefault(provider) : undefined
                 }
                 modelLabel={kimiModelLabel}
+                setAsDefaultDisabled={kimiHasNoModels}
               />
             );
           })}
@@ -612,6 +620,7 @@ interface SortableProviderCardProps {
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
   modelLabel?: string;
+  setAsDefaultDisabled?: boolean;
 }
 
 function SortableProviderCard({
@@ -643,6 +652,7 @@ function SortableProviderCard({
   isDefaultModel,
   onSetAsDefault,
   modelLabel,
+  setAsDefaultDisabled,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -697,6 +707,7 @@ function SortableProviderCard({
         isDefaultModel={isDefaultModel}
         onSetAsDefault={onSetAsDefault}
         modelLabel={modelLabel}
+        setAsDefaultDisabled={setAsDefaultDisabled}
       />
     </div>
   );
