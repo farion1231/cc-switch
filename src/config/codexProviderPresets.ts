@@ -906,6 +906,20 @@ requires_openai_auth = true`,
     icon: "amux",
   },
   {
+    name: "Kenari",
+    websiteUrl: "https://kenari.id",
+    apiKeyUrl: "https://kenari.id/keys",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "kenari",
+      "https://kenari.id/v1",
+      "gpt-5-5",
+    ),
+    endpointCandidates: ["https://kenari.id/v1"],
+    icon: "kenari",
+  },
+  {
     name: "Azure OpenAI",
     websiteUrl:
       "https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/codex",
