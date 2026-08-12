@@ -425,7 +425,18 @@ export function ClaudeDesktopProviderForm({
         ? "proxy"
         : preset.mode;
     setMode(presetMode);
-    setDirectRoutes([]);
+    setDirectRoutes(
+      presetMode === "direct" && preset.modelRoutes
+        ? preset.modelRoutes.map((route) =>
+            createRouteRow({
+              route: route.upstreamModel,
+              model: "",
+              labelOverride: route.labelOverride ?? "",
+              supports1m: route.supports1m,
+            }),
+          )
+        : [],
+    );
     if (presetMode === "proxy" && preset.modelRoutes) {
       didSeedDefaultProxyRoutes.current = true;
       setProxyRoutes(
