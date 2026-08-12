@@ -831,7 +831,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     category: "third_party",
     baseUrl: "https://opencode.ai/zen/go",
     mode: "proxy",
-    apiFormat: "openai_chat",
+    // Go 网关 /messages 收除 grok-4.5 外全部模型（Chat 组靠服务端转换），
+    // anthropic 透传即可；上游只认 x-api-key，apiKey 直填默认即该头。
+    apiFormat: "anthropic",
     modelRoutes: brandedRoutes(
       "deepseek-v4-flash",
       "deepseek-v4-flash",
@@ -1171,5 +1173,23 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     ),
     icon: "xiaomimimo",
     iconColor: "#000000",
+  },
+  {
+    name: "PPIO",
+    websiteUrl: "https://ppio.com",
+    apiKeyUrl: "https://ppio.com/settings/key-management",
+    category: "aggregator",
+    baseUrl: "https://api.ppio.com/anthropic",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "deepseek/deepseek-v4-flash-0731",
+      "deepseek/deepseek-v4-flash-0731",
+      "deepseek/deepseek-v4-flash-0731",
+      true,
+    ),
+    endpointCandidates: ["https://api.ppio.com/anthropic"],
+    icon: "ppio",
+    iconColor: "#2874FF",
   },
 ];

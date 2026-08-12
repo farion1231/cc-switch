@@ -23,7 +23,7 @@ backend:
 i18n:
   - changed-files:
       - any-glob-to-any-file:
-          - "src/locales/**"
+          - "src/i18n/locales/**"
 
 actions:
   - changed-files:
