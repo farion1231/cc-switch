@@ -30,7 +30,10 @@ import {
   useHermesLiveProviderIds,
   useHermesModelConfig,
 } from "@/hooks/useHermes";
-import { useKimiLiveProviderIds, useKimiDefaultModel } from "@/hooks/useKimi";
+import {
+  useKimiLiveProviderIds,
+  useKimiCurrentProviderId,
+} from "@/hooks/useKimi";
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
@@ -120,20 +123,16 @@ export function ProviderList({
   const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
   const hermesCurrentProviderId = hermesModelConfig?.provider;
 
-  // Kimi: 读取 live config 的 default_model，判断哪个供应商持有该默认模型
-  const { data: kimiDefaultModel } = useKimiDefaultModel(appId === "kimi");
+  // Kimi: 读取 live config 中持有 default_model 的 provider id（唯一归属）
+  const { data: kimiCurrentProviderId } = useKimiCurrentProviderId(
+    appId === "kimi",
+  );
   const isKimiCurrent = useCallback(
     (providerId: string): boolean => {
-      if (appId !== "kimi" || !kimiDefaultModel) return false;
-      const provider = providers[providerId];
-      const models =
-        (provider?.settingsConfig as { models?: Array<{ id?: string; model?: string }> } | undefined)
-          ?.models ?? [];
-      return models.some(
-        (m) => m.id === kimiDefaultModel || m.model === kimiDefaultModel,
-      );
+      if (appId !== "kimi") return false;
+      return kimiCurrentProviderId === providerId;
     },
-    [appId, kimiDefaultModel, providers],
+    [appId, kimiCurrentProviderId],
   );
 
   // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes/Kimi）

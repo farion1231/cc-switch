@@ -205,6 +205,13 @@ export const providersApi = {
   },
 
   /**
+   * 获取 Kimi live 配置中持有默认模型的 provider id
+   */
+  async getKimiCurrentProviderId(): Promise<string | null> {
+    return await invoke("get_kimi_current_provider_id");
+  },
+
+  /**
    * 从 OpenClaw live 配置导入供应商到数据库
    * OpenClaw 特有功能：由于累加模式，用户可能已在 openclaw.json 中配置供应商
    */

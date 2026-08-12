@@ -12,6 +12,7 @@ export const kimiKeys = {
   all: ["kimi"] as const,
   liveProviderIds: ["kimi", "liveProviderIds"] as const,
   defaultModel: ["kimi", "defaultModel"] as const,
+  currentProviderId: ["kimi", "currentProviderId"] as const,
 };
 
 /**
@@ -23,6 +24,7 @@ export function invalidateKimiProviderCaches(queryClient: QueryClient) {
   return Promise.all([
     queryClient.invalidateQueries({ queryKey: kimiKeys.liveProviderIds }),
     queryClient.invalidateQueries({ queryKey: kimiKeys.defaultModel }),
+    queryClient.invalidateQueries({ queryKey: kimiKeys.currentProviderId }),
   ]);
 }
 
@@ -42,6 +44,14 @@ export function useKimiDefaultModel(enabled: boolean) {
   return useQuery({
     queryKey: kimiKeys.defaultModel,
     queryFn: () => providersApi.getKimiDefaultModel(),
+    enabled,
+  });
+}
+
+export function useKimiCurrentProviderId(enabled: boolean) {
+  return useQuery({
+    queryKey: kimiKeys.currentProviderId,
+    queryFn: () => providersApi.getKimiCurrentProviderId(),
     enabled,
   });
 }

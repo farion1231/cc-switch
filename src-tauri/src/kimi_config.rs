@@ -181,6 +181,29 @@ pub fn get_default_model() -> Result<Option<String>, AppError> {
         .map(|s| s.to_string()))
 }
 
+/// 返回持有顶层 `default_model` 的 provider id（live config 中的归属）。
+///
+/// 通过 `[models."<default_model>"]` 的 `provider` 字段反查。模型别名在
+/// config.toml 中全局唯一，因此结果必然对应**唯一**的 provider——前端
+/// 用它做"当前激活"判定，避免多个 provider 配置了同名模型时全部命中。
+pub fn get_default_model_provider() -> Result<Option<String>, AppError> {
+    let doc = read_kimi_config()?;
+    let Some(default_model) = doc.get("default_model").and_then(|v| v.as_str()) else {
+        return Ok(None);
+    };
+
+    let provider = doc
+        .get("models")
+        .and_then(Item::as_table)
+        .and_then(|models| models.get(default_model))
+        .and_then(|item| item.as_table_like())
+        .and_then(|table| table.get("provider"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    Ok(provider)
+}
+
 /// Upsert 一个 Kimi provider。
 ///
 /// - 写入 `[providers.<name>]`（type / base_url / api_key，保留 env 等既有字段）

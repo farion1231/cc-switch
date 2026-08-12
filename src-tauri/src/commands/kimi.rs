@@ -43,3 +43,9 @@ pub fn get_kimi_live_provider(
 pub fn get_kimi_default_model() -> Result<Option<String>, String> {
     kimi_config::get_default_model().map_err(|e| e.to_string())
 }
+
+/// Get the provider id that owns the current `default_model` in the live config.
+#[tauri::command]
+pub fn get_kimi_current_provider_id() -> Result<Option<String>, String> {
+    kimi_config::get_default_model_provider().map_err(|e| e.to_string())
+}

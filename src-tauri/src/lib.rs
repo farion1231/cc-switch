@@ -1617,6 +1617,7 @@ pub fn run() {
             commands::get_kimi_live_provider_ids,
             commands::get_kimi_live_provider,
             commands::get_kimi_default_model,
+            commands::get_kimi_current_provider_id,
             // Global upstream proxy
             commands::get_global_proxy_url,
             commands::set_global_proxy_url,
