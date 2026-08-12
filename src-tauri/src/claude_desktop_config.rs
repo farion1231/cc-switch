@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use crate::config::get_home_dir;
 use crate::config::{atomic_write, delete_file, read_json_file, write_json_file};
 use crate::database::Database;
@@ -14,9 +14,9 @@ use crate::provider::{ClaudeDesktopMode, Provider};
 pub const PROFILE_ID: &str = "00000000-0000-4000-8000-000000157210";
 pub const PROFILE_NAME: &str = "CC Switch";
 
-#[cfg(any(target_os = "macos", windows, test))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux", test))]
 const CONFIG_FILE: &str = "claude_desktop_config.json";
-#[cfg(any(target_os = "macos", windows, test))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux", test))]
 const CONFIG_LIBRARY_DIR: &str = "configLibrary";
 const GATEWAY_TOKEN_SETTING_KEY: &str = "claude_desktop_gateway_token";
 const CLAUDE_DESKTOP_PROXY_PREFIX: &str = "/claude-desktop";
@@ -1211,7 +1211,7 @@ fn meta_has_profile_entry(path: &Path) -> bool {
 }
 
 fn is_supported_platform() -> bool {
-    cfg!(any(target_os = "macos", windows))
+    cfg!(any(target_os = "macos", windows, target_os = "linux"))
 }
 
 #[allow(clippy::needless_return)]
@@ -1227,10 +1227,50 @@ fn current_platform_paths() -> Result<ClaudeDesktopPaths, AppError> {
         return Ok(windows_paths_from_local_app_data(&local_app_data));
     }
 
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(target_os = "linux")]
+    {
+        return Ok(linux_paths_from_config_dir(&linux_config_dir()));
+    }
+
+    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
     {
         Err(unsupported_platform_error())
     }
+}
+
+/// Flatpak keeps an app's XDG_CONFIG_HOME inside its sandbox. Claude Desktop
+/// installed natively still stores its profile in the host's ~/.config, which
+/// must be exposed through the Flatpak filesystem permissions.
+#[cfg(target_os = "linux")]
+fn linux_config_dir() -> PathBuf {
+    let xdg_config_home = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
+    linux_config_dir_from_home(&get_home_dir(), xdg_config_home.as_deref(), is_flatpak())
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_config_dir_from_home(
+    home: &Path,
+    xdg_config_home: Option<&Path>,
+    running_in_flatpak: bool,
+) -> PathBuf {
+    if running_in_flatpak {
+        return home.join(".config");
+    }
+
+    xdg_config_home
+        .filter(|path| path.is_absolute())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| home.join(".config"))
+}
+
+#[cfg(target_os = "linux")]
+fn is_flatpak() -> bool {
+    Path::new("/.flatpak-info").is_file()
+}
+
+#[cfg(target_os = "linux")]
+fn linux_paths_from_config_dir(config_dir: &Path) -> ClaudeDesktopPaths {
+    paths_from_dirs(config_dir.join("Claude"), config_dir.join("Claude-3p"))
 }
 
 #[cfg(target_os = "macos")]
@@ -1281,7 +1321,7 @@ fn pick_windows_claude_dir(local_app_data: &Path, threep: bool) -> Option<PathBu
     candidates.into_iter().next()
 }
 
-#[cfg(any(target_os = "macos", windows, test))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux", test))]
 fn paths_from_dirs(normal_dir: PathBuf, threep_dir: PathBuf) -> ClaudeDesktopPaths {
     let config_library_path = threep_dir.join(CONFIG_LIBRARY_DIR);
     let profile_path = config_library_path.join(format!("{PROFILE_ID}.json"));
@@ -1311,12 +1351,12 @@ fn proxy_origin_from_parts(listen_address: &str, listen_port: u16) -> String {
     format!("http://{}:{}", connect_host_for_url, listen_port)
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 fn unsupported_platform_error() -> AppError {
     AppError::localized(
         "claude_desktop.unsupported_platform",
-        "当前平台暂不支持 Claude Desktop 3P 配置。第一阶段仅支持 macOS 和 Windows。",
-        "Claude Desktop 3P configuration is not supported on this platform yet. Phase 1 only supports macOS and Windows.",
+        "当前平台暂不支持 Claude Desktop 3P 配置。支持的平台：macOS、Windows 和 Linux。",
+        "Claude Desktop 3P configuration is not supported on this platform yet. Supported platforms: macOS, Windows, and Linux.",
     )
 }
 
@@ -1337,6 +1377,42 @@ mod tests {
                 .join("Application Support")
                 .join("Claude-3p"),
         )
+    }
+
+    #[test]
+    fn linux_config_dir_uses_absolute_xdg_config_home_outside_flatpak() {
+        let home = Path::new("/home/tester");
+        let xdg = Path::new("/mnt/config");
+
+        assert_eq!(
+            linux_config_dir_from_home(home, Some(xdg), false),
+            PathBuf::from("/mnt/config")
+        );
+    }
+
+    #[test]
+    fn linux_config_dir_falls_back_for_missing_or_relative_xdg_config_home() {
+        let home = Path::new("/home/tester");
+
+        assert_eq!(
+            linux_config_dir_from_home(home, None, false),
+            PathBuf::from("/home/tester/.config")
+        );
+        assert_eq!(
+            linux_config_dir_from_home(home, Some(Path::new("relative/config")), false),
+            PathBuf::from("/home/tester/.config")
+        );
+    }
+
+    #[test]
+    fn linux_config_dir_uses_host_config_when_cc_switch_runs_in_flatpak() {
+        let home = Path::new("/home/tester");
+        let private_xdg = Path::new("/home/tester/.var/app/com.ccswitch.desktop/config");
+
+        assert_eq!(
+            linux_config_dir_from_home(home, Some(private_xdg), true),
+            PathBuf::from("/home/tester/.config")
+        );
     }
 
     fn test_db() -> Database {
