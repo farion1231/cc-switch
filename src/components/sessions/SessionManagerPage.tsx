@@ -88,7 +88,8 @@ type ProviderFilter =
   | "opencode"
   | "openclaw"
   | "gemini"
-  | "hermes";
+  | "hermes"
+  | "kimi";
 
 type SessionListViewMode = "flat" | "grouped";
 
