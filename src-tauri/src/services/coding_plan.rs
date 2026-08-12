@@ -207,13 +207,13 @@ async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
 
 // ── 智谱 GLM ────────────────────────────────────────────────
 
-/// 智谱 TOKENS_LIMIT 条目按 `unit` 字段的显式窗口分类。
+/// 智谱 `TOKENS_LIMIT` / `CREDIT_LIMIT` 条目按 `unit` 字段的显式窗口分类。
 enum ZhipuWindow {
     FiveHour,
     Weekly,
 }
 
-/// 按 `unit` 字段判定 TOKENS_LIMIT 条目所属窗口。
+/// 按 `unit` 字段判定 `TOKENS_LIMIT` / `CREDIT_LIMIT` 条目所属窗口。
 ///
 /// 实测形态（bigmodel.cn 与 z.ai 共用同一后端，字段一致）：
 /// - `unit: 3, number: 5` → 5 小时滚动窗口（老/新套餐均有）
@@ -240,7 +240,7 @@ fn classify_zhipu_window(item: &serde_json::Value) -> Option<ZhipuWindow> {
 ///    依次填入仍空缺的槽位。
 ///
 /// 老套餐（2026-02-12 前订阅）只回 1 条
-/// `TOKENS_LIMIT`，自然降级为仅展示 `five_hour`；新套餐回 2 条。
+/// `TOKENS_LIMIT` 或 `CREDIT_LIMIT`，自然降级为仅展示 `five_hour`；新套餐回 2 条。
 fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
     type Entry = (Option<i64>, f64, Option<String>);
     let mut five_hour: Option<Entry> = None;
@@ -253,7 +253,8 @@ fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
                 .get("type")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            // 大小写不敏感比较：上游若把 "TOKENS_LIMIT" 改成小写或驼峰，依然能识别
+            // 大小写不敏感比较：兼容历史 `TOKENS_LIMIT` 与当前 `CREDIT_LIMIT`，
+            // 上游若只改变大小写，依然能识别。
             if !(limit_type.eq_ignore_ascii_case("TOKENS_LIMIT")
                 || limit_type.eq_ignore_ascii_case("CREDIT_LIMIT"))
             {
@@ -281,7 +282,7 @@ fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
         } else if weekly.is_none() {
             weekly = Some(entry);
         }
-        // 智谱当前最多两条 TOKENS_LIMIT，多余的忽略
+        // 智谱当前最多两条额度限制条目（`TOKENS_LIMIT` 或 `CREDIT_LIMIT`），多余的忽略
     }
 
     let mut tiers = Vec::new();
@@ -1342,7 +1343,7 @@ mod tests {
         parse_afp_tiers, parse_coding_plan_tiers, parse_minimax_tiers, parse_zhipu_token_tiers,
         query_zhipu_team_at, volcengine_canonical_query, volcengine_is_auth_error_code,
         volcengine_region, volcengine_response_error, volcengine_sign, zhipu_quota_base,
-        TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
+        zhipu_quota_from_body, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
 
@@ -1382,6 +1383,34 @@ mod tests {
         assert_eq!(tiers.len(), 1);
         assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
         assert_eq!(tiers[0].utilization, 2.0);
+    }
+
+    #[test]
+    fn zhipu_credit_limit_real_response_uses_unit_windows() {
+        // Real response from #6153: the current API uses CREDIT_LIMIT instead of
+        // TOKENS_LIMIT, includes usage but no package key or reset timestamps, and
+        // relies on unit 3/6 to identify the five-hour and weekly windows.
+        let body = json!({
+            "code": 200,
+            "msg": "操作成功",
+            "data": {
+                "limits": [
+                    { "type": "CREDIT_LIMIT", "unit": 3, "number": 5, "usage": 28000, "percentage": 26 },
+                    { "type": "CREDIT_LIMIT", "unit": 6, "number": 1, "usage": 140000, "percentage": 37 }
+                ]
+            }
+        });
+
+        let quota = zhipu_quota_from_body(&body);
+        assert!(quota.success);
+        assert!(quota.credential_message.is_none());
+        assert_eq!(quota.tiers.len(), 2);
+        assert_eq!(quota.tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(quota.tiers[0].utilization, 26.0);
+        assert!(quota.tiers[0].resets_at.is_none());
+        assert_eq!(quota.tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(quota.tiers[1].utilization, 37.0);
+        assert!(quota.tiers[1].resets_at.is_none());
     }
 
     #[test]
@@ -2186,7 +2215,8 @@ mod tests {
     #[tokio::test]
     async fn zhipu_team_request_carries_type2_and_org_project_headers() {
         ensure_no_proxy_for_loopback();
-        // 响应 shape 与个人版一致：两条 TOKENS_LIMIT（unit 3/6）→ five_hour + weekly。
+        // 响应 shape 与个人版一致：两条 `TOKENS_LIMIT` / `CREDIT_LIMIT`（unit 3/6）
+        // → five_hour + weekly。
         let body = serde_json::json!({
             "success": true,
             "data": {
