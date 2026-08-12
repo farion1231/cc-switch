@@ -183,15 +183,16 @@ export function useKimiFormState({
           return;
         }
         config.models = models;
-        // 默认模型不存在时回填为第一个模型 id
+        // 默认模型不存在时回填为第一个有效（非空）模型 id
         const currentDefault =
           (config.default_model as string | undefined) || "";
+        const firstValidId = models.find((m) => m.id.trim() !== "")?.id;
         if (
           !currentDefault ||
           !models.some((m) => m.id === currentDefault)
         ) {
-          config.default_model = models[0].id;
-          setKimiDefaultModel(models[0].id);
+          config.default_model = firstValidId;
+          setKimiDefaultModel(firstValidId ?? "");
         }
       });
     },

@@ -372,11 +372,14 @@ export function KimiFormFields({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {models.map((m) => (
-                      <SelectItem key={m.id} value={m.id}>
-                        {m.name || m.id}
-                      </SelectItem>
-                    ))}
+                    {/* Radix SelectItem 不允许空 value：过滤未填别名的模型行 */}
+                    {models
+                      .filter((m) => m.id.trim() !== "")
+                      .map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {m.name || m.id}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>
