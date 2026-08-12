@@ -88,6 +88,9 @@ interface CodexFormFieldsProps {
   // Note: wire_api is always "responses" for Codex; apiFormat controls proxy-layer conversion
   apiFormat: CodexApiFormat;
   onApiFormatChange: (format: CodexApiFormat) => void;
+  multiAgentV2Enabled: boolean;
+  onMultiAgentV2EnabledChange: (enabled: boolean) => void;
+  multiAgentV2Available: boolean;
   // Auth field for the Anthropic Messages upstream (only used when apiFormat === "anthropic")
   anthropicAuthField: ClaudeApiKeyField;
   onAnthropicAuthFieldChange: (value: ClaudeApiKeyField) => void;
@@ -191,6 +194,9 @@ export function CodexFormFields({
   onModelChange,
   apiFormat,
   onApiFormatChange,
+  multiAgentV2Enabled,
+  onMultiAgentV2EnabledChange,
+  multiAgentV2Available,
   anthropicAuthField,
   onAnthropicAuthFieldChange,
   impersonateClaudeCode,
@@ -236,6 +242,8 @@ export function CodexFormFields({
   //（填了才生成 catalog）。两者都已与「路由接管」概念解耦。
   const isChatFormat = apiFormat === "openai_chat";
   const isAnthropicFormat = apiFormat === "anthropic";
+  const canConfigureMultiAgentV2 =
+    appId === "codex" && category !== "official" && isChatFormat;
   const canEditCatalog = Boolean(onCatalogModelsChange);
   const canEditReasoning = Boolean(onCodexChatReasoningChange);
   const supportsThinking =
@@ -696,6 +704,40 @@ export function CodexFormFields({
                     })}
                   </p>
                 </div>
+
+                {canConfigureMultiAgentV2 && (
+                  <div className="flex items-center justify-between gap-4 border-t border-border-default pt-3">
+                    <div className="space-y-1">
+                      <FormLabel>
+                        {t("codexConfig.multiAgentV2Label", {
+                          defaultValue: "启用 V2 子智能体（实验性）",
+                        })}
+                      </FormLabel>
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        {t("codexConfig.multiAgentV2Hint", {
+                          defaultValue:
+                            "仅对已验证支持完整 Codex 工具调用的供应商开启。可能导致普通请求失败；重启 Codex 并新建任务后生效。",
+                        })}
+                        {!multiAgentV2Available && (
+                          <>
+                            {" "}
+                            {t("codexConfig.multiAgentV2CatalogHint", {
+                              defaultValue: "请先添加模型映射后再启用。",
+                            })}
+                          </>
+                        )}
+                      </p>
+                    </div>
+                    <Switch
+                      checked={multiAgentV2Available && multiAgentV2Enabled}
+                      onCheckedChange={onMultiAgentV2EnabledChange}
+                      disabled={!multiAgentV2Available}
+                      aria-label={t("codexConfig.multiAgentV2Label", {
+                        defaultValue: "启用 V2 子智能体（实验性）",
+                      })}
+                    />
+                  </div>
+                )}
 
                 {isAnthropicFormat && (
                   <div className="space-y-1.5">

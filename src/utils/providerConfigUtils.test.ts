@@ -7,6 +7,8 @@ import {
   isCodexRemoteCompactionEnabled,
   setCodexModelName,
   setCodexRemoteCompaction,
+  applyCodexMultiAgentCapability,
+  isCodexMultiAgentV2Enabled,
   updateCommonConfigSnippet,
 } from "./providerConfigUtils";
 
@@ -173,6 +175,132 @@ name = "Example"
 
     const singleQuoted = `model = 'kimi-k2.7'\n`;
     expect(extractCodexModelName(singleQuoted)).toBe("kimi-k2.7");
+  });
+});
+
+describe("Codex multi-agent V2 capability helpers", () => {
+  const baseSettings = {
+    auth: { OPENAI_API_KEY: "preserve-me" },
+    config: 'model_provider = \\"custom\\"',
+    modelCatalog: { models: [{ model: "LongCat-2.0" }] },
+    unrelated: "preserve-me-too",
+  };
+
+  it("defaults to disabled and does not write the capability marker", () => {
+    const result = applyCodexMultiAgentCapability(baseSettings, {
+      appId: "codex",
+      category: "third_party",
+      apiFormat: "openai_chat",
+      enabled: false,
+      hasModelCatalog: true,
+    });
+
+    expect(isCodexMultiAgentV2Enabled(result)).toBe(false);
+    expect(result).not.toHaveProperty("codexMultiAgentVersion");
+  });
+
+  it("reads an existing v2 marker as enabled", () => {
+    expect(isCodexMultiAgentV2Enabled({ codexMultiAgentVersion: "v2" })).toBe(
+      true,
+    );
+    expect(
+      isCodexMultiAgentV2Enabled({ codexMultiAgentVersion: "other" }),
+    ).toBe(false);
+  });
+
+  it("writes v2 only when explicitly enabled for openai_chat Codex", () => {
+    const result = applyCodexMultiAgentCapability(baseSettings, {
+      appId: "codex",
+      category: "custom",
+      apiFormat: "openai_chat",
+      enabled: true,
+      hasModelCatalog: true,
+    });
+
+    expect(result.codexMultiAgentVersion).toBe("v2");
+    expect(result.auth).toEqual(baseSettings.auth);
+    expect(result.config).toBe(baseSettings.config);
+    expect(result.modelCatalog).toEqual(baseSettings.modelCatalog);
+    expect(result.unrelated).toBe("preserve-me-too");
+  });
+
+  it("removes an old marker when the switch is disabled", () => {
+    const result = applyCodexMultiAgentCapability(
+      { ...baseSettings, codexMultiAgentVersion: "v2" },
+      {
+        appId: "codex",
+        category: "custom",
+        apiFormat: "openai_chat",
+        enabled: false,
+        hasModelCatalog: true,
+      },
+    );
+
+    expect(result).not.toHaveProperty("codexMultiAgentVersion");
+  });
+
+  it.each(["openai_responses", "anthropic"] as const)(
+    "removes an old marker for %s upstream format",
+    (apiFormat) => {
+      const result = applyCodexMultiAgentCapability(
+        { ...baseSettings, codexMultiAgentVersion: "v2" },
+        {
+          appId: "codex",
+          category: "custom",
+          apiFormat,
+          enabled: true,
+          hasModelCatalog: true,
+        },
+      );
+
+      expect(result).not.toHaveProperty("codexMultiAgentVersion");
+    },
+  );
+
+  it("never writes v2 for an Official provider", () => {
+    const result = applyCodexMultiAgentCapability(
+      { ...baseSettings, codexMultiAgentVersion: "v2" },
+      {
+        appId: "codex",
+        category: "official",
+        apiFormat: "openai_chat",
+        enabled: true,
+        hasModelCatalog: true,
+      },
+    );
+
+    expect(result).not.toHaveProperty("codexMultiAgentVersion");
+  });
+
+  it("returns a serializable provider settings object without losing v2", () => {
+    const result = applyCodexMultiAgentCapability(baseSettings, {
+      appId: "codex",
+      category: "third_party",
+      apiFormat: "openai_chat",
+      enabled: true,
+      hasModelCatalog: true,
+    });
+    const roundTrip = JSON.parse(JSON.stringify(result));
+
+    expect(roundTrip.codexMultiAgentVersion).toBe("v2");
+    expect(roundTrip.auth).toEqual(baseSettings.auth);
+    expect(roundTrip.config).toBe(baseSettings.config);
+    expect(roundTrip.modelCatalog).toEqual(baseSettings.modelCatalog);
+  });
+
+  it("does not write v2 when the model catalog is empty", () => {
+    const result = applyCodexMultiAgentCapability(
+      { ...baseSettings, codexMultiAgentVersion: "v2" },
+      {
+        appId: "codex",
+        category: "third_party",
+        apiFormat: "openai_chat",
+        enabled: true,
+        hasModelCatalog: false,
+      },
+    );
+
+    expect(result).not.toHaveProperty("codexMultiAgentVersion");
   });
 });
 

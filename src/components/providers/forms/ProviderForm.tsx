@@ -65,6 +65,7 @@ import {
   setCodexWireApi,
   extractCodexModelName,
   setCodexModelName as setCodexModelNameInConfig,
+  applyCodexMultiAgentCapability,
 } from "@/utils/providerConfigUtils";
 import { isNonNegativeDecimalString } from "@/types/usage";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
@@ -363,6 +364,9 @@ function ProviderFormFull({
       ),
     });
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
+    setCodexMultiAgentV2Enabled(
+      initialData?.settingsConfig?.codexMultiAgentVersion === "v2",
+    );
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
     setLocalProxyHeadersOverride(
@@ -603,6 +607,10 @@ function ProviderFormFull({
 
   const [localCodexApiFormat, setLocalCodexApiFormat] =
     useState<CodexApiFormat>(initialCodexApiFormat);
+  const [codexMultiAgentV2Enabled, setCodexMultiAgentV2Enabled] =
+    useState<boolean>(
+      () => initialData?.settingsConfig?.codexMultiAgentVersion === "v2",
+    );
 
   // Auth-field choice for the Anthropic Messages upstream (defaults to the Bearer form)
   const initialCodexAnthropicAuthField: ClaudeApiKeyField =
@@ -640,6 +648,9 @@ function ProviderFormFull({
   const handleCodexApiFormatChange = useCallback(
     (format: CodexApiFormat) => {
       setLocalCodexApiFormat(format);
+      if (format !== "openai_chat") {
+        setCodexMultiAgentV2Enabled(false);
+      }
       // wire_api is always "responses" for Codex; format controls proxy-layer conversion
       setCodexConfig((prev) => {
         const updated = setCodexWireApi(prev, "responses");
@@ -1405,7 +1416,15 @@ function ProviderFormFull({
         if (normalizedCatalogModels.length > 0) {
           configObj.modelCatalog = { models: normalizedCatalogModels };
         }
-        settingsConfig = JSON.stringify(configObj);
+        settingsConfig = JSON.stringify(
+          applyCodexMultiAgentCapability(configObj, {
+            appId,
+            category,
+            apiFormat: localCodexApiFormat,
+            enabled: codexMultiAgentV2Enabled,
+            hasModelCatalog: normalizedCatalogModels.length > 0,
+          }),
+        );
       } catch (err) {
         settingsConfig = values.settingsConfig.trim();
       }
@@ -1768,6 +1787,7 @@ function ProviderFormFull({
         const template = getCodexCustomTemplate();
         resetCodexConfig(template.auth, template.config);
         setCodexChatReasoning({});
+        setCodexMultiAgentV2Enabled(false);
         setPromptCacheRouting("auto");
         setLocalCodexApiFormat(
           codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
@@ -1810,6 +1830,7 @@ function ProviderFormFull({
 
       resetCodexConfig(auth, config, preset.modelCatalog ?? []);
       setCodexChatReasoning(preset.codexChatReasoning ?? {});
+      setCodexMultiAgentV2Enabled(false);
       setPromptCacheRouting(preset.promptCacheRouting ?? "auto");
       setLocalCodexApiFormat(
         preset.apiFormat ??
@@ -2278,6 +2299,7 @@ function ProviderFormFull({
 
           {appId === "codex" && (
             <CodexFormFields
+              appId={appId}
               providerId={providerId}
               isXaiOauthPreset={
                 presetProviderType === "xai_oauth" ||
@@ -2309,6 +2331,15 @@ function ProviderFormFull({
               onModelChange={handleCodexModelChange}
               apiFormat={localCodexApiFormat}
               onApiFormatChange={handleCodexApiFormatChange}
+              multiAgentV2Enabled={codexMultiAgentV2Enabled}
+              onMultiAgentV2EnabledChange={setCodexMultiAgentV2Enabled}
+              multiAgentV2Available={
+                appId === "codex" &&
+                category !== "official" &&
+                localCodexApiFormat === "openai_chat" &&
+                normalizeCodexCatalogModelsForSave(codexCatalogModels).length >
+                  0
+              }
               anthropicAuthField={localCodexAnthropicAuthField}
               onAnthropicAuthFieldChange={setLocalCodexAnthropicAuthField}
               impersonateClaudeCode={localCodexImpersonateClaudeCode}
