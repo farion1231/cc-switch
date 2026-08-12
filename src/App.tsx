@@ -42,7 +42,7 @@ import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
-import { kimiKeys } from "@/hooks/useKimi";
+import { invalidateKimiProviderCaches } from "@/hooks/useKimi";
 import { hermesApi } from "@/lib/api/hermes";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
@@ -704,9 +704,7 @@ function App() {
           queryKey: hermesKeys.liveProviderIds,
         });
       } else if (activeApp === "kimi") {
-        await queryClient.invalidateQueries({
-          queryKey: kimiKeys.liveProviderIds,
-        });
+        await invalidateKimiProviderCaches(queryClient);
       }
       toast.success(
         t("notifications.removeFromConfigSuccess", {
@@ -1061,7 +1059,7 @@ function App() {
                       onSetAsDefault={
                         activeApp === "openclaw"
                           ? setAsDefaultModel
-                          : activeApp === "hermes"
+                          : activeApp === "hermes" || activeApp === "kimi"
                             ? switchProvider
                             : undefined
                       }

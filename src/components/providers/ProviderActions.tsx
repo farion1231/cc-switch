@@ -228,7 +228,7 @@ export function ProviderActions({
 
   return (
     <div className="flex items-center gap-1.5">
-      {(appId === "openclaw" || appId === "hermes") &&
+      {(appId === "openclaw" || appId === "hermes" || appId === "kimi") &&
         isInConfig &&
         onSetAsDefault &&
         (() => {

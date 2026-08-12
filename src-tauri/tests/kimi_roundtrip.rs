@@ -63,10 +63,10 @@ fn set_and_get_provider_roundtrip_via_settings_override() {
         let config_path = dir.join("config.toml");
         let content = std::fs::read_to_string(&config_path).expect("read config.toml");
 
-        // 顶层 default_model 已写入
+        // 保存 provider 不写顶层 default_model（由 apply_switch_defaults 负责）
         assert!(
-            content.contains("default_model = \"kimi-k2.7-code\""),
-            "{content}"
+            !content.contains("default_model"),
+            "set_provider must not touch default_model:\n{content}"
         );
         // providers 表与 models 表
         assert!(content.contains("[providers.kimi]"), "{content}");
@@ -89,12 +89,14 @@ fn set_and_get_provider_roundtrip_via_settings_override() {
         let providers = kimi_config::get_providers().expect("get_providers");
         let provider = providers.get("kimi").expect("provider exists");
         assert_eq!(provider["type"], "openai");
-        assert_eq!(provider["default_model"], "kimi-k2.7-code");
+        // 保存不写 default_model；切换才写
+        assert_eq!(provider.get("default_model"), None);
         let models = provider["models"].as_array().expect("models array");
         assert_eq!(models.len(), 2);
         assert_eq!(models[0]["id"], "kimi-k2.7-code");
         assert_eq!(models[1]["max_context_size"], 1048576);
 
+        kimi_config::apply_switch_defaults("kimi", &sample_provider()).expect("switch");
         assert_eq!(
             kimi_config::get_default_model().expect("default model"),
             Some("kimi-k2.7-code".to_string())
@@ -134,9 +136,10 @@ timeout = 5
         assert!(content.contains("[[hooks]]"), "{content}");
         assert!(content.contains("command = \"echo hello\""), "{content}");
         assert!(content.contains("timeout = 5"), "{content}");
+        // 保存 provider 不覆盖已有的 default_model（保持种子值）
         assert!(
-            content.contains("default_model = \"kimi-k2.7-code\""),
-            "{content}"
+            content.contains("default_model = \"pre-existing\""),
+            "set_provider must not touch default_model:\n{content}"
         );
         // 文件头注释必须保留（挂在 default_model 键的前缀 decor 上）
         assert!(

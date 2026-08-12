@@ -343,18 +343,13 @@ pub fn set_provider(name: &str, settings: Value) -> Result<(), AppError> {
         }
     }
 
-    // 更新顶层 default_model
-    let effective_default = default_model.or_else(|| {
-        models
-            .first()
-            .and_then(|m| m.get("id"))
-            .and_then(Value::as_str)
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-    });
-    if let Some(dm) = effective_default {
-        upsert_default_model(&mut doc, &dm);
-    }
+    // 注意：这里**不**更新顶层 default_model。
+    //
+    // additive 模式下，全局 default_model 只应由"切换供应商/设为默认"
+    // （apply_switch_defaults）更新。若保存 provider 时也写 default_model，
+    // 编辑任意非当前 provider 就会把全局默认覆盖成它的第一个模型——用户
+    // 只是改个 base_url 也会悄悄改掉正在使用的模型（与 Hermes 的
+    // set_provider 不碰 model.default 的语义保持一致）。
 
     write_kimi_config(&doc)
 }
@@ -765,7 +760,9 @@ mod tests {
         assert_eq!(provider["type"], "openai");
         assert_eq!(provider["base_url"], "https://api.moonshot.cn/v1");
         assert_eq!(provider["api_key"], "sk-test-123");
-        assert_eq!(provider["default_model"], "kimi-k2.7-code");
+        // 保存 provider 不写顶层 default_model（只由 apply_switch_defaults 写）
+        assert_eq!(provider.get("default_model"), None);
+        assert_eq!(get_default_model().expect("default model"), None);
 
         let models = provider["models"].as_array().expect("models array");
         assert_eq!(models.len(), 2);
@@ -774,6 +771,8 @@ mod tests {
         assert_eq!(models[1]["id"], "kimi-k3");
         assert_eq!(models[1]["max_context_size"], 1048576);
 
+        // 切换（设为默认）才写顶层 default_model
+        apply_switch_defaults("kimi", &sample_settings()).expect("switch");
         assert_eq!(
             get_default_model().expect("default model"),
             Some("kimi-k2.7-code".to_string())
@@ -819,8 +818,11 @@ command = "echo hello"
         assert!(content.contains("command = \"echo hello\""));
         assert!(content.contains("kimi-k2.7-code"), "new model written");
 
-        // default_model 应被新 provider 覆盖
-        assert!(content.contains("default_model = \"kimi-k2.7-code\""));
+        // 保存 provider 不覆盖已有的 default_model（保持 "pre-existing"）
+        assert!(
+            content.contains("default_model = \"pre-existing\""),
+            "set_provider must not touch default_model:\n{content}"
+        );
     }
 
     #[test]

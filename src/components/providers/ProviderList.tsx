@@ -30,7 +30,7 @@ import {
   useHermesLiveProviderIds,
   useHermesModelConfig,
 } from "@/hooks/useHermes";
-import { useKimiLiveProviderIds } from "@/hooks/useKimi";
+import { useKimiLiveProviderIds, useKimiDefaultModel } from "@/hooks/useKimi";
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
@@ -119,6 +119,22 @@ export function ProviderList({
   // Hermes: 读取当前 model.provider，用于判断哪个供应商是"当前激活"（高亮）
   const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
   const hermesCurrentProviderId = hermesModelConfig?.provider;
+
+  // Kimi: 读取 live config 的 default_model，判断哪个供应商持有该默认模型
+  const { data: kimiDefaultModel } = useKimiDefaultModel(appId === "kimi");
+  const isKimiCurrent = useCallback(
+    (providerId: string): boolean => {
+      if (appId !== "kimi" || !kimiDefaultModel) return false;
+      const provider = providers[providerId];
+      const models =
+        (provider?.settingsConfig as { models?: Array<{ id?: string; model?: string }> } | undefined)
+          ?.models ?? [];
+      return models.some(
+        (m) => m.id === kimiDefaultModel || m.model === kimiDefaultModel,
+      );
+    },
+    [appId, kimiDefaultModel, providers],
+  );
 
   // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes/Kimi）
   const isProviderInConfig = useCallback(
@@ -404,6 +420,7 @@ export function ProviderList({
               isOmoSlim && provider.id === (currentOmoSlimId || "");
             const isHermesCurrent =
               appId === "hermes" && hermesCurrentProviderId === provider.id;
+            const isKimiActive = isKimiCurrent(provider.id);
             return (
               <SortableProviderCard
                 key={provider.id}
@@ -415,7 +432,9 @@ export function ProviderList({
                       ? isOmoSlimCurrent
                       : appId === "hermes"
                         ? isHermesCurrent
-                        : provider.id === currentProviderId
+                        : appId === "kimi"
+                          ? isKimiActive
+                          : provider.id === currentProviderId
                 }
                 appId={appId}
                 isInConfig={isProviderInConfig(provider.id)}
@@ -442,11 +461,13 @@ export function ProviderList({
                   handleToggleFailover(provider.id, enabled)
                 }
                 activeProviderId={activeProviderId}
-                // OpenClaw: default model / Hermes: model.provider === provider.id
+                // OpenClaw: default model / Hermes: model.provider === provider.id / Kimi: default_model 归属
                 isDefaultModel={
                   appId === "hermes"
                     ? isHermesCurrent
-                    : isProviderDefaultModel(provider.id)
+                    : appId === "kimi"
+                      ? isKimiActive
+                      : isProviderDefaultModel(provider.id)
                 }
                 onSetAsDefault={
                   onSetAsDefault ? () => onSetAsDefault(provider) : undefined
