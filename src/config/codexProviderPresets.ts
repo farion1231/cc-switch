@@ -1248,14 +1248,14 @@ requires_openai_auth = true`,
     // MiniMax 官方 API 参考已列 /v1/responses 为正式端点（CN/intl 双区，POST /v1/responses），原生 Responses，无需路由接管转换
     apiFormat: "openai_responses",
     // 官方 Codex catalog（platform.minimaxi.com/docs/token-plan/codex-cli）：
-    // shell_command 编辑、并行工具、文本+图像，不声明 freeform apply_patch
+    // shell_command editing, parallel tools, text/image/video input, and no freeform apply_patch.
     modelCatalog: modelCatalog([
       {
         model: "MiniMax-M3",
         displayName: "MiniMax-M3",
         contextWindow: 1000000,
         supportsParallelToolCalls: true,
-        inputModalities: ["text", "image"],
+        inputModalities: ["text", "image", "video"],
         baseInstructions:
           "You are Codex, a coding agent based on MiniMax-M3. You and the user share the same workspace and collaborate to achieve the user's goals.",
       },
@@ -1283,14 +1283,14 @@ requires_openai_auth = true`,
     // MiniMax 官方 API 参考已列 /v1/responses 为正式端点（CN/intl 双区，POST /v1/responses），原生 Responses，无需路由接管转换
     apiFormat: "openai_responses",
     // 官方 Codex catalog（platform.minimax.io/docs/token-plan/codex）：
-    // shell_command 编辑、并行工具、文本+图像，不声明 freeform apply_patch
+    // shell_command editing, parallel tools, text/image/video input, and no freeform apply_patch.
     modelCatalog: modelCatalog([
       {
         model: "MiniMax-M3",
         displayName: "MiniMax-M3",
         contextWindow: 1000000,
         supportsParallelToolCalls: true,
-        inputModalities: ["text", "image"],
+        inputModalities: ["text", "image", "video"],
         baseInstructions:
           "You are Codex, a coding agent based on MiniMax-M3. You and the user share the same workspace and collaborate to achieve the user's goals.",
       },

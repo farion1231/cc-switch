@@ -2208,7 +2208,7 @@ impl Database {
                 "0.06",
                 "0.375",
             ),
-            ("minimax-m3", "MiniMax M3", "0.30", "1.20", "0.06", "0"),
+            ("minimax-m3", "MiniMax M3", "0.60", "2.40", "0.12", "0"),
             // GLM (智谱)
             ("glm-4.7", "GLM-4.7", "0.6", "2.2", "0.11", "0"),
             ("glm-4.6", "GLM-4.6", "0.6", "2.2", "0.11", "0"),
@@ -2560,16 +2560,17 @@ impl Database {
                 "0.14",
                 "0",
             ),
+            // Refresh untouched rows that still use the previous built-in MiniMax M3 rates.
             (
                 "minimax-m3",
                 "MiniMax M3",
-                "0.30",
-                "1.20",
-                "0.06",
-                "0",
                 "0.60",
                 "2.40",
                 "0.12",
+                "0",
+                "0.30",
+                "1.20",
+                "0.06",
                 "0",
             ),
             // 2026-07-12 GPT-5.6 家族 cache write=1.25× 输入价（OpenAI 5.6 起的新规），
