@@ -11,9 +11,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      # On pull_request the filter reads changed files via the API (no checkout);
+      # on push it needs a local git history to diff against.
+      - name: Checkout
+        if: github.event_name == 'push'
+        uses: actions/checkout@v6
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            frontend:
+              - "src/**"
+              - "tests/**"
+              - "index.html"
+              - "package.json"
+              - "pnpm-lock.yaml"
+              - "pnpm-workspace.yaml"
+              - "tsconfig.json"
+              - "tsconfig.node.json"
+              - "vite.config.ts"
+              - "vitest.config.ts"
+              - "tailwind.config.cjs"
+              - "postcss.config.cjs"
+              - "components.json"
+              - ".github/workflows/**"
+            backend:
+              - "src-tauri/**"
+              - "rust-toolchain.toml"
+              - ".github/workflows/**"
+
   frontend:
     name: Frontend Checks
     runs-on: ubuntu-latest
+    needs: changes
+    # Pushes to main always run everything: they keep the caches that PRs restore from warm.
+    if: github.event_name != 'pull_request' || needs.changes.outputs.frontend == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -58,6 +102,8 @@ jobs:
   backend:
     name: Backend Checks
     runs-on: ${{ matrix.os }}
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.backend == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -105,3 +151,77 @@ jobs:
 
       - name: Run tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  backend-windows-wsl2:
+    name: Backend Checks (Windows + WSL2 home)
+    runs-on: windows-2025
+    timeout-minutes: 45
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.backend == 'true'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+
+      - name: Setup WSL2
+        uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7
+        with:
+          distribution: Ubuntu-24.04
+          wsl-version: 2
+
+      - name: Cache Cargo registry and build
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Create frontend dist placeholder
+        shell: bash
+        run: mkdir -p dist
+
+      - name: Prepare WSL2-backed test environment
+        shell: pwsh
+        run: |
+          wsl.exe -d Ubuntu-24.04 -- bash -lc "rm -rf /tmp/cc-switch-windows-test-root && mkdir -p /tmp/cc-switch-windows-test-root/{home,temp} && chmod -R 0777 /tmp/cc-switch-windows-test-root"
+          $testRoot = "\\wsl.localhost\Ubuntu-24.04\tmp\cc-switch-windows-test-root"
+          $testHome = Join-Path $testRoot "home"
+          $testTemp = Join-Path $testRoot "temp"
+          foreach ($path in @($testRoot, $testHome, $testTemp)) {
+            if (-not (Test-Path -LiteralPath $path)) {
+              throw "WSL2-backed test path is unavailable: $path"
+            }
+          }
+          "CC_SWITCH_TEST_HOME=$testHome" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CC_SWITCH_WSL_TEST_DIR=$testRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CC_SWITCH_WSL_TEST_TEMP=$testTemp" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Compile backend tests with native temp
+        # link.exe/mt.exe cannot create manifests when TEMP points at a WSL UNC path.
+        run: cargo test --lib --manifest-path src-tauri/Cargo.toml --no-run
+
+      - name: Run Windows-to-WSL2 filesystem contract
+        shell: pwsh
+        run: |
+          $env:TEMP = $env:CC_SWITCH_WSL_TEST_TEMP
+          $env:TMP = $env:CC_SWITCH_WSL_TEST_TEMP
+          $testName = "config::tests::atomic_write_replaces_existing_wsl_unc_file"
+          $testList = cargo test --lib --manifest-path src-tauri/Cargo.toml -- --ignored --list
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          $expected = "${testName}: test"
+          if ($testList -notcontains $expected) {
+            throw "Expected ignored test was not discovered: $testName"
+          }
+          cargo test --lib --manifest-path src-tauri/Cargo.toml $testName -- --ignored --exact --nocapture
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
