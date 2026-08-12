@@ -1745,6 +1745,33 @@ fn remove_codex_experimental_bearer_token(config_text: &str) -> Result<String, A
     remove_codex_experimental_bearer_token_if(config_text, |_| true)
 }
 
+fn disable_codex_openai_auth_for_third_party(config_text: &str) -> Result<String, AppError> {
+    if config_text.trim().is_empty() {
+        return Ok(config_text.to_string());
+    }
+
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+
+    let Some(provider_id) = active_codex_model_provider_id(&doc) else {
+        return Ok(config_text.to_string());
+    };
+    if !is_custom_codex_model_provider_id(&provider_id) {
+        return Ok(config_text.to_string());
+    }
+
+    if let Some(provider_table) = doc
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_mut())
+        .and_then(|providers| providers.get_mut(provider_id.as_str()))
+        .and_then(|item| item.as_table_mut())
+    {
+        provider_table["requires_openai_auth"] = toml_edit::value(false);
+    }
+    Ok(doc.to_string())
+}
+
 /// Read the current Codex live settings as a `{ auth, config }` object.
 ///
 /// Missing `auth.json` collapses to `{}` so a config-only third-party install
@@ -2132,6 +2159,11 @@ pub fn write_codex_live_for_provider(
         write_codex_live_atomic(auth, config_text)
     } else {
         let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
+        let live_config = if category == Some("official") {
+            live_config
+        } else {
+            disable_codex_openai_auth_for_third_party(&live_config)?
+        };
         write_codex_live_config_atomic(Some(&live_config))
     }
 }
@@ -2374,6 +2406,36 @@ mod tests {
             CodexCatalogToolProfile::from_api_format(None),
             CodexCatalogToolProfile::ProxyChat
         );
+    }
+
+    #[test]
+    fn third_party_provider_disables_openai_auth_requirement() {
+        let input = r#"model_provider = "custom"
+
+[model_providers.custom]
+base_url = "https://example.invalid/v1"
+requires_openai_auth = true
+"#;
+
+        let output = disable_codex_openai_auth_for_third_party(input).expect("rewrite config");
+        let doc: toml::Value = toml::from_str(&output).expect("parse output");
+
+        assert_eq!(
+            doc["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn official_provider_keeps_openai_auth_requirement() {
+        let input = r#"model_provider = "openai"
+
+[model_providers.openai]
+requires_openai_auth = true
+"#;
+
+        let output = disable_codex_openai_auth_for_third_party(input).expect("rewrite config");
+        assert_eq!(output, input);
     }
 
     #[test]
