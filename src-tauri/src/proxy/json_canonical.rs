@@ -78,8 +78,8 @@ pub(crate) fn canonicalize_tool_arguments_str(value: &str) -> String {
     // safe empty object so downstream round-trips do not fail on re-parse.
     if !result.trim().is_empty() && serde_json::from_str::<Value>(&result).is_err() {
         log::warn!(
-            "Upstream returned unparseable tool arguments; falling back to '{{}}'. raw prefix: {}",
-            &value.chars().take(120).collect::<String>()
+            "Upstream returned unparseable tool arguments ({} bytes); falling back to '{{}}'.",
+            value.len()
         );
         return "{}".to_string();
     }
@@ -194,10 +194,7 @@ mod tests {
         // handles non-objects separately).  Keep to document the boundary:
         // canonicalize_tool_arguments_str only rejects *non-JSON*, not
         // non-object JSON.
-        assert_eq!(
-            canonicalize_tool_arguments_str("42"),
-            "42"
-        );
+        assert_eq!(canonicalize_tool_arguments_str("42"), "42");
     }
 
     #[test]

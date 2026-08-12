@@ -548,8 +548,8 @@ fn convert_input_to_messages(
                     // the argument was not valid JSON at all, not merely oddly formatted.
                     serde_json::from_str(args_str).unwrap_or_else(|error| {
                         log::warn!(
-                            "Invalid function_call arguments for '{}' (round-trip): {}. Falling back to empty object. raw prefix: {}",
-                            name, error, &args_str.chars().take(120).collect::<String>()
+                            "Invalid function_call arguments for '{}' (round-trip): {}. Falling back to empty object ({} bytes).",
+                            name, error, args_str.len()
                         );
                         json!({})
                     })
