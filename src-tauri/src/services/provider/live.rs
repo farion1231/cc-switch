@@ -68,7 +68,7 @@ fn provider_env_targets_gpt56(provider_env: Option<&serde_json::Map<String, Valu
     saw_model
 }
 
-fn is_kimi_for_coding_provider(provider: &Provider) -> bool {
+pub(crate) fn is_kimi_for_coding_provider(provider: &Provider) -> bool {
     provider
         .settings_config
         .pointer("/env/ANTHROPIC_BASE_URL")

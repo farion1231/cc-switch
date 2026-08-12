@@ -21,6 +21,26 @@ const CONFIG_LIBRARY_DIR: &str = "configLibrary";
 const GATEWAY_TOKEN_SETTING_KEY: &str = "claude_desktop_gateway_token";
 const CLAUDE_DESKTOP_PROXY_PREFIX: &str = "/claude-desktop";
 const DEFAULT_CREATED_AT: &str = "2024-01-01T00:00:00Z";
+/// DB setting key that remembers the context-window env values CC Switch last
+/// injected into `~/.claude/settings.json` on behalf of a Claude Desktop
+/// provider, so a later cleanup only removes keys whose live value still
+/// matches what we wrote (never user-owned values). JSON object shape:
+/// `{"key": "value", ...}`.
+const INJECTED_CONTEXT_ENV_SETTING_KEY: &str = "claude_desktop_injected_context_env";
+/// Claude Desktop's harness falls back to a ~262K local context window /
+/// auto-compact threshold for third-party models: it neither honours the
+/// Claude Code `[1m]` suffix convention nor derives a window from the gateway
+/// profile. Sync the real window into `~/.claude/settings.json` env (inherited
+/// by Desktop's Claude Code subprocess) so the displayed window and the
+/// auto-compact threshold match the actually-routed upstream.
+const ONE_MILLION_CONTEXT_WINDOW: &str = "1048576";
+/// 256K window of the Kimi For Coding `kimi-for-coding*` aliases (same constant
+/// as the CLI-side preset in `services/provider/live.rs`).
+const KIMI_FOR_CODING_CONTEXT_WINDOW: &str = "262144";
+const CONTEXT_WINDOW_ENV_KEYS: &[&str] = &[
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+];
 const MIMO_REDACTED_THINKING_PLACEHOLDER: &str = "[redacted thinking]";
 const MIMO_TOOL_CALL_THINKING_PLACEHOLDER: &str = "tool call";
 
@@ -211,6 +231,156 @@ pub fn get_status(db: &Database, proxy_running: bool) -> Result<ClaudeDesktopSta
 
 pub fn get_config_library_path() -> Result<PathBuf, AppError> {
     Ok(current_platform_paths()?.config_library_path)
+}
+
+/// Claude Desktop context-window env that should be present in
+/// `~/.claude/settings.json` for this provider. Explicit provider values
+/// always win (and are NOT marked as CC-Switch-injected, so cleanup never
+/// touches them); otherwise any 1M slot in the applied profile implies a
+/// 1M window, and the Kimi For Coding preset implies its 256K window.
+/// Returns `None` when nothing should be injected.
+fn desired_context_window_env(
+    provider: &Provider,
+    model_specs: Option<&[InferenceModelSpec]>,
+) -> Option<serde_json::Map<String, Value>> {
+    let default_window = if model_specs.is_some_and(|specs| specs.iter().any(|s| s.supports_1m)) {
+        Some(ONE_MILLION_CONTEXT_WINDOW)
+    } else if crate::services::provider::is_kimi_for_coding_provider(provider) {
+        Some(KIMI_FOR_CODING_CONTEXT_WINDOW)
+    } else {
+        None
+    }?;
+
+    let provider_env = provider
+        .settings_config
+        .get("env")
+        .and_then(Value::as_object);
+
+    let mut desired = serde_json::Map::new();
+    for key in CONTEXT_WINDOW_ENV_KEYS {
+        if provider_env.is_some_and(|env| env.contains_key(*key)) {
+            // 用户显式配置的值必须原样生效；live 侧由 CLI 供应商链路负责写入。
+            continue;
+        }
+        desired.insert((*key).to_string(), json!(default_window));
+    }
+    (!desired.is_empty()).then_some(desired)
+}
+
+/// Read the last values CC Switch injected into settings.json env.
+fn read_injected_context_env(db: &Database) -> serde_json::Map<String, Value> {
+    db.get_setting(INJECTED_CONTEXT_ENV_SETTING_KEY)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default()
+}
+
+fn store_injected_context_env(
+    db: &Database,
+    injected: &serde_json::Map<String, Value>,
+) -> Result<(), AppError> {
+    db.set_setting(
+        INJECTED_CONTEXT_ENV_SETTING_KEY,
+        &Value::Object(injected.clone()).to_string(),
+    )
+}
+
+/// Remove from `settings.json` env the keys CC Switch previously injected,
+/// but only while their live value still equals what we injected. Values the
+/// user changed afterwards are user-owned and stay.
+fn prune_injected_context_env(
+    env: &mut serde_json::Map<String, Value>,
+    injected: &serde_json::Map<String, Value>,
+) {
+    for key in CONTEXT_WINDOW_ENV_KEYS {
+        let removable = injected
+            .get(*key)
+            .is_some_and(|injected_value| env.get(*key) == Some(injected_value));
+        if removable {
+            env.remove(*key);
+        }
+    }
+}
+
+/// Keep `~/.claude/settings.json` env in sync with the context window of the
+/// applied Claude Desktop provider (#6328). Failures are logged but never
+/// block applying the Desktop profile itself.
+fn sync_context_window_env(
+    db: &Database,
+    desired: Option<&serde_json::Map<String, Value>>,
+    settings_path: &Path,
+) {
+    if let Err(err) = sync_context_window_env_inner(db, desired, settings_path) {
+        log::warn!("Failed to sync Claude Desktop context window env: {err}");
+    }
+}
+
+fn sync_context_window_env_inner(
+    db: &Database,
+    desired: Option<&serde_json::Map<String, Value>>,
+    settings_path: &Path,
+) -> Result<(), AppError> {
+    let mut settings = read_json_or_empty(settings_path)?;
+    if !settings.is_object() {
+        settings = json!({});
+    }
+    if !settings.get("env").is_some_and(Value::is_object) {
+        settings["env"] = json!({});
+    }
+    let env = settings["env"]
+        .as_object_mut()
+        .expect("env object ensured above");
+
+    let previously_injected = read_injected_context_env(db);
+    let mut next_injected = previously_injected.clone();
+    let mut changed = false;
+
+    if let Some(desired) = desired {
+        for (key, value) in desired {
+            if env.get(key) != Some(value) {
+                env.insert(key.clone(), value.clone());
+                changed = true;
+            }
+            next_injected.insert(key.clone(), value.clone());
+        }
+        // A key we injected earlier but that no longer applies to this
+        // provider is stale (e.g. switching from a 1M route to a plain
+        // third-party provider): prune it like a cleanup would.
+        let stale: serde_json::Map<String, Value> = previously_injected
+            .iter()
+            .filter(|(key, _)| !desired.contains_key(*key))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        let before = env.len();
+        prune_injected_context_env(env, &stale);
+        changed |= env.len() != before;
+        for key in stale.keys() {
+            next_injected.remove(key);
+        }
+    } else {
+        let before = env.len();
+        prune_injected_context_env(env, &previously_injected);
+        changed |= env.len() != before;
+        next_injected.clear();
+    }
+
+    if env.is_empty() {
+        settings
+            .as_object_mut()
+            .expect("settings object ensured above")
+            .remove("env");
+    }
+
+    if changed || !settings_path.exists() {
+        // `desired.is_none()` 且文件不存在时无需创建空文件。
+        if desired.is_some() || settings_path.exists() {
+            write_json_file(settings_path, &settings)?;
+        }
+    }
+    store_injected_context_env(db, &next_injected)?;
+    Ok(())
 }
 
 pub fn default_proxy_routes() -> Vec<ClaudeDesktopDefaultRoute> {
@@ -939,7 +1109,9 @@ fn apply_provider_to_paths(
     paths: &ClaudeDesktopPaths,
 ) -> Result<(), AppError> {
     if is_official_provider(provider) {
-        return restore_official_at_paths(paths);
+        return with_rollback(paths, |paths| {
+            restore_official_at_paths_inner_with_db(Some(db), paths)
+        });
     }
 
     validate_provider(provider)?;
@@ -976,15 +1148,16 @@ fn apply_provider_to_paths_inner(
     provider: &Provider,
     paths: &ClaudeDesktopPaths,
 ) -> Result<(), AppError> {
-    let profile = match provider_mode(provider) {
+    let (profile, model_specs) = match provider_mode(provider) {
         ClaudeDesktopMode::Direct => {
             let credentials = direct_gateway_credentials(provider)?;
             let model_specs = direct_inference_model_specs(provider)?;
-            build_gateway_profile(
+            let profile = build_gateway_profile(
                 &credentials.base_url,
                 &credentials.api_key,
                 (!model_specs.is_empty()).then_some(model_specs.as_slice()),
-            )
+            );
+            (profile, (!model_specs.is_empty()).then_some(model_specs))
         }
         ClaudeDesktopMode::Proxy => {
             let base_url = proxy_gateway_base_url_from_db(db)?;
@@ -998,7 +1171,8 @@ fn apply_provider_to_paths_inner(
                     supports_1m: route.supports_1m,
                 })
                 .collect::<Vec<_>>();
-            build_gateway_profile(&base_url, &api_key, Some(model_specs.as_slice()))
+            let profile = build_gateway_profile(&base_url, &api_key, Some(model_specs.as_slice()));
+            (profile, Some(model_specs))
         }
     };
 
@@ -1007,10 +1181,27 @@ fn apply_provider_to_paths_inner(
     write_json_file(&paths.profile_path, &profile)?;
     write_meta(&paths.meta_path, Some(PROFILE_ID))?;
 
+    // #6328: Desktop 会话经宿主注入环境、读不到网关路由能力，harness 对第三方
+    // 模型的本地窗口/auto-compact 阈值会回退默认 262144。settings.json 的 env
+    // 段仍会被 Desktop 的 Claude Code 子进程继承，把当前路由的真实窗口同步进去。
+    let desired = desired_context_window_env(provider, model_specs.as_deref());
+    sync_context_window_env(
+        db,
+        desired.as_ref(),
+        &crate::config::get_claude_settings_path(),
+    );
+
     Ok(())
 }
 
 fn restore_official_at_paths_inner(paths: &ClaudeDesktopPaths) -> Result<(), AppError> {
+    restore_official_at_paths_inner_with_db(None, paths)
+}
+
+fn restore_official_at_paths_inner_with_db(
+    db: Option<&Database>,
+    paths: &ClaudeDesktopPaths,
+) -> Result<(), AppError> {
     write_deployment_mode(&paths.normal_config_path, "1p")?;
     write_deployment_mode(&paths.threep_config_path, "1p")?;
     remove_cc_switch_enterprise_config(&paths.threep_config_path)?;
@@ -1019,6 +1210,11 @@ fn restore_official_at_paths_inner(paths: &ClaudeDesktopPaths) -> Result<(), App
         delete_file(&paths.profile_path)?;
     }
     write_meta(&paths.meta_path, None)?;
+
+    // 切回官方后 CC Switch 注入的窗口 env 不再适用，按注入标记清理（不碰用户自有值）。
+    if let Some(db) = db {
+        sync_context_window_env(db, None, &crate::config::get_claude_settings_path());
+    }
 
     Ok(())
 }
@@ -2218,5 +2414,198 @@ mod tests {
             None,
         );
         assert!(!is_compatible_direct_provider(&missing_bearer));
+    }
+
+    fn supports_1m_spec() -> InferenceModelSpec {
+        InferenceModelSpec {
+            name: "claude-fable-5".to_string(),
+            label_override: None,
+            supports_1m: true,
+        }
+    }
+
+    fn context_window_env(settings: &Value) -> Value {
+        let env = settings.get("env").cloned().unwrap_or_else(|| json!({}));
+        let mut filtered = serde_json::Map::new();
+        for key in CONTEXT_WINDOW_ENV_KEYS {
+            if let Some(value) = env.get(*key) {
+                filtered.insert((*key).to_string(), value.clone());
+            }
+        }
+        Value::Object(filtered)
+    }
+
+    #[test]
+    fn context_window_env_injects_1m_for_supports1m_slots() {
+        let temp = TempDir::new().expect("tempdir");
+        let settings_path = temp.path().join("settings.json");
+        let db = test_db();
+        let provider = direct_provider("direct");
+        let specs = vec![supports_1m_spec()];
+
+        let desired = desired_context_window_env(&provider, Some(&specs));
+        sync_context_window_env_inner(&db, desired.as_ref(), &settings_path).expect("sync env");
+
+        let settings: Value = read_json_file(&settings_path).expect("read settings");
+        assert_eq!(
+            context_window_env(&settings),
+            json!({
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1048576",
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1048576"
+            })
+        );
+    }
+
+    #[test]
+    fn context_window_env_injects_256k_for_kimi_for_coding() {
+        let temp = TempDir::new().expect("tempdir");
+        let settings_path = temp.path().join("settings.json");
+        let db = test_db();
+        let mut provider = direct_provider("kimi");
+        provider.settings_config["env"]["ANTHROPIC_BASE_URL"] =
+            json!("https://api.kimi.com/coding/");
+        provider.settings_config["env"]["ANTHROPIC_MODEL"] = json!("kimi-for-coding");
+        let specs = vec![InferenceModelSpec {
+            name: "claude-sonnet-5".to_string(),
+            label_override: None,
+            supports_1m: false,
+        }];
+
+        let desired = desired_context_window_env(&provider, Some(&specs));
+        sync_context_window_env_inner(&db, desired.as_ref(), &settings_path).expect("sync env");
+
+        let settings: Value = read_json_file(&settings_path).expect("read settings");
+        assert_eq!(
+            context_window_env(&settings),
+            json!({
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144",
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "262144"
+            })
+        );
+    }
+
+    #[test]
+    fn context_window_env_never_overrides_explicit_provider_values() {
+        let temp = TempDir::new().expect("tempdir");
+        let settings_path = temp.path().join("settings.json");
+        let db = test_db();
+        let mut provider = direct_provider("direct");
+        provider.settings_config["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = json!("300000");
+        provider.settings_config["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = json!("250000");
+        let specs = vec![supports_1m_spec()];
+
+        // 显式值全部就位时不应注入任何东西。
+        assert!(desired_context_window_env(&provider, Some(&specs)).is_none());
+
+        // 只显式配置一个键时，另一个键仍按路由窗口注入。
+        provider.settings_config["env"]
+            .as_object_mut()
+            .expect("env")
+            .remove("CLAUDE_CODE_AUTO_COMPACT_WINDOW");
+        let desired = desired_context_window_env(&provider, Some(&specs)).expect("desired");
+        assert_eq!(
+            desired,
+            json!({ "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1048576" })
+                .as_object()
+                .expect("object")
+                .clone()
+        );
+        sync_context_window_env_inner(&db, Some(&desired), &settings_path).expect("sync env");
+
+        let settings: Value = read_json_file(&settings_path).expect("read settings");
+        assert_eq!(
+            settings["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("1048576")
+        );
+        assert!(settings["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+    }
+
+    #[test]
+    fn context_window_env_not_injected_for_unknown_providers() {
+        let provider = direct_provider("direct");
+        let specs = vec![InferenceModelSpec {
+            name: "claude-sonnet-5".to_string(),
+            label_override: None,
+            supports_1m: false,
+        }];
+        assert!(desired_context_window_env(&provider, Some(&specs)).is_none());
+    }
+
+    #[test]
+    fn context_window_env_cleanup_only_removes_own_injected_values() {
+        let temp = TempDir::new().expect("tempdir");
+        let settings_path = temp.path().join("settings.json");
+        let db = test_db();
+        let provider = direct_provider("direct");
+        let specs = vec![supports_1m_spec()];
+
+        // 注入一轮 1M 窗口。
+        let desired = desired_context_window_env(&provider, Some(&specs));
+        sync_context_window_env_inner(&db, desired.as_ref(), &settings_path).expect("inject");
+
+        // 用户随后手改了其中一个键：该键变为用户自有，清理时必须保留。
+        let mut settings: Value = read_json_file(&settings_path).expect("read settings");
+        settings["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = json!("500000");
+        settings["env"]["ANTHROPIC_BASE_URL"] = json!("https://keep-me.example.com");
+        write_json_file(&settings_path, &settings).expect("write user edit");
+
+        sync_context_window_env_inner(&db, None, &settings_path).expect("cleanup");
+
+        let settings: Value = read_json_file(&settings_path).expect("read settings");
+        let env = settings["env"].as_object().expect("env");
+        // 注入标记仍匹配的键被移除。
+        assert!(env.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS").is_none());
+        // 用户改过的键和其它 env 键保留。
+        assert_eq!(env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], json!("500000"));
+        assert_eq!(
+            env["ANTHROPIC_BASE_URL"],
+            json!("https://keep-me.example.com")
+        );
+        // 注入标记已清空，重复 cleanup 不会再动用户值。
+        sync_context_window_env_inner(&db, None, &settings_path).expect("cleanup again");
+        let settings: Value = read_json_file(&settings_path).expect("read settings");
+        assert_eq!(
+            settings["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
+            json!("500000")
+        );
+    }
+
+    #[test]
+    fn context_window_env_stale_injection_pruned_on_provider_switch() {
+        let temp = TempDir::new().expect("tempdir");
+        let settings_path = temp.path().join("settings.json");
+        let db = test_db();
+        let provider = direct_provider("direct");
+        let specs = vec![supports_1m_spec()];
+
+        let desired = desired_context_window_env(&provider, Some(&specs));
+        sync_context_window_env_inner(&db, desired.as_ref(), &settings_path).expect("inject");
+
+        // 切到无 1M 槽位、也非 Kimi 的供应商：旧注入按标记清理，不残留 1048576。
+        let next = desired_context_window_env(
+            &provider,
+            Some(&[InferenceModelSpec {
+                name: "claude-sonnet-5".to_string(),
+                label_override: None,
+                supports_1m: false,
+            }]),
+        );
+        assert!(next.is_none());
+        sync_context_window_env_inner(&db, None, &settings_path).expect("sync none");
+
+        let settings: Value = read_json_file(&settings_path).expect("read settings");
+        assert!(settings.get("env").is_none());
+    }
+
+    #[test]
+    fn context_window_env_missing_settings_file_without_injection_is_noop() {
+        let temp = TempDir::new().expect("tempdir");
+        let settings_path = temp.path().join("settings.json");
+        let db = test_db();
+
+        sync_context_window_env_inner(&db, None, &settings_path).expect("noop sync");
+        assert!(!settings_path.exists());
     }
 }
