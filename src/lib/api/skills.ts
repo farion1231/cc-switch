@@ -44,6 +44,8 @@ export interface InstalledSkill {
 
 export interface SkillUninstallResult {
   backupPath?: string;
+  preservedPiPath?: string;
+  piCleanupIncomplete?: boolean;
 }
 
 export interface SkillBackupEntry {

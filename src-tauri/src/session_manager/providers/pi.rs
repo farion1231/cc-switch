@@ -61,7 +61,7 @@ struct SessionHeader {
 #[derive(Debug)]
 struct SessionTree {
     header: SessionHeader,
-    active_ids: HashSet<String>,
+    active_entry_indexes: HashSet<usize>,
     summary: SessionSummary,
 }
 
@@ -339,7 +339,7 @@ fn read_tree(path: &Path) -> Result<SessionTree, String> {
         File::open(path).map_err(|error| format!("Failed to open Pi session: {error}"))?,
     );
     let mut header = None;
-    let mut parents = HashMap::<String, Option<String>>::new();
+    let mut parents = HashMap::<String, (Option<String>, usize)>::new();
     let mut latest_id = None;
     let mut legacy_previous_id = None;
     let mut entry_index = 0usize;
@@ -371,27 +371,34 @@ fn read_tree(path: &Path) -> Result<SessionTree, String> {
         else {
             continue;
         };
-        if parents.insert(id.clone(), parent_id).is_some() {
-            return Err(format!("Pi session contains duplicate entry ID: {id}"));
+        if parents
+            .insert(id.clone(), (parent_id, entry_index))
+            .is_some()
+        {
+            log::debug!("Pi session contains duplicate entry ID {id}; using the latest entry");
         }
         latest_id = Some(id.clone());
         legacy_previous_id = Some(id);
     }
     let header = header.ok_or_else(|| "Pi session has no valid header".to_string())?;
-    let mut active_ids = HashSet::new();
+    let mut active_entry_indexes = HashSet::new();
+    let mut visited_ids = HashSet::new();
     let mut current = latest_id;
     while let Some(id) = current {
-        if !active_ids.insert(id.clone()) {
-            return Err(format!("Pi session tree contains a cycle at entry {id}"));
+        if !visited_ids.insert(id.clone()) {
+            log::debug!("Pi session tree contains a cycle at entry {id}; stopping traversal");
+            break;
         }
-        current = parents
-            .get(&id)
-            .ok_or_else(|| format!("Pi session entry references missing parent: {id}"))?
-            .clone();
+        let Some((parent_id, entry_index)) = parents.get(&id) else {
+            log::debug!("Pi session tree references missing entry {id}; stopping traversal");
+            break;
+        };
+        active_entry_indexes.insert(*entry_index);
+        current = parent_id.clone();
     }
     Ok(SessionTree {
         header,
-        active_ids,
+        active_entry_indexes,
         summary,
     })
 }
@@ -474,7 +481,7 @@ fn read_active_messages(path: &Path, tree: &SessionTree) -> Result<Vec<SessionMe
             continue;
         };
         legacy_previous_id = Some(id.clone());
-        if !tree.active_ids.contains(&id) {
+        if !tree.active_entry_indexes.contains(&entry_index) {
             continue;
         }
         let entry_timestamp = value.get("timestamp").and_then(parse_timestamp_to_ms);
@@ -541,7 +548,7 @@ fn parse_header(value: &Value) -> Result<SessionHeader, String> {
         .ok_or_else(|| "Pi session header has an invalid ID".to_string())?
         .to_string();
     let version = value.get("version").and_then(Value::as_u64).unwrap_or(1);
-    if !(1..=3).contains(&version) {
+    if version == 0 {
         return Err(format!("Unsupported Pi session version: {version}"));
     }
     Ok(SessionHeader {
@@ -766,6 +773,85 @@ mod tests {
                 .map(|message| message.content)
                 .collect::<Vec<_>>(),
             vec!["question", "active"]
+        );
+    }
+
+    #[test]
+    fn future_session_versions_are_read_with_current_semantics() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("sessions");
+        fs::create_dir_all(&root).expect("root");
+        let path = root.join("future.jsonl");
+        fs::write(
+            &path,
+            "{\"type\":\"session\",\"version\":4,\"id\":\"session-1\",\"cwd\":\"/work\"}\n\
+             {\"type\":\"message\",\"id\":\"message-1\",\"parentId\":null,\"message\":{\"role\":\"user\",\"content\":\"future\"}}\n",
+        )
+        .expect("session");
+
+        let session = parse_session(&path).expect("parse future session");
+        assert_eq!(session.summary.as_deref(), Some("future"));
+    }
+
+    #[test]
+    fn duplicate_entry_ids_use_the_latest_entry() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("sessions");
+        fs::create_dir_all(&root).expect("root");
+        let path = root.join("duplicate.jsonl");
+        fs::write(
+            &path,
+            "{\"type\":\"session\",\"version\":3,\"id\":\"session-1\",\"cwd\":\"/work\"}\n\
+             {\"type\":\"message\",\"id\":\"root\",\"parentId\":null,\"message\":{\"role\":\"user\",\"content\":\"root\"}}\n\
+             {\"type\":\"message\",\"id\":\"duplicate\",\"parentId\":\"root\",\"message\":{\"role\":\"assistant\",\"content\":\"stale\"}}\n\
+             {\"type\":\"message\",\"id\":\"duplicate\",\"parentId\":\"root\",\"message\":{\"role\":\"assistant\",\"content\":\"latest\"}}\n",
+        )
+        .expect("session");
+
+        let messages =
+            load_messages_with_layout(&root, &path, SessionLayout::Flat).expect("messages");
+        assert_eq!(
+            messages
+                .into_iter()
+                .map(|message| message.content)
+                .collect::<Vec<_>>(),
+            vec!["root", "latest"]
+        );
+    }
+
+    #[test]
+    fn missing_parents_and_cycles_stop_at_the_readable_branch() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("sessions");
+        fs::create_dir_all(&root).expect("root");
+
+        let missing = root.join("missing.jsonl");
+        fs::write(
+            &missing,
+            "{\"type\":\"session\",\"version\":3,\"id\":\"session-1\",\"cwd\":\"/work\"}\n\
+             {\"type\":\"message\",\"id\":\"orphan\",\"parentId\":\"missing\",\"message\":{\"role\":\"assistant\",\"content\":\"visible orphan\"}}\n",
+        )
+        .expect("missing-parent session");
+        let messages = load_messages_with_layout(&root, &missing, SessionLayout::Flat)
+            .expect("missing parent is tolerated");
+        assert_eq!(messages[0].content, "visible orphan");
+
+        let cycle = root.join("cycle.jsonl");
+        fs::write(
+            &cycle,
+            "{\"type\":\"session\",\"version\":3,\"id\":\"session-2\",\"cwd\":\"/work\"}\n\
+             {\"type\":\"message\",\"id\":\"a\",\"parentId\":\"b\",\"message\":{\"role\":\"user\",\"content\":\"a\"}}\n\
+             {\"type\":\"message\",\"id\":\"b\",\"parentId\":\"a\",\"message\":{\"role\":\"assistant\",\"content\":\"b\"}}\n",
+        )
+        .expect("cyclic session");
+        let messages = load_messages_with_layout(&root, &cycle, SessionLayout::Flat)
+            .expect("cycle is tolerated");
+        assert_eq!(
+            messages
+                .into_iter()
+                .map(|message| message.content)
+                .collect::<Vec<_>>(),
+            vec!["a", "b"]
         );
     }
 

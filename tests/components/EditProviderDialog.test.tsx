@@ -1,4 +1,11 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { useEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Provider } from "@/types";
 
@@ -7,6 +14,8 @@ const apiMocks = vi.hoisted(() => ({
   getLiveProviderSettings: vi.fn(),
   getOpenClawLiveProvider: vi.fn(),
 }));
+let mockFormReady = true;
+let submitReadyCallbacks: Array<(isReady: boolean) => void> = [];
 
 vi.mock("@/lib/api", () => ({
   providersApi: {
@@ -66,39 +75,46 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
     onSubmitReadyChange?: (isReady: boolean) => void;
     isProxyTakeover?: boolean;
     appId?: string;
-  }) => (
-    <form
-      ref={(node) => {
-        if (node) onSubmitReadyChange?.(true);
-      }}
-      id="provider-form"
-      onSubmit={(event) => {
-        event.preventDefault();
-        onSubmit({
-          name: initialData.name ?? "",
-          websiteUrl: initialData.websiteUrl ?? "",
-          notes: initialData.notes,
-          settingsConfig: JSON.stringify(initialData.settingsConfig ?? {}),
-          meta: initialData.meta,
-          icon: initialData.icon,
-          iconColor: initialData.iconColor,
-        });
-      }}
-    >
-      <output data-testid="settings-config">
-        {JSON.stringify(initialData.settingsConfig ?? {})}
-      </output>
-      <output data-testid="is-proxy-takeover">
-        {isProxyTakeover ? "true" : "false"}
-      </output>
-    </form>
-  ),
+  }) => {
+    useEffect(() => {
+      if (onSubmitReadyChange) {
+        submitReadyCallbacks.push(onSubmitReadyChange);
+        onSubmitReadyChange(mockFormReady);
+      }
+    }, [onSubmitReadyChange]);
+    return (
+      <form
+        id="provider-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit({
+            name: initialData.name ?? "",
+            websiteUrl: initialData.websiteUrl ?? "",
+            notes: initialData.notes,
+            settingsConfig: JSON.stringify(initialData.settingsConfig ?? {}),
+            meta: initialData.meta,
+            icon: initialData.icon,
+            iconColor: initialData.iconColor,
+          });
+        }}
+      >
+        <output data-testid="settings-config">
+          {JSON.stringify(initialData.settingsConfig ?? {})}
+        </output>
+        <output data-testid="is-proxy-takeover">
+          {isProxyTakeover ? "true" : "false"}
+        </output>
+      </form>
+    );
+  },
 }));
 
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 
 describe("EditProviderDialog", () => {
   beforeEach(() => {
+    mockFormReady = true;
+    submitReadyCallbacks = [];
     apiMocks.getCurrent.mockReset();
     apiMocks.getLiveProviderSettings.mockReset();
     apiMocks.getOpenClawLiveProvider.mockReset();
@@ -249,5 +265,38 @@ describe("EditProviderDialog", () => {
     expect(handleSubmit.mock.calls[0][0]).not.toHaveProperty(
       "expectedSettingsConfig",
     );
+  });
+
+  it("重新打开 Pi 编辑表单后忽略上一轮的就绪回调", async () => {
+    const provider: Provider = {
+      id: "pi-provider",
+      name: "Pi Provider",
+      settingsConfig: { models: [{ id: "model" }] },
+    };
+    const props = {
+      provider,
+      onOpenChange: vi.fn(),
+      onSubmit: vi.fn(),
+      appId: "pi" as const,
+    };
+    const { rerender } = render(<EditProviderDialog open {...props} />);
+
+    const saveButton = await screen.findByRole("button", {
+      name: "common.save",
+    });
+    await waitFor(() => expect(saveButton).toBeEnabled());
+    const staleCallback = submitReadyCallbacks.at(-1);
+    expect(staleCallback).toBeDefined();
+
+    rerender(<EditProviderDialog open={false} {...props} />);
+    mockFormReady = false;
+    rerender(<EditProviderDialog open {...props} />);
+    const reopenedButton = await screen.findByRole("button", {
+      name: "common.save",
+    });
+    await waitFor(() => expect(reopenedButton).toBeDisabled());
+
+    act(() => staleCallback?.(true));
+    expect(reopenedButton).toBeDisabled();
   });
 });

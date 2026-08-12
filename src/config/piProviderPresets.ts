@@ -47,6 +47,34 @@ export interface PiProviderPreset {
   iconColor?: string;
 }
 
+const OPENAI_COMPLETIONS_COMPAT = {
+  supportsStore: false,
+  supportsDeveloperRole: false,
+  maxTokensField: "max_tokens",
+} as const;
+
+const DEEPSEEK_THINKING_COMPAT = {
+  ...OPENAI_COMPLETIONS_COMPAT,
+  requiresReasoningContentOnAssistantMessages: true,
+  thinkingFormat: "deepseek",
+} as const;
+
+const XIAOMI_THINKING_COMPAT = {
+  requiresReasoningContentOnAssistantMessages: true,
+  thinkingFormat: "deepseek",
+} as const;
+
+const KIMI_K3_COMPAT = {
+  supportsStore: false,
+  supportsDeveloperRole: false,
+  supportsReasoningEffort: true,
+  maxTokensField: "max_tokens",
+  supportsStrictMode: false,
+  thinkingFormat: "openai",
+  requiresReasoningContentOnAssistantMessages: true,
+  deferredToolsMode: "kimi",
+} as const;
+
 /**
  * Pi-native provider catalog.
  *
@@ -71,10 +99,13 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
           id: "kimi-k2.7-code",
           thinkingProfile: "offUnsupported",
         }),
-        piModel("moonshotai/kimi-k3", {
-          id: "kimi-k3",
-          thinkingProfile: "kimi3",
-        }),
+        {
+          ...piModel("moonshotai/kimi-k3", {
+            id: "kimi-k3",
+            thinkingProfile: "kimi3",
+          }),
+          compat: { ...KIMI_K3_COMPAT },
+        },
       ],
     },
     category: "cn_official",
@@ -1119,12 +1150,18 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("xiaomi/mimo-v2.5-pro", {
-          id: "mimo-v2.5-pro",
-        }),
-        piModel("xiaomi/mimo-v2.5", {
-          id: "mimo-v2.5",
-        }),
+        {
+          ...piModel("xiaomi/mimo-v2.5-pro", {
+            id: "mimo-v2.5-pro",
+          }),
+          compat: { ...XIAOMI_THINKING_COMPAT },
+        },
+        {
+          ...piModel("xiaomi/mimo-v2.5", {
+            id: "mimo-v2.5",
+          }),
+          compat: { ...XIAOMI_THINKING_COMPAT },
+        },
       ],
     },
     category: "cn_official",
@@ -1165,25 +1202,40 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("zai/glm-5.2", {
-          id: "glm-5.2",
-          name: "GLM 5.2",
-          thinkingProfile: "openCodeGoGlm52",
-        }),
-        piModel("moonshotai/kimi-k2.7-code", {
-          id: "kimi-k2.7-code",
-        }),
-        piModel("deepseek/deepseek-v4-pro", {
-          id: "deepseek-v4-pro",
-          thinkingProfile: "deepseekV4",
-        }),
-        piModel("deepseek/deepseek-v4-flash", {
-          id: "deepseek-v4-flash",
-          thinkingProfile: "deepseekV4",
-        }),
-        piModel("xiaomi/mimo-v2.5-pro", {
-          id: "mimo-v2.5-pro",
-        }),
+        {
+          ...piModel("zai/glm-5.2", {
+            id: "glm-5.2",
+            name: "GLM 5.2",
+            thinkingProfile: "openCodeGoGlm52",
+          }),
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
+        },
+        {
+          ...piModel("moonshotai/kimi-k2.7-code", {
+            id: "kimi-k2.7-code",
+          }),
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-pro", {
+            id: "deepseek-v4-pro",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("deepseek/deepseek-v4-flash", {
+            id: "deepseek-v4-flash",
+            thinkingProfile: "deepseekV4",
+          }),
+          compat: { ...DEEPSEEK_THINKING_COMPAT },
+        },
+        {
+          ...piModel("xiaomi/mimo-v2.5-pro", {
+            id: "mimo-v2.5-pro",
+          }),
+          compat: { ...OPENAI_COMPLETIONS_COMPAT },
+        },
       ],
     },
     category: "third_party",

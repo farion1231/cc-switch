@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -32,13 +32,28 @@ export function EditProviderDialog({
 }: EditProviderDialogProps) {
   const { t } = useTranslation();
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
-  const [isFormReady, setIsFormReady] = useState(appId !== "pi");
-
-  useEffect(() => {
-    if (open) {
-      setIsFormReady(appId !== "pi");
-    }
-  }, [appId, open, provider?.id]);
+  const formReadyToken = useMemo(
+    () => Symbol("provider-form-ready"),
+    [appId, open, provider?.id],
+  );
+  const currentFormReadyToken = useRef(formReadyToken);
+  currentFormReadyToken.current = formReadyToken;
+  const [formReadyState, setFormReadyState] = useState({
+    token: formReadyToken,
+    ready: appId !== "pi",
+  });
+  const isFormReady =
+    formReadyState.token === formReadyToken
+      ? formReadyState.ready
+      : appId !== "pi";
+  const handleSubmitReadyChange = useCallback(
+    (ready: boolean) => {
+      if (currentFormReadyToken.current === formReadyToken) {
+        setFormReadyState({ token: formReadyToken, ready });
+      }
+    },
+    [formReadyToken],
+  );
 
   // 默认使用传入的 provider.settingsConfig，若当前编辑对象是"当前生效供应商"，则尝试读取实时配置替换初始值
   const [liveSettings, setLiveSettings] = useState<Record<
@@ -253,7 +268,7 @@ export function EditProviderDialog({
         onSubmit={handleSubmit}
         onCancel={() => onOpenChange(false)}
         onSubmittingChange={setIsFormSubmitting}
-        onSubmitReadyChange={setIsFormReady}
+        onSubmitReadyChange={handleSubmitReadyChange}
         initialData={initialData}
         showButtons={false}
         isProxyTakeover={isProxyTakeover}

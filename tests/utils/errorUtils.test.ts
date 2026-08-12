@@ -19,4 +19,15 @@ describe("error utilities", () => {
       ),
     ).toBe("pi.provider.writeConflict");
   });
+
+  it("maps a duplicate Pi provider key to validation feedback", () => {
+    const t = vi.fn((key: string) => key);
+
+    expect(
+      translatePiProviderMutationError(
+        "无效输入: Pi provider key 'duplicate' already exists in models.json",
+        t,
+      ),
+    ).toBe("pi.form.providerKeyDuplicate");
+  });
 });

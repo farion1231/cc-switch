@@ -1,4 +1,11 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { useEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import type { ProviderFormValues } from "@/components/providers/forms/ProviderForm";
@@ -25,6 +32,8 @@ vi.mock("@/components/ui/dialog", () => ({
 }));
 
 let mockFormValues: ProviderFormValues;
+let mockFormReady = true;
+let submitReadyCallbacks: Array<(isReady: boolean) => void> = [];
 
 vi.mock("@/components/providers/forms/ProviderForm", () => ({
   ProviderForm: ({
@@ -33,22 +42,29 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
   }: {
     onSubmit: (values: ProviderFormValues) => void;
     onSubmitReadyChange?: (isReady: boolean) => void;
-  }) => (
-    <form
-      ref={(node) => {
-        if (node) onSubmitReadyChange?.(true);
-      }}
-      id="provider-form"
-      onSubmit={(event) => {
-        event.preventDefault();
-        onSubmit(mockFormValues);
-      }}
-    />
-  ),
+  }) => {
+    useEffect(() => {
+      if (onSubmitReadyChange) {
+        submitReadyCallbacks.push(onSubmitReadyChange);
+        onSubmitReadyChange(mockFormReady);
+      }
+    }, [onSubmitReadyChange]);
+    return (
+      <form
+        id="provider-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit(mockFormValues);
+        }}
+      />
+    );
+  },
 }));
 
 describe("AddProviderDialog", () => {
   beforeEach(() => {
+    mockFormReady = true;
+    submitReadyCallbacks = [];
     mockFormValues = {
       name: "Test Provider",
       websiteUrl: "https://provider.example.com",
@@ -215,5 +231,30 @@ context_window = 500000
     expect(handleSubmit.mock.calls[0][0]).not.toHaveProperty(
       "piActivateModelId",
     );
+  });
+
+  it("重新打开 Pi 表单后忽略上一轮的就绪回调", async () => {
+    const props = {
+      onOpenChange: vi.fn(),
+      appId: "pi" as const,
+      onSubmit: vi.fn(),
+    };
+    const { rerender } = render(<AddProviderDialog open {...props} />);
+
+    const addButton = await screen.findByRole("button", { name: "common.add" });
+    await waitFor(() => expect(addButton).toBeEnabled());
+    const staleCallback = submitReadyCallbacks.at(-1);
+    expect(staleCallback).toBeDefined();
+
+    rerender(<AddProviderDialog open={false} {...props} />);
+    mockFormReady = false;
+    rerender(<AddProviderDialog open {...props} />);
+    const reopenedButton = await screen.findByRole("button", {
+      name: "common.add",
+    });
+    await waitFor(() => expect(reopenedButton).toBeDisabled());
+
+    act(() => staleCallback?.(true));
+    expect(reopenedButton).toBeDisabled();
   });
 });

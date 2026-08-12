@@ -97,8 +97,55 @@ describe("Pi provider presets", () => {
     );
 
     expect(models.length).toBeGreaterThan(0);
-    expect(models.every((model) => model.contextWindow === 272_000)).toBe(
-      true,
-    );
+    expect(models.every((model) => model.contextWindow === 272_000)).toBe(true);
+  });
+
+  it("keeps provider-specific OpenAI compatibility metadata", () => {
+    const preset = (name: string) => {
+      const found = piProviderPresets.find((item) => item.name === name);
+      if (!found) throw new Error(`Missing Pi preset: ${name}`);
+      return found;
+    };
+    const model = (presetName: string, id: string) => {
+      const found = preset(presetName).settingsConfig.models.find(
+        (item) => item.id === id,
+      );
+      if (!found) throw new Error(`Missing Pi model: ${presetName}/${id}`);
+      return found;
+    };
+
+    expect(model("Kimi", "kimi-k3").compat).toEqual({
+      supportsStore: false,
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: true,
+      maxTokensField: "max_tokens",
+      supportsStrictMode: false,
+      thinkingFormat: "openai",
+      requiresReasoningContentOnAssistantMessages: true,
+      deferredToolsMode: "kimi",
+    });
+
+    const openCodeBase = {
+      supportsStore: false,
+      supportsDeveloperRole: false,
+      maxTokensField: "max_tokens",
+    };
+    expect(model("OpenCode Go", "glm-5.2").compat).toEqual(openCodeBase);
+    expect(model("OpenCode Go", "kimi-k2.7-code").compat).toEqual(openCodeBase);
+    expect(model("OpenCode Go", "mimo-v2.5-pro").compat).toEqual(openCodeBase);
+    for (const id of ["deepseek-v4-pro", "deepseek-v4-flash"]) {
+      expect(model("OpenCode Go", id).compat).toEqual({
+        ...openCodeBase,
+        requiresReasoningContentOnAssistantMessages: true,
+        thinkingFormat: "deepseek",
+      });
+    }
+
+    for (const id of ["mimo-v2.5-pro", "mimo-v2.5"]) {
+      expect(model("Xiaomi MiMo", id).compat).toEqual({
+        requiresReasoningContentOnAssistantMessages: true,
+        thinkingFormat: "deepseek",
+      });
+    }
   });
 });

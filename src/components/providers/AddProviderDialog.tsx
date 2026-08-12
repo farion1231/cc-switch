@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -61,13 +61,28 @@ export function AddProviderDialog({
   const [selectedUniversalPreset, setSelectedUniversalPreset] =
     useState<UniversalProviderPreset | null>(null);
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
-  const [isFormReady, setIsFormReady] = useState(appId !== "pi");
-
-  useEffect(() => {
-    if (open) {
-      setIsFormReady(appId !== "pi");
-    }
-  }, [appId, open]);
+  const formReadyToken = useMemo(
+    () => Symbol("provider-form-ready"),
+    [appId, open],
+  );
+  const currentFormReadyToken = useRef(formReadyToken);
+  currentFormReadyToken.current = formReadyToken;
+  const [formReadyState, setFormReadyState] = useState({
+    token: formReadyToken,
+    ready: appId !== "pi",
+  });
+  const isFormReady =
+    formReadyState.token === formReadyToken
+      ? formReadyState.ready
+      : appId !== "pi";
+  const handleSubmitReadyChange = useCallback(
+    (ready: boolean) => {
+      if (currentFormReadyToken.current === formReadyToken) {
+        setFormReadyState({ token: formReadyToken, ready });
+      }
+    },
+    [formReadyToken],
+  );
 
   const handleUniversalProviderSave = useCallback(
     async (provider: UniversalProvider) => {
@@ -404,7 +419,7 @@ export function AddProviderDialog({
               onSubmit={handleSubmit}
               onCancel={() => onOpenChange(false)}
               onSubmittingChange={setIsFormSubmitting}
-              onSubmitReadyChange={setIsFormReady}
+              onSubmitReadyChange={handleSubmitReadyChange}
               showButtons={false}
             />
           </TabsContent>
@@ -421,7 +436,7 @@ export function AddProviderDialog({
           onSubmit={handleSubmit}
           onCancel={() => onOpenChange(false)}
           onSubmittingChange={setIsFormSubmitting}
-          onSubmitReadyChange={setIsFormReady}
+          onSubmitReadyChange={handleSubmitReadyChange}
           showButtons={false}
         />
       )}

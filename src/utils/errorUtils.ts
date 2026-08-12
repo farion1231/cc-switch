@@ -43,8 +43,17 @@ export const translatePiProviderMutationError = (
 ): string => {
   if (!message) return "";
 
-  if (message.includes("models.json changed")) {
+  if (
+    message.includes("models.json changed") ||
+    message.includes("changed outside CC Switch") ||
+    message.includes("no longer present in models.json") ||
+    message.includes("another value now owns the key")
+  ) {
     return t("pi.provider.writeConflict");
+  }
+
+  if (message.includes("Pi provider") && message.includes("already exists")) {
+    return t("pi.form.providerKeyDuplicate");
   }
 
   return "";

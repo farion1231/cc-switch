@@ -98,10 +98,15 @@ interface PiModelDraft {
   key: string;
   id: string;
   name: string;
+  hasName: boolean;
   reasoning: boolean;
+  hasReasoning: boolean;
   input: unknown;
+  hasInput: boolean;
   contextWindow: string;
+  hasContextWindow: boolean;
   maxTokens: string;
+  hasMaxTokens: boolean;
   thinkingLevelMap: unknown;
   hasThinkingLevelMap: boolean;
   passthrough: Record<string, unknown>;
@@ -267,10 +272,15 @@ function modelDraft(
     key: options.key ?? crypto.randomUUID(),
     id: optionalText(model.id),
     name: optionalText(model.name),
+    hasName: hasOwn(model, "name"),
     reasoning: model.reasoning === true,
+    hasReasoning: hasOwn(model, "reasoning"),
     input: Array.isArray(model.input) ? model.input : ["text"],
+    hasInput: hasOwn(model, "input"),
     contextWindow: optionalNumberText(model.contextWindow),
+    hasContextWindow: hasOwn(model, "contextWindow"),
     maxTokens: optionalNumberText(model.maxTokens),
+    hasMaxTokens: hasOwn(model, "maxTokens"),
     thinkingLevelMap: model.thinkingLevelMap,
     hasThinkingLevelMap: hasOwn(model, "thinkingLevelMap"),
     passthrough: objectWithout(model, MODEL_CONTROLLED_KEYS),
@@ -282,10 +292,15 @@ function newModel(): PiModelDraft {
     key: crypto.randomUUID(),
     id: "",
     name: "",
+    hasName: true,
     reasoning: false,
+    hasReasoning: true,
     input: ["text"],
+    hasInput: true,
     contextWindow: "",
+    hasContextWindow: true,
     maxTokens: "",
+    hasMaxTokens: true,
     thinkingLevelMap: undefined,
     hasThinkingLevelMap: false,
     passthrough: {},
@@ -315,11 +330,15 @@ function modelPreview(model: PiModelDraft): Record<string, unknown> {
   return {
     ...model.passthrough,
     id: model.id,
-    name: displayName,
-    reasoning: model.reasoning,
-    input: withImageInput(model.input, supportsImageInput(model.input)),
-    ...(contextWindow !== undefined ? { contextWindow } : {}),
-    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(model.hasName ? { name: displayName } : {}),
+    ...(model.hasReasoning ? { reasoning: model.reasoning } : {}),
+    ...(model.hasInput
+      ? { input: withImageInput(model.input, supportsImageInput(model.input)) }
+      : {}),
+    ...(model.hasContextWindow && contextWindow !== undefined
+      ? { contextWindow }
+      : {}),
+    ...(model.hasMaxTokens && maxTokens !== undefined ? { maxTokens } : {}),
     ...(model.hasThinkingLevelMap
       ? { thinkingLevelMap: model.thinkingLevelMap }
       : {}),
@@ -516,6 +535,7 @@ export function PiProviderForm({
     parseJsonObject(initialSettingsConfigText) ?? {},
   );
   const settingsConfigText = form.watch("settingsConfig");
+  const isSettingsConfigValid = parseJsonObject(settingsConfigText) !== null;
   const displayName = form.watch("name");
   const hasConfigurationSelection = isEdit || selectedPresetId !== null;
   const isSubmitReady = hasConfigurationSelection;
@@ -830,7 +850,8 @@ export function PiProviderForm({
               ...model,
               id,
               name:
-                model.name.length === 0 || model.name === model.id
+                model.hasName &&
+                (model.name.length === 0 || model.name === model.id)
                   ? id
                   : model.name,
             }
@@ -1102,27 +1123,36 @@ export function PiProviderForm({
         }
         seen.add(id);
         const displayName = model.name.trim();
-        if (!displayName) {
+        const includeName = !isEdit || model.hasName;
+        const includeReasoning = !isEdit || model.hasReasoning;
+        const includeInput = !isEdit || model.hasInput;
+        const includeContextWindow = !isEdit || model.hasContextWindow;
+        const includeMaxTokens = !isEdit || model.hasMaxTokens;
+        if (includeName && !displayName) {
           throw new PiFormValidationError(
             t("pi.form.modelNameRequired", { index: index + 1 }),
             `#pi-model-name-${model.key}`,
             true,
           );
         }
-        const contextWindow = positiveNumber(
-          model.contextWindow,
-          t("pi.form.positiveNumberRequired", {
-            label: t("pi.form.contextWindow"),
-          }),
-          `#pi-model-context-window-${model.key}`,
-        );
-        const maxTokens = positiveNumber(
-          model.maxTokens,
-          t("pi.form.positiveNumberRequired", {
-            label: t("pi.form.maxTokens"),
-          }),
-          `#pi-model-max-tokens-${model.key}`,
-        );
+        const contextWindow = includeContextWindow
+          ? positiveNumber(
+              model.contextWindow,
+              t("pi.form.positiveNumberRequired", {
+                label: t("pi.form.contextWindow"),
+              }),
+              `#pi-model-context-window-${model.key}`,
+            )
+          : undefined;
+        const maxTokens = includeMaxTokens
+          ? positiveNumber(
+              model.maxTokens,
+              t("pi.form.positiveNumberRequired", {
+                label: t("pi.form.maxTokens"),
+              }),
+              `#pi-model-max-tokens-${model.key}`,
+            )
+          : undefined;
         if (
           model.hasThinkingLevelMap &&
           !isPiThinkingLevelMap(model.thinkingLevelMap)
@@ -1164,11 +1194,18 @@ export function PiProviderForm({
         return {
           ...model.passthrough,
           id,
-          name: displayName,
-          reasoning: model.reasoning,
-          input: withImageInput(model.input, supportsImageInput(model.input)),
-          contextWindow,
-          maxTokens,
+          ...(includeName ? { name: displayName } : {}),
+          ...(includeReasoning ? { reasoning: model.reasoning } : {}),
+          ...(includeInput
+            ? {
+                input: withImageInput(
+                  model.input,
+                  supportsImageInput(model.input),
+                ),
+              }
+            : {}),
+          ...(contextWindow !== undefined ? { contextWindow } : {}),
+          ...(maxTokens !== undefined ? { maxTokens } : {}),
           ...(model.hasThinkingLevelMap
             ? { thinkingLevelMap: model.thinkingLevelMap }
             : {}),
@@ -1296,8 +1333,20 @@ export function PiProviderForm({
           </div>
         )}
 
+        {hasConfigurationSelection && !isSettingsConfigValid && (
+          <p
+            role="status"
+            className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200"
+          >
+            {t("pi.form.fixJsonFirst")}
+          </p>
+        )}
+
         {hasConfigurationSelection && (
-          <>
+          <fieldset
+            disabled={!isSettingsConfigValid}
+            className="min-w-0 space-y-6 border-0 p-0 disabled:opacity-50"
+          >
             <BasicFormFields
               form={form}
               beforeNameSlot={
@@ -1539,11 +1588,12 @@ export function PiProviderForm({
                             onChange={(event) =>
                               updateModelOverride(model.key, {
                                 name: event.target.value,
+                                hasName: true,
                               })
                             }
                             placeholder={t("pi.form.modelNamePlaceholder")}
                             aria-label={t("pi.form.modelName")}
-                            required
+                            required={!isEdit || model.hasName}
                             className="min-w-0 flex-1"
                           />
                           <Button
@@ -1574,6 +1624,7 @@ export function PiProviderForm({
                                   onCheckedChange={(checked) =>
                                     updateModelOverride(model.key, {
                                       reasoning: checked,
+                                      hasReasoning: true,
                                     })
                                   }
                                 />
@@ -1594,6 +1645,7 @@ export function PiProviderForm({
                                         model.input,
                                         checked,
                                       ),
+                                      hasInput: true,
                                     })
                                   }
                                 />
@@ -1620,11 +1672,12 @@ export function PiProviderForm({
                                 step="any"
                                 min="1"
                                 inputMode="decimal"
-                                required
+                                required={!isEdit || model.hasContextWindow}
                                 value={model.contextWindow}
                                 onChange={(event) =>
                                   updateModelOverride(model.key, {
                                     contextWindow: event.target.value,
+                                    hasContextWindow: true,
                                   })
                                 }
                                 placeholder="128000"
@@ -1651,11 +1704,12 @@ export function PiProviderForm({
                                 step="any"
                                 min="1"
                                 inputMode="decimal"
-                                required
+                                required={!isEdit || model.hasMaxTokens}
                                 value={model.maxTokens}
                                 onChange={(event) =>
                                   updateModelOverride(model.key, {
                                     maxTokens: event.target.value,
+                                    hasMaxTokens: true,
                                   })
                                 }
                                 placeholder="16384"
@@ -1921,33 +1975,34 @@ export function PiProviderForm({
                 })}
               </p>
             </div>
+          </fieldset>
+        )}
 
-            <FormField
-              control={form.control}
-              name="settingsConfig"
-              render={() => (
-                <FormItem className="space-y-2">
-                  <Label htmlFor="pi-settings-config">
-                    {t("provider.configJson")}
-                  </Label>
-                  <JsonEditor
-                    id="pi-settings-config"
-                    ariaLabel={t("provider.configJson")}
-                    value={settingsConfigText}
-                    onChange={handleSettingsConfigChange}
-                    height={
-                      Math.max(1, settingsConfigText.split("\n").length) * 20 +
-                      20
-                    }
-                    showValidation={true}
-                    language="json"
-                    darkMode={isDarkMode}
-                  />
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </>
+        {hasConfigurationSelection && (
+          <FormField
+            control={form.control}
+            name="settingsConfig"
+            render={() => (
+              <FormItem className="space-y-2">
+                <Label htmlFor="pi-settings-config">
+                  {t("provider.configJson")}
+                </Label>
+                <JsonEditor
+                  id="pi-settings-config"
+                  ariaLabel={t("provider.configJson")}
+                  value={settingsConfigText}
+                  onChange={handleSettingsConfigChange}
+                  height={
+                    Math.max(1, settingsConfigText.split("\n").length) * 20 + 20
+                  }
+                  showValidation={true}
+                  language="json"
+                  darkMode={isDarkMode}
+                />
+                <FormMessage />
+              </FormItem>
+            )}
+          />
         )}
 
         {showButtons && (

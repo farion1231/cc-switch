@@ -47,14 +47,14 @@ pub(super) fn add(
         .get_provider_by_id(&provider.id, app_type.as_str())?
         .is_some()
     {
-        return Err(AppError::Conflict(format!(
+        return Err(AppError::InvalidInput(format!(
             "Pi provider '{}' already exists",
             provider.id
         )));
     }
 
     if !add_to_live && crate::pi_config::pi_provider_exists(&provider.id)? {
-        return Err(AppError::Conflict(format!(
+        return Err(AppError::InvalidInput(format!(
             "Pi provider key '{}' already exists in models.json",
             provider.id
         )));

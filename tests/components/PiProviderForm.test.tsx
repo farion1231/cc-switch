@@ -321,13 +321,13 @@ describe("PiProviderForm", () => {
     });
 
     const endpoint = screen.getByPlaceholderText("https://api.example.com/v1");
-    fireEvent.change(endpoint, {
-      target: { value: "https://blocked-while-invalid.example/v1" },
-    });
     expect(configEditor).toHaveValue(invalidDraft);
+    expect(endpoint).toBeDisabled();
     expect(endpoint).toHaveValue("");
+    expect(screen.getByText("pi.form.fixJsonFirst")).toBeInTheDocument();
 
     fireEvent.change(configEditor, { target: { value: validDraft } });
+    expect(endpoint).toBeEnabled();
     fireEvent.change(endpoint, {
       target: { value: "https://repaired.example/v1" },
     });
@@ -376,12 +376,7 @@ describe("PiProviderForm", () => {
     });
 
     expect(JSON.parse(configEditor.value).models).toEqual([
-      {
-        id: "brand-new",
-        name: "",
-        reasoning: false,
-        input: ["text"],
-      },
+      { id: "brand-new" },
       {
         id: "existing-model",
         name: "Existing Model",
@@ -1230,7 +1225,7 @@ describe("PiProviderForm", () => {
       within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
     );
     await user.click(await screen.findByRole("menuitem", { name: "shared" }));
-    expect(screen.getByLabelText("pi.form.modelName")).toHaveValue("shared");
+    expect(screen.getByLabelText("pi.form.modelName")).toHaveValue("");
 
     fireEvent.change(
       screen.getByPlaceholderText("https://api.example.com/v1"),
@@ -1242,16 +1237,9 @@ describe("PiProviderForm", () => {
       "provider.configJson",
     ) as HTMLTextAreaElement;
     await waitFor(() =>
-      expect(JSON.parse(configEditor.value).models).toEqual([
-        {
-          id: "shared",
-          name: "shared",
-          reasoning: false,
-          input: ["text"],
-        },
-      ]),
+      expect(JSON.parse(configEditor.value).models).toEqual([{ id: "shared" }]),
     );
-    expect(screen.getByLabelText("pi.form.modelName")).toHaveValue("shared");
+    expect(screen.getByLabelText("pi.form.modelName")).toHaveValue("");
   });
 
   it("uses a fetched model ID without inferring its capabilities", async () => {
@@ -1757,19 +1745,30 @@ describe("PiProviderForm", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps an id-only JSON model incomplete for manual configuration", async () => {
+  it("keeps an id-only JSON draft but requires complete new models", async () => {
     const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
     render(
       <PiProviderForm
         appId="pi"
         submitLabel="Save JSON model"
-        onSubmit={vi.fn()}
+        onSubmit={onSubmit}
         onCancel={() => {}}
       />,
     );
 
     await user.click(
       screen.getByRole("button", { name: "providerPreset.custom" }),
+    );
+    fireEvent.change(screen.getByPlaceholderText("my-provider"), {
+      target: { value: "json-provider" },
+    });
+    fireEvent.change(screen.getByLabelText("provider.name"), {
+      target: { value: "JSON provider" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("https://api.example.com/v1"),
+      { target: { value: "https://api.example.com/v1" } },
     );
     const configEditor = screen.getByLabelText(
       "provider.configJson",
@@ -1782,23 +1781,53 @@ describe("PiProviderForm", () => {
 
     await waitFor(() =>
       expect(JSON.parse(configEditor.value).models).toEqual([
-        {
-          id: "json-only-model",
-          name: "",
-          reasoning: false,
-          input: ["text"],
-        },
+        { id: "json-only-model" },
       ]),
     );
     expect(screen.getByLabelText("pi.form.modelName")).toHaveValue("");
+
+    await user.click(screen.getByRole("button", { name: "Save JSON model" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "pi.form.modelNameRequired",
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("pi.form.modelName"), {
+      target: { value: "JSON model" },
+    });
+    await user.click(
+      screen.getByRole("button", { name: "展开或收起模型详情" }),
+    );
+    fireEvent.change(screen.getByLabelText("pi.form.contextWindow"), {
+      target: { value: "128000" },
+    });
+    fireEvent.change(screen.getByLabelText("pi.form.maxTokens"), {
+      target: { value: "16384" },
+    });
+    await user.click(screen.getByRole("button", { name: "Save JSON model" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(onSubmit.mock.calls[0][0].settingsConfig).models).toEqual(
+      [
+        {
+          id: "json-only-model",
+          name: "JSON model",
+          reasoning: false,
+          input: ["text"],
+          contextWindow: 128000,
+          maxTokens: 16384,
+        },
+      ],
+    );
   });
 
-  it("requires missing fields when editing an incomplete model", async () => {
+  it("edits an incomplete model without inventing optional fields", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     const input = {
       name: "Existing local model",
       baseUrl: "https://api.example.com/v1",
       api: "openai-responses",
+      apiKey: "old-secret",
       models: [
         {
           id: "gpt-5.6-sol",
@@ -1824,24 +1853,20 @@ describe("PiProviderForm", () => {
         (screen.getByLabelText("provider.configJson") as HTMLTextAreaElement)
           .value,
       ).models,
-    ).toEqual([
-      {
-        id: "gpt-5.6-sol",
-        name: "",
-        reasoning: false,
-        input: ["text"],
-        maxTokens: 64_000,
-        nativeModelField: { keep: true },
-      },
-    ]);
+    ).toEqual(input.models);
+
+    fireEvent.change(screen.getByLabelText("pi.form.credential"), {
+      target: { value: "new-secret" },
+    });
 
     fireEvent.click(
       screen.getByRole("button", { name: "Save existing local provider" }),
     );
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "pi.form.modelNameRequired",
-    );
-    expect(onSubmit).not.toHaveBeenCalled();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(onSubmit.mock.calls[0][0].settingsConfig)).toEqual({
+      ...input,
+      apiKey: "new-secret",
+    });
   });
 
   it("round-trips a minimal explicit built-in provider node without inventing fields", async () => {

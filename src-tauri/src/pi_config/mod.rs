@@ -17,6 +17,8 @@ use std::sync::{LazyLock, Mutex, MutexGuard};
 const MAX_PI_FILE_BYTES: u64 = 1024 * 1024;
 const MISSING_MODELS_REVISION: &str = "missing";
 static MODELS_FILE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+#[cfg(test)]
+static TEST_AGENT_DIR: LazyLock<Mutex<Option<PathBuf>>> = LazyLock::new(|| Mutex::new(None));
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -30,14 +32,35 @@ pub(crate) struct PiNativeDefaults {
 }
 
 pub(crate) fn get_pi_agent_dir() -> Result<PathBuf, AppError> {
-    let (path, source) = match std::env::var_os("PI_CODING_AGENT_DIR") {
-        Some(value) if !value.is_empty() => (
-            crate::settings::resolve_override_path(value.to_string_lossy().as_ref()),
-            "PI_CODING_AGENT_DIR",
-        ),
-        _ => match crate::settings::get_pi_override_dir() {
-            Some(path) => (path, "Pi settings override"),
-            None => (get_home_dir().join(".pi").join("agent"), "Pi default"),
+    #[cfg(test)]
+    if let Some(path) = TEST_AGENT_DIR
+        .lock()
+        .expect("lock Pi test directory")
+        .clone()
+    {
+        return resolve_pi_agent_dir(Some(path), None, get_home_dir().join(".pi").join("agent"));
+    }
+
+    resolve_pi_agent_dir(
+        crate::settings::get_pi_override_dir(),
+        std::env::var_os("PI_CODING_AGENT_DIR"),
+        get_home_dir().join(".pi").join("agent"),
+    )
+}
+
+fn resolve_pi_agent_dir(
+    settings_override: Option<PathBuf>,
+    env_override: Option<std::ffi::OsString>,
+    default_path: PathBuf,
+) -> Result<PathBuf, AppError> {
+    let (path, source) = match settings_override {
+        Some(path) => (path, "Pi settings override"),
+        None => match env_override {
+            Some(value) if !value.is_empty() => (
+                crate::settings::resolve_override_path(value.to_string_lossy().as_ref()),
+                "PI_CODING_AGENT_DIR",
+            ),
+            _ => (default_path, "Pi default"),
         },
     };
     if !path.is_absolute() {
@@ -105,7 +128,7 @@ pub(crate) fn insert_pi_provider(provider_key: &str, config: &Value) -> Result<b
     match providers.get(provider_key) {
         Some(current) if current == config => return Ok(false),
         Some(_) => {
-            return Err(AppError::Conflict(format!(
+            return Err(AppError::InvalidInput(format!(
                 "Pi provider key '{provider_key}' already exists in models.json"
             )))
         }
@@ -450,19 +473,29 @@ fn nonempty_string(value: Option<&Value>) -> Option<&str> {
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use std::ffi::OsString;
+    use std::path::{Path, PathBuf};
 
     pub(crate) struct TestAgentDir {
-        _dir: tempfile::TempDir,
-        previous: Option<OsString>,
+        _dir: Option<tempfile::TempDir>,
+        previous: Option<PathBuf>,
     }
 
     impl TestAgentDir {
         pub(crate) fn new() -> Self {
             let dir = tempfile::tempdir().expect("create Pi test directory");
             let agent_dir = dir.path().join("agent");
-            let previous = std::env::var_os("PI_CODING_AGENT_DIR");
-            std::env::set_var("PI_CODING_AGENT_DIR", &agent_dir);
+            Self::set(agent_dir, Some(dir))
+        }
+
+        pub(crate) fn at(agent_dir: &Path) -> Self {
+            Self::set(agent_dir.to_path_buf(), None)
+        }
+
+        fn set(agent_dir: PathBuf, dir: Option<tempfile::TempDir>) -> Self {
+            let previous = super::TEST_AGENT_DIR
+                .lock()
+                .expect("lock Pi test directory")
+                .replace(agent_dir);
             Self {
                 _dir: dir,
                 previous,
@@ -472,10 +505,9 @@ pub(crate) mod test_support {
 
     impl Drop for TestAgentDir {
         fn drop(&mut self) {
-            match &self.previous {
-                Some(value) => std::env::set_var("PI_CODING_AGENT_DIR", value),
-                None => std::env::remove_var("PI_CODING_AGENT_DIR"),
-            }
+            *super::TEST_AGENT_DIR
+                .lock()
+                .expect("lock Pi test directory") = self.previous.take();
         }
     }
 }
@@ -517,13 +549,44 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn relative_agent_directory_is_rejected() {
-        let _agent = test_support::TestAgentDir::new();
-        std::env::set_var("PI_CODING_AGENT_DIR", "relative/pi-agent");
-
-        let error = get_pi_agent_dir().expect_err("relative Pi directory must be rejected");
+        let error = resolve_pi_agent_dir(
+            None,
+            Some("relative/pi-agent".into()),
+            PathBuf::from("default"),
+        )
+        .expect_err("relative Pi directory must be rejected");
         assert!(error.to_string().contains("absolute directory"));
+    }
+
+    #[test]
+    fn settings_directory_precedes_the_environment() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let settings_dir = temp.path().join("settings-agent");
+        let env_dir = temp.path().join("env-agent");
+
+        assert_eq!(
+            resolve_pi_agent_dir(
+                Some(settings_dir.clone()),
+                Some(env_dir.into_os_string()),
+                temp.path().join("default-agent"),
+            )
+            .expect("resolve Pi directory"),
+            settings_dir
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn duplicate_provider_key_is_validation_not_a_write_conflict() {
+        let _agent = test_support::TestAgentDir::new();
+        insert_pi_provider("duplicate", &provider()).expect("insert provider");
+        let mut replacement = provider();
+        replacement["name"] = json!("Other");
+
+        let error = insert_pi_provider("duplicate", &replacement)
+            .expect_err("duplicate provider key must be rejected");
+        assert!(matches!(error, AppError::InvalidInput(_)));
     }
 
     #[cfg(unix)]

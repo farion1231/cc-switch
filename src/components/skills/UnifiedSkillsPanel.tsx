@@ -326,12 +326,31 @@ const UnifiedSkillsPanel = React.forwardRef<
         try {
           const result = await uninstallMutation.mutateAsync(skill.id);
           setConfirmDialog(null);
-          toast.success(t("skills.uninstallSuccess", { name: skill.name }), {
-            description: result.backupPath
-              ? t("skills.backup.location", { path: result.backupPath })
-              : undefined,
+          const piCleanupIncomplete =
+            result.piCleanupIncomplete || Boolean(result.preservedPiPath);
+          const toastOptions = {
+            description: result.preservedPiPath
+              ? t("skills.uninstallPiPreserved", {
+                  path: result.preservedPiPath,
+                })
+              : result.piCleanupIncomplete
+                ? t("skills.uninstallPiCleanupIncomplete")
+                : result.backupPath
+                  ? t("skills.backup.location", { path: result.backupPath })
+                  : undefined,
             closeButton: true,
-          });
+          };
+          if (piCleanupIncomplete) {
+            toast.warning(
+              t("skills.uninstallSuccess", { name: skill.name }),
+              toastOptions,
+            );
+          } else {
+            toast.success(
+              t("skills.uninstallSuccess", { name: skill.name }),
+              toastOptions,
+            );
+          }
         } catch (error) {
           toast.error(t("common.error"), { description: String(error) });
         } finally {
