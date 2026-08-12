@@ -832,7 +832,7 @@ export function ClaudeDesktopProviderForm({
       <form
         id="provider-form"
         onSubmit={form.handleSubmit(handleSubmit)}
-        className="space-y-6"
+        className="space-y-6 glass rounded-xl p-6 border border-white/10"
       >
         {!initialData && (
           <ProviderPresetSelector
@@ -945,7 +945,7 @@ export function ClaudeDesktopProviderForm({
                   <div className="space-y-2">
                     <Label>
                       {t("providerForm.apiFormat", {
-                        defaultValue: "API 格式",
+                        defaultValue: "上游格式",
                       })}
                     </Label>
                     <Select
