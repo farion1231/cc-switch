@@ -221,6 +221,39 @@ pub struct MigrationResult {
     pub errors: Vec<String>,
 }
 
+/// ZIP 安装时跳过 Skill 的原因。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ZipSkillSkipReason {
+    /// 同名目录已由 CC Switch 管理。
+    ManagedConflict,
+    /// 当前 SSOT 中存在未纳管的同名路径。
+    StorageConflict,
+    /// 当前应用的 Skills 目录中存在未纳管的同名路径。
+    AppDirectoryConflict,
+    /// ZIP 内多个 Skill 会安装到同一个目录。
+    DuplicateInArchive,
+}
+
+/// ZIP 安装时因冲突被跳过的 Skill。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZipSkillSkippedItem {
+    pub directory: String,
+    pub name: String,
+    pub reason: ZipSkillSkipReason,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub existing_skill_id: Option<String>,
+}
+
+/// ZIP 安装结果，区分实际安装项与因冲突跳过的项。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZipSkillInstallResult {
+    pub installed: Vec<InstalledSkill>,
+    pub skipped: Vec<ZipSkillSkippedItem>,
+}
+
 // ========== skills.sh API 类型 ==========
 
 /// skills.sh API 原始响应
@@ -3167,7 +3200,7 @@ impl SkillService {
         db: &Arc<Database>,
         zip_path: &Path,
         current_app: &AppType,
-    ) -> Result<Vec<InstalledSkill>> {
+    ) -> Result<ZipSkillInstallResult> {
         // 解压到临时目录
         let temp_guard = Self::extract_local_zip(zip_path)?;
         let temp_dir = temp_guard.path();
@@ -3185,12 +3218,20 @@ impl SkillService {
 
         let _state_guard = skill_state_write_guard();
         let ssot_dir = Self::get_ssot_dir()?;
-        let mut installed = Vec::new();
         let existing_skills = db.get_all_installed_skills()?;
         let zip_stem = zip_path
             .file_stem()
             .and_then(|s| s.to_str())
             .map(|s| s.to_string());
+
+        struct ZipCandidate {
+            source: PathBuf,
+            directory: String,
+            name: String,
+            description: Option<String>,
+        }
+
+        let mut candidates = Vec::with_capacity(skill_dirs.len());
 
         for skill_dir in skill_dirs {
             // 解析元数据（提前解析，用于确定安装名）
@@ -3240,20 +3281,6 @@ impl SkillService {
                 }
             };
 
-            // 检查是否已有同名 directory 的 skill
-            let conflict = existing_skills
-                .values()
-                .find(|s| s.directory.eq_ignore_ascii_case(&install_name));
-
-            if let Some(existing) = conflict {
-                log::warn!(
-                    "Skill directory '{}' already exists (from {}), skipping",
-                    install_name,
-                    existing.id
-                );
-                continue;
-            }
-
             let (name, description) = match meta {
                 Some(m) => (
                     m.name.unwrap_or_else(|| install_name.clone()),
@@ -3262,22 +3289,144 @@ impl SkillService {
                 None => (install_name.clone(), None),
             };
 
-            // 复制到 SSOT
-            let dest = ssot_dir.join(&install_name);
-            if dest.exists() {
-                let _ = fs::remove_dir_all(&dest);
+            candidates.push(ZipCandidate {
+                source: skill_dir,
+                directory: install_name,
+                name,
+                description,
+            });
+        }
+
+        let mut directory_counts: HashMap<String, usize> = HashMap::new();
+        for candidate in &candidates {
+            *directory_counts
+                .entry(candidate.directory.to_lowercase())
+                .or_default() += 1;
+        }
+
+        let app_dir = if matches!(current_app, AppType::ClaudeDesktop) {
+            None
+        } else {
+            Some(Self::get_app_skills_dir(current_app)?)
+        };
+        let should_sync = app_dir
+            .as_ref()
+            .is_some_and(|directory| directory != &ssot_dir);
+
+        let mut installable = Vec::new();
+        let mut skipped = Vec::new();
+
+        for candidate in candidates {
+            let normalized = candidate.directory.to_lowercase();
+            let skip = if directory_counts.get(&normalized).copied().unwrap_or(0) > 1 {
+                Some((ZipSkillSkipReason::DuplicateInArchive, None))
+            } else if let Some(existing) = existing_skills.values().find(|skill| {
+                skill.directory.eq_ignore_ascii_case(&candidate.directory)
+                    || skill
+                        .id
+                        .eq_ignore_ascii_case(&format!("local:{}", candidate.directory))
+            }) {
+                Some((
+                    ZipSkillSkipReason::ManagedConflict,
+                    Some(existing.id.clone()),
+                ))
+            } else if Self::find_case_insensitive_entry(&ssot_dir, &candidate.directory)?.is_some()
+            {
+                Some((ZipSkillSkipReason::StorageConflict, None))
+            } else if should_sync
+                && Self::find_case_insensitive_entry(
+                    app_dir
+                        .as_ref()
+                        .expect("syncable app must have a directory"),
+                    &candidate.directory,
+                )?
+                .is_some()
+            {
+                Some((ZipSkillSkipReason::AppDirectoryConflict, None))
+            } else {
+                None
+            };
+
+            if let Some((reason, existing_skill_id)) = skip {
+                log::warn!(
+                    "Skipping ZIP Skill directory '{}' because of {:?}",
+                    candidate.directory,
+                    reason
+                );
+                skipped.push(ZipSkillSkippedItem {
+                    directory: candidate.directory,
+                    name: candidate.name,
+                    reason,
+                    existing_skill_id,
+                });
+            } else {
+                installable.push(candidate);
             }
-            Self::copy_dir_recursive(&skill_dir, &dest)?;
+        }
+
+        let mut installed = Vec::with_capacity(installable.len());
+
+        for candidate in installable {
+            let staging_prefix = format!(
+                ".{}.install-",
+                Self::sanitize_backup_segment(&candidate.directory)
+            );
+            let staging_guard = tempfile::Builder::new()
+                .prefix(&staging_prefix)
+                .tempdir_in(&ssot_dir)
+                .context("创建 ZIP Skill 临时安装目录失败")?;
+            let staging = staging_guard.path();
+            let dest = ssot_dir.join(&candidate.directory);
+
+            Self::copy_dir_recursive(&candidate.source, staging)?;
+
+            // 复制期间目录状态可能发生变化；落盘前再次检查，避免覆盖新出现的路径。
+            if Self::find_case_insensitive_entry(&ssot_dir, &candidate.directory)?.is_some() {
+                skipped.push(ZipSkillSkippedItem {
+                    directory: candidate.directory,
+                    name: candidate.name,
+                    reason: ZipSkillSkipReason::StorageConflict,
+                    existing_skill_id: None,
+                });
+                continue;
+            }
+
+            if should_sync
+                && Self::find_case_insensitive_entry(
+                    app_dir
+                        .as_ref()
+                        .expect("syncable app must have a directory"),
+                    &candidate.directory,
+                )?
+                .is_some()
+            {
+                skipped.push(ZipSkillSkippedItem {
+                    directory: candidate.directory,
+                    name: candidate.name,
+                    reason: ZipSkillSkipReason::AppDirectoryConflict,
+                    existing_skill_id: None,
+                });
+                continue;
+            }
+
+            fs::rename(staging, &dest).with_context(|| {
+                format!(
+                    "移动 ZIP Skill 到 SSOT 失败: {} -> {}",
+                    staging.display(),
+                    dest.display()
+                )
+            })?;
+            drop(staging_guard);
 
             // 计算内容哈希
             let content_hash = Self::compute_dir_hash(&dest).ok();
 
             // 创建 InstalledSkill 记录
             let skill = InstalledSkill {
-                id: format!("local:{install_name}"),
-                name,
-                description,
-                directory: install_name.clone(),
+                id: format!("local:{}", candidate.directory),
+                name: candidate.name,
+                description: candidate.description,
+                directory: candidate.directory.clone(),
                 repo_owner: None,
                 repo_name: None,
                 repo_branch: None,
@@ -3289,10 +3438,19 @@ impl SkillService {
             };
 
             // 保存到数据库
-            db.save_skill(&skill)?;
+            if let Err(err) = db.save_skill(&skill) {
+                let _ = Self::remove_path(&dest);
+                return Err(err.into());
+            }
 
             // 同步到当前应用目录
-            Self::sync_to_app_dir(&install_name, current_app)?;
+            if should_sync {
+                if let Err(err) = Self::sync_to_app_dir(&candidate.directory, current_app) {
+                    let _ = db.delete_skill(&skill.id);
+                    let _ = Self::remove_path(&dest);
+                    return Err(err);
+                }
+            }
 
             log::info!(
                 "Skill {} installed from ZIP, enabled for {:?}",
@@ -3302,7 +3460,27 @@ impl SkillService {
             installed.push(skill);
         }
 
-        Ok(installed)
+        Ok(ZipSkillInstallResult { installed, skipped })
+    }
+
+    /// 在目录下查找大小写不敏感的同名路径，同时覆盖文件、目录和失效 symlink。
+    fn find_case_insensitive_entry(parent: &Path, name: &str) -> Result<Option<PathBuf>> {
+        if !parent.exists() {
+            return Ok(None);
+        }
+
+        for entry in fs::read_dir(parent)? {
+            let entry = entry?;
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(name)
+            {
+                return Ok(Some(entry.path()));
+            }
+        }
+
+        Ok(None)
     }
 
     /// 解压本地 ZIP 文件到临时目录
@@ -4348,6 +4526,59 @@ mod tests {
         }
     }
 
+    struct SkillSettingsGuard(crate::settings::AppSettings);
+    impl SkillSettingsGuard {
+        fn set(storage: SkillStorageLocation, sync_method: SyncMethod) -> Self {
+            let previous = crate::settings::get_settings();
+            let mut next = previous.clone();
+            next.skill_storage_location = storage;
+            next.skill_sync_method = sync_method;
+            crate::settings::update_settings(next).expect("set test Skill settings");
+            Self(previous)
+        }
+    }
+    impl Drop for SkillSettingsGuard {
+        fn drop(&mut self) {
+            let _ = crate::settings::update_settings(self.0.clone());
+        }
+    }
+
+    fn set_test_skill_settings(storage: SkillStorageLocation, sync_method: SyncMethod) {
+        let mut settings = crate::settings::get_settings();
+        settings.skill_storage_location = storage;
+        settings.skill_sync_method = sync_method;
+        crate::settings::update_settings(settings).expect("update test Skill settings");
+    }
+
+    fn write_skill_zip(zip_path: &Path, skills: &[(&str, &str)]) {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        let file = fs::File::create(zip_path).expect("create Skill ZIP");
+        let mut archive = zip::ZipWriter::new(file);
+        let options = SimpleFileOptions::default();
+
+        if skills.is_empty() {
+            archive
+                .start_file("README.md", options)
+                .expect("start README");
+            archive.write_all(b"not a skill").expect("write README");
+        } else {
+            for (directory, name) in skills {
+                archive
+                    .start_file(format!("{directory}/SKILL.md"), options)
+                    .expect("start SKILL.md");
+                archive
+                    .write_all(
+                        format!("---\nname: {name}\ndescription: ZIP test skill\n---\n").as_bytes(),
+                    )
+                    .expect("write SKILL.md");
+            }
+        }
+
+        archive.finish().expect("finish Skill ZIP");
+    }
+
     fn poisoned_skill(id: &str, directory: &str) -> InstalledSkill {
         InstalledSkill {
             id: id.to_string(),
@@ -4906,5 +5137,229 @@ mod tests {
             SkillService::doc_path_for_source(temp.path(), std::path::Path::new("/elsewhere")),
             None
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn install_from_zip_reports_managed_conflict_without_touching_existing_files() {
+        let temp = tempdir().expect("tempdir");
+        let _home_guard = TestHomeGuard::set(temp.path());
+        let _settings_guard =
+            SkillSettingsGuard::set(SkillStorageLocation::CcSwitch, SyncMethod::Copy);
+        let db = Arc::new(Database::memory().expect("memory db"));
+
+        let ssot_dir = SkillService::get_ssot_dir().expect("SSOT");
+        let existing_dir = ssot_dir.join("Case-Skill");
+        write_skill(&existing_dir, "Existing Skill");
+        fs::write(existing_dir.join("marker.txt"), "keep storage").expect("write marker");
+
+        let app_dir = SkillService::get_app_skills_dir(&AppType::Claude).expect("app dir");
+        let existing_app_dir = app_dir.join("Case-Skill");
+        write_skill(&existing_app_dir, "Existing App Skill");
+        fs::write(existing_app_dir.join("marker.txt"), "keep app").expect("write app marker");
+
+        let mut existing = poisoned_skill("local:Case-Skill", "Case-Skill");
+        existing.name = "Existing Skill".to_string();
+        existing.apps = SkillApps::only(&AppType::Claude);
+        db.save_skill(&existing).expect("seed managed Skill");
+
+        let zip_path = temp.path().join("managed-conflict.zip");
+        write_skill_zip(&zip_path, &[("case-skill", "Replacement Skill")]);
+
+        let result = SkillService::install_from_zip(&db, &zip_path, &AppType::Claude)
+            .expect("conflict should be reported as a result");
+
+        assert!(result.installed.is_empty());
+        assert_eq!(result.skipped.len(), 1);
+        assert_eq!(
+            result.skipped[0].reason,
+            ZipSkillSkipReason::ManagedConflict
+        );
+        assert_eq!(
+            result.skipped[0].existing_skill_id.as_deref(),
+            Some("local:Case-Skill")
+        );
+        assert_eq!(
+            fs::read_to_string(existing_dir.join("marker.txt")).expect("read marker"),
+            "keep storage"
+        );
+        assert_eq!(
+            fs::read_to_string(existing_app_dir.join("marker.txt")).expect("read app marker"),
+            "keep app"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn install_from_zip_preserves_unmanaged_storage_in_both_storage_modes() {
+        let temp = tempdir().expect("tempdir");
+        let _home_guard = TestHomeGuard::set(temp.path());
+        let _settings_guard =
+            SkillSettingsGuard::set(SkillStorageLocation::CcSwitch, SyncMethod::Copy);
+
+        for (storage, directory) in [
+            (SkillStorageLocation::CcSwitch, "cc-switch-orphan"),
+            (SkillStorageLocation::Unified, "agents-orphan"),
+        ] {
+            set_test_skill_settings(storage, SyncMethod::Copy);
+            let db = Arc::new(Database::memory().expect("memory db"));
+            let ssot_dir = SkillService::get_ssot_dir().expect("SSOT");
+            let orphan = ssot_dir.join(directory);
+            write_skill(&orphan, "Unmanaged Skill");
+            fs::write(orphan.join("marker.txt"), "keep unmanaged").expect("write marker");
+
+            let zip_path = temp.path().join(format!("{directory}.zip"));
+            write_skill_zip(&zip_path, &[(directory, "ZIP Skill")]);
+
+            let result = SkillService::install_from_zip(&db, &zip_path, &AppType::ClaudeDesktop)
+                .expect("storage conflict result");
+
+            assert!(result.installed.is_empty());
+            assert_eq!(result.skipped.len(), 1);
+            assert_eq!(
+                result.skipped[0].reason,
+                ZipSkillSkipReason::StorageConflict
+            );
+            assert_eq!(
+                fs::read_to_string(orphan.join("marker.txt")).expect("read marker"),
+                "keep unmanaged"
+            );
+            assert!(db
+                .get_all_installed_skills()
+                .expect("query Skills")
+                .is_empty());
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn install_from_zip_preserves_app_directory_for_copy_and_symlink_modes() {
+        let temp = tempdir().expect("tempdir");
+        let _home_guard = TestHomeGuard::set(temp.path());
+        let _settings_guard =
+            SkillSettingsGuard::set(SkillStorageLocation::CcSwitch, SyncMethod::Copy);
+
+        for (sync_method, directory) in [
+            (SyncMethod::Copy, "copy-conflict"),
+            (SyncMethod::Symlink, "symlink-conflict"),
+        ] {
+            set_test_skill_settings(SkillStorageLocation::CcSwitch, sync_method);
+            let db = Arc::new(Database::memory().expect("memory db"));
+            let ssot_dir = SkillService::get_ssot_dir().expect("SSOT");
+            let app_dir = SkillService::get_app_skills_dir(&AppType::Claude).expect("app dir");
+            let occupied = app_dir.join(directory);
+            write_skill(&occupied, "Existing App Skill");
+            fs::write(occupied.join("marker.txt"), "keep app").expect("write marker");
+
+            let zip_path = temp.path().join(format!("{directory}.zip"));
+            write_skill_zip(&zip_path, &[(directory, "ZIP Skill")]);
+
+            let result = SkillService::install_from_zip(&db, &zip_path, &AppType::Claude)
+                .expect("app conflict result");
+
+            assert!(result.installed.is_empty());
+            assert_eq!(result.skipped.len(), 1);
+            assert_eq!(
+                result.skipped[0].reason,
+                ZipSkillSkipReason::AppDirectoryConflict
+            );
+            assert!(!ssot_dir.join(directory).exists());
+            assert_eq!(
+                fs::read_to_string(occupied.join("marker.txt")).expect("read marker"),
+                "keep app"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn install_from_zip_installs_non_conflicting_items_and_reports_skipped_items() {
+        let temp = tempdir().expect("tempdir");
+        let _home_guard = TestHomeGuard::set(temp.path());
+        let _settings_guard =
+            SkillSettingsGuard::set(SkillStorageLocation::CcSwitch, SyncMethod::Copy);
+        let db = Arc::new(Database::memory().expect("memory db"));
+
+        let ssot_dir = SkillService::get_ssot_dir().expect("SSOT");
+        write_skill(&ssot_dir.join("existing-skill"), "Existing Skill");
+        let existing = poisoned_skill("local:existing-skill", "existing-skill");
+        db.save_skill(&existing).expect("seed existing Skill");
+
+        let zip_path = temp.path().join("mixed.zip");
+        write_skill_zip(
+            &zip_path,
+            &[
+                ("existing-skill", "Existing Replacement"),
+                ("fresh-skill", "Fresh Skill"),
+            ],
+        );
+
+        let result = SkillService::install_from_zip(&db, &zip_path, &AppType::Claude)
+            .expect("mixed install result");
+
+        assert_eq!(result.installed.len(), 1);
+        assert_eq!(result.installed[0].directory, "fresh-skill");
+        assert_eq!(result.skipped.len(), 1);
+        assert_eq!(
+            result.skipped[0].reason,
+            ZipSkillSkipReason::ManagedConflict
+        );
+        assert!(ssot_dir.join("fresh-skill").join("SKILL.md").is_file());
+        assert!(SkillService::get_app_skills_dir(&AppType::Claude)
+            .expect("app dir")
+            .join("fresh-skill")
+            .join("SKILL.md")
+            .is_file());
+        assert_eq!(
+            db.get_all_installed_skills().expect("query Skills").len(),
+            2
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn install_from_zip_rejects_all_archive_entries_with_duplicate_install_names() {
+        let temp = tempdir().expect("tempdir");
+        let _home_guard = TestHomeGuard::set(temp.path());
+        let _settings_guard =
+            SkillSettingsGuard::set(SkillStorageLocation::CcSwitch, SyncMethod::Copy);
+        let db = Arc::new(Database::memory().expect("memory db"));
+
+        let zip_path = temp.path().join("duplicates.zip");
+        write_skill_zip(
+            &zip_path,
+            &[("first/shared", "First"), ("second/shared", "Second")],
+        );
+
+        let result = SkillService::install_from_zip(&db, &zip_path, &AppType::ClaudeDesktop)
+            .expect("duplicate result");
+
+        assert!(result.installed.is_empty());
+        assert_eq!(result.skipped.len(), 2);
+        assert!(result
+            .skipped
+            .iter()
+            .all(|item| item.reason == ZipSkillSkipReason::DuplicateInArchive));
+        assert!(!SkillService::get_ssot_dir()
+            .expect("SSOT")
+            .join("shared")
+            .exists());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn install_from_zip_keeps_no_skills_error_distinct_from_conflicts() {
+        let temp = tempdir().expect("tempdir");
+        let _home_guard = TestHomeGuard::set(temp.path());
+        let _settings_guard =
+            SkillSettingsGuard::set(SkillStorageLocation::CcSwitch, SyncMethod::Copy);
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let zip_path = temp.path().join("no-skills.zip");
+        write_skill_zip(&zip_path, &[]);
+
+        let error = SkillService::install_from_zip(&db, &zip_path, &AppType::ClaudeDesktop)
+            .expect_err("ZIP without SKILL.md must fail");
+
+        assert!(error.to_string().contains("NO_SKILLS_IN_ZIP"));
     }
 }

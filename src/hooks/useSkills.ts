@@ -295,10 +295,10 @@ export function useInstallSkillsFromZip() {
       filePath: string;
       currentApp: AppId;
     }) => skillsApi.installFromZip(filePath, currentApp),
-    onSuccess: (installedSkills) => {
+    onSuccess: (result) => {
       queryClient.setQueryData<InstalledSkill[]>(
         ["skills", "installed"],
-        (oldData) => mergeImportedSkills(oldData, installedSkills),
+        (oldData) => mergeImportedSkills(oldData, result.installed),
       );
     },
     // A ZIP can install multiple Skills before a later item or config sync
