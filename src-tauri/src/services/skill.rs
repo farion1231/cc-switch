@@ -19,6 +19,11 @@ use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
 use crate::config::get_app_config_dir;
 use crate::database::Database;
 use crate::error::format_skill_error;
+use crate::services::large_repo::{
+    backend_chain, compute_local_blob_hash, hash_needs_recompute, list_skill_mds,
+    materialize_skill_dir, race_backend_chain, should_use_large_repo_path, skill_dir_hashes,
+    BlobHashScheme, BLOB_SHA1_PREFIX, BLOB_SHA256_PREFIX,
+};
 
 // ========== 数据结构 ==========
 
@@ -272,19 +277,25 @@ const SKILL_BACKUP_RETAIN_COUNT: usize = 20;
 /// 改写到攻击者自传的 release asset），没有上限时一个几 MB 的压缩炸弹就能塞满磁盘。
 /// 取值对齐 `webdav_sync/archive.rs` 里同款保护的量级。
 const MAX_ARCHIVE_ENTRIES: usize = 10_000;
-const MAX_ARCHIVE_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
+pub(crate) const MAX_ARCHIVE_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
 /// symlink 目标就是一条路径，几十字节就够；给到 4 KiB 是宽松上限。
 /// 必须有这个上限：zip 2.4.2 的 `make_reader` 不按声明的 uncompressed_size
 /// 截断读取，所以一个打了 symlink 标志、deflate 流却能膨胀到数 GB 的条目，
 /// 会被 `read_to_string` 整个读进内存。
-const MAX_SYMLINK_TARGET_BYTES: u64 = 4 * 1024;
+pub(crate) const MAX_SYMLINK_TARGET_BYTES: u64 = 4 * 1024;
 /// 物化一个目录按一个目录块计费。空目录不写内容字节，但照样吃 inode 和磁盘块，
 /// 不计费就等于允许无限量地造目录。
 const DIRECTORY_BUDGET_COST: u64 = 4096;
 /// 压缩体上限。解压预算只有在 ZipArchive 建起来之后才生效，而那时整个响应体
 /// 已经在内存里了，所以下载这一步需要自己的上限。技能仓库是 Markdown，
 /// 128 MiB 的压缩包已经远超正常规模。
-const MAX_ARCHIVE_DOWNLOAD_BYTES: u64 = 128 * 1024 * 1024;
+pub(crate) const MAX_ARCHIVE_DOWNLOAD_BYTES: u64 = 128 * 1024 * 1024;
+
+/// 大仓库路径（git CLI / GitHub REST API）外层超时（秒）。
+///
+/// 旧 ZIP 路径保持 60s；大仓库路径要跑后端回退链（git clone / trees API），
+/// 单后端阶段各有自己的超时（clone 30s / ls-tree 15s / 物化 30s），外层给 90s。
+const LARGE_REPO_TIMEOUT_SECS: u64 = 90;
 
 /// 技能元数据 (从 SKILL.md 解析)
 #[derive(Debug, Clone, Deserialize)]
@@ -470,7 +481,7 @@ impl SkillService {
     ///
     /// 坐标不合法时返回 None：这个值会存进 `readme_url`，前端「查看文档」用
     /// `openExternal` 直接打开，恶意 branch 能把它指到 github.com 上的任意路径。
-    fn build_skill_doc_url(
+    pub(crate) fn build_skill_doc_url(
         owner: &str,
         repo: &str,
         branch: &str,
@@ -676,6 +687,9 @@ impl SkillService {
         // 真实解析出的源目录推导的文档路径（仅本次真正下载解析时可得）
         let mut resolved_doc_path: Option<String> = None;
 
+        // 大仓库路径物化时得到的 blob 哈希方案（None = 旧 ZIP 路径）
+        let mut blob_scheme: Option<BlobHashScheme> = None;
+
         // 如果已存在则跳过下载
         if !dest.exists() {
             let repo = SkillRepo {
@@ -685,23 +699,102 @@ impl SkillService {
                 enabled: true,
             };
 
-            // 下载仓库
-            let (temp_guard, used_branch) = timeout(
-                std::time::Duration::from_secs(60),
-                self.download_repo(&repo),
-            )
-            .await
-            .map_err(|_| {
-                anyhow!(format_skill_error(
-                    "DOWNLOAD_TIMEOUT",
-                    &[
-                        ("owner", &repo.owner),
-                        ("name", &repo.name),
-                        ("timeout", "60")
-                    ],
-                    Some("checkNetwork"),
-                ))
-            })??;
+            // 大仓库路径裁决：本地有 git 可执行文件即走 GitBackend（smart HTTP，不吃
+            // REST 限流）；否则直接走旧 ZIP 路径（codeload 域独立配额）。
+            let (temp_guard, used_branch, scheme) = if !should_use_large_repo_path(None) {
+                // 旧路径：ZIP 下载
+                let (temp_guard, used_branch) = timeout(
+                    std::time::Duration::from_secs(60),
+                    self.download_repo(&repo),
+                )
+                .await
+                .map_err(|_| {
+                    anyhow!(format_skill_error(
+                        "DOWNLOAD_TIMEOUT",
+                        &[
+                            ("owner", &repo.owner),
+                            ("name", &repo.name),
+                            ("timeout", "60")
+                        ],
+                        Some("checkNetwork"),
+                    ))
+                })??;
+                (temp_guard, used_branch, None)
+            } else {
+                // 大仓库路径：只物化 skill 目录，不下载整仓
+                Self::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)?;
+                let mut last_error: Option<anyhow::Error> = None;
+                let materialized: Option<(tempfile::TempDir, String, BlobHashScheme)> =
+                    match timeout(
+                        std::time::Duration::from_secs(LARGE_REPO_TIMEOUT_SECS),
+                        // 单仓库内串行回退整条后端链（有 git 时为 [Git]，命中即返回；
+                        // 并发单位是仓库，由外层 repo_futures 提供）
+                        async {
+                            let chain = backend_chain();
+                            race_backend_chain(&chain, |b| {
+                                materialize_skill_dir(b, &repo, &skill.directory)
+                            })
+                            .await
+                        },
+                    )
+                    .await
+                    {
+                        Ok(Ok(result)) => Some(result),
+                        Ok(Err(e)) => {
+                            log::warn!(
+                                "安装 skill 时大仓库路径失败（{}/{}）: {e:#}",
+                                repo.owner,
+                                repo.name
+                            );
+                            last_error = Some(e);
+                            None
+                        }
+                        Err(_) => {
+                            log::warn!(
+                                "安装 skill 时大仓库路径超时（{}/{}）",
+                                repo.owner,
+                                repo.name
+                            );
+                            last_error = Some(anyhow!("大仓库路径物化 skill 目录超时"));
+                            None
+                        }
+                    };
+                match materialized {
+                    Some((temp_guard, used_branch, scheme)) => {
+                        (temp_guard, used_branch, Some(scheme))
+                    }
+                    None => {
+                        // 全失败 → 旧 ZIP 路径兜底
+                        log::warn!(
+                            "安装 skill 时大仓库路径全部失败（{}/{}），回退 ZIP 路径: {:#}",
+                            repo.owner,
+                            repo.name,
+                            last_error
+                                .as_ref()
+                                .map(|e| format!("{e:#}"))
+                                .unwrap_or_default()
+                        );
+                        let (temp_guard, used_branch) = timeout(
+                            std::time::Duration::from_secs(60),
+                            self.download_repo(&repo),
+                        )
+                        .await
+                        .map_err(|_| {
+                            anyhow!(format_skill_error(
+                                "DOWNLOAD_TIMEOUT",
+                                &[
+                                    ("owner", &repo.owner),
+                                    ("name", &repo.name),
+                                    ("timeout", "60")
+                                ],
+                                Some("checkNetwork"),
+                            ))
+                        })??;
+                        (temp_guard, used_branch, None)
+                    }
+                }
+            };
+            blob_scheme = scheme;
             let temp_dir = temp_guard.path();
             repo_branch = used_branch;
 
@@ -738,7 +831,14 @@ impl SkillService {
             // skillId（末级目录名），嵌套目录场景直接拼接会丢路径、链接 404（#6111）
             resolved_doc_path = Self::doc_path_for_source(&canonical_temp, &canonical_source);
 
-            Self::copy_dir_recursive(&canonical_source, &dest)?;
+            // 物化产物已在 TempDir 内自包含。优先 move（同设备省一次整目录拷贝），
+            // 跨设备（TempDir 与 SSOT 不在同一卷）时 rename 失败，回退 copy。
+            if dest.exists() {
+                fs::remove_dir_all(&dest)?;
+            }
+            if fs::rename(&canonical_source, &dest).is_err() {
+                Self::copy_dir_recursive(&canonical_source, &dest)?;
+            }
 
             // 使用实际下载成功的分支，避免 readme_url / repo_branch 与真实分支不一致。
             if repo_branch != skill.repo_branch {
@@ -762,11 +862,20 @@ impl SkillService {
             Self::build_skill_doc_url(&skill.repo_owner, &skill.repo_name, &repo_branch, &doc_path);
 
         // 创建 InstalledSkill 记录
-        // 计算内容哈希
-        let content_hash = Self::compute_dir_hash(&dest).map(Some).unwrap_or_else(|e| {
-            log::warn!("Failed to compute content hash for {}: {e}", install_name);
-            None
-        });
+        // 计算内容哈希：大仓库路径存 blob-sha1:/blob-sha256:，旧路径存旧哈希
+        let content_hash = match blob_scheme {
+            Some(scheme) => compute_local_blob_hash(&dest, scheme)
+                .map(|h| format!("{}{}", scheme.prefix(), h))
+                .map(Some)
+                .unwrap_or_else(|e| {
+                    log::warn!("Failed to compute content hash for {}: {e}", install_name);
+                    None
+                }),
+            None => Self::compute_dir_hash(&dest).map(Some).unwrap_or_else(|e| {
+                log::warn!("Failed to compute content hash for {}: {e}", install_name);
+                None
+            }),
+        };
 
         let installed_skill = InstalledSkill {
             id: skill.key.clone(),
@@ -960,7 +1069,6 @@ impl SkillService {
     /// 按仓库分组下载，避免重复下载同一仓库。
     pub async fn check_updates(&self, db: &Arc<Database>) -> Result<Vec<SkillUpdateInfo>> {
         let skills = db.get_all_installed_skills()?;
-        let mut updates = Vec::new();
 
         // 按 (owner, name, branch) 分组
         let mut repo_groups: HashMap<(String, String, String), Vec<InstalledSkill>> =
@@ -981,88 +1089,278 @@ impl SkillService {
 
         let ssot_dir = Self::get_ssot_dir()?;
 
-        for ((owner, name, branch), group_skills) in &repo_groups {
+        // 跨仓库并行：每个 (owner,name,branch) 组独立成 future，join_all 并发检查。
+        // 这样多个大仓库的哈希探测 / ZIP 兜底不会串行排队，显著缩短总检查耗时。
+        // 注意：并发单位是**仓库**。单仓库内部 backend 链已改为串行回退（race_backend_chain
+        // 按顺序 [API, Git] 逐个尝试，命中即返回），不再让 git 与 api 同时跑，避免赢家已定、
+        // 输家仍白做整仓 clone 的资源浪费。fetch_file 仍受全局 Semaphore 限流
+        // （FETCH_FILE_SEMAPHORE），不会瞬间打爆本机。
+        let mut repo_futures = Vec::with_capacity(repo_groups.len());
+        for ((owner, name, branch), group_skills) in repo_groups {
             let repo = SkillRepo {
                 owner: owner.clone(),
                 name: name.clone(),
                 branch: branch.clone(),
                 enabled: true,
             };
+            let group_skills = group_skills.clone();
+            let ssot_dir = ssot_dir.clone();
+            repo_futures.push(async move {
+                let mut local_updates: Vec<SkillUpdateInfo> = Vec::new();
 
-            // 下载仓库 ZIP
-            let (temp_guard, _used_branch) = match timeout(
-                std::time::Duration::from_secs(60),
-                self.download_repo(&repo),
-            )
-            .await
-            {
-                Ok(Ok(result)) => result,
-                Ok(Err(e)) => {
-                    log::warn!("检查更新时下载 {}/{} 失败: {e}", owner, name);
-                    continue;
+                // 大仓库路径裁决：本地有 git 即走 GitBackend，否则直接回退 ZIP 路径
+                if !should_use_large_repo_path(None) {
+                    // 旧路径：ZIP 下载 + 扫描 + 双向对齐比较
+                    let _ = self
+                        .check_updates_via_zip(
+                            db,
+                            &ssot_dir,
+                            &repo,
+                            &owner,
+                            &name,
+                            &group_skills,
+                            &mut local_updates,
+                        )
+                        .await;
+                    return local_updates;
                 }
-                Err(_) => {
-                    log::warn!("检查更新时下载 {}/{} 超时", owner, name);
-                    continue;
+
+                // 大仓库路径：只取目录哈希，不下载整仓
+                if let Err(e) = Self::validate_repo_ref(&repo.owner, &repo.name, &repo.branch) {
+                    log::warn!("检查更新时仓库坐标非法（{}/{}）: {e}", owner, name);
+                    return local_updates;
                 }
-            };
-            let temp_dir = temp_guard.path();
+                let dirs: Vec<String> = group_skills.iter().map(|s| s.directory.clone()).collect();
 
-            // 扫描仓库中的所有 Skill 目录
-            let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
-            let _ = self.scan_dir_recursive(temp_dir, temp_dir, &repo, &mut remote_skills);
-
-            for skill in group_skills {
-                // 在远程仓库中找到匹配的 Skill 目录
-                let remote_match = remote_skills.iter().find(|rs| {
-                    // 匹配方式：安装名称的最后一段
-                    let remote_install_name =
-                        rs.directory.rsplit('/').next().unwrap_or(&rs.directory);
-                    remote_install_name.eq_ignore_ascii_case(&skill.directory)
-                });
-
-                let remote_skill_dir = match remote_match {
-                    Some(rs) => match Self::resolve_skill_source_dir(temp_dir, &rs.directory) {
-                        Some(path) => path,
-                        None => continue,
+                let mut remote_hashes: Option<Vec<(String, String)>> = None;
+                let mut last_error: Option<anyhow::Error> = None;
+                match timeout(
+                    std::time::Duration::from_secs(LARGE_REPO_TIMEOUT_SECS),
+                    // 单仓库内串行回退整条后端链（有 git 时为 [Git]，命中即返回；
+                    // 并发单位是仓库，由外层 repo_futures 提供）
+                    async {
+                        let chain = backend_chain();
+                        race_backend_chain(&chain, |b| skill_dir_hashes(b, &repo, &dirs)).await
                     },
-                    None => continue,
-                };
-
-                let remote_hash = match Self::compute_dir_hash(&remote_skill_dir) {
-                    Ok(h) => h,
-                    Err(e) => {
-                        log::warn!("计算远程哈希失败 {}: {e}", skill.id);
-                        continue;
+                )
+                .await
+                {
+                    Ok(Ok(hashes)) => {
+                        remote_hashes = Some(hashes);
                     }
-                };
-
-                let local_hash = match Self::local_hash_for_update_check(
-                    &ssot_dir,
-                    &skill.directory,
-                    skill.content_hash.as_deref(),
-                ) {
-                    Some((h, freshly_computed)) => {
-                        if freshly_computed {
-                            let _ = db.update_skill_hash(&skill.id, &h, 0);
-                        }
-                        Some(h)
+                    Ok(Err(e)) => {
+                        log::warn!("检查更新时大仓库路径失败（{}/{}）: {e:#}", owner, name);
+                        last_error = Some(e);
                     }
-                    None => None,
-                };
-
-                if local_hash.as_deref() != Some(&remote_hash) {
-                    updates.push(SkillUpdateInfo {
-                        id: skill.id.clone(),
-                        name: skill.name.clone(),
-                        current_hash: local_hash,
-                        remote_hash,
-                    });
+                    Err(_) => {
+                        log::warn!("检查更新时大仓库路径超时（{}/{}）", owner, name);
+                        last_error = Some(anyhow!("大仓库路径检查更新超时"));
+                    }
                 }
-            }
+
+                match remote_hashes {
+                    Some(hashes) => {
+                        for skill in &group_skills {
+                            // 匹配方式：远端目录最后一段 == 安装名（与旧路径一致）
+                            let remote_entry = hashes.iter().find(|(dir, _)| {
+                                let remote_install_name = dir.rsplit('/').next().unwrap_or(dir);
+                                remote_install_name.eq_ignore_ascii_case(&skill.directory)
+                            });
+                            let Some((_remote_dir, remote_hash)) = remote_entry else {
+                                continue;
+                            };
+                            // 双向对齐：远端 blob 方案 → 本地重算成 blob 方案
+                            let local_hash =
+                                Self::align_local_hash(db, skill, &ssot_dir, remote_hash);
+                            if local_hash.as_deref() != Some(remote_hash.as_str()) {
+                                local_updates.push(SkillUpdateInfo {
+                                    id: skill.id.clone(),
+                                    name: skill.name.clone(),
+                                    current_hash: local_hash,
+                                    remote_hash: remote_hash.clone(),
+                                });
+                            }
+                        }
+                    }
+                    None => {
+                        // 全失败 → 旧 ZIP 路径兜底
+                        log::warn!(
+                            "检查更新时大仓库路径全部失败（{}/{}），回退 ZIP 路径: {:#}",
+                            owner,
+                            name,
+                            last_error
+                                .as_ref()
+                                .map(|e| format!("{e:#}"))
+                                .unwrap_or_default()
+                        );
+                        let _ = self
+                            .check_updates_via_zip(
+                                db,
+                                &ssot_dir,
+                                &repo,
+                                &owner,
+                                &name,
+                                &group_skills,
+                                &mut local_updates,
+                            )
+                            .await;
+                    }
+                }
+                local_updates
+            });
+        }
+
+        let all_results = futures::future::join_all(repo_futures).await;
+        let mut updates: Vec<SkillUpdateInfo> = Vec::new();
+        for mut repo_updates in all_results {
+            updates.append(&mut repo_updates);
         }
 
         Ok(updates)
+    }
+
+    /// 通过 ZIP 下载路径检查一组 skill 的更新（旧路径 + 大仓库路径兜底共用）。
+    ///
+    /// 返回 false 表示下载失败（调用方跳过该组，与旧路径行为一致）。
+    #[allow(clippy::too_many_arguments)]
+    async fn check_updates_via_zip(
+        &self,
+        db: &Arc<Database>,
+        ssot_dir: &Path,
+        repo: &SkillRepo,
+        owner: &str,
+        name: &str,
+        group_skills: &[InstalledSkill],
+        updates: &mut Vec<SkillUpdateInfo>,
+    ) -> bool {
+        // 下载仓库 ZIP
+        let (temp_guard, _used_branch) =
+            match timeout(std::time::Duration::from_secs(60), self.download_repo(repo)).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(e)) => {
+                    log::warn!("检查更新时下载 {}/{} 失败: {e}", owner, name);
+                    return false;
+                }
+                Err(_) => {
+                    log::warn!("检查更新时下载 {}/{} 超时", owner, name);
+                    return false;
+                }
+            };
+        let temp_dir = temp_guard.path();
+
+        // 扫描仓库中的所有 Skill 目录
+        let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
+        let _ = self.scan_dir_recursive(temp_dir, temp_dir, repo, &mut remote_skills);
+
+        for skill in group_skills {
+            // 在远程仓库中找到匹配的 Skill 目录
+            let remote_match = remote_skills.iter().find(|rs| {
+                // 匹配方式：安装名称的最后一段
+                let remote_install_name = rs.directory.rsplit('/').next().unwrap_or(&rs.directory);
+                remote_install_name.eq_ignore_ascii_case(&skill.directory)
+            });
+
+            let remote_skill_dir = match remote_match {
+                Some(rs) => match Self::resolve_skill_source_dir(temp_dir, &rs.directory) {
+                    Some(path) => path,
+                    None => continue,
+                },
+                None => continue,
+            };
+
+            let remote_hash = match Self::compute_dir_hash(&remote_skill_dir) {
+                Ok(h) => h,
+                Err(e) => {
+                    log::warn!("计算远程哈希失败 {}: {e}", skill.id);
+                    continue;
+                }
+            };
+
+            // 本地哈希：双向对齐（远端旧方案 → 本地带 blob 前缀时重算成旧方案）
+            let local_hash = Self::align_local_hash(db, skill, ssot_dir, &remote_hash);
+
+            if local_hash.as_deref() != Some(&remote_hash) {
+                updates.push(SkillUpdateInfo {
+                    id: skill.id.clone(),
+                    name: skill.name.clone(),
+                    current_hash: local_hash,
+                    remote_hash,
+                });
+            }
+        }
+        true
+    }
+
+    /// 双向对齐本地哈希与远端哈希方案，必要时重算并持久化。
+    ///
+    /// 远端什么方案（blob-sha1:/blob-sha256:/旧无前缀），本地就重算成什么方案：
+    /// - 远端 blob 方案：本地无对应前缀 → `compute_local_blob_hash` 重算
+    /// - 远端旧方案：本地带 blob 前缀 → `compute_dir_hash` 重算
+    ///
+    /// 重算结果按 `update_skill_hash` 模式持久化，避免每次检查都重算。
+    /// 返回对齐后的本地哈希；无法计算时返回 None（视为有更新）。
+    fn align_local_hash(
+        db: &Arc<Database>,
+        skill: &InstalledSkill,
+        ssot_dir: &Path,
+        remote_hash: &str,
+    ) -> Option<String> {
+        // 远端方案：blob-sha1:/blob-sha256: 前缀，或旧方案（无前缀）
+        let remote_scheme = if remote_hash.starts_with(BLOB_SHA1_PREFIX) {
+            BLOB_SHA1_PREFIX
+        } else if remote_hash.starts_with(BLOB_SHA256_PREFIX) {
+            BLOB_SHA256_PREFIX
+        } else {
+            ""
+        };
+
+        // 本地哈希：复用 check_updates 的判定次序——先校验目录名、再查 SSOT
+        // 目录是否存在、最后才信任缓存（目录缺失返回 None，与远端必然不等，
+        // Skill 进入更新列表，点更新即可重建）。
+        let (local, freshly_computed) = Self::local_hash_for_update_check(
+            ssot_dir,
+            &skill.directory,
+            skill.content_hash.as_deref(),
+        )?;
+        if freshly_computed {
+            let _ = db.update_skill_hash(&skill.id, &local, 0);
+        }
+
+        // 方案一致则直接用
+        if !hash_needs_recompute(&local, remote_scheme) {
+            return Some(local);
+        }
+
+        // 需要重算：远端什么方案，本地就重算成什么方案
+        let Ok(directory) = Self::require_valid_directory(&skill.directory) else {
+            return Some(local);
+        };
+        let local_dir = ssot_dir.join(&directory);
+        if !local_dir.exists() {
+            return Some(local);
+        }
+
+        let recomputed = if remote_scheme.is_empty() {
+            Self::compute_dir_hash(&local_dir)
+        } else {
+            let blob_scheme = if remote_scheme == BLOB_SHA1_PREFIX {
+                BlobHashScheme::Sha1
+            } else {
+                BlobHashScheme::Sha256
+            };
+            compute_local_blob_hash(&local_dir, blob_scheme).map(|h| format!("{remote_scheme}{h}"))
+        };
+
+        match recomputed {
+            Ok(h) => {
+                let _ = db.update_skill_hash(&skill.id, &h, 0);
+                Some(h)
+            }
+            Err(e) => {
+                log::warn!("重算本地哈希失败 {}: {e}", skill.id);
+                Some(local)
+            }
+        }
     }
 
     /// 持久化更新后的 Skill 元数据，并重新读取数据库中的权威应用启用状态。
@@ -1114,40 +1412,114 @@ impl SkillService {
 
         let ssot_dir = Self::get_ssot_dir()?;
 
-        // 下载仓库
-        let (temp_guard, used_branch) = timeout(
-            std::time::Duration::from_secs(60),
-            self.download_repo(&repo),
-        )
-        .await
-        .map_err(|_| {
-            anyhow!(format_skill_error(
-                "DOWNLOAD_TIMEOUT",
-                &[("owner", &owner), ("name", &name), ("timeout", "60")],
-                Some("checkNetwork"),
-            ))
-        })??;
+        // 大仓库路径裁决：本地有 git 即走 GitBackend，否则直接走旧 ZIP 路径
+        let (temp_guard, used_branch, blob_scheme) = if !should_use_large_repo_path(None) {
+            // 旧路径：ZIP 下载
+            let (temp_guard, used_branch) = timeout(
+                std::time::Duration::from_secs(60),
+                self.download_repo(&repo),
+            )
+            .await
+            .map_err(|_| {
+                anyhow!(format_skill_error(
+                    "DOWNLOAD_TIMEOUT",
+                    &[("owner", &owner), ("name", &name), ("timeout", "60")],
+                    Some("checkNetwork"),
+                ))
+            })??;
+            (temp_guard, used_branch, None)
+        } else {
+            // 大仓库路径：只物化 skill 目录，不下载整仓
+            Self::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)?;
+            let mut last_error: Option<anyhow::Error> = None;
+            let materialized: Option<(tempfile::TempDir, String, BlobHashScheme)> = match timeout(
+                std::time::Duration::from_secs(LARGE_REPO_TIMEOUT_SECS),
+                // 单仓库内串行回退整条后端链（有 git 时为 [Git]，命中即返回；
+                // 并发单位是仓库，由外层 repo_futures 提供）
+                async {
+                    let chain = backend_chain();
+                    race_backend_chain(&chain, |b| {
+                        materialize_skill_dir(b, &repo, &skill.directory)
+                    })
+                    .await
+                },
+            )
+            .await
+            {
+                Ok(Ok(result)) => Some(result),
+                Ok(Err(e)) => {
+                    log::warn!("更新 skill 时大仓库路径失败（{}/{}）: {e:#}", owner, name);
+                    last_error = Some(e);
+                    None
+                }
+                Err(_) => {
+                    log::warn!("更新 skill 时大仓库路径超时（{}/{}）", owner, name);
+                    last_error = Some(anyhow!("大仓库路径物化 skill 目录超时"));
+                    None
+                }
+            };
+            match materialized {
+                Some((temp_guard, used_branch, scheme)) => (temp_guard, used_branch, Some(scheme)),
+                None => {
+                    // 全失败 → 旧 ZIP 路径兜底
+                    log::warn!(
+                        "更新 skill 时大仓库路径全部失败（{}/{}），回退 ZIP 路径: {:#}",
+                        owner,
+                        name,
+                        last_error
+                            .as_ref()
+                            .map(|e| format!("{e:#}"))
+                            .unwrap_or_default()
+                    );
+                    let (temp_guard, used_branch) = timeout(
+                        std::time::Duration::from_secs(60),
+                        self.download_repo(&repo),
+                    )
+                    .await
+                    .map_err(|_| {
+                        anyhow!(format_skill_error(
+                            "DOWNLOAD_TIMEOUT",
+                            &[("owner", &owner), ("name", &name), ("timeout", "60")],
+                            Some("checkNetwork"),
+                        ))
+                    })??;
+                    (temp_guard, used_branch, None)
+                }
+            }
+        };
         let temp_dir = temp_guard.path();
 
-        // 在解压的仓库中查找 Skill 源目录
-        let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
-        let _ = self.scan_dir_recursive(temp_dir, temp_dir, &repo, &mut remote_skills);
-
-        let remote_match = remote_skills
-            .iter()
-            .find(|rs| {
-                let remote_install_name = rs.directory.rsplit('/').next().unwrap_or(&rs.directory);
-                remote_install_name.eq_ignore_ascii_case(&skill.directory)
-            })
-            .ok_or_else(|| {
+        // 在下载的仓库中查找 Skill 源目录
+        let source = if blob_scheme.is_some() {
+            // 大仓库路径：物化目录根即 skill 源目录（含 SKILL.md）
+            Self::resolve_skill_source_dir(temp_dir, &skill.directory).ok_or_else(|| {
+                let missing = temp_dir.join(&skill.directory).display().to_string();
                 anyhow!(format_skill_error(
                     "SKILL_DIR_NOT_FOUND",
-                    &[("path", &skill.directory)],
+                    &[("path", &missing)],
                     Some("checkRepoUrl"),
                 ))
-            })?;
+            })?
+        } else {
+            // 旧路径：扫描 + 匹配
+            let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
+            let _ = self.scan_dir_recursive(temp_dir, temp_dir, &repo, &mut remote_skills);
 
-        let source =
+            let remote_match = remote_skills
+                .iter()
+                .find(|rs| {
+                    let remote_install_name =
+                        rs.directory.rsplit('/').next().unwrap_or(&rs.directory);
+                    remote_install_name.eq_ignore_ascii_case(&skill.directory)
+                })
+                .ok_or_else(|| {
+                    anyhow!(format_skill_error(
+                        "SKILL_DIR_NOT_FOUND",
+                        &[("path", &skill.directory)],
+                        Some("checkRepoUrl"),
+                    ))
+                })?;
+
             Self::resolve_skill_source_dir(temp_dir, &remote_match.directory).ok_or_else(|| {
                 let missing = temp_dir.join(&remote_match.directory).display().to_string();
                 anyhow!(format_skill_error(
@@ -1155,7 +1527,8 @@ impl SkillService {
                     &[("path", &missing)],
                     Some("checkRepoUrl"),
                 ))
-            })?;
+            })?
+        };
 
         // 下载和扫描期间用户可能已经卸载了该 Skill。必须在任何备份、删除或
         // 复制之前重新确认记录仍存在；否则即使最终的 metadata UPDATE 能发现
@@ -1177,15 +1550,24 @@ impl SkillService {
         // 备份旧文件
         let _ = Self::create_uninstall_backup(&skill);
 
-        // 删除旧 SSOT 目录并复制新文件
+        // 删除旧 SSOT 目录并写入新文件。优先 move（同设备省一次整目录拷贝），
+        // 跨设备（TempDir 与 SSOT 不在同一卷）时 rename 失败，回退 copy。
         let dest = ssot_dir.join(&skill.directory);
         if dest.exists() {
             fs::remove_dir_all(&dest)?;
         }
-        Self::copy_dir_recursive(&source, &dest)?;
+        if fs::rename(&source, &dest).is_err() {
+            Self::copy_dir_recursive(&source, &dest)?;
+        }
 
         // 计算新哈希 + 解析新元数据
-        let new_hash = Self::compute_dir_hash(&dest).ok();
+        // 大仓库路径存 blob-sha1:/blob-sha256:，旧路径存旧哈希
+        let new_hash = match blob_scheme {
+            Some(scheme) => compute_local_blob_hash(&dest, scheme)
+                .map(|h| format!("{}{}", scheme.prefix(), h))
+                .ok(),
+            None => Self::compute_dir_hash(&dest).ok(),
+        };
         let skill_md = dest.join("SKILL.md");
         let (new_name, new_description) = Self::read_skill_name_desc(&skill_md, &skill.directory);
 
@@ -2074,6 +2456,74 @@ impl SkillService {
 
     /// 从仓库获取技能列表
     async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
+        // 整个大仓库路径（含后端链 + ZIP 兜底）统一受 LARGE_REPO_TIMEOUT_SECS 约束：
+        // ZIP 兜底路径（download_repo 自带 60s timeout）也在该窗口内，无副作用。
+        match timeout(
+            std::time::Duration::from_secs(LARGE_REPO_TIMEOUT_SECS),
+            async {
+                // 大仓库路径裁决：本地有 git 即走 GitBackend，否则直接回退 ZIP 路径
+                if !should_use_large_repo_path(None) {
+                    // 旧路径：ZIP 下载 + 扫描
+                    let (temp_guard, resolved_branch) =
+                        timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
+                            .await
+                            .map_err(|_| {
+                                anyhow!(format_skill_error(
+                                    "DOWNLOAD_TIMEOUT",
+                                    &[
+                                        ("owner", &repo.owner),
+                                        ("name", &repo.name),
+                                        ("timeout", "60")
+                                    ],
+                                    Some("checkNetwork"),
+                                ))
+                            })??;
+
+                    let mut skills = Vec::new();
+                    let scan_dir = temp_guard.path();
+                    let mut resolved_repo = repo.clone();
+                    resolved_repo.branch = resolved_branch;
+                    self.scan_dir_recursive(scan_dir, scan_dir, &resolved_repo, &mut skills)?;
+
+                    return Ok(skills);
+                }
+
+                // 大仓库路径：只取 SKILL.md 清单，不下载整仓
+                log::debug!(
+                    "[large_repo][fetch_repo_skills] 进入大仓库路径: {}/{} branch={:?}",
+                    repo.owner,
+                    repo.name,
+                    repo.branch
+                );
+                Self::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)?;
+                let chain = backend_chain();
+                // 单仓库内串行回退整条后端链（有 git 时为 [Git]，命中即返回；
+                // 并发单位是仓库，由外层 repo_futures 提供）
+                race_backend_chain(&chain, |b| list_skill_mds(b, repo)).await
+            },
+        )
+        .await
+        {
+            Ok(Ok(skills)) => return Ok(skills),
+            Ok(Err(e)) => {
+                // 大仓库路径内部失败（含后端链全失败）→ 回退 ZIP
+                log::warn!(
+                    "发现 skill 时大仓库路径失败（{}/{}），回退 ZIP 路径: {:#}",
+                    repo.owner,
+                    repo.name,
+                    e
+                );
+            }
+            Err(_) => {
+                log::warn!(
+                    "发现 skill 时大仓库路径超时（{}/{}）",
+                    repo.owner,
+                    repo.name
+                );
+            }
+        }
+
+        // 大仓库路径超时 / 全失败 → 旧 ZIP 路径兜底（仍在大仓库 180s 窗口内）
         let (temp_guard, resolved_branch) =
             timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
                 .await
@@ -2174,25 +2624,28 @@ impl SkillService {
     }
 
     /// 静态方法：解析技能元数据
-    fn parse_skill_metadata_static(path: &Path) -> Result<SkillMetadata> {
+    pub(crate) fn parse_skill_metadata_static(path: &Path) -> Result<SkillMetadata> {
         let content = fs::read_to_string(path)?;
+        Ok(Self::parse_skill_metadata_content(&content))
+    }
+
+    /// 从内存内容解析技能元数据（供大仓库路径等不落盘场景复用）
+    pub(crate) fn parse_skill_metadata_content(content: &str) -> SkillMetadata {
         let content = content.trim_start_matches('\u{feff}');
 
         let parts: Vec<&str> = content.splitn(3, "---").collect();
         if parts.len() < 3 {
-            return Ok(SkillMetadata {
+            return SkillMetadata {
                 name: None,
                 description: None,
-            });
+            };
         }
 
         let front_matter = parts[1].trim();
-        let meta: SkillMetadata = serde_yaml::from_str(front_matter).unwrap_or(SkillMetadata {
+        serde_yaml::from_str(front_matter).unwrap_or(SkillMetadata {
             name: None,
             description: None,
-        });
-
-        Ok(meta)
+        })
     }
 
     /// 从 SKILL.md 读取名称和描述，不存在则用目录名兜底
@@ -2643,7 +3096,7 @@ impl SkillService {
     ///
     /// 超长或非 UTF-8 一律返回 `None` 让调用方跳过：合法的 symlink 目标是一条
     /// 路径，这两种形状都不可能是真实数据。
-    fn read_symlink_target<R: std::io::Read>(
+    pub(crate) fn read_symlink_target<R: std::io::Read>(
         reader: &mut R,
         total_bytes: &mut u64,
     ) -> Result<Option<String>> {
@@ -2666,7 +3119,7 @@ impl SkillService {
     /// `a/a/…/a/f.txt` 可以隐式造出几百层目录。只在 symlink 物化那条路径上给目录
     /// 计费是不够的：常规解压这条路上，不到 10_000 个条目照样能造出数百万目录，
     /// 而内容字节几乎为零。
-    fn create_dir_all_within_budget(path: &Path, total_bytes: &mut u64) -> Result<()> {
+    pub(crate) fn create_dir_all_within_budget(path: &Path, total_bytes: &mut u64) -> Result<()> {
         let missing = path.ancestors().take_while(|p| !p.exists()).count() as u64;
         if missing > 0 {
             Self::charge_archive_budget(total_bytes, missing * DIRECTORY_BUDGET_COST)?;
@@ -2681,7 +3134,7 @@ impl SkillService {
     /// 目录一个字节都不写，但每一个都要占 inode 与一个目录块，而第二遍的
     /// symlink 解析可以让目录数量按层数指数增长。只按内容字节计费时，一个全是
     /// 空目录的归档能把预算读数一直停在 0。
-    fn charge_archive_budget(total_bytes: &mut u64, amount: u64) -> Result<()> {
+    pub(crate) fn charge_archive_budget(total_bytes: &mut u64, amount: u64) -> Result<()> {
         if total_bytes.saturating_add(amount) > MAX_ARCHIVE_TOTAL_BYTES {
             let limit_mb = (MAX_ARCHIVE_TOTAL_BYTES / 1024 / 1024).to_string();
             return Err(anyhow::anyhow!(format_skill_error(
@@ -2792,7 +3245,11 @@ impl SkillService {
     /// 与 `copy_dir_recursive` 同语义，但把写出的字节计入归档总预算。
     /// 仅用于解压期间物化 symlink——常规的目录复制（安装、备份、迁移）不该受
     /// 归档预算约束，所以两个函数刻意不合并。
-    fn copy_dir_within_budget(src: &Path, dest: &Path, total_bytes: &mut u64) -> Result<()> {
+    pub(crate) fn copy_dir_within_budget(
+        src: &Path,
+        dest: &Path,
+        total_bytes: &mut u64,
+    ) -> Result<()> {
         Self::create_dir_all_within_budget(dest, total_bytes)?;
 
         for entry in fs::read_dir(src)? {
@@ -2812,7 +3269,11 @@ impl SkillService {
 
     /// 复制单个文件并计入归档总预算，复用 `copy_entry_within_budget` 以保证
     /// 上限与报错文案只有一处定义。
-    fn copy_file_within_budget(src: &Path, dest: &Path, total_bytes: &mut u64) -> Result<()> {
+    pub(crate) fn copy_file_within_budget(
+        src: &Path,
+        dest: &Path,
+        total_bytes: &mut u64,
+    ) -> Result<()> {
         let mut reader = fs::File::open(src)?;
         let mut writer = fs::File::create(dest)?;
         Self::copy_entry_within_budget(&mut reader, &mut writer, total_bytes)
@@ -2984,7 +3445,7 @@ impl SkillService {
     /// GitHub ZIP 归档保留了 symlink 元数据，解压时可通过 `is_symlink()` 检测。
     /// 此方法将 symlink 解析为实际文件/目录内容（而非创建真实 symlink），
     /// 以确保跨平台兼容且 skill 内容自包含。
-    fn resolve_symlinks_in_dir(
+    pub(crate) fn resolve_symlinks_in_dir(
         base_dir: &Path,
         symlinks: &[(PathBuf, String)],
         total_bytes: &mut u64,
