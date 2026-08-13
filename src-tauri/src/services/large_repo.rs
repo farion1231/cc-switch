@@ -16,7 +16,6 @@
 
 use anyhow::{anyhow, Result};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
