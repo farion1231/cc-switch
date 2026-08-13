@@ -2,16 +2,16 @@
 //!
 //! 背景：某些 skill 仓库较大（如 hugohe3/ppt-master 759MB）整仓 ZIP 下载会超过
 //! `MAX_ARCHIVE_DOWNLOAD_BYTES`(128MB) 预算和 60s 超时。本模块提供不下载整仓的
-//! 双后端（git CLI / GitHub REST API）实现：
-//! - `fetch_tree`：只取文件清单（`git ls-tree` / trees API），不取文件内容
-//! - `fetch_file`：按需取单个文件（`git cat-file` / raw API）
+//! 单后端（git CLI）实现：
+//! - `fetch_tree`：只取文件清单（`git ls-tree`），不取文件内容
+//! - `fetch_file`：按需取单个文件（`git cat-file`）
 //!
 //! 安全模型与 skill.rs 的 ZIP 路径对齐：所有进入 URL / 文件系统的路径都要过
 //! `validate_repo_ref` / `sanitize_tree_path`，所有下载都有字节预算。
 //!
-//! 本模块已接入 skill.rs 的 `fetch_repo_skills` / `check_updates` / `install` /
-//! `update_skill` 四个集成点（size 门控 + 后端回退链 + ZIP 兜底）。部分入口
-//! 函数仍可能因调用路径未覆盖而暂未使用，统一 allow(dead_code) 兜底。
+//! 裁决逻辑：本地存在 git 可执行文件时一律走本模块（GitBackend），否则由调用方
+//! 回退到 ZIP（codeload）路径。GitBackend 走 smart HTTP 协议，不吃 GitHub REST
+//! API 限流。部分入口函数仍可能因调用路径未覆盖而暂未使用，统一 allow(dead_code) 兜底。
 #![allow(dead_code)]
 
 use anyhow::{anyhow, Result};
@@ -21,7 +21,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{LazyLock, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tempfile::TempDir;
 use tokio::sync::Semaphore;
 use tokio::task::spawn_blocking;
@@ -33,9 +33,6 @@ use crate::services::skill::{
 
 // ========== 常量 ==========
 
-/// 大仓库判定阈值：仓库 size（KB）超过该值走本模块路径（32MB）
-pub const LARGE_REPO_THRESHOLD_KB: u64 = 32 * 1024;
-
 /// 本地哈希存储前缀：SHA-1 blob 方案
 pub const BLOB_SHA1_PREFIX: &str = "blob-sha1:";
 /// 本地哈希存储前缀：SHA-256 blob 方案
@@ -43,15 +40,11 @@ pub const BLOB_SHA256_PREFIX: &str = "blob-sha256:";
 
 /// 单次 tree 响应条目数上限（对齐 `MAX_ARCHIVE_ENTRIES` 量级）
 pub const TREE_ENTRY_LIMIT: usize = 500_000;
-/// tree API 响应体字节上限
-pub const TREE_RESPONSE_BYTES_LIMIT: u64 = 64 * 1024 * 1024;
 /// clone 后 `.git` 目录磁盘占用上限（对齐 `MAX_ARCHIVE_TOTAL_BYTES`）
 pub const CLONE_DISK_LIMIT: u64 = 512 * 1024 * 1024;
 
 /// git 命令超时（秒）
 const GIT_TIMEOUT_SECS: u64 = 30;
-/// GitHub REST/raw API 请求超时（秒）
-const API_TIMEOUT_SECS: u64 = 30;
 
 /// 统一构造 git CLI 命令。
 ///
@@ -533,253 +526,12 @@ fn dir_size(path: &Path) -> u64 {
     total
 }
 
-// ========== ApiBackend ==========
-
-/// GitHub REST API 后端：trees API 取清单，raw API 取文件。
-///
-/// base URL 可注入（默认 https://api.github.com / https://raw.githubusercontent.com），
-/// 便于 mock 测试。
-pub struct ApiBackend {
-    api_base: String,
-    raw_base: String,
-    client: reqwest::Client,
-}
-
-impl ApiBackend {
-    pub fn new() -> Self {
-        Self {
-            api_base: "https://api.github.com".to_string(),
-            raw_base: "https://raw.githubusercontent.com".to_string(),
-            client: crate::proxy::http_client::get(),
-        }
-    }
-
-    /// 测试用构造器：注入 base URL（mock server）。
-    ///
-    /// 客户端用独立构建的 `no_proxy` 实例，避免测试机系统代理把 localhost
-    /// 请求转发到代理导致 mock server 收不到。
-    #[cfg(test)]
-    pub(crate) fn with_bases(api_base: &str, raw_base: &str) -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .no_proxy()
-            .build()
-            .unwrap_or_default();
-        Self {
-            api_base: api_base.to_string(),
-            raw_base: raw_base.to_string(),
-            client,
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl LargeRepoBackend for ApiBackend {
-    async fn fetch_tree(&self, repo: &SkillRepo) -> Result<(Vec<RepoFile>, String)> {
-        log::debug!(
-            "[large_repo][ApiBackend] fetch_tree 开始: {}/{} branch_config={}",
-            repo.owner,
-            repo.name,
-            repo.branch
-        );
-        SkillService::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)?;
-        if is_rate_limited() {
-            // 全局冷却窗口内：跳过所有 REST API 请求，让位给 git 后端或回退 ZIP。
-            // 覆盖并发场景——即使本仓库已通过 backend_chain 入口检查，限流标记
-            // 可能在飞行期间被其他并发仓库触发，这里兜底拦截，避免浪费 GitHub 配额。
-            log::info!(
-                "[large_repo][ApiBackend] fetch_tree 跳过: 限流冷却窗口内 {}/{}",
-                repo.owner,
-                repo.name
-            );
-            return Err(anyhow!("GitHub REST API 限流冷却中，已跳过 tree 请求"));
-        }
-        let mut last_error = None;
-        for branch in branch_candidates(repo) {
-            if is_rate_limited() {
-                // 前一个分支的响应可能已触发限流标记，后续分支直接跳过，不再打 REST API。
-                log::debug!(
-                    "[large_repo][ApiBackend] fetch_tree 分支循环跳过: 限流冷却窗口内 {branch}"
-                );
-                last_error = Some(anyhow!("GitHub REST API 限流冷却中"));
-                break;
-            }
-            log::debug!("[large_repo][ApiBackend] fetch_tree 尝试分支: {branch}");
-            let mut url = url::Url::parse(&format!(
-                "{}/repos/{}/{}/git/trees/",
-                self.api_base, repo.owner, repo.name
-            ))?;
-            url.path_segments_mut()
-                .map_err(|_| anyhow!("无法构造 tree URL"))?
-                .push(&branch);
-            url.query_pairs_mut().append_pair("recursive", "1");
-
-            let resp = match timeout(
-                Duration::from_secs(API_TIMEOUT_SECS),
-                self.client
-                    .get(url)
-                    .header("User-Agent", "cc-switch")
-                    .send(),
-            )
-            .await
-            {
-                Ok(inner) => inner,
-                Err(_) => {
-                    last_error = Some(anyhow!("tree API 请求超时"));
-                    continue;
-                }
-            };
-            match resp {
-                Ok(r) if r.status().as_u16() == 404 => {
-                    log::debug!("[large_repo][ApiBackend] tree API 404: 分支不存在 {branch}");
-                    last_error = Some(anyhow!("分支不存在: {branch}"));
-                    continue;
-                }
-                Ok(r) if observe_rate_limit(&r) => {
-                    // 命中 GitHub 限流：已标记，本轮后续分支不再走 REST API；
-                    // 继续尝试其他分支无意义，直接失败冒泡由上层回退。
-                    log::info!(
-                        "[large_repo][ApiBackend] fetch_tree 失败: tree API 限流(403) {branch}"
-                    );
-                    last_error = Some(anyhow!("tree API 限流(403): {}", r.status()));
-                    break;
-                }
-                Ok(r) if !r.status().is_success() => {
-                    log::debug!(
-                        "[large_repo][ApiBackend] tree API 非成功状态: {} {}",
-                        r.status(),
-                        branch
-                    );
-                    last_error = Some(anyhow!("tree API 失败: {}", r.status()));
-                    continue;
-                }
-                Ok(r) => {
-                    let body = read_body_limited(r, TREE_RESPONSE_BYTES_LIMIT).await?;
-                    let (files, truncated) =
-                        parse_tree_api_response(&String::from_utf8_lossy(&body))?;
-                    if truncated {
-                        log::info!(
-                            "[large_repo][ApiBackend] fetch_tree 失败: tree 响应被截断，需回退 git 后端: {branch}"
-                        );
-                        return Err(anyhow!(
-                            "tree 响应被截断（truncated=true），请回退 git 后端"
-                        ));
-                    }
-                    if files.len() > TREE_ENTRY_LIMIT {
-                        log::info!(
-                            "[large_repo][ApiBackend] fetch_tree 失败: tree 条目数超过上限({}): {branch}",
-                            TREE_ENTRY_LIMIT
-                        );
-                        return Err(anyhow!("tree 条目数超过上限"));
-                    }
-                    log::info!(
-                        "[large_repo][ApiBackend] fetch_tree 成功: {}/{} 命中分支={branch} 文件数={}",
-                        repo.owner,
-                        repo.name,
-                        files.len()
-                    );
-                    return Ok((files, branch));
-                }
-                Err(e) => {
-                    log::debug!("[large_repo][ApiBackend] tree API 请求失败: {branch}: {e}");
-                    last_error = Some(anyhow!("tree API 请求失败: {e}"));
-                    continue;
-                }
-            }
-        }
-        let err = last_error.unwrap_or_else(|| anyhow!("所有候选分支 tree 请求失败"));
-        log::info!(
-            "[large_repo][ApiBackend] fetch_tree 失败: {}/{}: {err:#}",
-            repo.owner,
-            repo.name
-        );
-        Err(err)
-    }
-
-    async fn fetch_file(&self, repo: &SkillRepo, branch: &str, file: &RepoFile) -> Result<Vec<u8>> {
-        log::debug!(
-            "[large_repo][ApiBackend] fetch_file 开始: {}/{} branch={} file={}",
-            repo.owner,
-            repo.name,
-            branch,
-            file.path
-        );
-        if is_rate_limited() {
-            // 全局冷却窗口内：跳过所有 REST API 请求，让位给 git 后端或回退 ZIP。
-            // 覆盖 fetch_files_batch 并发取文件时，限流标记被飞行请求触发后的后续任务。
-            log::info!(
-                "[large_repo][ApiBackend] fetch_file 跳过: 限流冷却窗口内 {}/{} file={}",
-                repo.owner,
-                repo.name,
-                file.path
-            );
-            return Err(anyhow!("GitHub REST API 限流冷却中，已跳过 raw 文件请求"));
-        }
-        let mut url = url::Url::parse(&format!(
-            "{}/{}/{}/{}/",
-            self.raw_base, repo.owner, repo.name, branch
-        ))?;
-        for seg in file.path.split('/') {
-            url.path_segments_mut()
-                .map_err(|_| anyhow!("无法构造 raw URL"))?
-                .push(seg);
-        }
-        let resp = timeout(
-            Duration::from_secs(API_TIMEOUT_SECS),
-            self.client
-                .get(url)
-                .header("User-Agent", "cc-switch")
-                .send(),
-        )
-        .await
-        .map_err(|_| anyhow!("raw 文件获取超时"))??;
-        if observe_rate_limit(&resp) {
-            // 命中 GitHub 限流：已标记，本次操作失败冒泡回退ZIP/GitBackend。
-            log::info!(
-                "[large_repo][ApiBackend] fetch_file 失败: raw 限流(403): {}/{} file={}",
-                repo.owner,
-                repo.name,
-                file.path
-            );
-            return Err(anyhow!("raw 文件获取限流(403): {}", resp.status()));
-        }
-        if !resp.status().is_success() {
-            log::info!(
-                "[large_repo][ApiBackend] fetch_file 失败: raw 状态 {}: {}/{} file={}",
-                resp.status(),
-                repo.owner,
-                repo.name,
-                file.path
-            );
-            return Err(anyhow!("raw 文件获取失败: {}", resp.status()));
-        }
-        let bytes = read_body_limited(resp, MAX_ARCHIVE_DOWNLOAD_BYTES).await?;
-        log::debug!(
-            "[large_repo][ApiBackend] fetch_file 成功: {}/{} file={} 字节数={}",
-            repo.owner,
-            repo.name,
-            file.path,
-            bytes.len()
-        );
-        Ok(bytes)
-    }
-}
-
-/// 流式读取响应体并卡住字节上限
-async fn read_body_limited(mut resp: reqwest::Response, limit: u64) -> Result<Vec<u8>> {
-    let mut body = Vec::new();
-    while let Some(chunk) = resp.chunk().await? {
-        if body.len().saturating_add(chunk.len()) as u64 > limit {
-            log::info!(
-                "[large_repo][read_body] 失败: 响应体超过大小上限 ({}MB)",
-                limit / 1024 / 1024
-            );
-            return Err(anyhow!("响应体超过大小上限"));
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
-}
+// ========== ApiBackend（已移除） ==========
+//
+// 历史实现曾提供 GitHub REST API 后端（trees API + raw API），但因匿名配额易被
+// 限流（403 remaining=0）而不稳定，本 PR 已删除该后端，仅保留 GitBackend（走
+// smart HTTP 协议，不吃 REST 限流）。相关限流冷却（`mark_rate_limited` /
+// `is_rate_limited` 等）与 size 探测器（`fetch_repo_size_kb`）一并移除。
 
 // ========== 共享纯逻辑（无 I/O，可离线单测） ==========
 
@@ -844,55 +596,6 @@ pub fn parse_ls_tree_output(output: &[u8]) -> Result<Vec<RepoFile>> {
         files.len()
     );
     Ok(files)
-}
-
-/// 解析 GitHub trees API 响应。
-///
-/// 返回 (文件清单, truncated)。只保留 type=blob 的条目。
-pub fn parse_tree_api_response(json: &str) -> Result<(Vec<RepoFile>, bool)> {
-    log::debug!("[large_repo][parse_tree_api] 开始: 输入长度={}", json.len());
-    let value: serde_json::Value = serde_json::from_str(json)?;
-    let truncated = value
-        .get("truncated")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let entries = value
-        .get("tree")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| anyhow!("tree 响应缺少 tree 数组"))?;
-    let mut files = Vec::new();
-    for entry in entries {
-        if entry.get("type").and_then(|v| v.as_str()) != Some("blob") {
-            continue;
-        }
-        let path = entry
-            .get("path")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let blob_sha = entry
-            .get("sha")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let size = entry.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
-        let mode = entry
-            .get("mode")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        files.push(RepoFile {
-            path,
-            blob_sha,
-            size,
-            mode: u32::from_str_radix(&mode, 8).unwrap_or(0),
-        });
-    }
-    log::debug!(
-        "[large_repo][parse_tree_api] 完成: 解析出 blob 文件数={} truncated={truncated}",
-        files.len()
-    );
-    Ok((files, truncated))
 }
 
 /// 精确匹配 "SKILL.md" 后缀（大小写敏感，与 skill.rs 的 scan_dir_recursive 一致）
@@ -1065,135 +768,15 @@ pub fn sanitize_tree_path(path: &str) -> Result<String> {
 /// size 探测请求（GitHub REST API）可能被限流/阻断/瞬时不可用，此时返回 None。
 /// 若直接走旧 ZIP 路径，恰恰是本次要支持的超大仓库会在 128MiB 预算处失败，
 /// 而 git 后端（smart HTTP 协议，不吃 REST 限流）仍可用。
-pub fn should_use_large_repo_path(size_kb: Option<u64>) -> bool {
-    let result = match size_kb {
-        None => true,
-        Some(s) => s > LARGE_REPO_THRESHOLD_KB,
-    };
-    log::debug!(
-        "[large_repo][should_use_large_repo_path] size_kb={:?} 阈值={}KB => {result}",
-        size_kb,
-        LARGE_REPO_THRESHOLD_KB
-    );
-    result
-}
-
-/// 仓库 size 缓存 TTL：1 小时
-const SIZE_CACHE_TTL: Duration = Duration::from_secs(3600);
-type SizeCache = HashMap<(String, String), (Instant, u64)>;
-static SIZE_CACHE: LazyLock<Mutex<SizeCache>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// GitHub 匿名 REST API 限流冷却窗口：1 小时（对齐匿名配额窗口）。
-/// 窗口内命中限流后，跳过所有 GitHub REST API 后端，让位给 git 后端或回退 ZIP。
-const RATE_LIMIT_COOLDOWN: Duration = Duration::from_secs(3600);
-/// 上次遇到 GitHub REST API 限流的时间戳（全局共享，按 IP 配额计，不区分 owner/端点）。
-static RATE_LIMITED_AT: LazyLock<Mutex<Option<Instant>>> = LazyLock::new(|| Mutex::new(None));
-
-/// 标记 GitHub REST API 限流：记录当前时刻。后续 1 小时内的裁决会跳过 ApiBackend。
-pub fn mark_rate_limited() {
-    *RATE_LIMITED_AT.lock().unwrap() = Some(Instant::now());
-}
-
-/// 是否处于限流冷却窗口内（限流时间戳存在且未过期）。
-pub fn is_rate_limited() -> bool {
-    match *RATE_LIMITED_AT.lock().unwrap() {
-        Some(ts) => ts.elapsed() < RATE_LIMIT_COOLDOWN,
-        None => false,
-    }
-}
-
-/// 解析 GitHub 限流剩余配额响应头 `X-RateLimit-Remaining`。
-fn rate_limit_remaining(resp: &reqwest::Response) -> Option<u64> {
-    resp.headers()
-        .get("X-RateLimit-Remaining")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<u64>().ok())
-}
-
-/// 判定响应是否为 GitHub 限流信号：HTTP 403 + `X-RateLimit-Remaining: 0`。
+/// 裁决是否走大仓库后端（GitBackend）：本地存在 git 可执行文件即走，否则由调用方回退 ZIP。
 ///
-/// 仅双条件同时满足才视为限流，避免把「无权限 403」「其他非 2xx」误判成限流。
-fn is_rate_limited_response(resp: &reqwest::Response) -> bool {
-    resp.status().as_u16() == 403 && rate_limit_remaining(resp) == Some(0)
-}
-
-/// 检测并消费一个限流响应：命中则标记并返回 true。
-fn observe_rate_limit(resp: &reqwest::Response) -> bool {
-    if is_rate_limited_response(resp) {
-        log::info!(
-            "[large_repo][observe_rate_limit] 命中 GitHub REST 限流 (403 remaining=0)，进入 1h 冷却窗口"
-        );
-        mark_rate_limited();
-        true
-    } else {
-        false
-    }
-}
-
-/// 获取仓库 size（KB）。失败返回 Ok(None)（上层优先尝试大仓库后端）。1h TTL 缓存。
-pub async fn fetch_repo_size_kb(owner: &str, name: &str) -> Result<Option<u64>> {
-    log::debug!("[large_repo][size] 开始: {owner}/{name}");
-    let key = (owner.to_string(), name.to_string());
-    if let Some((ts, size)) = SIZE_CACHE.lock().unwrap().get(&key) {
-        if ts.elapsed() < SIZE_CACHE_TTL {
-            log::debug!("[large_repo][size] 命中缓存: {owner}/{name} size={size}KB");
-            return Ok(Some(*size));
-        }
-    }
-    // 限流冷却窗口内：不再发起无谓的 GitHub REST 请求，直接返回 None。
-    // None → should_use_large_repo_path → true → 进大仓库路径；此时 backend_chain
-    // 已剔除 ApiBackend，落到 GitBackend 或回退 ZIP。符合「size 限流后无需再用 REST API」。
-    if is_rate_limited() {
-        log::debug!("[large_repo][size] 限流冷却窗口内，跳过 size 探测返回 None");
-        return Ok(None);
-    }
-    let url = format!("https://api.github.com/repos/{owner}/{name}");
-    let client = crate::proxy::http_client::get();
-    let size = match timeout(
-        Duration::from_secs(API_TIMEOUT_SECS),
-        client.get(&url).header("User-Agent", "cc-switch").send(),
-    )
-    .await
-    {
-        Ok(Ok(resp)) => {
-            if observe_rate_limit(&resp) {
-                // 命中限流：已标记，返回 None 让下游裁决（不再走 REST API）。
-                log::info!("[large_repo][size] 限流，size 探测返回 None: {owner}/{name}");
-                None
-            } else if resp.status().is_success() {
-                match resp.json::<serde_json::Value>().await {
-                    Ok(json) => {
-                        let s = json.get("size").and_then(|v| v.as_u64());
-                        log::debug!("[large_repo][size] 探测成功: {owner}/{name} size={:?}KB", s);
-                        s
-                    }
-                    Err(_) => {
-                        log::debug!("[large_repo][size] 响应 JSON 解析失败: {owner}/{name}");
-                        None
-                    }
-                }
-            } else {
-                log::debug!(
-                    "[large_repo][size] 非成功状态 {}: {owner}/{name}",
-                    resp.status()
-                );
-                None
-            }
-        }
-        _ => {
-            log::debug!("[large_repo][size] 请求超时或失败: {owner}/{name}");
-            None
-        }
-    };
-    if let Some(size) = size {
-        SIZE_CACHE
-            .lock()
-            .unwrap()
-            .insert(key, (Instant::now(), size));
-        Ok(Some(size))
-    } else {
-        Ok(None)
-    }
+/// 不再依赖仓库 size 探测（已移除 GitHub REST size API，避免触发匿名配额限流）。
+pub fn should_use_large_repo_path(_size_kb: Option<u64>) -> bool {
+    let has_git = detect_git().is_some();
+    log::debug!(
+        "[large_repo][should_use_large_repo_path] has_git={has_git} => {has_git}"
+    );
+    has_git
 }
 
 /// 探测 git 可执行文件：PATH + 常见安装位置，结果缓存
@@ -1253,41 +836,28 @@ fn detect_git_uncached() -> Option<PathBuf> {
     candidates.into_iter().find(|c| c.is_file())
 }
 
-/// 选择后端：有 git → GitBackend，无 → ApiBackend
-pub fn select_backend() -> Box<dyn LargeRepoBackend> {
+/// 选择后端：有 git → GitBackend，无 → 返回 Err（由调用方回退 ZIP）。
+pub fn select_backend() -> Result<Box<dyn LargeRepoBackend>> {
     let git = detect_git().is_some();
     log::debug!("[large_repo][select_backend] git 可用={git}");
     if git {
-        Box::new(GitBackend::new())
+        Ok(Box::new(GitBackend::new()))
     } else {
-        Box::new(ApiBackend::new())
+        Err(anyhow!("git 不可用，请回退 ZIP 路径"))
     }
 }
 
-/// 后端回退链（**单仓库内串行回退**，不是并发竞速）。
+/// 后端链：**有 git 时单元素 `[Git]`**，无 git 时为空链。
 ///
-/// 顺序固定为 `[API, Git]`：API 优先（tree API 只拿清单、不下载内容、通常最快），
-/// Git 作为兜底（smart HTTP 不吃 REST 限流、能处理被 API 截断的大仓库）。
+/// 并发单位是**仓库**，不是后端：调用方（skill.rs 的 `repo_futures`）已对多个仓库做
+/// `join_all` 并发，单仓库内部不应并发多种后端。
 ///
-/// 并发单位是**仓库**，不是后端：调用方（skill.rs 的 `repo_futures`）已对多个仓库
-/// 做 `join_all` 并发，单仓库内部不应再让 git 与 api 同时跑——否则赢家已定、输家
-/// 仍在白做整仓 clone（数十秒、抢占代理/TCP），既浪费又拖慢整体。
-///
-/// 限流冷却窗口内：剔除 ApiBackend（GitHub REST API 已被限流，再试必然失败且浪费配额），
-/// 此时链退化为 `[Git]`（git 走 smart HTTP，不吃 REST 限流）；git 不可用且 API 限流
-/// 时链为空，调用方收到空链即视为「大仓库后端全失败」→ 回退旧 ZIP 路径（codeload 域独立配额）。
+/// 空链（git 不可用）时 `race_backend_chain` 返回 Err，调用方据此回退旧 ZIP 路径
+///（codeload 域独立配额）。GitBackend 走 smart HTTP 协议，不吃 GitHub REST API 限流。
 pub fn backend_chain() -> Vec<Box<dyn LargeRepoBackend>> {
     let git = detect_git().is_some();
-    let use_api = !is_rate_limited();
-    log::debug!(
-        "[large_repo][backend_chain] git={git} use_api={use_api} (限流冷却={})",
-        is_rate_limited()
-    );
+    log::debug!("[large_repo][backend_chain] git={git}");
     let mut chain: Vec<Box<dyn LargeRepoBackend>> = Vec::new();
-    // API 优先：快、轻量；git 作兜底。
-    if use_api {
-        chain.push(Box::new(ApiBackend::new()));
-    }
     if git {
         chain.push(Box::new(GitBackend::new()));
     }
@@ -1295,24 +865,22 @@ pub fn backend_chain() -> Vec<Box<dyn LargeRepoBackend>> {
     chain
 }
 
-/// 单仓库内**串行回退**整条后端链，返回第一个成功结果。
+/// 单仓库内核对后端链做**串行回退**，返回第一个成功结果。
 ///
 /// 注意：并发单位是**仓库**而非**后端**。调用方（skill.rs 的 `repo_futures`）已对多个
-/// 仓库做 `join_all` 并发；单仓库内部若再让 git 与 api 同时跑，会出现「一个后端已成功、
-/// 另一个后端仍在白做整仓 clone」的浪费（抢占代理/TCP、拖慢其余在飞仓库）。因此这里
-/// 改为**按 `backend_chain()` 顺序逐个尝试**，命中即返回，后续后端不再启动。
+/// 仓库做 `join_all` 并发；单仓库内部只跑 GitBackend（走 smart HTTP，不吃 REST 限流），
+/// 命中即返回。GitBackend 失败（网络/代理/仓库不存在/超时）时返回 Err，由调用方据此
+/// 回退 ZIP 路径（codeload 域独立配额，值得一试）。
 ///
-/// `backend_chain()` 已把顺序定为 `[API, Git]`：API 优先（轻量、最快），git 兜底。
-/// 这保留了旧 race 设计想要的「快路径优先」，但消除了 backend 级并行带来的资源放大。
-///
-/// - `chain`：由 `backend_chain()` 得到的后端链（调用方持有所有权，本函数只借用）。
+/// - `chain`：由 `backend_chain()` 得到的后端链（调用方持有所有权，本函数只借用）。有 git
+///   时为 `[Git]`，无 git 时为空链。
 /// - `op`：针对单个后端构造操作 future（如 `|b| skill_dir_hashes(b, repo, dirs)`）。
 ///   返回的 future 生命周期须能覆盖 `chain` 的借用期（即不能捕获比后端更短的生命）。
 /// - 返回首个 `Ok`；全部失败则返回最后一个错误，由调用方据此回退 ZIP 路径。
-/// - 空链（git 不可用 + API 限流）视为「全部失败」→ 返回 Err，调用方回退 ZIP。
+/// - 空链（git 不可用）视为「全部失败」→ 返回 Err，调用方回退 ZIP。
 ///
 /// 调用方应自行用 `timeout(LARGE_REPO_TIMEOUT_SECS, race_backend_chain(&chain, ...))` 包裹，
-/// 给整次回退一个统一上限（而非每个后端各 180s）。
+/// 给整次回退一个统一上限。
 pub async fn race_backend_chain<'a, F, Fut, T>(
     chain: &'a [Box<dyn LargeRepoBackend>],
     op: F,
@@ -1323,7 +891,7 @@ where
 {
     if chain.is_empty() {
         return Err(anyhow!(
-            "大仓库后端链为空（git 不可用且 API 限流中），请回退 ZIP 路径"
+            "大仓库后端链为空（git 不可用），请回退 ZIP 路径"
         ));
     }
     let mut last_err = None;
@@ -1890,42 +1458,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_tree_api_response_parses_entries() {
-        let json = r#"{
-            "sha": "abc",
-            "truncated": false,
-            "tree": [
-                {"path": "SKILL.md", "mode": "100644", "type": "blob", "sha": "aaa", "size": 10},
-                {"path": "sub", "mode": "040000", "type": "tree", "sha": "bbb", "size": 0},
-                {"path": "sub/SKILL.md", "mode": "100644", "type": "blob", "sha": "ccc", "size": 20}
-            ]
-        }"#;
-        let (files, truncated) = parse_tree_api_response(json).unwrap();
-        assert!(!truncated);
-        assert_eq!(files.len(), 2);
-        assert_eq!(files[0].path, "SKILL.md");
-        assert_eq!(files[0].mode, 0o100644);
-        assert_eq!(files[0].size, 10);
-        assert_eq!(files[1].path, "sub/SKILL.md");
-        assert_eq!(files[1].blob_sha, "ccc");
-    }
-
-    #[test]
-    fn parse_tree_api_response_reports_truncated() {
-        let json = r#"{"truncated": true, "tree": [{"path": "a", "mode": "100644", "type": "blob", "sha": "s", "size": 1}]}"#;
-        let (files, truncated) = parse_tree_api_response(json).unwrap();
-        assert!(truncated);
-        assert_eq!(files.len(), 1);
-    }
-
-    #[test]
-    fn parse_tree_api_response_rejects_malformed_json() {
-        assert!(parse_tree_api_response("not json").is_err());
-        assert!(parse_tree_api_response(r#"{"tree": "nope"}"#).is_err());
-        assert!(parse_tree_api_response(r#"{}"#).is_err());
-    }
-
-    #[test]
     fn filter_skill_md_paths_matches_exact_suffix() {
         let files = vec![
             RepoFile {
@@ -2320,13 +1852,7 @@ mod tests {
         assert!(build_discoverable_skill("owner", "repo", "main", "../SKILL.md", "x").is_err());
     }
 
-    // ========== 适配器测试（GitBackend / ApiBackend 一致性） ==========
-
-    use std::io::{Read, Write};
-    use std::net::{SocketAddr, TcpListener, TcpStream};
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
-    use std::thread;
+    // ========== 适配器测试（GitBackend） ==========
 
     /// fixture 仓库坐标（必须通过 validate_repo_ref）
     const FIXTURE_OWNER: &str = "test-owner";
@@ -2485,138 +2011,6 @@ mod tests {
         .to_string()
     }
 
-    /// 最小 HTTP mock server（std TcpListener，每连接一线程）
-    struct MockServer {
-        addr: SocketAddr,
-        shutdown: Arc<AtomicBool>,
-        handle: Option<thread::JoinHandle<()>>,
-    }
-
-    impl MockServer {
-        fn start(repo_root: &Path, tree_json: String) -> Self {
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            listener.set_nonblocking(true).unwrap();
-            let addr = listener.local_addr().unwrap();
-            let shutdown = Arc::new(AtomicBool::new(false));
-            let shutdown_clone = shutdown.clone();
-            let repo_root = repo_root.to_path_buf();
-            let handle = thread::spawn(move || {
-                while !shutdown_clone.load(Ordering::Relaxed) {
-                    match listener.accept() {
-                        Ok((stream, _)) => {
-                            let repo_root = repo_root.clone();
-                            let tree_json = tree_json.clone();
-                            thread::spawn(move || {
-                                let _ = handle_http(stream, &repo_root, &tree_json);
-                            });
-                        }
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            thread::sleep(std::time::Duration::from_millis(5));
-                        }
-                        Err(_) => break,
-                    }
-                }
-            });
-            Self {
-                addr,
-                shutdown,
-                handle: Some(handle),
-            }
-        }
-
-        fn api_base(&self) -> String {
-            format!("http://{}", self.addr)
-        }
-
-        fn raw_base(&self) -> String {
-            format!("http://{}/raw", self.addr)
-        }
-    }
-
-    impl Drop for MockServer {
-        fn drop(&mut self) {
-            self.shutdown.store(true, Ordering::Relaxed);
-            if let Some(h) = self.handle.take() {
-                let _ = h.join();
-            }
-        }
-    }
-
-    /// 处理单个 HTTP 连接：读请求头 → 路由 → 响应
-    fn handle_http(
-        mut stream: TcpStream,
-        repo_root: &Path,
-        tree_json: &str,
-    ) -> std::io::Result<()> {
-        let mut buf = Vec::new();
-        let mut tmp = [0u8; 4096];
-        loop {
-            match stream.read(&mut tmp) {
-                Ok(n) if n == 0 => return Ok(()),
-                Ok(n) => {
-                    buf.extend_from_slice(&tmp[..n]);
-                    if buf.windows(4).any(|w| w == b"\r\n\r\n") {
-                        break;
-                    }
-                    if buf.len() > 64 * 1024 {
-                        return Ok(());
-                    }
-                }
-                // Windows 上 accept 出的流会继承 listener 的非阻塞标记：请求数据
-                // 尚未到达时 read 立即返回 WouldBlock，若直接退出连接会被静默丢弃
-                // （并发跑多个 mock 测试时偶发，导致 API 后端回退到下一个分支）。
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                }
-                Err(e) => return Err(e),
-            }
-        }
-        let request = String::from_utf8_lossy(&buf);
-        let request_line = request.lines().next().unwrap_or("");
-        let mut parts = request_line.split_whitespace();
-        let method = parts.next().unwrap_or("");
-        let target = parts.next().unwrap_or("");
-        if method != "GET" {
-            return Ok(());
-        }
-        let path = target.split('?').next().unwrap_or(target);
-        let (status, body) = route(path, repo_root, tree_json);
-        let response = format!(
-            "HTTP/1.1 {status}\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            body.len()
-        );
-        stream.write_all(response.as_bytes())?;
-        stream.write_all(&body)?;
-        stream.flush()?;
-        Ok(())
-    }
-
-    /// 路由：trees API → tree JSON；raw API → 文件内容
-    fn route(path: &str, repo_root: &Path, tree_json: &str) -> (String, Vec<u8>) {
-        if let Some(rest) = path.strip_prefix("/repos/") {
-            let segs: Vec<&str> = rest.split('/').collect();
-            // {o}/{r}/git/trees/{branch...}
-            if segs.len() >= 4 && segs[2] == "git" && segs[3] == "trees" {
-                return ("200 OK".to_string(), tree_json.as_bytes().to_vec());
-            }
-        }
-        if let Some(rest) = path.strip_prefix("/raw/") {
-            // 归一化连续斜杠：url crate 的 path_segments_mut 在尾部斜杠后
-            // 会产生空段（如 main//.hidden），GitHub 会归一化，mock 需自行处理
-            let segs: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
-            // {o}/{r}/{branch}/{path...}
-            if segs.len() >= 4 {
-                let file_path = segs[3..].join("/");
-                let full = repo_root.join(&file_path);
-                if let Ok(bytes) = fs::read(&full) {
-                    return ("200 OK".to_string(), bytes);
-                }
-                return ("404 Not Found".to_string(), b"not found".to_vec());
-            }
-        }
-        ("404 Not Found".to_string(), b"not found".to_vec())
-    }
-
     /// git 不可用时返回 None（测试直接通过，等价 skip）
     fn git_available() -> Option<PathBuf> {
         detect_git()
@@ -2633,14 +2027,6 @@ mod tests {
 
     fn git_backend_for(git: &Path, root: &TempDir) -> GitBackend {
         GitBackend::with_git_and_base(git.to_path_buf(), file_url_for(root.path()))
-    }
-
-    /// 创建 fixture 仓库 + 启动 mock server
-    fn fixture_with_mock(git: &Path) -> (TempDir, PathBuf, MockServer) {
-        let (root, repo_dir, _o, _n, _b) = create_fixture_repo(git);
-        let tree_json = ls_tree_json(git, &repo_dir);
-        let server = MockServer::start(&repo_dir, tree_json);
-        (root, repo_dir, server)
     }
 
     #[tokio::test]
@@ -2809,203 +2195,6 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("SKILL.md"), "{err:#}");
-    }
-
-    #[tokio::test]
-    async fn api_backend_fetch_tree_matches_real_ls_tree() {
-        let Some(git) = git_available() else { return };
-        let (_root, repo_dir, server) = fixture_with_mock(&git);
-        let backend = ApiBackend::with_bases(&server.api_base(), &server.raw_base());
-        let repo = fixture_repo();
-        let (files, used_branch) = backend.fetch_tree(&repo).await.unwrap();
-        assert_eq!(used_branch, FIXTURE_BRANCH);
-        // 与真实 ls-tree 输出一致（同一 fixture，相同 blob SHA）
-        let expected = parse_ls_tree_output(
-            &Command::new(&git)
-                .arg("ls-tree")
-                .arg("-r")
-                .arg("-l")
-                .arg("-z")
-                .arg("HEAD")
-                .current_dir(&repo_dir)
-                .output()
-                .unwrap()
-                .stdout,
-        )
-        .unwrap();
-        assert_eq!(files, expected);
-    }
-
-    #[tokio::test]
-    async fn api_backend_list_skill_mds_discovers_all_skills() {
-        let Some(git) = git_available() else { return };
-        let (_root, _repo_dir, server) = fixture_with_mock(&git);
-        let backend = ApiBackend::with_bases(&server.api_base(), &server.raw_base());
-        let repo = fixture_repo();
-        let skills = list_skill_mds(&backend, &repo).await.unwrap();
-        let mut keys: Vec<String> = skills.iter().map(|s| s.key.clone()).collect();
-        keys.sort();
-        assert_eq!(
-            keys,
-            vec![
-                "test-owner/fixture-repo:.hidden",
-                "test-owner/fixture-repo:fixture-repo",
-                "test-owner/fixture-repo:skills/skill-a",
-                "test-owner/fixture-repo:skills/skill-b",
-            ]
-        );
-        let skill_a = skills
-            .iter()
-            .find(|s| s.directory == "skills/skill-a")
-            .unwrap();
-        assert_eq!(skill_a.name, "Skill A");
-        assert_eq!(skill_a.description, "Skill A description");
-        assert_eq!(
-            skill_a.readme_url.as_deref(),
-            Some("https://github.com/test-owner/fixture-repo/blob/main/skills/skill-a/SKILL.md")
-        );
-    }
-
-    #[tokio::test]
-    async fn api_backend_skill_dir_hashes_are_blob_sha1_prefixed() {
-        let Some(git) = git_available() else { return };
-        let (_root, repo_dir, server) = fixture_with_mock(&git);
-        let backend = ApiBackend::with_bases(&server.api_base(), &server.raw_base());
-        let repo = fixture_repo();
-        // 安装名是落盘名（目录最后一段），仓库里实际是嵌套路径
-        let install_names = vec![
-            "skill-a".to_string(),
-            "skill-b".to_string(),
-            ".hidden".to_string(),
-        ];
-        let hashes = skill_dir_hashes(&backend, &repo, &install_names)
-            .await
-            .unwrap();
-        assert_eq!(hashes.len(), 3);
-        for (dir, hash) in &hashes {
-            assert!(
-                hash.starts_with(BLOB_SHA1_PREFIX),
-                "{dir} 哈希缺少 blob-sha1: 前缀: {hash}"
-            );
-            // 返回的目录键是仓库相对路径（嵌套目录原样返回）
-            assert!(dir.starts_with("skills/") || dir == ".hidden", "{dir}");
-            let local = compute_local_blob_hash(&repo_dir.join(dir), BlobHashScheme::Sha1).unwrap();
-            assert_eq!(hash, &format!("{BLOB_SHA1_PREFIX}{local}"));
-        }
-    }
-
-    #[tokio::test]
-    async fn api_backend_materialize_skill_dir_matches_fixture_bytes() {
-        let Some(git) = git_available() else { return };
-        let (_root, repo_dir, server) = fixture_with_mock(&git);
-        let backend = ApiBackend::with_bases(&server.api_base(), &server.raw_base());
-        let repo = fixture_repo();
-        let (temp_dir, used_branch, scheme) =
-            materialize_skill_dir(&backend, &repo, "skills/skill-a")
-                .await
-                .unwrap();
-        assert_eq!(used_branch, FIXTURE_BRANCH);
-        assert_eq!(scheme, BlobHashScheme::Sha1);
-        assert_eq!(
-            fs::read(temp_dir.path().join("SKILL.md")).unwrap(),
-            b"---\nname: Skill A\ndescription: Skill A description\n---\n# A\n"
-        );
-        assert_eq!(
-            fs::read(temp_dir.path().join("helper.py")).unwrap(),
-            b"print('hello')\n"
-        );
-    }
-
-    #[tokio::test]
-    async fn api_backend_materialize_root_skill_materializes_whole_tree() {
-        let Some(git) = git_available() else { return };
-        let (_root, _repo_dir, server) = fixture_with_mock(&git);
-        let backend = ApiBackend::with_bases(&server.api_base(), &server.raw_base());
-        let repo = fixture_repo();
-        // 根级 skill 的 directory 是仓库名哨兵，应解析为 tree 根
-        let (temp_dir, used_branch, scheme) = materialize_skill_dir(&backend, &repo, FIXTURE_NAME)
-            .await
-            .unwrap();
-        assert_eq!(used_branch, FIXTURE_BRANCH);
-        assert_eq!(scheme, BlobHashScheme::Sha1);
-        assert_eq!(
-            fs::read(temp_dir.path().join("SKILL.md")).unwrap(),
-            b"---\nname: Root Skill\ndescription: Root level skill\n---\n# Root\n"
-        );
-        assert_eq!(
-            fs::read(temp_dir.path().join("skills/skill-a/SKILL.md")).unwrap(),
-            b"---\nname: Skill A\ndescription: Skill A description\n---\n# A\n"
-        );
-    }
-
-    /// 核心一致性：同一 fixture 下两个后端产出完全相同的结果
-    #[tokio::test]
-    async fn git_and_api_backends_produce_identical_results() {
-        let Some(git) = git_available() else { return };
-        let (root, repo_dir, _o, _n, _b) = create_fixture_repo(&git);
-        let git_backend = git_backend_for(&git, &root);
-        let server = MockServer::start(&repo_dir, ls_tree_json(&git, &repo_dir));
-        let api_backend = ApiBackend::with_bases(&server.api_base(), &server.raw_base());
-        let repo = fixture_repo();
-
-        // 1. fetch_tree 文件清单一致
-        let (git_files, git_branch) = git_backend.fetch_tree(&repo).await.unwrap();
-        let (api_files, api_branch) = api_backend.fetch_tree(&repo).await.unwrap();
-        assert_eq!(git_branch, api_branch);
-        assert_eq!(git_files, api_files);
-
-        // 2. list_skill_mds 一致（按 key 排序后逐字段比较）
-        let git_skills = list_skill_mds(&git_backend, &repo).await.unwrap();
-        let api_skills = list_skill_mds(&api_backend, &repo).await.unwrap();
-        let mut git_sorted = git_skills.clone();
-        let mut api_sorted = api_skills.clone();
-        git_sorted.sort_by(|a, b| a.key.cmp(&b.key));
-        api_sorted.sort_by(|a, b| a.key.cmp(&b.key));
-        assert_eq!(git_sorted.len(), api_sorted.len());
-        for (g, a) in git_sorted.iter().zip(api_sorted.iter()) {
-            assert_eq!(g.key, a.key);
-            assert_eq!(g.name, a.name);
-            assert_eq!(g.description, a.description);
-            assert_eq!(g.directory, a.directory);
-            assert_eq!(g.readme_url, a.readme_url);
-            assert_eq!(g.repo_owner, a.repo_owner);
-            assert_eq!(g.repo_name, a.repo_name);
-            assert_eq!(g.repo_branch, a.repo_branch);
-        }
-
-        // 3. skill_dir_hashes 一致（安装名是落盘名，仓库里是嵌套路径）
-        let install_names = vec![
-            "skill-a".to_string(),
-            "skill-b".to_string(),
-            ".hidden".to_string(),
-        ];
-        let git_hashes = skill_dir_hashes(&git_backend, &repo, &install_names)
-            .await
-            .unwrap();
-        let api_hashes = skill_dir_hashes(&api_backend, &repo, &install_names)
-            .await
-            .unwrap();
-        assert_eq!(git_hashes, api_hashes);
-
-        // 4. materialize_skill_dir 内容一致（逐字节）
-        let (git_temp, git_branch2, git_scheme) =
-            materialize_skill_dir(&git_backend, &repo, "skills/skill-b")
-                .await
-                .unwrap();
-        let (api_temp, api_branch2, api_scheme) =
-            materialize_skill_dir(&api_backend, &repo, "skills/skill-b")
-                .await
-                .unwrap();
-        assert_eq!(git_branch2, api_branch2);
-        assert_eq!(git_scheme, api_scheme);
-        assert_eq!(
-            fs::read(git_temp.path().join("SKILL.md")).unwrap(),
-            fs::read(api_temp.path().join("SKILL.md")).unwrap()
-        );
-        assert_eq!(
-            fs::read(git_temp.path().join("data/config.json")).unwrap(),
-            fs::read(api_temp.path().join("data/config.json")).unwrap()
-        );
     }
 
     /// symlink 指向文件：物化后 link 位置应是目标文件内容副本，而非路径文本。

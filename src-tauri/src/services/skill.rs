@@ -20,9 +20,9 @@ use crate::config::get_app_config_dir;
 use crate::database::Database;
 use crate::error::format_skill_error;
 use crate::services::large_repo::{
-    backend_chain, compute_local_blob_hash, fetch_repo_size_kb, hash_needs_recompute,
-    list_skill_mds, materialize_skill_dir, race_backend_chain, should_use_large_repo_path,
-    skill_dir_hashes, BlobHashScheme, BLOB_SHA1_PREFIX, BLOB_SHA256_PREFIX,
+    backend_chain, compute_local_blob_hash, hash_needs_recompute, list_skill_mds,
+    materialize_skill_dir, race_backend_chain, should_use_large_repo_path, skill_dir_hashes,
+    BlobHashScheme, BLOB_SHA1_PREFIX, BLOB_SHA256_PREFIX,
 };
 
 // ========== 数据结构 ==========
@@ -699,11 +699,9 @@ impl SkillService {
                 enabled: true,
             };
 
-            // 大仓库判定：size 超过 32MB，或 size 探测失败（限流/阻断）时走 git CLI / GitHub REST API 路径
-            let size_kb = fetch_repo_size_kb(&repo.owner, &repo.name)
-                .await
-                .unwrap_or(None);
-            let (temp_guard, used_branch, scheme) = if !should_use_large_repo_path(size_kb) {
+            // 大仓库路径裁决：本地有 git 可执行文件即走 GitBackend（smart HTTP，不吃
+            // REST 限流）；否则直接走旧 ZIP 路径（codeload 域独立配额）。
+            let (temp_guard, used_branch, scheme) = if !should_use_large_repo_path(None) {
                 // 旧路径：ZIP 下载
                 let (temp_guard, used_branch) = timeout(
                     std::time::Duration::from_secs(60),
@@ -729,8 +727,8 @@ impl SkillService {
                 let materialized: Option<(tempfile::TempDir, String, BlobHashScheme)> =
                     match timeout(
                         std::time::Duration::from_secs(LARGE_REPO_TIMEOUT_SECS),
-                        // 单仓库内串行回退整条后端链（顺序 [API, Git]，命中即返回；
-                        // 并发单位是仓库，由外层 repo_futures 提供，见下方说明）
+                        // 单仓库内串行回退整条后端链（有 git 时为 [Git]，命中即返回；
+                        // 并发单位是仓库，由外层 repo_futures 提供）
                         async {
                             let chain = backend_chain();
                             race_backend_chain(&chain, |b| {
@@ -833,7 +831,14 @@ impl SkillService {
             // skillId（末级目录名），嵌套目录场景直接拼接会丢路径、链接 404（#6111）
             resolved_doc_path = Self::doc_path_for_source(&canonical_temp, &canonical_source);
 
-            Self::copy_dir_recursive(&canonical_source, &dest)?;
+            // 物化产物已在 TempDir 内自包含。优先 move（同设备省一次整目录拷贝），
+            // 跨设备（TempDir 与 SSOT 不在同一卷）时 rename 失败，回退 copy。
+            if dest.exists() {
+                fs::remove_dir_all(&dest)?;
+            }
+            if fs::rename(&canonical_source, &dest).is_err() {
+                Self::copy_dir_recursive(&canonical_source, &dest)?;
+            }
 
             // 使用实际下载成功的分支，避免 readme_url / repo_branch 与真实分支不一致。
             if repo_branch != skill.repo_branch {
@@ -1103,9 +1108,8 @@ impl SkillService {
             repo_futures.push(async move {
                 let mut local_updates: Vec<SkillUpdateInfo> = Vec::new();
 
-                // 大仓库判定：size 超过 32MB，或 size 探测失败（限流/阻断）时走 git CLI / GitHub REST API 路径
-                let size_kb = fetch_repo_size_kb(&owner, &name).await.unwrap_or(None);
-                if !should_use_large_repo_path(size_kb) {
+                // 大仓库路径裁决：本地有 git 即走 GitBackend，否则直接回退 ZIP 路径
+                if !should_use_large_repo_path(None) {
                     // 旧路径：ZIP 下载 + 扫描 + 双向对齐比较
                     let _ = self
                         .check_updates_via_zip(
@@ -1132,7 +1136,7 @@ impl SkillService {
                 let mut last_error: Option<anyhow::Error> = None;
                 match timeout(
                     std::time::Duration::from_secs(LARGE_REPO_TIMEOUT_SECS),
-                    // 单仓库内串行回退整条后端链（顺序 [API, Git]，命中即返回；
+                    // 单仓库内串行回退整条后端链（有 git 时为 [Git]，命中即返回；
                     // 并发单位是仓库，由外层 repo_futures 提供）
                     async {
                         let chain = backend_chain();
@@ -1408,9 +1412,8 @@ impl SkillService {
 
         let ssot_dir = Self::get_ssot_dir()?;
 
-        // 大仓库判定：size 超过 32MB，或 size 探测失败（限流/阻断）时走 git CLI / GitHub REST API 路径
-        let size_kb = fetch_repo_size_kb(&owner, &name).await.unwrap_or(None);
-        let (temp_guard, used_branch, blob_scheme) = if !should_use_large_repo_path(size_kb) {
+        // 大仓库路径裁决：本地有 git 即走 GitBackend，否则直接走旧 ZIP 路径
+        let (temp_guard, used_branch, blob_scheme) = if !should_use_large_repo_path(None) {
             // 旧路径：ZIP 下载
             let (temp_guard, used_branch) = timeout(
                 std::time::Duration::from_secs(60),
@@ -1431,7 +1434,7 @@ impl SkillService {
             let mut last_error: Option<anyhow::Error> = None;
             let materialized: Option<(tempfile::TempDir, String, BlobHashScheme)> = match timeout(
                 std::time::Duration::from_secs(LARGE_REPO_TIMEOUT_SECS),
-                // 单仓库内串行回退整条后端链（顺序 [API, Git]，命中即返回；
+                // 单仓库内串行回退整条后端链（有 git 时为 [Git]，命中即返回；
                 // 并发单位是仓库，由外层 repo_futures 提供）
                 async {
                     let chain = backend_chain();
@@ -1547,12 +1550,15 @@ impl SkillService {
         // 备份旧文件
         let _ = Self::create_uninstall_backup(&skill);
 
-        // 删除旧 SSOT 目录并复制新文件
+        // 删除旧 SSOT 目录并写入新文件。优先 move（同设备省一次整目录拷贝），
+        // 跨设备（TempDir 与 SSOT 不在同一卷）时 rename 失败，回退 copy。
         let dest = ssot_dir.join(&skill.directory);
         if dest.exists() {
             fs::remove_dir_all(&dest)?;
         }
-        Self::copy_dir_recursive(&source, &dest)?;
+        if fs::rename(&source, &dest).is_err() {
+            Self::copy_dir_recursive(&source, &dest)?;
+        }
 
         // 计算新哈希 + 解析新元数据
         // 大仓库路径存 blob-sha1:/blob-sha256:，旧路径存旧哈希
@@ -2450,18 +2456,13 @@ impl SkillService {
 
     /// 从仓库获取技能列表
     async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
-        // 整个大仓库路径（含 size 探测 + 后端链 + ZIP 兜底）统一受 LARGE_REPO_TIMEOUT_SECS 约束：
-        // size 探测也是网络请求，若卡在代理/TLS 会被算进同一计时窗口，避免「进 large_repo
-        // 之前就耗尽超时预算」导致「看起来没执行就超时」的观感。
-        // 注：ZIP 兜底路径（download_repo 自带 60s timeout）也在该窗口内，180 > 60 无副作用。
+        // 整个大仓库路径（含后端链 + ZIP 兜底）统一受 LARGE_REPO_TIMEOUT_SECS 约束：
+        // ZIP 兜底路径（download_repo 自带 60s timeout）也在该窗口内，无副作用。
         match timeout(
             std::time::Duration::from_secs(LARGE_REPO_TIMEOUT_SECS),
             async {
-                // 大仓库判定：size 超过 32MB，或 size 探测失败（限流/阻断）时走 git CLI / GitHub REST API 路径
-                let size_kb = fetch_repo_size_kb(&repo.owner, &repo.name)
-                    .await
-                    .unwrap_or(None);
-                if !should_use_large_repo_path(size_kb) {
+                // 大仓库路径裁决：本地有 git 即走 GitBackend，否则直接回退 ZIP 路径
+                if !should_use_large_repo_path(None) {
                     // 旧路径：ZIP 下载 + 扫描
                     let (temp_guard, resolved_branch) =
                         timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
@@ -2489,15 +2490,14 @@ impl SkillService {
 
                 // 大仓库路径：只取 SKILL.md 清单，不下载整仓
                 log::debug!(
-                    "[large_repo][fetch_repo_skills] 进入大仓库路径: {}/{} branch={:?} size_kb={:?}",
+                    "[large_repo][fetch_repo_skills] 进入大仓库路径: {}/{} branch={:?}",
                     repo.owner,
                     repo.name,
-                    repo.branch,
-                    size_kb
+                    repo.branch
                 );
                 Self::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)?;
                 let chain = backend_chain();
-                // 单仓库内串行回退整条后端链（顺序 [API, Git]，命中即返回；
+                // 单仓库内串行回退整条后端链（有 git 时为 [Git]，命中即返回；
                 // 并发单位是仓库，由外层 repo_futures 提供）
                 race_backend_chain(&chain, |b| list_skill_mds(b, repo)).await
             },
@@ -2506,7 +2506,7 @@ impl SkillService {
         {
             Ok(Ok(skills)) => return Ok(skills),
             Ok(Err(e)) => {
-                // 大仓库路径内部失败（含 size 探测、后端链全失败）→ 回退 ZIP
+                // 大仓库路径内部失败（含后端链全失败）→ 回退 ZIP
                 log::warn!(
                     "发现 skill 时大仓库路径失败（{}/{}），回退 ZIP 路径: {:#}",
                     repo.owner,
