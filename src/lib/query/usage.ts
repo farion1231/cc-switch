@@ -302,6 +302,30 @@ export function useModelStats(
   });
 }
 
+export function useFloatingModelStats(
+  range: UsageRangeSelection,
+  options?: UsageQueryOptions,
+) {
+  return useQuery({
+    queryKey: [
+      ...usageKeys.modelStats(
+        range.preset,
+        range.customStartDate,
+        range.customEndDate,
+        undefined,
+        range.liveEndTime,
+      ),
+      "floating",
+    ] as const,
+    queryFn: () => {
+      const { startDate, endDate } = resolveUsageRange(range);
+      return usageApi.getFloatingModelStats(startDate, endDate);
+    },
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+  });
+}
+
 export function useRequestLogs({
   filters,
   range,

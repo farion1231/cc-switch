@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::UpdaterExt;
 
 /// 应用更新下载进度（通过 `update-download-progress` 事件发给前端）。
@@ -57,18 +57,219 @@ pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
     Ok(crate::settings::get_settings_for_frontend())
 }
 
+/// 确保悬浮窗窗口存在；不存在时按需创建（保持隐藏，由前端加载完成后自行恢复位置
+/// 并显示，避免空白窗口闪烁）。已存在则直接返回。
+pub fn ensure_floating_usage_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
+    if let Some(floating_window) = app.get_webview_window("floating_usage") {
+        return Some(floating_window);
+    }
+    // 窗口属性与原 tauri.conf.json 中的 floating_usage 定义保持一致。
+    tauri::WebviewWindowBuilder::new(app, "floating_usage", tauri::WebviewUrl::default())
+        .title("Floating Usage")
+        .inner_size(220.0, 64.0)
+        .resizable(false)
+        .maximizable(false)
+        .decorations(false)
+        .always_on_top(true)
+        .transparent(true)
+        .visible(false)
+        .skip_taskbar(true)
+        .shadow(false)
+        .build()
+        .map_err(|e| log::warn!("创建悬浮窗失败: {e}"))
+        .ok()
+}
+
+/// 显示或隐藏桌面用量悬浮窗。
+/// - visible=true：确保窗口存在（按需创建）；窗口显示由前端加载完成后自行处理。
+/// - visible=false：销毁窗口，释放 WebView 与查询轮询（下次启用时动态重建）。
+pub fn set_floating_usage_window_visible(app: &AppHandle, visible: bool) {
+    if visible {
+        ensure_floating_usage_window(app);
+    } else if let Some(floating_window) = app.get_webview_window("floating_usage") {
+        if let Err(e) = floating_window.destroy() {
+            log::warn!("销毁悬浮窗失败: {e}");
+        }
+    }
+}
+
+/// 显示并聚焦主窗口，行为与托盘"打开主界面"完全一致。
+/// 悬浮窗双击调用：即使主窗口被其他窗口遮挡，也会置顶显示。
+#[tauri::command(rename_all = "camelCase")]
+pub fn show_main_window(app: AppHandle) -> Result<bool, String> {
+    crate::tray::show_main_window(&app)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn resize_floating_usage_window(
+    app: AppHandle,
+    width: f64,
+    height: f64,
+) -> Result<bool, String> {
+    if let Some(window) = app.get_webview_window("floating_usage") {
+        #[cfg(target_os = "windows")]
+        {
+            // tao 的 set_size 对 resizable:false 窗口不可靠：
+            // 内部走 SWP_ASYNCWINDOWPOS（异步），且 set_resizable 的样式切换是
+            // 通过 PostMessage 异步应用的——两个异步叠加会与“先开 resizable、再改
+            // 尺寸、再关 resizable”的时序产生竞态，导致窗口经常停在比内容更大的
+            // 高度上，透明区就把下方点击挡住（即悬浮窗底部“一块不可点击的区域”）。
+            // 这里直接在主线程上用原生 Win32 SetWindowPos 同步改尺寸，无论窗口
+            // resizable 与否都能可靠地精确贴合内容高度。
+            let hwnd_raw = window
+                .hwnd()
+                .map_err(|e| format!("failed to get floating window hwnd: {e}"))?
+                .0 as isize;
+            let scale = window.scale_factor().map_err(|e| e.to_string())?;
+            let (w, h) = (
+                (width * scale).round() as i32,
+                (height * scale).round() as i32,
+            );
+
+            app.run_on_main_thread(move || unsafe {
+                use windows_sys::Win32::UI::WindowsAndMessaging::*;
+
+                // HWND 是 *mut c_void 的类型别名，直接用转换即可。
+                let hwnd: *mut core::ffi::c_void = hwnd_raw as *mut core::ffi::c_void;
+                // 临时加上 WS_THICKFRAME 解除 Win32 对非 resizable 窗口的 min/max
+                // 锁定，SetWindowPos 同步完成后立刻还原，外观与行为不受影响。
+                let old_style = GetWindowLongW(hwnd, GWL_STYLE);
+                SetWindowLongW(hwnd, GWL_STYLE, old_style | WS_SIZEBOX as i32);
+                SetWindowPos(
+                    hwnd,
+                    core::ptr::null_mut(),
+                    0,
+                    0,
+                    w,
+                    h,
+                    SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE,
+                );
+                SetWindowLongW(hwnd, GWL_STYLE, old_style);
+                SetWindowPos(
+                    hwnd,
+                    core::ptr::null_mut(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                );
+            })
+            .map_err(|e| format!("failed to resize floating window on main thread: {e}"))?;
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            window
+                .set_size(tauri::Size::Logical(tauri::LogicalSize::new(width, height)))
+                .map_err(|e| format!("Failed to resize floating window: {e}"))?;
+        }
+
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+/// 悬浮窗所在显示器的工作区（物理像素，排除任务栏/Dock 占用的区域）。
+/// 用于"贴边吸附"功能：Windows 用 GetMonitorInfoW 取 rcWork，
+/// 其他平台退化为显示器完整边界。
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FloatingWorkArea {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn get_floating_work_area(window: tauri::Window) -> Result<Option<FloatingWorkArea>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::Graphics::Gdi::*;
+
+        let hwnd: *mut core::ffi::c_void = window
+            .hwnd()
+            .map_err(|e| format!("failed to get floating window hwnd: {e}"))?
+            .0;
+        let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+        if monitor.is_null() {
+            return Ok(None);
+        }
+        let mut info: MONITORINFO = unsafe { core::mem::zeroed() };
+        info.cbSize = core::mem::size_of::<MONITORINFO>() as u32;
+        if unsafe { GetMonitorInfoW(monitor, &mut info) } == 0 {
+            return Ok(None);
+        }
+        Ok(Some(FloatingWorkArea {
+            x: info.rcWork.left,
+            y: info.rcWork.top,
+            width: info.rcWork.right - info.rcWork.left,
+            height: info.rcWork.bottom - info.rcWork.top,
+        }))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(monitor) = window
+            .current_monitor()
+            .map_err(|e| format!("failed to get current monitor: {e}"))?
+        {
+            let p = monitor.position();
+            let s = monitor.size();
+            Ok(Some(FloatingWorkArea {
+                x: p.x as i32,
+                y: p.y as i32,
+                width: s.width as i32,
+                height: s.height as i32,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+/// 关闭悬浮窗：置为禁用、持久化设置并销毁窗口（释放 WebView 与查询轮询），
+/// 同时广播 `settings-updated` 通知主窗口刷新设置缓存。
+/// 悬浮窗无标题栏、无法走系统关闭按钮，此函数由悬浮窗内的关闭按钮命令与
+/// 主窗口的 `CloseRequested` 拦截共同调用。
+pub fn disable_floating_usage(app: &AppHandle) {
+    let mut settings = crate::settings::get_settings();
+    settings.enable_floating_usage = false;
+    if let Err(e) = crate::settings::update_settings(settings) {
+        log::error!("更新设置（关闭悬浮窗）失败: {e}");
+    }
+    if let Some(floating_window) = app.get_webview_window("floating_usage") {
+        if let Err(e) = floating_window.destroy() {
+            log::warn!("销毁悬浮窗失败: {e}");
+        }
+    }
+    let _ = app.emit("settings-updated", ());
+}
+
+/// 悬浮窗内的关闭按钮调用的命令：置为禁用并销毁窗口（与设置开关关闭等效），
+/// 并通知前端刷新设置缓存。
+#[tauri::command(rename_all = "camelCase")]
+pub fn close_floating_usage_window(app: AppHandle) -> Result<bool, String> {
+    disable_floating_usage(&app);
+    Ok(true)
+}
+
 /// 保存设置
 #[tauri::command]
 pub async fn save_settings(
+    app: AppHandle,
     state: tauri::State<'_, crate::store::AppState>,
     settings: crate::settings::AppSettings,
 ) -> Result<bool, String> {
     let existing = crate::settings::get_settings();
     let merged = merge_settings_for_save(settings, &existing);
+    let enable_floating_changed = merged.enable_floating_usage != existing.enable_floating_usage;
     let unify_codex_changed =
         merged.unify_codex_session_history != existing.unify_codex_session_history;
     let unify_codex_enabled = merged.unify_codex_session_history;
-    crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
+    crate::settings::update_settings(merged.clone()).map_err(|e| e.to_string())?;
 
     // 统一会话开关变更时立即重写当前官方 Codex 供应商的 live 配置，
     // 不必等下一次切换才生效。
@@ -122,6 +323,10 @@ pub async fn save_settings(
                 log::warn!("清除统一会话迁移意愿失败: {err}");
             }
         }
+    }
+
+    if enable_floating_changed {
+        set_floating_usage_window_visible(&app, merged.enable_floating_usage);
     }
     Ok(true)
 }

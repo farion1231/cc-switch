@@ -1,3 +1,5 @@
+import type { UsageSummaryByApp } from "@/types/usage";
+
 export function parseFiniteNumber(value: unknown): number | null {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : null;
@@ -94,4 +96,66 @@ export function formatTokensShort(
   if (value >= 1e6) return `${(value / 1e6).toFixed(2)}M`;
   if (value >= 1e3) return `${(value / 1e3).toFixed(decimals)}K`;
   return value.toLocaleString();
+}
+
+export interface FloatingUsageSummary {
+  totalCost: number;
+  realTotalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  cacheHitRate: number;
+}
+
+/**
+ * 悬浮窗的今日汇总聚合：把各应用的 UsageSummary 累加成单一数字。
+ *
+ * `realTotalTokens` 按「真实消耗」口径 = input + output + cache_creation +
+ * cache_read（含缓存命中，与后端 `UsageSummary::real_total_tokens` 一致）；
+ * `cacheHitRate` 以可缓存输入（input + cache_creation + cache_read）为分母。
+ */
+export function computeFloatingUsageSummary(
+  data: UsageSummaryByApp[] | undefined,
+): FloatingUsageSummary {
+  if (!data || data.length === 0) {
+    return {
+      totalCost: 0,
+      realTotalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      cacheHitRate: 0,
+    };
+  }
+
+  let totalCostNum = 0;
+  let input = 0;
+  let output = 0;
+  let cacheCreation = 0;
+  let cacheRead = 0;
+
+  for (const item of data) {
+    totalCostNum += parseFloat(item.summary.totalCost) || 0;
+    input += item.summary.totalInputTokens || 0;
+    output += item.summary.totalOutputTokens || 0;
+    cacheCreation += item.summary.totalCacheCreationTokens || 0;
+    cacheRead += item.summary.totalCacheReadTokens || 0;
+  }
+
+  const realTotal = input + output + cacheCreation + cacheRead;
+  const cacheableInput = input + cacheCreation + cacheRead;
+  const cacheHitRate =
+    cacheableInput > 0 ? (cacheRead / cacheableInput) * 100 : 0;
+
+  return {
+    totalCost: totalCostNum,
+    realTotalTokens: realTotal,
+    inputTokens: input,
+    outputTokens: output,
+    cacheCreationTokens: cacheCreation,
+    cacheReadTokens: cacheRead,
+    cacheHitRate,
+  };
 }
