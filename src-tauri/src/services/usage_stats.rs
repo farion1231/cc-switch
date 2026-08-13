@@ -1413,6 +1413,29 @@ impl Database {
         provider_name: Option<&str>,
         model: Option<&str>,
     ) -> Result<Vec<ModelStats>, AppError> {
+        self.query_model_stats(start_date, end_date, app_type, provider_name, model, false)
+    }
+
+    /// 获取包含缓存用量的模型统计（仅供悬浮窗使用）
+    pub fn get_model_stats_with_cache(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+    ) -> Result<Vec<ModelStats>, AppError> {
+        self.query_model_stats(start_date, end_date, None, None, None, true)
+    }
+
+    /// 模型统计公共查询。`include_cache` 为 true 时 total_tokens 额外计入
+    /// cache_creation_tokens 与 cache_read_tokens（悬浮窗展示口径）。
+    fn query_model_stats(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        app_type: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        include_cache: bool,
+    ) -> Result<Vec<ModelStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
         let mut detail_conditions = vec![effective_usage_log_filter("l")];
@@ -1490,6 +1513,20 @@ impl Database {
         let fresh_input_rollup = fresh_input_sql("r");
         let detail_model = effective_model_sql("l");
         let rollup_model = effective_model_sql("r");
+        let detail_tokens_expr = if include_cache {
+            format!(
+                "{fresh_input_detail} + l.output_tokens + l.cache_creation_tokens + l.cache_read_tokens"
+            )
+        } else {
+            format!("{fresh_input_detail} + l.output_tokens")
+        };
+        let rollup_tokens_expr = if include_cache {
+            format!(
+                "{fresh_input_rollup} + r.output_tokens + r.cache_creation_tokens + r.cache_read_tokens"
+            )
+        } else {
+            format!("{fresh_input_rollup} + r.output_tokens")
+        };
         let sql = format!(
             "SELECT
                 model,
@@ -1499,7 +1536,7 @@ impl Database {
             FROM (
                 SELECT {detail_model} as model,
                     COUNT(*) as request_count,
-                    COALESCE(SUM({fresh_input_detail} + l.output_tokens), 0) as total_tokens,
+                    COALESCE(SUM({detail_tokens_expr}), 0) as total_tokens,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost
                 FROM proxy_request_logs l
                 {detail_join}
@@ -1508,7 +1545,7 @@ impl Database {
                 UNION ALL
                 SELECT {rollup_model},
                     COALESCE(SUM(r.request_count), 0),
-                    COALESCE(SUM({fresh_input_rollup} + r.output_tokens), 0),
+                    COALESCE(SUM({rollup_tokens_expr}), 0),
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0)
                 FROM usage_daily_rollups r
                 {rollup_join}
@@ -4153,6 +4190,46 @@ mod tests {
         assert_eq!(stats[0].model, "claude-3-haiku");
         assert_eq!(stats[0].request_count, 9);
         assert_eq!(stats[0].total_tokens, 1350);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_model_stats_with_cache_includes_cache_tokens() -> Result<(), AppError> {
+        // 悬浮窗口径（get_model_stats_with_cache）的 total_tokens 应计入
+        // cache_creation 与 cache_read；常规口径（get_model_stats）只含
+        // fresh input + output。两者源自同一行数据，仅 include_cache 分支不同。
+        let db = Database::memory()?;
+        {
+            // 块内获取连接锁，块结束即释放；后续 get_model_stats* 会再次加锁，
+            // 若此处持有 MutexGuard 不释放，同一线程重入 lock_conn! 会死锁。
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "req-with-cache",
+                "claude", // 非 cache-inclusive，input_tokens 即 fresh input
+                "p1",
+                "claude-sonnet-4-5",
+                "proxy",
+                local_ts(2026, 8, 13, 10, 0, 0),
+                100, // input
+                50,  // output
+                30,  // cache_read
+                20,  // cache_creation
+                200,
+                "0.01",
+            )?;
+        }
+
+        let with_cache = db.get_model_stats_with_cache(None, None)?;
+        assert_eq!(with_cache.len(), 1);
+        assert_eq!(with_cache[0].model, "claude-sonnet-4-5");
+        assert_eq!(with_cache[0].total_tokens, 200); // 100 + 50 + 30 + 20
+
+        let without_cache = db.get_model_stats(None, None, None, None, None)?;
+        assert_eq!(without_cache.len(), 1);
+        assert_eq!(without_cache[0].model, "claude-sonnet-4-5");
+        assert_eq!(without_cache[0].total_tokens, 150); // 100 + 50
 
         Ok(())
     }
