@@ -1,10 +1,60 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::fs;
+use std::fs::Permissions;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 use crate::error::AppError;
+
+/// 限制文件权限为「仅所有者可读写」（Unix: 0600；Windows: 无操作）。
+///
+/// Windows 没有 POSIX 权限位，`set_mode` 行为不可预测，因此仅在 Unix 平台生效；
+/// 同时避免 `set_permissions` 与 Windows ACL 机制冲突。
+pub fn restrict_file_mode(path: &Path) -> Result<(), AppError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(mut perms) = fs::metadata(path)?.permissions() {
+            perms.set_mode(0o600);
+            fs::set_permissions(path, perms).map_err(|e| AppError::io(path, e))?;
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path; // Windows 忽略
+    }
+    Ok(())
+}
+
+/// 限制目录权限为「仅所有者可读写执行」（Unix: 0700；Windows: 无操作）。
+///
+/// 与 [`restrict_file_mode`] 配套：`.cc-switch/` 内所有数据（数据库、token、OAuth 凭据）
+/// 都依赖目录级的访问控制，目录 0755/0777 会让其他用户能列出文件名。
+pub fn restrict_dir_mode(path: &Path) -> Result<(), AppError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(mut perms) = fs::metadata(path)?.permissions() {
+            perms.set_mode(0o700);
+            fs::set_permissions(path, perms).map_err(|e| AppError::io(path, e))?;
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path; // Windows 忽略
+    }
+    Ok(())
+}
+
+/// 确保 `.cc-switch/` 配置目录存在，并在 Unix 上收紧目录权限为 0700
+pub fn ensure_config_dir(dir: &Path) -> Result<(), AppError> {
+    fs::create_dir_all(dir).map_err(|e| AppError::io(dir, e))?;
+    if let Err(e) = restrict_dir_mode(dir) {
+        log::warn!("restrict dir mode failed for {}: {}", dir.display(), e);
+    }
+    Ok(())
+}
 
 /// 获取用户主目录，带回退和日志
 ///
@@ -471,12 +521,55 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
             });
         }
     }
+
+    // Unix 平台：原子写入完成后收紧文件权限为 0600（config.json 等敏感文件）
+    if cfg!(unix) {
+        if let Err(e) = restrict_file_mode(path) {
+            log::warn!("restrict file mode failed for {}: {}", path.display(), e);
+        }
+    }
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restrict_dir_mode_sets_0700_on_unix() {
+        let dir = std::env::temp_dir().join(format!(
+            "cc-switch-dir-mode-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        restrict_dir_mode(&dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "dir mode should be 0700, got {:o}", mode);
+        }
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn ensure_config_dir_sets_0700_on_unix() {
+        let dir = std::env::temp_dir().join(format!(
+            "cc-switch-ensure-dir-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        ensure_config_dir(&dir).unwrap();
+        assert!(dir.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "dir mode should be 0700, got {:o}", mode);
+        }
+        fs::remove_dir_all(&dir).ok();
+    }
 
     fn assert_atomic_write_replaces_existing_file(dir: &Path) {
         let path = dir.join("atomic-write-contract.json");

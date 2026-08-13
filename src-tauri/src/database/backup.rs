@@ -383,6 +383,8 @@ impl Database {
             .ok_or_else(|| AppError::Config("无效的数据库路径".to_string()))?
             .join("backups");
 
+        crate::config::ensure_config_dir(&backup_dir)?;
+
         fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
 
         let base_id = format!("db_backup_{}", Local::now().format("%Y%m%d_%H%M%S"));
@@ -405,6 +407,9 @@ impl Database {
                 .step(-1)
                 .map_err(|e| AppError::Database(e.to_string()))?;
         }
+
+        // 备份数据库含全部 token/凭据，收紧为 0600，防其他用户读取
+        crate::config::restrict_file_mode(&backup_path)?;
 
         Self::cleanup_db_backups(&backup_dir)?;
         Ok(Some(backup_path))
