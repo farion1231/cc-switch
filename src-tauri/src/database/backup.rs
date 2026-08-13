@@ -169,8 +169,10 @@ impl Database {
             source: e,
         })?;
         let temp_path = temp_file.path().to_path_buf();
-        let temp_conn =
+        let mut temp_conn =
             Connection::open(&temp_path).map_err(|e| AppError::Database(e.to_string()))?;
+        #[cfg(unix)]
+        let _ = fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600));
 
         // authorizer 只覆盖外部 SQL，执行完立刻摘掉：紧随其后的
         // `create_tables_on_conn` / `apply_schema_migrations_on_conn` 是本程序自己的
@@ -384,6 +386,8 @@ impl Database {
             .join("backups");
 
         fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+        #[cfg(unix)]
+        let _ = fs::set_permissions(&backup_dir, fs::Permissions::from_mode(0o700));
 
         let base_id = format!("db_backup_{}", Local::now().format("%Y%m%d_%H%M%S"));
         let mut backup_id = base_id.clone();
@@ -399,8 +403,11 @@ impl Database {
             let conn = lock_conn!(self.conn);
             let mut dest_conn =
                 Connection::open(&backup_path).map_err(|e| AppError::Database(e.to_string()))?;
-            let backup = Backup::new(&conn, &mut dest_conn)
+            dest_conn.authorizer(Some(import_authorizer));
+            let mut backup = Backup::new(&conn, &mut dest_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
+            #[cfg(unix)]
+            let _ = fs::set_permissions(&backup_path, fs::Permissions::from_mode(0o600));
             backup
                 .step(-1)
                 .map_err(|e| AppError::Database(e.to_string()))?;

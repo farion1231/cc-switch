@@ -101,12 +101,20 @@ impl Database {
         let db_path = get_app_config_dir().join("cc-switch.db");
         let db_exists = db_path.exists();
 
-        // 确保父目录存在
+        // 确保父目录存在,并设置严格权限
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+            #[cfg(unix)]
+            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
         }
 
         let conn = Connection::open(&db_path).map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 新创建的数据库文件设置严格权限,防止其他用户读取
+        #[cfg(unix)]
+        if !db_exists {
+            let _ = std::fs::set_permissions(&db_path, std::fs::Permissions::from_mode(0o600));
+        }
 
         // 启用外键约束
         conn.execute("PRAGMA foreign_keys = ON;", [])

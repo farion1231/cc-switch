@@ -377,9 +377,13 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
+        let exists = path.exists();
         if let Ok(meta) = fs::metadata(path) {
             let perm = meta.permissions().mode();
             let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(perm));
+        }
+        if !exists {
+            let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600));
         }
     }
 
