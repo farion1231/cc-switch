@@ -15,8 +15,8 @@ use crate::codex_state_db::codex_state_db_paths;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
-    TITLE_MAX_CHARS,
+    extract_text, file_size, parse_timestamp_to_ms, path_basename, read_head_tail_lines,
+    truncate_summary, TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "codex";
@@ -410,6 +410,8 @@ fn parse_session_with_titles(
         project_dir,
         created_at,
         last_active_at,
+        size_bytes: file_size(path),
+        size_approximate: false,
         source_path: Some(path.to_string_lossy().to_string()),
         resume_command: Some(format!("codex resume {session_id}")),
     })
