@@ -507,7 +507,7 @@ pub(crate) fn clear_codex_live_auth_api_key_if_matches(
     if !strip_codex_auth_api_key_if_matches(&mut live_auth, expected_key) {
         return Ok(false);
     }
-    if codex_auth_has_login_material(&live_auth) {
+    if codex_auth_has_credential_login_material(&live_auth) {
         write_json_file(&auth_path, &live_auth)?;
     } else {
         delete_file(&auth_path)?;
@@ -2863,6 +2863,21 @@ experimental_bearer_token = "stale-table-key"
         assert_eq!(
             auth,
             json!({ "tokens": { "access_token": "oauth-access" } })
+        );
+
+        let mut metadata_only_auth = json!({
+            "auth_mode": "apikey",
+            "OPENAI_API_KEY": "third-party-key",
+            "last_refresh": "2026-08-13T00:00:00Z",
+            "tokens": { "account_id": "acct-metadata-only" }
+        });
+        assert!(strip_codex_auth_api_key_if_matches(
+            &mut metadata_only_auth,
+            Some("third-party-key")
+        ));
+        assert!(
+            !codex_auth_has_credential_login_material(&metadata_only_auth),
+            "metadata without OAuth tokens must not preserve auth.json"
         );
     }
 

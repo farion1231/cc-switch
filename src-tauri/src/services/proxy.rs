@@ -4475,6 +4475,32 @@ wire_api = "responses"
     }
 
     #[test]
+    #[serial]
+    fn codex_matching_key_cleanup_deletes_metadata_only_auth_file() {
+        let _home = TempHome::new();
+        let auth_path = crate::codex_config::get_codex_auth_path();
+        crate::config::write_json_file(
+            &auth_path,
+            &json!({
+                "auth_mode": "apikey",
+                "OPENAI_API_KEY": "third-party-key",
+                "last_refresh": "2026-08-13T00:00:00Z",
+                "tokens": { "account_id": "acct-metadata-only" }
+            }),
+        )
+        .expect("seed metadata-only auth");
+
+        assert!(
+            crate::codex_config::clear_codex_live_auth_api_key_if_matches(Some("third-party-key"))
+                .expect("clear matching key")
+        );
+        assert!(
+            !auth_path.exists(),
+            "metadata without OAuth credentials must not keep auth.json alive"
+        );
+    }
+
+    #[test]
     fn codex_takeover_backup_preserves_api_key_login_material() {
         let mut target = json!({ "auth": {}, "config": "" });
         let existing = json!({
