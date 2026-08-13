@@ -120,9 +120,17 @@ struct ParsedAssistantUsage {
     cache_read_tokens: u32,
     cache_creation_tokens: u32,
     stop_reason: Option<String>,
+    status_code: u16,
+    error_message: Option<String>,
+    is_api_error: bool,
     timestamp: Option<String>,
     session_id: Option<String>,
 }
+
+/// One-time cursor marker for the parser version that started importing
+/// structured Claude Code API errors. Existing installations have already
+/// advanced past those zero-token rows, so they need one idempotent full scan.
+const CLAUDE_API_ERROR_BACKFILL_MARKER: &str = "__claude_api_error_backfill_v1__";
 
 /// 同步 Claude Code 会话日志到使用统计数据库
 pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppError> {
@@ -150,10 +158,12 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
     // 收集所有 .jsonl 文件
     let jsonl_files = collect_jsonl_files(&projects_dir);
 
+    let force_full_scan = get_sync_state(db, CLAUDE_API_ERROR_BACKFILL_MARKER)? == (0, 0);
+
     for file_path in &jsonl_files {
         result.files_scanned += 1;
 
-        match sync_single_file(db, file_path) {
+        match sync_single_file_with_options(db, file_path, force_full_scan) {
             Ok((imported, skipped)) => {
                 result.imported += imported;
                 result.skipped += skipped;
@@ -164,6 +174,10 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
                 result.errors.push(msg);
             }
         }
+    }
+
+    if force_full_scan {
+        update_sync_state(db, CLAUDE_API_ERROR_BACKFILL_MARKER, 1, 1)?;
     }
 
     if result.imported > 0 {
@@ -250,7 +264,16 @@ fn push_jsonl_children(dir: &Path, files: &mut Vec<PathBuf>) {
 }
 
 /// 同步单个 JSONL 文件，返回 (imported, skipped)
+#[cfg(test)]
 fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppError> {
+    sync_single_file_with_options(db, file_path, false)
+}
+
+fn sync_single_file_with_options(
+    db: &Database,
+    file_path: &Path,
+    force_full_scan: bool,
+) -> Result<(u32, u32), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
 
     // 获取文件元数据
@@ -259,7 +282,11 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
     let file_modified = metadata_modified_nanos(&metadata);
 
     // 检查同步状态
-    let (last_modified, last_offset) = get_sync_state(db, &file_path_str)?;
+    let (last_modified, last_offset) = if force_full_scan {
+        (0, 0)
+    } else {
+        get_sync_state(db, &file_path_str)?
+    };
 
     // 文件未变化则跳过
     if file_modified <= last_modified {
@@ -324,6 +351,17 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
             None => continue,
         };
 
+        let api_error_status = value
+            .get("apiErrorStatus")
+            .and_then(|v| v.as_u64())
+            .filter(|status| (400..=599).contains(status))
+            .map(|status| status as u16);
+        let is_api_error = value
+            .get("isApiErrorMessage")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+            && api_error_status.is_some();
+
         let parsed = ParsedAssistantUsage {
             message_id: msg_id.clone(),
             model: message
@@ -351,6 +389,16 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
                 .get("stop_reason")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
+            status_code: api_error_status.unwrap_or(200),
+            error_message: if is_api_error {
+                value
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            } else {
+                None
+            },
+            is_api_error,
             timestamp: value
                 .get("timestamp")
                 .and_then(|v| v.as_str())
@@ -401,7 +449,7 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
             || msg.output_tokens > 0
             || msg.cache_read_tokens > 0
             || msg.cache_creation_tokens > 0;
-        if !has_billable_tokens {
+        if !has_billable_tokens && !msg.is_api_error {
             continue;
         }
 
@@ -583,8 +631,8 @@ fn insert_session_log_entry(
                 total_cost,
                 0i64,               // latency_ms: 会话日志无此数据
                 Option::<i64>::None, // first_token_ms
-                200i64,             // status_code: 会话日志中的请求只要产生计费 token 即视为成功
-                Option::<String>::None, // error_message
+                msg.status_code as i64,
+                msg.error_message,
                 msg.session_id,
                 Some("session_log"), // provider_type
                 1i64,               // is_streaming: Claude Code 通常使用流式
@@ -713,6 +761,9 @@ mod tests {
             cache_read_tokens: 5000,
             cache_creation_tokens: 10000,
             stop_reason: None,
+            status_code: 200,
+            error_message: None,
+            is_api_error: false,
             timestamp: Some("2026-04-05T12:00:00Z".to_string()),
             session_id: None,
         };
@@ -727,6 +778,9 @@ mod tests {
             cache_read_tokens: 5000,
             cache_creation_tokens: 10000,
             stop_reason: Some("end_turn".to_string()),
+            status_code: 200,
+            error_message: None,
+            is_api_error: false,
             timestamp: Some("2026-04-05T12:00:00Z".to_string()),
             session_id: None,
         };
@@ -778,6 +832,9 @@ mod tests {
             cache_read_tokens: 10,
             cache_creation_tokens: 5,
             stop_reason: Some("end_turn".to_string()),
+            status_code: 200,
+            error_message: None,
+            is_api_error: false,
             timestamp: Some("1970-01-01T00:16:45Z".to_string()),
             session_id: Some("session-1".to_string()),
         };
@@ -887,6 +944,41 @@ mod tests {
             |row| row.get(0),
         )?;
         assert!(!empty_exists, "全 0 token 的 message 应被跳过");
+        drop(conn);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_sync_imports_claude_api_error_without_tokens() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("claude-api-error.jsonl");
+
+        let api_error = r#"{"type":"assistant","message":{"id":"msg_api_error","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"stop_reason":"stop_sequence","content":[{"type":"text","text":"Please run /login · API Error: 403 Access to model denied."}]},"timestamp":"2026-08-12T07:34:44Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"authentication_failed"}"#;
+        fs::write(&file, format!("{api_error}\n")).unwrap();
+
+        let modified = metadata_modified_nanos(&fs::metadata(&file).unwrap());
+        update_sync_state(&db, &file.to_string_lossy(), modified, 1)?;
+        assert_eq!(
+            sync_single_file(&db, &file)?,
+            (0, 0),
+            "普通增量同步不会重读已推进的游标"
+        );
+
+        let (imported, _skipped) = sync_single_file_with_options(&db, &file, true)?;
+        assert_eq!(imported, 1, "结构化 API 错误即使没有 token 也必须被导入");
+
+        let conn = lock_conn!(db.conn);
+        let (status, error): (i64, Option<String>) = conn.query_row(
+            "SELECT status_code, error_message FROM proxy_request_logs WHERE request_id = 'session:msg_api_error'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(status, 403);
+        assert_eq!(error.as_deref(), Some("authentication_failed"));
         drop(conn);
 
         fs::remove_dir_all(&tmp).ok();

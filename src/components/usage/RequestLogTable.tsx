@@ -131,6 +131,7 @@ export function RequestLogTable({
               <SelectItem value="200">200 OK</SelectItem>
               <SelectItem value="400">400</SelectItem>
               <SelectItem value="401">401</SelectItem>
+              <SelectItem value="403">403</SelectItem>
               <SelectItem value="429">429</SelectItem>
               <SelectItem value="500">500</SelectItem>
             </SelectContent>
