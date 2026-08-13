@@ -485,7 +485,8 @@ requires_openai_auth = true
             .and_then(|v| v.get("aihubmix"))
             .and_then(|v| v.get("requires_openai_auth"))
             .and_then(|v| v.as_bool()),
-        Some(true)
+        Some(false),
+        "third-party providers must use the configured API key instead of OpenAI OAuth"
     );
 
     ProviderService::switch(&state, AppType::Codex, "plain-provider")
