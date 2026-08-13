@@ -88,4 +88,17 @@ describe("KimiOAuthSection", () => {
     );
     expect(mockRenderAccountQuota).toHaveBeenNthCalledWith(2, "usable-account");
   });
+
+  it("disables retry while a login attempt is already starting", () => {
+    mockUseKimiOauth.mockReturnValue({
+      ...mockUseKimiOauth(),
+      pollingState: "error",
+      error: "Device Code does not exist",
+      isAddingAccount: true,
+    });
+
+    render(<KimiOAuthSection />);
+
+    expect(screen.getByRole("button", { name: "Retry" })).toBeDisabled();
+  });
 });

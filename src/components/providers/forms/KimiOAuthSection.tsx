@@ -311,6 +311,7 @@ export const KimiOAuthSection: React.FC<KimiOAuthSectionProps> = ({
               variant="outline"
               size="sm"
               onClick={addAccount}
+              disabled={isAddingAccount}
             >
               {t("kimiOauth.retry", "Retry")}
             </Button>

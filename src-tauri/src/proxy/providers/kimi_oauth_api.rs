@@ -707,7 +707,10 @@ impl KimiOAuthApiClient {
             max_response_bytes: MAX_MANAGEMENT_RESPONSE_BYTES,
         };
         let response = self.transport.execute(request).await?;
-        if matches!(response.status, 401..=403) {
+        // Only 401/403 signal a rejected credential. 402 (payment required)
+        // reflects subscription state, not token validity, so it must remain an
+        // ordinary upstream failure and never trigger refresh or reauth.
+        if matches!(response.status, 401 | 403) {
             return Err(KimiOAuthError::ManagementUnauthorized(endpoint));
         }
         if !(200..300).contains(&response.status) {

@@ -361,6 +361,26 @@ async fn profile_retries_transient_transport_and_server_failures() {
 }
 
 #[tokio::test]
+async fn payment_required_is_an_upstream_failure_not_an_auth_failure() {
+    let transport = Arc::new(RecordingTransport::with_responses(vec![Ok(json_response(
+        402,
+        serde_json::json!({"error":"payment_required"}),
+    ))]));
+    let client = KimiOAuthApiClient::new(transport.clone(), Arc::new(RecordingSleeper::default()));
+
+    let error = client
+        .fetch_usage("access-token", &identity())
+        .await
+        .expect_err("HTTP 402 must surface as an error");
+
+    assert!(
+        matches!(error, KimiOAuthError::UpstreamRejected { status: 402, .. }),
+        "402 must stay an ordinary upstream failure, got: {error:?}"
+    );
+    assert_eq!(transport.requests().len(), 1);
+}
+
+#[tokio::test]
 async fn models_require_positive_context_and_return_only_anthropic_protocol() {
     let transport = Arc::new(RecordingTransport::with_responses(vec![Ok(json_response(
         200,

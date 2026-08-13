@@ -494,7 +494,12 @@ impl KimiOAuthManager {
         account_id: Option<&str>,
     ) -> Result<String, KimiOAuthError> {
         let account_id = self.resolve_inference_account_id(account_id).await?;
-        self.force_refresh_for_account(&account_id).await?;
+        // Snapshot the credential that was presumably rejected before queueing
+        // on the refresh lock; if the cache holds a different token once the
+        // lock is acquired, a concurrent rejection already replaced it.
+        let rejected_token = self.cached_token(&account_id).await;
+        self.force_refresh_for_account(&account_id, rejected_token.as_deref())
+            .await?;
         Ok(account_id)
     }
 
@@ -640,7 +645,9 @@ impl KimiOAuthManager {
         let token = self.get_valid_token_for_account(account_id).await?;
         match self.call_management(operation, &token).await {
             Err(KimiOAuthError::ManagementUnauthorized(_)) => {
-                let refreshed = self.force_refresh_for_account(account_id).await?;
+                let refreshed = self
+                    .force_refresh_for_account(account_id, Some(&token))
+                    .await?;
                 match self.call_management(operation, &refreshed).await {
                     Err(KimiOAuthError::ManagementUnauthorized(_)) => {
                         self.mark_reauth_required(account_id).await?;
@@ -673,9 +680,22 @@ impl KimiOAuthManager {
         }
     }
 
-    async fn force_refresh_for_account(&self, account_id: &str) -> Result<String, KimiOAuthError> {
+    async fn force_refresh_for_account(
+        &self,
+        account_id: &str,
+        rejected_access_token: Option<&str>,
+    ) -> Result<String, KimiOAuthError> {
         let refresh_lock = self.get_refresh_lock(account_id).await;
         let _refresh_guard = refresh_lock.lock().await;
+        // A concurrent rejection may have already refreshed this account while
+        // this task waited on the per-account lock. Rotating again would
+        // discard a live token and burn another refresh grant, so reuse the
+        // replacement unless the cache still holds the rejected credential.
+        if let Some(current) = self.cached_token_for_usable_account(account_id).await {
+            if rejected_access_token != Some(current.as_str()) {
+                return Ok(current);
+            }
+        }
         let account = self
             .accounts
             .read()
@@ -1965,6 +1985,100 @@ mod tests {
         assert_eq!(
             manager.access_tokens.read().await["account-one"].token,
             "cached-access"
+        );
+    }
+
+    #[tokio::test]
+    async fn payment_required_usage_response_preserves_credentials_without_refresh() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let (manager, transport) = test_manager(
+            data_dir.path().to_path_buf(),
+            vec![Ok(json_response(
+                402,
+                serde_json::json!({"error":"payment_required"}),
+            ))],
+        );
+        manager
+            .add_account_internal(
+                "account-one".to_string(),
+                None,
+                "initial-refresh".to_string(),
+                None,
+                Some(cached_access("cached-access")),
+            )
+            .await
+            .unwrap();
+
+        let result = manager.fetch_usage_for_account("account-one").await;
+
+        assert!(matches!(
+            result,
+            Err(KimiOAuthError::UpstreamRejected { status: 402, .. })
+        ));
+        assert_eq!(
+            transport.requests.lock().unwrap().len(),
+            1,
+            "a 402 must not trigger a token refresh"
+        );
+        assert!(
+            !manager
+                .accounts
+                .read()
+                .await
+                .get("account-one")
+                .unwrap()
+                .requires_reauth
+        );
+        assert_eq!(
+            manager.access_tokens.read().await["account-one"].token,
+            "cached-access"
+        );
+    }
+
+    #[tokio::test]
+    async fn losing_concurrent_auth_rejection_reuses_the_replacement_token() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let (manager, transport) = test_manager(
+            data_dir.path().to_path_buf(),
+            vec![Ok(json_response(
+                200,
+                serde_json::json!({
+                    "access_token":"refreshed-access",
+                    "refresh_token":"refreshed-refresh",
+                    "expires_in":900
+                }),
+            ))],
+        );
+        manager
+            .add_account_internal(
+                "account-one".to_string(),
+                None,
+                "initial-refresh".to_string(),
+                None,
+                Some(cached_access("rejected-access")),
+            )
+            .await
+            .unwrap();
+
+        // Two concurrent requests both saw "rejected-access" fail; the winner
+        // of the refresh-lock race performs the real rotation.
+        let winner = manager
+            .force_refresh_for_account("account-one", Some("rejected-access"))
+            .await
+            .unwrap();
+        // The loser must reuse the freshly issued replacement instead of
+        // rotating it again and burning another refresh grant.
+        let loser = manager
+            .force_refresh_for_account("account-one", Some("rejected-access"))
+            .await
+            .unwrap();
+
+        assert_eq!(winner, "refreshed-access");
+        assert_eq!(loser, "refreshed-access");
+        assert_eq!(
+            transport.requests.lock().unwrap().len(),
+            1,
+            "only the first rejection may perform a real token rotation"
         );
     }
 }
