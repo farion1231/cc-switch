@@ -17,7 +17,12 @@ const ENV_LINE = /^[A-Z][A-Z0-9_]*=[^=]/;
 /** A model row validation result, named so the UI can focus the offending row. */
 export interface DshModelValidationFailure {
   index: number;
-  message: string;
+  messageKey:
+    | "dsh.validation.modelRequired"
+    | "dsh.validation.modelIdRequired"
+    | "dsh.validation.modelIdDuplicate"
+    | "dsh.validation.positiveInteger";
+  field?: "contextWindow" | "maxTokens";
 }
 
 /** Validate model ids and positive capacity overrides. */
@@ -26,20 +31,25 @@ export function validateDshModels(
   requireOne = true,
 ): DshModelValidationFailure | undefined {
   if (requireOne && models.length === 0) {
-    return { index: 0, message: "至少填写一个模型" };
+    return { index: 0, messageKey: "dsh.validation.modelRequired" };
   }
   const seen = new Set<string>();
   for (const [index, model] of models.entries()) {
     const id = model.id.trim();
-    if (!id) return { index, message: "模型 ID 不能为空" };
-    if (seen.has(id)) return { index, message: "模型 ID 不能重复" };
+    if (!id) return { index, messageKey: "dsh.validation.modelIdRequired" };
+    if (seen.has(id))
+      return { index, messageKey: "dsh.validation.modelIdDuplicate" };
     seen.add(id);
     for (const [field, value] of [
       ["contextWindow", model.contextWindow],
       ["maxTokens", model.maxTokens],
     ] as const) {
       if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
-        return { index, message: `${field} 必须为正整数` };
+        return {
+          index,
+          messageKey: "dsh.validation.positiveInteger",
+          field,
+        };
       }
     }
   }
@@ -47,30 +57,38 @@ export function validateDshModels(
 }
 
 /** Validate a route id without exposing a backend regular expression. */
-export function validateDshRoute(route: string): string | undefined {
+export function validateDshRoute(
+  route: string,
+): "dsh.validation.routeRequired" | "dsh.validation.routeFormat" | undefined {
   const value = route.trim();
-  if (!value) return "Provider ID 不能为空";
+  if (!value) return "dsh.validation.routeRequired";
   if (!DSH_ROUTE_PATTERN.test(value)) {
-    return "Provider ID 只能使用小写字母、数字和短横线，且必须以字母开头";
+    return "dsh.validation.routeFormat";
   }
   return undefined;
 }
 
 /** Validate a one-shot API-key field. Empty means keep/no credential. */
-export function validateDshApiKey(value: string): string | undefined {
+export function validateDshApiKey(
+  value: string,
+):
+  | "dsh.validation.apiKeyWhitespace"
+  | "dsh.validation.apiKeyQuoted"
+  | "dsh.validation.apiKeyFormat"
+  | undefined {
   if (value.length === 0) return undefined;
   const trimmed = value.trim();
-  if (!trimmed) return "API key 不能只包含空白字符";
+  if (!trimmed) return "dsh.validation.apiKeyWhitespace";
   const first = trimmed[0];
   if (
     (first === "'" || first === '"' || first === "`") &&
     trimmed.length > 1 &&
     trimmed.endsWith(first)
   ) {
-    return "请粘贴未加引号的 API key";
+    return "dsh.validation.apiKeyQuoted";
   }
   if (ENV_LINE.test(trimmed) || !LEGAL_API_KEY.test(trimmed)) {
-    return "API key 含有无效字符或环境变量赋值格式";
+    return "dsh.validation.apiKeyFormat";
   }
   return undefined;
 }

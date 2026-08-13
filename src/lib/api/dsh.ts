@@ -97,6 +97,8 @@ export interface DshCustomInput {
 export interface DshCredentialWrite {
   ref: string;
   value: string;
+  /** Expected credentials document revision for stale-editor protection. */
+  expectedRevision?: string;
 }
 
 /** Input for model discovery; `apiKey` is write-only and never returned. */
@@ -139,7 +141,13 @@ export const DSH_CONFLICT_CODES = new Set([
  * @returns a safe error payload; secret-bearing fields are intentionally ignored.
  */
 export function readDshError(error: unknown): DshErrorPayload {
-  if (typeof error === "string") return { message: error };
+  if (typeof error === "string") {
+    try {
+      return readDshError(JSON.parse(error) as unknown);
+    } catch {
+      return { message: error };
+    }
+  }
   if (!(error && typeof error === "object")) return {};
   const value = error as Record<string, unknown>;
   const nested = value.payload;
@@ -175,10 +183,7 @@ export function isDshConflictError(error: unknown): boolean {
 }
 
 /** Return a bounded user-facing error string, omitting untrusted object dumps. */
-export function dshErrorMessage(
-  error: unknown,
-  fallback = "DSH 操作失败",
-): string {
+export function dshErrorMessage(error: unknown, fallback: string): string {
   const payload = readDshError(error);
   const text = payload.message ?? payload.detail;
   if (!text || text.length > 500) return fallback;
@@ -253,21 +258,30 @@ export const dshApi = {
   /** Save the complete default provider/model selection. */
   async setDefaultModel(
     selection: DshDefaultModel,
+    expectedRevision?: string,
   ): Promise<DshSnapshot | undefined> {
     const result = await invoke<DshMutationResponse>("dsh_set_default_model", {
       selection,
+      expectedRevision,
     });
     return unwrapSnapshot(result);
   },
 
   /** Store one API key in the DSH credentials provider; response has no value. */
   async setCredential(input: DshCredentialWrite): Promise<void> {
-    await invoke<void>("dsh_set_credential", { ...input });
+    await invoke<void>("dsh_set_credential", {
+      reference: input.ref,
+      value: input.value,
+      expectedRevision: input.expectedRevision,
+    });
   },
 
   /** Remove one credential reference after an explicit user confirmation. */
-  async unsetCredential(ref: string): Promise<void> {
-    await invoke<void>("dsh_unset_credential", { ref });
+  async unsetCredential(ref: string, expectedRevision?: string): Promise<void> {
+    await invoke<void>("dsh_unset_credential", {
+      reference: ref,
+      expectedRevision,
+    });
   },
 
   /** Probe a compatible endpoint; `apiKey` is never returned or persisted. */

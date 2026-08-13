@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Eye, EyeOff, RefreshCw } from "lucide-react";
 import type {
   DshCredentialInfo,
@@ -7,6 +8,7 @@ import type {
   DshNativeInput,
   DshProvider,
 } from "@/lib/api/dsh";
+import { dshErrorMessage, isDshConflictError } from "@/lib/api/dsh";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -39,15 +41,16 @@ interface DshProviderDialogProps {
   open: boolean;
   provider: DshProvider | null;
   protocols: readonly string[];
+  credentialsRevision?: string;
   readOnly?: boolean;
   onClose: () => void;
   onSaveNative: (
     input: DshNativeInput,
-    apiKey?: { ref: string; value: string },
+    apiKey?: { ref: string; value: string; expectedRevision?: string },
   ) => Promise<void>;
   onSaveCustom: (
     input: DshCustomInput,
-    apiKey?: { ref: string; value: string },
+    apiKey?: { ref: string; value: string; expectedRevision?: string },
   ) => Promise<void>;
   onDiscover: (input: {
     baseURL: string;
@@ -56,12 +59,18 @@ interface DshProviderDialogProps {
   }) => Promise<DshModel[]>;
 }
 
-function credentialLabel(credential?: DshCredentialInfo): string {
-  if (!credential) return "未配置 API key";
-  if (!credential.configured) return `未配置（${credential.ref}）`;
+function credentialLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  credential?: DshCredentialInfo,
+): string {
+  if (!credential) return t("dsh.credentials.notConfigured");
+  if (!credential.configured)
+    return t("dsh.credentials.notConfiguredRef", { ref: credential.ref });
   if (credential.source === "env" && !credential.writable)
-    return `由启动环境提供（${credential.ref}）`;
-  return `已配置（${credential.source ?? "managed"}）`;
+    return t("dsh.credentials.environmentRef", { ref: credential.ref });
+  return t("dsh.credentials.configuredSource", {
+    source: credential.source ?? t("dsh.credentials.managed"),
+  });
 }
 
 /** Native/custom DSH route editor. API keys are held only in this dialog. */
@@ -69,12 +78,14 @@ export function DshProviderDialog({
   open,
   provider,
   protocols,
+  credentialsRevision,
   readOnly = false,
   onClose,
   onSaveNative,
   onSaveCustom,
   onDiscover,
 }: DshProviderDialogProps) {
+  const { t } = useTranslation();
   const isNative = provider?.kind === "native";
   const isCreate = provider === null;
   const [route, setRoute] = useState("");
@@ -121,7 +132,7 @@ export function DshProviderDialog({
         : undefined;
   const modelError = validateDshModels(models);
   const baseError =
-    !isNative && !baseURL.trim() ? "Base URL 不能为空" : undefined;
+    !isNative && !baseURL.trim() ? "dsh.validation.baseUrlRequired" : undefined;
   const disabled = readOnly || busy || (provider?.kind === "native" && false);
   const canSubmit =
     !disabled && !keyError && !routeError && !modelError && !baseError;
@@ -134,10 +145,14 @@ export function DshProviderDialog({
       if (!values.includes(protocol)) values.push(protocol);
     return values;
   }, [protocols]);
+  const displayError = (error: unknown, fallbackKey: string) =>
+    isDshConflictError(error)
+      ? t("dsh.errors.conflict")
+      : dshErrorMessage(error, t(fallbackKey));
 
   const discover = async () => {
     if (!baseURL.trim() || !api) {
-      setFailure("请先填写 Base URL 和协议");
+      setFailure(t("dsh.validation.discoveryFieldsRequired"));
       return;
     }
     setDiscovering(true);
@@ -156,9 +171,7 @@ export function DshProviderDialog({
         ];
       });
     } catch (error) {
-      setFailure(
-        error instanceof Error ? error.message : "模型读取失败；请手动填写模型",
-      );
+      setFailure(displayError(error, "dsh.errors.modelDiscovery"));
     } finally {
       setDiscovering(false);
     }
@@ -171,7 +184,11 @@ export function DshProviderDialog({
     try {
       const trimmedKey = apiKey.trim();
       const keyPayload = trimmedKey
-        ? { ref: effectiveRef, value: trimmedKey }
+        ? {
+            ref: effectiveRef,
+            value: trimmedKey,
+            expectedRevision: credentialsRevision,
+          }
         : undefined;
       if (isNative && provider) {
         await onSaveNative(
@@ -200,7 +217,7 @@ export function DshProviderDialog({
       setApiKey("");
       onClose();
     } catch (error) {
-      setFailure(error instanceof Error ? error.message : "保存失败");
+      setFailure(displayError(error, "dsh.errors.save"));
     } finally {
       setBusy(false);
     }
@@ -214,22 +231,19 @@ export function DshProviderDialog({
         <DialogHeader>
           <DialogTitle>
             {isNative
-              ? "DeepSeek Official 设置"
+              ? t("dsh.dialog.nativeTitle")
               : isCreate
-                ? "添加 DSH Provider"
-                : `编辑 ${provider?.displayName}`}
+                ? t("dsh.dialog.addTitle")
+                : t("dsh.dialog.editTitle", {
+                    name: provider?.displayName,
+                  })}
           </DialogTitle>
-          <DialogDescription>
-            配置直接写入 DSH settings.yaml；cc-switch 不保存 provider 或 API
-            key。
-          </DialogDescription>
+          <DialogDescription>{t("dsh.dialog.description")}</DialogDescription>
         </DialogHeader>
         <div className="max-h-[65vh] space-y-5 overflow-y-auto px-6 py-5">
           {readOnly && (
             <Alert>
-              <AlertDescription>
-                当前 DSH 配置为只读。可以查看，但不能写入。
-              </AlertDescription>
+              <AlertDescription>{t("dsh.dialog.readOnly")}</AlertDescription>
             </Alert>
           )}
           {failure && (
@@ -239,7 +253,7 @@ export function DshProviderDialog({
           )}
           {!isNative && (
             <div className="space-y-1.5">
-              <Label htmlFor="dsh-route">Provider ID</Label>
+              <Label htmlFor="dsh-route">{t("dsh.fields.providerId")}</Label>
               <Input
                 id="dsh-route"
                 value={route}
@@ -248,28 +262,30 @@ export function DshProviderDialog({
                 placeholder="my-gateway"
               />
               {routeError && (
-                <p className="text-xs text-destructive">{routeError}</p>
+                <p className="text-xs text-destructive">{t(routeError)}</p>
               )}
             </div>
           )}
           {!isNative && (
             <div className="space-y-1.5">
-              <Label htmlFor="dsh-display-name">显示名称（可选）</Label>
+              <Label htmlFor="dsh-display-name">
+                {t("dsh.fields.displayName")}
+              </Label>
               <Input
                 id="dsh-display-name"
                 value={displayName}
                 disabled={disabled}
                 onChange={(event) => setDisplayName(event.target.value)}
-                placeholder={route || "Provider"}
+                placeholder={route || t("dsh.fields.providerPlaceholder")}
               />
             </div>
           )}
           {!isNative && (
             <div className="space-y-1.5">
-              <Label>协议</Label>
+              <Label>{t("dsh.fields.protocol")}</Label>
               <Select value={api} onValueChange={setApi} disabled={disabled}>
                 <SelectTrigger>
-                  <SelectValue placeholder="选择协议" />
+                  <SelectValue placeholder={t("dsh.fields.selectProtocol")} />
                 </SelectTrigger>
                 <SelectContent>
                   {protocolChoices.map((value) => (
@@ -283,7 +299,9 @@ export function DshProviderDialog({
           )}
           <div className="space-y-1.5">
             <Label htmlFor="dsh-base-url">
-              Base URL{isNative ? "（可选）" : ""}
+              {isNative
+                ? t("dsh.fields.baseUrlOptional")
+                : t("dsh.fields.baseUrl")}
             </Label>
             <Input
               id="dsh-base-url"
@@ -293,11 +311,11 @@ export function DshProviderDialog({
               placeholder="https://api.deepseek.com"
             />
             {baseError && (
-              <p className="text-xs text-destructive">{baseError}</p>
+              <p className="text-xs text-destructive">{t(baseError)}</p>
             )}
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="dsh-api-key">API key（可选，仅写入时填写）</Label>
+            <Label htmlFor="dsh-api-key">{t("dsh.fields.apiKey")}</Label>
             <div className="flex gap-2">
               <Input
                 id="dsh-api-key"
@@ -308,7 +326,7 @@ export function DshProviderDialog({
                   (credential?.source === "env" && !credential.writable)
                 }
                 onChange={(event) => setApiKey(event.target.value)}
-                placeholder={credentialLabel(credential)}
+                placeholder={credentialLabel(t, credential)}
                 aria-invalid={Boolean(keyError)}
               />
               <Button
@@ -316,7 +334,11 @@ export function DshProviderDialog({
                 variant="outline"
                 size="icon"
                 onClick={() => setShowKey((value) => !value)}
-                aria-label={showKey ? "隐藏 API key" : "显示 API key"}
+                aria-label={
+                  showKey
+                    ? t("dsh.credentials.hide")
+                    : t("dsh.credentials.show")
+                }
                 disabled={disabled}
               >
                 <>
@@ -330,10 +352,12 @@ export function DshProviderDialog({
             </div>
             {credential?.source === "env" && !credential.writable && (
               <p className="text-xs text-muted-foreground">
-                该 key 来自启动环境，不能由 DSH credentials 文件覆盖。
+                {t("dsh.credentials.environmentReadOnly")}
               </p>
             )}
-            {keyError && <p className="text-xs text-destructive">{keyError}</p>}
+            {keyError && (
+              <p className="text-xs text-destructive">{t(keyError)}</p>
+            )}
           </div>
           <DshModelEditor
             models={models}
@@ -346,14 +370,15 @@ export function DshProviderDialog({
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </Button>
           <Button
             type="button"
             onClick={() => void save()}
             disabled={!canSubmit}
           >
-            {busy ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}保存
+            {busy ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}
+            {t("common.save")}
           </Button>
         </DialogFooter>
       </DialogContent>

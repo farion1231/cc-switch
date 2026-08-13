@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { Plus, Trash2 } from "lucide-react";
 import type { DshModel } from "@/lib/api/dsh";
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,7 @@ export function DshModelEditor({
   onDiscover,
   discovering = false,
 }: DshModelEditorProps) {
+  const { t } = useTranslation();
   const failure = useMemo(() => validateDshModels(models), [models]);
 
   const update = (index: number, patch: Partial<DshModel>) => {
@@ -46,9 +48,9 @@ export function DshModelEditor({
     <fieldset className="space-y-3" disabled={disabled}>
       <div className="flex items-center justify-between gap-3">
         <div>
-          <Label>模型目录</Label>
+          <Label>{t("dsh.models.title")}</Label>
           <p className="mt-1 text-xs text-muted-foreground">
-            模型 ID 会原样发送给 DSH；容量字段仅描述 endpoint 能力。
+            {t("dsh.models.description")}
           </p>
         </div>
         <div className="flex gap-2">
@@ -60,7 +62,9 @@ export function DshModelEditor({
               onClick={onDiscover}
               disabled={discovering}
             >
-              {discovering ? "读取中…" : "从 endpoint 读取"}
+              {discovering
+                ? t("dsh.models.discovering")
+                : t("dsh.models.discover")}
             </Button>
           )}
           <Button
@@ -70,14 +74,14 @@ export function DshModelEditor({
             onClick={() => onChange([...models, { id: "" }])}
           >
             <Plus className="h-3.5 w-3.5" />
-            添加模型
+            {t("dsh.models.add")}
           </Button>
         </div>
       </div>
 
       {models.length === 0 && (
         <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-          至少添加一个模型。Anthropic endpoint 不支持自动读取，请手动填写。
+          {t("dsh.models.empty")}
         </div>
       )}
 
@@ -86,7 +90,9 @@ export function DshModelEditor({
           <div key={`${index}-${model.id}`} className="rounded-md border p-3">
             <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
               <div className="space-y-1.5">
-                <Label htmlFor={`dsh-model-id-${index}`}>模型 ID</Label>
+                <Label htmlFor={`dsh-model-id-${index}`}>
+                  {t("dsh.models.id")}
+                </Label>
                 <Input
                   id={`dsh-model-id-${index}`}
                   value={model.id}
@@ -99,7 +105,7 @@ export function DshModelEditor({
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor={`dsh-model-name-${index}`}>
-                  显示名称（可选）
+                  {t("dsh.models.displayName")}
                 </Label>
                 <Input
                   id={`dsh-model-name-${index}`}
@@ -115,7 +121,7 @@ export function DshModelEditor({
                   type="button"
                   variant="ghost"
                   size="icon"
-                  aria-label={`删除模型 ${index + 1}`}
+                  aria-label={t("dsh.models.remove", { index: index + 1 })}
                   onClick={() => remove(index)}
                 >
                   <Trash2 className="h-4 w-4 text-destructive" />
@@ -125,7 +131,7 @@ export function DshModelEditor({
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor={`dsh-model-context-${index}`}>
-                  Context window（可选）
+                  {t("dsh.models.contextWindow")}
                 </Label>
                 <Input
                   id={`dsh-model-context-${index}`}
@@ -141,7 +147,7 @@ export function DshModelEditor({
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor={`dsh-model-max-${index}`}>
-                  Max output tokens（可选）
+                  {t("dsh.models.maxTokens")}
                 </Label>
                 <Input
                   id={`dsh-model-max-${index}`}
@@ -158,7 +164,11 @@ export function DshModelEditor({
             </div>
             {failure?.index === index && (
               <p className="mt-2 text-xs text-destructive" role="alert">
-                {failure.message}
+                {t(failure.messageKey, {
+                  field: failure.field
+                    ? t(`dsh.validation.fields.${failure.field}`)
+                    : "",
+                })}
               </p>
             )}
           </div>

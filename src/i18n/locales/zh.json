@@ -3033,6 +3033,133 @@
     "suggestedDefaults": "应用建议默认配置",
     "suggestedDefaultsHint": "使用此预设推荐的默认模型配置"
   },
+  "dsh": {
+    "description": "实时管理 DSH settings.yaml 与 credentials 文件，不会导入 cc-switch 数据库。",
+    "home": "Home：{{path}}",
+    "loading": "正在读取 DSH 配置…",
+    "actions": {
+      "openHome": "打开目录",
+      "retry": "重试",
+      "addProvider": "添加 Provider",
+      "resetNative": "恢复默认"
+    },
+    "readOnly": {
+      "title": "只读配置",
+      "description": "当前 DSH settings 或 credentials provider 不可写；可以查看和刷新，但保存操作已禁用。"
+    },
+    "unsupported": {
+      "title": "存在无法在此编辑的配置",
+      "description": "此页面只管理 native DeepSeek 和 OpenAI/Anthropic compatible routes；其他字段会原样保留。",
+      "learnMore": "了解范围"
+    },
+    "defaultModel": {
+      "title": "新 Agent 默认模型",
+      "description": "只影响之后创建的 Agent；现有 session 保留原选择。",
+      "unavailable": "当前默认模型已不在配置目录中，请重新选择。",
+      "providerPlaceholder": "选择 Provider",
+      "modelPlaceholder": "选择模型"
+    },
+    "providers": {
+      "defaultBadge": "默认 Provider",
+      "native": "原生",
+      "custom": "自定义",
+      "modelCount": "{{count}} 个模型",
+      "environmentKey": "环境 key",
+      "keyConfigured": "key 已配置",
+      "keyMissing": "未配置 key",
+      "readOnlySuffix": "（只读）",
+      "defaultModel": "默认模型：{{model}}"
+    },
+    "dialog": {
+      "nativeTitle": "DeepSeek Official 设置",
+      "addTitle": "添加 DSH Provider",
+      "editTitle": "编辑 {{name}}",
+      "description": "配置直接写入 DSH settings.yaml；cc-switch 不保存 Provider 或 API key。",
+      "readOnly": "当前 DSH 配置为只读。可以查看，但不能写入。"
+    },
+    "fields": {
+      "provider": "Provider",
+      "model": "模型",
+      "providerId": "Provider ID",
+      "providerPlaceholder": "Provider",
+      "displayName": "显示名称（可选）",
+      "protocol": "协议",
+      "selectProtocol": "选择协议",
+      "baseUrl": "Base URL",
+      "baseUrlOptional": "Base URL（可选）",
+      "apiKey": "API key（可选，仅写入时填写）"
+    },
+    "credentials": {
+      "notConfigured": "未配置 API key",
+      "notConfiguredRef": "未配置（{{ref}}）",
+      "environmentRef": "由运行环境提供（{{ref}}）",
+      "configuredSource": "已配置（{{source}}）",
+      "managed": "托管文件",
+      "hide": "隐藏 API key",
+      "show": "显示 API key",
+      "environmentReadOnly": "此 key 被报告为来自 DSH 运行环境，不能由 credentials 文件覆盖。"
+    },
+    "models": {
+      "title": "模型目录",
+      "description": "模型 ID 会原样发送给 DSH；容量字段仅描述 endpoint 能力。",
+      "discover": "从 endpoint 读取",
+      "discovering": "读取中…",
+      "add": "添加模型",
+      "empty": "至少添加一个模型。Anthropic endpoint 不支持自动读取，请手动填写。",
+      "id": "模型 ID",
+      "displayName": "显示名称（可选）",
+      "remove": "删除模型 {{index}}",
+      "contextWindow": "Context window（可选）",
+      "maxTokens": "Max output tokens（可选）"
+    },
+    "validation": {
+      "modelRequired": "至少填写一个模型",
+      "modelIdRequired": "模型 ID 不能为空",
+      "modelIdDuplicate": "模型 ID 不能重复",
+      "positiveInteger": "{{field}} 必须为正整数",
+      "fields": {
+        "contextWindow": "Context window",
+        "maxTokens": "Max output tokens"
+      },
+      "routeRequired": "Provider ID 不能为空",
+      "routeFormat": "Provider ID 只能使用小写字母、数字和短横线，且必须以字母开头",
+      "apiKeyWhitespace": "API key 不能只包含空白字符",
+      "apiKeyQuoted": "请粘贴未加引号的 API key",
+      "apiKeyFormat": "API key 含有无效字符或环境变量赋值格式",
+      "baseUrlRequired": "Base URL 不能为空",
+      "discoveryFieldsRequired": "请先填写 Base URL 和协议"
+    },
+    "errors": {
+      "conflict": "配置在编辑期间发生变化，请刷新后重试；你的草稿未被覆盖。",
+      "read": "读取 DSH 配置失败",
+      "readTitle": "无法读取 DSH 配置",
+      "readHint": "请检查 DSH Home、YAML 格式和文件权限",
+      "defaultModelSave": "默认模型保存失败",
+      "defaultProviderDelete": "该 Provider 是新 Agent 的默认 Provider，请先选择替代模型。",
+      "providerRemove": "Provider 移除失败",
+      "nativeReset": "恢复默认设置失败",
+      "modelDiscovery": "模型读取失败；请手动填写模型",
+      "credentialSave": "Provider 已保存，但 API key 写入失败",
+      "save": "保存失败"
+    },
+    "messages": {
+      "refreshed": "DSH 配置已刷新",
+      "nativeSaved": "DeepSeek Official 已保存",
+      "providerUpdated": "Provider 已更新",
+      "providerAdded": "Provider 已添加",
+      "providerRemoved": "Provider 已移除",
+      "nativeReset": "已恢复 DeepSeek 默认设置",
+      "defaultModelSaved": "默认模型已保存",
+      "profileSavedKeyFailed": "Provider 配置已保存，但 API key 未写入；请编辑已保存的 Provider 重试。"
+    },
+    "deleteDialog": {
+      "ariaLabel": "确认删除 Provider",
+      "title": "删除 {{name}}？",
+      "description": "只删除 DSH route，不会自动删除共享 API key。若该 route 是默认 Provider，必须先选择替代模型。",
+      "deleting": "删除中…",
+      "confirm": "确认删除"
+    }
+  },
   "subscription": {
     "title": "订阅额度",
     "fiveHour": "5小时",

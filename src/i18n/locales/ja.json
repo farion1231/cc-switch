@@ -3033,6 +3033,133 @@
     "suggestedDefaults": "推奨デフォルト設定を適用",
     "suggestedDefaultsHint": "このプリセットの推奨デフォルトモデル設定を使用します"
   },
+  "dsh": {
+    "description": "DSH の settings.yaml と credentials ファイルを直接管理します。cc-switch データベースには取り込みません。",
+    "home": "Home: {{path}}",
+    "loading": "DSH 設定を読み込んでいます…",
+    "actions": {
+      "openHome": "フォルダーを開く",
+      "retry": "再試行",
+      "addProvider": "Provider を追加",
+      "resetNative": "既定値に戻す"
+    },
+    "readOnly": {
+      "title": "読み取り専用設定",
+      "description": "現在の DSH settings または credentials provider は書き込みできません。表示と更新はできますが、保存操作は無効です。"
+    },
+    "unsupported": {
+      "title": "ここでは編集できない設定があります",
+      "description": "このページでは native DeepSeek と OpenAI/Anthropic compatible routes のみを管理します。その他のフィールドは変更せず保持します。",
+      "learnMore": "対象範囲を見る"
+    },
+    "defaultModel": {
+      "title": "新しい Agent の既定モデル",
+      "description": "今後作成する Agent のみに適用されます。既存の session は選択済みのモデルを保持します。",
+      "unavailable": "現在の既定モデルは設定済みカタログにありません。別のモデルを選択してください。",
+      "providerPlaceholder": "Provider を選択",
+      "modelPlaceholder": "モデルを選択"
+    },
+    "providers": {
+      "defaultBadge": "既定の Provider",
+      "native": "ネイティブ",
+      "custom": "カスタム",
+      "modelCount": "{{count}} モデル",
+      "environmentKey": "環境 key",
+      "keyConfigured": "key 設定済み",
+      "keyMissing": "key 未設定",
+      "readOnlySuffix": "（読み取り専用）",
+      "defaultModel": "既定モデル: {{model}}"
+    },
+    "dialog": {
+      "nativeTitle": "DeepSeek Official 設定",
+      "addTitle": "DSH Provider を追加",
+      "editTitle": "{{name}} を編集",
+      "description": "設定は DSH settings.yaml に直接書き込まれます。cc-switch は Provider や API key を保存しません。",
+      "readOnly": "現在の DSH 設定は読み取り専用です。表示できますが、変更を書き込めません。"
+    },
+    "fields": {
+      "provider": "Provider",
+      "model": "モデル",
+      "providerId": "Provider ID",
+      "providerPlaceholder": "Provider",
+      "displayName": "表示名（任意）",
+      "protocol": "プロトコル",
+      "selectProtocol": "プロトコルを選択",
+      "baseUrl": "Base URL",
+      "baseUrlOptional": "Base URL（任意）",
+      "apiKey": "API key（任意、書き込む場合のみ入力）"
+    },
+    "credentials": {
+      "notConfigured": "API key 未設定",
+      "notConfiguredRef": "未設定（{{ref}}）",
+      "environmentRef": "実行環境から提供（{{ref}}）",
+      "configuredSource": "設定済み（{{source}}）",
+      "managed": "管理ファイル",
+      "hide": "API key を隠す",
+      "show": "API key を表示",
+      "environmentReadOnly": "この key は DSH 実行環境から提供されたものとして報告されており、credentials ファイルでは上書きできません。"
+    },
+    "models": {
+      "title": "モデルカタログ",
+      "description": "モデル ID は変更せず DSH に送信します。容量フィールドは endpoint の能力のみを表します。",
+      "discover": "endpoint から読み込む",
+      "discovering": "読み込み中…",
+      "add": "モデルを追加",
+      "empty": "モデルを 1 つ以上追加してください。Anthropic endpoint は自動取得に対応していないため、手動で入力してください。",
+      "id": "モデル ID",
+      "displayName": "表示名（任意）",
+      "remove": "モデル {{index}} を削除",
+      "contextWindow": "Context window（任意）",
+      "maxTokens": "Max output tokens（任意）"
+    },
+    "validation": {
+      "modelRequired": "モデルを 1 つ以上入力してください",
+      "modelIdRequired": "モデル ID は必須です",
+      "modelIdDuplicate": "モデル ID は重複できません",
+      "positiveInteger": "{{field}} は正の整数である必要があります",
+      "fields": {
+        "contextWindow": "Context window",
+        "maxTokens": "Max output tokens"
+      },
+      "routeRequired": "Provider ID は必須です",
+      "routeFormat": "Provider ID は小文字で始め、小文字、数字、ハイフンのみを使用してください",
+      "apiKeyWhitespace": "API key を空白文字だけにすることはできません",
+      "apiKeyQuoted": "引用符を付けずに API key を貼り付けてください",
+      "apiKeyFormat": "API key に無効な文字または環境変数代入形式が含まれています",
+      "baseUrlRequired": "Base URL は必須です",
+      "discoveryFieldsRequired": "先に Base URL を入力してプロトコルを選択してください"
+    },
+    "errors": {
+      "conflict": "編集中に設定が変更されました。更新してから再試行してください。下書きは保持されています。",
+      "read": "DSH 設定の読み込みに失敗しました",
+      "readTitle": "DSH 設定を読み込めません",
+      "readHint": "DSH Home、YAML 形式、ファイル権限を確認してください",
+      "defaultModelSave": "既定モデルの保存に失敗しました",
+      "defaultProviderDelete": "この Provider は新しい Agent の既定 Provider です。先に代替モデルを選択してください。",
+      "providerRemove": "Provider の削除に失敗しました",
+      "nativeReset": "既定設定への復元に失敗しました",
+      "modelDiscovery": "モデルの読み込みに失敗しました。手動で入力してください。",
+      "credentialSave": "Provider は保存されましたが、API key を書き込めませんでした",
+      "save": "保存に失敗しました"
+    },
+    "messages": {
+      "refreshed": "DSH 設定を更新しました",
+      "nativeSaved": "DeepSeek Official を保存しました",
+      "providerUpdated": "Provider を更新しました",
+      "providerAdded": "Provider を追加しました",
+      "providerRemoved": "Provider を削除しました",
+      "nativeReset": "DeepSeek の既定設定に戻しました",
+      "defaultModelSaved": "既定モデルを保存しました",
+      "profileSavedKeyFailed": "Provider 設定は保存されましたが、API key は書き込まれませんでした。保存済みの Provider を編集して再試行してください。"
+    },
+    "deleteDialog": {
+      "ariaLabel": "Provider 削除の確認",
+      "title": "{{name}} を削除しますか？",
+      "description": "DSH route のみを削除し、共有 API key は自動削除しません。この route が既定 Provider の場合は、先に代替モデルを選択してください。",
+      "deleting": "削除中…",
+      "confirm": "削除する"
+    }
+  },
   "subscription": {
     "title": "サブスクリプションクォータ",
     "fiveHour": "5時間",

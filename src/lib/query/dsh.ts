@@ -57,7 +57,7 @@ export function useDshActions() {
       if (snapshot) {
         queryClient.setQueryData(dshKeys.snapshot, snapshot);
       } else {
-        await queryClient.invalidateQueries({ queryKey: dshKeys.snapshot });
+        void queryClient.invalidateQueries({ queryKey: dshKeys.snapshot });
       }
       return snapshot;
     },
@@ -104,8 +104,11 @@ export function useDshActions() {
   );
 
   const setDefaultModel = useCallback(
-    async (selection: DshDefaultModel): Promise<DshSnapshot | undefined> =>
-      commitSnapshot(await dshApi.setDefaultModel(selection)),
+    async (
+      selection: DshDefaultModel,
+      expectedRevision?: string,
+    ): Promise<DshSnapshot | undefined> =>
+      commitSnapshot(await dshApi.setDefaultModel(selection, expectedRevision)),
     [commitSnapshot],
   );
 
@@ -114,15 +117,15 @@ export function useDshActions() {
       // Do not wrap this in useMutation: its variables would put `value` in
       // React Query's mutation cache. The value is released after this await.
       await dshApi.setCredential(input);
-      await queryClient.invalidateQueries({ queryKey: dshKeys.snapshot });
+      void queryClient.invalidateQueries({ queryKey: dshKeys.snapshot });
     },
     [queryClient],
   );
 
   const unsetCredential = useCallback(
-    async (ref: string): Promise<void> => {
-      await dshApi.unsetCredential(ref);
-      await queryClient.invalidateQueries({ queryKey: dshKeys.snapshot });
+    async (ref: string, expectedRevision?: string): Promise<void> => {
+      await dshApi.unsetCredential(ref, expectedRevision);
+      void queryClient.invalidateQueries({ queryKey: dshKeys.snapshot });
     },
     [queryClient],
   );

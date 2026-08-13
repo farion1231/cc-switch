@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { DshDefaultModel, DshProvider } from "@/lib/api/dsh";
+import { dshErrorMessage, isDshConflictError } from "@/lib/api/dsh";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
@@ -24,6 +26,7 @@ export function DshDefaultModelPicker({
   disabled = false,
   onSave,
 }: DshDefaultModelPickerProps) {
+  const { t } = useTranslation();
   const options = useMemo(
     () =>
       providers.flatMap((provider) =>
@@ -72,7 +75,11 @@ export function DshDefaultModelPicker({
       // explicitly clears an old effort that belonged to a prior route.
       await onSave({ provider, model });
     } catch (error) {
-      setFailure(error instanceof Error ? error.message : "默认模型保存失败");
+      setFailure(
+        isDshConflictError(error)
+          ? t("dsh.errors.conflict")
+          : dshErrorMessage(error, t("dsh.errors.defaultModelSave")),
+      );
     } finally {
       setBusy(false);
     }
@@ -81,13 +88,13 @@ export function DshDefaultModelPicker({
   return (
     <section
       className="rounded-lg border bg-card p-4 shadow-sm"
-      aria-label="新 Agent 默认模型"
+      aria-label={t("dsh.defaultModel.title")}
     >
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
-          <h2 className="font-semibold">新 Agent 默认模型</h2>
+          <h2 className="font-semibold">{t("dsh.defaultModel.title")}</h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            只影响之后创建的 Agent；已发送的 session 保留原选择。
+            {t("dsh.defaultModel.description")}
           </p>
         </div>
         <Button
@@ -96,17 +103,17 @@ export function DshDefaultModelPicker({
           onClick={() => void save()}
           disabled={disabled || busy || !provider || !model}
         >
-          保存
+          {t("common.save")}
         </Button>
       </div>
       {unavailable && (
         <p className="mb-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-          当前默认模型已不在配置目录中，请重新选择。
+          {t("dsh.defaultModel.unavailable")}
         </p>
       )}
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
-          <Label>Provider</Label>
+          <Label>{t("dsh.fields.provider")}</Label>
           <Select
             value={provider}
             onValueChange={(next) => {
@@ -118,7 +125,9 @@ export function DshDefaultModelPicker({
             disabled={disabled}
           >
             <SelectTrigger>
-              <SelectValue placeholder="选择 provider" />
+              <SelectValue
+                placeholder={t("dsh.defaultModel.providerPlaceholder")}
+              />
             </SelectTrigger>
             <SelectContent>
               {providerOptions.map((option) => (
@@ -130,14 +139,16 @@ export function DshDefaultModelPicker({
           </Select>
         </div>
         <div className="space-y-1.5">
-          <Label>Model</Label>
+          <Label>{t("dsh.fields.model")}</Label>
           <Select
             value={model}
             onValueChange={setModel}
             disabled={disabled || !provider}
           >
             <SelectTrigger>
-              <SelectValue placeholder="选择 model" />
+              <SelectValue
+                placeholder={t("dsh.defaultModel.modelPlaceholder")}
+              />
             </SelectTrigger>
             <SelectContent>
               {modelOptions.map((option) => (

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
   ExternalLink,
@@ -24,9 +25,12 @@ interface DshProvidersPageProps {
   onUnsupportedFeature?: (feature: string) => void;
 }
 
-function displayError(error: unknown, fallback: string): string {
-  if (isDshConflictError(error))
-    return "配置在编辑期间发生变化，请刷新后重试；你的草稿未被覆盖。";
+function displayError(
+  error: unknown,
+  fallback: string,
+  conflictMessage: string,
+): string {
+  if (isDshConflictError(error)) return conflictMessage;
   return dshErrorMessage(error, fallback);
 }
 
@@ -34,6 +38,7 @@ function displayError(error: unknown, fallback: string): string {
 export function DshProvidersPage({
   onUnsupportedFeature,
 }: DshProvidersPageProps) {
+  const { t } = useTranslation();
   const query = useDshSnapshot();
   const actions = useDshActions();
   const [editing, setEditing] = useState<DshProvider | null | undefined>();
@@ -53,57 +58,81 @@ export function DshProvidersPage({
   }, [snapshot]);
 
   const showFailure = (error: unknown, fallback: string) =>
-    toast.error(displayError(error, fallback));
+    toast.error(displayError(error, fallback, t("dsh.errors.conflict")));
   const reload = async () => {
     try {
       await actions.refresh();
-      toast.success("DSH 配置已刷新");
+      toast.success(t("dsh.messages.refreshed"));
     } catch (error) {
-      showFailure(error, "读取 DSH 配置失败");
+      showFailure(error, t("dsh.errors.read"));
     }
   };
   const saveCredentialIfNeeded = async (key?: {
     ref: string;
     value: string;
+    expectedRevision?: string;
   }) => {
     if (key) await actions.setCredential(key);
   };
   const saveNative = async (
     input: Parameters<typeof actions.upsertNative>[0],
-    key?: { ref: string; value: string },
-  ) => {
+    key?: { ref: string; value: string; expectedRevision?: string },
+  ): Promise<void> => {
     await actions.upsertNative(input);
-    await saveCredentialIfNeeded(key);
-    await actions.refresh();
-    toast.success("DeepSeek Official 已保存");
+    try {
+      await saveCredentialIfNeeded(key);
+    } catch (error) {
+      void actions.refresh().catch(() => undefined);
+      toast.warning(t("dsh.messages.profileSavedKeyFailed"), {
+        description: displayError(
+          error,
+          t("dsh.errors.credentialSave"),
+          t("dsh.errors.conflict"),
+        ),
+      });
+      return;
+    }
+    toast.success(t("dsh.messages.nativeSaved"));
   };
   const saveCustom = async (
     input: Parameters<typeof actions.createCustom>[0],
-    key?: { ref: string; value: string },
-  ) => {
+    key?: { ref: string; value: string; expectedRevision?: string },
+  ): Promise<void> => {
     if (editing?.kind === "custom") await actions.updateCustom(input);
     else await actions.createCustom(input);
-    await saveCredentialIfNeeded(key);
-    await actions.refresh();
-    toast.success(editing ? "Provider 已更新" : "Provider 已添加");
+    try {
+      await saveCredentialIfNeeded(key);
+    } catch (error) {
+      void actions.refresh().catch(() => undefined);
+      toast.warning(t("dsh.messages.profileSavedKeyFailed"), {
+        description: displayError(
+          error,
+          t("dsh.errors.credentialSave"),
+          t("dsh.errors.conflict"),
+        ),
+      });
+      return;
+    }
+    toast.success(
+      t(
+        editing ? "dsh.messages.providerUpdated" : "dsh.messages.providerAdded",
+      ),
+    );
   };
   const removeProvider = async () => {
     if (!confirmDelete || !snapshot) return;
     setDeleting(true);
     try {
       if (snapshot.defaultModel?.provider === confirmDelete.route)
-        throw new Error(
-          "该 Provider 是新 Agent 的默认 Provider，请先选择替代模型。",
-        );
+        throw new Error(t("dsh.errors.defaultProviderDelete"));
       await actions.removeCustom(
         confirmDelete.route,
         confirmDelete.revision ?? snapshot.settingsRevision,
       );
-      await actions.refresh();
       setConfirmDelete(null);
-      toast.success("Provider 已移除");
+      toast.success(t("dsh.messages.providerRemoved"));
     } catch (error) {
-      showFailure(error, "Provider 移除失败");
+      showFailure(error, t("dsh.errors.providerRemove"));
     } finally {
       setDeleting(false);
     }
@@ -112,31 +141,34 @@ export function DshProvidersPage({
     if (!snapshot) return;
     try {
       await actions.resetNative(snapshot.settingsRevision);
-      await actions.refresh();
-      toast.success("已恢复 DeepSeek 默认设置");
+      toast.success(t("dsh.messages.nativeReset"));
     } catch (error) {
-      showFailure(error, "恢复默认设置失败");
+      showFailure(error, t("dsh.errors.nativeReset"));
     }
   };
 
   if (query.isLoading && !snapshot)
     return (
       <div className="p-6 text-sm text-muted-foreground">
-        正在读取 DSH 配置…
+        {t("dsh.loading")}
       </div>
     );
   if (query.error && !snapshot)
     return (
       <div className="space-y-4 p-6">
         <Alert variant="destructive">
-          <AlertTitle>无法读取 DSH 配置</AlertTitle>
+          <AlertTitle>{t("dsh.errors.readTitle")}</AlertTitle>
           <AlertDescription>
-            {displayError(query.error, "请检查 DSH Home、YAML 格式和文件权限")}
+            {displayError(
+              query.error,
+              t("dsh.errors.readHint"),
+              t("dsh.errors.conflict"),
+            )}
           </AlertDescription>
         </Alert>
         <Button type="button" onClick={() => void reload()}>
           <RefreshCw className="h-4 w-4" />
-          重试
+          {t("dsh.actions.retry")}
         </Button>
       </div>
     );
@@ -151,11 +183,10 @@ export function DshProvidersPage({
         <div>
           <h1 className="text-xl font-semibold">DeepSeek Harness</h1>
           <p className="mt-1 text-xs text-muted-foreground">
-            实时管理 DSH settings.yaml 与 credentials；不会导入 cc-switch
-            数据库。
+            {t("dsh.description")}
           </p>
           <p className="mt-1 break-all text-xs text-muted-foreground">
-            Home: {snapshot.home}
+            {t("dsh.home", { path: snapshot.home })}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -166,7 +197,7 @@ export function DshProvidersPage({
             onClick={() => void actions.openHome()}
           >
             <ExternalLink className="h-4 w-4" />
-            打开目录
+            {t("dsh.actions.openHome")}
           </Button>
           <Button
             type="button"
@@ -178,7 +209,7 @@ export function DshProvidersPage({
             <RefreshCw
               className={query.isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"}
             />
-            刷新
+            {t("common.refresh")}
           </Button>
           <Button
             type="button"
@@ -187,33 +218,29 @@ export function DshProvidersPage({
             disabled={snapshot.readOnly}
           >
             <Plus className="h-4 w-4" />
-            添加 Provider
+            {t("dsh.actions.addProvider")}
           </Button>
         </div>
       </div>
       {snapshot.readOnly && (
         <Alert className="mb-4">
-          <AlertTitle>只读配置</AlertTitle>
-          <AlertDescription>
-            当前 DSH settings/credentials provider
-            不可写；可以查看和刷新，但保存操作已禁用。
-          </AlertDescription>
+          <AlertTitle>{t("dsh.readOnly.title")}</AlertTitle>
+          <AlertDescription>{t("dsh.readOnly.description")}</AlertDescription>
         </Alert>
       )}
       {snapshot.unsupported && snapshot.unsupported.length > 0 && (
         <Alert className="mb-4">
           <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>存在未编辑的配置</AlertTitle>
+          <AlertTitle>{t("dsh.unsupported.title")}</AlertTitle>
           <AlertDescription>
-            页面只管理 native DeepSeek 和 OpenAI/Anthropic compatible
-            routes；其他字段已保留，不会被覆盖。
+            {t("dsh.unsupported.description")}
             {onUnsupportedFeature && (
               <Button
                 variant="link"
                 className="h-auto p-0"
                 onClick={() => onUnsupportedFeature("dsh-unsupported")}
               >
-                了解范围
+                {t("dsh.unsupported.learnMore")}
               </Button>
             )}
           </AlertDescription>
@@ -225,9 +252,8 @@ export function DshProvidersPage({
           value={snapshot.defaultModel}
           disabled={snapshot.readOnly}
           onSave={async (selection) => {
-            await actions.setDefaultModel(selection);
-            await actions.refresh();
-            toast.success("默认模型已保存");
+            await actions.setDefaultModel(selection, snapshot.settingsRevision);
+            toast.success(t("dsh.messages.defaultModelSaved"));
           }}
         />
         <div className="grid gap-4">
@@ -246,11 +272,13 @@ export function DshProvidersPage({
                         }
                       >
                         {provider.kind === "native"
-                          ? "Native"
-                          : (provider.api ?? "Custom")}
+                          ? t("dsh.providers.native")
+                          : (provider.api ?? t("dsh.providers.custom"))}
                       </Badge>
                       {isDefault && (
-                        <Badge variant="outline">默认 Provider</Badge>
+                        <Badge variant="outline">
+                          {t("dsh.providers.defaultBadge")}
+                        </Badge>
                       )}
                     </CardTitle>
                     <p className="mt-1 break-all text-xs text-muted-foreground">
@@ -263,7 +291,7 @@ export function DshProvidersPage({
                       type="button"
                       variant="ghost"
                       size="icon"
-                      title="编辑"
+                      title={t("common.edit")}
                       onClick={() => setEditing(provider)}
                     >
                       <Pencil className="h-4 w-4" />
@@ -273,7 +301,7 @@ export function DshProvidersPage({
                         type="button"
                         variant="ghost"
                         size="icon"
-                        title="恢复默认"
+                        title={t("dsh.actions.resetNative")}
                         onClick={() => void resetNative()}
                         disabled={snapshot.readOnly || !provider.customized}
                       >
@@ -284,7 +312,7 @@ export function DshProvidersPage({
                         type="button"
                         variant="ghost"
                         size="icon"
-                        title="删除"
+                        title={t("common.delete")}
                         onClick={() => setConfirmDelete(provider)}
                         disabled={snapshot.readOnly}
                       >
@@ -296,24 +324,30 @@ export function DshProvidersPage({
                 <CardContent className="space-y-2 pt-0">
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span>
-                      {provider.models.length || provider.modelCount || 0}{" "}
-                      个模型
+                      {t("dsh.providers.modelCount", {
+                        count:
+                          provider.models.length || provider.modelCount || 0,
+                      })}
                     </span>
                     <span>·</span>
                     <span className="inline-flex items-center gap-1">
                       <KeyRound className="h-3.5 w-3.5" />
                       {provider.credential?.configured
                         ? provider.credential.source === "env"
-                          ? "环境 key"
-                          : "key 已配置"
-                        : "未配置 key"}
+                          ? t("dsh.providers.environmentKey")
+                          : t("dsh.providers.keyConfigured")
+                        : t("dsh.providers.keyMissing")}
                     </span>
                     {provider.credential?.source === "env" &&
-                      !provider.credential.writable && <span>（只读）</span>}
+                      !provider.credential.writable && (
+                        <span>{t("dsh.providers.readOnlySuffix")}</span>
+                      )}
                   </div>
                   {isDefault && snapshot.defaultModel && (
                     <p className="text-xs text-muted-foreground">
-                      默认模型：{snapshot.defaultModel.model}
+                      {t("dsh.providers.defaultModel", {
+                        model: snapshot.defaultModel.model,
+                      })}
                     </p>
                   )}
                 </CardContent>
@@ -326,6 +360,7 @@ export function DshProvidersPage({
         open={editing !== undefined}
         provider={editing ?? null}
         protocols={snapshot.protocols}
+        credentialsRevision={snapshot.credentialsRevision}
         readOnly={snapshot.readOnly}
         onClose={() => setEditing(undefined)}
         onSaveNative={saveNative}
@@ -339,15 +374,16 @@ export function DshProvidersPage({
           className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
           role="dialog"
           aria-modal="true"
-          aria-label="确认删除 Provider"
+          aria-label={t("dsh.deleteDialog.ariaLabel")}
         >
           <div className="w-full max-w-md rounded-lg border bg-background p-5 shadow-lg">
             <h2 className="font-semibold">
-              删除 {confirmDelete.displayName}？
+              {t("dsh.deleteDialog.title", {
+                name: confirmDelete.displayName,
+              })}
             </h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              只删除 DSH route，不会自动删除共享 API key。若该 route 是默认
-              Provider，必须先选择替代模型。
+              {t("dsh.deleteDialog.description")}
             </p>
             <div className="mt-5 flex justify-end gap-2">
               <Button
@@ -355,7 +391,7 @@ export function DshProvidersPage({
                 variant="outline"
                 onClick={() => setConfirmDelete(null)}
               >
-                取消
+                {t("common.cancel")}
               </Button>
               <Button
                 type="button"
@@ -363,7 +399,9 @@ export function DshProvidersPage({
                 onClick={() => void removeProvider()}
                 disabled={deleting}
               >
-                {deleting ? "删除中…" : "确认删除"}
+                {deleting
+                  ? t("dsh.deleteDialog.deleting")
+                  : t("dsh.deleteDialog.confirm")}
               </Button>
             </div>
           </div>

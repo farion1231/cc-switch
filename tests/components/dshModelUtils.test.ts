@@ -6,6 +6,7 @@ import {
   validateDshModels,
   validateDshRoute,
 } from "@/components/dsh/dshModelUtils";
+import { isDshConflictError, readDshError } from "@/lib/api/dsh";
 
 describe("DSH editor validation", () => {
   it("accepts route ids that can become credential references", () => {
@@ -29,7 +30,10 @@ describe("DSH editor validation", () => {
   });
 
   it("validates unique model ids and positive capacities", () => {
-    expect(validateDshModels([])).toMatchObject({ index: 0 });
+    expect(validateDshModels([])).toEqual({
+      index: 0,
+      messageKey: "dsh.validation.modelRequired",
+    });
     expect(validateDshModels([{ id: "chat" }, { id: "chat" }])).toMatchObject({
       index: 1,
     });
@@ -49,5 +53,22 @@ describe("DSH editor validation", () => {
     expect(parseDshCapacity(" 4096 ")).toBe(4096);
     expect(parseDshCapacity("0")).toBeUndefined();
     expect(parseDshCapacity("1MiB")).toBeUndefined();
+  });
+
+  it("parses structured Rust errors serialized as JSON strings", () => {
+    const error = JSON.stringify({
+      code: "stale-revision",
+      message: "settings changed",
+      secret: "must-not-be-returned",
+    });
+
+    expect(readDshError(error)).toEqual({
+      code: "stale-revision",
+      message: "settings changed",
+      detail: undefined,
+      namespace: undefined,
+      path: undefined,
+    });
+    expect(isDshConflictError(error)).toBe(true);
   });
 });
