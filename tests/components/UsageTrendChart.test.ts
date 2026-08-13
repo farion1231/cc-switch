@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildUsageTrendChartData } from "@/components/usage/UsageTrendChart";
+import {
+  buildUsageTrendChartData,
+  formatUsageTrendTickLabel,
+} from "@/components/usage/UsageTrendChart";
 
 const day = (isoDate: string) =>
   ({
@@ -66,5 +69,49 @@ describe("buildUsageTrendChartData (#6302)", () => {
     // en-US 2-digit month/day — should not need a year prefix inside one year.
     expect(points[0].label).not.toMatch(/2026/);
     expect(points[0].tooltipLabel).toMatch(/2026/);
+  });
+});
+
+describe("formatUsageTrendTickLabel", () => {
+  it("resolves labels by xKey even when the tick index is thinned", () => {
+    const startDate = Math.floor(Date.parse("2025-01-01T00:00:00Z") / 1000);
+    const endDate = Math.floor(Date.parse("2026-08-10T00:00:00Z") / 1000);
+    const points = buildUsageTrendChartData(
+      [
+        {
+          date: "2025-01-01T12:00:00.000Z",
+          totalInputTokens: 1,
+          totalOutputTokens: 1,
+          totalCacheCreationTokens: 0,
+          totalCacheReadTokens: 0,
+          totalCost: "0",
+        },
+        {
+          date: "2025-04-27T12:00:00.000Z",
+          totalInputTokens: 1,
+          totalOutputTokens: 1,
+          totalCacheCreationTokens: 0,
+          totalCacheReadTokens: 0,
+          totalCost: "0",
+        },
+        {
+          date: "2026-04-27T12:00:00.000Z",
+          totalInputTokens: 1,
+          totalOutputTokens: 1,
+          totalCacheCreationTokens: 0,
+          totalCacheReadTokens: 0,
+          totalCost: "0",
+        },
+      ],
+      { isHourly: false, dateLocale: "en-US", startDate, endDate },
+    );
+
+    // Simulate Recharts passing a later category as the only visible tick
+    // (filtered index 0 would wrongly map to the first chart row).
+    const last = points[2];
+    expect(formatUsageTrendTickLabel(last.xKey, points)).toBe(last.label);
+    expect(formatUsageTrendTickLabel(last.xKey, points)).not.toBe(
+      points[0].label,
+    );
   });
 });

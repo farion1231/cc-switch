@@ -126,6 +126,15 @@ export function buildUsageTrendChartData(
   );
 }
 
+/** Resolve a tick label by the unique category key (not by filtered tick index). */
+export function formatUsageTrendTickLabel(
+  xKey: string,
+  chartData: UsageTrendChartPoint[],
+): string {
+  const point = chartData.find((row) => row.xKey === xKey);
+  return point?.label ?? xKey;
+}
+
 export function UsageTrendChart({
   range,
   rangeLabel,
@@ -250,7 +259,9 @@ export function UsageTrendChart({
               tickLine={false}
               tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
               dy={10}
-              tickFormatter={(_, index) => chartData[index]?.label ?? ""}
+              tickFormatter={(value) =>
+                formatUsageTrendTickLabel(String(value), chartData)
+              }
               allowDuplicatedCategory={false}
             />
             <YAxis
