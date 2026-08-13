@@ -764,8 +764,16 @@ impl ChatToResponsesState {
 
     fn failed_event(&mut self, message: String, error_type: Option<String>) -> Bytes {
         self.completed = true;
-        let mut error = json!({ "message": message });
-        if let Some(error_type) = error_type.filter(|value| !value.is_empty()) {
+        let error_type = error_type.filter(|value| !value.is_empty());
+        // Grok Build / Codex 的 Responses 错误解析器要求 error 对象必须带
+        // code 字段，缺失会报 "missing field `code`"。
+        let code = match error_type.as_deref() {
+            Some("rate_limit_error") => "rate_limit_exceeded".to_string(),
+            Some(other) => other.to_string(),
+            None => "proxy_error".to_string(),
+        };
+        let mut error = json!({ "message": message, "code": code });
+        if let Some(error_type) = error_type {
             error["type"] = json!(error_type);
         }
 
@@ -1492,6 +1500,22 @@ mod tests {
         assert!(output.contains("event: response.failed"));
         assert!(output.contains("quota exceeded"));
         assert!(output.contains("rate_limit_exceeded"));
+        assert!(!output.contains("event: response.completed"));
+    }
+
+    #[tokio::test]
+    async fn failed_event_includes_error_code_field() {
+        // 回归保护：上游错误只带 type 不带 code 时，代理也必须补 code，
+        // 否则 Grok Build 报 "missing field `code`"。
+        let output = collect(vec![
+            "data: {\"error\":{\"message\":\"boom\",\"type\":\"rate_limit_error\"}}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.failed"));
+        assert!(output.contains("\"code\":\"rate_limit_exceeded\""));
+        assert!(output.contains("\"type\":\"rate_limit_error\""));
         assert!(!output.contains("event: response.completed"));
     }
 }
