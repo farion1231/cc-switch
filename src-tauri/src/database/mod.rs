@@ -101,12 +101,17 @@ impl Database {
         let db_path = get_app_config_dir().join("cc-switch.db");
         let db_exists = db_path.exists();
 
-        // 确保父目录存在
+        // 确保父目录存在，并将 `.cc-switch/` 目录权限收紧为 0700
         if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+            crate::config::ensure_config_dir(parent)?;
         }
 
         let conn = Connection::open(&db_path).map_err(|e| AppError::Database(e.to_string()))?;
+
+        // Unix 平台：新创建的 SQLite 文件收紧为 0600（含 WAL/SHM 文件）
+        if cfg!(unix) && !db_exists {
+            let _ = crate::config::restrict_file_mode(&db_path);
+        }
 
         // 启用外键约束
         conn.execute("PRAGMA foreign_keys = ON;", [])
