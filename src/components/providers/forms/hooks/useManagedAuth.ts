@@ -40,6 +40,8 @@ export function useManagedAuth(
     null,
   );
   const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const authAttemptGenerationRef = useRef(0);
+  const pollingRequestInFlightRef = useRef<number | null>(null);
 
   const {
     data: authStatus,
@@ -65,15 +67,27 @@ export function useManagedAuth(
     }
   }, []);
 
-  useEffect(() => {
-    return () => {
-      stopPolling();
-    };
+  const invalidateAuthAttempt = useCallback(() => {
+    stopPolling();
+    pollingRequestInFlightRef.current = null;
+    authAttemptGenerationRef.current += 1;
+    return authAttemptGenerationRef.current;
   }, [stopPolling]);
 
+  useEffect(() => {
+    return () => {
+      invalidateAuthAttempt();
+    };
+  }, [invalidateAuthAttempt]);
+
   const startLoginMutation = useMutation({
-    mutationFn: () => authApi.authStartLogin(authProvider, githubDomain),
-    onSuccess: async (response) => {
+    mutationFn: (_attemptGeneration: number) =>
+      authApi.authStartLogin(authProvider, githubDomain),
+    onSuccess: async (response, attemptGeneration) => {
+      if (attemptGeneration !== authAttemptGenerationRef.current) {
+        return;
+      }
+
       setDeviceCode(response);
       setPollingState("polling");
       setError(null);
@@ -83,11 +97,17 @@ export function useManagedAuth(
       } catch (e) {
         console.debug("[ManagedAuth] Failed to copy user code:", e);
       }
+      if (attemptGeneration !== authAttemptGenerationRef.current) {
+        return;
+      }
 
       try {
         await settingsApi.openExternal(response.verification_uri);
       } catch (e) {
         console.debug("[ManagedAuth] Failed to open browser:", e);
+      }
+      if (attemptGeneration !== authAttemptGenerationRef.current) {
+        return;
       }
 
       // Add a small buffer on top of GitHub's suggested interval to avoid
@@ -96,28 +116,50 @@ export function useManagedAuth(
       const expiresAt = Date.now() + response.expires_in * 1000;
 
       const pollOnce = async () => {
-        if (Date.now() > expiresAt) {
-          stopPolling();
-          setPollingState("error");
-          setError("Device code expired. Please try again.");
+        if (
+          attemptGeneration !== authAttemptGenerationRef.current ||
+          pollingRequestInFlightRef.current === attemptGeneration
+        ) {
           return;
         }
+        pollingRequestInFlightRef.current = attemptGeneration;
 
         try {
+          if (Date.now() > expiresAt) {
+            invalidateAuthAttempt();
+            setPollingState("error");
+            setError("Device code expired. Please try again.");
+            return;
+          }
+
           const newAccount = await authApi.authPollForAccount(
             authProvider,
             response.device_code,
             githubDomain,
           );
+          if (attemptGeneration !== authAttemptGenerationRef.current) {
+            return;
+          }
+
           if (newAccount) {
             stopPolling();
             setPollingState("success");
             await refetchStatus();
+            if (attemptGeneration !== authAttemptGenerationRef.current) {
+              return;
+            }
             await queryClient.invalidateQueries({ queryKey });
+            if (attemptGeneration !== authAttemptGenerationRef.current) {
+              return;
+            }
             setPollingState("idle");
             setDeviceCode(null);
           }
         } catch (e) {
+          if (attemptGeneration !== authAttemptGenerationRef.current) {
+            return;
+          }
+
           const errorMessage = e instanceof Error ? e.message : String(e);
           if (
             !errorMessage.includes("pending") &&
@@ -127,18 +169,30 @@ export function useManagedAuth(
             setPollingState("error");
             setError(errorMessage);
           }
+        } finally {
+          if (pollingRequestInFlightRef.current === attemptGeneration) {
+            pollingRequestInFlightRef.current = null;
+          }
         }
       };
 
       void pollOnce();
       pollingIntervalRef.current = setInterval(pollOnce, interval);
       pollingTimeoutRef.current = setTimeout(() => {
-        stopPolling();
+        if (attemptGeneration !== authAttemptGenerationRef.current) {
+          return;
+        }
+
+        invalidateAuthAttempt();
         setPollingState("error");
         setError("Device code expired. Please try again.");
       }, response.expires_in * 1000);
     },
-    onError: (e) => {
+    onError: (e, attemptGeneration) => {
+      if (attemptGeneration !== authAttemptGenerationRef.current) {
+        return;
+      }
+
       setPollingState("error");
       setError(e instanceof Error ? e.message : String(e));
     },
@@ -195,19 +249,19 @@ export function useManagedAuth(
   });
 
   const startAuth = useCallback(() => {
+    const attemptGeneration = invalidateAuthAttempt();
     setPollingState("idle");
     setDeviceCode(null);
     setError(null);
-    stopPolling();
-    startLoginMutation.mutate();
-  }, [startLoginMutation, stopPolling]);
+    startLoginMutation.mutate(attemptGeneration);
+  }, [invalidateAuthAttempt, startLoginMutation]);
 
   const cancelAuth = useCallback(() => {
-    stopPolling();
+    invalidateAuthAttempt();
     setPollingState("idle");
     setDeviceCode(null);
     setError(null);
-  }, [stopPolling]);
+  }, [invalidateAuthAttempt]);
 
   const logout = useCallback(() => {
     logoutMutation.mutate();
