@@ -24,6 +24,34 @@ pub(crate) fn sse_event(event: &str, data: Value) -> Bytes {
     ))
 }
 
+/// 给已序列化的 SSE 事件注入顶层 `sequence_number`。
+///
+/// Grok Build / Codex 的新版 Responses 解析器要求每个事件都带一个单调递增的
+/// `sequence_number`（与 `type` 平级）。事件由上层状态机用计数器统一盖章，
+/// 解析失败（如 `[DONE]`）时原样返回。
+pub(crate) fn inject_sequence_number(event: &Bytes, sequence_number: u64) -> Bytes {
+    let text = String::from_utf8_lossy(event);
+    let mut lines = text.splitn(3, '\n');
+    let Some(event_line) = lines.next() else {
+        return event.clone();
+    };
+    let Some(data_line) = lines.next() else {
+        return event.clone();
+    };
+    let Some(payload) = data_line.strip_prefix("data: ") else {
+        return event.clone();
+    };
+    let Ok(mut value) = serde_json::from_str::<Value>(payload) else {
+        return event.clone();
+    };
+    let Some(object) = value.as_object_mut() else {
+        return event.clone();
+    };
+    object.insert("sequence_number".to_string(), json!(sequence_number));
+    let new_payload = serde_json::to_string(&value).unwrap_or_default();
+    Bytes::from(format!("{event_line}\ndata: {new_payload}\n\n"))
+}
+
 // ---------------------------------------------------------------------------
 // Response lifecycle (created / in_progress / completed / failed)
 // ---------------------------------------------------------------------------
