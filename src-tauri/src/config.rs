@@ -42,6 +42,15 @@ pub fn get_claude_config_dir() -> PathBuf {
     get_home_dir().join(".claude")
 }
 
+/// 获取 Claude Science 数据/配置目录路径
+pub fn get_claude_science_config_dir() -> PathBuf {
+    if let Some(custom) = crate::settings::get_claude_science_override_dir() {
+        return custom;
+    }
+
+    get_home_dir().join(".claude-science")
+}
+
 /// 默认 Claude MCP 配置文件路径 (~/.claude.json)
 pub fn get_default_claude_mcp_path() -> PathBuf {
     get_home_dir().join(".claude.json")

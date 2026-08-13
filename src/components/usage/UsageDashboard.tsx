@@ -67,6 +67,7 @@ const normalizeRefreshInterval = (value: number | undefined) =>
 // 与 AppSwitcher 的 appIconName 保持一致（codex 复用 openai 图标）
 const APP_FILTER_ICON: Record<AppType, string> = {
   claude: "claude",
+  "claude-science": "claudescience",
   codex: "openai",
   gemini: "gemini",
   grokbuild: "grok",

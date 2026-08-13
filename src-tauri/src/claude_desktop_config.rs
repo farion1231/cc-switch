@@ -621,6 +621,67 @@ pub fn proxy_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>
     Ok(result)
 }
 
+/// 解析 Claude Desktop 本地路由模式的模型路由（读取 `claudeDesktopModelRoutes`）。
+///
+/// （ciao-dev 版本中此处还有聚合供应商分支；单独提取 Claude Science 时不含
+/// 聚合路由功能，故仅保留普通供应商路径。）
+pub fn resolve_proxy_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>, AppError> {
+    proxy_model_routes(provider)
+}
+
+/// 从 Claude Code 风格 env 配置投影出模型路由列表。
+///
+/// Claude Science 供应商没有 `claudeDesktopModelRoutes`（那是 Desktop 专属结构），
+/// 其模型映射就是 env 里的 `ANTHROPIC_DEFAULT_*_MODEL` / `ANTHROPIC_MODEL`。
+/// 这里把 env 四档投射到 [`DEFAULT_PROXY_ROUTES`] 的 Claude-safe route id 上，
+/// 供 `/claude-science/v1/models` 在路由表缺失时回退使用；未配置档回退到
+/// `ANTHROPIC_MODEL`（与消息映射 `ModelMapping::map_model` 的兜底方向一致）。
+/// `[1m]` 后缀按 Claude Code 语义解析为 supports1m 声明并从上游模型名剥离。
+pub fn env_model_routes(provider: &Provider) -> Result<Vec<ResolvedModelRoute>, AppError> {
+    let env = provider
+        .settings_config
+        .get("env")
+        .and_then(Value::as_object);
+    let read = |key: &str| -> Option<String> {
+        env.and_then(|e| e.get(key))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let default_model = read("ANTHROPIC_MODEL");
+
+    let mut result = Vec::new();
+    for default_route in DEFAULT_PROXY_ROUTES {
+        let Some(raw) = read(default_route.env_key).or_else(|| default_model.clone()) else {
+            continue;
+        };
+        let upstream_model =
+            crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(&raw).to_string();
+        if upstream_model.is_empty() {
+            continue;
+        }
+        let supports_1m = upstream_model != raw;
+        let name_key = format!("{}_NAME", default_route.env_key);
+        result.push(ResolvedModelRoute {
+            route_id: default_route.route_id.to_string(),
+            label_override: read(&name_key).or_else(|| Some(upstream_model.clone())),
+            upstream_model,
+            supports_1m,
+        });
+    }
+
+    if result.is_empty() {
+        return Err(AppError::localized(
+            "claude_science.provider.models_missing",
+            "Claude Science 供应商缺少模型配置（ANTHROPIC_MODEL 或 ANTHROPIC_DEFAULT_*_MODEL）",
+            "Claude Science provider is missing model configuration (ANTHROPIC_MODEL or ANTHROPIC_DEFAULT_*_MODEL)",
+        ));
+    }
+
+    Ok(result)
+}
+
 fn next_catalog_safe_route_id(
     existing: &[ResolvedModelRoute],
     reserved: &std::collections::HashSet<String>,
@@ -648,16 +709,38 @@ fn next_catalog_safe_route_id(
 }
 
 pub fn model_list_response(provider: &Provider) -> Result<Value, AppError> {
-    let routes = proxy_model_routes(provider)?;
+    let routes = resolve_proxy_routes(provider)?;
+    Ok(model_list_response_from_routes(&routes))
+}
+
+pub fn model_list_response_from_routes(routes: &[ResolvedModelRoute]) -> Value {
     let data: Vec<Value> = routes
         .iter()
         .map(|route| {
-            let model_id = route.route_id.clone();
+            // Anthropic's /v1/models returns both `id` and `display_name`.
+            // Claude Science 0.1.25 reads `display_name` (and falls back to
+            // `name`) when rendering the session model picker; emitting only
+            // `id` makes its UI hit `undefined.replace(...)` and crash the
+            // session with "Something went wrong".
+            //
+            // Surface `label_override` as both `display_name` and
+            // `labelOverride` so users see the friendly upstream name (Kimi
+            // K2, GPT-5.4, …) instead of the underlying route_id, matching
+            // the live-config shape produced by `inference_model_json`.
+            let display_name = route
+                .label_override
+                .clone()
+                .unwrap_or_else(|| route.route_id.clone());
             let mut item = json!({
                 "type": "model",
-                "id": model_id,
+                "id": route.route_id,
+                "name": route.route_id,
+                "display_name": display_name,
                 "created_at": DEFAULT_CREATED_AT,
             });
+            if let Some(label_override) = route.label_override.as_deref() {
+                item["labelOverride"] = json!(label_override);
+            }
             if route.supports_1m {
                 item["supports1m"] = json!(true);
             }
@@ -675,12 +758,12 @@ pub fn model_list_response(provider: &Provider) -> Result<Value, AppError> {
         .and_then(Value::as_str)
         .map(str::to_string);
 
-    Ok(json!({
+    json!({
         "data": data,
         "has_more": false,
         "first_id": first_id,
         "last_id": last_id,
-    }))
+    })
 }
 
 pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<Value, AppError> {
@@ -1395,6 +1478,76 @@ mod tests {
         provider
     }
 
+    fn env_science_provider(settings: serde_json::Value) -> Provider {
+        Provider::with_id("science".to_string(), "Science".to_string(), settings, None)
+    }
+
+    #[test]
+    fn env_model_routes_projects_tiers_onto_default_route_ids() {
+        let provider = env_science_provider(json!({
+            "env": {
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-k2[1m]",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Kimi K2",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "kimi-k2-thinking",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "  ",
+            }
+        }));
+
+        let routes = env_model_routes(&provider).expect("env routes");
+        assert_eq!(routes.len(), 2);
+
+        let sonnet = &routes[0];
+        assert_eq!(sonnet.route_id, "claude-sonnet-5");
+        assert_eq!(sonnet.upstream_model, "kimi-k2");
+        assert_eq!(sonnet.label_override.as_deref(), Some("Kimi K2"));
+        assert!(sonnet.supports_1m);
+
+        let opus = &routes[1];
+        assert_eq!(opus.route_id, "claude-opus-5");
+        assert_eq!(opus.upstream_model, "kimi-k2-thinking");
+        // 无 NAME 键时回退为上游模型名
+        assert_eq!(opus.label_override.as_deref(), Some("kimi-k2-thinking"));
+        assert!(!opus.supports_1m);
+    }
+
+    #[test]
+    fn env_model_routes_falls_back_to_default_model() {
+        let provider = env_science_provider(json!({
+            "env": { "ANTHROPIC_MODEL": "gpt-5.6" }
+        }));
+
+        let routes = env_model_routes(&provider).expect("env routes");
+        assert_eq!(routes.len(), DEFAULT_PROXY_ROUTES.len());
+        assert!(routes.iter().all(|route| route.upstream_model == "gpt-5.6"));
+        // 会话里存的 claude-opus-5 必须在列表里，否则 Science UI 判 unavailable
+        assert!(routes.iter().any(|route| route.route_id == "claude-opus-5"));
+    }
+
+    #[test]
+    fn env_model_routes_errors_without_any_model_env() {
+        let provider = env_science_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://example.com" }
+        }));
+        assert!(env_model_routes(&provider).is_err());
+    }
+
+    #[test]
+    fn model_list_response_from_routes_emits_display_name_and_1m() {
+        let routes = vec![ResolvedModelRoute {
+            route_id: "claude-opus-5".to_string(),
+            upstream_model: "kimi-k2".to_string(),
+            label_override: Some("Kimi K2".to_string()),
+            supports_1m: true,
+        }];
+        let response = model_list_response_from_routes(&routes);
+        let item = &response["data"][0];
+        assert_eq!(item["id"], json!("claude-opus-5"));
+        assert_eq!(item["display_name"], json!("Kimi K2"));
+        assert_eq!(item["labelOverride"], json!("Kimi K2"));
+        assert_eq!(item["supports1m"], json!(true));
+        assert_eq!(response["first_id"], json!("claude-opus-5"));
+    }
+
     fn proxy_provider(id: &str) -> Provider {
         let mut provider = direct_provider(id);
         provider.name = "Proxy".to_string();
@@ -1623,6 +1776,9 @@ mod tests {
 
         let models = model_list_response(&provider).expect("model list");
         assert_eq!(models["data"][0]["id"], json!("claude-sonnet-4-6"));
+        assert_eq!(models["data"][0]["name"], json!("claude-sonnet-4-6"));
+        assert_eq!(models["data"][0]["display_name"], json!("Kimi K2"));
+        assert_eq!(models["data"][0]["labelOverride"], json!("Kimi K2"));
         assert_eq!(models["data"][0]["supports1m"], json!(true));
 
         let err = map_proxy_request_model(json!({"model": "claude-opus-4-8"}), &provider)
@@ -1685,6 +1841,68 @@ mod tests {
         let err = map_proxy_request_model(json!({"model": "gpt-5"}), &provider)
             .expect_err("model without a role keyword should still fail");
         assert!(err.to_string().contains("gpt-5"));
+    }
+
+    #[test]
+    fn claude_science_model_list_includes_fable_when_configured() {
+        // Claude Science 的 /claude-science/v1/models 直接调用
+        // model_list_response 返回当前 provider 的所有档位。
+        // Fable 档（claude-fable-5）必须在列表里，前端才能展示 Fable 选项。
+        let mut provider = proxy_provider("proxy-for-science");
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes = std::collections::HashMap::from([
+            (
+                "claude-opus-4-8".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "upstream-opus".to_string(),
+                    label_override: None,
+                    supports_1m: Some(true),
+                },
+            ),
+            (
+                "claude-sonnet-4-6".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "upstream-sonnet".to_string(),
+                    label_override: None,
+                    supports_1m: Some(true),
+                },
+            ),
+            (
+                "claude-haiku-4-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "upstream-haiku".to_string(),
+                    label_override: None,
+                    supports_1m: Some(true),
+                },
+            ),
+            (
+                "claude-fable-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: "upstream-fable".to_string(),
+                    label_override: None,
+                    supports_1m: Some(true),
+                },
+            ),
+        ]);
+
+        let models = model_list_response(&provider).expect("model list");
+        let ids: Vec<&str> = models["data"]
+            .as_array()
+            .expect("data array")
+            .iter()
+            .map(|item| item["id"].as_str().expect("id string"))
+            .collect();
+        assert!(
+            ids.contains(&"claude-fable-5"),
+            "Fable route not in model list; ids={ids:?}"
+        );
+        assert!(
+            ids.contains(&"claude-opus-4-8"),
+            "Opus route not in model list; ids={ids:?}"
+        );
     }
 
     #[test]

@@ -52,6 +52,7 @@ export function AddProviderDialog({
     appId !== "openclaw" &&
     appId !== "hermes" &&
     appId !== "grokbuild" &&
+    appId !== "claude-science" &&
     appId !== "claude-desktop";
   const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
     "app-specific",
@@ -181,7 +182,7 @@ export function AddProviderDialog({
         };
 
         if (values.presetId) {
-          if (appId === "claude") {
+          if (appId === "claude" || appId === "claude-science") {
             const presets = providerPresets;
             const presetIndex = parseInt(
               values.presetId.replace("claude-", ""),
@@ -243,7 +244,7 @@ export function AddProviderDialog({
           }
         }
 
-        if (appId === "claude") {
+        if (appId === "claude" || appId === "claude-science") {
           const env = parsedConfig.env as Record<string, any> | undefined;
           if (env?.ANTHROPIC_BASE_URL) {
             addUrl(env.ANTHROPIC_BASE_URL);

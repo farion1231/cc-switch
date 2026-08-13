@@ -778,6 +778,8 @@
     "openclawConfigDirDescription": "覆盖 OpenClaw 配置目录 (openclaw.json)。",
     "hermesConfigDir": "Hermes 配置目录",
     "hermesConfigDirDescription": "覆盖 Hermes 配置目录 (config.yaml)。",
+    "claudeScienceConfigDir": "Claude Science 配置目录",
+    "claudeScienceConfigDirDescription": "覆盖 Claude Science 数据目录。留空将自动检测 WSL 发行版与安装路径并一键启动；也可手动指向 WSL 路径（如 \\\\\u005Cwsl$\\u005CUbuntu-24.04\\u005Chome\\u005C用户名\\u005C.claude-science）。",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
     "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
     "browsePlaceholderGemini": "例如：/home/<你的用户名>/.gemini",
@@ -785,6 +787,7 @@
     "browsePlaceholderOpencode": "例如：/home/<你的用户名>/.config/opencode",
     "browsePlaceholderOpenclaw": "例如：/home/<你的用户名>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<你的用户名>/.hermes",
+    "browsePlaceholderScience": "例如：\\\\\u005Cwsl$\\u005CUbuntu\\u005Chome\\u005C<你的用户名>\\u005C.claude-science",
     "browseDirectory": "浏览目录",
     "resetDefault": "恢复默认目录（需保存后生效）",
     "checkForUpdates": "检查更新",
@@ -889,7 +892,9 @@
     "claude": "Claude",
     "claudeCode": "Claude Code",
     "claudeDesktop": "Claude Desktop",
+    "claudeScience": "Claude Science",
     "claude-desktop": "Claude Desktop",
+    "claude-science": "Claude Science",
     "codex": "Codex",
     "gemini": "Gemini",
     "grokbuild": "Grok Build",
@@ -1522,7 +1527,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "grokbuild": "Grok Build"
+      "grokbuild": "Grok Build",
+      "claude-science": "Claude Science"
     },
     "rawInputLabel": "原始",
     "rebuildCodex": {
@@ -2577,6 +2583,11 @@
       "disabled": "启用 {{app}} 故障转移\n将立即切换到队列 P1，并在失败时自动切换到下一个",
       "takeoverRequired": "请先接管 {{app}}，再启用故障转移"
     }
+  },
+  "claudeScience": {
+    "launch": "通过代理启动 Claude Science",
+    "launchSuccess": "Claude Science 已通过本地代理启动。",
+    "launchFailed": "启动 Claude Science 失败"
   },
   "proxy": {
     "panel": {

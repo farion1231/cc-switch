@@ -146,14 +146,19 @@ fn build_message_delta_event(stop_reason: Option<String>, usage_json: Option<Val
 }
 
 /// 创建 Anthropic SSE 流
+///
+/// `expected_model` 用于覆盖上游 SSE chunk 中的 model 字段。OpenAI 兼容格式的上游
+/// 返回的 model 通常是上游自己的模型 id，而 Claude Science 等 Anthropic 客户端
+/// 期望收到请求时使用的模型 id（路由 id），因此需要显式指定。
 pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+    expected_model: Option<String>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
         let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut message_id = None;
-        let mut current_model = None;
+        let mut current_model = expected_model.clone();
         let mut next_content_index: u32 = 0;
         let mut has_sent_message_start = false;
         // 某些上游 provider（如 OpenRouter 的 kimi-k2.6）会在 tool_use 后发送多个
@@ -726,7 +731,7 @@ mod tests {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
             input.as_bytes().to_vec(),
         ))]);
-        let converted = create_anthropic_sse_stream(upstream);
+        let converted = create_anthropic_sse_stream(upstream, None);
         let chunks: Vec<_> = converted.collect().await;
         let merged = chunks
             .into_iter()
@@ -774,7 +779,7 @@ mod tests {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
             input.as_bytes().to_vec(),
         ))]);
-        let converted = create_anthropic_sse_stream(upstream);
+        let converted = create_anthropic_sse_stream(upstream, None);
         let chunks: Vec<_> = converted.collect().await;
 
         let merged = chunks
@@ -864,7 +869,7 @@ mod tests {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
             input.as_bytes().to_vec(),
         ))]);
-        let converted = create_anthropic_sse_stream(upstream);
+        let converted = create_anthropic_sse_stream(upstream, None);
         let chunks: Vec<_> = converted.collect().await;
         let merged = chunks
             .into_iter()
@@ -946,7 +951,7 @@ mod tests {
             Ok::<_, std::io::Error>(chunk1),
             Ok::<_, std::io::Error>(chunk2),
         ]);
-        let converted = create_anthropic_sse_stream(upstream);
+        let converted = create_anthropic_sse_stream(upstream, None);
         let chunks: Vec<_> = converted.collect().await;
 
         let merged = chunks
@@ -978,7 +983,7 @@ mod tests {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
             input.as_bytes().to_vec(),
         ))]);
-        let converted = create_anthropic_sse_stream(upstream);
+        let converted = create_anthropic_sse_stream(upstream, None);
         let chunks: Vec<_> = converted.collect().await;
 
         let merged = chunks
@@ -1217,7 +1222,7 @@ mod tests {
         let upstream = stream::iter(vec![Err::<Bytes, _>(std::io::Error::other(
             "upstream disconnected",
         ))]);
-        let converted = create_anthropic_sse_stream(upstream);
+        let converted = create_anthropic_sse_stream(upstream, None);
         let chunks: Vec<_> = converted.collect().await;
 
         let merged = chunks
@@ -1244,5 +1249,45 @@ mod tests {
         assert!(!events
             .iter()
             .any(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_stop")));
+    }
+
+    #[tokio::test]
+    async fn test_expected_model_overrides_upstream_model_in_message_start() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_override\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_override\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
+        let converted = create_anthropic_sse_stream(upstream, Some("claude-opus-5".to_string()));
+        let chunks: Vec<_> = converted.collect().await;
+        let merged = chunks
+            .into_iter()
+            .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
+            .collect::<String>();
+
+        let events: Vec<Value> = merged
+            .split("\n\n")
+            .filter_map(|block| {
+                let data = block
+                    .lines()
+                    .find_map(|line| strip_sse_field(line, "data"))?;
+                serde_json::from_str::<Value>(data).ok()
+            })
+            .collect();
+
+        let message_start = events
+            .iter()
+            .find(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_start"))
+            .expect("message_start event should exist");
+        assert_eq!(
+            message_start
+                .pointer("/message/model")
+                .and_then(|v| v.as_str()),
+            Some("claude-opus-5")
+        );
     }
 }

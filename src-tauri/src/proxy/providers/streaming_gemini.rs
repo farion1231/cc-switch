@@ -240,12 +240,13 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
     provider_id: Option<String>,
     session_id: Option<String>,
     tool_schema_hints: Option<AnthropicToolSchemaHints>,
+    expected_model: Option<String>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
         let mut utf8_remainder = Vec::new();
         let mut message_id: Option<String> = None;
-        let mut current_model: Option<String> = None;
+        let mut current_model: Option<String> = expected_model.clone();
         let mut has_sent_message_start = false;
         let mut accumulated_text = String::new();
         let mut text_block_index: Option<u32> = None;
@@ -587,7 +588,8 @@ mod tests {
                 .into_iter()
                 .map(|chunk| Ok::<Bytes, std::io::Error>(Bytes::from(chunk))),
         );
-        let converted = create_anthropic_sse_stream_from_gemini(stream, None, None, None, None);
+        let converted =
+            create_anthropic_sse_stream_from_gemini(stream, None, None, None, None, None);
         futures::executor::block_on(async move {
             converted
                 .collect::<Vec<_>>()
@@ -616,6 +618,7 @@ mod tests {
             Some(store),
             Some(provider_id.to_string()),
             Some(session_id.to_string()),
+            None,
             None,
         );
         futures::executor::block_on(async move {
@@ -693,7 +696,8 @@ mod tests {
             Ok::<Bytes, std::io::Error>(Bytes::from(chunk_bytes[..split_at].to_vec())),
             Ok::<Bytes, std::io::Error>(Bytes::from(chunk_bytes[split_at..].to_vec())),
         ]);
-        let converted = create_anthropic_sse_stream_from_gemini(stream, None, None, None, None);
+        let converted =
+            create_anthropic_sse_stream_from_gemini(stream, None, None, None, None, None);
         let output = futures::executor::block_on(async move {
             converted
                 .collect::<Vec<_>>()
@@ -769,6 +773,7 @@ mod tests {
             Some("provider-a".to_string()),
             Some("session-1".to_string()),
             None,
+            None,
         ));
 
         futures::executor::block_on(async {
@@ -811,7 +816,7 @@ mod tests {
             }]
         }));
         let converted =
-            create_anthropic_sse_stream_from_gemini(stream, None, None, None, Some(hints));
+            create_anthropic_sse_stream_from_gemini(stream, None, None, None, Some(hints), None);
         let output = futures::executor::block_on(async move {
             converted
                 .collect::<Vec<_>>()
@@ -875,7 +880,7 @@ mod tests {
             }]
         }));
         let converted =
-            create_anthropic_sse_stream_from_gemini(stream, None, None, None, Some(hints));
+            create_anthropic_sse_stream_from_gemini(stream, None, None, None, Some(hints), None);
         let output = futures::executor::block_on(async move {
             converted
                 .collect::<Vec<_>>()
@@ -1050,5 +1055,38 @@ mod tests {
             shadow["parts"][0]["thoughtSignature"], "sig-keep",
             "prior thoughtSignature must survive a later chunk that omits it: {shadow}"
         );
+    }
+
+    #[test]
+    fn expected_model_overrides_upstream_model_version_in_message_start() {
+        let chunks = vec![
+            "data: {\"responseId\":\"resp_override\",\"modelVersion\":\"gemini-2.5-pro\",\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"text\":\"Hello\"}]}}],\"usageMetadata\":{\"promptTokenCount\":1,\"totalTokenCount\":2}}\n\n".to_string(),
+        ];
+        let stream = futures::stream::iter(
+            chunks
+                .into_iter()
+                .map(|chunk| Ok::<Bytes, std::io::Error>(Bytes::from(chunk))),
+        );
+        let converted = create_anthropic_sse_stream_from_gemini(
+            stream,
+            None,
+            None,
+            None,
+            None,
+            Some("claude-opus-5".to_string()),
+        );
+        let output = futures::executor::block_on(async move {
+            converted
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .map(|item| String::from_utf8(item.unwrap().to_vec()).unwrap())
+                .collect::<Vec<_>>()
+                .join("")
+        });
+
+        assert!(output.contains("event: message_start"));
+        assert!(output.contains("\"model\":\"claude-opus-5\""));
+        assert!(!output.contains("\"model\":\"gemini-2.5-pro\""));
     }
 }

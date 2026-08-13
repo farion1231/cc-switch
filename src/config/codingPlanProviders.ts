@@ -71,8 +71,9 @@ export function detectCodingPlanProvider(
  * 自动把 `meta.usage_script` 标记为 token_plan 并启用。
  *
  * - 仅在 `meta.usage_script` 完全缺失时注入，不覆盖用户/UsageScriptModal 已有配置
- * - 仅对 Claude app 生效：后端 `commands/provider.rs` 的 token_plan 分支只处理 Claude
- *   supplier 的 `settings_config.env.ANTHROPIC_BASE_URL`
+ * - 仅对 Claude / Claude Science app 生效：二者共享 Anthropic env 配置结构，
+ *   后端 `commands/provider.rs` 的 token_plan 分支经 `resolve_usage_credentials`
+ *   读取 `settings_config.env.ANTHROPIC_BASE_URL`（已支持 ClaudeScience）
  * - code 置空：Rust 端走专用 `coding_plan::get_coding_plan_quota`，不执行 JS 脚本
  */
 export function injectCodingPlanUsageScript<
@@ -81,7 +82,7 @@ export function injectCodingPlanUsageScript<
     meta?: Record<string, any>;
   },
 >(appId: string, provider: T): T {
-  if (appId !== "claude") return provider;
+  if (appId !== "claude" && appId !== "claude-science") return provider;
   if (provider.meta?.usage_script) return provider;
 
   const baseUrl = provider.settingsConfig?.env?.ANTHROPIC_BASE_URL;

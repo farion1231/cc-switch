@@ -11,7 +11,7 @@ import {
   useDeleteMcpServer,
   useImportMcpFromApps,
 } from "@/hooks/useMcp";
-import type { McpServer } from "@/types";
+import type { McpServer, McpApps } from "@/types";
 import type { AppId } from "@/lib/api/types";
 import McpFormModal from "./McpFormModal";
 import { ConfirmDialog } from "../ConfirmDialog";
@@ -178,7 +178,9 @@ const UnifiedMcpPanel = React.forwardRef<
     // AppCountBar summarizes the complete collection, so its bulk action must
     // use the complete collection too, even while a search filter is active.
     const serverIds = serverEntries
-      .filter(([_, server]) => Boolean(server.apps[app]) !== enabled)
+      .filter(
+        ([_, server]) => Boolean(server.apps[app as keyof McpApps]) !== enabled,
+      )
       .map(([id]) => id);
     if (serverIds.length === 0) {
       endWrite();

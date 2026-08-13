@@ -890,7 +890,9 @@
     "claude": "Claude",
     "claudeCode": "Claude Code",
     "claudeDesktop": "Claude Desktop",
+    "claudeScience": "Claude Science",
     "claude-desktop": "Claude Desktop",
+    "claude-science": "Claude Science",
     "codex": "Codex",
     "gemini": "Gemini",
     "grokbuild": "Grok Build",
@@ -1523,7 +1525,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "grokbuild": "Grok Build"
+      "grokbuild": "Grok Build",
+      "claude-science": "Claude Science"
     },
     "rawInputLabel": "原始",
     "rebuildCodex": {
@@ -2578,6 +2581,11 @@
       "disabled": "啟用 {{app}} 故障轉移\n將立即切換至佇列 P1，並在失敗時自動切換至下一個",
       "takeoverRequired": "請先接管 {{app}}，再啟用故障轉移"
     }
+  },
+  "claudeScience": {
+    "launch": "透過代理啟動 Claude Science",
+    "launchSuccess": "Claude Science 已透過本地代理啟動。",
+    "launchFailed": "啟動 Claude Science 失敗"
   },
   "proxy": {
     "panel": {

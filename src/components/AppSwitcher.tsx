@@ -27,6 +27,7 @@ interface AppSwitcherProps {
 const ALL_APPS: AppId[] = [
   "claude",
   "claude-desktop",
+  "claude-science",
   "codex",
   "gemini",
   "grokbuild",
@@ -39,6 +40,7 @@ const STORAGE_KEY = "cc-switch-last-app";
 const APP_ICON_NAME: Record<AppId, string> = {
   claude: "claude",
   "claude-desktop": "claude",
+  "claude-science": "claudescience",
   codex: "openai",
   gemini: "gemini",
   grokbuild: "grok",
@@ -50,6 +52,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
 const APP_DISPLAY_NAME: Record<AppId, string> = {
   claude: "Claude Code",
   "claude-desktop": "Claude Desktop",
+  "claude-science": "Claude Science",
   codex: "Codex",
   gemini: "Gemini",
   grokbuild: "Grok Build",

@@ -63,7 +63,7 @@ fn anthropic_error_sse(message: &str, error_type: &str) -> Bytes {
 /// Convert a compatible gateway's non-streaming Responses JSON into a complete
 /// Anthropic SSE lifecycle. This is used when the client requested streaming but
 /// the upstream ignored `stream:true` and returned `application/json`.
-fn responses_json_to_anthropic_sse(body: Value) -> Vec<Bytes> {
+fn responses_json_to_anthropic_sse(body: Value, expected_model: Option<&str>) -> Vec<Bytes> {
     let message = match responses_to_anthropic(body) {
         Ok(message) => message,
         Err(error) => {
@@ -77,6 +77,10 @@ fn responses_json_to_anthropic_sse(body: Value) -> Vec<Bytes> {
     let usage = message.get("usage").cloned().unwrap_or_else(|| json!({}));
     let mut start_usage = usage.clone();
     start_usage["output_tokens"] = json!(0);
+    let model = expected_model
+        .map(|m| json!(m))
+        .or_else(|| message.get("model").cloned())
+        .unwrap_or_else(|| json!(""));
     let mut events = vec![anthropic_sse(
         "message_start",
         &json!({
@@ -85,7 +89,7 @@ fn responses_json_to_anthropic_sse(body: Value) -> Vec<Bytes> {
                 "id": message.get("id").cloned().unwrap_or_else(|| json!("")),
                 "type": "message",
                 "role": "assistant",
-                "model": message.get("model").cloned().unwrap_or_else(|| json!("")),
+                "model": model,
                 "usage": start_usage
             }
         }),
@@ -290,14 +294,19 @@ fn resolve_content_index(
 ///
 /// 状态机跟踪: message_id, current_model, has_sent_message_start, item/content index map
 /// SSE 解析支持 named events (event: + data: 行)
+///
+/// `expected_model` 用于覆盖上游响应中的 model 字段。OpenAI 兼容格式的上游返回的
+/// model 通常是上游自己的模型 id，而 Claude Science 等 Anthropic 客户端期望收到
+/// 请求时使用的模型 id（路由 id），因此需要显式指定。
 pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+    expected_model: Option<String>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
         let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut message_id: Option<String> = None;
-        let mut current_model: Option<String> = None;
+        let mut current_model: Option<String> = expected_model.clone();
         let mut has_sent_message_start = false;
         let mut has_tool_use = false;
         let mut next_content_index: u32 = 0;
@@ -348,7 +357,10 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                     if looks_like_json && is_eof {
                         match serde_json::from_str::<Value>(buffer.trim()) {
                             Ok(body) => {
-                                for event in responses_json_to_anthropic_sse(body) {
+                                for event in responses_json_to_anthropic_sse(
+                                    body,
+                                    expected_model.as_deref(),
+                                ) {
                                     yield Ok(event);
                                 }
                                 terminated = true;
@@ -455,10 +467,12 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                 if let Some(id) = response_obj.get("id").and_then(|i| i.as_str()) {
                                     message_id = Some(id.to_string());
                                 }
-                                if let Some(model) =
-                                    response_obj.get("model").and_then(|m| m.as_str())
-                                {
-                                    current_model = Some(model.to_string());
+                                if current_model.is_none() {
+                                    if let Some(model) =
+                                        response_obj.get("model").and_then(|m| m.as_str())
+                                    {
+                                        current_model = Some(model.to_string());
+                                    }
                                 }
 
                                 has_sent_message_start = true;
@@ -1170,10 +1184,12 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                     if let Some(id) = response_obj.get("id").and_then(Value::as_str) {
                                         message_id = Some(id.to_string());
                                     }
-                                    if let Some(model) =
-                                        response_obj.get("model").and_then(Value::as_str)
-                                    {
-                                        current_model = Some(model.to_string());
+                                    if current_model.is_none() {
+                                        if let Some(model) =
+                                            response_obj.get("model").and_then(Value::as_str)
+                                        {
+                                            current_model = Some(model.to_string());
+                                        }
                                     }
                                     yield Ok(anthropic_sse(
                                         "message_start",
@@ -1544,7 +1560,7 @@ mod tests {
 
     async fn convert_stream_text(input: impl Into<Bytes>) -> String {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(input.into())]);
-        create_anthropic_sse_stream_from_responses(upstream)
+        create_anthropic_sse_stream_from_responses(upstream, None)
             .collect::<Vec<_>>()
             .await
             .into_iter()
@@ -1750,7 +1766,7 @@ mod tests {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
             input.as_bytes().to_vec(),
         ))]);
-        let converted = create_anthropic_sse_stream_from_responses(upstream);
+        let converted = create_anthropic_sse_stream_from_responses(upstream, None);
         let chunks: Vec<_> = converted.collect().await;
 
         let merged = chunks
@@ -1788,7 +1804,7 @@ mod tests {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
             input.as_bytes().to_vec(),
         ))]);
-        let converted = create_anthropic_sse_stream_from_responses(upstream);
+        let converted = create_anthropic_sse_stream_from_responses(upstream, None);
         let chunks: Vec<_> = converted.collect().await;
 
         let merged = chunks
@@ -1821,7 +1837,7 @@ mod tests {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
             input.as_bytes().to_vec(),
         ))]);
-        let converted = create_anthropic_sse_stream_from_responses(upstream);
+        let converted = create_anthropic_sse_stream_from_responses(upstream, None);
         let chunks: Vec<_> = converted.collect().await;
 
         let merged = chunks
@@ -1859,7 +1875,7 @@ mod tests {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
             input.as_bytes().to_vec(),
         ))]);
-        let converted = create_anthropic_sse_stream_from_responses(upstream);
+        let converted = create_anthropic_sse_stream_from_responses(upstream, None);
         let chunks: Vec<_> = converted.collect().await;
         let merged = chunks
             .into_iter()
@@ -1923,7 +1939,7 @@ mod tests {
             "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
         );
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(input))]);
-        let merged = create_anthropic_sse_stream_from_responses(upstream)
+        let merged = create_anthropic_sse_stream_from_responses(upstream, None)
             .collect::<Vec<_>>()
             .await
             .into_iter()
@@ -1953,7 +1969,7 @@ mod tests {
             "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
         );
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(input))]);
-        let merged = create_anthropic_sse_stream_from_responses(upstream)
+        let merged = create_anthropic_sse_stream_from_responses(upstream, None)
             .collect::<Vec<_>>()
             .await
             .into_iter()
@@ -1992,7 +2008,7 @@ mod tests {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
             input.as_bytes().to_vec(),
         ))]);
-        let converted = create_anthropic_sse_stream_from_responses(upstream);
+        let converted = create_anthropic_sse_stream_from_responses(upstream, None);
         let chunks: Vec<_> = converted.collect().await;
         let merged = chunks
             .into_iter()
@@ -2101,7 +2117,7 @@ mod tests {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
             input.as_bytes().to_vec(),
         ))]);
-        let converted = create_anthropic_sse_stream_from_responses(upstream);
+        let converted = create_anthropic_sse_stream_from_responses(upstream, None);
         let chunks: Vec<_> = converted.collect().await;
         let events: Vec<Value> = chunks
             .into_iter()
@@ -2178,7 +2194,7 @@ mod tests {
             Ok::<_, std::io::Error>(chunk1),
             Ok::<_, std::io::Error>(chunk2),
         ]);
-        let converted = create_anthropic_sse_stream_from_responses(upstream);
+        let converted = create_anthropic_sse_stream_from_responses(upstream, None);
         let chunks: Vec<_> = converted.collect().await;
         let merged = chunks
             .into_iter()
@@ -2192,6 +2208,48 @@ mod tests {
         assert!(
             !merged.contains('\u{FFFD}'),
             "output must not contain U+FFFD replacement characters"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_expected_model_overrides_upstream_model_in_message_start() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_override\",\"model\":\"gpt-5\"}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
+        );
+
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
+        let converted =
+            create_anthropic_sse_stream_from_responses(upstream, Some("claude-opus-5".to_string()));
+        let chunks: Vec<_> = converted.collect().await;
+        let merged = chunks
+            .into_iter()
+            .map(|c| String::from_utf8_lossy(c.unwrap().as_ref()).to_string())
+            .collect::<String>();
+
+        let events: Vec<Value> = merged
+            .split("\n\n")
+            .filter_map(|block| {
+                let data = block
+                    .lines()
+                    .find_map(|line| strip_sse_field(line, "data"))?;
+                serde_json::from_str::<Value>(data).ok()
+            })
+            .collect();
+
+        let message_start = events
+            .iter()
+            .find(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_start"))
+            .expect("message_start event should exist");
+        assert_eq!(
+            message_start
+                .pointer("/message/model")
+                .and_then(|v| v.as_str()),
+            Some("claude-opus-5")
         );
     }
 }

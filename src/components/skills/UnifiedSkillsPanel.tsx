@@ -30,6 +30,7 @@ import {
   type SkillUpdateInfo,
 } from "@/hooks/useSkills";
 import type { AppId } from "@/lib/api/types";
+import type { SkillApps } from "@/lib/api/skills";
 import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
@@ -274,7 +275,9 @@ const UnifiedSkillsPanel = React.forwardRef<
     if (!skills || !beginWrite()) return;
 
     const ids = skills
-      .filter((skill) => Boolean(skill.apps[app]) !== enabled)
+      .filter(
+        (skill) => Boolean(skill.apps[app as keyof SkillApps]) !== enabled,
+      )
       .map((skill) => skill.id);
     if (ids.length === 0) {
       endWrite();

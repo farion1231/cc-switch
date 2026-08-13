@@ -527,7 +527,8 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
-        | AppType::ClaudeDesktop => false,
+        | AppType::ClaudeDesktop
+        | AppType::ClaudeScience => false,
     }
 }
 
@@ -601,7 +602,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
+        | AppType::ClaudeDesktop
+        | AppType::ClaudeScience => Ok(settings.clone()),
     }
 }
 
@@ -660,7 +662,8 @@ fn apply_common_config_to_settings(
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
+        | AppType::ClaudeDesktop
+        | AppType::ClaudeScience => Ok(settings.clone()),
     }
 }
 
@@ -1027,6 +1030,10 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 "Claude Desktop configuration must be written through the provider switch flow",
             ));
         }
+        AppType::ClaudeScience => {
+            // Claude Science 的配置在加密 SQLite 中，没有 live 配置文件可写，
+            // 切换供应商由本地代理的独立路由命名空间完成，这里什么都不做。
+        }
         AppType::Codex => {
             let obj = provider
                 .settings_config
@@ -1355,6 +1362,11 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             "Claude Desktop 3P 配置不支持作为通用 live 配置导入，请使用“从 Claude 导入兼容供应商”。",
             "Claude Desktop 3P configuration cannot be imported as a generic live config. Use 'Import compatible providers from Claude' instead.",
         )),
+        AppType::ClaudeScience => Err(AppError::localized(
+            "claude_science.live.read_unsupported",
+            "Claude Science 的配置在加密 SQLite 中，没有 live 配置文件可读取。",
+            "Claude Science configuration lives in an encrypted SQLite database; there is no live config file to read.",
+        )),
         AppType::Gemini => {
             use crate::gemini_config::{
                 env_to_json, get_gemini_env_path, get_gemini_settings_path, read_gemini_env,
@@ -1507,6 +1519,13 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "Claude Desktop 3P config cannot be imported through the generic import flow. Use 'Import compatible providers from Claude' instead.",
             ));
         }
+        AppType::ClaudeScience => {
+            return Err(AppError::localized(
+                "claude_science.import_unsupported",
+                "Claude Science 的配置在加密 SQLite 中，无法从 live 配置导入。",
+                "Claude Science configuration lives in an encrypted SQLite database and cannot be imported from a live config.",
+            ));
+        }
         AppType::Gemini => {
             use crate::gemini_config::{
                 env_to_json, get_gemini_env_path, get_gemini_settings_path, read_gemini_env,
@@ -1612,6 +1631,11 @@ pub fn should_import_default_config_on_startup(
     app_type: &AppType,
 ) -> Result<bool, AppError> {
     if app_type.is_additive_mode() {
+        return Ok(false);
+    }
+
+    // Claude Science 的配置在加密 SQLite 中，没有 live 配置可导入
+    if matches!(app_type, AppType::ClaudeScience) {
         return Ok(false);
     }
 

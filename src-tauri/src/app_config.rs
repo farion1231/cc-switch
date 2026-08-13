@@ -33,6 +33,7 @@ impl McpApps {
             AppType::OpenClaw => false, // OpenClaw doesn't support MCP
             AppType::Hermes => self.hermes,
             AppType::ClaudeDesktop => false,
+            AppType::ClaudeScience => false, // Claude Science 的 MCP 配置在加密 SQLite 中，不支持同步
         }
     }
 
@@ -47,6 +48,7 @@ impl McpApps {
             AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
             AppType::Hermes => self.hermes = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P provider config doesn't support MCP here
+            AppType::ClaudeScience => {} // Claude Science 的 MCP 配置在加密 SQLite 中，忽略
         }
     }
 
@@ -114,6 +116,7 @@ impl SkillApps {
             AppType::Hermes => self.hermes,
             AppType::OpenClaw => false, // OpenClaw doesn't support Skills
             AppType::ClaudeDesktop => false,
+            AppType::ClaudeScience => false, // Claude Science 无 live 配置文件，不支持 Skill 同步
         }
     }
 
@@ -128,6 +131,7 @@ impl SkillApps {
             AppType::Hermes => self.hermes = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
+            AppType::ClaudeScience => {} // Claude Science 无 live 配置文件，忽略
         }
     }
 
@@ -291,6 +295,15 @@ pub struct McpRoot {
         skip_serializing_if = "McpConfig::is_empty"
     )]
     pub claude_desktop: McpConfig,
+    /// Claude Science MCP 配置（占位：实际 MCP 配置在加密 SQLite 中，不参与同步）
+    #[serde(
+        rename = "claude-science",
+        alias = "claudeScience",
+        alias = "claude_science",
+        default,
+        skip_serializing_if = "McpConfig::is_empty"
+    )]
+    pub claude_science: McpConfig,
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub codex: McpConfig,
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
@@ -316,6 +329,7 @@ impl Default for McpRoot {
             // 旧结构保持空，仅用于反序列化旧配置时的迁移
             claude: McpConfig::default(),
             claude_desktop: McpConfig::default(),
+            claude_science: McpConfig::default(),
             codex: McpConfig::default(),
             gemini: McpConfig::default(),
             grokbuild: McpConfig::default(),
@@ -345,6 +359,13 @@ pub struct PromptRoot {
         default
     )]
     pub claude_desktop: PromptConfig,
+    #[serde(
+        rename = "claude-science",
+        alias = "claudeScience",
+        alias = "claude_science",
+        default
+    )]
+    pub claude_science: PromptConfig,
     #[serde(default)]
     pub codex: PromptConfig,
     #[serde(default)]
@@ -375,6 +396,12 @@ pub enum AppType {
         alias = "claudeDesktop"
     )]
     ClaudeDesktop,
+    #[serde(
+        rename = "claude-science",
+        alias = "claude_science",
+        alias = "claudeScience"
+    )]
+    ClaudeScience,
     Codex,
     Gemini,
     GrokBuild,
@@ -388,6 +415,7 @@ impl AppType {
         match self {
             AppType::Claude => "claude",
             AppType::ClaudeDesktop => "claude-desktop",
+            AppType::ClaudeScience => "claude-science",
             AppType::Codex => "codex",
             AppType::Gemini => "gemini",
             AppType::GrokBuild => "grokbuild",
@@ -413,6 +441,7 @@ impl AppType {
         [
             AppType::Claude,
             AppType::ClaudeDesktop,
+            AppType::ClaudeScience,
             AppType::Codex,
             AppType::Gemini,
             AppType::GrokBuild,
@@ -432,6 +461,7 @@ impl FromStr for AppType {
         match normalized.as_str() {
             "claude" => Ok(AppType::Claude),
             "claude-desktop" | "claude_desktop" | "claudedesktop" => Ok(AppType::ClaudeDesktop),
+            "claude-science" | "claude_science" | "claudescience" => Ok(AppType::ClaudeScience),
             "codex" => Ok(AppType::Codex),
             "gemini" => Ok(AppType::Gemini),
             "grokbuild" | "grok-build" | "grok_build" | "grok" => Ok(AppType::GrokBuild),
@@ -440,8 +470,8 @@ impl FromStr for AppType {
             "hermes" => Ok(AppType::Hermes),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, claude-science, codex, gemini, grokbuild, opencode, openclaw, hermes。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, claude-science, codex, gemini, grokbuild, opencode, openclaw, hermes."),
             )),
         }
     }
@@ -475,6 +505,8 @@ impl CommonConfigSnippets {
         match app {
             AppType::Claude => self.claude.as_ref(),
             AppType::ClaudeDesktop => None,
+            // claude-science 没有 live 配置文件，无片段可合并，按 ClaudeDesktop 处理
+            AppType::ClaudeScience => None,
             AppType::Codex => self.codex.as_ref(),
             AppType::Gemini => self.gemini.as_ref(),
             AppType::GrokBuild => None,
@@ -489,6 +521,8 @@ impl CommonConfigSnippets {
         match app {
             AppType::Claude => self.claude = snippet,
             AppType::ClaudeDesktop => {}
+            // claude-science 没有 live 配置文件，忽略片段写入
+            AppType::ClaudeScience => {}
             AppType::Codex => self.codex = snippet,
             AppType::Gemini => self.gemini = snippet,
             AppType::GrokBuild => {}
@@ -533,6 +567,7 @@ impl Default for MultiAppConfig {
         let mut apps = HashMap::new();
         apps.insert("claude".to_string(), ProviderManager::default());
         apps.insert("claude-desktop".to_string(), ProviderManager::default());
+        apps.insert("claude-science".to_string(), ProviderManager::default());
         apps.insert("codex".to_string(), ProviderManager::default());
         apps.insert("gemini".to_string(), ProviderManager::default());
         apps.insert("grokbuild".to_string(), ProviderManager::default());
@@ -696,6 +731,7 @@ impl MultiAppConfig {
         match app {
             AppType::Claude => &self.mcp.claude,
             AppType::ClaudeDesktop => &self.mcp.claude_desktop,
+            AppType::ClaudeScience => &self.mcp.claude_science,
             AppType::Codex => &self.mcp.codex,
             AppType::Gemini => &self.mcp.gemini,
             AppType::GrokBuild => &self.mcp.grokbuild,
@@ -710,6 +746,7 @@ impl MultiAppConfig {
         match app {
             AppType::Claude => &mut self.mcp.claude,
             AppType::ClaudeDesktop => &mut self.mcp.claude_desktop,
+            AppType::ClaudeScience => &mut self.mcp.claude_science,
             AppType::Codex => &mut self.mcp.codex,
             AppType::Gemini => &mut self.mcp.gemini,
             AppType::GrokBuild => &mut self.mcp.grokbuild,
@@ -751,6 +788,7 @@ impl MultiAppConfig {
         // 如果任一应用已经有提示词配置，说明用户已经在使用 Prompt 功能，避免再次自动导入
         if !self.prompts.claude.prompts.is_empty()
             || !self.prompts.claude_desktop.prompts.is_empty()
+            || !self.prompts.claude_science.prompts.is_empty()
             || !self.prompts.codex.prompts.is_empty()
             || !self.prompts.gemini.prompts.is_empty()
             || !self.prompts.grokbuild.prompts.is_empty()
@@ -840,6 +878,7 @@ impl MultiAppConfig {
         let prompts = match app {
             AppType::Claude => &mut config.prompts.claude.prompts,
             AppType::ClaudeDesktop => &mut config.prompts.claude_desktop.prompts,
+            AppType::ClaudeScience => &mut config.prompts.claude_science.prompts,
             AppType::Codex => &mut config.prompts.codex.prompts,
             AppType::Gemini => &mut config.prompts.gemini.prompts,
             AppType::GrokBuild => &mut config.prompts.grokbuild.prompts,
@@ -883,6 +922,7 @@ impl MultiAppConfig {
             let old_servers = match app {
                 AppType::Claude => &self.mcp.claude.servers,
                 AppType::ClaudeDesktop => continue, // Claude Desktop 3P profiles don't use MCP here
+                AppType::ClaudeScience => continue, // Claude Science 在 v3.6.x 不存在，跳过
                 AppType::Codex => &self.mcp.codex.servers,
                 AppType::Gemini => &self.mcp.gemini.servers,
                 AppType::GrokBuild => continue,
@@ -1019,6 +1059,49 @@ mod tests {
             AppType::ClaudeDesktop
         );
         assert_eq!(AppType::ClaudeDesktop.as_str(), "claude-desktop");
+    }
+
+    #[test]
+    fn app_type_parses_claude_science_aliases() {
+        assert_eq!(
+            "claude-science".parse::<AppType>().unwrap(),
+            AppType::ClaudeScience
+        );
+        assert_eq!(
+            "claude_science".parse::<AppType>().unwrap(),
+            AppType::ClaudeScience
+        );
+        assert_eq!(
+            "claudeScience".parse::<AppType>().unwrap(),
+            AppType::ClaudeScience
+        );
+        assert_eq!(
+            "claudescience".parse::<AppType>().unwrap(),
+            AppType::ClaudeScience
+        );
+        assert_eq!(AppType::ClaudeScience.as_str(), "claude-science");
+        assert!(!AppType::ClaudeScience.is_additive_mode());
+        assert!(AppType::all().any(|app| app == AppType::ClaudeScience));
+    }
+
+    #[test]
+    fn app_type_serde_claude_science_aliases() {
+        assert_eq!(
+            serde_json::from_str::<AppType>("\"claude-science\"").unwrap(),
+            AppType::ClaudeScience
+        );
+        assert_eq!(
+            serde_json::from_str::<AppType>("\"claude_science\"").unwrap(),
+            AppType::ClaudeScience
+        );
+        assert_eq!(
+            serde_json::from_str::<AppType>("\"claudeScience\"").unwrap(),
+            AppType::ClaudeScience
+        );
+        assert_eq!(
+            serde_json::to_string(&AppType::ClaudeScience).unwrap(),
+            "\"claude-science\""
+        );
     }
 
     struct TempHome {

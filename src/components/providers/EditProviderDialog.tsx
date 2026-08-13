@@ -77,6 +77,15 @@ export function EditProviderDialog({
         return;
       }
 
+      // Claude Science 没有 live 配置文件（经本地代理路由），直接使用 SSOT 配置
+      if (appId === "claude-science") {
+        if (!cancelled) {
+          setLiveSettings(null);
+          setHasLoadedLive(true);
+        }
+        return;
+      }
+
       if (appId === "openclaw") {
         try {
           const live = await openclawApi.getLiveProvider(provider.id);
