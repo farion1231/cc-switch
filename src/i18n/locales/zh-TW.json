@@ -145,7 +145,6 @@
     "duplicate": "複製",
     "sortUpdateFailed": "排序更新失敗",
     "configureUsage": "設定用量查詢",
-    "officialPartner": "官方合作夥伴",
     "managedByHermes": "Hermes 託管",
     "managedByHermesHint": "該專案定義於 Hermes 的 providers: dict，請在 Hermes Web UI 中編輯或刪除。",
     "openTerminal": "開啟終端機",
