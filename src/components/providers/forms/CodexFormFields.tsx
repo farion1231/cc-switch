@@ -28,6 +28,7 @@ import {
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
 import { XaiOAuthSection } from "./XaiOAuthSection";
+import { CodexOAuthSection } from "./CodexOAuthSection";
 import {
   fetchModelsForConfig,
   fetchXaiOauthModels,
@@ -54,6 +55,9 @@ interface EndpointCandidate {
 interface CodexFormFieldsProps {
   appId?: AppId;
   providerId?: string;
+  isOfficialProfile?: boolean;
+  selectedCodexAccountId?: string | null;
+  onCodexAccountSelect?: (accountId: string | null) => void;
   // xAI OAuth 托管预设（Grok 订阅）：隐藏 API Key / 端点输入，挂账号选择区块
   isXaiOauthPreset?: boolean;
   isXaiOauthAuthenticated?: boolean;
@@ -166,6 +170,9 @@ function catalogRowsMatchModels(
 export function CodexFormFields({
   appId = "codex",
   providerId,
+  isOfficialProfile,
+  selectedCodexAccountId,
+  onCodexAccountSelect,
   isXaiOauthPreset,
   isXaiOauthAuthenticated,
   selectedXaiAccountId,
@@ -501,6 +508,15 @@ export function CodexFormFields({
 
   return (
     <>
+      {isOfficialProfile && (
+        <CodexOAuthSection
+          selectedAccountId={selectedCodexAccountId}
+          onAccountSelect={onCodexAccountSelect}
+          showAccountQuota
+          allowDefaultAccount={false}
+        />
+      )}
+
       {/* xAI OAuth 认证（Grok 订阅托管账号） */}
       {isXaiOauthPreset && (
         <XaiOAuthSection
@@ -510,7 +526,7 @@ export function CodexFormFields({
       )}
 
       {/* Codex API Key 输入框（托管 OAuth 预设无需 Key） */}
-      {!isXaiOauthPreset && (
+      {!isXaiOauthPreset && !isOfficialProfile && (
         <ApiKeySection
           id="codexApiKey"
           label="API Key"

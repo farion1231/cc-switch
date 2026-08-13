@@ -51,6 +51,19 @@ pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &
         && crate::proxy::providers::is_codex_official_provider(provider)
 }
 
+fn activate_codex_profile_for_provider(provider: &Provider) -> Result<(), AppError> {
+    let account_id = if provider.category.as_deref() == Some("official") {
+        provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+    } else {
+        None
+    };
+    crate::codex_profile::activate(account_id.as_deref())?;
+    Ok(())
+}
+
 /// 统一会话开关变更后，立即按新开关状态重写当前官方 Codex 供应商的
 /// live 配置，使开关即时生效（无需等下一次切换）。
 /// 当前供应商非官方（或不存在）时为 no-op：注入只作用于官方配置，
@@ -2588,6 +2601,9 @@ impl ProviderService {
         let current = state.db.get_current_provider(app_type.as_str())?;
         if current.is_none() {
             // No current provider, set as current and sync
+            if matches!(app_type, AppType::Codex) {
+                activate_codex_profile_for_provider(&provider)?;
+            }
             state
                 .db
                 .set_current_provider(app_type.as_str(), &provider.id)?;
@@ -2755,6 +2771,10 @@ impl ProviderService {
         let is_current = effective_current.as_deref() == Some(provider.id.as_str());
 
         if is_current {
+            if matches!(app_type, AppType::Codex) {
+                activate_codex_profile_for_provider(&provider)?;
+            }
+
             // 如果 Claude 代理接管处于激活状态，并且代理服务正在运行：
             // - 不直接走普通 Live 写入逻辑
             // - 改为更新 Live 备份，并在 Claude 下同步代理安全的 Live 配置
@@ -3038,6 +3058,10 @@ impl ProviderService {
                 id
             );
 
+            if matches!(app_type, AppType::Codex) {
+                activate_codex_profile_for_provider(_provider)?;
+            }
+
             futures::executor::block_on(
                 state
                     .proxy_service
@@ -3131,6 +3155,12 @@ impl ProviderService {
                     }
                 }
             }
+        }
+
+        // Backfill must read the outgoing profile first. Only after that is
+        // complete may CODEX_HOME move to the target account profile.
+        if matches!(app_type, AppType::Codex) {
+            activate_codex_profile_for_provider(provider)?;
         }
 
         // Additive mode apps skip setting is_current (no such concept)

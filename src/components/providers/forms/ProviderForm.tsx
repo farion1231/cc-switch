@@ -522,6 +522,7 @@ function ProviderFormFull({
   const {
     isAuthenticated: isCodexOauthAuthenticated,
     accounts: codexOauthAccounts,
+    defaultAccountId: defaultCodexAccountId,
   } = useCodexOauth();
 
   const {
@@ -544,6 +545,17 @@ function ProviderFormFull({
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
   );
+
+  useEffect(() => {
+    if (
+      appId === "codex" &&
+      category === "official" &&
+      !selectedCodexAccountId &&
+      defaultCodexAccountId
+    ) {
+      setSelectedCodexAccountId(defaultCodexAccountId);
+    }
+  }, [appId, category, defaultCodexAccountId, selectedCodexAccountId]);
   const [codexChatReasoning, setCodexChatReasoning] =
     useState<CodexChatReasoning>(
       () => initialData?.meta?.codexChatReasoning ?? {},
@@ -1170,6 +1182,7 @@ function ProviderFormFull({
     const isCodexOauthProvider =
       presetProviderType === "codex_oauth" ||
       initialData?.meta?.providerType === "codex_oauth";
+    const isCodexOfficialProfile = appId === "codex" && category === "official";
     const isXaiOauthProvider =
       presetProviderType === "xai_oauth" ||
       initialData?.meta?.providerType === "xai_oauth";
@@ -1181,7 +1194,10 @@ function ProviderFormFull({
       );
       return;
     }
-    if (isCodexOauthProvider && !isCodexOauthAuthenticated) {
+    if (
+      (isCodexOauthProvider || isCodexOfficialProfile) &&
+      !isCodexOauthAuthenticated
+    ) {
       toast.error(
         t("codexOauth.loginRequired", {
           defaultValue: "请先登录 ChatGPT 账号",
@@ -1218,12 +1234,20 @@ function ProviderFormFull({
       return;
     }
     if (
-      isCodexOauthProvider &&
+      (isCodexOauthProvider || isCodexOfficialProfile) &&
       !selectedAccountIsUsable(selectedCodexAccountId, codexOauthAccounts)
     ) {
       toast.error(
         t("managedAuth.selectedAccountUnavailable", {
           defaultValue: "已绑定账号不存在，请重新选择账号",
+        }),
+      );
+      return;
+    }
+    if (isCodexOfficialProfile && !selectedCodexAccountId) {
+      toast.error(
+        t("codexOauth.selectAccountPlaceholder", {
+          defaultValue: "请选择一个 ChatGPT 账号",
         }),
       );
       return;
@@ -1563,7 +1587,7 @@ function ProviderFormFull({
             authProvider: "github_copilot",
             accountId: selectedGitHubAccountId ?? undefined,
           }
-        : isCodexOauthProvider
+        : isCodexOauthProvider || (appId === "codex" && category === "official")
           ? {
               source: "managed_account",
               authProvider: "codex_oauth",
@@ -2279,6 +2303,9 @@ function ProviderFormFull({
           {appId === "codex" && (
             <CodexFormFields
               providerId={providerId}
+              isOfficialProfile={category === "official"}
+              selectedCodexAccountId={selectedCodexAccountId}
+              onCodexAccountSelect={setSelectedCodexAccountId}
               isXaiOauthPreset={
                 presetProviderType === "xai_oauth" ||
                 initialData?.meta?.providerType === "xai_oauth"

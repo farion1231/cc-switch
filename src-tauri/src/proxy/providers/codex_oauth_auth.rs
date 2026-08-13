@@ -187,6 +187,9 @@ struct CodexAccountData {
     pub email: Option<String>,
     /// Refresh Token（持久化）
     pub refresh_token: String,
+    /// Official Codex `auth.json` also needs the OIDC identity token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id_token: Option<String>,
     /// 认证时间戳（秒）
     pub authenticated_at: i64,
 }
@@ -415,7 +418,7 @@ impl CodexOAuthManager {
         }
 
         let account = self
-            .add_account_internal(account_id, refresh_token, email)
+            .add_account_internal(account_id, refresh_token, tokens.id_token, email)
             .await?;
 
         Ok(Some(account))
@@ -498,6 +501,46 @@ impl CodexOAuthManager {
         &self,
         account_id: &str,
     ) -> Result<String, CodexOAuthError> {
+        // Codex CLI may have rotated the same account's refresh token while
+        // using its profile. Pull that canonical value back before deciding to
+        // refresh in the OAuth center, preventing stale-token reuse.
+        let mut profile_exists = false;
+        let mut profile_changed_manager = false;
+        if let Ok(Some(profile_auth)) = crate::codex_profile::read_account_auth(account_id) {
+            profile_exists = true;
+            let profile_tokens = profile_auth
+                .get("tokens")
+                .and_then(serde_json::Value::as_object);
+            let profile_refresh = profile_tokens
+                .and_then(|tokens| tokens.get("refresh_token"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            let profile_id = profile_tokens
+                .and_then(|tokens| tokens.get("id_token"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            if profile_refresh.is_some() || profile_id.is_some() {
+                let mut accounts = self.accounts.write().await;
+                if let Some(account) = accounts.get_mut(account_id) {
+                    if let Some(refresh) = profile_refresh {
+                        if account.refresh_token != refresh {
+                            account.refresh_token = refresh;
+                            profile_changed_manager = true;
+                        }
+                    }
+                    if let Some(id_token) = profile_id {
+                        if account.id_token.as_deref() != Some(id_token.as_str()) {
+                            account.id_token = Some(id_token);
+                            profile_changed_manager = true;
+                        }
+                    }
+                }
+            }
+        }
+        if profile_changed_manager {
+            self.save_to_disk().await?;
+        }
+
         // 先检查缓存
         {
             let tokens = self.access_tokens.read().await;
@@ -533,16 +576,27 @@ impl CodexOAuthManager {
 
         let new_tokens = self.refresh_with_token(&refresh_token).await?;
 
-        // 如果服务端返回了新的 refresh_token，更新存储
-        if let Some(new_refresh) = new_tokens.refresh_token.clone() {
-            if new_refresh != refresh_token {
-                let mut accounts = self.accounts.write().await;
-                if let Some(account) = accounts.get_mut(account_id) {
-                    account.refresh_token = new_refresh;
+        // Keep every credential needed to project an official Codex auth.json.
+        let mut account_changed = false;
+        {
+            let mut accounts = self.accounts.write().await;
+            if let Some(account) = accounts.get_mut(account_id) {
+                if let Some(new_refresh) = new_tokens.refresh_token.clone() {
+                    if new_refresh != account.refresh_token {
+                        account.refresh_token = new_refresh;
+                        account_changed = true;
+                    }
                 }
-                drop(accounts);
-                self.save_to_disk().await?;
+                if let Some(id_token) = new_tokens.id_token.clone() {
+                    if account.id_token.as_deref() != Some(id_token.as_str()) {
+                        account.id_token = Some(id_token);
+                        account_changed = true;
+                    }
+                }
             }
+        }
+        if account_changed {
+            self.save_to_disk().await?;
         }
 
         let access_token = new_tokens.access_token.clone();
@@ -559,7 +613,78 @@ impl CodexOAuthManager {
             );
         }
 
+        // If this account already has an official profile, immediately project
+        // manager-side token rotation back to it. This keeps one effective
+        // refresh-token lineage even when quota/proxy traffic triggered refresh.
+        if profile_exists {
+            let account = self
+                .accounts
+                .read()
+                .await
+                .get(account_id)
+                .cloned()
+                .ok_or_else(|| CodexOAuthError::AccountNotFound(account_id.to_string()))?;
+            if let Some(id_token) = account.id_token {
+                let auth = serde_json::json!({
+                    "OPENAI_API_KEY": serde_json::Value::Null,
+                    "auth_mode": "chatgpt",
+                    "last_refresh": chrono::Utc::now().to_rfc3339(),
+                    "tokens": {
+                        "access_token": access_token.clone(),
+                        "account_id": account.account_id,
+                        "id_token": id_token,
+                        "refresh_token": account.refresh_token,
+                    }
+                });
+                crate::codex_profile::write_account_auth(account_id, &auth)
+                    .map_err(|e| CodexOAuthError::IoError(e.to_string()))?;
+            }
+        }
+
         Ok(access_token)
+    }
+
+    /// Build the official Codex CLI auth.json for one managed account.
+    /// Legacy OAuth-center records did not retain `id_token`; those are
+    /// refreshed once so the projected profile always has a complete bundle.
+    pub async fn get_codex_auth_for_account(
+        &self,
+        account_id: &str,
+    ) -> Result<serde_json::Value, CodexOAuthError> {
+        let needs_identity_refresh = {
+            let accounts = self.accounts.read().await;
+            accounts
+                .get(account_id)
+                .map(|account| account.id_token.is_none())
+                .ok_or_else(|| CodexOAuthError::AccountNotFound(account_id.to_string()))?
+        };
+        if needs_identity_refresh {
+            self.access_tokens.write().await.remove(account_id);
+        }
+
+        let access_token = self.get_valid_token_for_account(account_id).await?;
+        let account = self
+            .accounts
+            .read()
+            .await
+            .get(account_id)
+            .cloned()
+            .ok_or_else(|| CodexOAuthError::AccountNotFound(account_id.to_string()))?;
+        let id_token = account.id_token.ok_or_else(|| {
+            CodexOAuthError::TokenFetchFailed("刷新响应缺少 id_token".to_string())
+        })?;
+
+        Ok(serde_json::json!({
+            "OPENAI_API_KEY": serde_json::Value::Null,
+            "auth_mode": "chatgpt",
+            "last_refresh": chrono::Utc::now().to_rfc3339(),
+            "tokens": {
+                "access_token": access_token,
+                "account_id": account.account_id,
+                "id_token": id_token,
+                "refresh_token": account.refresh_token,
+            }
+        }))
     }
 
     /// 获取默认账号的有效 token
@@ -695,6 +820,7 @@ impl CodexOAuthManager {
         &self,
         account_id: String,
         refresh_token: String,
+        id_token: Option<String>,
         email: Option<String>,
     ) -> Result<GitHubAccount, CodexOAuthError> {
         let now = chrono::Utc::now().timestamp();
@@ -703,6 +829,7 @@ impl CodexOAuthManager {
             account_id: account_id.clone(),
             email,
             refresh_token,
+            id_token,
             authenticated_at: now,
         };
 
@@ -1084,6 +1211,7 @@ mod tests {
                 .add_account_internal(
                     "acc-123".to_string(),
                     "rt-secret".to_string(),
+                    Some("id-secret".to_string()),
                     Some("user@example.com".to_string()),
                 )
                 .await
@@ -1106,6 +1234,7 @@ mod tests {
             .add_account_internal(
                 "acc-123".to_string(),
                 "rt".to_string(),
+                Some("id-a".to_string()),
                 Some("a@example.com".to_string()),
             )
             .await
@@ -1114,6 +1243,7 @@ mod tests {
             .add_account_internal(
                 "acc-456".to_string(),
                 "rt2".to_string(),
+                Some("id-b".to_string()),
                 Some("b@example.com".to_string()),
             )
             .await

@@ -2,6 +2,7 @@ use indexmap::IndexMap;
 use tauri::{Emitter, Manager, State};
 
 use crate::app_config::AppType;
+use crate::commands::codex_oauth::CodexOAuthState;
 use crate::commands::copilot::CopilotAuthState;
 use crate::commands::xai_oauth::XaiOAuthState;
 use crate::error::AppError;
@@ -36,27 +37,45 @@ pub fn get_current_provider(state: State<'_, AppState>, app: String) -> Result<S
 }
 
 #[tauri::command]
-pub fn add_provider(
-    state: State<'_, AppState>,
+pub async fn add_provider(
+    app_handle: tauri::AppHandle,
     app: String,
     provider: Provider,
     #[allow(non_snake_case)] addToLive: Option<bool>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::add(state.inner(), app_type, provider, addToLive.unwrap_or(true))
-        .map_err(|e| e.to_string())
+    materialize_codex_official_profile_auth(&app_handle, &app_type, &provider).await?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle
+            .try_state::<AppState>()
+            .ok_or_else(|| "应用状态不可用".to_string())?;
+        ProviderService::add(state.inner(), app_type, provider, addToLive.unwrap_or(true))
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("供应商创建任务执行失败: {e}"))?
 }
 
 #[tauri::command]
-pub fn update_provider(
-    state: State<'_, AppState>,
+pub async fn update_provider(
+    app_handle: tauri::AppHandle,
     app: String,
     provider: Provider,
     #[allow(non_snake_case)] originalId: Option<String>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::update(state.inner(), app_type, originalId.as_deref(), provider)
-        .map_err(|e| e.to_string())
+    materialize_codex_official_profile_auth(&app_handle, &app_type, &provider).await?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle
+            .try_state::<AppState>()
+            .ok_or_else(|| "应用状态不可用".to_string())?;
+        ProviderService::update(state.inner(), app_type, originalId.as_deref(), provider)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("供应商更新任务执行失败: {e}"))?
 }
 
 #[tauri::command]
@@ -107,6 +126,21 @@ pub async fn switch_provider(
     id: String,
 ) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let provider = if matches!(app_type, AppType::Codex) {
+        let state = app_handle
+            .try_state::<AppState>()
+            .ok_or_else(|| "应用状态不可用".to_string())?;
+        state
+            .db
+            .get_provider_by_id(&id, app_type.as_str())
+            .map_err(|e| e.to_string())?
+    } else {
+        None
+    };
+    if let Some(provider) = provider.as_ref() {
+        materialize_codex_official_profile_auth(&app_handle, &app_type, provider).await?;
+    }
+
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle
             .try_state::<AppState>()
@@ -115,6 +149,33 @@ pub async fn switch_provider(
     })
     .await
     .map_err(|e| format!("供应商切换任务执行失败: {e}"))?
+}
+
+async fn materialize_codex_official_profile_auth(
+    app_handle: &tauri::AppHandle,
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<(), String> {
+    if !matches!(app_type, AppType::Codex) || provider.category.as_deref() != Some("official") {
+        return Ok(());
+    }
+    let Some(account_id) = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+    else {
+        return Ok(());
+    };
+
+    let oauth_state = app_handle.state::<CodexOAuthState>();
+    let auth = oauth_state
+        .0
+        .read()
+        .await
+        .get_codex_auth_for_account(&account_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    crate::codex_profile::write_account_auth(&account_id, &auth).map_err(|e| e.to_string())
 }
 
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {

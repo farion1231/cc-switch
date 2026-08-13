@@ -315,6 +315,57 @@ pub fn write_json_file<T: Serialize>(path: &Path, data: &T) -> Result<(), AppErr
     write_json_file_with_contents(path, data).map(|_| ())
 }
 
+/// Write JSON containing credentials with owner-only Unix permissions.
+pub fn write_private_json_file<T: Serialize>(path: &Path, data: &T) -> Result<(), AppError> {
+    let value = serde_json::to_value(data).map_err(|e| AppError::JsonSerialize { source: e })?;
+    let json = serde_json::to_string_pretty(&sort_json_keys(&value))
+        .map_err(|e| AppError::JsonSerialize { source: e })?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        let parent = path
+            .parent()
+            .ok_or_else(|| AppError::Config("无效的路径".to_string()))?;
+        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+        let file_name = path
+            .file_name()
+            .ok_or_else(|| AppError::Config("无效的路径".to_string()))?
+            .to_string_lossy();
+        let tmp = parent.join(format!(
+            ".{file_name}.tmp.{}.{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp)
+            .map_err(|e| AppError::io(&tmp, e))?;
+        if let Err(e) = file.write_all(json.as_bytes()).and_then(|_| file.flush()) {
+            drop(file);
+            let _ = fs::remove_file(&tmp);
+            return Err(AppError::io(&tmp, e));
+        }
+        drop(file);
+        if let Err(e) = fs::rename(&tmp, path) {
+            let _ = fs::remove_file(&tmp);
+            return Err(AppError::io(path, e));
+        }
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .map_err(|e| AppError::io(path, e))?;
+        return Ok(());
+    }
+
+    #[cfg(not(unix))]
+    write_json_file(path, data)
+}
+
 /// 原子写入文本文件（用于 TOML/纯文本）
 pub fn write_text_file(path: &Path, data: &str) -> Result<(), AppError> {
     if let Some(parent) = path.parent() {
@@ -503,6 +554,28 @@ mod tests {
     fn atomic_write_replaces_existing_file() {
         let dir = tempfile::tempdir().unwrap();
         assert_atomic_write_replaces_existing_file(dir.path());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_json_file_has_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.json");
+        std::fs::write(&path, b"old credentials").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_private_json_file(&path, &serde_json::json!({ "refresh_token": "secret" })).unwrap();
+
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            read_json_file::<Value>(&path).unwrap()["refresh_token"],
+            "secret"
+        );
     }
 
     #[cfg(windows)]
