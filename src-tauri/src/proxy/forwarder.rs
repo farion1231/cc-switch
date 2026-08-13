@@ -65,6 +65,10 @@ pub struct ForwardResult {
     /// usage 归因不能依赖 ctx.request_model（映射前的客户端别名）：上游响应
     /// 缺失 model 或回显别名时，接管流量会被记成 claude-* 并按其定价计费。
     pub outbound_model: Option<String>,
+    /// 最终发往上游的思考强度，取自请求体所有转换和本地覆盖完成后的结果。
+    pub outbound_reasoning_effort: Option<String>,
+    /// 模型路由命中前的思考强度；用于使用统计展示路由后的映射关系。
+    pub outbound_reasoning_effort_source: Option<String>,
     /// 活跃连接 RAII guard：随响应一起流转到 response_processor / handle_claude_transform，
     /// 最终被 move 进流式 body future（或非流式响应作用域），覆盖整个响应生命周期。
     pub(crate) connection_guard: Option<ActiveConnectionGuard>,
@@ -490,7 +494,13 @@ impl RequestForwarder {
                 )
                 .await
             {
-                Ok((response, claude_api_format, outbound_model)) => {
+                Ok((
+                    response,
+                    claude_api_format,
+                    outbound_model,
+                    outbound_reasoning_effort,
+                    outbound_reasoning_effort_source,
+                )) => {
                     // 成功：普通闭合熔断状态异步记录，避免阻塞流式首包返回；
                     // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
                     self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
@@ -539,6 +549,8 @@ impl RequestForwarder {
                         provider: provider.clone(),
                         claude_api_format,
                         outbound_model,
+                        outbound_reasoning_effort,
+                        outbound_reasoning_effort_source,
                         connection_guard: None,
                     });
                 }
@@ -589,7 +601,13 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok((response, claude_api_format, outbound_model)) => {
+                                Ok((
+                                    response,
+                                    claude_api_format,
+                                    outbound_model,
+                                    outbound_reasoning_effort,
+                                    outbound_reasoning_effort_source,
+                                )) => {
                                     log::info!(
                                         "[{app_type_str}] [Media] Unsupported-image retry succeeded"
                                     );
@@ -642,6 +660,8 @@ impl RequestForwarder {
                                         provider: provider.clone(),
                                         claude_api_format,
                                         outbound_model,
+                                        outbound_reasoning_effort,
+                                        outbound_reasoning_effort_source,
                                         connection_guard: None,
                                     });
                                 }
@@ -735,7 +755,13 @@ impl RequestForwarder {
                                     )
                                     .await
                                 {
-                                    Ok((response, claude_api_format, outbound_model)) => {
+                                    Ok((
+                                        response,
+                                        claude_api_format,
+                                        outbound_model,
+                                        outbound_reasoning_effort,
+                                        outbound_reasoning_effort_source,
+                                    )) => {
                                         log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
                                         self.record_success_result(
                                             &provider.id,
@@ -791,6 +817,8 @@ impl RequestForwarder {
                                             provider: provider.clone(),
                                             claude_api_format,
                                             outbound_model,
+                                            outbound_reasoning_effort,
+                                            outbound_reasoning_effort_source,
                                             connection_guard: None,
                                         });
                                     }
@@ -901,7 +929,13 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok((response, claude_api_format, outbound_model)) => {
+                                Ok((
+                                    response,
+                                    claude_api_format,
+                                    outbound_model,
+                                    outbound_reasoning_effort,
+                                    outbound_reasoning_effort_source,
+                                )) => {
                                     log::info!("[{app_type_str}] [RECT-011] budget 整流重试成功");
                                     self.record_success_result(
                                         &provider.id,
@@ -951,6 +985,8 @@ impl RequestForwarder {
                                         provider: provider.clone(),
                                         claude_api_format,
                                         outbound_model,
+                                        outbound_reasoning_effort,
+                                        outbound_reasoning_effort_source,
                                         connection_guard: None,
                                     });
                                 }
@@ -1109,7 +1145,8 @@ impl RequestForwarder {
 
     /// 转发单个请求（使用适配器）
     ///
-    /// 成功时返回 `(response, claude_api_format, outbound_model)`，其中
+    /// 成功时返回 `(response, claude_api_format, outbound_model, outbound_reasoning_effort,
+    /// outbound_reasoning_effort_source)`，其中
     /// `outbound_model` 是最终发往上游的模型名（所有映射/改写之后）。
     #[allow(clippy::too_many_arguments)]
     async fn forward(
@@ -1122,7 +1159,16 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
-    ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+    ) -> Result<
+        (
+            ProxyResponse,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ),
+        ProxyError,
+    > {
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
@@ -1159,13 +1205,17 @@ impl RequestForwarder {
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
-        let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
-            crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
-                .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+        let inbound_reasoning_effort = extract_requested_reasoning_effort(body);
+        let (mapped_body, model_was_routed) = if matches!(app_type, AppType::ClaudeDesktop) {
+            let mapped_body =
+                crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
+                    .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?;
+            let model_was_routed = body.get("model") != mapped_body.get("model");
+            (mapped_body, model_was_routed)
         } else {
-            let (mapped_body, _original_model, _mapped_model) =
+            let (mapped_body, _original_model, mapped_model) =
                 super::model_mapper::apply_model_mapping(body.clone(), provider);
-            mapped_body
+            (mapped_body, mapped_model.is_some())
         };
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
@@ -1598,6 +1648,12 @@ impl RequestForwarder {
         {
             outbound_model = Some(m.to_string());
         }
+        let outbound_reasoning_effort = extract_outbound_reasoning_effort(&filtered_body);
+        let outbound_reasoning_effort_source = reasoning_effort_source_for_log(
+            model_was_routed,
+            inbound_reasoning_effort,
+            outbound_reasoning_effort.as_deref(),
+        );
         log_prompt_cache_trace(
             app_type,
             provider,
@@ -2310,7 +2366,13 @@ impl RequestForwarder {
                     response = self.validate_responses_stream_start(response).await?;
                 }
             }
-            Ok((response, resolved_claude_api_format, outbound_model))
+            Ok((
+                response,
+                resolved_claude_api_format,
+                outbound_model,
+                outbound_reasoning_effort,
+                outbound_reasoning_effort_source,
+            ))
         } else {
             let status_code = status.as_u16();
             // 错误响应同样可能被上游压缩（content-encoding）。reqwest 未启用任何
@@ -3302,6 +3364,67 @@ fn is_streaming_request(endpoint: &str, body: &Value, headers: &axum::http::Head
         .unwrap_or(false)
 }
 
+/// 从最终出站 body 提取实际发送的思考强度。
+///
+/// 同时覆盖 Chat Completions、Responses 与 Anthropic 的常见字段。此处刻意在
+/// `filtered_body` 定稿后调用，以反映格式转换和本地请求体覆盖的最终结果。
+fn extract_outbound_reasoning_effort(body: &Value) -> Option<String> {
+    [
+        body.get("reasoning_effort"),
+        body.pointer("/reasoning/effort"),
+        body.pointer("/output_config/effort"),
+        body.pointer("/thinking/effort"),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|value| {
+        value
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
+}
+
+/// 判断路由请求日志是否应保留入站思考强度。
+///
+/// `max -> max` 之类的恒等映射也会保留：来源字段不仅表示强度值发生变化，
+/// 还用于表明模型路由已经命中。
+fn reasoning_effort_source_for_log(
+    model_was_routed: bool,
+    inbound_effort: Option<String>,
+    outbound_effort: Option<&str>,
+) -> Option<String> {
+    if model_was_routed && outbound_effort.is_some() {
+        inbound_effort
+    } else {
+        None
+    }
+}
+
+/// 从入站请求读取用户指定的思考强度。
+///
+/// 这个值只会在模型路由实际改变模型时写入日志，用于与最终出站值组成
+/// `来源 -> 最终值`。转换器基于 `thinking` 预算推导出的强度不属于显式设置，
+/// 因而不作为映射来源显示。
+fn extract_requested_reasoning_effort(body: &Value) -> Option<String> {
+    [
+        body.pointer("/output_config/effort"),
+        body.get("reasoning_effort"),
+        body.pointer("/reasoning/effort"),
+        body.pointer("/thinking/effort"),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|value| {
+        value
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
+}
+
 #[cfg(test)]
 fn should_force_identity_encoding(
     endpoint: &str,
@@ -3641,6 +3764,70 @@ mod tests {
             streaming_first_byte_timeout,
             max_attempts: 1,
         }
+    }
+
+    #[test]
+    fn extracts_final_outbound_reasoning_effort_with_protocol_priority() {
+        assert_eq!(
+            extract_outbound_reasoning_effort(&json!({
+                "reasoning_effort": "max",
+                "reasoning": { "effort": "xhigh" },
+                "output_config": { "effort": "high" }
+            })),
+            Some("max".to_string())
+        );
+        assert_eq!(
+            extract_outbound_reasoning_effort(&json!({
+                "reasoning": { "effort": "ultra" }
+            })),
+            Some("ultra".to_string())
+        );
+        assert_eq!(
+            extract_outbound_reasoning_effort(&json!({
+                "output_config": { "effort": "xhigh" }
+            })),
+            Some("xhigh".to_string())
+        );
+        assert_eq!(extract_outbound_reasoning_effort(&json!({})), None);
+    }
+
+    #[test]
+    fn preserves_identity_effort_mapping_when_model_route_matches() {
+        assert_eq!(
+            reasoning_effort_source_for_log(true, Some("max".to_string()), Some("max")),
+            Some("max".to_string())
+        );
+    }
+
+    #[test]
+    fn omits_effort_source_without_model_route_or_outbound_effort() {
+        assert_eq!(
+            reasoning_effort_source_for_log(false, Some("max".to_string()), Some("xhigh")),
+            None
+        );
+        assert_eq!(
+            reasoning_effort_source_for_log(true, Some("max".to_string()), None),
+            None
+        );
+    }
+
+    #[test]
+    fn extracts_explicit_requested_reasoning_effort_with_protocol_priority() {
+        assert_eq!(
+            extract_requested_reasoning_effort(&json!({
+                "output_config": { "effort": "max" },
+                "reasoning_effort": "xhigh",
+                "reasoning": { "effort": "high" }
+            })),
+            Some("max".to_string())
+        );
+        assert_eq!(
+            extract_requested_reasoning_effort(&json!({
+                "reasoning": { "effort": "ultra" }
+            })),
+            Some("ultra".to_string())
+        );
+        assert_eq!(extract_requested_reasoning_effort(&json!({})), None);
     }
 
     #[test]

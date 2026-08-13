@@ -485,6 +485,8 @@ pub(crate) fn create_usage_collector(
         .outbound_model
         .clone()
         .unwrap_or_else(|| ctx.request_model.clone());
+    let reasoning_effort = ctx.outbound_reasoning_effort.clone();
+    let reasoning_effort_source = ctx.outbound_reasoning_effort_source.clone();
     // 用 ctx 的 app_type 而不是 parser_config 的：Claude Desktop 流式透传复用
     // CLAUDE_PARSER_CONFIG（app_type_str="claude"），按 parser_config 记账会把
     // claude-desktop 的行错记到 claude 名下，导致供应商计价覆盖解析不到。
@@ -508,6 +510,8 @@ pub(crate) fn create_usage_collector(
                 let session_id = session_id.clone();
                 let request_model = request_model.clone();
                 let outbound_model = fallback_model.clone();
+                let reasoning_effort = reasoning_effort.clone();
+                let reasoning_effort_source = reasoning_effort_source.clone();
 
                 tokio::spawn(async move {
                     log_usage_internal(
@@ -517,6 +521,8 @@ pub(crate) fn create_usage_collector(
                         &model,
                         &request_model,
                         &outbound_model,
+                        reasoning_effort,
+                        reasoning_effort_source,
                         usage,
                         latency_ms,
                         first_token_ms,
@@ -534,6 +540,8 @@ pub(crate) fn create_usage_collector(
                 let session_id = session_id.clone();
                 let request_model = request_model.clone();
                 let outbound_model = fallback_model.clone();
+                let reasoning_effort = reasoning_effort.clone();
+                let reasoning_effort_source = reasoning_effort_source.clone();
 
                 tokio::spawn(async move {
                     log_usage_internal(
@@ -543,6 +551,8 @@ pub(crate) fn create_usage_collector(
                         &model,
                         &request_model,
                         &outbound_model,
+                        reasoning_effort,
+                        reasoning_effort_source,
                         TokenUsage::default(),
                         latency_ms,
                         first_token_ms,
@@ -585,6 +595,8 @@ fn spawn_log_usage(
         .outbound_model
         .clone()
         .unwrap_or_else(|| ctx.request_model.clone());
+    let reasoning_effort = ctx.outbound_reasoning_effort.clone();
+    let reasoning_effort_source = ctx.outbound_reasoning_effort_source.clone();
     let latency_ms = ctx.latency_ms();
     let session_id = ctx.session_id.clone();
 
@@ -596,6 +608,8 @@ fn spawn_log_usage(
             &model,
             &request_model,
             &outbound_model,
+            reasoning_effort,
+            reasoning_effort_source,
             usage,
             latency_ms,
             None,
@@ -629,6 +643,8 @@ async fn log_usage_internal(
     model: &str,
     request_model: &str,
     outbound_model: &str,
+    reasoning_effort: Option<String>,
+    reasoning_effort_source: Option<String>,
     usage: TokenUsage,
     latency_ms: u64,
     first_token_ms: Option<u64>,
@@ -666,6 +682,8 @@ async fn log_usage_internal(
         model.to_string(),
         request_model.to_string(),
         pricing_model.to_string(),
+        reasoning_effort,
+        reasoning_effort_source,
         usage,
         multiplier,
         latency_ms,
@@ -1101,6 +1119,8 @@ mod tests {
             "resp-model",
             "req-model",
             "req-model",
+            Some("xhigh".to_string()),
+            Some("max".to_string()),
             usage,
             10,
             None,
@@ -1111,17 +1131,18 @@ mod tests {
         .await;
 
         let conn = crate::database::lock_conn!(db.conn);
-        let (model, request_model, total_cost, cost_multiplier): (String, String, String, String) =
+        let (model, request_model, reasoning_effort_source, total_cost, cost_multiplier): (String, String, Option<String>, String, String) =
             conn.query_row(
-                "SELECT model, request_model, total_cost_usd, cost_multiplier
+                "SELECT model, request_model, reasoning_effort_source, total_cost_usd, cost_multiplier
                  FROM proxy_request_logs WHERE provider_id = ?1",
                 ["provider-1"],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         assert_eq!(model, "resp-model");
         assert_eq!(request_model, "req-model");
+        assert_eq!(reasoning_effort_source.as_deref(), Some("max"));
         assert_eq!(
             Decimal::from_str(&cost_multiplier).unwrap(),
             Decimal::from_str("2").unwrap()
@@ -1171,6 +1192,8 @@ mod tests {
             "resp-model",
             "req-model",
             "outbound-model",
+            Some("max".to_string()),
+            None,
             usage,
             10,
             None,
@@ -1251,6 +1274,8 @@ mod tests {
             "resp-model",
             "req-model",
             "req-model",
+            None,
+            None,
             usage,
             10,
             None,

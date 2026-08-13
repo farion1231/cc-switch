@@ -195,4 +195,59 @@ describe("ClaudeFormFields", () => {
       "shared-model[1M]",
     );
   });
+
+  it("默认收起自定义思考强度映射并保留 CCS 默认值", () => {
+    renderCopilotForm({
+      category: "third_party",
+      apiFormat: "openai_chat",
+    });
+
+    expect(
+      screen.getByText("使用 CCS 默认映射（max -> xhigh）。"),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("max")).not.toBeInTheDocument();
+  });
+
+  it("允许将 Claude max 映射为后端的 max", () => {
+    const onClaudeChatReasoningChange = vi.fn();
+    renderCopilotForm({
+      category: "third_party",
+      apiFormat: "openai_chat",
+      onClaudeChatReasoningChange,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "自定义思考强度映射" }));
+    fireEvent.click(screen.getByLabelText("max"));
+    fireEvent.click(screen.getByRole("option", { name: "max" }));
+
+    expect(onClaudeChatReasoningChange).toHaveBeenCalledWith({
+      effortMap: { max: "max" },
+    });
+  });
+
+  it("在 OpenAI Responses 格式中提供自定义映射", () => {
+    renderCopilotForm({
+      category: "third_party",
+      apiFormat: "openai_responses",
+    });
+
+    expect(
+      screen.getByRole("button", { name: "自定义思考强度映射" }),
+    ).toBeInTheDocument();
+  });
+
+  it("恢复 CCS 默认映射时不保留自定义配置", () => {
+    const onClaudeChatReasoningChange = vi.fn();
+    renderCopilotForm({
+      category: "third_party",
+      apiFormat: "openai_chat",
+      claudeChatReasoning: { effortMap: { max: "max" } },
+      onClaudeChatReasoningChange,
+    });
+
+    fireEvent.click(screen.getByLabelText("max"));
+    fireEvent.click(screen.getByRole("option", { name: "xhigh" }));
+
+    expect(onClaudeChatReasoningChange).toHaveBeenCalledWith({});
+  });
 });

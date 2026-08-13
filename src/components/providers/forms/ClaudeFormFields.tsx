@@ -49,6 +49,9 @@ import {
 import { CustomUserAgentField } from "./CustomUserAgentField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
 import type {
+  ClaudeChatReasoning,
+  ClaudeChatReasoningSourceEffort,
+  ClaudeChatReasoningTargetEffort,
   ProviderCategory,
   ClaudeApiFormat,
   ClaudeApiKeyField,
@@ -67,6 +70,34 @@ import {
 interface EndpointCandidate {
   url: string;
 }
+
+const CLAUDE_REASONING_SOURCE_EFFORTS: ClaudeChatReasoningSourceEffort[] = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+
+const CLAUDE_REASONING_TARGET_EFFORTS: ClaudeChatReasoningTargetEffort[] = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+];
+
+const DEFAULT_CLAUDE_CHAT_EFFORT_MAP: Record<
+  ClaudeChatReasoningSourceEffort,
+  ClaudeChatReasoningTargetEffort
+> = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "xhigh",
+  max: "xhigh",
+};
 
 interface ClaudeFormFieldsProps {
   providerId?: string;
@@ -140,6 +171,8 @@ interface ClaudeFormFieldsProps {
   // API Format (for Claude-compatible providers that need request/response conversion)
   apiFormat: ClaudeApiFormat;
   onApiFormatChange: (format: ClaudeApiFormat) => void;
+  claudeChatReasoning?: ClaudeChatReasoning;
+  onClaudeChatReasoningChange?: (value: ClaudeChatReasoning) => void;
 
   // Auth Field (ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY)
   apiKeyField: ClaudeApiKeyField;
@@ -211,6 +244,8 @@ export function ClaudeFormFields({
   speedTestEndpoints,
   apiFormat,
   onApiFormatChange,
+  claudeChatReasoning = {},
+  onClaudeChatReasoningChange = () => undefined,
   apiKeyField,
   onApiKeyFieldChange,
   isFullUrl,
@@ -226,6 +261,10 @@ export function ClaudeFormFields({
   const hasRequestOverrides = Boolean(
     localProxyHeadersOverride.trim() || localProxyBodyOverride.trim(),
   );
+  const hasClaudeChatReasoningOverrides = Boolean(
+    claudeChatReasoning.effortMap &&
+      Object.keys(claudeChatReasoning.effortMap).length > 0,
+  );
   const hasAnyAdvancedValue = !!(
     claudeModel ||
     defaultHaikuModel ||
@@ -235,11 +274,15 @@ export function ClaudeFormFields({
     subagentModel ||
     (!isXaiOauthPreset && apiFormat !== "anthropic") ||
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
+    hasClaudeChatReasoningOverrides ||
     customUserAgent ||
     hasRequestOverrides
   );
   const [advancedExpanded, setAdvancedExpanded] = useState(
     isXaiOauthPreset ? false : hasAnyAdvancedValue,
+  );
+  const [customReasoningExpanded, setCustomReasoningExpanded] = useState(
+    hasClaudeChatReasoningOverrides,
   );
 
   // 预设填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
@@ -250,6 +293,32 @@ export function ClaudeFormFields({
       setAdvancedExpanded(true);
     }
   }, [hasAnyAdvancedValue, isXaiOauthPreset]);
+
+  // 已保存的自定义映射在再次编辑时直接展开，默认映射则保持收起。
+  useEffect(() => {
+    if (hasClaudeChatReasoningOverrides) {
+      setCustomReasoningExpanded(true);
+    }
+  }, [hasClaudeChatReasoningOverrides]);
+
+  const handleClaudeChatReasoningEffortChange = useCallback(
+    (
+      source: ClaudeChatReasoningSourceEffort,
+      target: ClaudeChatReasoningTargetEffort,
+    ) => {
+      const nextMap = { ...(claudeChatReasoning.effortMap ?? {}) };
+      if (target === DEFAULT_CLAUDE_CHAT_EFFORT_MAP[source]) {
+        delete nextMap[source];
+      } else {
+        nextMap[source] = target;
+      }
+
+      onClaudeChatReasoningChange(
+        Object.keys(nextMap).length > 0 ? { effortMap: nextMap } : {},
+      );
+    },
+    [claudeChatReasoning.effortMap, onClaudeChatReasoningChange],
+  );
 
   // Copilot 可用模型列表
   const [copilotModels, setCopilotModels] = useState<CopilotModel[]>([]);
@@ -833,6 +902,87 @@ export function ClaudeFormFields({
                 </p>
               </div>
             )}
+
+            {(apiFormat === "openai_chat" ||
+              apiFormat === "openai_responses") &&
+              !isXaiOauthPreset && (
+                <Collapsible
+                  open={customReasoningExpanded}
+                  onOpenChange={setCustomReasoningExpanded}
+                  className="border-t border-border-default pt-3"
+                >
+                  <CollapsibleTrigger asChild>
+                    <Button
+                      type="button"
+                      variant={null}
+                      size="sm"
+                      className="h-8 gap-1.5 px-0 text-sm font-medium text-foreground hover:opacity-70"
+                    >
+                      {customReasoningExpanded ? (
+                        <ChevronDown className="h-4 w-4" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4" />
+                      )}
+                      {t("providerForm.claudeChatReasoningCustomToggle", {
+                        defaultValue: "自定义思考强度映射",
+                      })}
+                    </Button>
+                  </CollapsibleTrigger>
+                  {!customReasoningExpanded && (
+                    <p className="mt-1 ml-1 text-xs text-muted-foreground">
+                      {t("providerForm.claudeChatReasoningDefaultHint", {
+                        defaultValue: "使用 CCS 默认映射（max -> xhigh）。",
+                      })}
+                    </p>
+                  )}
+                  <CollapsibleContent className="space-y-3 pt-2">
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {t("providerForm.claudeChatReasoningEffortMapHint", {
+                        defaultValue:
+                          "仅保存与 CCS 默认映射不同的值；未配置的强度始终使用默认映射。",
+                      })}
+                    </p>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      {CLAUDE_REASONING_SOURCE_EFFORTS.map((source) => {
+                        const value =
+                          claudeChatReasoning.effortMap?.[source] ??
+                          DEFAULT_CLAUDE_CHAT_EFFORT_MAP[source];
+                        const fieldId = `claude-chat-reasoning-${source}`;
+
+                        return (
+                          <div key={source} className="space-y-1.5">
+                            <FormLabel htmlFor={fieldId} className="text-xs">
+                              {source}
+                            </FormLabel>
+                            <Select
+                              value={value}
+                              onValueChange={(target) =>
+                                handleClaudeChatReasoningEffortChange(
+                                  source,
+                                  target as ClaudeChatReasoningTargetEffort,
+                                )
+                              }
+                            >
+                              <SelectTrigger id={fieldId} className="w-full">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {CLAUDE_REASONING_TARGET_EFFORTS.map(
+                                  (target) => (
+                                    <SelectItem key={target} value={target}>
+                                      {target}
+                                    </SelectItem>
+                                  ),
+                                )}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
 
             {/* 认证字段选择器 */}
             <div className="space-y-2">

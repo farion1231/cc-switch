@@ -133,6 +133,12 @@ pub struct RequestLogDetail {
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_model: Option<String>,
+    /// 最终出站请求的思考强度；历史记录或无思考请求为空。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    /// 模型路由命中前的显式思考强度；存在时前端展示映射关系。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort_source: Option<String>,
     pub cost_multiplier: String,
     pub input_tokens: u32,
     pub output_tokens: u32,
@@ -160,15 +166,15 @@ pub struct RequestLogDetail {
     pub pricing_model: Option<String>,
 }
 
-/// 把 26 列的查询结果映射为 `RequestLogDetail`。
+/// 把 28 列的查询结果映射为 `RequestLogDetail`。
 ///
-/// 调用方的 SELECT **必须**按以下顺序返回 26 列：
+/// 调用方的 SELECT **必须**按以下顺序返回 28 列：
 /// `request_id, provider_id, provider_name, app_type, model, request_model,
-///  cost_multiplier, input_tokens, output_tokens, cache_read_tokens,
-///  cache_creation_tokens, input_cost_usd, output_cost_usd, cache_read_cost_usd,
-///  cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
-///  first_token_ms, duration_ms, status_code, error_message, created_at,
-///  data_source, pricing_model, input_token_semantics`
+///  reasoning_effort, reasoning_effort_source, cost_multiplier, input_tokens,
+///  output_tokens, cache_read_tokens, cache_creation_tokens, input_cost_usd,
+///  output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
+///  is_streaming, latency_ms, first_token_ms, duration_ms, status_code,
+///  error_message, created_at, data_source, pricing_model, input_token_semantics`
 ///
 /// 不需要 provider_name 时（如 backfill）SELECT `NULL AS provider_name` 占位即可。
 fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLogDetail> {
@@ -179,28 +185,30 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
         app_type: row.get(3)?,
         model: row.get(4)?,
         request_model: row.get(5)?,
+        reasoning_effort: row.get(6)?,
+        reasoning_effort_source: row.get(7)?,
         cost_multiplier: row
-            .get::<_, Option<String>>(6)?
+            .get::<_, Option<String>>(8)?
             .unwrap_or_else(|| "1".to_string()),
-        input_tokens: row.get::<_, i64>(7)? as u32,
-        output_tokens: row.get::<_, i64>(8)? as u32,
-        cache_read_tokens: row.get::<_, i64>(9)? as u32,
-        cache_creation_tokens: row.get::<_, i64>(10)? as u32,
-        input_cost_usd: row.get(11)?,
-        output_cost_usd: row.get(12)?,
-        cache_read_cost_usd: row.get(13)?,
-        cache_creation_cost_usd: row.get(14)?,
-        total_cost_usd: row.get(15)?,
-        is_streaming: row.get::<_, i64>(16)? != 0,
-        latency_ms: row.get::<_, i64>(17)? as u64,
-        first_token_ms: row.get::<_, Option<i64>>(18)?.map(|v| v as u64),
-        duration_ms: row.get::<_, Option<i64>>(19)?.map(|v| v as u64),
-        status_code: row.get::<_, i64>(20)? as u16,
-        error_message: row.get(21)?,
-        created_at: row.get(22)?,
-        data_source: row.get(23)?,
-        pricing_model: row.get(24)?,
-        input_token_semantics: row.get::<_, i64>(25)?,
+        input_tokens: row.get::<_, i64>(9)? as u32,
+        output_tokens: row.get::<_, i64>(10)? as u32,
+        cache_read_tokens: row.get::<_, i64>(11)? as u32,
+        cache_creation_tokens: row.get::<_, i64>(12)? as u32,
+        input_cost_usd: row.get(13)?,
+        output_cost_usd: row.get(14)?,
+        cache_read_cost_usd: row.get(15)?,
+        cache_creation_cost_usd: row.get(16)?,
+        total_cost_usd: row.get(17)?,
+        is_streaming: row.get::<_, i64>(18)? != 0,
+        latency_ms: row.get::<_, i64>(19)? as u64,
+        first_token_ms: row.get::<_, Option<i64>>(20)?.map(|v| v as u64),
+        duration_ms: row.get::<_, Option<i64>>(21)?.map(|v| v as u64),
+        status_code: row.get::<_, i64>(22)? as u16,
+        error_message: row.get(23)?,
+        created_at: row.get(24)?,
+        data_source: row.get(25)?,
+        pricing_model: row.get(26)?,
+        input_token_semantics: row.get::<_, i64>(27)?,
     })
 }
 
@@ -1617,7 +1625,7 @@ impl Database {
         let logs_pname = provider_name_coalesce("l", "p");
         let sql = format!(
             "SELECT l.request_id, l.provider_id, {logs_pname} as provider_name, l.app_type, l.model,
-                    l.request_model, l.cost_multiplier,
+                    l.request_model, l.reasoning_effort, l.reasoning_effort_source, l.cost_multiplier,
                     l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
@@ -1661,11 +1669,11 @@ impl Database {
         let detail_pname = provider_name_coalesce("l", "p");
         let detail_sql = format!(
             "SELECT l.request_id, l.provider_id, {detail_pname} as provider_name, l.app_type, l.model,
-                    l.request_model, l.cost_multiplier,
-                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
-                    is_streaming, latency_ms, first_token_ms, duration_ms,
-                    status_code, error_message, created_at, l.data_source, l.pricing_model,
+                    l.request_model, l.reasoning_effort, l.reasoning_effort_source, l.cost_multiplier,
+                    l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens,
+                    l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
+                    l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
+                    l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model,
                     l.input_token_semantics
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
@@ -1817,7 +1825,7 @@ impl Database {
     ) -> Result<u64, AppError> {
         const BASE_SQL: &str =
             "SELECT request_id, provider_id, NULL AS provider_name, app_type, model, request_model,
-                        cost_multiplier,
+                        reasoning_effort, reasoning_effort_source, cost_multiplier,
                         input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                         input_cost_usd, output_cost_usd, cache_read_cost_usd,
                         cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
@@ -2432,6 +2440,32 @@ mod tests {
             )",
             [],
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn request_log_queries_include_reasoning_effort_mapping() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, reasoning_effort, reasoning_effort_source,
+                    latency_ms, status_code, created_at
+                 ) VALUES ('effort-log', 'provider-1', 'claude', 'gpt-5.6-sol', 'ultra', 'max', 10, 200, 1)",
+                [],
+            )?;
+        }
+
+        let logs = db.get_request_logs(&LogFilters::default(), 0, 10)?;
+        assert_eq!(logs.data[0].reasoning_effort.as_deref(), Some("ultra"));
+        assert_eq!(logs.data[0].reasoning_effort_source.as_deref(), Some("max"));
+
+        let detail = db
+            .get_request_detail("effort-log")?
+            .expect("request log exists");
+        assert_eq!(detail.reasoning_effort.as_deref(), Some("ultra"));
+        assert_eq!(detail.reasoning_effort_source.as_deref(), Some("max"));
         Ok(())
     }
 
