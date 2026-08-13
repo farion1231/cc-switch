@@ -332,6 +332,14 @@ function ProviderFormFull({
     ),
   }));
 
+  const [testModel, setTestModel] = useState<string>(() => {
+    return initialData?.meta?.testModel ?? "";
+  });
+
+  const [testPrompt, setTestPrompt] = useState<string>(() => {
+    return initialData?.meta?.testPrompt ?? "";
+  });
+
   const { category } = useProviderCategory({
     appId,
     selectedPresetId,
@@ -365,6 +373,8 @@ function ProviderFormFull({
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
+    setTestModel(initialData?.meta?.testModel || "");
+    setTestPrompt(initialData?.meta?.testPrompt || "");
     setLocalProxyHeadersOverride(
       formatRequestOverrideObject(
         initialData?.meta?.localProxyRequestOverrides?.headers,
@@ -1605,6 +1615,8 @@ function ProviderFormFull({
       costMultiplier: pricingConfig.enabled
         ? pricingConfig.costMultiplier
         : undefined,
+      testModel: testModel.trim() || undefined,
+      testPrompt: testPrompt.trim() || undefined,
       pricingModelSource:
         pricingConfig.enabled && pricingConfig.pricingModelSource !== "inherit"
           ? pricingConfig.pricingModelSource
@@ -2602,6 +2614,10 @@ function ProviderFormFull({
               <ProviderAdvancedConfig
                 pricingConfig={pricingConfig}
                 onPricingConfigChange={setPricingConfig}
+                testModel={testModel}
+                testPrompt={testPrompt}
+                onTestModelChange={setTestModel}
+                onTestPromptChange={setTestPrompt}
               />
             )}
 
