@@ -33,8 +33,8 @@ use crate::services::skill::{
 
 // ========== 常量 ==========
 
-/// 大仓库判定阈值：仓库 size（KB）超过该值走本模块路径（4MB）
-pub const LARGE_REPO_THRESHOLD_KB: u64 = 4 * 1024;
+/// 大仓库判定阈值：仓库 size（KB）超过该值走本模块路径（32MB）
+pub const LARGE_REPO_THRESHOLD_KB: u64 = 32 * 1024;
 
 /// 本地哈希存储前缀：SHA-1 blob 方案
 pub const BLOB_SHA1_PREFIX: &str = "blob-sha1:";
@@ -3119,7 +3119,21 @@ mod tests {
         write_fixture(&repo_dir);
         run_git(&git, &repo_dir, &["init", "-b", "weird-branch"]);
         run_git(&git, &repo_dir, &["add", "-A"]);
-        run_git(&git, &repo_dir, &["commit", "-m", "init"]);
+        // 与 create_fixture_repo 一致：内联 user 身份，避免 CI 无 git config 时报
+        // "Author identity unknown"。
+        run_git(
+            &git,
+            &repo_dir,
+            &[
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "user.name=test",
+                "commit",
+                "-m",
+                "init",
+            ],
+        );
 
         let backend = git_backend_for(&git, &root);
         // 请求一个不存在的分支；候选仅 ["missing-branch"]（不含 main/master，
