@@ -135,6 +135,16 @@ export const usageApi = {
     });
   },
 
+  getFloatingModelStats: async (
+    startDate?: number,
+    endDate?: number,
+  ): Promise<ModelStats[]> => {
+    return invoke("get_floating_model_stats", {
+      startDate,
+      endDate,
+    });
+  },
+
   getRequestLogs: async (
     filters: LogFilters,
     page: number = 0,
