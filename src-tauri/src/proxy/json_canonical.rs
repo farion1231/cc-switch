@@ -71,19 +71,7 @@ pub(crate) fn canonicalize_tool_arguments_str(value: &str) -> String {
     if value.trim().is_empty() {
         return "{}".to_string();
     }
-    let result = canonicalize_json_string_if_parseable(value);
-    // When an upstream provider produces malformed partial JSON
-    // (e.g. a truncated streaming input_json_delta), the canonicalizer falls back to
-    // the raw string — which is not valid JSON.  Reject the garbage and emit a
-    // safe empty object so downstream round-trips do not fail on re-parse.
-    if !result.trim().is_empty() && serde_json::from_str::<Value>(&result).is_err() {
-        log::warn!(
-            "Upstream returned unparseable tool arguments ({} bytes); falling back to '{{}}'.",
-            value.len()
-        );
-        return "{}".to_string();
-    }
-    result
+    canonicalize_json_string_if_parseable(value)
 }
 
 /// Normalize a tool-call `arguments` field from a Responses/Chat item.
@@ -180,21 +168,6 @@ mod tests {
             canonicalize_tool_arguments_str(r#"{ "b": 2, "a": 1 }"#),
             r#"{"a":1,"b":2}"#
         );
-    }
-
-    #[test]
-    fn canonicalize_tool_arguments_str_rejects_unparseable() {
-        // Truncated JSON fragment — should fall back to empty object
-        // instead of returning the raw garbage.
-        assert_eq!(canonicalize_tool_arguments_str("{broken"), "{}");
-        // Plain text, not JSON at all.
-        assert_eq!(canonicalize_tool_arguments_str("not json"), "{}");
-        // Numeric literal — valid JSON, but not an object (this passes the
-        // re-parse check in the new guard since 42 is valid JSON; the caller
-        // handles non-objects separately).  Keep to document the boundary:
-        // canonicalize_tool_arguments_str only rejects *non-JSON*, not
-        // non-object JSON.
-        assert_eq!(canonicalize_tool_arguments_str("42"), "42");
     }
 
     #[test]
