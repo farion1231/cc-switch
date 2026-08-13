@@ -74,6 +74,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
   openclaw: {},
   hermes: {},
   pi: {},
+  "deepseek-harness": {},
 });
 
 const createDefaultCurrent = (): CurrentProviderState => ({
@@ -86,6 +87,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   openclaw: "",
   hermes: "",
   pi: "",
+  "deepseek-harness": "",
 });
 
 let providers = createDefaultProviders();
@@ -200,6 +202,7 @@ let mcpConfigs: McpConfigState = {
   openclaw: {},
   hermes: {},
   pi: {},
+  "deepseek-harness": {},
 };
 
 const cloneProviders = (value: ProvidersByApp) =>
@@ -270,6 +273,7 @@ export const resetProviderState = () => {
     openclaw: {},
     hermes: {},
     pi: {},
+    "deepseek-harness": {},
   };
 };
 

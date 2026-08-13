@@ -608,6 +608,9 @@ impl SkillService {
             AppType::Pi => {
                 return Ok(crate::pi_config::get_pi_agent_dir()?.join("skills"));
             }
+            AppType::DeepSeekHarness => {
+                log::debug!("DeepSeek Harness skill sync is not supported, skipping");
+            }
         }
 
         // 默认路径：回退到用户主目录下的标准位置。
@@ -625,6 +628,9 @@ impl SkillService {
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
+            AppType::DeepSeekHarness => {
+                return Err(anyhow!("DeepSeek Harness does not support Skills"));
+            }
         })
     }
 
@@ -2239,7 +2245,7 @@ impl SkillService {
     /// - Symlink: 仅使用 symlink
     /// - Copy: 仅使用文件复制
     pub fn sync_to_app_dir(directory: &str, app: &AppType) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop) {
+        if matches!(app, AppType::ClaudeDesktop | AppType::DeepSeekHarness) {
             return Ok(());
         }
 
@@ -2426,7 +2432,7 @@ impl SkillService {
         app: &AppType,
         preserved_path: Option<&Path>,
     ) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop) {
+        if matches!(app, AppType::ClaudeDesktop | AppType::DeepSeekHarness) {
             return Ok(());
         }
 
@@ -2463,7 +2469,10 @@ impl SkillService {
 
     /// Caller must hold either the Skills state read or write guard.
     fn sync_to_app_unlocked(db: &Arc<Database>, app: &AppType) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop | AppType::Pi) {
+        if matches!(
+            app,
+            AppType::ClaudeDesktop | AppType::Pi | AppType::DeepSeekHarness
+        ) {
             return Ok(());
         }
 

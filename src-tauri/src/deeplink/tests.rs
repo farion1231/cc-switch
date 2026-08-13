@@ -127,6 +127,38 @@ fn test_parse_grokbuild_provider() {
 }
 
 #[test]
+fn test_parse_deepseek_harness_provider() {
+    use super::provider::build_provider_from_request;
+
+    let url = "ccswitch://v1/import?resource=provider&app=deepseek-harness&name=DeepSeek%20Relay&endpoint=https%3A%2F%2Fapi.example.com&apiKey=secret&model=private-model";
+    let request = parse_deeplink_url(url).unwrap();
+    let provider = build_provider_from_request(&AppType::DeepSeekHarness, &request).unwrap();
+
+    assert_eq!(provider.settings_config["apiKey"], "secret");
+    assert_eq!(
+        provider.settings_config["baseURL"],
+        "https://api.example.com"
+    );
+    assert_eq!(provider.settings_config["defaultModel"], "private-model");
+}
+
+#[test]
+fn test_parse_deepseek_harness_provider_omits_missing_optional_live_fields() {
+    use super::provider::build_provider_from_request;
+
+    let url = "ccswitch://v1/import?resource=provider&app=dsh&name=DeepSeek";
+    let request = parse_deeplink_url(url).unwrap();
+    let provider = build_provider_from_request(&AppType::DeepSeekHarness, &request).unwrap();
+
+    assert!(provider.settings_config.get("apiKey").is_none());
+    assert!(provider.settings_config.get("baseURL").is_none());
+    assert_eq!(
+        provider.settings_config["defaultModel"],
+        "deepseek-v4-flash"
+    );
+}
+
+#[test]
 fn test_parse_invalid_scheme() {
     let url = "https://v1/import?resource=provider&app=claude&name=Test";
 
@@ -650,6 +682,30 @@ context_window = 500000
     assert_eq!(merged.endpoint.as_deref(), Some("https://grok.example/v1"));
     assert_eq!(merged.model.as_deref(), Some("grok-upstream"));
     assert_eq!(merged.homepage.as_deref(), Some("https://grok.example"));
+}
+
+#[test]
+fn test_parse_and_merge_config_deepseek_harness() {
+    let config = serde_json::json!({
+        "apiKey": "sk-dsh",
+        "baseURL": "https://dsh.example",
+        "defaultModel": "deepseek-private"
+    })
+    .to_string();
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("deepseek-harness".to_string()),
+        name: Some("DeepSeek Harness".to_string()),
+        config: Some(BASE64_STANDARD.encode(config.as_bytes())),
+        config_format: Some("json".to_string()),
+        ..Default::default()
+    };
+
+    let merged = parse_and_merge_config(&request).unwrap();
+    assert_eq!(merged.api_key.as_deref(), Some("sk-dsh"));
+    assert_eq!(merged.endpoint.as_deref(), Some("https://dsh.example"));
+    assert_eq!(merged.model.as_deref(), Some("deepseek-private"));
 }
 
 #[test]

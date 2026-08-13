@@ -146,6 +146,15 @@ pub async fn get_config_status(
                 path,
             })
         }
+        AppType::DeepSeekHarness => {
+            let dir = crate::dsh_config::get_dsh_dir();
+            let exists = crate::dsh_config::get_dsh_settings_path().exists()
+                || crate::dsh_config::get_dsh_credentials_path().exists();
+            Ok(ConfigStatus {
+                exists,
+                path: dir.to_string_lossy().to_string(),
+            })
+        }
     }
 }
 
@@ -168,6 +177,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
+        AppType::DeepSeekHarness => crate::dsh_config::get_dsh_dir(),
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -187,6 +197,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
         AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
+        AppType::DeepSeekHarness => crate::dsh_config::get_dsh_dir(),
     };
 
     if !config_dir.exists() {

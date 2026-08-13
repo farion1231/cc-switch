@@ -791,6 +791,8 @@
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
     "piConfigDir": "Pi Configuration Directory",
     "piConfigDirDescription": "Override the Pi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
+    "deepseekHarnessConfigDir": "DeepSeek Harness Configuration Directory",
+    "deepseekHarnessConfigDirDescription": "Override the DeepSeek Harness home directory (settings.yaml and .credentials.yaml).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
@@ -799,6 +801,7 @@
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
     "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
+    "browsePlaceholderDeepSeekHarness": "e.g., /home/<your-username>/.dsh",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",
@@ -910,7 +913,8 @@
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
-    "pi": "Pi"
+    "pi": "Pi",
+    "deepseek-harness": "DeepSeek Harness"
   },
   "pi": {
     "empty": {
@@ -1054,6 +1058,23 @@
   },
   "appSwitcher": {
     "more": "More apps"
+  },
+  "deepseekHarness": {
+    "defaultProviderName": "DeepSeek Official",
+    "apiKey": "API Key",
+    "apiKeyEnv": "Credential reference",
+    "apiKeyEnvRequired": "Credential reference is required",
+    "baseURL": "Base URL",
+    "defaultModel": "Default model",
+    "defaultModelRequired": "Default model is required",
+    "thinking": "Thinking policy",
+    "disabled": "Disabled",
+    "reasoningEffort": "Default reasoning effort",
+    "models": "Advisory models (one ID per line)",
+    "modelsHint": "The selected default model may also be an unlisted pass-through ID.",
+    "advancedJson": "Advanced llm-deepseek profile (JSON)",
+    "advancedHint": "Unknown native profile fields are retained. Structured fields above take precedence when saving.",
+    "invalidAdvancedJson": "Invalid advanced JSON: {{error}}"
   },
   "grokBuild": {
     "apiBackend": "API backend",

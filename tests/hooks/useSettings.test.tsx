@@ -496,6 +496,7 @@ describe("useSettings hook", () => {
       openclaw: "/server/openclaw",
       hermes: "/server/hermes",
       pi: "/server/pi",
+      "deepseek-harness": undefined,
     });
     expect(metadataMock.setRequiresRestart).toHaveBeenCalledWith(false);
   });

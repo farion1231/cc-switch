@@ -119,6 +119,7 @@ export function useSettings(): UseSettingsResult {
       openclaw: sanitizeDir(data?.openclawConfigDir),
       hermes: sanitizeDir(data?.hermesConfigDir),
       pi: sanitizeDir(data?.piConfigDir),
+      "deepseek-harness": sanitizeDir(data?.deepseekHarnessConfigDir),
     });
     setRequiresRestart(false);
   }, [
@@ -200,7 +201,11 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
         );
+        const sanitizedHermesDir = sanitizeDir(mergedSettings.hermesConfigDir);
         const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
+        const sanitizedDeepSeekHarnessDir = sanitizeDir(
+          mergedSettings.deepseekHarnessConfigDir,
+        );
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -215,7 +220,9 @@ export function useSettings(): UseSettingsResult {
           grokConfigDir: sanitizedGrokDir,
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
+          hermesConfigDir: sanitizedHermesDir,
           piConfigDir: sanitizedPiDir,
+          deepseekHarnessConfigDir: sanitizedDeepSeekHarnessDir,
           language: mergedSettings.language,
         };
 
@@ -335,7 +342,11 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
         );
+        const sanitizedHermesDir = sanitizeDir(mergedSettings.hermesConfigDir);
         const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
+        const sanitizedDeepSeekHarnessDir = sanitizeDir(
+          mergedSettings.deepseekHarnessConfigDir,
+        );
         const previousAppDir = initialAppConfigDir;
         const previousClaudeDir = sanitizeDir(data?.claudeConfigDir);
         const previousCodexDir = sanitizeDir(data?.codexConfigDir);
@@ -343,7 +354,11 @@ export function useSettings(): UseSettingsResult {
         const previousGrokDir = sanitizeDir(data?.grokConfigDir);
         const previousOpencodeDir = sanitizeDir(data?.opencodeConfigDir);
         const previousOpenclawDir = sanitizeDir(data?.openclawConfigDir);
+        const previousHermesDir = sanitizeDir(data?.hermesConfigDir);
         const previousPiDir = sanitizeDir(data?.piConfigDir);
+        const previousDeepSeekHarnessDir = sanitizeDir(
+          data?.deepseekHarnessConfigDir,
+        );
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -358,7 +373,9 @@ export function useSettings(): UseSettingsResult {
           grokConfigDir: sanitizedGrokDir,
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
+          hermesConfigDir: sanitizedHermesDir,
           piConfigDir: sanitizedPiDir,
+          deepseekHarnessConfigDir: sanitizedDeepSeekHarnessDir,
           language: mergedSettings.language,
         };
 
@@ -446,7 +463,10 @@ export function useSettings(): UseSettingsResult {
         const grokDirChanged = sanitizedGrokDir !== previousGrokDir;
         const opencodeDirChanged = sanitizedOpencodeDir !== previousOpencodeDir;
         const openclawDirChanged = sanitizedOpenclawDir !== previousOpenclawDir;
+        const hermesDirChanged = sanitizedHermesDir !== previousHermesDir;
         const piDirChanged = sanitizedPiDir !== previousPiDir;
+        const deepseekHarnessDirChanged =
+          sanitizedDeepSeekHarnessDir !== previousDeepSeekHarnessDir;
         if (
           !pluginSynced &&
           (claudeDirChanged ||
@@ -454,7 +474,9 @@ export function useSettings(): UseSettingsResult {
             geminiDirChanged ||
             grokDirChanged ||
             opencodeDirChanged ||
-            openclawDirChanged)
+            openclawDirChanged ||
+            hermesDirChanged ||
+            deepseekHarnessDirChanged)
         ) {
           const syncResult = await syncCurrentProvidersLiveSafe();
           if (!syncResult.ok) {

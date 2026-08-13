@@ -357,6 +357,9 @@ export function SettingsPage({
                             openclawDir={settings.openclawConfigDir}
                             hermesDir={settings.hermesConfigDir}
                             piDir={settings.piConfigDir}
+                            deepseekHarnessDir={
+                              settings.deepseekHarnessConfigDir
+                            }
                             onDirectoryChange={updateDirectory}
                             onBrowseDirectory={browseDirectory}
                             onResetDirectory={resetDirectory}

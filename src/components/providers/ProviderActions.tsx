@@ -43,6 +43,8 @@ interface ProviderActionsProps {
   onDuplicate?: () => void;
   onTest?: () => void;
   onConfigureUsage?: () => void;
+  showConnectivity?: boolean;
+  showUsage?: boolean;
   onDelete: () => void;
   onRemoveFromConfig?: () => void;
   onDisableOmo?: () => void;
@@ -85,6 +87,8 @@ export function ProviderActions({
   onDuplicate,
   onTest,
   onConfigureUsage,
+  showConnectivity = true,
+  showUsage = true,
   onDelete,
   onRemoveFromConfig,
   onDisableOmo,
@@ -412,37 +416,41 @@ export function ProviderActions({
           </Button>
         )}
 
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={onTest || undefined}
-          disabled={isTesting}
-          title={t("provider.connectivityCheck", "检测连通")}
-          className={cn(
-            iconButtonClass,
-            !onTest && "opacity-40 cursor-not-allowed text-muted-foreground",
-          )}
-        >
-          {isTesting ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Activity className="h-4 w-4" />
-          )}
-        </Button>
+        {showConnectivity && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onTest || undefined}
+            disabled={isTesting}
+            title={t("provider.connectivityCheck", "检测连通")}
+            className={cn(
+              iconButtonClass,
+              !onTest && "opacity-40 cursor-not-allowed text-muted-foreground",
+            )}
+          >
+            {isTesting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Activity className="h-4 w-4" />
+            )}
+          </Button>
+        )}
 
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={onConfigureUsage || undefined}
-          title={t("provider.configureUsage")}
-          className={cn(
-            iconButtonClass,
-            !onConfigureUsage &&
-              "opacity-40 cursor-not-allowed text-muted-foreground",
-          )}
-        >
-          <BarChart3 className="h-4 w-4" />
-        </Button>
+        {showUsage && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onConfigureUsage || undefined}
+            title={t("provider.configureUsage")}
+            className={cn(
+              iconButtonClass,
+              !onConfigureUsage &&
+                "opacity-40 cursor-not-allowed text-muted-foreground",
+            )}
+          >
+            <BarChart3 className="h-4 w-4" />
+          </Button>
+        )}
 
         {onOpenTerminal && (
           <Button

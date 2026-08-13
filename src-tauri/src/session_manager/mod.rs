@@ -209,6 +209,10 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "grokbuild" => grokbuild::session_roots(),
         "hermes" => vec![crate::hermes_config::get_hermes_dir().join("sessions")],
         "pi" => pi::session_roots(),
+        // Harness session storage is not managed in the initial integration.
+        "deepseek-harness" | "deepseek_harness" | "dsh" => {
+            return Err("DeepSeek Harness session management is not supported".to_string())
+        }
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
 

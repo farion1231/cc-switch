@@ -126,6 +126,8 @@ export function useSettingsForm(): UseSettingsFormResult {
       opencodeConfigDir: sanitizeDir(data.opencodeConfigDir),
       openclawConfigDir: sanitizeDir(data.openclawConfigDir),
       piConfigDir: sanitizeDir(data.piConfigDir),
+      hermesConfigDir: sanitizeDir(data.hermesConfigDir),
+      deepseekHarnessConfigDir: sanitizeDir(data.deepseekHarnessConfigDir),
       language: normalizedLanguage,
     };
 
@@ -194,6 +196,10 @@ export function useSettingsForm(): UseSettingsFormResult {
         opencodeConfigDir: sanitizeDir(serverData.opencodeConfigDir),
         openclawConfigDir: sanitizeDir(serverData.openclawConfigDir),
         piConfigDir: sanitizeDir(serverData.piConfigDir),
+        hermesConfigDir: sanitizeDir(serverData.hermesConfigDir),
+        deepseekHarnessConfigDir: sanitizeDir(
+          serverData.deepseekHarnessConfigDir,
+        ),
         language: normalizedLanguage,
       };
 

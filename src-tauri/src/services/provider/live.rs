@@ -531,7 +531,8 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
-        | AppType::ClaudeDesktop => false,
+        | AppType::ClaudeDesktop
+        | AppType::DeepSeekHarness => false,
     }
 }
 
@@ -606,7 +607,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
+        | AppType::ClaudeDesktop
+        | AppType::DeepSeekHarness => Ok(settings.clone()),
     }
 }
 
@@ -666,7 +668,8 @@ fn apply_common_config_to_settings(
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
-        | AppType::ClaudeDesktop => Ok(settings.clone()),
+        | AppType::ClaudeDesktop
+        | AppType::DeepSeekHarness => Ok(settings.clone()),
     }
 }
 
@@ -1005,6 +1008,25 @@ fn restore_live_settings_for_provider_backfill(
     provider: &Provider,
     live_settings: Value,
 ) -> Value {
+    if matches!(app_type, AppType::DeepSeekHarness) {
+        let mut settings = live_settings;
+        let Some(object) = settings.as_object_mut() else {
+            return settings;
+        };
+        // The managed credential store is shared native state, not part of the
+        // provider profile being switched away. Preserve the provider-owned
+        // secret/reference instead of absorbing an externally changed key into
+        // the wrong CC Switch snapshot during backfill.
+        object.remove("apiKey");
+        object.remove("apiKeyEnv");
+        if let Some(stored) = provider.settings_config.get("apiKey") {
+            object.insert("apiKey".to_string(), stored.clone());
+        }
+        if let Some(stored) = provider.settings_config.get("apiKeyEnv") {
+            object.insert("apiKeyEnv".to_string(), stored.clone());
+        }
+        return settings;
+    }
     if matches!(app_type, AppType::Claude) {
         let mut settings = live_settings;
         strip_injected_codex_oauth_context_defaults(&mut settings, provider);
@@ -1276,6 +1298,9 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly
             write_gemini_live(provider)?;
+        }
+        AppType::DeepSeekHarness => {
+            crate::dsh_config::write_live_settings(&provider.settings_config)?;
         }
         AppType::GrokBuild => {
             crate::grok_config::write_grok_provider_live(provider)?;
@@ -1633,6 +1658,15 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = read_opencode_config()?;
             Ok(config)
         }
+        AppType::DeepSeekHarness => {
+            crate::dsh_config::read_live_settings()?.ok_or_else(|| {
+                AppError::localized(
+                    "deepseek_harness.live.missing",
+                    "DeepSeek Harness 配置文件不存在",
+                    "DeepSeek Harness configuration files are missing",
+                )
+            })
+        }
         AppType::GrokBuild => crate::grok_config::read_grok_live_settings(),
         AppType::OpenClaw => {
             use crate::openclaw_config::{get_openclaw_config_path, read_openclaw_config};
@@ -1773,6 +1807,13 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
+        AppType::DeepSeekHarness => crate::dsh_config::read_live_settings()?.ok_or_else(|| {
+            AppError::localized(
+                "deepseek_harness.live.missing",
+                "DeepSeek Harness 配置文件不存在",
+                "DeepSeek Harness configuration files are missing",
+            )
+        })?,
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
             unreachable!("additive mode apps are handled by early return")

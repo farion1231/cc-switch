@@ -253,7 +253,6 @@ describe("EditProviderDialog", () => {
       JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
     ).toEqual(provider.settingsConfig);
   });
-
   it("clears the nested auth panel before the dialog reopens", async () => {
     const provider: Provider = {
       id: "official",
@@ -351,7 +350,6 @@ describe("EditProviderDialog", () => {
       accountId: "acct-managed",
     });
   });
-
   it("编辑 Pi 供应商时保留通用元数据", async () => {
     const provider: Provider = {
       id: "pi-provider",
@@ -425,5 +423,100 @@ describe("EditProviderDialog", () => {
 
     act(() => staleCallback?.(true));
     expect(reopenedButton).toBeDisabled();
+  });
+
+  it("loads current DeepSeek Harness live settings while retaining stored credentials", async () => {
+    const provider: Provider = {
+      id: "deepseek-official",
+      name: "DeepSeek Official",
+      category: "official",
+      settingsConfig: {
+        apiKey: "db-secret",
+        apiKeyEnv: "DB_DEEPSEEK_KEY",
+        defaultModel: "db-model",
+        baseURL: "https://db.example",
+      },
+    };
+    const liveSettings = {
+      apiKey: "live-resolved-secret",
+      apiKeyEnv: "LIVE_DEEPSEEK_KEY",
+      defaultModel: "live-model",
+      baseURL: "https://live.example",
+      retryPolicy: { mode: "always" },
+    };
+    const expectedSettings = {
+      ...liveSettings,
+      apiKey: "db-secret",
+      apiKeyEnv: "DB_DEEPSEEK_KEY",
+    };
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+    apiMocks.getCurrent.mockResolvedValue(provider.id);
+    apiMocks.getLiveProviderSettings.mockResolvedValue(liveSettings);
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={handleSubmit}
+        appId="deepseek-harness"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual(expectedSettings);
+    });
+    expect(apiMocks.getCurrent).toHaveBeenCalledWith("deepseek-harness");
+    expect(apiMocks.getLiveProviderSettings).toHaveBeenCalledWith(
+      "deepseek-harness",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+    expect(handleSubmit.mock.calls[0][0].provider.settingsConfig).toEqual(
+      expectedSettings,
+    );
+  });
+
+  it("does not adopt DeepSeek Harness live credentials when the stored provider has none", async () => {
+    const provider: Provider = {
+      id: "deepseek-official",
+      name: "DeepSeek Official",
+      category: "official",
+      settingsConfig: {
+        defaultModel: "db-model",
+      },
+    };
+
+    apiMocks.getCurrent.mockResolvedValue(provider.id);
+    apiMocks.getLiveProviderSettings.mockResolvedValue({
+      apiKey: "shared-live-secret",
+      apiKeyEnv: "SHARED_LIVE_KEY",
+      defaultModel: "live-model",
+      baseURL: "https://live.example",
+    });
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="deepseek-harness"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual({
+        defaultModel: "live-model",
+        baseURL: "https://live.example",
+      });
+    });
   });
 });

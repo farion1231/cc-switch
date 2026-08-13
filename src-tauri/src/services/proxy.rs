@@ -1143,6 +1143,12 @@ impl ProxyService {
     /// - 关闭：仅恢复当前 app 的 Live 配置；若无其它接管，则自动停止代理服务
     pub async fn set_takeover_for_app(&self, app_type: &str, enabled: bool) -> Result<(), String> {
         let app = AppType::from_str(app_type).map_err(|e| format!("无效的应用类型: {e}"))?;
+        if matches!(app, AppType::DeepSeekHarness) {
+            return Err(
+                "DeepSeek Harness 暂不支持代理接管 (DeepSeek Harness proxy takeover is not supported)"
+                    .to_string(),
+            );
+        }
         if !app.supports_local_proxy() {
             return Err(format!("{} 不支持本地路由", app.as_str()));
         }
@@ -2947,6 +2953,12 @@ impl ProxyService {
     ) -> Result<HotSwitchOutcome, String> {
         let app_type_enum =
             AppType::from_str(app_type).map_err(|_| format!("无效的应用类型: {app_type}"))?;
+        if matches!(app_type_enum, AppType::DeepSeekHarness) {
+            return Err(
+                "DeepSeek Harness 暂不支持代理切换 (DeepSeek Harness proxy switching is not supported)"
+                    .to_string(),
+            );
+        }
         let provider = self
             .db
             .get_provider_by_id(provider_id, app_type)

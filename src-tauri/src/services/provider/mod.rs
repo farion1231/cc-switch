@@ -235,8 +235,10 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
         let old_home = std::env::var_os("HOME");
+        let old_dsh_home = std::env::var_os("DSH_HOME");
         std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
         std::env::set_var("HOME", temp.path());
+        std::env::set_var("DSH_HOME", temp.path().join(".dsh"));
 
         let db = Arc::new(Database::memory().expect("in-memory database"));
         let state = AppState::new(db);
@@ -249,6 +251,10 @@ mod tests {
         match old_home {
             Some(value) => std::env::set_var("HOME", value),
             None => std::env::remove_var("HOME"),
+        }
+        match old_dsh_home {
+            Some(value) => std::env::set_var("DSH_HOME", value),
+            None => std::env::remove_var("DSH_HOME"),
         }
 
         result
@@ -415,6 +421,18 @@ mod tests {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    fn deepseek_harness_provider(id: &str, model: &str) -> Provider {
+        Provider::with_id(
+            id.to_string(),
+            format!("Provider {id}"),
+            json!({
+                "defaultModel": model,
+                "apiKeyEnv": "TEST_DSH_API_KEY"
+            }),
+            None,
+        )
     }
 
     fn opencode_omo_provider(id: &str, category: &str) -> Provider {
@@ -2349,6 +2367,95 @@ requires_openai_auth = true
             json!([{ "name": "claude-sonnet-4-6", "labelOverride": "DeepSeek V4 Flash Updated", "supports1m": true }]),
             "provider edits should propagate into the Claude Desktop 3P profile during takeover"
         );
+    }
+
+    #[test]
+    #[serial]
+    fn update_current_deepseek_harness_provider_rolls_back_db_when_native_write_fails() {
+        with_test_home(|state, home| {
+            let dsh_home = home.join(".dsh");
+            fs::create_dir_all(&dsh_home).expect("create isolated DSH home");
+            let original = deepseek_harness_provider("p1", "deepseek-v4-flash");
+            state
+                .db
+                .save_provider(AppType::DeepSeekHarness.as_str(), &original)
+                .expect("save original provider");
+            state
+                .db
+                .set_current_provider(AppType::DeepSeekHarness.as_str(), "p1")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::DeepSeekHarness, Some("p1"))
+                .expect("set local current provider");
+
+            let lock_path = dsh_home.join("settings.yaml.lock");
+            fs::write(&lock_path, "contender\n").expect("hold native writer lock");
+            let updated = deepseek_harness_provider("p1", "deepseek-v4-pro");
+            let error = ProviderService::update(state, AppType::DeepSeekHarness, None, updated)
+                .expect_err("native writer lock must reject the update");
+            fs::remove_file(&lock_path).expect("release native writer lock");
+
+            assert!(
+                error.to_string().contains("Timed out"),
+                "unexpected write failure: {error}"
+            );
+            let stored = state
+                .db
+                .get_provider_by_id("p1", AppType::DeepSeekHarness.as_str())
+                .expect("read stored provider")
+                .expect("provider remains stored");
+            assert_eq!(
+                stored.settings_config, original.settings_config,
+                "failed native writes must restore the exact previous provider snapshot"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn update_current_deepseek_harness_provider_ignores_stale_proxy_backup() {
+        with_test_home(|state, home| {
+            let original = deepseek_harness_provider("p1", "deepseek-v4-flash");
+            state
+                .db
+                .save_provider(AppType::DeepSeekHarness.as_str(), &original)
+                .expect("save original provider");
+            state
+                .db
+                .set_current_provider(AppType::DeepSeekHarness.as_str(), "p1")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::DeepSeekHarness, Some("p1"))
+                .expect("set local current provider");
+
+            futures::executor::block_on(
+                state
+                    .db
+                    .save_live_backup(AppType::DeepSeekHarness.as_str(), "stale-backup"),
+            )
+            .expect("seed stale proxy backup");
+
+            let updated = deepseek_harness_provider("p1", "deepseek-v4-pro");
+            ProviderService::update(state, AppType::DeepSeekHarness, None, updated.clone())
+                .expect("stale proxy state must not divert the native write");
+
+            let settings = fs::read_to_string(home.join(".dsh").join("settings.yaml"))
+                .expect("native Harness settings were written");
+            assert!(settings.contains("model: deepseek-v4-pro"));
+            let stored = state
+                .db
+                .get_provider_by_id("p1", AppType::DeepSeekHarness.as_str())
+                .expect("read stored provider")
+                .expect("provider remains stored");
+            assert_eq!(stored.settings_config, updated.settings_config);
+            assert_eq!(
+                futures::executor::block_on(
+                    state.db.get_live_backup(AppType::DeepSeekHarness.as_str())
+                )
+                .expect("read stale backup")
+                .expect("stale backup remains untouched")
+                .original_config,
+                "stale-backup"
+            );
+        });
     }
 
     #[test]
@@ -4903,6 +5010,15 @@ impl ProviderService {
             return Ok(true);
         }
 
+        // First Harness provider: validate and project the native files before
+        // persisting a provider/current pointer. This avoids a failed native
+        // lock or environment-shadow check leaving a phantom DB provider.
+        let harness_first = matches!(app_type, AppType::DeepSeekHarness)
+            && state.db.get_current_provider(app_type.as_str())?.is_none();
+        if harness_first {
+            write_live_with_common_config_for_state(state, &app_type, &provider)?;
+        }
+
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
@@ -4926,12 +5042,23 @@ impl ProviderService {
         // For other apps: Check if sync is needed (if this is current provider, or no current provider)
         let current = state.db.get_current_provider(app_type.as_str())?;
         if current.is_none() {
-            // No current provider, set as current and sync. Managed Codex adds
-            // use the transactional path above because token resolution can fail.
-            state
-                .db
-                .set_current_provider(app_type.as_str(), &provider.id)?;
-            write_live_with_common_config_for_state(state, &app_type, &provider)?;
+            // Harness may reject a native writer lock or environment-shadow
+            // conflict. Do not mark the first provider current until its live
+            // projection has succeeded.
+            if !matches!(app_type, AppType::DeepSeekHarness) {
+                state
+                    .db
+                    .set_current_provider(app_type.as_str(), &provider.id)?;
+            }
+            if !harness_first {
+                write_live_with_common_config_for_state(state, &app_type, &provider)?;
+            }
+            if matches!(app_type, AppType::DeepSeekHarness) {
+                state
+                    .db
+                    .set_current_provider(app_type.as_str(), &provider.id)?;
+                crate::settings::set_current_provider(&app_type, Some(&provider.id))?;
+            }
         }
 
         Ok(true)
@@ -5387,7 +5514,11 @@ impl ProviderService {
             // Backup or live placeholders mean the live file is currently owned
             // by proxy takeover, including the short activation window before
             // proxy_config.enabled is committed.
-            let should_sync_via_proxy = has_live_backup || live_taken_over;
+            // DeepSeek Harness is never proxy-managed. A stale backup row from a
+            // previous app version must not divert its native settings write into
+            // the proxy takeover path.
+            let should_sync_via_proxy = !matches!(app_type, AppType::DeepSeekHarness)
+                && (has_live_backup || live_taken_over);
 
             if should_sync_via_proxy {
                 if matches!(app_type, AppType::ClaudeDesktop) {
@@ -5426,7 +5557,32 @@ impl ProviderService {
                     }
                 }
             } else {
-                write_live_with_common_config_for_state(state, &app_type, &provider)?;
+                if let Err(err) = write_live_with_common_config_for_state(
+                    state,
+                    &app_type,
+                    &provider,
+                ) {
+                    // Harness native writes can be rejected by its cross-process
+                    // lock or by an inherited environment override. Restore the
+                    // provider snapshot so a reported save failure does not leave
+                    // CC Switch ahead of the live Harness configuration.
+                    if matches!(app_type, AppType::DeepSeekHarness) {
+                        let rollback_result = match existing_provider.as_ref() {
+                            Some(previous) => state.db.save_provider(app_type.as_str(), previous),
+                            None => state
+                                .db
+                                .delete_provider(app_type.as_str(), provider.id.as_str()),
+                        };
+                        if let Err(rollback_err) = rollback_result {
+                            return Err(AppError::Message(format!(
+                                "Failed to write DeepSeek Harness live configuration ({err}); \
+                                 restoring the previous provider snapshot also failed: \
+                                 {rollback_err}"
+                            )));
+                        }
+                    }
+                    return Err(err);
+                }
                 // 重写 live 后只重投影本应用的 MCP：全量 sync_all_enabled 会把
                 // 无关应用的 live 损坏（如 ~/.claude.json 坏 JSON）牵连进保存
                 // 流程。走到这里 DB 与 live 都已按新配置落盘，保存事实上已
@@ -5621,7 +5777,7 @@ impl ProviderService {
             return Self::switch_normal(state, app_type, id, &providers);
         }
 
-        if matches!(app_type, AppType::ClaudeDesktop) {
+        if matches!(app_type, AppType::ClaudeDesktop | AppType::DeepSeekHarness) {
             return Self::switch_normal(state, app_type, id, &providers);
         }
 
@@ -5783,6 +5939,11 @@ impl ProviderService {
             outgoing_managed_codex_account_id.as_deref(),
         )?;
 
+        // Harness writes two live documents and may reject a native writer-lock
+        // or environment-shadow conflict. Commit the current pointer only after
+        // that write succeeds so a failed switch cannot claim it took effect.
+        let commit_current_after_live = matches!(app_type, AppType::DeepSeekHarness);
+
         // 提交 current 前预检托管 Codex token（见 preflight_managed_codex_live）。
         let preflighted_provider = Self::preflight_managed_codex_live(state, &app_type, provider)?;
         let use_managed_codex_transaction = matches!(app_type, AppType::Codex)
@@ -5840,7 +6001,7 @@ impl ProviderService {
             }
         } else {
             // Additive mode apps skip setting is_current (no such concept).
-            if !app_type.is_additive_mode() {
+            if !app_type.is_additive_mode() && !commit_current_after_live {
                 crate::settings::set_current_provider(&app_type, Some(id))?;
                 state.db.set_current_provider(app_type.as_str(), id)?;
             }
@@ -5852,8 +6013,12 @@ impl ProviderService {
                 provider,
                 preflighted_provider.as_ref(),
             )?;
-        }
 
+            if commit_current_after_live {
+                crate::settings::set_current_provider(&app_type, Some(id))?;
+                state.db.set_current_provider(app_type.as_str(), id)?;
+            }
+        }
         // A material-less official Codex provider gets a config-only live
         // write, which can leave the previous third-party key in
         // ~/.codex/auth.json and strand the user on a 401 with no login
@@ -6199,6 +6364,7 @@ impl ProviderService {
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Pi => Ok(String::new()),
+            AppType::DeepSeekHarness => Ok(String::new()),
         }
     }
 
@@ -6217,6 +6383,7 @@ impl ProviderService {
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
             AppType::Pi => Ok(String::new()),
+            AppType::DeepSeekHarness => Ok(String::new()),
         }
     }
 
@@ -6985,6 +7152,80 @@ impl ProviderService {
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
+            AppType::DeepSeekHarness => {
+                let settings = provider.settings_config.as_object().ok_or_else(|| {
+                    AppError::localized(
+                        "provider.deepseek_harness.settings.not_object",
+                        "DeepSeek Harness 配置必须是 JSON 对象",
+                        "DeepSeek Harness configuration must be a JSON object",
+                    )
+                })?;
+
+                if settings
+                    .get("defaultModel")
+                    .and_then(Value::as_str)
+                    .is_none_or(|value| value.trim().is_empty())
+                {
+                    return Err(AppError::localized(
+                        "provider.deepseek_harness.default_model.missing",
+                        "DeepSeek Harness 配置缺少 defaultModel",
+                        "DeepSeek Harness configuration is missing defaultModel",
+                    ));
+                }
+
+                if settings.contains_key("apiKeyEnv")
+                    && settings
+                        .get("apiKeyEnv")
+                        .and_then(Value::as_str)
+                        .is_none_or(|value| value.trim().is_empty())
+                {
+                    return Err(AppError::localized(
+                        "provider.deepseek_harness.api_key_env.invalid",
+                        "DeepSeek Harness apiKeyEnv 必须是非空字符串",
+                        "DeepSeek Harness apiKeyEnv must be a non-empty string",
+                    ));
+                }
+
+                let thinking = settings.get("thinking").and_then(Value::as_str);
+                if settings.contains_key("thinking")
+                    && !matches!(thinking, Some("enabled" | "disabled"))
+                {
+                    return Err(AppError::localized(
+                        "provider.deepseek_harness.thinking.invalid",
+                        "DeepSeek Harness thinking 必须是 enabled 或 disabled",
+                        "DeepSeek Harness thinking must be enabled or disabled",
+                    ));
+                }
+
+                let effort = settings.get("reasoningEffort").and_then(Value::as_str);
+                if settings.contains_key("reasoningEffort")
+                    && !matches!(effort, Some("off" | "high" | "max"))
+                {
+                    return Err(AppError::localized(
+                        "provider.deepseek_harness.reasoning_effort.invalid",
+                        "DeepSeek Harness reasoningEffort 必须是 off、high 或 max",
+                        "DeepSeek Harness reasoningEffort must be off, high, or max",
+                    ));
+                }
+
+                if thinking == Some("disabled") && effort.is_some_and(|value| value != "off") {
+                    return Err(AppError::localized(
+                        "provider.deepseek_harness.thinking_effort.conflict",
+                        "thinking 为 disabled 时 reasoningEffort 只能为 off",
+                        "reasoningEffort must be off when thinking is disabled",
+                    ));
+                }
+
+                if let Some(default_effort) = settings.get("defaultReasoningEffort") {
+                    if !matches!(default_effort.as_str(), Some("off" | "high" | "max")) {
+                        return Err(AppError::localized(
+                            "provider.deepseek_harness.default_reasoning_effort.invalid",
+                            "DeepSeek Harness defaultReasoningEffort 必须是 off、high 或 max",
+                            "DeepSeek Harness defaultReasoningEffort must be off, high, or max",
+                        ));
+                    }
+                }
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -7213,6 +7454,11 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
+            AppType::DeepSeekHarness => Err(AppError::localized(
+                "provider.deepseek_harness.credentials.unsupported",
+                "DeepSeek Harness 暂不支持用量或代理凭据提取",
+                "DeepSeek Harness usage and proxy credential extraction is not supported",
+            )),
         }
     }
 }

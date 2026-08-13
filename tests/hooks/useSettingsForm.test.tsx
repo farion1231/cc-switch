@@ -36,6 +36,8 @@ describe("useSettingsForm Hook", () => {
         enableClaudePluginIntegration: undefined,
         claudeConfigDir: "  /Users/demo  ",
         codexConfigDir: "   ",
+        hermesConfigDir: "  /Users/demo/.hermes  ",
+        deepseekHarnessConfigDir: "  /Users/demo/.dsh  ",
         language: "en",
       },
       isLoading: false,
@@ -53,6 +55,8 @@ describe("useSettingsForm Hook", () => {
     expect(settings.enableClaudePluginIntegration).toBe(false);
     expect(settings.claudeConfigDir).toBe("/Users/demo");
     expect(settings.codexConfigDir).toBeUndefined();
+    expect(settings.hermesConfigDir).toBe("/Users/demo/.hermes");
+    expect(settings.deepseekHarnessConfigDir).toBe("/Users/demo/.dsh");
     expect(settings.language).toBe("en");
     expect(result.current.initialLanguage).toBe("en");
     expect(changeLanguageSpy).toHaveBeenCalledWith("en");
@@ -171,6 +175,8 @@ describe("useSettingsForm Hook", () => {
         claudeConfigDir: "  /reset  ",
         codexConfigDir: "   ",
         piConfigDir: "  /pi-reset  ",
+        hermesConfigDir: "  /reset/hermes  ",
+        deepseekHarnessConfigDir: "  /reset/dsh  ",
         language: "zh",
       });
     });
@@ -182,6 +188,8 @@ describe("useSettingsForm Hook", () => {
     expect(settings.claudeConfigDir).toBe("/reset");
     expect(settings.codexConfigDir).toBeUndefined();
     expect(settings.piConfigDir).toBe("/pi-reset");
+    expect(settings.hermesConfigDir).toBe("/reset/hermes");
+    expect(settings.deepseekHarnessConfigDir).toBe("/reset/dsh");
     expect(settings.language).toBe("zh");
     expect(result.current.initialLanguage).toBe("en");
     expect(changeLanguageSpy).toHaveBeenCalledWith("en");

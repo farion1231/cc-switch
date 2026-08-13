@@ -157,6 +157,24 @@ pub(crate) fn build_provider_from_request(
                 "Pi providers must be added from the Pi provider page".to_string(),
             ));
         }
+        AppType::DeepSeekHarness => {
+            let mut config = serde_json::Map::new();
+            if let Some(api_key) = request.api_key.as_deref() {
+                config.insert("apiKey".to_string(), serde_json::json!(api_key));
+            }
+            let endpoint = get_primary_endpoint(request);
+            if !endpoint.is_empty() {
+                config.insert("baseURL".to_string(), serde_json::json!(endpoint));
+            }
+            config.insert(
+                "defaultModel".to_string(),
+                serde_json::json!(request
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| "deepseek-v4-flash".to_string())),
+            );
+            serde_json::Value::Object(config)
+        }
     };
 
     // Build usage script configuration if provided
@@ -653,6 +671,30 @@ pub fn parse_and_merge_config(
         // Additive mode apps use JSON config directly; pass through as-is
         "openclaw" | "opencode" | "hermes" => {
             merge_additive_config(&mut merged, &config_value)?;
+        }
+        "deepseek-harness" | "deepseek_harness" | "dsh" => {
+            if merged.api_key.as_ref().is_none_or(|value| value.is_empty()) {
+                merged.api_key = config_value
+                    .get("apiKey")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+            }
+            if merged
+                .endpoint
+                .as_ref()
+                .is_none_or(|value| value.is_empty())
+            {
+                merged.endpoint = config_value
+                    .get("baseURL")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+            }
+            if merged.model.as_ref().is_none_or(|value| value.is_empty()) {
+                merged.model = config_value
+                    .get("defaultModel")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+            }
         }
         "" => {
             // No app specified, skip merging

@@ -89,6 +89,7 @@ impl ConfigService {
         Self::sync_current_provider_for_app(config, &AppType::Codex)?;
         Self::sync_current_provider_for_app(config, &AppType::Gemini)?;
         Self::sync_current_provider_for_app(config, &AppType::GrokBuild)?;
+        Self::sync_current_provider_for_app(config, &AppType::DeepSeekHarness)?;
         Ok(())
     }
 
@@ -141,6 +142,9 @@ impl ConfigService {
             AppType::Pi => {
                 // Pi owns its shared models/settings documents; this legacy
                 // single-provider live-sync path must not rewrite them.
+            }
+            AppType::DeepSeekHarness => {
+                crate::dsh_config::write_live_settings(&provider.settings_config)?;
             }
         }
 
