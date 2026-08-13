@@ -812,13 +812,13 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
-    name: "火山Agentplan",
+    name: "火山 Agent Plan",
     websiteUrl:
-      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
     apiKeyUrl:
-      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
     settingsConfig: {
-      baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
+      baseUrl: "https://ark.cn-beijing.volces.com/api/plan/v3",
       apiKey: "",
       api: "openai-completions",
       models: [
@@ -845,6 +845,43 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       model: { primary: "ark_agentplan/ark-code-latest" },
       modelCatalog: {
         "ark_agentplan/ark-code-latest": { alias: "Ark Code" },
+      },
+    },
+  },
+  {
+    name: "火山 Coding Plan",
+    websiteUrl:
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    settingsConfig: {
+      baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "ark-code-latest",
+          name: "Ark Code Latest",
+          contextWindow: 256000,
+        },
+      ],
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "volcengine_codingplan",
+    icon: "huoshan",
+    iconColor: "#3370FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "ark_codingplan/ark-code-latest" },
+      modelCatalog: {
+        "ark_codingplan/ark-code-latest": { alias: "Ark Code" },
       },
     },
   },

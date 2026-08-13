@@ -10,8 +10,8 @@ const expectedChatPresets = new Map<
   string,
   { baseUrl: string; contextWindows: Record<string, number> }
 >([
-  // 火山Agentplan（国内站 coding/v3）已切原生 Responses，见下方 native 清单；
-  // BytePlus 国际站未核实，保持 Chat 路由
+  // 火山 Agent Plan / Coding Plan（国内站 plan/v3、coding/v3）已切原生
+  // Responses，见下方 native 清单；BytePlus 国际站未核实，保持 Chat 路由
   [
     "BytePlus",
     {
@@ -151,8 +151,10 @@ describe("Codex Chat provider presets", () => {
       string,
       { contextWindows: Record<string, number> }
     >([
-      // 官方 Codex 文档确认 Coding Plan /api/coding/v3 支持 Responses API
-      ["火山Agentplan", { contextWindows: { "ark-code-latest": 256000 } }],
+      // 官方 Codex 文档确认 Agent Plan /api/plan/v3 与 Coding Plan
+      // /api/coding/v3 均支持 Responses API
+      ["火山 Agent Plan", { contextWindows: { "ark-code-latest": 256000 } }],
+      ["火山 Coding Plan", { contextWindows: { "ark-code-latest": 256000 } }],
       [
         "DouBaoSeed",
         { contextWindows: { "doubao-seed-2-1-pro-260628": 262144 } },

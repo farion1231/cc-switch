@@ -429,7 +429,27 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "claudecn",
   },
   {
-    name: "火山Agentplan",
+    name: "火山 Agent Plan",
+    websiteUrl:
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
+    apiKeyUrl:
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
+    category: "cn_official",
+    baseUrl: "https://ark.cn-beijing.volces.com/api/plan",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "ark-code-latest",
+      "ark-code-latest",
+      "ark-code-latest",
+    ),
+    icon: "huoshan",
+    iconColor: "#3370FF",
+    isPartner: true,
+    partnerPromotionKey: "volcengine_agentplan",
+  },
+  {
+    name: "火山 Coding Plan",
     websiteUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
@@ -446,7 +466,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "huoshan",
     iconColor: "#3370FF",
     isPartner: true,
-    partnerPromotionKey: "volcengine_agentplan",
+    partnerPromotionKey: "volcengine_codingplan",
   },
   {
     name: "BytePlus",
