@@ -738,6 +738,8 @@ impl CodexOAuthManager {
         }
 
         self.save_to_disk().await?;
+        crate::codex_profile::remove_account_profile(account_id)
+            .map_err(|err| CodexOAuthError::IoError(err.to_string()))?;
         Ok(())
     }
 
@@ -785,6 +787,8 @@ impl CodexOAuthManager {
         if self.storage_path.exists() {
             std::fs::remove_file(&self.storage_path)?;
         }
+        crate::codex_profile::remove_all_account_profiles()
+            .map_err(|err| CodexOAuthError::IoError(err.to_string()))?;
 
         Ok(())
     }

@@ -317,9 +317,13 @@ pub fn write_json_file<T: Serialize>(path: &Path, data: &T) -> Result<(), AppErr
 
 /// Write JSON containing credentials with owner-only Unix permissions.
 pub fn write_private_json_file<T: Serialize>(path: &Path, data: &T) -> Result<(), AppError> {
-    let value = serde_json::to_value(data).map_err(|e| AppError::JsonSerialize { source: e })?;
-    let json = serde_json::to_string_pretty(&sort_json_keys(&value))
-        .map_err(|e| AppError::JsonSerialize { source: e })?;
+    #[cfg(unix)]
+    let json = serde_json::to_value(data)
+        .map_err(|e| AppError::JsonSerialize { source: e })
+        .and_then(|value| {
+            serde_json::to_string_pretty(&sort_json_keys(&value))
+                .map_err(|e| AppError::JsonSerialize { source: e })
+        })?;
 
     #[cfg(unix)]
     {
@@ -359,7 +363,7 @@ pub fn write_private_json_file<T: Serialize>(path: &Path, data: &T) -> Result<()
         }
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))
             .map_err(|e| AppError::io(path, e))?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(unix))]

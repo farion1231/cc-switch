@@ -64,6 +64,19 @@ fn activate_codex_profile_for_provider(provider: &Provider) -> Result<(), AppErr
     Ok(())
 }
 
+pub fn restore_active_codex_profile(state: &AppState) -> Result<(), AppError> {
+    let current_id = ProviderService::current(state, AppType::Codex)?;
+    if current_id.is_empty() {
+        return Ok(());
+    }
+
+    let providers = state.db.get_all_providers(AppType::Codex.as_str())?;
+    if let Some(provider) = providers.get(&current_id) {
+        activate_codex_profile_for_provider(provider)?;
+    }
+    Ok(())
+}
+
 /// 统一会话开关变更后，立即按新开关状态重写当前官方 Codex 供应商的
 /// live 配置，使开关即时生效（无需等下一次切换）。
 /// 当前供应商非官方（或不存在）时为 no-op：注入只作用于官方配置，

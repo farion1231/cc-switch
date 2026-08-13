@@ -32,12 +32,6 @@ pub fn account_profile_dir(account_id: &str) -> PathBuf {
     managed_profiles_dir().join(format!("account-{:x}", digest))
 }
 
-pub fn active_codex_dir_for_account(account_id: Option<&str>) -> PathBuf {
-    account_id
-        .map(account_profile_dir)
-        .unwrap_or_else(shared_codex_dir)
-}
-
 /// Prepare an account profile. `auth.json` and `config.toml` are intentionally
 /// excluded from links: auth is private, while config is copied on activation
 /// because Codex/CC Switch replace it atomically (which would sever a symlink).
@@ -77,7 +71,7 @@ pub fn prepare_account_profile(account_id: &str) -> Result<PathBuf, AppError> {
 
     let shared_config = shared.join("config.toml");
     let profile_config = profile.join("config.toml");
-    if shared_config.is_file() {
+    if shared_config.is_file() && !profile_config.exists() {
         fs::copy(&shared_config, &profile_config).map_err(|e| AppError::io(&profile_config, e))?;
     }
 
@@ -131,6 +125,22 @@ pub fn read_account_auth(account_id: &str) -> Result<Option<serde_json::Value>, 
         return Ok(None);
     }
     crate::config::read_json_file(&path).map(Some)
+}
+
+pub fn remove_account_profile(account_id: &str) -> Result<(), AppError> {
+    let profile = account_profile_dir(account_id);
+    if profile.exists() {
+        fs::remove_dir_all(&profile).map_err(|e| AppError::io(&profile, e))?;
+    }
+    Ok(())
+}
+
+pub fn remove_all_account_profiles() -> Result<(), AppError> {
+    let profiles = managed_profiles_dir();
+    if profiles.exists() {
+        fs::remove_dir_all(&profiles).map_err(|e| AppError::io(&profiles, e))?;
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
