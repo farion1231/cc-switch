@@ -2,7 +2,7 @@
 
 # CC Switch
 
-### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw 和 Hermes Agent 的全方位管理工具
+### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent 和 DeepSeek Harness 的全方位管理工具
 
 [![Version](https://img.shields.io/github/v/release/farion1231/cc-switch?color=blue&label=version)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
@@ -198,11 +198,11 @@ TeamoRouter 还提供企业级功能，包括集中账单、团队管理、BYOK�
 
 ## 为什么选择 CC Switch？
 
-现代 AI 编程依赖于 Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw 和 Hermes 等工具——但每个工具都有自己的配置格式。切换 API 供应商意味着手动编辑 JSON、TOML 或 `.env` 文件，而在多个工具之间缺乏一个统一管理 MCP, SKILLS 的方式。
+现代 AI 编程依赖于 Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes 和 DeepSeek Harness 等工具——但每个工具都有自己的配置格式。切换 API 供应商意味着手动编辑 JSON、TOML、YAML 或 `.env` 文件，而在多个工具之间缺乏一个统一管理 MCP、Skills 的方式。
 
-**CC Switch** 为你提供一个桌面应用来管理所有支持的 AI 工具。无需手动编辑配置文件，你将获得一个可视化界面，一键将供应商导入应用，一键在不同的供应商之间进行切换，内置 50+ 供应商预设、统一的 MCP, SKILLS 管理以及系统托盘即时切换功能——所有操作都基于可靠的 SQLite 数据库和原子写入机制，保护你的配置不被损坏。
+**CC Switch** 为你提供一个桌面应用来管理所有支持的 AI 工具。标准集成提供一键导入和切换供应商、50+ 内置预设、统一的 MCP 与 Skills 管理及系统托盘快速切换，并使用 SQLite 和原子写入保护配置。DeepSeek Harness 则通过专用实时编辑器管理 YAML 设置和凭据，不使用通用数据库流程。
 
-- **一个应用，八个工具** — 在单一界面中管理 Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw 和 Hermes
+- **一个应用，九个工具** — 在单一界面中管理 Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes 和 DeepSeek Harness
 - **告别手动编辑** — 50+ 供应商预设，包括 AWS Bedrock、NVIDIA NIM 和社区中转服务；一键即可切换
 - **统一 MCP, SKILLS 管理** — 一个面板管理 Claude、Codex、Gemini、Grok Build、OpenCode 和 Hermes 的 MCP, SKILLS, 支持双向同步
 - **系统托盘快速切换** — 从托盘菜单即时切换供应商，无需打开完整应用
@@ -222,9 +222,14 @@ TeamoRouter 还提供企业级功能，包括集中账单、团队管理、BYOK�
 
 ### 供应商管理
 
-- **8 个支持工具，50+ 预设** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes；复制 key 即可一键导入
+- **9 个支持工具，50+ 预设** — 现有集成继续使用供应商预设，DeepSeek Harness 提供专用实时供应商编辑器
 - **通用供应商** — 一份配置同步到 Claude Code、Codex 和 Gemini CLI
 - 一键切换、系统托盘快速访问、拖拽排序、导入导出
+
+### DeepSeek Harness
+
+- **实时配置** — 直接在 `settings.yaml` 和 `.credentials.yaml` 中管理原生 DeepSeek、自定义 OpenAI/Anthropic 兼容路由、凭据以及新 Agent 的默认模型
+- **明确的功能范围** — “设置 → 高级 → 配置目录”中选择的目录优先；否则依次使用非空的 `DSH_HOME` 和 `~/.dsh`。DSH 数据不会进入 CC Switch SQLite 数据库，DSH 也不提供通用代理、故障转移、MCP、Skills、Profile 和 Session 功能
 
 ### 代理与故障转移
 
@@ -257,14 +262,14 @@ TeamoRouter 还提供企业级功能，包括集中账单、团队管理、BYOK�
 <details>
 <summary><strong>CC Switch 支持哪些 AI 工具？</strong></summary>
 
-CC Switch 支持八个工具：**Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw** 和 **Hermes**。每个工具都有专属的供应商预设和配置管理。
+CC Switch 支持九个工具：**Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes** 和 **DeepSeek Harness**。DeepSeek Harness 使用上文所述的专用实时配置流程。
 
 </details>
 
 <details>
 <summary><strong>切换供应商后需要重启终端吗？</strong></summary>
 
-大多数工具需要重启终端或 CLI 工具才能使更改生效。例外的是 **Claude Code**，它目前支持供应商数据的热切换，无需重启。
+大多数工具需要重启终端或 CLI 工具才能使更改生效。**Claude Code** 支持供应商数据热切换；DeepSeek Harness 会在后续请求中重新加载设置和凭据，更改默认模型则影响之后新建的 Agent。
 
 </details>
 

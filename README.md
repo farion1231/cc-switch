@@ -2,7 +2,7 @@
 
 # CC Switch
 
-### The All-in-One Manager for Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw & Hermes Agent
+### The All-in-One Manager for Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes Agent & DeepSeek Harness
 
 [![Version](https://img.shields.io/github/v/release/farion1231/cc-switch?color=blue&label=version)](https://github.com/farion1231/cc-switch/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
@@ -197,11 +197,11 @@ TeamoRouter also offers enterprise features including centralized billing, team 
 
 ## Why CC Switch?
 
-Modern AI-powered coding relies on tools like Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, and Hermes — but each has its own configuration format. Switching API providers means manually editing JSON, TOML, or `.env` files, and there is no unified way to manage MCP and Skills across multiple tools.
+Modern AI-powered coding relies on tools like Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, and DeepSeek Harness — but each has its own configuration format. Switching API providers means manually editing JSON, TOML, YAML, or `.env` files, and there is no unified way to manage MCP and Skills across multiple tools.
 
-**CC Switch** gives you a single desktop app to manage all supported AI tools. Instead of editing config files by hand, you get a visual interface to import providers with one click, switch between them instantly, with 50+ built-in provider presets, unified MCP and Skills management, and system tray quick switching — all backed by a reliable SQLite database with atomic writes that protect your configs from corruption.
+**CC Switch** gives you a single desktop app to manage all supported AI tools. Its standard integrations provide one-click provider import and switching, 50+ built-in presets, unified MCP and Skills management, and system tray quick switching, backed by SQLite and atomic writes. DeepSeek Harness uses a dedicated live editor for its YAML settings and credentials instead of the generic database workflow.
 
-- **One App, Eight Tools** — Manage Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, and Hermes from a single interface
+- **One App, Nine Tools** — Manage Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, and DeepSeek Harness from a single interface
 - **No More Manual Editing** — 50+ provider presets including AWS Bedrock, NVIDIA NIM, and community relays; just pick and switch
 - **Unified MCP & Skills Management** — One panel to manage MCP servers and Skills across Claude, Codex, Gemini, Grok Build, OpenCode, and Hermes with bidirectional sync
 - **System Tray Quick Switch** — Switch providers instantly from the tray menu, no need to open the full app
@@ -221,9 +221,14 @@ Modern AI-powered coding relies on tools like Claude Code, Claude Desktop, Codex
 
 ### Provider Management
 
-- **8 supported tools, 50+ presets** — Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes; copy your key and import with one click
+- **9 supported tools, 50+ presets** — Provider presets for the existing integrations, plus a dedicated live provider editor for DeepSeek Harness
 - **Universal providers** — One config syncs to Claude Code, Codex, and Gemini CLI
 - One-click switching, system tray quick access, drag-and-drop sorting, import/export
+
+### DeepSeek Harness
+
+- **Live configuration** — Manage native DeepSeek, custom OpenAI/Anthropic-compatible routes, credentials, and the default model for new Agents directly in `settings.yaml` and `.credentials.yaml`
+- **Explicit scope** — A directory selected in Settings → Advanced → Configuration Directory takes precedence; otherwise CC Switch uses a non-empty `DSH_HOME`, then `~/.dsh`. DSH data stays out of the CC Switch SQLite database, and generic proxy, failover, MCP, Skills, profile, and session features are unavailable for DSH
 
 ### Proxy & Failover
 
@@ -256,14 +261,14 @@ Modern AI-powered coding relies on tools like Claude Code, Claude Desktop, Codex
 <details>
 <summary><strong>Which AI tools does CC Switch support?</strong></summary>
 
-CC Switch supports eight tools: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**, **OpenCode**, **OpenClaw**, and **Hermes**. Each tool has dedicated provider presets and configuration management.
+CC Switch supports nine tools: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**, **OpenCode**, **OpenClaw**, **Hermes**, and **DeepSeek Harness**. DeepSeek Harness uses the dedicated live configuration workflow described above.
 
 </details>
 
 <details>
 <summary><strong>Do I need to restart the terminal after switching providers?</strong></summary>
 
-For most tools, yes — restart your terminal or the CLI tool for changes to take effect. The exception is **Claude Code**, which currently supports hot-switching of provider data without a restart.
+For most tools, yes — restart your terminal or the CLI tool for changes to take effect. **Claude Code** supports hot-switching of provider data. DeepSeek Harness reloads settings and credentials for subsequent requests; changing its default model affects newly created Agents.
 
 </details>
 
