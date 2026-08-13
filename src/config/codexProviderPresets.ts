@@ -955,8 +955,7 @@ requires_openai_auth = true`,
         displayName: "DeepSeek V4 Flash",
         contextWindow: 1048576,
       },
-      // 官方预计 2026-08 初开通 pro 的 Codex 集成（官方 models.json 已含该条目），
-      // 在那之前切到 pro 会上游报错
+      // pro 已于 2026-08 开通 Responses/Codex 集成（官方 catalog 条目与 flash 仅差 priority）
       {
         model: "deepseek-v4-pro",
         displayName: "DeepSeek V4 Pro",
