@@ -1791,6 +1791,15 @@ impl Database {
         Ok(stats)
     }
 
+    /// 获取包含缓存用量的模型统计（仅供悬浮窗使用）
+    pub fn get_model_stats_with_cache(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+    ) -> Result<Vec<ModelStats>, AppError> {
+        self.get_model_stats(start_date, end_date, None, None, None)
+    }
+
     /// 获取模型统计
     pub fn get_model_stats(
         &self,
@@ -5533,6 +5542,46 @@ mod tests {
         assert_eq!(stats[0].model, "claude-3-haiku");
         assert_eq!(stats[0].request_count, 9);
         assert_eq!(stats[0].total_tokens, 1350);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_model_stats_with_cache_includes_cache_tokens() -> Result<(), AppError> {
+        // 悬浮窗口径（get_model_stats_with_cache）的 total_tokens 应计入
+        // cache_creation 与 cache_read；常规口径（get_model_stats）只含
+        // fresh input + output。两者源自同一行数据，仅 include_cache 分支不同。
+        let db = Database::memory()?;
+        {
+            // 块内获取连接锁，块结束即释放；后续 get_model_stats* 会再次加锁，
+            // 若此处持有 MutexGuard 不释放，同一线程重入 lock_conn! 会死锁。
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "req-with-cache",
+                "claude", // 非 cache-inclusive，input_tokens 即 fresh input
+                "p1",
+                "claude-sonnet-4-5",
+                "proxy",
+                local_ts(2026, 8, 13, 10, 0, 0),
+                100, // input
+                50,  // output
+                30,  // cache_read
+                20,  // cache_creation
+                200,
+                "0.01",
+            )?;
+        }
+
+        let with_cache = db.get_model_stats_with_cache(None, None)?;
+        assert_eq!(with_cache.len(), 1);
+        assert_eq!(with_cache[0].model, "claude-sonnet-4-5");
+        assert_eq!(with_cache[0].total_tokens, 200); // 100 + 50 + 30 + 20
+
+        let without_cache = db.get_model_stats(None, None, None, None, None)?;
+        assert_eq!(without_cache.len(), 1);
+        assert_eq!(without_cache[0].model, "claude-sonnet-4-5");
+        assert_eq!(without_cache[0].total_tokens, 200); // 上游模型统计已原生统一步调为 real_total_tokens（含缓存）
 
         Ok(())
     }
