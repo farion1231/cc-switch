@@ -1,3 +1,4 @@
+mod claude_code_index;
 pub mod providers;
 pub mod terminal;
 
@@ -91,6 +92,10 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
         let b_ts = b.last_active_at.or(b.created_at).unwrap_or(0);
         b_ts.cmp(&a_ts)
     });
+
+    if let Err(error) = claude_code_index::sync(&sessions) {
+        log::warn!("Claude Code session index sync failed: {error}");
+    }
 
     sessions
 }

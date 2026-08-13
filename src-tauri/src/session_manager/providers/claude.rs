@@ -41,8 +41,13 @@ pub fn session_roots() -> Vec<PathBuf> {
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let mut sessions = Vec::new();
+    let mut sessions: Vec<SessionMeta> = Vec::new();
     let mut seen_paths = std::collections::HashSet::new();
+    // Claude Desktop can mirror a Claude Code transcript through a hard link
+    // under local-agent-mode-sessions. Keep the Code file as the canonical
+    // record so switching providers never creates duplicate or movable copies.
+    let mut seen_files: std::collections::HashMap<(u64, u64), usize> =
+        std::collections::HashMap::new();
     let mut seen_account_sessions = std::collections::HashSet::new();
     for root in session_roots() {
         let mut files = Vec::new();
@@ -52,14 +57,31 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
             if !seen_paths.insert(key) {
                 continue;
             }
-            if let Some(meta) = parse_session(&path) {
-                if let Some(key) = account_session_key(&meta) {
-                    if !seen_account_sessions.insert(key) {
-                        continue;
+            let Some(meta) = parse_session(&path) else {
+                continue;
+            };
+            if let Some(file_key) = file_identity(&path) {
+                if let Some(existing_index) = seen_files.get(&file_key).copied() {
+                    // The canonical Code path is scanned before Desktop mirrors,
+                    // so merge the mirror's account identity without replacing
+                    // the stable source_path used to load the transcript.
+                    if sessions[existing_index].account_label.is_none() {
+                        sessions[existing_index].account_label = meta.account_label.clone();
                     }
+                    if let Some(account) = meta.account_label {
+                        seen_account_sessions
+                            .insert((account, sessions[existing_index].session_id.clone()));
+                    }
+                    continue;
                 }
-                sessions.push(meta);
+                seen_files.insert(file_key, sessions.len());
             }
+            if let Some(key) = account_session_key(&meta) {
+                if !seen_account_sessions.insert(key) {
+                    continue;
+                }
+            }
+            sessions.push(meta);
         }
     }
 
@@ -329,6 +351,21 @@ fn account_session_key(meta: &SessionMeta) -> Option<(String, String)> {
         .map(|account| (account.clone(), meta.session_id.clone()))
 }
 
+#[cfg(unix)]
+fn file_identity(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::metadata(path).ok()?;
+    Some((metadata.dev(), metadata.ino()))
+}
+
+#[cfg(not(unix))]
+fn file_identity(_path: &Path) -> Option<(u64, u64)> {
+    // Non-Unix platforms do not expose a portable inode identity through the
+    // standard library. Canonical paths still deduplicate ordinary mirrors;
+    // avoid guessing from size/timestamps and accidentally hiding a session.
+    None
+}
+
 fn infer_session_id_from_filename(path: &Path) -> Option<String> {
     path.file_stem()
         .and_then(|stem| stem.to_str())
@@ -535,6 +572,18 @@ mod tests {
             account_session_key(&desktop_a),
             account_session_key(&other_account)
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_identity_deduplicates_hard_linked_transcripts() {
+        let temp = tempdir().expect("tempdir");
+        let original = temp.path().join("original.jsonl");
+        let mirror = temp.path().join("mirror.jsonl");
+        std::fs::write(&original, "{}\n").expect("write original");
+        std::fs::hard_link(&original, &mirror).expect("hard link");
+
+        assert_eq!(file_identity(&original), file_identity(&mirror));
     }
 
     #[test]
