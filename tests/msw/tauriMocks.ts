@@ -14,6 +14,7 @@ globalThis.Request = CrossFetchRequest as typeof Request;
 globalThis.Response = CrossFetchResponse as typeof Response;
 
 vi.mock("@tauri-apps/api/core", () => ({
+  isTauri: () => true,
   invoke: async (command: string, payload: Record<string, unknown> = {}) => {
     const response = await fetch(`${TAURI_ENDPOINT}/${command}`, {
       method: "POST",

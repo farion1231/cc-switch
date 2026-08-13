@@ -99,6 +99,16 @@ pub fn get_model_stats(
     )
 }
 
+/// 获取包含缓存用量的模型统计（仅供悬浮窗使用）
+#[tauri::command(rename_all = "camelCase")]
+pub fn get_floating_model_stats(
+    state: State<'_, AppState>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+) -> Result<Vec<ModelStats>, AppError> {
+    state.db.get_model_stats_with_cache(start_date, end_date)
+}
+
 /// 获取请求日志列表
 #[tauri::command]
 pub fn get_request_logs(
