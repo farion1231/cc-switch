@@ -89,6 +89,45 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
   ),
 }));
 
+vi.mock("@/components/providers/forms/AggregateProviderForm", () => ({
+  AggregateProviderForm: ({
+    initialData,
+    onSubmit,
+  }: {
+    initialData: {
+      name?: string;
+      notes?: string;
+      settingsConfig?: Record<string, unknown>;
+      meta?: Record<string, unknown>;
+    };
+    onSubmit: (values: {
+      name: string;
+      websiteUrl: string;
+      notes?: string;
+      settingsConfig: string;
+      meta?: Record<string, unknown>;
+      presetCategory?: string;
+    }) => void;
+  }) => (
+    <form
+      id="provider-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit({
+          name: initialData.name ?? "",
+          websiteUrl: "",
+          notes: initialData.notes,
+          settingsConfig: JSON.stringify({}),
+          meta: initialData.meta,
+          presetCategory: "custom",
+        });
+      }}
+    >
+      <output data-testid="aggregate-form">{initialData.name}</output>
+    </form>
+  ),
+}));
+
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 
 describe("EditProviderDialog", () => {
@@ -201,5 +240,50 @@ describe("EditProviderDialog", () => {
     expect(
       JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
     ).toEqual(provider.settingsConfig);
+  });
+
+  it("编辑聚合供应商时渲染 AggregateProviderForm 且不读取 live 配置", async () => {
+    const provider: Provider = {
+      id: "agg",
+      name: "Agg Provider",
+      category: "custom",
+      settingsConfig: {},
+      meta: {
+        aggregateRoutes: {
+          sonnet: { providerId: "kimi", model: "k3" },
+        },
+      },
+    };
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={handleSubmit}
+        appId="claude"
+      />,
+    );
+
+    // 渲染聚合表单而不是普通 ProviderForm
+    expect(screen.getByTestId("aggregate-form").textContent).toBe(
+      "Agg Provider",
+    );
+    expect(screen.queryByTestId("settings-config")).toBeNull();
+
+    // 聚合供应商使用占位配置，不读取 live
+    expect(apiMocks.getCurrent).not.toHaveBeenCalled();
+    expect(apiMocks.getLiveProviderSettings).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+    const submitted = handleSubmit.mock.calls[0][0].provider as Provider;
+    expect(submitted.settingsConfig).toEqual({});
+    expect(submitted.meta?.aggregateRoutes).toEqual({
+      sonnet: { providerId: "kimi", model: "k3" },
+    });
+    expect(submitted.category).toBe("custom");
   });
 });

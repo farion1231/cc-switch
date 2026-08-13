@@ -1,8 +1,9 @@
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_settings_path, read_json_file, write_codex_live_atomic, AppError, AppType, McpApps,
-    McpServer, MultiAppConfig, Provider, ProviderMeta, ProviderService,
+    get_claude_settings_path, read_json_file, write_codex_live_atomic, AggregateRoute,
+    AggregateRoutes, AppError, AppType, McpApps, McpServer, MultiAppConfig, Provider, ProviderMeta,
+    ProviderService, UniversalProvider, UniversalProviderApps,
 };
 
 #[path = "support.rs"]
@@ -3111,4 +3112,146 @@ fn recover_from_crash_without_backup_cleans_placeholder_instead_of_writing_it_ba
             .unwrap_or(true),
         "recovery must drop the local proxy base URL"
     );
+}
+
+// ============================================================================
+// 统一供应商（Universal Provider）删除/同步时的聚合依赖检查
+// ============================================================================
+
+/// 构造一个 Codex 聚合供应商，其 custom 路由引用 target_id。
+fn codex_aggregate_provider(id: &str, target_id: &str) -> Provider {
+    let mut custom = std::collections::BTreeMap::new();
+    custom.insert(
+        "gpt-5.5".to_string(),
+        AggregateRoute {
+            provider_id: target_id.to_string(),
+            model: "gpt-5.5".to_string(),
+        },
+    );
+    let mut provider =
+        Provider::with_id(id.to_string(), format!("Aggregate {id}"), json!({}), None);
+    provider.meta = Some(ProviderMeta {
+        aggregate_routes: Some(AggregateRoutes {
+            custom: Some(custom),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    provider
+}
+
+fn universal_provider(id: &str, codex_enabled: bool) -> UniversalProvider {
+    let mut provider = UniversalProvider::new(
+        id.to_string(),
+        format!("Universal {id}"),
+        "custom".to_string(),
+        "https://example.com".to_string(),
+        "sk-test".to_string(),
+    );
+    provider.apps = UniversalProviderApps {
+        claude: false,
+        codex: codex_enabled,
+        gemini: false,
+    };
+    provider
+}
+
+#[test]
+fn delete_universal_blocked_when_codex_child_referenced_by_aggregate() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_universal_provider(&universal_provider("u1", true))
+        .expect("save universal provider");
+    state
+        .db
+        .save_provider(
+            AppType::Codex.as_str(),
+            &codex_aggregate_provider("agg1", "universal-codex-u1"),
+        )
+        .expect("save codex aggregate provider");
+
+    let err = ProviderService::delete_universal(&state, "u1")
+        .expect_err("deleting universal with referenced codex child should fail");
+    match err {
+        AppError::Localized { zh, .. } => {
+            assert!(zh.contains("聚合供应商"), "unexpected message: {zh}")
+        }
+        other => panic!("expected Localized error, got {other:?}"),
+    }
+
+    // 删除被阻止后，统一供应商本身应仍然存在
+    assert!(
+        state
+            .db
+            .get_universal_provider("u1")
+            .expect("get universal provider")
+            .is_some(),
+        "universal provider must survive the blocked delete"
+    );
+}
+
+#[test]
+fn delete_universal_succeeds_when_codex_child_not_referenced() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_universal_provider(&universal_provider("u2", true))
+        .expect("save universal provider");
+    // 聚合路由引用的是其他 provider，不阻碍删除
+    state
+        .db
+        .save_provider(
+            AppType::Codex.as_str(),
+            &codex_aggregate_provider("agg2", "some-other-provider"),
+        )
+        .expect("save codex aggregate provider");
+
+    ProviderService::delete_universal(&state, "u2").expect("delete should succeed");
+    assert!(
+        state
+            .db
+            .get_universal_provider("u2")
+            .expect("get universal provider")
+            .is_none(),
+        "universal provider should be deleted"
+    );
+}
+
+#[test]
+fn sync_universal_blocked_when_disabling_codex_child_referenced_by_aggregate() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+    // Codex 开关已关闭：sync 会走删除 codex 子供应商的分支
+    state
+        .db
+        .save_universal_provider(&universal_provider("u3", false))
+        .expect("save universal provider");
+    state
+        .db
+        .save_provider(
+            AppType::Codex.as_str(),
+            &codex_aggregate_provider("agg3", "universal-codex-u3"),
+        )
+        .expect("save codex aggregate provider");
+
+    let err = ProviderService::sync_universal_to_apps(&state, "u3")
+        .expect_err("sync should fail when disabling a referenced codex child");
+    match err {
+        AppError::Localized { zh, .. } => {
+            assert!(zh.contains("聚合供应商"), "unexpected message: {zh}")
+        }
+        other => panic!("expected Localized error, got {other:?}"),
+    }
 }
