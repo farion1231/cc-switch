@@ -1840,10 +1840,10 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
     // Grok Build / Codex 的 Responses 解析器要求 usage 中始终存在
     // input_tokens_details（即便缓存令牌为 0），否则会报
     // "missing field `input_tokens_details`" 序列化错误。
-    result["input_tokens_details"] = json!({
-        "cached_tokens": cached,
-        "cache_write_tokens": cache_write
-    });
+    result["input_tokens_details"] = json!({ "cached_tokens": cached });
+    if cache_write > 0 {
+        result["input_tokens_details"]["cache_write_tokens"] = json!(cache_write);
+    }
 
     if let Some(details) = usage
         .get("completion_tokens_details")
@@ -3876,7 +3876,7 @@ mod tests {
         assert_eq!(result["input_tokens"], 10);
         assert_eq!(result["output_tokens"], 5);
         assert_eq!(result["input_tokens_details"]["cached_tokens"], 0);
-        assert_eq!(result["input_tokens_details"]["cache_write_tokens"], 0);
+        assert!(result["input_tokens_details"].get("cache_write_tokens").is_none());
     }
 
     #[test]
