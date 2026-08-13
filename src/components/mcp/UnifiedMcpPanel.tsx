@@ -145,6 +145,7 @@ const UnifiedMcpPanel = React.forwardRef<
     };
     serverEntries.forEach(([_, server]) => {
       for (const app of MCP_APP_IDS) {
+        if (app === "dsh") continue;
         if (server.apps[app]) counts[app]++;
       }
     });
@@ -162,6 +163,7 @@ const UnifiedMcpPanel = React.forwardRef<
     app: AppId,
     enabled: boolean,
   ) => {
+    if (app === "dsh") return;
     if (!beginWrite()) return;
     try {
       await toggleAppMutation.mutateAsync({ serverId, app, enabled });
@@ -173,6 +175,7 @@ const UnifiedMcpPanel = React.forwardRef<
   };
 
   const handleToggleAll = async (app: AppId, enabled: boolean) => {
+    if (app === "dsh") return;
     if (!beginWrite()) return;
 
     // AppCountBar summarizes the complete collection, so its bulk action must
