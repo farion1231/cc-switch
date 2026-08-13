@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 
@@ -19,6 +19,32 @@ use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
 use crate::config::get_app_config_dir;
 use crate::database::Database;
 use crate::error::format_skill_error;
+
+// ========== Skills state coordination ==========
+
+/// Coordinates the database `skills` state with the filesystem SSOT.
+///
+/// Lock order is: global sync operation lock -> this lock -> database mutex.
+/// Async install/update paths acquire the write guard only after downloads have
+/// completed, so no non-Send std guard is held across an `.await`.
+fn skill_state_lock() -> &'static RwLock<()> {
+    static LOCK: OnceLock<RwLock<()>> = OnceLock::new();
+    LOCK.get_or_init(|| RwLock::new(()))
+}
+
+pub(crate) fn skill_state_read_guard() -> RwLockReadGuard<'static, ()> {
+    skill_state_lock().read().unwrap_or_else(|poisoned| {
+        log::warn!("Skills state read lock was poisoned; recovering the protected state");
+        poisoned.into_inner()
+    })
+}
+
+pub(crate) fn skill_state_write_guard() -> RwLockWriteGuard<'static, ()> {
+    skill_state_lock().write().unwrap_or_else(|poisoned| {
+        log::warn!("Skills state write lock was poisoned; recovering the protected state");
+        poisoned.into_inner()
+    })
+}
 
 // ========== 数据结构 ==========
 
@@ -592,6 +618,60 @@ impl SkillService {
         Ok(skills.into_values().collect())
     }
 
+    /// Reuse an existing installation or reject a directory owned by another repo.
+    /// The caller must hold [`skill_state_write_guard`] because this can update the
+    /// database and materialized app directory.
+    fn reuse_existing_install(
+        db: &Arc<Database>,
+        skill: &DiscoverableSkill,
+        install_name: &str,
+        current_app: &AppType,
+    ) -> Result<Option<InstalledSkill>> {
+        let existing_skills = db.get_all_installed_skills()?;
+        for existing in existing_skills.values() {
+            if !existing.directory.eq_ignore_ascii_case(install_name) {
+                continue;
+            }
+
+            let same_repo = existing.repo_owner.as_deref() == Some(&skill.repo_owner)
+                && existing.repo_name.as_deref() == Some(&skill.repo_name);
+            if same_repo {
+                let mut updated = existing.clone();
+                updated.apps.set_enabled_for(current_app, true);
+                db.save_skill(&updated)?;
+                Self::sync_to_app_dir(&updated.directory, current_app)?;
+                log::info!(
+                    "Skill {} 已存在，更新 {:?} 启用状态",
+                    updated.name,
+                    current_app
+                );
+                return Ok(Some(updated));
+            }
+
+            return Err(anyhow!(format_skill_error(
+                "SKILL_DIRECTORY_CONFLICT",
+                &[
+                    ("directory", install_name),
+                    (
+                        "existing_repo",
+                        &format!(
+                            "{}/{}",
+                            existing.repo_owner.as_deref().unwrap_or("unknown"),
+                            existing.repo_name.as_deref().unwrap_or("unknown")
+                        )
+                    ),
+                    (
+                        "new_repo",
+                        &format!("{}/{}", skill.repo_owner, skill.repo_name)
+                    ),
+                ],
+                Some("uninstallFirst"),
+            )));
+        }
+
+        Ok(None)
+    }
+
     /// 安装 Skill
     ///
     /// 流程：
@@ -626,47 +706,14 @@ impl SkillService {
                 ))
             })?;
 
-        // 检查数据库中是否已有同名 directory 的 skill（来自其他仓库）
-        let existing_skills = db.get_all_installed_skills()?;
-        for existing in existing_skills.values() {
-            if existing.directory.eq_ignore_ascii_case(&install_name) {
-                // 检查是否来自同一仓库
-                let same_repo = existing.repo_owner.as_deref() == Some(&skill.repo_owner)
-                    && existing.repo_name.as_deref() == Some(&skill.repo_name);
-                if same_repo {
-                    // 同一仓库的同名 skill，返回现有记录（可能需要更新启用状态）
-                    let mut updated = existing.clone();
-                    updated.apps.set_enabled_for(current_app, true);
-                    db.save_skill(&updated)?;
-                    Self::sync_to_app_dir(&updated.directory, current_app)?;
-                    log::info!(
-                        "Skill {} 已存在，更新 {:?} 启用状态",
-                        updated.name,
-                        current_app
-                    );
-                    return Ok(updated);
-                } else {
-                    // 不同仓库的同名 skill，报错
-                    return Err(anyhow!(format_skill_error(
-                        "SKILL_DIRECTORY_CONFLICT",
-                        &[
-                            ("directory", &install_name),
-                            (
-                                "existing_repo",
-                                &format!(
-                                    "{}/{}",
-                                    existing.repo_owner.as_deref().unwrap_or("unknown"),
-                                    existing.repo_name.as_deref().unwrap_or("unknown")
-                                )
-                            ),
-                            (
-                                "new_repo",
-                                &format!("{}/{}", skill.repo_owner, skill.repo_name)
-                            ),
-                        ],
-                        Some("uninstallFirst"),
-                    )));
-                }
+        // Fast path for an existing installation. The write guard makes the DB
+        // row and app projection indivisible from a concurrent cloud snapshot.
+        {
+            let _state_guard = skill_state_write_guard();
+            if let Some(existing) =
+                Self::reuse_existing_install(db, skill, &install_name, current_app)?
+            {
+                return Ok(existing);
             }
         }
 
@@ -675,6 +722,7 @@ impl SkillService {
         let mut repo_branch = skill.repo_branch.clone();
         // 真实解析出的源目录推导的文档路径（仅本次真正下载解析时可得）
         let mut resolved_doc_path: Option<String> = None;
+        let mut downloaded_source: Option<(tempfile::TempDir, PathBuf)> = None;
 
         // 如果已存在则跳过下载
         if !dest.exists() {
@@ -738,7 +786,7 @@ impl SkillService {
             // skillId（末级目录名），嵌套目录场景直接拼接会丢路径、链接 404（#6111）
             resolved_doc_path = Self::doc_path_for_source(&canonical_temp, &canonical_source);
 
-            Self::copy_dir_recursive(&canonical_source, &dest)?;
+            downloaded_source = Some((temp_guard, canonical_source));
 
             // 使用实际下载成功的分支，避免 readme_url / repo_branch 与真实分支不一致。
             if repo_branch != skill.repo_branch {
@@ -760,6 +808,22 @@ impl SkillService {
 
         let readme_url =
             Self::build_skill_doc_url(&skill.repo_owner, &skill.repo_name, &repo_branch, &doc_path);
+
+        // Re-check after the network download: another install/uninstall may have
+        // completed while the lock was intentionally released around `.await`.
+        let _state_guard = skill_state_write_guard();
+        if let Some(existing) = Self::reuse_existing_install(db, skill, &install_name, current_app)?
+        {
+            return Ok(existing);
+        }
+
+        if !dest.exists() {
+            let source = downloaded_source
+                .as_ref()
+                .map(|(_, source)| source)
+                .ok_or_else(|| anyhow!("Skill directory changed during install; please retry"))?;
+            Self::copy_dir_recursive(source, &dest)?;
+        }
 
         // 创建 InstalledSkill 记录
         // 计算内容哈希
@@ -809,6 +873,8 @@ impl SkillService {
     /// 2. 从 SSOT 删除
     /// 3. 从数据库删除
     pub fn uninstall(db: &Arc<Database>, id: &str) -> Result<SkillUninstallResult> {
+        let _state_guard = skill_state_write_guard();
+
         // 获取 skill 信息
         let skill = db
             .get_installed_skill(id)?
@@ -1012,6 +1078,10 @@ impl SkillService {
             let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
             let _ = self.scan_dir_recursive(temp_dir, temp_dir, &repo, &mut remote_skills);
 
+            // Remote I/O is complete. Stabilize the local DB + SSOT while hashes
+            // are read and any missing hash metadata is backfilled.
+            let _state_guard = skill_state_read_guard();
+
             for skill in group_skills {
                 // 在远程仓库中找到匹配的 Skill 目录
                 let remote_match = remote_skills.iter().find(|rs| {
@@ -1157,6 +1227,10 @@ impl SkillService {
                 ))
             })?;
 
+        // Downloads do not mutate local state, so acquire only now and hold the
+        // guard through the SSOT replacement, DB metadata update, and app sync.
+        let _state_guard = skill_state_write_guard();
+
         // 下载和扫描期间用户可能已经卸载了该 Skill。必须在任何备份、删除或
         // 复制之前重新确认记录仍存在；否则即使最终的 metadata UPDATE 能发现
         // 缺行，这里也会先把已卸载的 SSOT 目录重新创建出来。
@@ -1227,6 +1301,7 @@ impl SkillService {
 
     /// 为缺少 content_hash 的已安装 Skill 补算哈希
     pub fn backfill_content_hashes(db: &Arc<Database>) -> Result<usize> {
+        let _state_guard = skill_state_write_guard();
         let skills = db.get_all_installed_skills()?;
         let ssot_dir = Self::get_ssot_dir()?;
         let mut count = 0;
@@ -1267,6 +1342,7 @@ impl SkillService {
         db: &Arc<Database>,
         target: SkillStorageLocation,
     ) -> Result<MigrationResult> {
+        let _state_guard = skill_state_write_guard();
         let current = crate::settings::get_skill_storage_location();
         if current == target {
             return Ok(MigrationResult {
@@ -1339,7 +1415,7 @@ impl SkillService {
 
         // 4. 刷新所有应用目录的 symlink（指向新 SSOT）
         for app in AppType::all() {
-            let _ = Self::sync_to_app(db, &app);
+            let _ = Self::sync_to_app_unlocked(db, &app);
         }
 
         log::info!(
@@ -1410,6 +1486,7 @@ impl SkillService {
         backup_id: &str,
         current_app: &AppType,
     ) -> Result<InstalledSkill> {
+        let _state_guard = skill_state_write_guard();
         let backup_path = Self::backup_path_for_id(backup_id)?;
         let metadata = Self::read_backup_metadata(&backup_path)?;
         let backup_skill_dir = backup_path.join("skill");
@@ -1485,6 +1562,7 @@ impl SkillService {
     /// 启用：复制到应用目录
     /// 禁用：从应用目录删除
     pub fn toggle_app(db: &Arc<Database>, id: &str, app: &AppType, enabled: bool) -> Result<()> {
+        let _state_guard = skill_state_write_guard();
         // 获取当前 skill
         let mut skill = db
             .get_installed_skill(id)?
@@ -1512,6 +1590,7 @@ impl SkillService {
     ///
     /// 扫描各应用目录，找出未被 CC Switch 管理的 Skills
     pub fn scan_unmanaged(db: &Arc<Database>) -> Result<Vec<UnmanagedSkill>> {
+        let _state_guard = skill_state_read_guard();
         let managed_skills = db.get_all_installed_skills()?;
         let managed_dirs: HashSet<String> = managed_skills
             .values()
@@ -1578,6 +1657,7 @@ impl SkillService {
         db: &Arc<Database>,
         imports: Vec<ImportSkillSelection>,
     ) -> Result<Vec<InstalledSkill>> {
+        let _state_guard = skill_state_write_guard();
         let ssot_dir = Self::get_ssot_dir()?;
         let agents_lock = parse_agents_lock();
         let mut imported = Vec::new();
@@ -1919,6 +1999,12 @@ impl SkillService {
 
     /// 同步所有已启用的 Skills 到指定应用
     pub fn sync_to_app(db: &Arc<Database>, app: &AppType) -> Result<()> {
+        let _state_guard = skill_state_read_guard();
+        Self::sync_to_app_unlocked(db, app)
+    }
+
+    /// Caller must hold either the Skills state read or write guard.
+    fn sync_to_app_unlocked(db: &Arc<Database>, app: &AppType) -> Result<()> {
         if matches!(app, AppType::ClaudeDesktop) {
             return Ok(());
         }
@@ -3097,6 +3183,7 @@ impl SkillService {
             )));
         }
 
+        let _state_guard = skill_state_write_guard();
         let ssot_dir = Self::get_ssot_dir()?;
         let mut installed = Vec::new();
         let existing_skills = db.get_all_installed_skills()?;
@@ -3539,6 +3626,7 @@ fn save_repos_from_lock(
 
 /// 首次启动迁移：扫描应用目录，重建数据库
 pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
+    let _state_guard = skill_state_write_guard();
     let ssot_dir = SkillService::get_ssot_dir()?;
     let agents_lock = parse_agents_lock();
     let snapshot: Vec<LegacySkillMigrationRow> =
@@ -3666,6 +3754,20 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn skill_state_lock_allows_snapshots_but_excludes_writers() {
+        let first_reader = skill_state_read_guard();
+        let second_reader = skill_state_read_guard();
+        assert!(
+            skill_state_lock().try_write().is_err(),
+            "a Skill mutation must wait for every snapshot reader"
+        );
+
+        drop(second_reader);
+        drop(first_reader);
+        assert!(skill_state_lock().try_write().is_ok());
+    }
 
     /// 构造一个模拟 GitHub 归档的 ZIP：带一层 `repo-main/` 根目录，
     /// 其中掺入用 `../` 逃逸的恶意条目。
