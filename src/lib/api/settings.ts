@@ -346,6 +346,20 @@ export interface BackupEntry {
   createdAt: string;
 }
 
+export interface RestoreImpactPreview {
+  providersChanged: boolean;
+  commonConfigChanged: boolean;
+  proxyConfigChanged: boolean;
+  otherDataChanged: boolean;
+  currentProviderCount: number;
+  backupProviderCount: number;
+  restoreToken: string;
+}
+
+export interface RestoreDbBackupResult {
+  safetyBackupId: string;
+}
+
 export const backupsApi = {
   async createDbBackup(): Promise<string> {
     return await invoke("create_db_backup");
@@ -355,8 +369,22 @@ export const backupsApi = {
     return await invoke("list_db_backups");
   },
 
-  async restoreDbBackup(filename: string): Promise<string> {
-    return await invoke("restore_db_backup", { filename });
+  async previewDbBackupRestore(
+    filename: string,
+  ): Promise<RestoreImpactPreview> {
+    return await invoke("preview_db_backup_restore", { filename });
+  },
+
+  async restoreDbBackup(
+    filename: string,
+    restoreToken: string,
+    preserveLocalPreferences: boolean,
+  ): Promise<RestoreDbBackupResult> {
+    return await invoke("restore_db_backup", {
+      filename,
+      restoreToken,
+      preserveLocalPreferences,
+    });
   },
 
   async renameDbBackup(oldFilename: string, newName: string): Promise<string> {
