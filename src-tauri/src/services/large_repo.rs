@@ -773,9 +773,7 @@ pub fn sanitize_tree_path(path: &str) -> Result<String> {
 /// 不再依赖仓库 size 探测（已移除 GitHub REST size API，避免触发匿名配额限流）。
 pub fn should_use_large_repo_path(_size_kb: Option<u64>) -> bool {
     let has_git = detect_git().is_some();
-    log::debug!(
-        "[large_repo][should_use_large_repo_path] has_git={has_git} => {has_git}"
-    );
+    log::debug!("[large_repo][should_use_large_repo_path] has_git={has_git} => {has_git}");
     has_git
 }
 
@@ -890,9 +888,7 @@ where
     Fut: std::future::Future<Output = Result<T>> + 'a,
 {
     if chain.is_empty() {
-        return Err(anyhow!(
-            "大仓库后端链为空（git 不可用），请回退 ZIP 路径"
-        ));
+        return Err(anyhow!("大仓库后端链为空（git 不可用），请回退 ZIP 路径"));
     }
     let mut last_err = None;
     for b in chain.iter() {
