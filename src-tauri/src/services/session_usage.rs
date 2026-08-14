@@ -16,11 +16,12 @@ use crate::proxy::usage::parser::TokenUsage;
 use crate::services::usage_stats::{
     effective_usage_log_filter, find_model_pricing, should_skip_session_insert, DedupKey,
 };
+use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::SystemTime;
@@ -131,6 +132,16 @@ struct ParsedAssistantUsage {
 /// structured Claude Code API errors. Existing installations have already
 /// advanced past those zero-token rows, so they need one idempotent full scan.
 const CLAUDE_API_ERROR_BACKFILL_MARKER: &str = "__claude_api_error_backfill_v1__";
+const CLAUDE_BACKFILL_ERROR_MARKER: &str = "__claude_api_error_backfill_error_v1__";
+const CLAUDE_INCOMPLETE_TAIL_MARKER_PREFIX: &str = "__claude_incomplete_tail_v1__:";
+const CLAUDE_FILE_STATE_MARKER_PREFIX: &str = "__claude_file_state_v1__:";
+const CLAUDE_FILE_HASH_MARKER_PREFIX: &str = "__claude_file_hash_v1__:";
+const CLAUDE_FILE_FULL_HASH_MARKER_PREFIX: &str = "__claude_file_full_hash_v1__:";
+const CLAUDE_PROXY_ERROR_DEDUP_MARKER_PREFIX: &str = "__claude_proxy_error_dedup_v1__:";
+const FNV1A_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+const FNV1A_PRIME: u64 = 0x100000001b3;
+const FILE_FINGERPRINT_SAMPLE_SIZE: i64 = 4096;
+const FILE_FULL_HASH_VERIFY_INTERVAL_SECONDS: i64 = 24 * 60 * 60;
 
 /// 同步 Claude Code 会话日志到使用统计数据库
 pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppError> {
@@ -211,8 +222,39 @@ fn complete_api_error_backfill_if_successful(
     force_full_scan: bool,
     errors: &[String],
 ) -> Result<(), AppError> {
-    if force_full_scan && errors.is_empty() {
+    if !force_full_scan {
+        return Ok(());
+    }
+
+    if errors.is_empty() {
         update_sync_state(db, CLAUDE_API_ERROR_BACKFILL_MARKER, 1, 1)?;
+        update_sync_state(db, CLAUDE_BACKFILL_ERROR_MARKER, 0, 0)?;
+        return Ok(());
+    }
+
+    // 同一组错误连续出现两次后停止每分钟强制全量回扫。普通增量同步仍会
+    // 每分钟枚举并重试这些路径；而旧文件没有内容指纹，会在恢复可读后保守
+    // 全量解析，因此不会因结束一次性 backfill 而永久漏记。
+    let mut sorted_errors = errors.to_vec();
+    sorted_errors.sort_unstable();
+    let mut signature_hash = FNV1A_OFFSET_BASIS;
+    for error in &sorted_errors {
+        update_fnv1a(&mut signature_hash, error.as_bytes());
+        update_fnv1a(&mut signature_hash, b"\0");
+    }
+    let signature = (
+        signature_hash as i64,
+        sorted_errors.len().min(i64::MAX as usize) as i64,
+    );
+    if get_sync_state(db, CLAUDE_BACKFILL_ERROR_MARKER)? == signature {
+        log::warn!(
+            "[SESSION-SYNC] backfill 连续遇到相同的 {} 个错误，结束强制全量扫描并保留普通重试",
+            errors.len()
+        );
+        update_sync_state(db, CLAUDE_API_ERROR_BACKFILL_MARKER, 1, 1)?;
+        update_sync_state(db, CLAUDE_BACKFILL_ERROR_MARKER, 0, 0)?;
+    } else {
+        update_sync_state(db, CLAUDE_BACKFILL_ERROR_MARKER, signature.0, signature.1)?;
     }
 
     Ok(())
@@ -330,29 +372,97 @@ fn sync_single_file_with_options(
     let metadata = fs::metadata(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
     let file_modified = metadata_modified_nanos_checked(&metadata)?;
+    let file_len = metadata.len().min(i64::MAX as u64) as i64;
 
-    // 检查同步状态
-    let (last_modified, last_offset) = if force_full_scan {
+    // 检查同步状态。mtime 不能单独代表文件内容：日志可能在时间戳不变时追加，
+    // 也可能被截断或替换，因此额外保存 (mtime, length) 文件签名。
+    let (_, saved_offset) = if force_full_scan {
         (0, 0)
     } else {
         get_sync_state(db, &file_path_str)?
     };
+    let file_state_marker = format!("{CLAUDE_FILE_STATE_MARKER_PREFIX}{file_path_str}");
+    let previous_file_state = get_sync_state(db, &file_state_marker)?;
+    let file_hash_marker = format!("{CLAUDE_FILE_HASH_MARKER_PREFIX}{file_path_str}");
+    let previous_file_hash = get_sync_state(db, &file_hash_marker)?;
+    let file_full_hash_marker = format!("{CLAUDE_FILE_FULL_HASH_MARKER_PREFIX}{file_path_str}");
+    let previous_full_hash = get_sync_state(db, &file_full_hash_marker)?;
+    let now = unix_timestamp_seconds();
 
-    // 文件未变化则跳过
-    if file_modified <= last_modified {
-        return Ok((0, 0));
+    // 稳态先用固定大小采样避免每分钟读取全部历史日志；每天再全量校验一次，
+    // 让刻意保留 mtime/长度及采样窗口的替换也不会永久漏掉。
+    let mut full_content_changed = false;
+    if !force_full_scan
+        && previous_file_state == (file_modified, file_len)
+        && previous_file_hash.1 == file_len
+        && hash_file_prefix(file_path, file_len)? == previous_file_hash.0
+    {
+        if previous_full_hash != (0, 0)
+            && now.saturating_sub(previous_full_hash.1) < FILE_FULL_HASH_VERIFY_INTERVAL_SECONDS
+        {
+            return Ok((0, 0));
+        }
+        let current_full_hash = hash_entire_file_prefix(file_path, file_len)?;
+        if previous_full_hash.0 == current_full_hash {
+            update_sync_state(db, &file_full_hash_marker, current_full_hash, now)?;
+            return Ok((0, 0));
+        }
+        full_content_changed = true;
     }
+
+    let can_continue_from_cursor = !force_full_scan
+        && !full_content_changed
+        && previous_file_state != (0, 0)
+        && previous_file_hash.1 == previous_file_state.1
+        && file_len >= previous_file_state.1
+        && hash_file_prefix(file_path, previous_file_state.1)? == previous_file_hash.0;
+    let last_offset = if can_continue_from_cursor {
+        saved_offset
+    } else {
+        // 文件被截断、替换，或尚无内容指纹时，旧行号不再可信。
+        0
+    };
 
     // 从上次偏移位置开始增量解析
     let file =
         fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
-    let reader = BufReader::new(file);
+    let mut reader = BufReader::new(file);
+    let incomplete_tail_marker = format!("{CLAUDE_INCOMPLETE_TAIL_MARKER_PREFIX}{file_path_str}");
+    let observed_incomplete_tail = get_sync_state(db, &incomplete_tail_marker)?;
 
     let mut line_offset: i64 = 0;
     let mut messages: HashMap<String, ParsedAssistantUsage> = HashMap::new();
     let mut current_session_id: Option<String> = None;
+    let mut line = Vec::new();
+    let mut full_hash = FNV1A_OFFSET_BASIS;
+    let mut full_hashed_bytes = 0_i64;
+    let mut previous_prefix_hash = FNV1A_OFFSET_BASIS;
+    let mut previous_prefix_hashed_bytes = 0_i64;
 
-    for line_result in reader.lines() {
+    loop {
+        line.clear();
+        let bytes_read = reader.read_until(b'\n', &mut line).map_err(|error| {
+            AppError::Config(format!(
+                "读取 JSONL 失败 ({} 第 {} 行): {error}",
+                file_path.display(),
+                line_offset + 1
+            ))
+        })?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        let bytes_to_hash = (file_len - full_hashed_bytes).clamp(0, bytes_read as i64) as usize;
+        update_fnv1a(&mut full_hash, &line[..bytes_to_hash]);
+        full_hashed_bytes += bytes_to_hash as i64;
+        if can_continue_from_cursor {
+            let prefix_len = previous_file_state.1;
+            let prefix_bytes =
+                (prefix_len - previous_prefix_hashed_bytes).clamp(0, bytes_read as i64) as usize;
+            update_fnv1a(&mut previous_prefix_hash, &line[..prefix_bytes]);
+            previous_prefix_hashed_bytes += prefix_bytes as i64;
+        }
+
         line_offset += 1;
 
         // 跳过已处理的行
@@ -360,27 +470,50 @@ fn sync_single_file_with_options(
             continue;
         }
 
-        let line = line_result.map_err(|error| {
-            AppError::Config(format!(
-                "读取 JSONL 失败 ({} 第 {line_offset} 行): {error}",
-                file_path.display()
-            ))
-        })?;
-
-        if line.trim().is_empty() {
+        if line.iter().all(|byte| byte.is_ascii_whitespace()) {
             continue;
         }
 
-        let value: serde_json::Value = serde_json::from_str(&line).map_err(|error| {
-            AppError::Config(format!(
-                "解析 JSONL 失败 ({} 第 {line_offset} 行): {error}",
-                file_path.display()
-            ))
-        })?;
+        let value: serde_json::Value = match serde_json::from_slice(&line) {
+            Ok(value) => value,
+            Err(error) if !line.ends_with(b"\n") => {
+                let tail_signature = (fnv1a_hash(&line), line.len().min(i64::MAX as usize) as i64);
+                if observed_incomplete_tail == tail_signature {
+                    log::warn!(
+                        "[SESSION-SYNC] 跳过稳定未变化的损坏 JSONL 末行 ({} 第 {line_offset} 行): {error}",
+                        file_path.display()
+                    );
+                    line_offset -= 1;
+                    break;
+                }
+
+                update_sync_state(
+                    db,
+                    &incomplete_tail_marker,
+                    tail_signature.0,
+                    tail_signature.1,
+                )?;
+                return Err(AppError::Config(format!(
+                    "解析可能尚未写完的 JSONL 末行失败 ({} 第 {line_offset} 行): {error}",
+                    file_path.display()
+                )));
+            }
+            Err(error) => {
+                log::warn!(
+                    "[SESSION-SYNC] 跳过损坏的 JSONL 记录 ({} 第 {line_offset} 行): {error}",
+                    file_path.display()
+                );
+                continue;
+            }
+        };
 
         // 提取 session ID (从 system 或首条消息)
         if current_session_id.is_none() {
-            if let Some(sid) = value.get("sessionId").and_then(|v| v.as_str()) {
+            if let Some(sid) = value
+                .get("sessionId")
+                .and_then(|v| v.as_str())
+                .filter(|sid| !sid.trim().is_empty())
+            {
                 current_session_id = Some(sid.to_string());
             }
         }
@@ -482,6 +615,14 @@ fn sync_single_file_with_options(
         }
     }
 
+    if can_continue_from_cursor
+        && (previous_prefix_hashed_bytes != previous_file_state.1
+            || previous_prefix_hash as i64 != previous_full_hash.0)
+    {
+        // 追加期间旧前缀也被改写；尚未执行任何插入，安全回退为一次全量解析。
+        return sync_single_file_with_options(db, file_path, true);
+    }
+
     // 写入数据库
     let mut imported: u32 = 0;
     let mut skipped: u32 = 0;
@@ -525,8 +666,98 @@ fn sync_single_file_with_options(
 
     // 更新同步状态
     update_sync_state(db, &file_path_str, file_modified, line_offset)?;
+    update_sync_state(db, &file_full_hash_marker, full_hash as i64, now)?;
+    update_sync_state(
+        db,
+        &file_hash_marker,
+        hash_file_prefix(file_path, file_len)?,
+        file_len,
+    )?;
+    update_sync_state(db, &file_state_marker, file_modified, file_len)?;
+    if observed_incomplete_tail != (0, 0) {
+        update_sync_state(db, &incomplete_tail_marker, 0, 0)?;
+    }
 
     Ok((imported, skipped))
+}
+
+fn update_fnv1a(hash: &mut u64, bytes: &[u8]) {
+    for byte in bytes {
+        *hash ^= u64::from(*byte);
+        *hash = hash.wrapping_mul(FNV1A_PRIME);
+    }
+}
+
+fn fnv1a_hash(bytes: &[u8]) -> i64 {
+    let mut hash = FNV1A_OFFSET_BASIS;
+    update_fnv1a(&mut hash, bytes);
+    hash as i64
+}
+
+fn hash_file_prefix(file_path: &Path, length: i64) -> Result<i64, AppError> {
+    let mut file = fs::File::open(file_path)
+        .map_err(|error| AppError::Config(format!("无法打开文件: {error}")))?;
+    let length = length.max(0);
+    let mut hash = FNV1A_OFFSET_BASIS;
+    update_fnv1a(&mut hash, &length.to_le_bytes());
+
+    let sample_size = FILE_FINGERPRINT_SAMPLE_SIZE.min(length);
+    let offsets = if length <= FILE_FINGERPRINT_SAMPLE_SIZE * 3 {
+        vec![0]
+    } else {
+        vec![0, length / 2 - sample_size / 2, length - sample_size]
+    };
+
+    for offset in offsets {
+        file.seek(SeekFrom::Start(offset as u64))
+            .map_err(|error| AppError::Config(format!("定位文件指纹失败: {error}")))?;
+        let bytes_to_read = if length <= FILE_FINGERPRINT_SAMPLE_SIZE * 3 {
+            length as usize
+        } else {
+            sample_size as usize
+        };
+        let mut buffer = vec![0_u8; bytes_to_read];
+        file.read_exact(&mut buffer)
+            .map_err(|error| AppError::Config(format!("读取文件指纹失败: {error}")))?;
+        update_fnv1a(&mut hash, &offset.to_le_bytes());
+        update_fnv1a(&mut hash, &buffer);
+    }
+
+    Ok(hash as i64)
+}
+
+fn hash_entire_file_prefix(file_path: &Path, length: i64) -> Result<i64, AppError> {
+    let file = fs::File::open(file_path)
+        .map_err(|error| AppError::Config(format!("无法打开文件: {error}")))?;
+    let length = length.max(0);
+    let mut reader = file.take(length as u64);
+    let mut buffer = [0_u8; 8192];
+    let mut hash = FNV1A_OFFSET_BASIS;
+    let mut bytes_read = 0_i64;
+
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|error| AppError::Config(format!("读取完整文件指纹失败: {error}")))?;
+        if read == 0 {
+            break;
+        }
+        update_fnv1a(&mut hash, &buffer[..read]);
+        bytes_read += read as i64;
+    }
+    if bytes_read != length {
+        return Err(AppError::Config(format!(
+            "读取完整文件指纹失败: 文件在同步期间被截断 ({bytes_read}/{length})"
+        )));
+    }
+    Ok(hash as i64)
+}
+
+fn unix_timestamp_seconds() -> i64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
+        .unwrap_or(0)
 }
 
 /// 获取 session_log_sync 表中某条目的同步进度。
@@ -626,7 +857,12 @@ fn insert_session_log_entry(
         cache_creation_tokens: msg.cache_creation_tokens,
         created_at,
     };
-    if should_skip_session_insert(&conn, request_id, &dedup_key)? {
+    let should_skip = if msg.is_api_error {
+        should_skip_api_error_insert(&conn, request_id, msg, created_at)?
+    } else {
+        should_skip_session_insert(&conn, request_id, &dedup_key)?
+    };
+    if should_skip {
         return Ok(false);
     }
 
@@ -702,6 +938,67 @@ fn insert_session_log_entry(
         .map_err(|e| AppError::Database(format!("插入会话日志失败: {e}")))?;
 
     Ok(inserted_rows > 0)
+}
+
+fn should_skip_api_error_insert(
+    conn: &rusqlite::Connection,
+    request_id: &str,
+    msg: &ParsedAssistantUsage,
+    created_at: i64,
+) -> Result<bool, AppError> {
+    let session_id = msg
+        .session_id
+        .as_deref()
+        .filter(|session_id| !session_id.trim().is_empty());
+    let request_exists = conn
+        .prepare_cached("SELECT EXISTS(SELECT 1 FROM proxy_request_logs WHERE request_id = ?1)")
+        .and_then(|mut stmt| stmt.query_row([request_id], |row| row.get::<_, bool>(0)))
+        .map_err(|error| AppError::Database(format!("查询 API 错误 request_id 失败: {error}")))?;
+    if request_exists {
+        return Ok(true);
+    }
+    let Some(session_id) = session_id else {
+        return Ok(false);
+    };
+
+    let marker_prefix = CLAUDE_PROXY_ERROR_DEDUP_MARKER_PREFIX;
+    let proxy_request_id = conn
+        .prepare_cached(
+            "SELECT l.request_id
+             FROM proxy_request_logs l
+             WHERE COALESCE(l.data_source, 'proxy') = 'proxy'
+               AND l.app_type = 'claude'
+               AND l.status_code = ?1
+               AND l.session_id = ?2
+               AND l.created_at = ?3
+               AND NOT EXISTS (
+                   SELECT 1 FROM session_log_sync s
+                   WHERE s.file_path = ?4 || l.request_id
+                     AND s.last_modified = 1
+               )
+             ORDER BY l.request_id
+             LIMIT 1",
+        )
+        .and_then(|mut stmt| {
+            stmt.query_row(
+                rusqlite::params![
+                    msg.status_code as i64,
+                    session_id,
+                    created_at,
+                    marker_prefix,
+                ],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+        })
+        .map_err(|error| AppError::Database(format!("查询重复代理 API 错误失败: {error}")))?;
+
+    if let Some(proxy_request_id) = proxy_request_id {
+        update_sync_state_on_conn(conn, &format!("{marker_prefix}{proxy_request_id}"), 1, 1)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
 
 /// 从 model_pricing 表查找模型定价（支持模糊匹配）
@@ -910,6 +1207,128 @@ mod tests {
     }
 
     #[test]
+    fn test_insert_api_error_does_not_use_token_heuristic_dedup() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, latency_ms, status_code, created_at, data_source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    "proxy-zero-success",
+                    "openai-compatible",
+                    "claude",
+                    "<synthetic>",
+                    "<synthetic>",
+                    0,
+                    0,
+                    0,
+                    0,
+                    "0",
+                    100,
+                    200,
+                    1000,
+                    "proxy"
+                ],
+            )?;
+        }
+
+        let msg = ParsedAssistantUsage {
+            message_id: "msg_zero_403".to_string(),
+            model: "<synthetic>".to_string(),
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            stop_reason: None,
+            status_code: 403,
+            error_message: Some("authentication_failed".to_string()),
+            is_api_error: true,
+            timestamp: Some("1970-01-01T00:16:40Z".to_string()),
+            session_id: Some("session-error".to_string()),
+        };
+
+        assert!(
+            insert_session_log_entry(&db, "session:msg_zero_403", &msg)?,
+            "API 错误不能被零 token 的成功代理日志近似去重"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_insert_api_error_skips_matching_proxy_error() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, latency_ms, status_code, error_message, session_id,
+                    created_at, data_source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    "proxy-403",
+                    "openai-compatible",
+                    "claude",
+                    "deepseek-v4-flash-0731",
+                    "deepseek-v4-flash-0731",
+                    0,
+                    0,
+                    0,
+                    0,
+                    "0",
+                    100,
+                    403,
+                    "authentication_failed",
+                    "session-error",
+                    1000,
+                    "proxy"
+                ],
+            )?;
+        }
+
+        let msg = ParsedAssistantUsage {
+            message_id: "msg_duplicate_403".to_string(),
+            model: "<synthetic>".to_string(),
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            stop_reason: None,
+            status_code: 403,
+            error_message: Some("authentication_failed".to_string()),
+            is_api_error: true,
+            timestamp: Some("1970-01-01T00:16:40Z".to_string()),
+            session_id: Some("session-error".to_string()),
+        };
+
+        assert!(
+            !insert_session_log_entry(&db, "session:msg_duplicate_403", &msg)?,
+            "代理已经记录同一会话的 403 时不能重复导入 session 错误"
+        );
+
+        let mut second_error = msg;
+        second_error.message_id = "msg_second_403".to_string();
+        assert!(
+            insert_session_log_entry(&db, "session:msg_second_403", &second_error)?,
+            "一条代理错误只能抵消一条 session 错误"
+        );
+
+        let mut unidentified = second_error;
+        unidentified.message_id = "msg_empty_session_403".to_string();
+        unidentified.session_id = Some(String::new());
+        assert!(
+            insert_session_log_entry(&db, "session:msg_empty_session_403", &unidentified)?,
+            "空 session_id 不是可靠身份，不能把无关的 403 合并"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_collect_jsonl_files_includes_subagents() {
         let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
         let project = tmp.join("project");
@@ -1020,8 +1439,29 @@ mod tests {
         let api_error = r#"{"type":"assistant","message":{"id":"msg_api_error","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"stop_reason":"stop_sequence","content":[{"type":"text","text":"Please run /login · API Error: 403 Access to model denied."}]},"timestamp":"2026-08-12T07:34:44Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"authentication_failed"}"#;
         fs::write(&file, format!("{api_error}\n")).unwrap();
 
-        let modified = metadata_modified_nanos(&fs::metadata(&file).unwrap());
-        update_sync_state(&db, &file.to_string_lossy(), modified, 1)?;
+        let metadata = fs::metadata(&file).unwrap();
+        let modified = metadata_modified_nanos(&metadata);
+        let file_len = metadata.len() as i64;
+        let file_path = file.to_string_lossy();
+        update_sync_state(&db, &file_path, modified, 1)?;
+        update_sync_state(
+            &db,
+            &format!("{CLAUDE_FILE_HASH_MARKER_PREFIX}{file_path}"),
+            hash_file_prefix(&file, file_len)?,
+            file_len,
+        )?;
+        update_sync_state(
+            &db,
+            &format!("{CLAUDE_FILE_FULL_HASH_MARKER_PREFIX}{file_path}"),
+            hash_entire_file_prefix(&file, file_len)?,
+            unix_timestamp_seconds(),
+        )?;
+        update_sync_state(
+            &db,
+            &format!("{CLAUDE_FILE_STATE_MARKER_PREFIX}{file_path}"),
+            modified,
+            file_len,
+        )?;
         assert_eq!(
             sync_single_file(&db, &file)?,
             (0, 0),
@@ -1067,6 +1507,27 @@ mod tests {
             "所有文件扫描成功后才应完成回填"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_stable_backfill_error_stops_repeated_force_scans() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let errors = ["permanently unreadable.jsonl".to_string()];
+
+        complete_api_error_backfill_if_successful(&db, true, &errors)?;
+        assert_eq!(
+            get_sync_state(&db, CLAUDE_API_ERROR_BACKFILL_MARKER)?,
+            (0, 0),
+            "第一次错误仍应保留一次强制重试"
+        );
+
+        complete_api_error_backfill_if_successful(&db, true, &errors)?;
+        assert_eq!(
+            get_sync_state(&db, CLAUDE_API_ERROR_BACKFILL_MARKER)?,
+            (1, 1),
+            "相同永久错误不能导致每分钟全量回扫所有历史日志"
+        );
         Ok(())
     }
 
@@ -1191,6 +1652,324 @@ mod tests {
             get_sync_state(&db, CLAUDE_API_ERROR_BACKFILL_MARKER)?,
             (1, 1),
             "完整重试成功后才能完成回填"
+        );
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_corrupt_complete_line_does_not_block_later_api_errors() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        let project_dir = tmp.join("project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let file = project_dir.join("claude-api-error.jsonl");
+        let api_error = r#"{"type":"assistant","message":{"id":"msg_after_corrupt","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:44Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"authentication_failed"}"#;
+        fs::write(&file, format!("{{corrupt-json}}\n{api_error}\n")).unwrap();
+
+        let result = sync_claude_session_logs_from_projects_dir(&db, &tmp)?;
+        assert!(
+            result.errors.is_empty(),
+            "有换行边界的永久损坏记录应被跳过，不能卡住整个文件"
+        );
+        assert_eq!(result.imported, 1, "损坏记录后的有效 403 必须继续导入");
+        assert_eq!(
+            get_sync_state(&db, CLAUDE_API_ERROR_BACKFILL_MARKER)?,
+            (1, 1),
+            "跳过确定损坏的记录后应能完成回填"
+        );
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_invalid_utf8_complete_line_does_not_block_later_api_errors() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        let project_dir = tmp.join("project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let file = project_dir.join("claude-api-error.jsonl");
+        let api_error = r#"{"type":"assistant","message":{"id":"msg_after_invalid_utf8","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:44Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"authentication_failed"}"#;
+        let mut content = vec![0xff, b'\n'];
+        content.extend_from_slice(api_error.as_bytes());
+        content.push(b'\n');
+        fs::write(&file, content).unwrap();
+
+        let result = sync_claude_session_logs_from_projects_dir(&db, &tmp)?;
+        assert!(
+            result.errors.is_empty(),
+            "有换行边界的非法 UTF-8 记录应被跳过"
+        );
+        assert_eq!(result.imported, 1, "非法 UTF-8 记录后的有效 403 必须导入");
+        assert_eq!(
+            get_sync_state(&db, CLAUDE_API_ERROR_BACKFILL_MARKER)?,
+            (1, 1)
+        );
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_stable_corrupt_tail_does_not_block_future_appends() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        let project_dir = tmp.join("project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let file = project_dir.join("claude-api-error.jsonl");
+        let corrupt_tail = r#"{"type":"assistant","message":{"id":"abandoned""#;
+        fs::write(&file, corrupt_tail).unwrap();
+
+        let first = sync_claude_session_logs_from_projects_dir(&db, &tmp)?;
+        assert!(!first.errors.is_empty(), "首次观察坏尾行时必须等待重试");
+        assert_eq!(
+            get_sync_state(&db, CLAUDE_API_ERROR_BACKFILL_MARKER)?,
+            (0, 0)
+        );
+
+        let stable_retry = sync_claude_session_logs_from_projects_dir(&db, &tmp)?;
+        assert!(
+            stable_retry.errors.is_empty(),
+            "文件保持不变后应把坏尾行认定为永久损坏"
+        );
+        assert_eq!(
+            get_sync_state(&db, CLAUDE_API_ERROR_BACKFILL_MARKER)?,
+            (1, 1),
+            "稳定的坏尾行不能让全局回填永久 pending"
+        );
+
+        let original_modified = fs::metadata(&file).unwrap().modified().unwrap();
+        let api_error = r#"{"type":"assistant","message":{"id":"msg_after_stable_tail","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:44Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"authentication_failed"}"#;
+        fs::write(&file, format!("{corrupt_tail}\n{api_error}\n")).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(original_modified))
+            .unwrap();
+
+        let appended = sync_claude_session_logs_from_projects_dir(&db, &tmp)?;
+        assert!(appended.errors.is_empty());
+        assert_eq!(
+            appended.imported, 1,
+            "坏尾行稳定后仍必须保留游标，以导入未来追加的 403"
+        );
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_truncated_file_restarts_before_importing_new_api_error() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        let project_dir = tmp.join("project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let file = project_dir.join("claude-api-error.jsonl");
+        let old_one = r#"{"type":"assistant","message":{"id":"msg_before_truncate_1","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:44Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"authentication_failed"}"#;
+        let old_two = r#"{"type":"assistant","message":{"id":"msg_before_truncate_2","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:45Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"authentication_failed"}"#;
+        let corrupt_tail = r#"{"type":"assistant","message":{"id":"abandoned""#;
+        fs::write(&file, format!("{old_one}\n{old_two}\n{corrupt_tail}")).unwrap();
+
+        let first = sync_claude_session_logs_from_projects_dir(&db, &tmp)?;
+        assert!(!first.errors.is_empty());
+        let stable_retry = sync_claude_session_logs_from_projects_dir(&db, &tmp)?;
+        assert!(stable_retry.errors.is_empty());
+        assert_eq!(stable_retry.imported, 2);
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let replacement = r#"{"type":"assistant","message":{"id":"msg_after_truncate","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:46Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"authentication_failed"}"#;
+        fs::write(&file, format!("{replacement}\n")).unwrap();
+
+        let truncated = sync_claude_session_logs_from_projects_dir(&db, &tmp)?;
+        assert!(truncated.errors.is_empty());
+        assert_eq!(
+            truncated.imported, 1,
+            "日志截断或替换后必须从文件开头导入新的 403"
+        );
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_longer_replacement_restarts_before_importing_new_api_error() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("claude-api-error.jsonl");
+        let old = r#"{"type":"assistant","message":{"id":"msg_old_file","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:44Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"old"}"#;
+        fs::write(&file, format!("{old}\n")).unwrap();
+        assert_eq!(sync_single_file(&db, &file)?.0, 1);
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let replacement = r#"{"type":"assistant","message":{"id":"msg_new_first_line","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:45Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"new"}"#;
+        let padding = r#"{"type":"system","sessionId":"session-error","padding":"this replacement is intentionally longer than the previous file so length alone cannot identify an append"}"#;
+        fs::write(&file, format!("{replacement}\n{padding}\n")).unwrap();
+
+        let (imported, _) = sync_single_file(&db, &file)?;
+        assert_eq!(
+            imported, 1,
+            "更长的替换文件也必须通过前缀指纹识别并从头扫描"
+        );
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_legacy_cursor_does_not_hide_same_mtime_append() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("claude-api-error.jsonl");
+        let old = r#"{"type":"assistant","message":{"id":"msg_legacy_old","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:44Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"old"}"#;
+        fs::write(&file, format!("{old}\n")).unwrap();
+        assert_eq!(sync_single_file(&db, &file)?.0, 1);
+        let original_modified = fs::metadata(&file).unwrap().modified().unwrap();
+
+        let file_path = file.to_string_lossy();
+        update_sync_state(
+            &db,
+            &format!("{CLAUDE_FILE_STATE_MARKER_PREFIX}{file_path}"),
+            0,
+            0,
+        )?;
+        update_sync_state(
+            &db,
+            &format!("{CLAUDE_FILE_HASH_MARKER_PREFIX}{file_path}"),
+            0,
+            0,
+        )?;
+
+        let appended = r#"{"type":"assistant","message":{"id":"msg_legacy_new","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:45Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"new"}"#;
+        fs::write(&file, format!("{old}\n{appended}\n")).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(original_modified))
+            .unwrap();
+
+        assert_eq!(
+            sync_single_file(&db, &file)?.0,
+            1,
+            "旧版游标没有文件指纹时必须保守重扫，不能吞掉相同 mtime 的追加"
+        );
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_same_metadata_replacement_is_verified_by_content_hash() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("claude-api-error.jsonl");
+        let old = r#"{"type":"assistant","message":{"id":"msg_equal_old","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:44Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"old"}"#;
+        let replacement = r#"{"type":"assistant","message":{"id":"msg_equal_new","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:44Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"new"}"#;
+        assert_eq!(old.len(), replacement.len());
+        fs::write(&file, format!("{old}\n")).unwrap();
+        assert_eq!(sync_single_file(&db, &file)?.0, 1);
+        let original_modified = fs::metadata(&file).unwrap().modified().unwrap();
+
+        fs::write(&file, format!("{replacement}\n")).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(original_modified))
+            .unwrap();
+
+        assert_eq!(
+            sync_single_file(&db, &file)?.0,
+            1,
+            "mtime 和长度都相同也必须校验内容指纹"
+        );
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_equal_metadata_corrupt_tail_requires_new_observation() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        let project_dir = tmp.join("project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let file = project_dir.join("claude-api-error.jsonl");
+        let first_tail = r#"{"type":"assistant","message":{"id":"tail_old_x""#;
+        let second_tail = r#"{"type":"assistant","message":{"id":"tail_new_y""#;
+        assert_eq!(first_tail.len(), second_tail.len());
+        fs::write(&file, first_tail).unwrap();
+        let original_modified = fs::metadata(&file).unwrap().modified().unwrap();
+
+        let first = sync_claude_session_logs_from_projects_dir(&db, &tmp)?;
+        assert!(!first.errors.is_empty());
+
+        fs::write(&file, second_tail).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(original_modified))
+            .unwrap();
+
+        let changed = sync_claude_session_logs_from_projects_dir(&db, &tmp)?;
+        assert!(
+            !changed.errors.is_empty(),
+            "内容不同的坏尾即使 mtime 和长度相同，也应重新进行首次观察"
+        );
+        let stable = sync_claude_session_logs_from_projects_dir(&db, &tmp)?;
+        assert!(stable.errors.is_empty());
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_periodic_full_hash_detects_change_outside_samples() -> Result<(), AppError> {
+        fn large_api_error(message_id: &str) -> String {
+            format!(
+                r#"{{"type":"assistant","padding_a":"{}","message":{{"id":"{message_id}","model":"<synthetic>","usage":{{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}},"padding_b":"{}","timestamp":"2026-08-12T07:34:44Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"authentication_failed"}}"#,
+                "a".repeat(6000),
+                "z".repeat(24000)
+            )
+        }
+
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("claude-api-error.jsonl");
+        let old = large_api_error("msg_sample_old");
+        let replacement = large_api_error("msg_sample_new");
+        assert_eq!(old.len(), replacement.len());
+        fs::write(&file, format!("{old}\n")).unwrap();
+        assert_eq!(sync_single_file(&db, &file)?.0, 1);
+        let original_modified = fs::metadata(&file).unwrap().modified().unwrap();
+
+        fs::write(&file, format!("{replacement}\n")).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(original_modified))
+            .unwrap();
+
+        let full_hash_marker = format!(
+            "{CLAUDE_FILE_FULL_HASH_MARKER_PREFIX}{}",
+            file.to_string_lossy()
+        );
+        let (old_full_hash, _) = get_sync_state(&db, &full_hash_marker)?;
+        update_sync_state(&db, &full_hash_marker, old_full_hash, 0)?;
+
+        assert_eq!(
+            sync_single_file(&db, &file)?.0,
+            1,
+            "采样窗口之外的等元数据替换也必须在周期全量校验时被发现"
         );
 
         fs::remove_dir_all(&tmp).ok();
