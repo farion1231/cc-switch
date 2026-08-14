@@ -458,7 +458,12 @@ impl KimiOAuthManager {
         let tokens = match self.refresh_with_token(&account.refresh_token).await {
             Ok(tokens) => tokens,
             Err(KimiOAuthError::RefreshTokenInvalid) => {
-                self.mark_reauth_required(account_id).await?;
+                self.mark_reauth_required_if_token_matches(
+                    account_id,
+                    None,
+                    Some(account.refresh_token.as_str()),
+                )
+                .await?;
                 return Err(KimiOAuthError::ReauthRequired(account_id.to_string()));
             }
             Err(error) => return Err(error),
@@ -519,7 +524,7 @@ impl KimiOAuthManager {
         account_id: &str,
         rejected_access_token: Option<&str>,
     ) -> Result<(), KimiOAuthError> {
-        self.mark_reauth_required_if_token_matches(account_id, rejected_access_token)
+        self.mark_reauth_required_if_token_matches(account_id, rejected_access_token, None)
             .await
     }
 
@@ -662,7 +667,12 @@ impl KimiOAuthManager {
                     .await?;
                 match self.call_management(operation, &refreshed).await {
                     Err(KimiOAuthError::ManagementUnauthorized(_)) => {
-                        self.mark_reauth_required(account_id).await?;
+                        self.mark_reauth_required_if_token_matches(
+                            account_id,
+                            Some(&refreshed),
+                            None,
+                        )
+                        .await?;
                         Err(KimiOAuthError::ReauthRequired(account_id.to_string()))
                     }
                     result => result,
@@ -721,7 +731,12 @@ impl KimiOAuthManager {
         let tokens = match self.refresh_with_token(&account.refresh_token).await {
             Ok(tokens) => tokens,
             Err(KimiOAuthError::RefreshTokenInvalid) => {
-                self.mark_reauth_required(account_id).await?;
+                self.mark_reauth_required_if_token_matches(
+                    account_id,
+                    None,
+                    Some(account.refresh_token.as_str()),
+                )
+                .await?;
                 return Err(KimiOAuthError::ReauthRequired(account_id.to_string()));
             }
             Err(error) => return Err(error),
@@ -877,7 +892,7 @@ impl KimiOAuthManager {
     }
 
     async fn mark_reauth_required(&self, account_id: &str) -> Result<(), KimiOAuthError> {
-        self.mark_reauth_required_if_token_matches(account_id, None)
+        self.mark_reauth_required_if_token_matches(account_id, None, None)
             .await
     }
 
@@ -885,6 +900,7 @@ impl KimiOAuthManager {
         &self,
         account_id: &str,
         rejected_access_token: Option<&str>,
+        expected_refresh_token: Option<&str>,
     ) -> Result<(), KimiOAuthError> {
         let _mutation_guard = self.mutation_lock.lock().await;
         if let Some(rejected) = rejected_access_token {
@@ -899,6 +915,14 @@ impl KimiOAuthManager {
             }
         }
         let mut accounts = self.accounts.read().await.clone();
+        if let Some(expected) = expected_refresh_token {
+            let still_current = accounts
+                .get(account_id)
+                .is_some_and(|account| account.refresh_token == expected);
+            if !still_current {
+                return Ok(());
+            }
+        }
         let account = accounts
             .get_mut(account_id)
             .ok_or_else(|| KimiOAuthError::AccountNotFound(account_id.to_string()))?;
@@ -1269,6 +1293,7 @@ mod tests {
     struct RecordingTransport {
         requests: StdMutex<Vec<KimiHttpRequest>>,
         responses: StdMutex<VecDeque<Result<KimiHttpResponse, KimiOAuthError>>>,
+        on_execute: StdMutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     }
 
     impl RecordingTransport {
@@ -1276,7 +1301,12 @@ mod tests {
             Self {
                 requests: StdMutex::new(Vec::new()),
                 responses: StdMutex::new(responses.into()),
+                on_execute: StdMutex::new(None),
             }
+        }
+
+        fn set_on_execute(&self, hook: impl Fn() + Send + Sync + 'static) {
+            *self.on_execute.lock().unwrap() = Some(Arc::new(hook));
         }
     }
 
@@ -1286,6 +1316,9 @@ mod tests {
             request: KimiHttpRequest,
         ) -> BoxFuture<'a, Result<KimiHttpResponse, KimiOAuthError>> {
             Box::pin(async move {
+                if let Some(hook) = self.on_execute.lock().unwrap().clone() {
+                    hook();
+                }
                 self.requests.lock().unwrap().push(request);
                 self.responses
                     .lock()
@@ -2295,6 +2328,156 @@ mod tests {
         assert_eq!(
             manager.access_tokens.read().await["account-one"].token,
             "newer-access"
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_management_retry_rejection_does_not_invalidate_a_newer_cached_token() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let (manager, transport) = test_manager(
+            data_dir.path().to_path_buf(),
+            vec![
+                Ok(json_response(403, serde_json::json!({}))),
+                Ok(json_response(
+                    200,
+                    serde_json::json!({
+                        "access_token":"refreshed-access",
+                        "refresh_token":"refreshed-refresh",
+                        "expires_in":900
+                    }),
+                )),
+                Ok(json_response(401, serde_json::json!({}))),
+            ],
+        );
+        manager
+            .add_account_internal(
+                "account-one".to_string(),
+                None,
+                "initial-refresh".to_string(),
+                None,
+                Some(cached_access("cached-access")),
+            )
+            .await
+            .unwrap();
+
+        let tokens = Arc::clone(&manager.access_tokens);
+        let calls = Arc::new(AtomicUsize::new(0));
+        transport.set_on_execute({
+            let tokens = Arc::clone(&tokens);
+            let calls = Arc::clone(&calls);
+            move || {
+                if calls.fetch_add(1, Ordering::SeqCst) == 2 {
+                    tokens
+                        .try_write()
+                        .expect("token cache should be uncontended during the retry")
+                        .insert("account-one".to_string(), cached_access("newer-access"));
+                }
+            }
+        });
+
+        let result = manager.fetch_usage_for_account("account-one").await;
+
+        assert!(matches!(result, Err(KimiOAuthError::ReauthRequired(_))));
+        assert!(
+            !manager
+                .accounts
+                .read()
+                .await
+                .get("account-one")
+                .unwrap()
+                .requires_reauth
+        );
+        assert_eq!(
+            manager.access_tokens.read().await["account-one"].token,
+            "newer-access"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_refresh_grant_marks_the_current_account_for_reauthentication() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let (manager, _) = test_manager(
+            data_dir.path().to_path_buf(),
+            vec![Ok(json_response(
+                401,
+                serde_json::json!({"error":"invalid_grant"}),
+            ))],
+        );
+        manager
+            .add_account_internal(
+                "account-one".to_string(),
+                None,
+                "current-grant".to_string(),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let result = manager.get_valid_token_for_account("account-one").await;
+
+        assert!(matches!(result, Err(KimiOAuthError::ReauthRequired(_))));
+        assert!(
+            manager
+                .accounts
+                .read()
+                .await
+                .get("account-one")
+                .unwrap()
+                .requires_reauth
+        );
+        assert!(!manager
+            .access_tokens
+            .read()
+            .await
+            .contains_key("account-one"));
+    }
+
+    #[tokio::test]
+    async fn stale_refresh_failure_does_not_expire_a_replaced_grant() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let (manager, transport) = test_manager(
+            data_dir.path().to_path_buf(),
+            vec![Ok(json_response(
+                401,
+                serde_json::json!({"error":"invalid_grant"}),
+            ))],
+        );
+        manager
+            .add_account_internal(
+                "account-one".to_string(),
+                None,
+                "old-grant".to_string(),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let accounts = Arc::clone(&manager.accounts);
+        let tokens = Arc::clone(&manager.access_tokens);
+        transport.set_on_execute(move || {
+            accounts
+                .try_write()
+                .expect("account store should be uncontended during refresh")
+                .get_mut("account-one")
+                .expect("account exists")
+                .refresh_token = "new-grant".to_string();
+            tokens
+                .try_write()
+                .expect("token cache should be uncontended during refresh")
+                .insert("account-one".to_string(), cached_access("new-access"));
+        });
+
+        let result = manager.get_valid_token_for_account("account-one").await;
+
+        assert!(matches!(result, Err(KimiOAuthError::ReauthRequired(_))));
+        let account = manager.accounts.read().await["account-one"].clone();
+        assert!(!account.requires_reauth);
+        assert_eq!(account.refresh_token, "new-grant");
+        assert_eq!(
+            manager.access_tokens.read().await["account-one"].token,
+            "new-access"
         );
     }
 }
