@@ -41,6 +41,11 @@ export function EditProviderDialog({
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
   const [authSettingsTarget, setAuthSettingsTarget] =
     useState<ManagedAuthProvider | null>(null);
+
+  useEffect(() => {
+    setAuthSettingsTarget(null);
+  }, [appId, open, provider?.id]);
+
   const formReadyToken = useMemo(
     () => Symbol("provider-form-ready"),
     [appId, open, provider?.id],

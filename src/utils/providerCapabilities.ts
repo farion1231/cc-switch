@@ -1,6 +1,7 @@
 import type { AppId } from "@/lib/api";
 import type { Provider } from "@/types";
 import { isOAuthProviderType } from "@/config/constants";
+import { resolveManagedAccountId } from "@/lib/authBinding";
 import {
   extractCodexWireApi,
   isCodexAnthropicWireApi,
@@ -13,12 +14,13 @@ export const GROKBUILD_OFFICIAL_PROVIDER_ID = "grokbuild-official";
 /** Keep the UI capability rule aligned with the Rust takeover policy. */
 export function supportsOfficialProxyTakeover(
   appId: AppId,
-  provider: Pick<Provider, "id" | "category">,
+  provider: Pick<Provider, "id" | "category" | "meta">,
 ): boolean {
+  if (appId !== "codex" || provider.category !== "official") return false;
+
   return (
-    appId === "codex" &&
-    provider.id === CODEX_OFFICIAL_PROVIDER_ID &&
-    provider.category === "official"
+    provider.id === CODEX_OFFICIAL_PROVIDER_ID ||
+    Boolean(resolveManagedAccountId(provider.meta, "codex_oauth")?.trim())
   );
 }
 

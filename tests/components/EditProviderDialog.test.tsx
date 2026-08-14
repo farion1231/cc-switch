@@ -52,6 +52,7 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
     initialData,
     onSubmit,
     onSubmitReadyChange,
+    onManageAuthAccounts,
     isProxyTakeover,
   }: {
     initialData: {
@@ -73,6 +74,7 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
       iconColor?: string;
     }) => void;
     onSubmitReadyChange?: (isReady: boolean) => void;
+    onManageAuthAccounts?: (target: "codex_oauth") => void;
     isProxyTakeover?: boolean;
     appId?: string;
   }) => {
@@ -104,9 +106,20 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
         <output data-testid="is-proxy-takeover">
           {isProxyTakeover ? "true" : "false"}
         </output>
+        <button
+          type="button"
+          onClick={() => onManageAuthAccounts?.("codex_oauth")}
+        >
+          manage-auth
+        </button>
       </form>
     );
   },
+}));
+
+vi.mock("@/components/providers/AuthSettingsPanel", () => ({
+  AuthSettingsPanel: ({ target }: { target: string | null }) =>
+    target ? <div data-testid="auth-settings-panel">{target}</div> : null,
 }));
 
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
@@ -223,6 +236,35 @@ describe("EditProviderDialog", () => {
     expect(
       JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
     ).toEqual(provider.settingsConfig);
+  });
+
+  it("clears the nested auth panel before the dialog reopens", async () => {
+    const provider: Provider = {
+      id: "official",
+      name: "OpenAI Official",
+      settingsConfig: { auth: {}, config: "" },
+    };
+    const props = {
+      provider,
+      onOpenChange: vi.fn(),
+      onSubmit: vi.fn(),
+      appId: "codex" as const,
+    };
+    const { rerender } = render(<EditProviderDialog open {...props} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "manage-auth" }));
+    expect(screen.getByTestId("auth-settings-panel")).toHaveTextContent(
+      "codex_oauth",
+    );
+
+    rerender(<EditProviderDialog open={false} {...props} />);
+    rerender(<EditProviderDialog open {...props} />);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("auth-settings-panel"),
+      ).not.toBeInTheDocument();
+    });
   });
 
   it("编辑 Pi 供应商时保留通用元数据", async () => {

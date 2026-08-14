@@ -178,6 +178,22 @@ impl CodexLiveFileState {
     }
 }
 
+/// Rollback point for the cc-switch-owned model catalog. Catalog projection
+/// writes this file before the caller commits `config.toml`, so guarded restore
+/// paths use this snapshot when a concurrently changing `auth.json` cancels the
+/// commit.
+pub(crate) struct CodexModelCatalogFileSnapshot(CodexLiveFileState);
+
+impl CodexModelCatalogFileSnapshot {
+    pub(crate) fn capture() -> Result<Self, AppError> {
+        CodexLiveFileState::capture(get_codex_model_catalog_path()).map(Self)
+    }
+
+    pub(crate) fn restore(&self) -> Result<(), AppError> {
+        self.0.restore()
+    }
+}
+
 /// Exact rollback state for a managed Codex live write. The generated catalog
 /// and ownership marker are part of the same logical commit as auth/config.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2351,8 +2367,8 @@ fn remove_codex_proxy_placeholders_from_providers(providers: &mut toml_edit::Tab
     }
 }
 
-/// Project the built-in Codex official provider through the local proxy while
-/// keeping authentication owned by Codex itself.
+/// Project a Codex official account card through the local proxy while keeping
+/// authentication owned by Codex itself.
 ///
 /// The resulting custom provider explicitly opts into OpenAI authentication,
 /// so Codex forwards its existing ChatGPT login to the local `/responses`

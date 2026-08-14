@@ -145,4 +145,61 @@ describe("CodexOAuthSection", () => {
       "second@example.com",
     );
   });
+
+  it("locks the native card to the current Codex login", async () => {
+    const user = userEvent.setup();
+    render(
+      <CodexOAuthSection
+        mode="select"
+        selectedAccountId={null}
+        onAccountSelect={vi.fn()}
+        noneOptionLabel="Use Codex current login"
+        nativeLoginOnly
+      />,
+    );
+
+    const selector = screen.getByRole("combobox");
+    expect(selector).toBeDisabled();
+    expect(selector).toHaveTextContent("Use Codex current login");
+    await user.click(selector);
+    expect(
+      screen.queryByRole("option", { name: /user@example\.com/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("requires a managed account on managed Official cards", async () => {
+    const user = userEvent.setup();
+    render(
+      <CodexOAuthSection
+        mode="select"
+        selectedAccountId="account-1"
+        onAccountSelect={vi.fn()}
+        noneOptionLabel="Use Codex current login"
+        allowUnboundSelection={false}
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox"));
+    expect(
+      screen.queryByRole("option", { name: "Use Codex current login" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: /second@example\.com/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a disabled account prompt before a managed account is selected", () => {
+    render(
+      <CodexOAuthSection
+        mode="select"
+        selectedAccountId={null}
+        onAccountSelect={vi.fn()}
+        allowUnboundSelection={false}
+      />,
+    );
+
+    expect(screen.getByRole("combobox")).toHaveTextContent(
+      "选择一个 ChatGPT 账号",
+    );
+  });
 });

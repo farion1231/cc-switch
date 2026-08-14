@@ -40,7 +40,7 @@ interface ProviderActionsProps {
   isOmo?: boolean;
   onSwitch: () => void;
   onEdit: () => void;
-  onDuplicate: () => void;
+  onDuplicate?: () => void;
   onTest?: () => void;
   onConfigureUsage?: () => void;
   onDelete: () => void;
@@ -400,15 +400,17 @@ export function ProviderActions({
           <Edit className="h-4 w-4" />
         </Button>
 
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={onDuplicate}
-          title={t("provider.duplicate")}
-          className={iconButtonClass}
-        >
-          <Copy className="h-4 w-4" />
-        </Button>
+        {onDuplicate && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onDuplicate}
+            title={t("provider.duplicate")}
+            className={iconButtonClass}
+          >
+            <Copy className="h-4 w-4" />
+          </Button>
+        )}
 
         <Button
           size="icon"

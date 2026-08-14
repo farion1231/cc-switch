@@ -1393,7 +1393,7 @@
     "manageAccounts": "アカウント管理",
     "selectAccountPlaceholder": "ChatGPT アカウントを選択",
     "useDefaultAccount": "デフォルトアカウントを使用",
-    "noneOptionLabel": "管理アカウントをバインドせず、ブラウザでログイン",
+    "noneOptionLabel": "Codex の現在のログインを使用",
     "reauthTitle": "再ログインが必要なアカウントがあります",
     "reauthDescription": "ブラウザログインと同じ挙動にするため、これらのアカウントは再ログインして必要な認証情報（id_token）を補完する必要があります。再ログイン後は管理アカウントのバインドに利用できます。",
     "reauthBadge": "再ログインが必要",

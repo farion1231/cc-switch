@@ -23,7 +23,9 @@ import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
+import { resolveManagedAccountId } from "@/lib/authBinding";
 import {
+  CODEX_OFFICIAL_PROVIDER_ID,
   supportsOfficialProxyTakeover,
   providerNeedsRouting,
 } from "@/utils/providerCapabilities";
@@ -263,6 +265,12 @@ export function ProviderCard({
     appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
   const isCodexOauth =
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
+  const canDuplicate = !(
+    appId === "codex" &&
+    (provider.id === CODEX_OFFICIAL_PROVIDER_ID ||
+      (provider.category === "official" &&
+        !resolveManagedAccountId(provider.meta, "codex_oauth")?.trim()))
+  );
   // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
   const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
   // 统一权威谓词（详见 providerNeedsRouting）：以 providerType 为准，不受
@@ -458,14 +466,18 @@ export function ProviderCard({
                   />
                 )}
 
-              {isProxyRunning && isInFailoverQueue && health && (
-                <ProviderHealthBadge
-                  consecutiveFailures={health.consecutive_failures}
-                  isHealthy={health.is_healthy}
-                />
-              )}
+              {isProxyRunning &&
+                !supportsOfficialRouting &&
+                isInFailoverQueue &&
+                health && (
+                  <ProviderHealthBadge
+                    consecutiveFailures={health.consecutive_failures}
+                    isHealthy={health.is_healthy}
+                  />
+                )}
 
               {isAutoFailoverEnabled &&
+                !supportsOfficialRouting &&
                 isInFailoverQueue &&
                 failoverPriority && (
                   <FailoverPriorityBadge priority={failoverPriority} />
@@ -591,7 +603,9 @@ export function ProviderCard({
               isOmo={isAnyOmo}
               onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}
-              onDuplicate={() => onDuplicate(provider)}
+              onDuplicate={
+                canDuplicate ? () => onDuplicate(provider) : undefined
+              }
               onTest={
                 // 连通检测对第三方/自定义/Copilot/Codex-OAuth 供应商开放（这些正是旧的
                 // 真实请求探测会误报、而可达性探测能正确处理的对象）。官方供应商
@@ -622,7 +636,9 @@ export function ProviderCard({
               }
               isAutoFailoverEnabled={isAutoFailoverEnabled}
               isInFailoverQueue={isInFailoverQueue}
-              onToggleFailover={onToggleFailover}
+              onToggleFailover={
+                supportsOfficialRouting ? undefined : onToggleFailover
+              }
               // OpenClaw: default model
               isDefaultModel={isDefaultModel}
               isRemovalProtected={isRemovalProtected}

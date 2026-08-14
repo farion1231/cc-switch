@@ -1393,7 +1393,7 @@
     "manageAccounts": "Manage accounts",
     "selectAccountPlaceholder": "Choose a ChatGPT account",
     "useDefaultAccount": "Use default account",
-    "noneOptionLabel": "Don't bind a managed account, use browser login",
+    "noneOptionLabel": "Use Codex current login",
     "reauthTitle": "Some accounts need to sign in again",
     "reauthDescription": "To match the browser-login behavior, these accounts must sign in again to restore the required login credential (id_token). Once re-authenticated they can be used for managed binding.",
     "reauthBadge": "Re-login required",

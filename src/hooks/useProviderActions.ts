@@ -274,8 +274,8 @@ export function useProviderActions(
         );
       }
 
-      // The built-in Codex official provider can reuse Codex's native ChatGPT
-      // login through local routing. Other official providers remain blocked.
+      // Codex official account cards can reuse the active native ChatGPT login
+      // through local routing. Other apps' official providers remain blocked.
       const officialSupportsTakeover = supportsOfficialProxyTakeover(
         activeApp,
         provider,

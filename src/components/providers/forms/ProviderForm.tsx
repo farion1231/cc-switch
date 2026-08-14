@@ -129,6 +129,7 @@ import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
+import { CODEX_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 
 type PresetEntry = {
   id: string;
@@ -297,6 +298,18 @@ function ProviderFormFull({
 
   const { t } = useTranslation();
   const isEditMode = Boolean(initialData);
+  const isCodexNativeLoginProvider =
+    appId === "codex" && providerId === CODEX_OFFICIAL_PROVIDER_ID;
+  const { data: codexNativeLoginProviderExists = true } = useQuery({
+    queryKey: ["providers", "codex", "native-login-exists"],
+    enabled: appId === "codex" && !isEditMode,
+    queryFn: async () => {
+      const providers = await providersApi.getAll("codex");
+      return Boolean(providers[CODEX_OFFICIAL_PROVIDER_ID]);
+    },
+  });
+  const canCreateCodexNativeLoginProvider =
+    appId === "codex" && !isEditMode && !codexNativeLoginProviderExists;
   const queryClient = useQueryClient();
   const { data: settingsData } = useSettingsQuery();
   const showCommonConfigNotice =
@@ -789,8 +802,24 @@ function ProviderFormFull({
     appId === "codex" &&
     initialData?.category === "official" &&
     Boolean(resolveManagedAccountId(initialData?.meta, "codex_oauth"));
+  const isLegacyUnboundCodexOfficialCard =
+    isEditMode &&
+    isCodexOfficialProvider &&
+    !isCodexNativeLoginProvider &&
+    !wasCodexOfficialManagedOauthBound;
+  const isNewCodexNativeLoginCard =
+    canCreateCodexNativeLoginProvider &&
+    isCodexOfficialProvider &&
+    !selectedCodexAccountId;
+  const isCodexManagedOfficialCard =
+    isCodexOfficialProvider &&
+    !isCodexNativeLoginProvider &&
+    !isLegacyUnboundCodexOfficialCard &&
+    !isNewCodexNativeLoginCard;
   const requiresCodexOauthLogin =
-    isClaudeCodexOauthProvider || isCodexOfficialManagedOauthBound;
+    isClaudeCodexOauthProvider ||
+    isCodexOfficialManagedOauthBound ||
+    isCodexManagedOfficialCard;
 
   const {
     templateValues,
@@ -1291,6 +1320,9 @@ function ProviderFormFull({
       accountId === null ||
       accounts.some((account) => account.id === accountId);
     const selectedCodexAccountIsUsable = (accountId: string | null) => {
+      if (isCodexManagedOfficialCard && !accountId) {
+        return false;
+      }
       const effectiveAccountId =
         accountId ??
         codexOauthDefaultAccountId ??
@@ -1324,6 +1356,14 @@ function ProviderFormFull({
       requiresCodexOauthLogin &&
       !selectedCodexAccountIsUsable(selectedCodexAccountId)
     ) {
+      if (isCodexManagedOfficialCard && !selectedCodexAccountId) {
+        toast.error(
+          t("codexOauth.selectAccountPlaceholder", {
+            defaultValue: "选择一个 ChatGPT 账号",
+          }),
+        );
+        return;
+      }
       toast.error(
         t("managedAuth.selectedAccountNeedsReauth", {
           defaultValue: "已绑定账号不存在或需要重新登录",
@@ -1593,6 +1633,21 @@ function ProviderFormFull({
                 payload.providerKey,
               )
             : activePreset.suggestedDefaults;
+      }
+    }
+
+    if (!isEditMode && isCodexOfficialManagedOauthBound) {
+      const selectedAccountLogin = codexOauthAccounts.find(
+        (account) => account.id === selectedCodexAccountId,
+      )?.login;
+      const presetName = selectedPresetEntry
+        ? "nameKey" in selectedPresetEntry.preset &&
+          selectedPresetEntry.preset.nameKey
+          ? t(selectedPresetEntry.preset.nameKey)
+          : selectedPresetEntry.preset.name
+        : null;
+      if (selectedAccountLogin && presetName && payload.name === presetName) {
+        payload.name = `${presetName} (${selectedAccountLogin})`;
       }
     }
 
@@ -2405,6 +2460,12 @@ function ProviderFormFull({
               onCodexAccountSelect={setSelectedCodexAccountId}
               onManageAuthAccounts={onManageAuthAccounts}
               codexOauthNoneOptionLabel={t("codexOauth.noneOptionLabel")}
+              codexOauthAllowUnboundSelection={
+                isCodexNativeLoginProvider ||
+                isLegacyUnboundCodexOfficialCard ||
+                canCreateCodexNativeLoginProvider
+              }
+              codexOauthNativeLoginOnly={isCodexNativeLoginProvider}
               shouldShowSpeedTest={shouldShowSpeedTest}
               codexBaseUrl={codexBaseUrl}
               onBaseUrlChange={handleCodexBaseUrlChange}

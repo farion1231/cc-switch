@@ -15,6 +15,7 @@ import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
 import { invalidatePiProviderCaches } from "@/lib/query/pi";
+import { resolveManagedAccountId } from "@/lib/authBinding";
 import {
   CODEX_OFFICIAL_PROVIDER_ID,
   GROKBUILD_OFFICIAL_PROVIDER_ID,
@@ -54,34 +55,31 @@ export const useAddProviderMutation = (appId: AppId) => {
       }
 
       if (appId === "codex" && ensureCodexOfficialSeed) {
-        const inserted = await providersApi.ensureCodexOfficialProvider();
-        const providers = await providersApi.getAll(appId);
-        const officialProvider = providers[CODEX_OFFICIAL_PROVIDER_ID];
-        if (!officialProvider) {
-          throw new Error("Codex official provider was not created");
+        // The fixed seed is the one native "Codex current login" card.
+        // A managed account gets its own provider row so several accounts can
+        // coexist without replacing that native-login entry.
+        const managedAccountId = resolveManagedAccountId(
+          rest.meta,
+          "codex_oauth",
+        )?.trim();
+        if (!managedAccountId) {
+          await providersApi.ensureCodexOfficialProvider();
+          const providers = await providersApi.getAll(appId);
+          const nativeLoginProvider = providers[CODEX_OFFICIAL_PROVIDER_ID];
+          if (!nativeLoginProvider) {
+            throw new Error("Codex current-login provider was not created");
+          }
+          return nativeLoginProvider;
         }
 
-        // The ensure command deliberately preserves an existing fixed-id row.
-        // Re-entering the Official preset from Add Provider must honor that
-        // contract instead of silently overwriting the user's saved provider.
-        if (!inserted) {
-          return officialProvider;
-        }
-
-        // The fixed seed supplies identity/order, while the Add Provider form
-        // supplies the selected managed-account binding for a newly recreated
-        // row. Persist through the normal update path so current-provider live
-        // sync and managed auth preflight run too.
-        const updatedOfficialProvider: Provider = {
-          ...officialProvider,
+        const managedOfficialProvider: Provider = {
           ...rest,
-          id: CODEX_OFFICIAL_PROVIDER_ID,
+          id: generateUUID(),
           category: "official",
-          createdAt: officialProvider.createdAt,
-          sortIndex: officialProvider.sortIndex,
+          createdAt: Date.now(),
         };
-        await providersApi.update(updatedOfficialProvider, appId);
-        return updatedOfficialProvider;
+        await providersApi.add(managedOfficialProvider, appId, addToLive);
+        return managedOfficialProvider;
       }
 
       if (appId === "grokbuild" && ensureGrokBuildOfficialSeed) {

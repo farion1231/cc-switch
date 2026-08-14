@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
-import { providerNeedsRouting } from "@/utils/providerCapabilities";
+import {
+  providerNeedsRouting,
+  supportsOfficialProxyTakeover,
+} from "@/utils/providerCapabilities";
 
 function mkProvider(overrides: Partial<Provider> = {}): Provider {
   return { id: "p1", name: "Test", settingsConfig: {}, ...overrides };
@@ -12,6 +15,37 @@ const codexConfig = (wireApi: "chat_completions" | "responses") =>
   `model_provider = "custom"\n\n[model_providers.custom]\nname = "X"\nbase_url = "https://x.example/v1"\nwire_api = "${wireApi}"\n`;
 
 describe("providerNeedsRouting", () => {
+  it("allows only native-login and managed Codex Official cards during takeover", () => {
+    expect(
+      supportsOfficialProxyTakeover(
+        "codex",
+        mkProvider({ id: "codex-official", category: "official" }),
+      ),
+    ).toBe(true);
+    expect(
+      supportsOfficialProxyTakeover(
+        "codex",
+        mkProvider({
+          id: "managed-account-card",
+          category: "official",
+          meta: {
+            authBinding: {
+              source: "managed_account",
+              authProvider: "codex_oauth",
+              accountId: "acct-managed",
+            },
+          },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      supportsOfficialProxyTakeover(
+        "codex",
+        mkProvider({ id: "legacy-unbound", category: "official" }),
+      ),
+    ).toBe(false);
+  });
+
   it("官方供应商一律不需要路由（即便 providerType 是 OAuth）", () => {
     const apps: AppId[] = ["claude", "codex", "claude-desktop"];
     for (const app of apps) {

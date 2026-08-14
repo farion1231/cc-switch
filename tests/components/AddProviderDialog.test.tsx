@@ -40,9 +40,11 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
   ProviderForm: ({
     onSubmit,
     onSubmitReadyChange,
+    onManageAuthAccounts,
   }: {
     onSubmit: (values: ProviderFormValues) => void;
     onSubmitReadyChange?: (isReady: boolean) => void;
+    onManageAuthAccounts?: (target: "codex_oauth") => void;
   }) => {
     useEffect(() => {
       if (onSubmitReadyChange) {
@@ -57,9 +59,21 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
           event.preventDefault();
           onSubmit(mockFormValues);
         }}
-      />
+      >
+        <button
+          type="button"
+          onClick={() => onManageAuthAccounts?.("codex_oauth")}
+        >
+          manage-auth
+        </button>
+      </form>
     );
   },
+}));
+
+vi.mock("@/components/providers/AuthSettingsPanel", () => ({
+  AuthSettingsPanel: ({ target }: { target: string | null }) =>
+    target ? <div data-testid="auth-settings-panel">{target}</div> : null,
 }));
 
 describe("AddProviderDialog", () => {
@@ -197,6 +211,29 @@ describe("AddProviderDialog", () => {
         }),
       }),
     );
+  });
+
+  it("clears the nested auth panel before the dialog reopens", async () => {
+    const props = {
+      onOpenChange: vi.fn(),
+      appId: "codex" as const,
+      onSubmit: vi.fn(),
+    };
+    const { rerender } = render(<AddProviderDialog open {...props} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "manage-auth" }));
+    expect(screen.getByTestId("auth-settings-panel")).toHaveTextContent(
+      "codex_oauth",
+    );
+
+    rerender(<AddProviderDialog open={false} {...props} />);
+    rerender(<AddProviderDialog open {...props} />);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("auth-settings-panel"),
+      ).not.toBeInTheDocument();
+    });
   });
 
   it("新建 Grok Build 自定义供应商时不补默认 Grok 图标", async () => {

@@ -57,6 +57,334 @@ enum ClaudeTakeoverAuthPolicy {
     ManagedAccount { keep_auth_token: bool },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CodexAuthFileSnapshot {
+    contents: Option<Vec<u8>>,
+}
+
+impl CodexAuthFileSnapshot {
+    fn capture() -> Result<Self, String> {
+        let path = crate::codex_config::get_codex_auth_path();
+        match std::fs::read(&path) {
+            Ok(contents) => Ok(Self {
+                contents: Some(contents),
+            }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(Self { contents: None })
+            }
+            Err(error) => Err(format!(
+                "读取 Codex auth 失败 ({}): {error}",
+                path.display()
+            )),
+        }
+    }
+
+    fn value(&self) -> Result<Option<Value>, String> {
+        self.contents
+            .as_deref()
+            .map(serde_json::from_slice)
+            .transpose()
+            .map_err(|error| format!("读取 Codex auth 失败: {error}"))
+    }
+}
+
+/// Owns the exact auth.json generation observed at restore start.
+///
+/// A plain compare-then-write is unsafe because Codex can replace auth.json
+/// between those two operations. We instead atomically move the current path
+/// aside, compare the moved bytes, and only install a replacement if the path
+/// is still vacant. A newer Codex login therefore always wins.
+struct CodexAuthFileTransaction {
+    path: std::path::PathBuf,
+    quarantined: Option<std::path::PathBuf>,
+    installed: Option<Vec<u8>>,
+    finished: bool,
+}
+
+impl CodexAuthFileTransaction {
+    fn begin(expected: &CodexAuthFileSnapshot) -> Result<Self, String> {
+        let path = crate::codex_config::get_codex_auth_path();
+        let mut transaction = Self {
+            path: path.clone(),
+            quarantined: None,
+            installed: None,
+            finished: false,
+        };
+
+        let Some(expected_contents) = expected.contents.as_deref() else {
+            return match std::fs::read(&path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(transaction),
+                Ok(_) => Err(Self::changed_error()),
+                Err(error) => Err(format!(
+                    "读取 Codex auth 失败 ({}): {error}",
+                    path.display()
+                )),
+            };
+        };
+
+        // The no-clobber install/rollback protocol below requires hard links.
+        // Probe before moving the live credentials so unsupported custom Codex
+        // directories fail closed with auth.json still in place.
+        let probe = Self::unique_sibling_path(&path, "restore-probe")?;
+        match std::fs::hard_link(&path, &probe) {
+            Ok(()) => {
+                std::fs::remove_file(&probe).map_err(|error| {
+                    format!(
+                        "清理 Codex auth 事务能力探针失败 ({}): {error}",
+                        probe.display()
+                    )
+                })?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(Self::changed_error());
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Codex auth 所在文件系统不支持安全恢复，原凭据未修改 ({}): {error}",
+                    path.display()
+                ));
+            }
+        }
+
+        let quarantine = Self::unique_sibling_path(&path, "restore-backup")?;
+        match std::fs::rename(&path, &quarantine) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(Self::changed_error());
+            }
+            Err(error) => {
+                return Err(format!(
+                    "认领 Codex auth 失败 ({}): {error}",
+                    path.display()
+                ));
+            }
+        }
+        transaction.quarantined = Some(quarantine.clone());
+
+        let actual = std::fs::read(&quarantine).map_err(|error| {
+            format!(
+                "读取已认领的 Codex auth 失败 ({}): {error}",
+                quarantine.display()
+            )
+        })?;
+        if actual != expected_contents {
+            let restore_result = transaction.restore_quarantined_if_vacant();
+            transaction.finished = true;
+            return match restore_result {
+                Ok(()) => Err(Self::changed_error()),
+                Err(restore_error) => Err(format!(
+                    "{}; 恢复较新的 Codex auth 失败: {restore_error}",
+                    Self::changed_error()
+                )),
+            };
+        }
+
+        Ok(transaction)
+    }
+
+    fn install(&mut self, replacement: Option<Vec<u8>>) -> Result<(), String> {
+        let Some(contents) = replacement else {
+            return Ok(());
+        };
+
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                format!("创建 Codex auth 目录失败 ({}): {error}", parent.display())
+            })?;
+        }
+        let temporary = Self::unique_sibling_path(&self.path, "restore-new")?;
+        let write_result = (|| -> Result<(), String> {
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(&temporary).map_err(|error| {
+                format!(
+                    "创建 Codex auth 临时文件失败 ({}): {error}",
+                    temporary.display()
+                )
+            })?;
+            use std::io::Write;
+            file.write_all(&contents)
+                .and_then(|_| file.flush())
+                .map_err(|error| {
+                    format!(
+                        "写入 Codex auth 临时文件失败 ({}): {error}",
+                        temporary.display()
+                    )
+                })?;
+            drop(file);
+
+            match std::fs::hard_link(&temporary, &self.path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    Err(Self::changed_error())
+                }
+                Err(error) => Err(format!(
+                    "安装 Codex auth 失败 ({}): {error}",
+                    self.path.display()
+                )),
+            }
+        })();
+        let _ = std::fs::remove_file(&temporary);
+
+        if let Err(error) = write_result {
+            // If Codex created a newer path while the expected generation was
+            // quarantined, never put the older generation back over it.
+            if self.path.exists() {
+                self.discard_quarantined();
+                self.finished = true;
+            }
+            return Err(error);
+        }
+
+        self.installed = Some(contents);
+        Ok(())
+    }
+
+    fn commit(mut self) -> Result<(), String> {
+        self.discard_quarantined();
+        self.finished = true;
+        Ok(())
+    }
+
+    fn rollback(mut self) -> Result<(), String> {
+        let result = self.rollback_inner();
+        self.finished = true;
+        result
+    }
+
+    fn rollback_inner(&mut self) -> Result<(), String> {
+        if let Some(installed) = self.installed.take() {
+            let replacement_quarantine = Self::unique_sibling_path(&self.path, "restore-rollback")?;
+            match std::fs::rename(&self.path, &replacement_quarantine) {
+                Ok(()) => {
+                    let current = std::fs::read(&replacement_quarantine).map_err(|error| {
+                        format!(
+                            "读取待回滚 Codex auth 失败 ({}): {error}",
+                            replacement_quarantine.display()
+                        )
+                    })?;
+                    if current == installed {
+                        std::fs::remove_file(&replacement_quarantine).map_err(|error| {
+                            format!(
+                                "删除待回滚 Codex auth 失败 ({}): {error}",
+                                replacement_quarantine.display()
+                            )
+                        })?;
+                    } else {
+                        // Codex replaced our installed generation. Restore that
+                        // newer file if the path is still vacant and discard the
+                        // old expected generation.
+                        Self::restore_file_if_vacant(&replacement_quarantine, &self.path)?;
+                        self.discard_quarantined();
+                        return Ok(());
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    // A concurrent logout removed our generation. Missing auth
+                    // is newer state too; do not resurrect the old credentials.
+                    self.discard_quarantined();
+                    return Ok(());
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "回滚 Codex auth 失败 ({}): {error}",
+                        self.path.display()
+                    ));
+                }
+            }
+        }
+
+        self.restore_quarantined_if_vacant()
+    }
+
+    fn restore_quarantined_if_vacant(&mut self) -> Result<(), String> {
+        let Some(quarantined) = self.quarantined.take() else {
+            return Ok(());
+        };
+        Self::restore_file_if_vacant(&quarantined, &self.path)
+    }
+
+    fn restore_file_if_vacant(
+        source: &std::path::Path,
+        destination: &std::path::Path,
+    ) -> Result<(), String> {
+        match std::fs::hard_link(source, destination) {
+            Ok(()) => {
+                std::fs::remove_file(source).map_err(|error| {
+                    format!(
+                        "清理 Codex auth 事务文件失败 ({}): {error}",
+                        source.display()
+                    )
+                })?;
+                Ok(())
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                // The destination was recreated by Codex and is newer than the
+                // quarantined generation.
+                std::fs::remove_file(source).map_err(|remove_error| {
+                    format!(
+                        "清理旧 Codex auth 事务文件失败 ({}): {remove_error}",
+                        source.display()
+                    )
+                })?;
+                Ok(())
+            }
+            Err(error) => Err(format!(
+                "恢复 Codex auth 事务文件失败 ({} -> {}): {error}",
+                source.display(),
+                destination.display()
+            )),
+        }
+    }
+
+    fn discard_quarantined(&mut self) {
+        if let Some(path) = self.quarantined.take() {
+            if let Err(error) = std::fs::remove_file(&path) {
+                log::warn!(
+                    "清理旧 Codex auth 事务文件失败 ({}): {error}",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    fn unique_sibling_path(
+        path: &std::path::Path,
+        label: &str,
+    ) -> Result<std::path::PathBuf, String> {
+        let parent = path
+            .parent()
+            .ok_or_else(|| format!("无效的 Codex auth 路径: {}", path.display()))?;
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("auth.json");
+        Ok(parent.join(format!(
+            ".{file_name}.cc-switch-{label}-{}",
+            uuid::Uuid::new_v4()
+        )))
+    }
+
+    fn changed_error() -> String {
+        "Codex auth 在恢复期间发生变化；为避免覆盖新凭据，本次恢复已取消，请重试".to_string()
+    }
+}
+
+impl Drop for CodexAuthFileTransaction {
+    fn drop(&mut self) {
+        if !self.finished {
+            if let Err(error) = self.rollback_inner() {
+                log::error!("Codex auth 事务自动回滚失败: {error}");
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ProxyService {
     db: Arc<Database>,
@@ -1205,8 +1533,8 @@ impl ProxyService {
                     if let Ok(Some(mut provider)) =
                         self.db.get_provider_by_id(&provider_id, "codex")
                     {
-                        // The built-in official row is a routing capability, not
-                        // a credential store. Its auth must remain empty even
+                        // Official rows are routing/account selectors, not
+                        // credential stores. Their auth must remain empty even
                         // when the live Codex login uses OPENAI_API_KEY mode.
                         if crate::proxy::providers::is_codex_official_provider(&provider) {
                             return Ok(());
@@ -1896,11 +2224,8 @@ impl ProxyService {
             }
             AppType::Codex => {
                 if let Ok(Some(backup)) = self.db.get_live_backup("codex").await {
-                    let mut config: Value = serde_json::from_str(&backup.original_config)
+                    let config: Value = serde_json::from_str(&backup.original_config)
                         .map_err(|e| format!("解析 Codex 备份失败: {e}"))?;
-                    // 与 with_fallback 版共用同一保护：半接管重建与接管失败
-                    // 回滚也不得用快照覆盖 live 的官方 ChatGPT 登录（#6277）。
-                    self.preserve_codex_oauth_login_on_restore(&mut config)?;
                     self.write_codex_restore_backup(&config)?;
                     log::info!("Codex Live 配置已恢复");
                 }
@@ -1974,7 +2299,7 @@ impl ProxyService {
             .await
             .map_err(|e| format!("获取 {app_type_str} Live 备份失败: {e}"))?;
         if let Some(backup) = backup {
-            let mut config: Value = serde_json::from_str(&backup.original_config)
+            let config: Value = serde_json::from_str(&backup.original_config)
                 .map_err(|e| format!("解析 {app_type_str} 备份失败: {e}"))?;
 
             // 备份若是代理占位符（异常历史：上次 stop 失败导致 Live 留在了代理状态，
@@ -1985,9 +2310,6 @@ impl ProxyService {
                     "{app_type_str} 备份本身已是代理占位符（异常历史状态），跳过备份，改走 SSOT 重建 Live"
                 );
             } else {
-                if matches!(app_type, AppType::Codex) {
-                    self.preserve_codex_oauth_login_on_restore(&mut config)?;
-                }
                 self.write_live_config_for_app(app_type, &config)?;
                 log::info!("{app_type_str} Live 配置已从备份恢复");
                 return Ok(());
@@ -2631,8 +2953,8 @@ impl ProxyService {
             .map_err(|e| format!("读取供应商失败: {e}"))?
             .ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
 
-        // Defense-in-depth: only the built-in Codex official provider supports
-        // native OpenAI auth passthrough during takeover.
+        // Defense-in-depth: only Codex official providers support native OpenAI
+        // auth passthrough during takeover.
         if provider.category.as_deref() == Some("official")
             && !crate::services::provider::official_provider_supports_proxy_takeover(
                 &app_type_enum,
@@ -2998,9 +3320,9 @@ impl ProxyService {
 
     /// 恢复备份到 Codex live 时绝不覆盖官方 ChatGPT 登录。
     ///
-    /// 备份是接管开启时的快照，而 live 的 `auth.json` 只会被 Codex 自己
-    /// （登录 / token 自刷新）更新——所以只要 live 持有真实登录凭据（非
-    /// 接管占位符），它就恒比快照新，必须获胜：登录发生在接管期间时备份
+    /// 备份是接管开启时的快照，而 live 的 `auth.json` 可能被 Codex
+    /// （登录 / token 自刷新）或接管中的托管账号切换更新——所以只要 live
+    /// 持有真实登录凭据（非接管占位符），它就比快照新，必须获胜：登录发生在接管期间时备份
     /// 里是第三方 API key（#6277 的循环覆盖链），把它降级进 config 的
     /// `experimental_bearer_token`；备份也是官方形态时它的 tokens 只是旧
     /// 副本，同样不写回。摘掉备份 auth 槽后 `write_codex_live_verbatim`
@@ -3009,23 +3331,23 @@ impl ProxyService {
     /// `tokens.account_id` 等元数据残留不算登录，既不让 sk-+元数据形态的
     /// 备份逃过降级，也不把元数据残留的 live 误当官方登录。与
     /// `auth.json` 独立读取，避免损坏的 config.toml 掩盖有效登录。官方
-    /// provider 缺失 auth 文件时也必须保留，因为它表示接管期间主动登出。
+    /// provider 缺失 auth 文件时也必须保留，因为它表示接管期间主动登出；
+    /// 当前 provider 无法归类时沿用备份侧的保守策略，不回放未知来源的旧凭据。
     /// 与 `preserve_codex_auth_in_backup` 语义对称（那边保护备份方向），同样
     /// 不受"非接管切换保留官方登录"设置门控（接管子系统的既有不变量是
     /// 无条件不清官方登录）。
-    fn preserve_codex_oauth_login_on_restore(&self, target: &mut Value) -> Result<(), String> {
-        let auth_path = crate::codex_config::get_codex_auth_path();
-        let live_auth = if auth_path.exists() {
-            Some(read_json_file(&auth_path).map_err(|e| format!("读取 Codex auth 失败: {e}"))?)
-        } else {
-            None
-        };
+    fn preserve_codex_oauth_login_on_restore(
+        &self,
+        target: &mut Value,
+    ) -> Result<CodexAuthFileSnapshot, String> {
+        let auth_snapshot = CodexAuthFileSnapshot::capture()?;
+        let live_auth = auth_snapshot.value()?;
         let live_has_login = live_auth.as_ref().is_some_and(|auth| {
             !Self::codex_auth_has_proxy_placeholder(auth)
                 && crate::codex_config::codex_auth_has_credential_login_material(auth)
         });
         let Some(target_obj) = target.as_object_mut() else {
-            return Ok(());
+            return Ok(auth_snapshot);
         };
 
         if live_has_login {
@@ -3055,19 +3377,16 @@ impl ProxyService {
             log::info!(
                 "Codex 恢复：live 持有官方 ChatGPT 登录凭据（恒比备份快照新），保留登录，仅恢复 config"
             );
-            return Ok(());
+            return Ok(auth_snapshot);
         }
 
-        let missing_official_auth = live_auth.is_none()
-            && self
-                .get_current_provider_for_app(&AppType::Codex)?
-                .as_ref()
-                .is_some_and(crate::proxy::providers::is_codex_official_provider);
-        if missing_official_auth {
+        let missing_preservable_auth =
+            live_auth.is_none() && self.should_preserve_current_codex_auth()?;
+        if missing_preservable_auth {
             target_obj.remove("auth");
-            log::info!("Codex 恢复：保留官方 provider 当前的登出状态，仅恢复 config");
+            log::info!("Codex 恢复：保留当前缺失的 auth 状态，仅恢复 config");
         }
-        Ok(())
+        Ok(auth_snapshot)
     }
 
     /// 代理模式下切换供应商（热切换，并按需刷新代理安全的 Live 显示字段）
@@ -3223,16 +3542,9 @@ impl ProxyService {
     }
 
     fn write_codex_restore_backup(&self, config: &Value) -> Result<(), String> {
-        let restores_absent_auth = config
-            .get("auth")
-            .and_then(Value::as_object)
-            .is_some_and(Map::is_empty);
-        self.write_codex_live(config)?;
-        if restores_absent_auth {
-            crate::config::delete_file(&crate::codex_config::get_codex_auth_path())
-                .map_err(|e| format!("删除 Codex auth 失败: {e}"))?;
-        }
-        Ok(())
+        let mut config = config.clone();
+        let auth_snapshot = self.preserve_codex_oauth_login_on_restore(&mut config)?;
+        self.write_codex_live_verbatim_with_auth_guard(&config, Some(&auth_snapshot))
     }
 
     fn write_codex_live_for_provider(
@@ -3348,10 +3660,30 @@ impl ProxyService {
     }
 
     fn write_codex_live_verbatim(&self, config: &Value) -> Result<(), String> {
+        self.write_codex_live_verbatim_with_auth_guard(config, None)
+    }
+
+    fn write_codex_live_verbatim_with_auth_guard(
+        &self,
+        config: &Value,
+        expected_auth: Option<&CodexAuthFileSnapshot>,
+    ) -> Result<(), String> {
         use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
 
         let auth = config.get("auth");
         let config_str = config.get("config").and_then(|v| v.as_str());
+
+        let catalog_snapshot = if expected_auth.is_some()
+            && config_str.is_some()
+            && config.get("modelCatalog").is_some()
+        {
+            Some(
+                crate::codex_config::CodexModelCatalogFileSnapshot::capture()
+                    .map_err(|e| format!("捕获 Codex 模型目录失败: {e}"))?,
+            )
+        } else {
+            None
+        };
 
         // Decide the config.toml text ONCE, before splitting on auth. A stored
         // Codex backup comes in two shapes needing opposite handling:
@@ -3372,7 +3704,7 @@ impl ProxyService {
         // modelCatalog but would not get apply_patch re-stripped until the next
         // provider switch rewrites it via write_live_snapshot. Acceptable known
         // limitation (restore-of-deleted-provider-backup only).
-        let prepared_cfg = config_str
+        let prepared_cfg_result = config_str
             .map(|cfg| {
                 crate::codex_config::prepare_codex_live_config_text_with_optional_catalog(
                     config,
@@ -3381,34 +3713,88 @@ impl ProxyService {
                 )
             })
             .transpose()
-            .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
-
-        match (auth, prepared_cfg.as_deref()) {
-            (Some(auth), Some(cfg)) => {
-                if auth.as_object().is_some_and(|obj| obj.is_empty()) {
-                    // An empty provider snapshot must not destroy an existing
-                    // Codex login. This is especially important when takeover
-                    // switches from an API-key-backed official session to the
-                    // built-in empty `codex-official` seed.
-                    let config_path = get_codex_config_path();
-                    crate::config::write_text_file(&config_path, cfg)
-                        .map_err(|e| format!("写入 Codex config 失败: {e}"))?;
-                } else {
-                    crate::codex_config::write_codex_live_atomic(auth, Some(cfg))
-                        .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
+            .map_err(|e| format!("写入 Codex 配置失败: {e}"));
+        let prepared_cfg = match prepared_cfg_result {
+            Ok(prepared_cfg) => prepared_cfg,
+            Err(error) => {
+                if let Some(snapshot) = catalog_snapshot.as_ref() {
+                    snapshot.restore().map_err(|rollback_error| {
+                        format!("{error}; 回滚 Codex 模型目录失败: {rollback_error}")
+                    })?;
                 }
+                return Err(error);
             }
-            (Some(auth), None) => {
-                let auth_path = get_codex_auth_path();
-                write_json_file(&auth_path, auth)
-                    .map_err(|e| format!("写入 Codex auth 失败: {e}"))?;
+        };
+
+        let write_result = if let (Some(expected_auth), Some(auth)) = (expected_auth, auth) {
+            (|| -> Result<(), String> {
+                let replacement = if auth.as_object().is_some_and(Map::is_empty) {
+                    None
+                } else {
+                    Some(
+                        serde_json::to_vec_pretty(auth)
+                            .map_err(|error| format!("序列化 Codex auth 失败: {error}"))?,
+                    )
+                };
+                let mut transaction = CodexAuthFileTransaction::begin(expected_auth)?;
+                if let Err(error) = transaction.install(replacement) {
+                    return match transaction.rollback() {
+                        Ok(()) => Err(error),
+                        Err(rollback_error) => {
+                            Err(format!("{error}; 回滚 Codex auth 失败: {rollback_error}"))
+                        }
+                    };
+                }
+
+                let config_result = prepared_cfg.as_deref().map_or(Ok(()), |cfg| {
+                    crate::config::write_text_file(&get_codex_config_path(), cfg)
+                        .map_err(|error| format!("写入 Codex config 失败: {error}"))
+                });
+                match config_result {
+                    Ok(()) => transaction.commit(),
+                    Err(error) => match transaction.rollback() {
+                        Ok(()) => Err(error),
+                        Err(rollback_error) => {
+                            Err(format!("{error}; 回滚 Codex auth 失败: {rollback_error}"))
+                        }
+                    },
+                }
+            })()
+        } else {
+            match (auth, prepared_cfg.as_deref()) {
+                (Some(auth), Some(cfg)) => {
+                    if auth.as_object().is_some_and(Map::is_empty) {
+                        // Unguarded provider writes preserve an existing login;
+                        // only restore transactions interpret empty auth as an
+                        // exact-generation deletion.
+                        crate::config::write_text_file(&get_codex_config_path(), cfg)
+                            .map_err(|e| format!("写入 Codex config 失败: {e}"))
+                    } else {
+                        crate::codex_config::write_codex_live_atomic(auth, Some(cfg))
+                            .map_err(|e| format!("写入 Codex 配置失败: {e}"))
+                    }
+                }
+                (Some(auth), None) => {
+                    if auth.as_object().is_some_and(Map::is_empty) {
+                        Ok(())
+                    } else {
+                        write_json_file(&get_codex_auth_path(), auth)
+                            .map_err(|e| format!("写入 Codex auth 失败: {e}"))
+                    }
+                }
+                (None, Some(cfg)) => crate::config::write_text_file(&get_codex_config_path(), cfg)
+                    .map_err(|e| format!("写入 Codex config 失败: {e}")),
+                (None, None) => Ok(()),
             }
-            (None, Some(cfg)) => {
-                let config_path = get_codex_config_path();
-                crate::config::write_text_file(&config_path, cfg)
-                    .map_err(|e| format!("写入 Codex config 失败: {e}"))?;
+        };
+
+        if let Err(error) = write_result {
+            if let Some(snapshot) = catalog_snapshot.as_ref() {
+                snapshot.restore().map_err(|rollback_error| {
+                    format!("{error}; 回滚 Codex 模型目录失败: {rollback_error}")
+                })?;
             }
-            (None, None) => {}
+            return Err(error);
         }
 
         Ok(())
@@ -4273,7 +4659,7 @@ mod tests {
             .expect("seed managed account");
 
         let mut provider = Provider::with_id(
-            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "managed-official".to_string(),
             "OpenAI Official".to_string(),
             json!({ "auth": {}, "config": "model = \"gpt-5.4\"\n" }),
             None,
@@ -4787,7 +5173,7 @@ wire_api = "responses"
             .expect("seed managed account");
 
         let mut managed = Provider::with_id(
-            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "managed-official".to_string(),
             "OpenAI Official".to_string(),
             json!({ "auth": {}, "config": "model = \"gpt-5.4\"\n" }),
             None,
@@ -4927,7 +5313,7 @@ wire_api = "responses"
             ..Default::default()
         });
         let mut managed_b = Provider::with_id(
-            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "managed-official-b".to_string(),
             "OpenAI Official B".to_string(),
             json!({ "auth": {}, "config": "model = \"gpt-5.4\"\n" }),
             None,
@@ -5063,7 +5449,7 @@ wire_api = "responses"
             None,
         );
         let mut managed = Provider::with_id(
-            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "managed-official".to_string(),
             "OpenAI Official".to_string(),
             json!({ "auth": {}, "config": "model = \"gpt-5.4\"\n" }),
             None,
@@ -5338,7 +5724,7 @@ wire_api = "responses"
             .expect("seed native live bundle");
 
         let mut provider = Provider::with_id(
-            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "managed-official".to_string(),
             "OpenAI Official".to_string(),
             json!({ "auth": {}, "config": native_config }),
             None,
@@ -6953,7 +7339,7 @@ base_url = "https://codex.example/v1"
         .expect("seed live backup");
 
         let mut provider = Provider::with_id(
-            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "managed-official".to_string(),
             "OpenAI Official".to_string(),
             json!({
                 "auth": {},
@@ -7029,7 +7415,7 @@ base_url = "https://codex.example/v1"
             .expect("seed native auth");
 
         let mut provider = Provider::with_id(
-            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "managed-official".to_string(),
             "OpenAI Official".to_string(),
             json!({ "auth": {}, "config": "model = \"gpt-5.4\"\n" }),
             None,
@@ -7130,7 +7516,7 @@ base_url = "https://codex.example/v1"
         let db = Arc::new(Database::memory().expect("init db"));
         let service = ProxyService::new(db.clone());
         let mut provider = Provider::with_id(
-            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "managed-official".to_string(),
             "OpenAI Official".to_string(),
             json!({ "auth": {}, "config": "" }),
             None,
@@ -8814,10 +9200,289 @@ base_url = "https://third.example/v1"
         );
     }
 
-    /// Live auth.json is only ever advanced by Codex itself (login / token
-    /// self-refresh), so genuine live credentials are always newer than the
-    /// takeover-start snapshot: even an official-shape backup must not roll
-    /// live tokens back. The auth check must not depend on config.toml parsing.
+    #[tokio::test]
+    #[serial]
+    async fn restore_preserves_missing_codex_auth_when_current_provider_is_unknown() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": {
+                    "auth_mode": "chatgpt",
+                    "tokens": { "refresh_token": "stale-rt" }
+                },
+                "config": "model_provider = \"any\"\n"
+            }))
+            .expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup");
+        crate::codex_config::write_codex_live_config_atomic(Some("model = \"gpt-5.4\"\n"))
+            .expect("seed config without auth");
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Codex)
+            .await
+            .expect("restore codex");
+
+        assert!(
+            !crate::codex_config::get_codex_auth_path().exists(),
+            "an unclassified backup must not replay credentials over missing live auth"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn guarded_codex_restore_rejects_a_changed_auth_file() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+        let auth_path = crate::codex_config::get_codex_auth_path();
+        write_json_file(
+            &auth_path,
+            &json!({ "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER }),
+        )
+        .expect("seed observed auth");
+        let observed = CodexAuthFileSnapshot::capture().expect("capture auth");
+        write_json_file(
+            &auth_path,
+            &json!({
+                "auth_mode": "chatgpt",
+                "tokens": { "refresh_token": "new-rt" }
+            }),
+        )
+        .expect("simulate concurrent login");
+
+        let error = service
+            .write_codex_live_verbatim_with_auth_guard(
+                &json!({
+                    "auth": { "OPENAI_API_KEY": "stale-key" },
+                    "config": "model_provider = \"any\"\n"
+                }),
+                Some(&observed),
+            )
+            .expect_err("changed auth must cancel restore");
+
+        assert!(error.contains("发生变化"));
+        let current: Value = read_json_file(&auth_path).expect("read current auth");
+        assert_eq!(
+            current
+                .pointer("/tokens/refresh_token")
+                .and_then(Value::as_str),
+            Some("new-rt")
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn restore_empty_auth_without_config_keeps_auth_file_absent() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let provider = Provider::with_id(
+            "third-party".to_string(),
+            "Third Party".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-third-party" },
+                "config": "model_provider = \"third-party\"\n"
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider)
+            .expect("save current provider");
+        db.set_current_provider("codex", &provider.id)
+            .expect("set current provider");
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": {},
+                "config": null
+            }))
+            .expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Codex)
+            .await
+            .expect("restore empty auth backup");
+
+        assert!(
+            !crate::codex_config::get_codex_auth_path().exists(),
+            "an empty backup must preserve the missing-file logout state"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn changed_auth_after_catalog_prepare_rolls_catalog_back() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        seed_codex_model_template();
+
+        let catalog_path = crate::codex_config::get_codex_model_catalog_path();
+        write_json_file(&catalog_path, &json!({ "models": ["old"] })).expect("seed catalog");
+        let auth_snapshot = CodexAuthFileSnapshot::capture().expect("capture missing auth");
+
+        let auth_path = crate::codex_config::get_codex_auth_path();
+        write_json_file(
+            &auth_path,
+            &json!({
+                "auth_mode": "chatgpt",
+                "tokens": { "refresh_token": "new-rt" }
+            }),
+        )
+        .expect("simulate concurrent login");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+        let error = service
+            .write_codex_live_verbatim_with_auth_guard(
+                &json!({
+                    "auth": { "OPENAI_API_KEY": "stale-key" },
+                    "config": "model = \"model-a\"\n",
+                    "modelCatalog": { "models": [{ "model": "model-a" }] }
+                }),
+                Some(&auth_snapshot),
+            )
+            .expect_err("changed auth must cancel the prepared restore");
+
+        assert!(error.contains("发生变化"));
+        let catalog: Value = read_json_file(&catalog_path).expect("read rolled-back catalog");
+        assert_eq!(catalog, json!({ "models": ["old"] }));
+        let auth: Value = read_json_file(&auth_path).expect("read concurrent auth");
+        assert_eq!(
+            auth.pointer("/tokens/refresh_token")
+                .and_then(Value::as_str),
+            Some("new-rt")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn guarded_restore_delete_preserves_login_created_after_auth_claim() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let auth_path = crate::codex_config::get_codex_auth_path();
+        write_json_file(
+            &auth_path,
+            &json!({ "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER }),
+        )
+        .expect("seed takeover auth");
+        let auth_snapshot = CodexAuthFileSnapshot::capture().expect("capture takeover auth");
+        let mut transaction =
+            CodexAuthFileTransaction::begin(&auth_snapshot).expect("claim takeover auth");
+
+        write_json_file(
+            &auth_path,
+            &json!({
+                "auth_mode": "chatgpt",
+                "tokens": { "refresh_token": "new-rt" }
+            }),
+        )
+        .expect("simulate login after claim");
+        transaction.install(None).expect("stage auth deletion");
+        transaction.commit().expect("commit auth deletion");
+
+        let current: Value = read_json_file(&auth_path).expect("read newer auth");
+        assert_eq!(
+            current
+                .pointer("/tokens/refresh_token")
+                .and_then(Value::as_str),
+            Some("new-rt")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn guarded_restore_write_rejects_login_created_after_auth_claim() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let auth_path = crate::codex_config::get_codex_auth_path();
+        write_json_file(
+            &auth_path,
+            &json!({ "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER }),
+        )
+        .expect("seed takeover auth");
+        let auth_snapshot = CodexAuthFileSnapshot::capture().expect("capture takeover auth");
+        let mut transaction =
+            CodexAuthFileTransaction::begin(&auth_snapshot).expect("claim takeover auth");
+
+        write_json_file(
+            &auth_path,
+            &json!({
+                "auth_mode": "chatgpt",
+                "tokens": { "refresh_token": "new-rt" }
+            }),
+        )
+        .expect("simulate login after claim");
+        transaction
+            .install(Some(br#"{"OPENAI_API_KEY":"stale-key"}"#.to_vec()))
+            .expect_err("newer login must win the no-clobber install");
+
+        let current: Value = read_json_file(&auth_path).expect("read newer auth");
+        assert_eq!(
+            current
+                .pointer("/tokens/refresh_token")
+                .and_then(Value::as_str),
+            Some("new-rt")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn guarded_restore_final_config_failure_rolls_back_auth_and_catalog() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        seed_codex_model_template();
+
+        let auth_path = crate::codex_config::get_codex_auth_path();
+        let original_auth = json!({ "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER });
+        write_json_file(&auth_path, &original_auth).expect("seed takeover auth");
+        let auth_snapshot = CodexAuthFileSnapshot::capture().expect("capture takeover auth");
+
+        let catalog_path = crate::codex_config::get_codex_model_catalog_path();
+        let original_catalog = json!({ "models": ["old"] });
+        write_json_file(&catalog_path, &original_catalog).expect("seed catalog");
+
+        let config_path = crate::codex_config::get_codex_config_path();
+        std::fs::create_dir(&config_path).expect("make config target unwritable as a file");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+        let error = service
+            .write_codex_live_verbatim_with_auth_guard(
+                &json!({
+                    "auth": { "OPENAI_API_KEY": "restored-key" },
+                    "config": "model = \"model-a\"\n",
+                    "modelCatalog": { "models": [{ "model": "model-a" }] }
+                }),
+                Some(&auth_snapshot),
+            )
+            .expect_err("config write must fail");
+
+        assert!(error.contains("config"));
+        let auth: Value = read_json_file(&auth_path).expect("read rolled-back auth");
+        assert_eq!(auth, original_auth);
+        let catalog: Value = read_json_file(&catalog_path).expect("read rolled-back catalog");
+        assert_eq!(catalog, original_catalog);
+    }
+
+    /// Live auth.json can advance through Codex login/token refresh or a managed
+    /// account switch. That state is newer than the takeover-start snapshot, so
+    /// even an official-shape backup must not roll live tokens back. The auth
+    /// check must not depend on config.toml parsing.
     #[tokio::test]
     #[serial]
     async fn restore_prefers_live_codex_oauth_tokens_over_backup_snapshot() {

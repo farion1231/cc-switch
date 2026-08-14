@@ -43,6 +43,10 @@ interface CodexOAuthSectionProps {
   onManageAccounts?: () => void;
   /** 空选择项文案；默认表示使用托管认证的默认账号 */
   noneOptionLabel?: string;
+  /** 是否允许不绑定托管账号 */
+  allowUnboundSelection?: boolean;
+  /** 固定展示原生 Codex 当前登录，不允许改绑 */
+  nativeLoginOnly?: boolean;
   /** 是否开启 Codex FAST mode */
   fastModeEnabled?: boolean;
   /** FAST mode 切换回调 */
@@ -63,6 +67,8 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   onAccountSelect,
   onManageAccounts,
   noneOptionLabel,
+  allowUnboundSelection = true,
+  nativeLoginOnly = false,
   fastModeEnabled = false,
   onFastModeChange,
 }) => {
@@ -137,6 +143,9 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     accounts.some(
       (account) => account.id === selectedAccountId && account.reauth_required,
     );
+  const accountSelectValue =
+    selectedAccountId ??
+    (allowUnboundSelection ? "none" : "__managed_account_required__");
 
   const accountSelect = isStatusSuccess &&
     onAccountSelect &&
@@ -148,8 +157,9 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
             : t("codexOauth.selectAccount", "选择账号")}
         </Label>
         <Select
-          value={selectedAccountId || "none"}
+          value={accountSelectValue}
           onValueChange={handleAccountSelect}
+          disabled={nativeLoginOnly}
         >
           <SelectTrigger>
             <SelectValue
@@ -160,26 +170,39 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
             />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="none">
-              <span className="text-muted-foreground">
-                {noneOptionLabel ??
-                  t("codexOauth.useDefaultAccount", "使用默认账号")}
-              </span>
-            </SelectItem>
-            {accounts.map((account) => (
-              <SelectItem key={account.id} value={account.id}>
-                <div className="flex items-center gap-2">
-                  <User className="h-4 w-4 text-muted-foreground" />
-                  <span>{account.login}</span>
-                  {account.reauth_required && (
-                    <span className="ml-1 inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
-                      <AlertTriangle className="h-3 w-3" />
-                      {t("codexOauth.reauthBadge", "需要重新登录")}
-                    </span>
-                  )}
-                </div>
+            {allowUnboundSelection && (
+              <SelectItem value="none">
+                <span className="text-muted-foreground">
+                  {noneOptionLabel ??
+                    t("codexOauth.useDefaultAccount", "使用默认账号")}
+                </span>
               </SelectItem>
-            ))}
+            )}
+            {!allowUnboundSelection && !selectedAccountId && (
+              <SelectItem value="__managed_account_required__" disabled>
+                <span className="text-muted-foreground">
+                  {t(
+                    "codexOauth.selectAccountPlaceholder",
+                    "选择一个 ChatGPT 账号",
+                  )}
+                </span>
+              </SelectItem>
+            )}
+            {!nativeLoginOnly &&
+              accounts.map((account) => (
+                <SelectItem key={account.id} value={account.id}>
+                  <div className="flex items-center gap-2">
+                    <User className="h-4 w-4 text-muted-foreground" />
+                    <span>{account.login}</span>
+                    {account.reauth_required && (
+                      <span className="ml-1 inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
+                        <AlertTriangle className="h-3 w-3" />
+                        {t("codexOauth.reauthBadge", "需要重新登录")}
+                      </span>
+                    )}
+                  </div>
+                </SelectItem>
+              ))}
           </SelectContent>
         </Select>
       </div>

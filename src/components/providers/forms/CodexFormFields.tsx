@@ -74,6 +74,8 @@ interface CodexFormFieldsProps {
   onCodexAccountSelect?: (accountId: string | null) => void;
   onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
   codexOauthNoneOptionLabel?: string;
+  codexOauthAllowUnboundSelection?: boolean;
+  codexOauthNativeLoginOnly?: boolean;
 
   // Base URL
   shouldShowSpeedTest: boolean;
@@ -189,6 +191,8 @@ export function CodexFormFields({
   onCodexAccountSelect,
   onManageAuthAccounts,
   codexOauthNoneOptionLabel,
+  codexOauthAllowUnboundSelection,
+  codexOauthNativeLoginOnly,
   shouldShowSpeedTest,
   codexBaseUrl,
   onBaseUrlChange,
@@ -525,6 +529,8 @@ export function CodexFormFields({
               : undefined
           }
           noneOptionLabel={codexOauthNoneOptionLabel}
+          allowUnboundSelection={codexOauthAllowUnboundSelection}
+          nativeLoginOnly={codexOauthNativeLoginOnly}
         />
       )}
 
