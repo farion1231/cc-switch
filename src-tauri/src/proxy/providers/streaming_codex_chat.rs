@@ -335,47 +335,86 @@ impl ChatToResponsesState {
         (!self.reasoning.text.trim().is_empty()).then(|| self.reasoning.text.trim().to_string())
     }
 
-    /// 上游未下发 `index` 时的 key 解析。
+    /// 分配一个不会与现有调用冲突的内部 key。
     ///
-    /// `index` 在 OpenAI Chat Completions 协议里是必填字段，但部分第三方网关会省略。
-    /// 缺了它就无法从帧结构上区分「同一调用的 arguments 续帧」和「一个新调用」，
-    /// 所以这里只在**能确证是新调用**时才分配新 key：delta 带非空 `id`，且该 id 与
-    /// 所有已知调用都不同。其余情况一律归入最后一个已知 key（空 map 时为 0），保持
-    /// 既有行为——宁可两个并行调用坍缩成一个，也不能把一个调用的续帧炸成多个 item。
-    fn resolve_tool_key_without_index(&self, tool_call: &Value) -> usize {
-        let last_key = self.tools.keys().next_back().copied();
-
-        let Some(id) = tool_call
-            .get("id")
-            .and_then(|v| v.as_str())
-            .filter(|id| !id.is_empty())
-        else {
-            return last_key.unwrap_or(0);
-        };
-
-        if let Some((key, _)) = self.tools.iter().find(|(_, state)| state.call_id == id) {
-            return *key;
+    /// 正常情况下追加到最大 key 后面，以保持调用到达顺序。若畸形上游已经使用
+    /// `usize::MAX`，则从 0 开始寻找第一个空洞，避免溢出、回绕或覆盖已有调用。
+    fn next_available_tool_key(&self) -> Option<usize> {
+        if let Some(next) = self
+            .tools
+            .keys()
+            .next_back()
+            .and_then(|key| key.checked_add(1))
+        {
+            return Some(next);
         }
 
-        // 上游可以先发一个显式 `index: usize::MAX` 再发无 index 的新 id。这段代码
-        // 存在的理由就是应付畸形上游，所以不能用裸 `+1`（debug 下 panic、release 下
-        // 回绕到 0 覆盖已有调用）。溢出时退回并入最后一个已知调用，与本函数
-        // "宁可坍缩也不炸开" 的取向一致。
-        match last_key {
-            Some(key) => key.checked_add(1).unwrap_or(key),
-            None => 0,
+        let mut candidate = 0usize;
+        for key in self.tools.keys().copied() {
+            if key > candidate {
+                return Some(candidate);
+            }
+            if key == candidate {
+                candidate = candidate.checked_add(1)?;
+            }
+        }
+        Some(candidate)
+    }
+
+    /// 将上游的原始 `index` 与稳定的非空调用 ID 统一解析成内部 key。
+    ///
+    /// 非空 ID 是更强的身份信号：已知 ID 永远回到原状态；显式 index 只有在空闲、
+    /// 对应状态尚无 ID、或 ID 相同时才复用。不同非空 ID 冲突时必须另行分配 key。
+    /// 对于既没有可用 ID、又缺少 index 的续帧，继续保守地归入最后一个已知调用。
+    fn resolve_tool_key(
+        &self,
+        explicit_index: Option<usize>,
+        call_id: Option<&str>,
+    ) -> Option<usize> {
+        let call_id = call_id.filter(|id| !id.is_empty());
+
+        if let Some(call_id) = call_id {
+            if let Some((key, _)) = self
+                .tools
+                .iter()
+                .find(|(_, state)| state.call_id == call_id)
+            {
+                return Some(*key);
+            }
+        }
+
+        let Some(explicit_index) = explicit_index else {
+            return match call_id {
+                Some(_) => self.next_available_tool_key(),
+                None => Some(self.tools.keys().next_back().copied().unwrap_or(0)),
+            };
+        };
+
+        match self.tools.get(&explicit_index) {
+            None => Some(explicit_index),
+            Some(state) => match call_id {
+                None => Some(explicit_index),
+                Some(call_id) if state.call_id.is_empty() || state.call_id == call_id => {
+                    Some(explicit_index)
+                }
+                Some(_) => self.next_available_tool_key(),
+            },
         }
     }
 
     fn push_tool_call_delta(&mut self, tool_call: &Value, reasoning: Option<&str>) -> Vec<Bytes> {
-        let chat_index = match tool_call.get("index").and_then(|v| v.as_u64()) {
-            Some(index) => index as usize,
-            None => self.resolve_tool_key_without_index(tool_call),
-        };
         let id_delta = tool_call
             .get("id")
             .and_then(|v| v.as_str())
             .map(str::to_string);
+        let explicit_index = tool_call
+            .get("index")
+            .and_then(|v| v.as_u64())
+            .and_then(|index| usize::try_from(index).ok());
+        let Some(chat_index) = self.resolve_tool_key(explicit_index, id_delta.as_deref()) else {
+            // 所有 usize key 都被占用时无法再隔离身份；拒绝改写已有状态比混合调用安全。
+            return Vec::new();
+        };
         let function = tool_call.get("function").unwrap_or(&Value::Null);
         let name_delta = function
             .get("name")
@@ -1224,6 +1263,114 @@ mod tests {
         assert_eq!(items[1]["call_id"], "call_b");
         assert_eq!(items[1]["name"], "exec_command");
         assert_eq!(items[1]["arguments"], r#"{"cmd":"ls"}"#);
+    }
+
+    /// #6449：不同非空 ID 即使复用了同一个显式 index，也必须保持独立身份与参数。
+    #[tokio::test]
+    async fn reused_explicit_index_with_distinct_ids_keeps_calls_separate() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_dupidx\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_function_dup_1\",\"type\":\"function\",\"function\":{\"name\":\"shell_command\",\"arguments\":\"{\\\"command\\\":\\\"dir a\\\"}\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_dupidx\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_function_dup_2\",\"type\":\"function\",\"function\":{\"name\":\"exec_command\",\"arguments\":\"{\\\"command\\\":\\\"dir b\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let added = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.added")
+            .collect::<Vec<_>>();
+        let done = events
+            .iter()
+            .filter(|event| event["type"] == "response.output_item.done")
+            .collect::<Vec<_>>();
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        let items = completed["response"]["output"].as_array().unwrap();
+        let expected = [
+            (
+                "fc_call_function_dup_1",
+                "call_function_dup_1",
+                "shell_command",
+                "dir a",
+            ),
+            (
+                "fc_call_function_dup_2",
+                "call_function_dup_2",
+                "exec_command",
+                "dir b",
+            ),
+        ];
+
+        assert_eq!(added.len(), 2);
+        assert_eq!(done.len(), 2);
+        assert_eq!(items.len(), 2);
+        for (index, (item_id, call_id, name, command)) in expected.into_iter().enumerate() {
+            let item = &items[index];
+            assert_eq!(added[index]["output_index"], index as u64);
+            assert_eq!(added[index]["item"]["id"], item_id);
+            assert_eq!(added[index]["item"]["call_id"], call_id);
+            assert_eq!(added[index]["item"]["name"], name);
+            assert_eq!(done[index]["output_index"], index as u64);
+            assert_eq!(done[index]["item"], *item);
+            assert_eq!(item["type"], "function_call");
+            assert_eq!(item["id"], item_id);
+            assert_eq!(item["call_id"], call_id);
+            assert_eq!(item["name"], name);
+            let arguments = item["arguments"].as_str().unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(arguments).unwrap(),
+                json!({ "command": command })
+            );
+        }
+        assert!(!output.contains(r#"{"command":"dir a"}{"command":"dir b"}"#));
+    }
+
+    #[tokio::test]
+    async fn repeated_id_with_changed_explicit_index_stays_in_one_call() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_reindexed\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_stable\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_reindexed\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":7,\"id\":\"call_stable\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"\\\"README.md\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        let items = completed["response"]["output"].as_array().unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["id"], "fc_call_stable");
+        assert_eq!(items[0]["call_id"], "call_stable");
+        assert_eq!(items[0]["name"], "read_file");
+        assert_eq!(items[0]["arguments"], r#"{"path":"README.md"}"#);
+    }
+
+    #[test]
+    fn explicit_index_collision_at_max_uses_first_gap_without_overflow() {
+        let mut state = ChatToResponsesState::default();
+        state.tools.insert(
+            0,
+            ToolCallState {
+                call_id: "call_zero".to_string(),
+                ..ToolCallState::default()
+            },
+        );
+        state.tools.insert(
+            usize::MAX,
+            ToolCallState {
+                call_id: "call_max".to_string(),
+                ..ToolCallState::default()
+            },
+        );
+
+        assert_eq!(
+            state.resolve_tool_key(Some(usize::MAX), Some("call_new")),
+            Some(1)
+        );
     }
 
     /// 上游省略 `index` 时，不带 id 的 arguments 续帧必须归入同一个调用，
