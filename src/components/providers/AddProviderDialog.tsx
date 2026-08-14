@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, WandSparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -14,6 +14,7 @@ import {
 } from "@/components/providers/forms/ProviderForm";
 import { UniversalProviderFormModal } from "@/components/universal/UniversalProviderFormModal";
 import { UniversalProviderPanel } from "@/components/universal";
+import { ProviderSetupWizard } from "@/components/providers/ProviderSetupWizard";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import { geminiProviderPresets } from "@/config/geminiProviderPresets";
@@ -61,6 +62,7 @@ export function AddProviderDialog({
   const [selectedUniversalPreset, setSelectedUniversalPreset] =
     useState<UniversalProviderPreset | null>(null);
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
+  const [setupWizardOpen, setSetupWizardOpen] = useState(false);
   const formReadyToken = useMemo(
     () => Symbol("provider-form-ready"),
     [appId, open],
@@ -347,6 +349,19 @@ export function AddProviderDialog({
   const footer =
     !showUniversalTab || activeTab === "app-specific" ? (
       <>
+        {(appId === "claude" || appId === "codex") && (
+          <Button
+            variant="ghost"
+            onClick={() => {
+              onOpenChange(false);
+              setSetupWizardOpen(true);
+            }}
+            className="mr-auto"
+          >
+            <WandSparkles className="mr-2 h-4 w-4" />
+            Thiết lập nhanh
+          </Button>
+        )}
         <span className="mr-auto min-w-0 text-xs text-muted-foreground truncate">
           {t("provider.addFooterHint")}
         </span>
@@ -449,6 +464,12 @@ export function AddProviderDialog({
           initialPreset={selectedUniversalPreset}
         />
       )}
+
+      <ProviderSetupWizard
+        open={setupWizardOpen}
+        onOpenChange={setSetupWizardOpen}
+        initialApp={appId}
+      />
     </FullScreenPanel>
   );
 }

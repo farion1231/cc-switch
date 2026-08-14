@@ -319,7 +319,13 @@ mod tests {
             build_model_fetch_headers("anthropic-key", Some("anthropic-messages"), None, None)
                 .unwrap();
         assert_eq!(anthropic["x-api-key"], "anthropic-key");
+        assert_eq!(anthropic["anthropic-version"], "2023-06-01");
         assert!(!anthropic.contains_key(AUTHORIZATION));
+
+        let anthropic_alias =
+            build_model_fetch_headers("anthropic-key", Some("anthropic"), None, None).unwrap();
+        assert_eq!(anthropic_alias["x-api-key"], "anthropic-key");
+        assert_eq!(anthropic_alias["anthropic-version"], "2023-06-01");
 
         let google =
             build_model_fetch_headers("google-key", Some("google-generative-ai"), None, None)

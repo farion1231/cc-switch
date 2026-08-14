@@ -381,6 +381,7 @@ export function CodexFormFields({
       isFullUrl,
       undefined,
       customUserAgent,
+      { apiFormat },
     )
       .then((models) => {
         if (seq !== fetchModelsSeqRef.current) return;
@@ -404,6 +405,7 @@ export function CodexFormFields({
     codexApiKey,
     isFullUrl,
     customUserAgent,
+    apiFormat,
     isXaiOauthPreset,
     isXaiOauthAuthenticated,
     selectedXaiAccountId,
