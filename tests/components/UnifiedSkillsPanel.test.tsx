@@ -2,6 +2,7 @@ import { createRef } from "react";
 import { render, screen, waitFor, act, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import i18n from "i18next";
 
 import UnifiedSkillsPanel, {
   type UnifiedSkillsPanelHandle,
@@ -151,6 +152,18 @@ const renderPanel = () =>
 
 describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
+    i18n.addResource(
+      "zh",
+      "translation",
+      "common.enableAllForApp",
+      "common.enableAllForApp {{app}}",
+    );
+    i18n.addResource(
+      "zh",
+      "translation",
+      "common.disableAllForApp",
+      "common.disableAllForApp {{app}}",
+    );
     installedSkillsMock = [];
     skillBackupsMock = [];
     skillUpdatesMock = [];
@@ -529,7 +542,7 @@ describe("UnifiedSkillsPanel", () => {
 
     await user.click(
       within(repoAGroup).getByRole("checkbox", {
-        name: "owner/repo-a: Claude common.enableAllForApp",
+        name: "owner/repo-a: common.enableAllForApp Claude",
       }),
     );
 
@@ -565,10 +578,14 @@ describe("UnifiedSkillsPanel", () => {
     const user = userEvent.setup();
     const repoAGroup = screen.getByRole("region", { name: "owner/repo-a" });
     const claudeToggle = within(repoAGroup).getByRole("checkbox", {
-      name: "owner/repo-a: Claude common.enableAllForApp",
+      name: "owner/repo-a: common.enableAllForApp Claude",
     });
 
     expect(claudeToggle).toHaveAttribute("aria-checked", "mixed");
+    expect(claudeToggle).toHaveAttribute(
+      "title",
+      "owner/repo-a: common.enableAllForApp Claude",
+    );
     await user.click(claudeToggle);
 
     await waitFor(() => {
@@ -605,10 +622,10 @@ describe("UnifiedSkillsPanel", () => {
     const user = userEvent.setup();
     const repoAGroup = screen.getByRole("region", { name: "owner/repo-a" });
     const claudeToggle = within(repoAGroup).getByRole("checkbox", {
-      name: "owner/repo-a: Claude common.enableAllForApp",
+      name: "owner/repo-a: common.enableAllForApp Claude",
     });
     const codexToggle = within(repoAGroup).getByRole("checkbox", {
-      name: "owner/repo-a: Codex common.enableAllForApp",
+      name: "owner/repo-a: common.enableAllForApp Codex",
     });
 
     await user.click(claudeToggle);
@@ -1113,7 +1130,7 @@ describe("UnifiedSkillsPanel", () => {
     const piToggle = screen.getByRole("button", { name: "Pi" });
     const sourceGroup = screen.getByRole("region", { name: "owner/repo" });
     const sourcePiToggle = within(sourceGroup).getByRole("checkbox", {
-      name: "owner/repo: Pi common.disableAllForApp",
+      name: "owner/repo: common.disableAllForApp Pi",
     });
     expect(piToggle).toHaveAttribute("aria-pressed", "true");
     expect(sourcePiToggle).toHaveAttribute("aria-checked", "true");

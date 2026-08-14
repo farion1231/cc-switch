@@ -1018,7 +1018,7 @@ const SourceGroupAppToggleBar: React.FC<SourceGroupAppToggleBarProps> = ({
         const actionLabel = allEnabled
           ? t("common.disableAllForApp", { app: label })
           : t("common.enableAllForApp", { app: label });
-        const scopedActionLabel = `${groupLabel}: ${label} ${actionLabel}`;
+        const scopedActionLabel = `${groupLabel}: ${actionLabel}`;
 
         return (
           <Tooltip key={app}>
