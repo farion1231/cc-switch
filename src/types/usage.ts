@@ -224,6 +224,7 @@ export interface UsageRangeSelection {
 export type AppType =
   | "claude"
   | "codex"
+  | "deepseek-harness"
   | "gemini"
   | "grokbuild"
   | "opencode"
@@ -235,6 +236,7 @@ export type AppTypeFilter = "all" | AppType;
 export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "claude",
   "codex",
+  "deepseek-harness",
   "gemini",
   "grokbuild",
   "opencode",

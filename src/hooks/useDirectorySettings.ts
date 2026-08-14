@@ -15,7 +15,8 @@ type AppDirectoryKey =
   | "openclaw"
   | "hermes"
   | "pi";
-type DirectoryKey = "appConfig" | AppDirectoryKey;
+type ExtraDirectoryKey = "deepseekHarnessSession";
+type DirectoryKey = "appConfig" | AppDirectoryKey | ExtraDirectoryKey;
 
 export interface ResolvedDirectories {
   appConfig: string;
@@ -27,6 +28,7 @@ export interface ResolvedDirectories {
   openclaw: string;
   hermes: string;
   pi: string;
+  deepseekHarnessSession: string;
 }
 
 // Single source of truth for per-app directory metadata.
@@ -92,6 +94,21 @@ const computeDefaultConfigDir = async (
   }
 };
 
+const computeDefaultDeepseekHarnessSessionDir = async (): Promise<
+  string | undefined
+> => {
+  try {
+    const home = await homeDir();
+    return await join(home, ".dsh", "sessions");
+  } catch (error) {
+    console.error(
+      "[useDirectorySettings] Failed to resolve default DeepSeek Harness session dir",
+      error,
+    );
+    return undefined;
+  }
+};
+
 export interface UseDirectorySettingsProps {
   settings: SettingsFormState | null;
   onUpdateSettings: (updates: Partial<SettingsFormState>) => void;
@@ -105,16 +122,19 @@ export interface UseDirectorySettingsResult {
   /** 保存成功后把已保存的数据目录换成刚存的值 */
   commitAppConfigDir: (value: string | undefined) => void;
   updateDirectory: (app: DirectoryAppId, value?: string) => void;
+  updateDeepseekHarnessSessionDir: (value?: string) => void;
   updateAppConfigDir: (value?: string) => void;
   browseDirectory: (app: DirectoryAppId) => Promise<void>;
+  browseDeepseekHarnessSessionDir: () => Promise<void>;
   browseAppConfigDir: () => Promise<void>;
   resetDirectory: (app: DirectoryAppId) => Promise<void>;
+  resetDeepseekHarnessSessionDir: () => Promise<void>;
   resetAppConfigDir: () => Promise<void>;
   resetAllDirectories: (overrides?: ResolvedAppDirectoryOverrides) => void;
 }
 
 export type ResolvedAppDirectoryOverrides = Partial<
-  Record<AppDirectoryKey, string | undefined>
+  Record<AppDirectoryKey | ExtraDirectoryKey, string | undefined>
 >;
 
 /**
@@ -145,6 +165,7 @@ export function useDirectorySettings({
     openclaw: "",
     hermes: "",
     pi: "",
+    deepseekHarnessSession: "",
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -158,6 +179,7 @@ export function useDirectorySettings({
     openclaw: "",
     hermes: "",
     pi: "",
+    deepseekHarnessSession: "",
   });
   // 已保存的数据目录（保存按钮和「需要重启」都和它比）。ref 给回调用，state 让比较它的
   // 组件在保存后重渲染：保存成功要把它更新成刚存的值，否则保存按钮一直在、改回去存不了
@@ -196,6 +218,7 @@ export function useDirectorySettings({
           defaultOpenclawDir,
           defaultHermesDir,
           defaultPiDir,
+          defaultDeepseekHarnessSessionDir,
         ] = await Promise.all([
           settingsApi.getAppConfigDirOverride(),
           settingsApi.getConfigDir("claude"),
@@ -215,6 +238,7 @@ export function useDirectorySettings({
           computeDefaultConfigDir("openclaw"),
           computeDefaultConfigDir("hermes"),
           computeDefaultConfigDir("pi"),
+          computeDefaultDeepseekHarnessSessionDir(),
         ]);
 
         if (!active) return;
@@ -231,6 +255,7 @@ export function useDirectorySettings({
           openclaw: defaultOpenclawDir ?? "",
           hermes: defaultHermesDir ?? "",
           pi: defaultPiDir ?? "",
+          deepseekHarnessSession: defaultDeepseekHarnessSessionDir ?? "",
         };
 
         setAppConfigDir(normalizedOverride);
@@ -246,6 +271,9 @@ export function useDirectorySettings({
           openclaw: openclawDir || defaultsRef.current.openclaw,
           hermes: hermesDir || defaultsRef.current.hermes,
           pi: piDir || defaultsRef.current.pi,
+          deepseekHarnessSession:
+            settings?.deepseekHarnessSessionDir ||
+            defaultsRef.current.deepseekHarnessSession,
         });
       } catch (error) {
         console.error(
@@ -326,11 +354,24 @@ export function useDirectorySettings({
     [],
   );
 
+  useEffect(() => {
+    const sanitized = sanitizeDir(settings?.deepseekHarnessSessionDir);
+    const next = sanitized ?? defaultsRef.current.deepseekHarnessSession;
+    if (!next) return;
+    setResolvedDirs((prev) =>
+      prev.deepseekHarnessSession === next
+        ? prev
+        : { ...prev, deepseekHarnessSession: next },
+    );
+  }, [settings?.deepseekHarnessSessionDir]);
+
   const updateDirectoryState = useCallback(
     (key: DirectoryKey, value?: string) => {
       const sanitized = sanitizeDir(value);
       if (key === "appConfig") {
         setAppConfigDir(sanitized);
+      } else if (key === "deepseekHarnessSession") {
+        onUpdateSettings({ deepseekHarnessSessionDir: sanitized });
       } else {
         const field = DIRECTORY_KEY_TO_SETTINGS_FIELD[key];
         // Local edits already update the display below. Do not resolve a local
@@ -362,6 +403,13 @@ export function useDirectorySettings({
   const updateDirectory = useCallback(
     (app: DirectoryAppId, value?: string) => {
       updateDirectoryState(APP_DIRECTORY_META[app].key, value);
+    },
+    [updateDirectoryState],
+  );
+
+  const updateDeepseekHarnessSessionDir = useCallback(
+    (value?: string) => {
+      updateDirectoryState("deepseekHarnessSession", value);
     },
     [updateDirectoryState],
   );
@@ -410,6 +458,27 @@ export function useDirectorySettings({
     }
   }, [appConfigDir, resolvedDirs.appConfig, t, updateDirectoryState]);
 
+  const browseDeepseekHarnessSessionDir = useCallback(async () => {
+    const currentValue =
+      settings?.deepseekHarnessSessionDir ?? resolvedDirs.deepseekHarnessSession;
+    try {
+      const picked = await settingsApi.selectConfigDirectory(currentValue);
+      const sanitized = sanitizeDir(picked ?? undefined);
+      if (!sanitized) return;
+      updateDirectoryState("deepseekHarnessSession", sanitized);
+    } catch (error) {
+      console.error(
+        "[useDirectorySettings] Failed to pick DeepSeek Harness session directory",
+        error,
+      );
+      toast.error(
+        t("settings.selectFileFailed", {
+          defaultValue: "选择目录失败",
+        }),
+      );
+    }
+  }, [settings, resolvedDirs.deepseekHarnessSession, t, updateDirectoryState]);
+
   const resetDirectory = useCallback(
     async (app: DirectoryAppId) => {
       const key = APP_DIRECTORY_META[app].key;
@@ -440,6 +509,19 @@ export function useDirectorySettings({
     updateDirectoryState("appConfig", undefined);
   }, [updateDirectoryState]);
 
+  const resetDeepseekHarnessSessionDir = useCallback(async () => {
+    if (!defaultsRef.current.deepseekHarnessSession) {
+      const fallback = await computeDefaultDeepseekHarnessSessionDir();
+      if (fallback) {
+        defaultsRef.current = {
+          ...defaultsRef.current,
+          deepseekHarnessSession: fallback,
+        };
+      }
+    }
+    updateDirectoryState("deepseekHarnessSession", undefined);
+  }, [updateDirectoryState]);
+
   const resetAllDirectories = useCallback(
     (overrides?: ResolvedAppDirectoryOverrides) => {
       for (const { key } of Object.values(APP_DIRECTORY_META)) {
@@ -458,6 +540,10 @@ export function useDirectorySettings({
         openclaw: overrides?.openclaw ?? defaultsRef.current.openclaw,
         hermes: overrides?.hermes ?? defaultsRef.current.hermes,
         pi: overrides?.pi ?? defaultsRef.current.pi,
+        pi: overrides?.pi ?? defaultsRef.current.pi,
+        deepseekHarnessSession:
+          overrides?.deepseekHarnessSession ??
+          defaultsRef.current.deepseekHarnessSession,
       });
     },
     [],
@@ -470,10 +556,13 @@ export function useDirectorySettings({
     initialAppConfigDir,
     commitAppConfigDir,
     updateDirectory,
+    updateDeepseekHarnessSessionDir,
     updateAppConfigDir,
     browseDirectory,
+    browseDeepseekHarnessSessionDir,
     browseAppConfigDir,
     resetDirectory,
+    resetDeepseekHarnessSessionDir,
     resetAppConfigDir,
     resetAllDirectories,
   };
