@@ -893,6 +893,9 @@ fn parse_models(value: &Value) -> Result<Vec<KimiModelInfo>, KimiOAuthError> {
     })?;
     let mut models = Vec::new();
     for item in data {
+        if item.get("protocol").and_then(Value::as_str) != Some("anthropic") {
+            continue;
+        }
         let id = required_string(item, "id", "models")?;
         let context_length = item
             .get("context_length")
@@ -904,9 +907,7 @@ fn parse_models(value: &Value) -> Result<Vec<KimiModelInfo>, KimiOAuthError> {
                     "Kimi model {id} must include a positive context_length"
                 ))
             })?;
-        if item.get("protocol").and_then(Value::as_str) == Some("anthropic") {
-            models.push(KimiModelInfo { id, context_length });
-        }
+        models.push(KimiModelInfo { id, context_length });
     }
     models.sort_by(|left, right| left.id.cmp(&right.id));
     models.dedup_by(|left, right| left.id == right.id);

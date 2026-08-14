@@ -457,6 +457,7 @@ async fn models_require_positive_context_and_return_only_anthropic_protocol() {
         serde_json::json!({"data":[
             {"id":"k3","context_length":262144,"protocol":"anthropic"},
             {"id":"responses-only","context_length":"131072","protocol":"responses"},
+            {"id":"openai-gpt","protocol":"openai"},
             {"id":"k3","context_length":"262144","protocol":"anthropic"},
             {"id":"k3-256k","context_length":"262144","protocol":"anthropic"}
         ]}),
