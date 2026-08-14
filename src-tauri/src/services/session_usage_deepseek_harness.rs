@@ -11,6 +11,7 @@ use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
     get_sync_state, metadata_modified_nanos, update_sync_state, SessionSyncResult,
 };
+use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
 use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
 use serde_json::Value;
@@ -372,8 +373,9 @@ fn insert_harness_session_entry(
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
-            provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+            provider_type, is_streaming, cost_multiplier, created_at, data_source,
+            pricing_model, input_token_semantics
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
         rusqlite::params![
             request_id,
             PROVIDER_ID,
@@ -399,6 +401,8 @@ fn insert_harness_session_entry(
             "1.0",
             event.created_at,
             DATA_SOURCE,
+            event.model,
+            INPUT_TOKEN_SEMANTICS_FRESH,
         ],
     )
     .map_err(|error| AppError::Database(format!("插入 DeepSeek Harness 会话日志失败: {error}")))?;
@@ -454,6 +458,29 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(count, 1);
+
+        let (pricing_model, input_semantics): (String, i64) = conn.query_row(
+            "SELECT pricing_model, input_token_semantics FROM proxy_request_logs WHERE data_source = 'deepseek_harness_session'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(pricing_model, "deepseek-v4-flash");
+        assert_eq!(input_semantics, INPUT_TOKEN_SEMANTICS_FRESH);
+        Ok(())
+    }
+
+    #[test]
+    fn reads_zstd_session_log() -> Result<(), AppError> {
+        let encoded = zstd::encode_all(fixture().as_bytes(), 0)
+            .map_err(|error| AppError::Config(error.to_string()))?;
+        let tmp = tempfile::tempdir().map_err(|error| AppError::Config(error.to_string()))?;
+        let path = tmp.path().join("session.jsonl.zstd");
+        std::fs::write(&path, encoded).map_err(|error| AppError::Config(error.to_string()))?;
+
+        let content = read_session_log_text(&path)?;
+        let events = parse_harness_usage_events(&content);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].input_tokens, 100);
         Ok(())
     }
 }
