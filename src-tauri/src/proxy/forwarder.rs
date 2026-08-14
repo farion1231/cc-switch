@@ -1188,7 +1188,12 @@ impl RequestForwarder {
         {
             let kimi_auth = kimi_state.0.read().await;
             kimi_auth
-                .require_reauthentication_after_inference_rejection(&resolved_account_id)
+                .require_reauthentication_after_inference_rejection(
+                    &resolved_account_id,
+                    sent_kimi_auth
+                        .as_ref()
+                        .map(|auth| auth.access_token.as_str()),
+                )
                 .await
                 .map_err(|error| {
                     ProxyError::AuthError(format!(

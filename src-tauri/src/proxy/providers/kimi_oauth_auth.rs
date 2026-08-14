@@ -517,8 +517,10 @@ impl KimiOAuthManager {
     pub(crate) async fn require_reauthentication_after_inference_rejection(
         &self,
         account_id: &str,
+        rejected_access_token: Option<&str>,
     ) -> Result<(), KimiOAuthError> {
-        self.mark_reauth_required(account_id).await
+        self.mark_reauth_required_if_token_matches(account_id, rejected_access_token)
+            .await
     }
 
     /// Fetches the live Anthropic-protocol model catalog for an account.
@@ -875,7 +877,27 @@ impl KimiOAuthManager {
     }
 
     async fn mark_reauth_required(&self, account_id: &str) -> Result<(), KimiOAuthError> {
+        self.mark_reauth_required_if_token_matches(account_id, None)
+            .await
+    }
+
+    async fn mark_reauth_required_if_token_matches(
+        &self,
+        account_id: &str,
+        rejected_access_token: Option<&str>,
+    ) -> Result<(), KimiOAuthError> {
         let _mutation_guard = self.mutation_lock.lock().await;
+        if let Some(rejected) = rejected_access_token {
+            let still_current = self
+                .access_tokens
+                .read()
+                .await
+                .get(account_id)
+                .is_some_and(|token| token.token == rejected);
+            if !still_current {
+                return Ok(());
+            }
+        }
         let mut accounts = self.accounts.read().await.clone();
         let account = accounts
             .get_mut(account_id)
@@ -1571,7 +1593,7 @@ mod tests {
         manager.set_default_account("account-one").await.unwrap();
 
         manager
-            .require_reauthentication_after_inference_rejection("account-two")
+            .require_reauthentication_after_inference_rejection("account-two", None)
             .await
             .unwrap();
 
@@ -1985,7 +2007,10 @@ mod tests {
             .unwrap();
 
         manager
-            .require_reauthentication_after_inference_rejection("account-one")
+            .require_reauthentication_after_inference_rejection(
+                "account-one",
+                Some("rejected-access"),
+            )
             .await
             .expect("repeated rejection should persist reauthentication state");
 
@@ -2233,5 +2258,43 @@ mod tests {
             "other-access"
         );
         assert_eq!(transport.requests.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn stale_retry_rejection_does_not_invalidate_a_newer_cached_token() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let (manager, _) = test_manager(data_dir.path().to_path_buf(), Vec::new());
+        manager
+            .add_account_internal(
+                "account-one".to_string(),
+                None,
+                "initial-refresh".to_string(),
+                None,
+                Some(cached_access("newer-access")),
+            )
+            .await
+            .unwrap();
+
+        manager
+            .require_reauthentication_after_inference_rejection(
+                "account-one",
+                Some("stale-retry-access"),
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            !manager
+                .accounts
+                .read()
+                .await
+                .get("account-one")
+                .unwrap()
+                .requires_reauth
+        );
+        assert_eq!(
+            manager.access_tokens.read().await["account-one"].token,
+            "newer-access"
+        );
     }
 }
