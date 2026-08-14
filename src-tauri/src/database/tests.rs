@@ -919,3 +919,33 @@ fn ensure_incremental_auto_vacuum_rebuilds_existing_file_db() {
         "file db should persist INCREMENTAL auto_vacuum after VACUUM rebuild"
     );
 }
+
+#[test]
+fn sync_default_chain_from_queue_rebuilds_chain() {
+    let db = Database::memory().expect("create memory db");
+
+    let mut p1 = Provider::with_id("p1".into(), "P1".into(), json!({}), None);
+    p1.sort_index = Some(2);
+    let mut p2 = Provider::with_id("p2".into(), "P2".into(), json!({}), None);
+    p2.sort_index = Some(1);
+    db.save_provider("claude", &p1).expect("save p1");
+    db.save_provider("claude", &p2).expect("save p2");
+
+    // 加入队列 → 自动同步 default 链路，按 sort_index 排序
+    db.add_to_failover_queue("claude", "p1").expect("add p1");
+    db.add_to_failover_queue("claude", "p2").expect("add p2");
+
+    let chain = db.get_fallback_chain("claude", "default").expect("get chain");
+    assert_eq!(chain.len(), 2);
+    assert_eq!(chain[0].provider_id, "p2", "sort_index=1 应优先");
+    assert_eq!(chain[1].provider_id, "p1");
+
+    // 移除 p2 → 链路同步为只剩 p1
+    db.remove_from_failover_queue("claude", "p2")
+        .expect("remove p2");
+    let chain = db
+        .get_fallback_chain("claude", "default")
+        .expect("get chain after remove");
+    assert_eq!(chain.len(), 1);
+    assert_eq!(chain[0].provider_id, "p1");
+}

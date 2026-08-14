@@ -402,6 +402,63 @@ impl Database {
             [],
         );
 
+        // 20. Fallback Chain 配置表（v17 oh-my-pi Fallback Chain 架构）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS fallback_chain_config (
+                app_type TEXT NOT NULL,
+                chain_key TEXT NOT NULL,
+                selector_index INTEGER NOT NULL,
+                selector_raw TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                model_id TEXT NOT NULL DEFAULT '*',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (app_type, chain_key, selector_index)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 21. Selector 抑制状态表
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS selector_suppression (
+                selector_identity TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                suppressed_until TEXT NOT NULL,
+                consecutive_count INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY (selector_identity, app_type)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 22. Fallback 配置列（proxy_config）— 兼容已存在的库
+        if Self::table_exists(conn, "proxy_config")? {
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "fallback_enabled",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "fallback_revert_policy",
+                "TEXT NOT NULL DEFAULT 'cooldown-expiry'",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "retry_base_delay_ms",
+                "INTEGER NOT NULL DEFAULT 500",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "retry_max_delay_ms",
+                "INTEGER NOT NULL DEFAULT 8000",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -510,6 +567,11 @@ impl Database {
                         log::info!("迁移数据库从 v15 到 v16（重建 Codex 会话用量）");
                         Self::migrate_v15_to_v16(conn)?;
                         Self::set_user_version(conn, 16)?;
+                    }
+                    16 => {
+                        log::info!("迁移数据库从 v16 到 v17（oh-my-pi Fallback Chain 架构）");
+                        Self::migrate_v16_to_v17(conn)?;
+                        Self::set_user_version(conn, 17)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1521,6 +1583,96 @@ impl Database {
     fn migrate_v15_to_v16(conn: &Connection) -> Result<(), AppError> {
         let codex_dir = crate::codex_config::get_codex_config_dir();
         crate::services::session_usage_codex::reset_codex_usage_on_conn(conn, &codex_dir)
+    }
+
+    /// v16 → v17：oh-my-pi Fallback Chain 架构
+    ///
+    /// 新增回退链路配置表、运行时抑制表，并为 proxy_config 添加 fallback 开关与
+    /// 退避参数列；最后将既有 `in_failover_queue=1` 的 Provider 按 sort_index
+    /// 迁移为 `chain_key='default'` 的回退链路条目（0 起点，index 即优先级）。
+    fn migrate_v16_to_v17(conn: &Connection) -> Result<(), AppError> {
+        // 1. fallback_chain_config 表：回退链路定义
+        // selector_raw 采用 "provider_id/model_id" 或通配符 "provider_id/*"；
+        // 迁移来源的 cc-switch Provider 是端点级实体，故 selector_raw=provider_id、model_id='*'。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS fallback_chain_config (
+                app_type TEXT NOT NULL,
+                chain_key TEXT NOT NULL,
+                selector_index INTEGER NOT NULL,
+                selector_raw TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                model_id TEXT NOT NULL DEFAULT '*',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (app_type, chain_key, selector_index)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 fallback_chain_config 表失败: {e}")))?;
+
+        // 2. selector_suppression 表：运行时 Selector 抑制状态
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS selector_suppression (
+                selector_identity TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                suppressed_until TEXT NOT NULL,
+                consecutive_count INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY (selector_identity, app_type)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建 selector_suppression 表失败: {e}")))?;
+
+        // 3. proxy_config 新增 fallback 配置列
+        // 兼容内存测试库：proxy_config 可能不存在，此时跳过 ALTER。
+        if Self::table_exists(conn, "proxy_config")? {
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "fallback_enabled",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "fallback_revert_policy",
+                "TEXT NOT NULL DEFAULT 'cooldown-expiry'",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "retry_base_delay_ms",
+                "INTEGER NOT NULL DEFAULT 500",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_config",
+                "retry_max_delay_ms",
+                "INTEGER NOT NULL DEFAULT 8000",
+            )?;
+        }
+
+        // 4. 数据迁移：将 in_failover_queue=1 的 Provider 转成 chain_key='default' 的回退链路
+        // ROW_NUMBER 保证同 sort_index 也有确定性顺序；-1 让 index 从 0 开始。
+        if Self::table_exists(conn, "providers")? && Self::has_column(conn, "providers", "in_failover_queue")? {
+            conn.execute(
+                "INSERT OR IGNORE INTO fallback_chain_config
+                    (app_type, chain_key, selector_index, selector_raw, provider_id, model_id)
+                 SELECT
+                    p.app_type, 'default',
+                    ROW_NUMBER() OVER (
+                        PARTITION BY p.app_type
+                        ORDER BY p.sort_index ASC, p.created_at ASC, p.id ASC
+                    ) - 1,
+                    p.id, p.id, '*'
+                 FROM providers p
+                 WHERE p.in_failover_queue = 1",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("迁移 failover 队列到回退链路失败: {e}")))?;
+        }
+
+        log::info!("迁移 v16 → v17：创建 fallback 链路表并迁移 failover 队列");
+        Ok(())
     }
 
     /// 插入默认模型定价数据
@@ -3243,7 +3395,7 @@ mod tests {
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
-        assert_eq!(Database::get_user_version(&conn)?, 16);
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         let counts: (i64, i64, i64, i64) = conn.query_row(
             "SELECT
                 (SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'),
@@ -3254,6 +3406,63 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
         assert_eq!(counts, (0, 1, 0, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v16_to_v17_creates_fallback_tables_and_migrates_failover_queue() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        // 构造 failover 队列：p2(sort=1)、p1(sort=2) 在队列中，p3 不在
+        conn.execute("DELETE FROM providers", [])?;
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config, sort_index, in_failover_queue)
+             VALUES ('p1', 'claude', 'P1', '{}', 2, 1),
+                    ('p2', 'claude', 'P2', '{}', 1, 1),
+                    ('p3', 'claude', 'P3', '{}', 3, 0)",
+            [],
+        )?;
+        Database::set_user_version(&conn, 16)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::table_exists(&conn, "fallback_chain_config")?);
+        assert!(Database::table_exists(&conn, "selector_suppression")?);
+        assert!(Database::has_column(&conn, "proxy_config", "fallback_enabled")?);
+        assert!(Database::has_column(&conn, "proxy_config", "fallback_revert_policy")?);
+        assert!(Database::has_column(&conn, "proxy_config", "retry_base_delay_ms")?);
+        assert!(Database::has_column(&conn, "proxy_config", "retry_max_delay_ms")?);
+
+        // 校验迁移链路顺序：按 sort_index 升序，p2 在前 (index 0)、p1 在后 (index 1)
+        let chain: Vec<(String, i64)> = {
+            let mut stmt = conn.prepare(
+                "SELECT provider_id, selector_index FROM fallback_chain_config
+                 WHERE app_type = 'claude' AND chain_key = 'default'
+                 ORDER BY selector_index ASC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        assert_eq!(
+            chain,
+            vec![
+                ("p2".to_string(), 0),
+                ("p1".to_string(), 1),
+            ]
+        );
+
+        // 新库上再次运行应幂等（不抛错、不重复）
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM fallback_chain_config WHERE app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(count, 2);
+
         Ok(())
     }
 }

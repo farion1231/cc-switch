@@ -8,10 +8,11 @@ use crate::proxy::{
     extract_session_id,
     forwarder::RequestForwarder,
     server::ProxyState,
-    types::{AppProxyConfig, CopilotOptimizerConfig, OptimizerConfig, RectifierConfig},
+    types::{AppProxyConfig, CopilotOptimizerConfig, GuardrailConfig, OptimizerConfig, RectifierConfig},
     ProxyError,
 };
 use axum::http::HeaderMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 /// 流式超时配置
@@ -70,6 +71,8 @@ pub struct RequestContext {
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
+    /// 围栏（Guardrail）配置
+    pub guardrail_config: GuardrailConfig,
 }
 
 impl RequestContext {
@@ -106,6 +109,7 @@ impl RequestContext {
         let rectifier_config = state.db.get_rectifier_config().unwrap_or_default();
         let optimizer_config = state.db.get_optimizer_config().unwrap_or_default();
         let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
+        let guardrail_config = state.db.get_guardrail_config().unwrap_or_default();
 
         let current_provider_id =
             crate::settings::get_current_provider(&app_type).unwrap_or_default();
@@ -173,6 +177,7 @@ impl RequestContext {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            guardrail_config,
         })
     }
 
@@ -223,6 +228,24 @@ impl RequestContext {
             0
         };
 
+        // 加载 fallback chain 运行时配置（仅当启用时返回 Some）
+        let fallback_config = state
+            .db
+            .get_fallback_proxy_config(self.app_type_str)
+            .ok()
+            .map(|cfg| crate::fallback::fallback_chain::FallbackRuntimeConfig::from_dao(&cfg))
+            .filter(|runtime| runtime.enabled);
+
+        // 加载 fallback 链路定义（provider/model 联合切换所需的 model_id 映射）
+        let fallback_chains = match &fallback_config {
+            Some(_) => state
+                .db
+                .get_all_fallback_chains(self.app_type_str)
+                .map(Arc::new)
+                .unwrap_or_default(),
+            None => Arc::new(std::collections::HashMap::new()),
+        };
+
         RequestForwarder::new(
             state.provider_router.clone(),
             non_streaming_timeout,
@@ -240,6 +263,10 @@ impl RequestContext {
             self.rectifier_config.clone(),
             self.optimizer_config.clone(),
             self.copilot_optimizer_config.clone(),
+            self.guardrail_config.clone(),
+            fallback_config,
+            fallback_chains,
+            state.fallback_suppression.clone(),
             max_retries,
         )
     }

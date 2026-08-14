@@ -48,6 +48,8 @@ pub struct ProxyState {
     pub app_handle: Option<tauri::AppHandle>,
     /// 故障转移切换管理器
     pub failover_manager: Arc<FailoverSwitchManager>,
+    /// fallback chain 的 Selector 抑制管理器（跨请求共享冷却状态）
+    pub fallback_suppression: Arc<crate::fallback::selector_suppression::SelectorSuppression>,
 }
 
 /// 代理HTTP服务器
@@ -81,6 +83,9 @@ impl ProxyServer {
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle,
             failover_manager,
+            fallback_suppression: Arc::new(
+                crate::fallback::selector_suppression::SelectorSuppression::new(),
+            ),
         };
 
         Self {

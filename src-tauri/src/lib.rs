@@ -12,6 +12,7 @@ mod config;
 mod database;
 mod deeplink;
 mod error;
+mod fallback;
 mod gemini_config;
 mod gemini_mcp;
 mod grok_config;
@@ -1524,6 +1525,14 @@ pub fn run() {
             commands::remove_from_failover_queue,
             commands::get_auto_failover_enabled,
             commands::set_auto_failover_enabled,
+            // Fallback chain management
+            commands::get_fallback_chains,
+            commands::save_fallback_chain,
+            commands::delete_fallback_chain,
+            commands::get_fallback_config,
+            commands::set_fallback_config,
+            commands::get_selector_suppressions,
+            commands::clear_selector_suppression,
             // Usage statistics
             commands::get_usage_summary,
             commands::get_usage_summary_by_app,
