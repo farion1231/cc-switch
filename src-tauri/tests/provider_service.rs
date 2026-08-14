@@ -485,7 +485,8 @@ requires_openai_auth = true
             .and_then(|v| v.get("aihubmix"))
             .and_then(|v| v.get("requires_openai_auth"))
             .and_then(|v| v.as_bool()),
-        Some(true)
+        Some(false),
+        "provider-scoped bearer auth must not select the preserved ChatGPT login"
     );
 
     ProviderService::switch(&state, AppType::Codex, "plain-provider")
@@ -521,6 +522,22 @@ requires_openai_auth = true
             .unwrap_or_default()
             .contains("experimental_bearer_token"),
         "stored provider config should stay clean; bridge token is generated only for live config"
+    );
+    let stored_bridge_config = stored_bridge
+        .settings_config
+        .get("config")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    let parsed_stored: toml::Value =
+        toml::from_str(stored_bridge_config).expect("parse stored bridge config");
+    assert_eq!(
+        parsed_stored
+            .get("model_providers")
+            .and_then(|v| v.get("aihubmix"))
+            .and_then(|v| v.get("requires_openai_auth"))
+            .and_then(|v| v.as_bool()),
+        Some(true),
+        "backfill must restore template requires_openai_auth, not keep live-projected false"
     );
 }
 
