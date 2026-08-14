@@ -1683,7 +1683,7 @@ mod tests {
             "max_output_tokens": 100,
             "input": [{ "role": "user", "content": "hi" }],
             "tools": [
-                { "type": "function", "name": "get_weather", "description": "d", "parameters": {"type": "object"} },
+                { "type": "function", "name": "get_weather", "description": "d", "strict": true, "parameters": {"type": "object"} },
                 { "type": "web_search" },
                 { "type": "custom", "name": "apply_patch" }
             ]
@@ -1693,6 +1693,7 @@ mod tests {
         assert_eq!(tools.len(), 2);
         assert_eq!(tools[0]["name"], "get_weather");
         assert_eq!(tools[0]["input_schema"]["type"], "object");
+        assert_eq!(tools[0]["strict"], true);
         assert!(tools[0].get("parameters").is_none());
         assert_eq!(tools[1]["name"], "apply_patch");
     }
