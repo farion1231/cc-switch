@@ -41,31 +41,53 @@ pub fn import_provider_from_deeplink(
         .clone()
         .ok_or_else(|| AppError::InvalidInput("Missing 'app' field for provider".to_string()))?;
 
-    let api_key = merged_request.api_key.as_ref().ok_or_else(|| {
-        AppError::InvalidInput("API key is required (either in URL or config file)".to_string())
-    })?;
+    // Parse the app before validating connection fields: Harness can reuse its
+    // native credential store and bundled endpoint when a deep link omits them.
+    let app_type = AppType::from_str(&app_str)
+        .map_err(|_| AppError::InvalidInput(format!("Invalid app type: {app_str}")))?;
+    let uses_native_connection_defaults = matches!(app_type, AppType::DeepSeekHarness);
+    let declares_endpoint = merged_request
+        .endpoint
+        .as_deref()
+        .is_some_and(|value| value.split(',').any(|endpoint| !endpoint.trim().is_empty()));
 
-    if api_key.is_empty() {
-        return Err(AppError::InvalidInput(
-            "API key cannot be empty".to_string(),
-        ));
+    match merged_request.api_key.as_ref() {
+        Some(api_key) if api_key.is_empty() => {
+            return Err(AppError::InvalidInput(
+                "API key cannot be empty".to_string(),
+            ));
+        }
+        // A credential-free Harness link is safe only when it also keeps the
+        // native endpoint. Otherwise an imported endpoint could reuse and
+        // exfiltrate a credential from the Harness environment/store.
+        None if !uses_native_connection_defaults || declares_endpoint => {
+            return Err(AppError::InvalidInput(
+                "API key is required (either in URL or config file)".to_string(),
+            ));
+        }
+        _ => {}
     }
 
     // Get endpoint: supports comma-separated multiple URLs (first is primary)
-    let endpoint_str = merged_request.endpoint.as_ref().ok_or_else(|| {
-        AppError::InvalidInput("Endpoint is required (either in URL or config file)".to_string())
-    })?;
-
     // Parse endpoints: split by comma, first is primary
-    let all_endpoints: Vec<String> = endpoint_str
+    let all_endpoints: Vec<String> = merged_request
+        .endpoint
+        .as_deref()
+        .unwrap_or_default()
         .split(',')
         .map(|e| e.trim().to_string())
         .filter(|e| !e.is_empty())
         .collect();
 
-    let primary_endpoint = all_endpoints
-        .first()
-        .ok_or_else(|| AppError::InvalidInput("Endpoint cannot be empty".to_string()))?;
+    let primary_endpoint = all_endpoints.first();
+    if primary_endpoint.is_none() && !uses_native_connection_defaults {
+        let message = if merged_request.endpoint.is_some() {
+            "Endpoint cannot be empty"
+        } else {
+            "Endpoint is required (either in URL or config file)"
+        };
+        return Err(AppError::InvalidInput(message.to_string()));
+    }
 
     // Auto-infer homepage from endpoint if not provided
     if merged_request
@@ -73,27 +95,28 @@ pub fn import_provider_from_deeplink(
         .as_ref()
         .is_none_or(|s| s.is_empty())
     {
-        merged_request.homepage = infer_homepage_from_endpoint(primary_endpoint);
+        merged_request.homepage =
+            primary_endpoint.and_then(|endpoint| infer_homepage_from_endpoint(endpoint));
     }
 
-    let homepage = merged_request.homepage.as_ref().ok_or_else(|| {
-        AppError::InvalidInput("Homepage is required (either in URL or config file)".to_string())
-    })?;
+    if !uses_native_connection_defaults {
+        let homepage = merged_request.homepage.as_ref().ok_or_else(|| {
+            AppError::InvalidInput(
+                "Homepage is required (either in URL or config file)".to_string(),
+            )
+        })?;
 
-    if homepage.is_empty() {
-        return Err(AppError::InvalidInput(
-            "Homepage cannot be empty".to_string(),
-        ));
+        if homepage.is_empty() {
+            return Err(AppError::InvalidInput(
+                "Homepage cannot be empty".to_string(),
+            ));
+        }
     }
 
     let name = merged_request
         .name
         .clone()
         .ok_or_else(|| AppError::InvalidInput("Missing 'name' field for provider".to_string()))?;
-
-    // Parse app type
-    let app_type = AppType::from_str(&app_str)
-        .map_err(|_| AppError::InvalidInput(format!("Invalid app type: {app_str}")))?;
 
     // Build provider configuration based on app type
     let mut provider = build_provider_from_request(&app_type, &merged_request)?;
