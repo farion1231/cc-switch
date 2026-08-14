@@ -1186,23 +1186,42 @@ impl RequestForwarder {
             .as_ref()
             .is_err_and(|error| is_kimi_upstream_auth_rejection(provider, error))
         {
-            let kimi_auth = kimi_state.0.read().await;
-            kimi_auth
-                .require_reauthentication_after_inference_rejection(
-                    &resolved_account_id,
-                    sent_kimi_auth
-                        .as_ref()
-                        .map(|auth| auth.access_token.as_str()),
+            if persist_kimi_reauth_after_inference_rejection(
+                &kimi_state,
+                &resolved_account_id,
+                &sent_kimi_auth,
+            )
+            .await?
+            {
+                return Err(kimi_reauth_required_after_refresh());
+            }
+
+            let replacement_result = self
+                .forward_once(
+                    app_type,
+                    method,
+                    &retry_provider,
+                    endpoint,
+                    body,
+                    headers,
+                    extensions,
+                    adapter,
+                    &mut sent_kimi_auth,
                 )
-                .await
-                .map_err(|error| {
-                    ProxyError::AuthError(format!(
-                        "Kimi OAuth reauthentication state could not be saved: {error}"
-                    ))
-                })?;
-            return Err(ProxyError::AuthError(
-                "Kimi OAuth credential was rejected after refresh; sign in again".to_string(),
-            ));
+                .await;
+            if replacement_result
+                .as_ref()
+                .is_err_and(|error| is_kimi_upstream_auth_rejection(provider, error))
+                && persist_kimi_reauth_after_inference_rejection(
+                    &kimi_state,
+                    &resolved_account_id,
+                    &sent_kimi_auth,
+                )
+                .await?
+            {
+                return Err(kimi_reauth_required_after_refresh());
+            }
+            return replacement_result;
         }
 
         retry_result
@@ -2888,6 +2907,33 @@ fn is_kimi_upstream_auth_rejection(provider: &Provider, error: &ProxyError) -> b
                 ..
             }
         )
+}
+
+async fn persist_kimi_reauth_after_inference_rejection(
+    kimi_state: &KimiOAuthState,
+    account_id: &str,
+    sent_kimi_auth: &Option<SentKimiInferenceAuth>,
+) -> Result<bool, ProxyError> {
+    let kimi_auth = kimi_state.0.read().await;
+    kimi_auth
+        .require_reauthentication_after_inference_rejection(
+            account_id,
+            sent_kimi_auth
+                .as_ref()
+                .map(|auth| auth.access_token.as_str()),
+        )
+        .await
+        .map_err(|error| {
+            ProxyError::AuthError(format!(
+                "Kimi OAuth reauthentication state could not be saved: {error}"
+            ))
+        })
+}
+
+fn kimi_reauth_required_after_refresh() -> ProxyError {
+    ProxyError::AuthError(
+        "Kimi OAuth credential was rejected after refresh; sign in again".to_string(),
+    )
 }
 
 fn pin_kimi_managed_account(provider: &Provider, account_id: &str) -> Provider {

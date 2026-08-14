@@ -458,13 +458,9 @@ impl KimiOAuthManager {
         let tokens = match self.refresh_with_token(&account.refresh_token).await {
             Ok(tokens) => tokens,
             Err(KimiOAuthError::RefreshTokenInvalid) => {
-                self.mark_reauth_required_if_token_matches(
-                    account_id,
-                    None,
-                    Some(account.refresh_token.as_str()),
-                )
-                .await?;
-                return Err(KimiOAuthError::ReauthRequired(account_id.to_string()));
+                return self
+                    .finish_refresh_after_invalid_grant(account_id, &account.refresh_token)
+                    .await;
             }
             Err(error) => return Err(error),
         };
@@ -519,11 +515,15 @@ impl KimiOAuthManager {
     }
 
     /// Persists a reauthentication requirement after a refreshed token is rejected.
+    ///
+    /// Returns `true` when this account was marked. `false` means a newer
+    /// credential is already cached and callers should use that instead of
+    /// reporting the account as expired.
     pub(crate) async fn require_reauthentication_after_inference_rejection(
         &self,
         account_id: &str,
         rejected_access_token: Option<&str>,
-    ) -> Result<(), KimiOAuthError> {
+    ) -> Result<bool, KimiOAuthError> {
         self.mark_reauth_required_if_token_matches(account_id, rejected_access_token, None)
             .await
     }
@@ -667,13 +667,10 @@ impl KimiOAuthManager {
                     .await?;
                 match self.call_management(operation, &refreshed).await {
                     Err(KimiOAuthError::ManagementUnauthorized(_)) => {
-                        self.mark_reauth_required_if_token_matches(
-                            account_id,
-                            Some(&refreshed),
-                            None,
+                        self.finish_management_after_retry_rejection(
+                            account_id, operation, &refreshed,
                         )
-                        .await?;
-                        Err(KimiOAuthError::ReauthRequired(account_id.to_string()))
+                        .await
                     }
                     result => result,
                 }
@@ -731,18 +728,59 @@ impl KimiOAuthManager {
         let tokens = match self.refresh_with_token(&account.refresh_token).await {
             Ok(tokens) => tokens,
             Err(KimiOAuthError::RefreshTokenInvalid) => {
-                self.mark_reauth_required_if_token_matches(
-                    account_id,
-                    None,
-                    Some(account.refresh_token.as_str()),
-                )
-                .await?;
-                return Err(KimiOAuthError::ReauthRequired(account_id.to_string()));
+                return self
+                    .finish_refresh_after_invalid_grant(account_id, &account.refresh_token)
+                    .await;
             }
             Err(error) => return Err(error),
         };
         self.commit_refreshed_tokens(account_id, &account.refresh_token, tokens)
             .await
+    }
+
+    async fn finish_refresh_after_invalid_grant(
+        &self,
+        account_id: &str,
+        expected_refresh_token: &str,
+    ) -> Result<String, KimiOAuthError> {
+        if self
+            .mark_reauth_required_if_token_matches(account_id, None, Some(expected_refresh_token))
+            .await?
+        {
+            return Err(KimiOAuthError::ReauthRequired(account_id.to_string()));
+        }
+        self.replacement_token_after_stale_rejection(account_id)
+            .await
+    }
+
+    async fn finish_management_after_retry_rejection(
+        &self,
+        account_id: &str,
+        operation: KimiManagementOperation,
+        rejected_access_token: &str,
+    ) -> Result<KimiManagementResponse, KimiOAuthError> {
+        if self
+            .mark_reauth_required_if_token_matches(account_id, Some(rejected_access_token), None)
+            .await?
+        {
+            return Err(KimiOAuthError::ReauthRequired(account_id.to_string()));
+        }
+        let current = self
+            .replacement_token_after_stale_rejection(account_id)
+            .await?;
+        match self.call_management(operation, &current).await {
+            Err(KimiOAuthError::ManagementUnauthorized(_)) => {
+                if self
+                    .mark_reauth_required_if_token_matches(account_id, Some(&current), None)
+                    .await?
+                {
+                    Err(KimiOAuthError::ReauthRequired(account_id.to_string()))
+                } else {
+                    Err(Self::credentials_changed_error())
+                }
+            }
+            result => result,
+        }
     }
 
     #[cfg(test)]
@@ -894,14 +932,16 @@ impl KimiOAuthManager {
     async fn mark_reauth_required(&self, account_id: &str) -> Result<(), KimiOAuthError> {
         self.mark_reauth_required_if_token_matches(account_id, None, None)
             .await
+            .map(|_| ())
     }
 
+    /// Returns `true` when the account was marked for reauthentication.
     async fn mark_reauth_required_if_token_matches(
         &self,
         account_id: &str,
         rejected_access_token: Option<&str>,
         expected_refresh_token: Option<&str>,
-    ) -> Result<(), KimiOAuthError> {
+    ) -> Result<bool, KimiOAuthError> {
         let _mutation_guard = self.mutation_lock.lock().await;
         if let Some(rejected) = rejected_access_token {
             let still_current = self
@@ -911,7 +951,7 @@ impl KimiOAuthManager {
                 .get(account_id)
                 .is_some_and(|token| token.token == rejected);
             if !still_current {
-                return Ok(());
+                return Ok(false);
             }
         }
         let mut accounts = self.accounts.read().await.clone();
@@ -920,7 +960,7 @@ impl KimiOAuthManager {
                 .get(account_id)
                 .is_some_and(|account| account.refresh_token == expected);
             if !still_current {
-                return Ok(());
+                return Ok(false);
             }
         }
         let account = accounts
@@ -935,7 +975,7 @@ impl KimiOAuthManager {
         self.persist_and_commit(accounts, default_account_id)
             .await?;
         self.access_tokens.write().await.remove(account_id);
-        Ok(())
+        Ok(true)
     }
 
     async fn persist_and_commit(
@@ -977,6 +1017,19 @@ impl KimiOAuthManager {
             return None;
         }
         self.cached_token(account_id).await
+    }
+
+    fn credentials_changed_error() -> KimiOAuthError {
+        KimiOAuthError::TokenFetchFailed("账号认证状态已变化，请重试请求".to_string())
+    }
+
+    async fn replacement_token_after_stale_rejection(
+        &self,
+        account_id: &str,
+    ) -> Result<String, KimiOAuthError> {
+        self.cached_token_for_usable_account(account_id)
+            .await
+            .ok_or_else(Self::credentials_changed_error)
     }
 
     async fn schedule_next_poll(&self, device_code: &str, interval_secs: u64) {
@@ -2039,13 +2092,14 @@ mod tests {
             .await
             .unwrap();
 
-        manager
+        let marked = manager
             .require_reauthentication_after_inference_rejection(
                 "account-one",
                 Some("rejected-access"),
             )
             .await
             .expect("repeated rejection should persist reauthentication state");
+        assert!(marked);
 
         assert!(
             manager
@@ -2308,13 +2362,17 @@ mod tests {
             .await
             .unwrap();
 
-        manager
+        let marked = manager
             .require_reauthentication_after_inference_rejection(
                 "account-one",
                 Some("stale-retry-access"),
             )
             .await
             .unwrap();
+        assert!(
+            !marked,
+            "a stale rejected token must not mark a newer cached credential"
+        );
 
         assert!(
             !manager
@@ -2347,6 +2405,10 @@ mod tests {
                     }),
                 )),
                 Ok(json_response(401, serde_json::json!({}))),
+                Ok(json_response(
+                    200,
+                    serde_json::json!({"usage":{"used":"1","limit":"4"}}),
+                )),
             ],
         );
         manager
@@ -2375,9 +2437,13 @@ mod tests {
             }
         });
 
-        let result = manager.fetch_usage_for_account("account-one").await;
+        let usage = manager
+            .fetch_usage_for_account("account-one")
+            .await
+            .expect("a newer cached token should be used instead of reporting reauth");
 
-        assert!(matches!(result, Err(KimiOAuthError::ReauthRequired(_))));
+        assert_eq!(usage.tiers[0].utilization, 25.0);
+        assert_eq!(transport.requests.lock().unwrap().len(), 4);
         assert!(
             !manager
                 .accounts
@@ -2469,9 +2535,11 @@ mod tests {
                 .insert("account-one".to_string(), cached_access("new-access"));
         });
 
-        let result = manager.get_valid_token_for_account("account-one").await;
-
-        assert!(matches!(result, Err(KimiOAuthError::ReauthRequired(_))));
+        let token = manager
+            .get_valid_token_for_account("account-one")
+            .await
+            .expect("a replaced grant should keep the account usable");
+        assert_eq!(token, "new-access");
         let account = manager.accounts.read().await["account-one"].clone();
         assert!(!account.requires_reauth);
         assert_eq!(account.refresh_token, "new-grant");
