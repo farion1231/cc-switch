@@ -68,6 +68,7 @@ const normalizeRefreshInterval = (value: number | undefined) =>
 const APP_FILTER_ICON: Record<AppType, string> = {
   claude: "claude",
   codex: "openai",
+  "deepseek-harness": "deepseek",
   gemini: "gemini",
   grokbuild: "grok",
   opencode: "opencode",

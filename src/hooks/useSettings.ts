@@ -28,10 +28,13 @@ export interface UseSettingsResult {
   requiresRestart: boolean;
   updateSettings: (updates: Partial<SettingsFormState>) => void;
   updateDirectory: (app: DirectoryAppId, value?: string) => void;
+  updateDeepseekHarnessSessionDir: (value?: string) => void;
   updateAppConfigDir: (value?: string) => void;
   browseDirectory: (app: DirectoryAppId) => Promise<void>;
+  browseDeepseekHarnessSessionDir: () => Promise<void>;
   browseAppConfigDir: () => Promise<void>;
   resetDirectory: (app: DirectoryAppId) => Promise<void>;
+  resetDeepseekHarnessSessionDir: () => Promise<void>;
   resetAppConfigDir: () => Promise<void>;
   saveSettings: (
     overrides?: Partial<SettingsFormState>,
@@ -82,10 +85,13 @@ export function useSettings(): UseSettingsResult {
     isLoading: isDirectoryLoading,
     initialAppConfigDir,
     updateDirectory,
+    updateDeepseekHarnessSessionDir,
     updateAppConfigDir,
     browseDirectory,
+    browseDeepseekHarnessSessionDir,
     browseAppConfigDir,
     resetDirectory,
+    resetDeepseekHarnessSessionDir,
     resetAppConfigDir,
     resetAllDirectories,
   } = useDirectorySettings({
@@ -114,6 +120,7 @@ export function useSettings(): UseSettingsResult {
       opencode: sanitizeDir(data?.opencodeConfigDir),
       openclaw: sanitizeDir(data?.openclawConfigDir),
       hermes: sanitizeDir(data?.hermesConfigDir),
+      deepseekHarnessSession: sanitizeDir(data?.deepseekHarnessSessionDir),
     });
     setRequiresRestart(false);
   }, [
@@ -195,6 +202,9 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
         );
+        const sanitizedDeepseekHarnessSessionDir = sanitizeDir(
+          mergedSettings.deepseekHarnessSessionDir,
+        );
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -209,6 +219,7 @@ export function useSettings(): UseSettingsResult {
           grokConfigDir: sanitizedGrokDir,
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
+          deepseekHarnessSessionDir: sanitizedDeepseekHarnessSessionDir,
           language: mergedSettings.language,
         };
 
@@ -328,6 +339,9 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
         );
+        const sanitizedDeepseekHarnessSessionDir = sanitizeDir(
+          mergedSettings.deepseekHarnessSessionDir,
+        );
         const previousAppDir = initialAppConfigDir;
         const previousClaudeDir = sanitizeDir(data?.claudeConfigDir);
         const previousCodexDir = sanitizeDir(data?.codexConfigDir);
@@ -349,6 +363,7 @@ export function useSettings(): UseSettingsResult {
           grokConfigDir: sanitizedGrokDir,
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
+          deepseekHarnessSessionDir: sanitizedDeepseekHarnessSessionDir,
           language: mergedSettings.language,
         };
 
@@ -506,10 +521,13 @@ export function useSettings(): UseSettingsResult {
     requiresRestart,
     updateSettings,
     updateDirectory,
+    updateDeepseekHarnessSessionDir,
     updateAppConfigDir,
     browseDirectory,
+    browseDeepseekHarnessSessionDir,
     browseAppConfigDir,
     resetDirectory,
+    resetDeepseekHarnessSessionDir,
     resetAppConfigDir,
     saveSettings,
     autoSaveSettings,

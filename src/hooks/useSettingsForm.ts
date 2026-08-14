@@ -125,6 +125,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       grokConfigDir: sanitizeDir(data.grokConfigDir),
       opencodeConfigDir: sanitizeDir(data.opencodeConfigDir),
       openclawConfigDir: sanitizeDir(data.openclawConfigDir),
+      deepseekHarnessSessionDir: sanitizeDir(data.deepseekHarnessSessionDir),
       language: normalizedLanguage,
     };
 
@@ -192,6 +193,9 @@ export function useSettingsForm(): UseSettingsFormResult {
         grokConfigDir: sanitizeDir(serverData.grokConfigDir),
         opencodeConfigDir: sanitizeDir(serverData.opencodeConfigDir),
         openclawConfigDir: sanitizeDir(serverData.openclawConfigDir),
+        deepseekHarnessSessionDir: sanitizeDir(
+          serverData.deepseekHarnessSessionDir,
+        ),
         language: normalizedLanguage,
       };
 
