@@ -5,7 +5,7 @@ import type {
   DraggableAttributes,
   DraggableSyntheticListeners,
 } from "@dnd-kit/core";
-import type { Provider } from "@/types";
+import type { OpenClawProviderConfig, Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
@@ -66,7 +66,7 @@ interface ProviderCardProps {
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
   // OpenClaw: default model
   isDefaultModel?: boolean;
-  onSetAsDefault?: () => void;
+  onSetAsDefault?: (modelId?: string) => void;
 }
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
@@ -183,6 +183,15 @@ export function ProviderCard({
   const displayUrl = useMemo(() => {
     return extractApiUrl(provider, fallbackUrlText);
   }, [provider, fallbackUrlText]);
+
+  const openclawDefaultModelOptions = useMemo(() => {
+    if (appId !== "openclaw") return [];
+    const config = provider.settingsConfig as OpenClawProviderConfig;
+    if (!Array.isArray(config?.models)) return [];
+    return config.models
+      .filter((model) => typeof model.id === "string" && model.id.trim())
+      .map((model) => ({ id: model.id, name: model.name }));
+  }, [appId, provider.settingsConfig]);
 
   const isClickableUrl = useMemo(() => {
     if (provider.notes?.trim()) {
@@ -436,18 +445,6 @@ export function ProviderCard({
                   <FailoverPriorityBadge priority={failoverPriority} />
                 )}
 
-              {provider.category === "third_party" &&
-                provider.meta?.isPartner && (
-                  <span
-                    className="text-yellow-500 dark:text-yellow-400"
-                    title={t("provider.officialPartner", {
-                      defaultValue: "官方合作伙伴",
-                    })}
-                  >
-                    ⭐
-                  </span>
-                )}
-
               {isHermesReadOnly && (
                 <span
                   className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200"
@@ -602,6 +599,7 @@ export function ProviderCard({
               onToggleFailover={onToggleFailover}
               // OpenClaw: default model
               isDefaultModel={isDefaultModel}
+              defaultModelOptions={openclawDefaultModelOptions}
               onSetAsDefault={onSetAsDefault}
             />
           </div>

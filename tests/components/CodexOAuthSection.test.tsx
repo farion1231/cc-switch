@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
@@ -29,6 +30,10 @@ vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
 
 describe("CodexOAuthSection", () => {
   beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
     mocks.useCodexOauth.mockReturnValue({
       accounts: [
         {
@@ -38,6 +43,17 @@ describe("CodexOAuthSection", () => {
           avatar_url: null,
           authenticated_at: 0,
           is_default: true,
+          github_domain: "",
+          reauth_required: false,
+          requires_reauth: false,
+        },
+        {
+          id: "account-2",
+          provider: "codex_oauth",
+          login: "second@example.com",
+          avatar_url: null,
+          authenticated_at: 1,
+          is_default: false,
           github_domain: "",
           reauth_required: false,
           requires_reauth: false,
@@ -74,6 +90,28 @@ describe("CodexOAuthSection", () => {
     render(<AuthCenterPanel />);
 
     expect(mocks.renderAccountQuota).toHaveBeenCalledWith("account-1");
-    expect(screen.getByTestId("account-quota")).toHaveTextContent("account-1");
+    expect(mocks.renderAccountQuota).toHaveBeenCalledWith("account-2");
+    expect(
+      screen.getAllByTestId("account-quota").map((quota) => quota.textContent),
+    ).toEqual(["account-1", "account-2"]);
+  });
+
+  it("selects a specific account when multiple accounts are managed", async () => {
+    const user = userEvent.setup();
+    const onAccountSelect = vi.fn();
+    render(
+      <CodexOAuthSection
+        mode="select"
+        selectedAccountId="account-1"
+        onAccountSelect={onAccountSelect}
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox"));
+    await user.click(
+      await screen.findByRole("option", { name: /second@example\.com/ }),
+    );
+
+    expect(onAccountSelect).toHaveBeenCalledWith("account-2");
   });
 });

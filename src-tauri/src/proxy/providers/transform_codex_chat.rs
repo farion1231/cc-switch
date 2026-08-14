@@ -1794,6 +1794,7 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
     let Some(usage) = usage.filter(|value| value.is_object() && !value.is_null()) else {
         return json!({
             "input_tokens": 0,
+            "input_tokens_details": { "cached_tokens": 0 },
             "output_tokens": 0,
             "total_tokens": 0,
             "output_tokens_details": { "reasoning_tokens": 0 }
@@ -1821,10 +1822,18 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
         "total_tokens": total_tokens
     });
 
-    let cached = usage
-        .pointer("/prompt_tokens_details/cached_tokens")
-        .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
-        .and_then(|v| v.as_u64())
+    let direct_cache_read = usage.get("cache_read_input_tokens").and_then(Value::as_u64);
+    let cached = direct_cache_read
+        .or_else(|| {
+            usage
+                .pointer("/prompt_tokens_details/cached_tokens")
+                .and_then(Value::as_u64)
+        })
+        .or_else(|| {
+            usage
+                .pointer("/input_tokens_details/cached_tokens")
+                .and_then(Value::as_u64)
+        })
         .unwrap_or(0);
     let cache_write = usage
         .pointer("/prompt_tokens_details/cache_write_tokens")
@@ -1841,6 +1850,8 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
             "cached_tokens": cached,
             "cache_write_tokens": cache_write
         });
+    } else {
+        result["input_tokens_details"] = json!({ "cached_tokens": 0 });
     }
 
     if let Some(details) = usage
@@ -1856,8 +1867,8 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
         result["output_tokens_details"] = json!({ "reasoning_tokens": 0 });
     }
 
-    if let Some(cache_read) = usage.get("cache_read_input_tokens") {
-        result["cache_read_input_tokens"] = cache_read.clone();
+    if let Some(cache_read) = direct_cache_read {
+        result["cache_read_input_tokens"] = json!(cache_read);
     }
     if cache_write > 0 {
         result["cache_creation_input_tokens"] = json!(cache_write);
@@ -3799,6 +3810,64 @@ mod tests {
         let second = responses_to_chat_completions(input).unwrap();
 
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn chat_usage_to_responses_includes_required_input_token_details() {
+        let usage = json!({
+            "prompt_tokens": 13,
+            "completion_tokens": 245,
+            "total_tokens": 258,
+            "prompt_tokens_details": { "cached_tokens": 0 }
+        });
+
+        let converted = chat_usage_to_responses_usage(Some(&usage));
+        assert_eq!(
+            converted["input_tokens_details"],
+            json!({ "cached_tokens": 0 })
+        );
+
+        let fallback = chat_usage_to_responses_usage(None);
+        assert_eq!(
+            fallback["input_tokens_details"],
+            json!({ "cached_tokens": 0 })
+        );
+    }
+
+    #[test]
+    fn chat_usage_to_responses_resolves_cache_read_precedence() {
+        let direct_cache_usage = json!({
+            "prompt_tokens": 100,
+            "completion_tokens": 5,
+            "prompt_tokens_details": { "cached_tokens": 0 },
+            "cache_read_input_tokens": 40
+        });
+        let converted = chat_usage_to_responses_usage(Some(&direct_cache_usage));
+        assert_eq!(converted["input_tokens_details"]["cached_tokens"], 40);
+        assert_eq!(converted["cache_read_input_tokens"], 40);
+
+        let direct_zero = json!({
+            "prompt_tokens_details": { "cached_tokens": 12 },
+            "cache_read_input_tokens": 0
+        });
+        let converted = chat_usage_to_responses_usage(Some(&direct_zero));
+        assert_eq!(converted["input_tokens_details"]["cached_tokens"], 0);
+        assert_eq!(converted["cache_read_input_tokens"], 0);
+
+        let invalid_direct = json!({
+            "prompt_tokens_details": { "cached_tokens": 12 },
+            "cache_read_input_tokens": "invalid"
+        });
+        let converted = chat_usage_to_responses_usage(Some(&invalid_direct));
+        assert_eq!(converted["input_tokens_details"]["cached_tokens"], 12);
+        assert!(converted.get("cache_read_input_tokens").is_none());
+
+        let invalid_prompt_details = json!({
+            "prompt_tokens_details": { "cached_tokens": "invalid" },
+            "input_tokens_details": { "cached_tokens": 7 }
+        });
+        let converted = chat_usage_to_responses_usage(Some(&invalid_prompt_details));
+        assert_eq!(converted["input_tokens_details"]["cached_tokens"], 7);
     }
 
     #[test]

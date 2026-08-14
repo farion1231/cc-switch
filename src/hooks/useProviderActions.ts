@@ -394,7 +394,7 @@ export function useProviderActions(
 
   // Set provider as default model (OpenClaw only)
   const setAsDefaultModel = useCallback(
-    async (provider: Provider) => {
+    async (provider: Provider, modelId?: string) => {
       const config = provider.settingsConfig as OpenClawProviderConfig;
       if (!config.models || config.models.length === 0) {
         toast.error(
@@ -405,12 +405,31 @@ export function useProviderActions(
         return;
       }
 
-      const model: OpenClawDefaultModel = {
-        primary: `${provider.id}/${config.models[0].id}`,
-        fallbacks: config.models.slice(1).map((m) => `${provider.id}/${m.id}`),
-      };
+      const selectedModel = modelId
+        ? config.models.find((model) => model.id === modelId)
+        : config.models[0];
+      if (!selectedModel) {
+        toast.error(
+          t("notifications.openclawModelNotFound", {
+            defaultValue: "所选模型已不存在，请刷新后重试",
+          }),
+        );
+        return;
+      }
 
       try {
+        const primary = `${provider.id}/${selectedModel.id}`;
+        const existingDefault = await openclawApi.getDefaultModel();
+        const model: OpenClawDefaultModel = {
+          ...(existingDefault ?? {}),
+          primary,
+        };
+        if (existingDefault?.fallbacks) {
+          model.fallbacks = existingDefault.fallbacks.filter(
+            (fallback) => fallback !== primary,
+          );
+        }
+
         await openclawApi.setDefaultModel(model);
         await queryClient.invalidateQueries({
           queryKey: openclawKeys.defaultModel,

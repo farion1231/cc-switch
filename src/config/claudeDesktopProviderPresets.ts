@@ -273,13 +273,14 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "RunAPI",
-    websiteUrl: "https://runapi.co",
-    apiKeyUrl: "https://runapi.co/register?aff=iOKB",
+    websiteUrl: "https://runapi.host",
+    apiKeyUrl: "https://runapi.host/register?aff=iOKB",
     category: "aggregator",
-    baseUrl: "https://runapi.co",
+    baseUrl: "https://runapi.host",
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
+    endpointCandidates: ["https://runapi.host", "https://runapi.co"],
     isPartner: true,
     partnerPromotionKey: "runapi",
     icon: "runapi",
@@ -428,7 +429,27 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "claudecn",
   },
   {
-    name: "火山Agentplan",
+    name: "火山 Agent Plan",
+    websiteUrl:
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
+    apiKeyUrl:
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
+    category: "cn_official",
+    baseUrl: "https://ark.cn-beijing.volces.com/api/plan",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "ark-code-latest",
+      "ark-code-latest",
+      "ark-code-latest",
+    ),
+    icon: "huoshan",
+    iconColor: "#3370FF",
+    isPartner: true,
+    partnerPromotionKey: "volcengine_agentplan",
+  },
+  {
+    name: "火山 Coding Plan",
     websiteUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
@@ -445,7 +466,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "huoshan",
     iconColor: "#3370FF",
     isPartner: true,
-    partnerPromotionKey: "volcengine_agentplan",
+    partnerPromotionKey: "volcengine_codingplan",
   },
   {
     name: "BytePlus",
@@ -735,6 +756,20 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     isPartner: true,
     icon: "sudocode-us",
   },
+  {
+    name: "XycAi",
+    websiteUrl: "https://xycai.us",
+    apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
+    category: "aggregator",
+    baseUrl: "https://apicdn.xycai.us",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(),
+    endpointCandidates: ["https://apicdn.xycai.us", "https://apicdn.xyc.ai"],
+    isPartner: true,
+    partnerPromotionKey: "xycai",
+    icon: "xycai",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Amux",
@@ -831,7 +866,9 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     category: "third_party",
     baseUrl: "https://opencode.ai/zen/go",
     mode: "proxy",
-    apiFormat: "openai_chat",
+    // Go 网关 /messages 收除 grok-4.5 外全部模型（Chat 组靠服务端转换），
+    // anthropic 透传即可；上游只认 x-api-key，apiKey 直填默认即该头。
+    apiFormat: "anthropic",
     modelRoutes: brandedRoutes(
       "deepseek-v4-flash",
       "deepseek-v4-flash",
@@ -1170,6 +1207,43 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "mimo-v2.5-pro",
     ),
     icon: "xiaomimimo",
+    iconColor: "#000000",
+  },
+  {
+    name: "PPIO",
+    websiteUrl: "https://ppio.com",
+    apiKeyUrl: "https://ppio.com/settings/key-management",
+    category: "aggregator",
+    baseUrl: "https://api.ppio.com/anthropic",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "deepseek/deepseek-v4-flash-0731",
+      "deepseek/deepseek-v4-flash-0731",
+      "deepseek/deepseek-v4-flash-0731",
+      true,
+    ),
+    endpointCandidates: ["https://api.ppio.com/anthropic"],
+    icon: "ppio",
+    iconColor: "#2874FF",
+  },
+  {
+    name: "JieKou AI",
+    websiteUrl: "https://jiekou.ai/#model-library",
+    apiKeyUrl: "https://jiekou.ai/settings/key-management",
+    category: "aggregator",
+    baseUrl: "https://api.jiekou.ai/anthropic",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: [
+      {
+        routeId: CLAUDE_DESKTOP_ROLE_ROUTE_IDS.fable,
+        upstreamModel: "claude-fable-5",
+        supports1m: true,
+      },
+    ],
+    endpointCandidates: ["https://api.jiekou.ai/anthropic"],
+    icon: "jiekou",
     iconColor: "#000000",
   },
 ];
