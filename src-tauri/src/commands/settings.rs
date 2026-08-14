@@ -219,8 +219,8 @@ pub fn get_floating_work_area(window: tauri::Window) -> Result<Option<FloatingWo
             let p = monitor.position();
             let s = monitor.size();
             Ok(Some(FloatingWorkArea {
-                x: p.x as i32,
-                y: p.y as i32,
+                x: p.x,
+                y: p.y,
                 width: s.width as i32,
                 height: s.height as i32,
             }))
