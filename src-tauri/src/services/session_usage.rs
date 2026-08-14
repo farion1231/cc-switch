@@ -135,17 +135,13 @@ const CLAUDE_API_ERROR_BACKFILL_MARKER: &str = "__claude_api_error_backfill_v1__
 /// 同步 Claude Code 会话日志到使用统计数据库
 pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppError> {
     let projects_dir = get_claude_config_dir().join("projects");
-    if !projects_dir.exists() {
-        return Ok(SessionSyncResult {
-            imported: 0,
-            skipped: 0,
-            files_scanned: 0,
-            suspected_duplicates: 0,
-            deferred_files: 0,
-            errors: vec![],
-        });
-    }
+    sync_claude_session_logs_from_projects_dir(db, &projects_dir)
+}
 
+fn sync_claude_session_logs_from_projects_dir(
+    db: &Database,
+    projects_dir: &Path,
+) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult {
         imported: 0,
         skipped: 0,
@@ -155,8 +151,28 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
         errors: vec![],
     };
 
+    match fs::metadata(projects_dir) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => {
+            result.errors.push(format!(
+                "Claude projects 路径不是目录: {}",
+                projects_dir.display()
+            ));
+            return Ok(result);
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(result),
+        Err(error) => {
+            result.errors.push(format!(
+                "无法读取 Claude projects 目录 {}: {error}",
+                projects_dir.display()
+            ));
+            return Ok(result);
+        }
+    }
+
     // 收集所有 .jsonl 文件
-    let jsonl_files = collect_jsonl_files(&projects_dir);
+    let (jsonl_files, collection_errors) = collect_jsonl_files(projects_dir);
+    result.errors.extend(collection_errors);
 
     let force_full_scan = get_sync_state(db, CLAUDE_API_ERROR_BACKFILL_MARKER)? == (0, 0);
 
@@ -213,62 +229,86 @@ fn complete_api_error_backfill_if_successful(
 /// agent 多嵌套一层 `workflows/wf_<ID>/`。漏掉这一层会让 Workflow 的 token
 /// 用量完全不计入统计；`journal.jsonl` 不含 `type=="assistant"` 行，解析时
 /// 会被 `sync_single_file` 天然跳过，因此这里无需按文件名过滤。
-fn collect_jsonl_files(projects_dir: &Path) -> Vec<PathBuf> {
+fn collect_jsonl_files(projects_dir: &Path) -> (Vec<PathBuf>, Vec<String>) {
     let mut files = Vec::new();
+    let mut errors = Vec::new();
 
-    let entries = match fs::read_dir(projects_dir) {
-        Ok(e) => e,
-        Err(_) => return files,
-    };
-
-    for entry in entries.flatten() {
+    for entry in read_dir_entries(projects_dir, false, &mut errors) {
         let path = entry.path();
-        if !path.is_dir() {
+        if !path_is_dir(&path, &mut errors) {
             continue;
         }
         // 每个项目目录下的 .jsonl 文件
-        if let Ok(sub_entries) = fs::read_dir(&path) {
-            for sub_entry in sub_entries.flatten() {
-                let sub_path = sub_entry.path();
-                if sub_path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-                    // 主会话 JSONL 文件
-                    files.push(sub_path);
-                } else if sub_path.is_dir() {
-                    // 扫描子 agent 目录: 项目/SESSION_ID/subagents/*.jsonl
-                    let subagents_dir = sub_path.join("subagents");
-                    if subagents_dir.is_dir() {
-                        push_jsonl_children(&subagents_dir, &mut files);
+        for sub_entry in read_dir_entries(&path, false, &mut errors) {
+            let sub_path = sub_entry.path();
+            if sub_path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                // 主会话 JSONL 文件
+                files.push(sub_path);
+            } else if path_is_dir(&sub_path, &mut errors) {
+                // 扫描子 agent 目录: 项目/SESSION_ID/subagents/*.jsonl
+                let subagents_dir = sub_path.join("subagents");
+                push_jsonl_children(&subagents_dir, true, &mut files, &mut errors);
 
-                        // 额外下探 Workflow 子 agent:
-                        // 项目/SESSION_ID/subagents/workflows/wf_<ID>/*.jsonl
-                        let workflows_dir = subagents_dir.join("workflows");
-                        if workflows_dir.is_dir() {
-                            if let Ok(wf_entries) = fs::read_dir(&workflows_dir) {
-                                for wf_entry in wf_entries.flatten() {
-                                    let wf_path = wf_entry.path();
-                                    if wf_path.is_dir() {
-                                        push_jsonl_children(&wf_path, &mut files);
-                                    }
-                                }
-                            }
-                        }
+                // 额外下探 Workflow 子 agent:
+                // 项目/SESSION_ID/subagents/workflows/wf_<ID>/*.jsonl
+                let workflows_dir = subagents_dir.join("workflows");
+                for wf_entry in read_dir_entries(&workflows_dir, true, &mut errors) {
+                    let wf_path = wf_entry.path();
+                    if path_is_dir(&wf_path, &mut errors) {
+                        push_jsonl_children(&wf_path, false, &mut files, &mut errors);
                     }
                 }
             }
         }
     }
 
-    files
+    (files, errors)
 }
 
 /// 将 `dir` 下直接子层的所有 `.jsonl` 文件追加到 `files`（不递归）。
-fn push_jsonl_children(dir: &Path, files: &mut Vec<PathBuf>) {
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-                files.push(path);
+fn push_jsonl_children(
+    dir: &Path,
+    optional: bool,
+    files: &mut Vec<PathBuf>,
+    errors: &mut Vec<String>,
+) {
+    for entry in read_dir_entries(dir, optional, errors) {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+            files.push(path);
+        }
+    }
+}
+
+fn read_dir_entries(dir: &Path, optional: bool, errors: &mut Vec<String>) -> Vec<fs::DirEntry> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if optional && error.kind() == std::io::ErrorKind::NotFound => {
+            return Vec::new();
+        }
+        Err(error) => {
+            errors.push(format!("无法读取目录 {}: {error}", dir.display()));
+            return Vec::new();
+        }
+    };
+
+    entries
+        .filter_map(|entry| match entry {
+            Ok(entry) => Some(entry),
+            Err(error) => {
+                errors.push(format!("无法读取目录项 {}: {error}", dir.display()));
+                None
             }
+        })
+        .collect()
+}
+
+fn path_is_dir(path: &Path, errors: &mut Vec<String>) -> bool {
+    match fs::metadata(path) {
+        Ok(metadata) => metadata.is_dir(),
+        Err(error) => {
+            errors.push(format!("无法读取路径元数据 {}: {error}", path.display()));
+            false
         }
     }
 }
@@ -289,7 +329,7 @@ fn sync_single_file_with_options(
     // 获取文件元数据
     let metadata = fs::metadata(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
-    let file_modified = metadata_modified_nanos(&metadata);
+    let file_modified = metadata_modified_nanos_checked(&metadata)?;
 
     // 检查同步状态
     let (last_modified, last_offset) = if force_full_scan {
@@ -320,19 +360,23 @@ fn sync_single_file_with_options(
             continue;
         }
 
-        let line = match line_result {
-            Ok(l) => l,
-            Err(_) => continue, // 容忍不完整的最后一行
-        };
+        let line = line_result.map_err(|error| {
+            AppError::Config(format!(
+                "读取 JSONL 失败 ({} 第 {line_offset} 行): {error}",
+                file_path.display()
+            ))
+        })?;
 
         if line.trim().is_empty() {
             continue;
         }
 
-        let value: serde_json::Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
+        let value: serde_json::Value = serde_json::from_str(&line).map_err(|error| {
+            AppError::Config(format!(
+                "解析 JSONL 失败 ({} 第 {line_offset} 行): {error}",
+                file_path.display()
+            ))
+        })?;
 
         // 提取 session ID (从 system 或首条消息)
         if current_session_id.is_none() {
@@ -474,7 +518,7 @@ fn sync_single_file_with_options(
             Ok(false) => skipped += 1,
             Err(e) => {
                 log::warn!("[SESSION-SYNC] 插入失败 ({}): {e}", msg.message_id);
-                skipped += 1;
+                return Err(e);
             }
         }
     }
@@ -503,12 +547,16 @@ pub(crate) fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64
 /// `session_log_sync.last_modified` 旧数据是秒级时间戳；新写入纳秒值不需要
 /// schema 迁移，旧值会自然触发一次增量重扫，并继续依赖行 offset 避免重复导入。
 pub(crate) fn metadata_modified_nanos(metadata: &fs::Metadata) -> i64 {
+    metadata_modified_nanos_checked(metadata).unwrap_or(0)
+}
+
+fn metadata_modified_nanos_checked(metadata: &fs::Metadata) -> Result<i64, AppError> {
     metadata
         .modified()
-        .ok()
-        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map_err(|error| AppError::Config(format!("无法读取文件修改时间: {error}")))?
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_err(|error| AppError::Config(format!("文件修改时间早于 UNIX epoch: {error}")))
         .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
-        .unwrap_or(0)
 }
 
 /// 更新 session_log_sync 表中某条目的同步进度。
@@ -872,7 +920,8 @@ mod tests {
         fs::write(project.join("main.jsonl"), "{}").unwrap();
         fs::write(subagents_dir.join("agent-abc.jsonl"), "{}").unwrap();
 
-        let files = collect_jsonl_files(&tmp);
+        let (files, errors) = collect_jsonl_files(&tmp);
+        assert!(errors.is_empty());
         assert_eq!(files.len(), 2);
         let paths: Vec<String> = files
             .iter()
@@ -901,7 +950,8 @@ mod tests {
         // journal.jsonl 也会被收集，但解析时因无 assistant 行而产出 0 条
         fs::write(wf_dir.join("journal.jsonl"), "{}").unwrap();
 
-        let files = collect_jsonl_files(&tmp);
+        let (files, errors) = collect_jsonl_files(&tmp);
+        assert!(errors.is_empty());
         let paths: Vec<String> = files
             .iter()
             .map(|p| p.to_string_lossy().to_string())
@@ -1017,6 +1067,133 @@ mod tests {
             "所有文件扫描成功后才应完成回填"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_api_error_backfill_marker_waits_for_directory_scan_errors() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let not_a_directory = tmp.join("projects");
+        fs::write(&not_a_directory, "not a directory").unwrap();
+
+        let result = sync_claude_session_logs_from_projects_dir(&db, &not_a_directory)?;
+        assert!(
+            !result.errors.is_empty(),
+            "目录枚举失败必须进入同步错误列表"
+        );
+
+        assert_eq!(
+            get_sync_state(&db, CLAUDE_API_ERROR_BACKFILL_MARKER)?,
+            (0, 0),
+            "目录扫描不完整时必须保留回填待重试状态"
+        );
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_optional_scan_path_that_is_not_a_directory_is_an_error() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        let session_dir = tmp.join("project").join("session");
+        fs::create_dir_all(&session_dir).unwrap();
+        fs::write(session_dir.join("subagents"), "not a directory").unwrap();
+
+        let result = sync_claude_session_logs_from_projects_dir(&db, &tmp)?;
+        assert!(
+            !result.errors.is_empty(),
+            "存在但不是目录的可选扫描路径必须被报告，不能视为目录缺失"
+        );
+        assert_eq!(
+            get_sync_state(&db, CLAUDE_API_ERROR_BACKFILL_MARKER)?,
+            (0, 0),
+            "嵌套目录扫描失败时必须保留回填待重试状态"
+        );
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_sync_does_not_advance_cursor_when_insert_fails() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        let project_dir = tmp.join("project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let file = project_dir.join("claude-api-error.jsonl");
+        let api_error = r#"{"type":"assistant","message":{"id":"msg_insert_error","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:44Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"authentication_failed"}"#;
+        fs::write(&file, format!("{api_error}\n")).unwrap();
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute_batch("DROP TABLE proxy_request_logs")?;
+        }
+
+        let result = sync_claude_session_logs_from_projects_dir(&db, &tmp)?;
+        assert!(
+            !result.errors.is_empty(),
+            "数据库插入失败必须进入顶层同步错误列表"
+        );
+        assert_eq!(
+            get_sync_state(&db, &file.to_string_lossy())?,
+            (0, 0),
+            "插入失败后不能推进文件游标，后续同步必须能够重试"
+        );
+        assert_eq!(
+            get_sync_state(&db, CLAUDE_API_ERROR_BACKFILL_MARKER)?,
+            (0, 0),
+            "数据库插入失败时必须保留回填待重试状态"
+        );
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_incomplete_jsonl_keeps_backfill_pending_until_retry() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        let project_dir = tmp.join("project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let file = project_dir.join("claude-api-error.jsonl");
+        fs::write(
+            &file,
+            r#"{"type":"assistant","message":{"id":"msg_partial""#,
+        )
+        .unwrap();
+
+        let first = sync_claude_session_logs_from_projects_dir(&db, &tmp)?;
+        assert!(
+            !first.errors.is_empty(),
+            "未写完的 JSONL 行必须使本次回填失败"
+        );
+        assert_eq!(
+            get_sync_state(&db, &file.to_string_lossy())?,
+            (0, 0),
+            "未写完的行不能被文件游标越过"
+        );
+        assert_eq!(
+            get_sync_state(&db, CLAUDE_API_ERROR_BACKFILL_MARKER)?,
+            (0, 0),
+            "未写完的行必须让全量回填保持待重试"
+        );
+
+        let api_error = r#"{"type":"assistant","message":{"id":"msg_partial","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:44Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"authentication_failed"}"#;
+        fs::write(&file, format!("{api_error}\n")).unwrap();
+
+        let retry = sync_claude_session_logs_from_projects_dir(&db, &tmp)?;
+        assert_eq!(retry.imported, 1, "文件写完后重试必须导入原来的 403");
+        assert!(retry.errors.is_empty());
+        assert_eq!(
+            get_sync_state(&db, CLAUDE_API_ERROR_BACKFILL_MARKER)?,
+            (1, 1),
+            "完整重试成功后才能完成回填"
+        );
+
+        fs::remove_dir_all(&tmp).ok();
         Ok(())
     }
 }
