@@ -307,12 +307,6 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     let proxy_data_source = data_source_expr("proxy_dedup");
     let app_type_match =
         dedup_app_type_match_sql("proxy_dedup.app_type", &format!("{log_alias}.app_type"));
-    let proxy_error_data_source = data_source_expr("proxy_error_dedup");
-    let proxy_error_app_type_match = dedup_app_type_match_sql(
-        "proxy_error_dedup.app_type",
-        &format!("{log_alias}.app_type"),
-    );
-    let session_error_data_source = data_source_expr("session_error_rank");
     format!(
         "NOT (
             {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
@@ -342,31 +336,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                       LOWER(proxy_dedup.model) = LOWER({log_alias}.model)
                       OR LOWER(proxy_dedup.model) = 'unknown'
                       OR LOWER({log_alias}.model) = 'unknown'
-                )
-            )
-        )
-        AND NOT (
-            {data_source} = 'session_log'
-            AND {log_alias}.status_code >= 400
-            AND {log_alias}.status_code < 600
-            AND NULLIF(TRIM({log_alias}.session_id), '') IS NOT NULL
-            AND (
-                SELECT COUNT(*)
-                FROM proxy_request_logs proxy_error_dedup
-                WHERE {proxy_error_data_source} = 'proxy'
-                  AND {proxy_error_app_type_match}
-                  AND proxy_error_dedup.status_code = {log_alias}.status_code
-                  AND proxy_error_dedup.session_id = {log_alias}.session_id
-                  AND proxy_error_dedup.created_at = {log_alias}.created_at
-            ) >= (
-                SELECT COUNT(*)
-                FROM proxy_request_logs session_error_rank
-                WHERE {session_error_data_source} = 'session_log'
-                  AND session_error_rank.app_type = {log_alias}.app_type
-                  AND session_error_rank.status_code = {log_alias}.status_code
-                  AND session_error_rank.session_id = {log_alias}.session_id
-                  AND session_error_rank.created_at = {log_alias}.created_at
-                  AND session_error_rank.request_id <= {log_alias}.request_id
+                  )
             )
         )"
     )
@@ -2459,7 +2429,6 @@ mod tests {
                 cache_read_tokens INTEGER NOT NULL,
                 cache_creation_tokens INTEGER NOT NULL,
                 status_code INTEGER NOT NULL,
-                session_id TEXT,
                 created_at INTEGER NOT NULL,
                 data_source TEXT
             )",
@@ -2580,58 +2549,6 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()?;
         assert_eq!(request_ids, vec!["desktop-proxy"]);
 
-        Ok(())
-    }
-
-    #[test]
-    fn test_effective_filter_keeps_session_api_error_near_proxy_success() -> Result<(), AppError> {
-        let conn = Connection::open_in_memory()?;
-        create_legacy_nullable_logs_table(&conn)?;
-        conn.execute_batch(
-            "INSERT INTO proxy_request_logs (
-                request_id, app_type, model, input_tokens, output_tokens,
-                cache_read_tokens, cache_creation_tokens, status_code, created_at, data_source
-            ) VALUES
-                ('proxy-success', 'claude', '<synthetic>', 0, 0, 0, 0, 200, 1000, 'proxy'),
-                ('session-error', 'claude', '<synthetic>', 0, 0, 0, 0, 403, 1000, 'session_log');",
-        )?;
-
-        let filter = effective_usage_log_filter("l");
-        let sql = format!(
-            "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
-        );
-        let request_ids = conn
-            .prepare(&sql)?
-            .query_map([], |row| row.get::<_, String>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        assert_eq!(request_ids, vec!["proxy-success", "session-error"]);
-        Ok(())
-    }
-
-    #[test]
-    fn test_effective_filter_pairs_proxy_and_session_errors_one_to_one() -> Result<(), AppError> {
-        let conn = Connection::open_in_memory()?;
-        create_legacy_nullable_logs_table(&conn)?;
-        conn.execute_batch(
-            "INSERT INTO proxy_request_logs (
-                request_id, app_type, model, input_tokens, output_tokens,
-                cache_read_tokens, cache_creation_tokens, status_code, session_id,
-                created_at, data_source
-            ) VALUES
-                ('proxy-error', 'claude', 'deepseek-v4', 0, 0, 0, 0, 403, 'session-1', 1000, 'proxy'),
-                ('session-error-a', 'claude', '<synthetic>', 0, 0, 0, 0, 403, 'session-1', 1000, 'session_log'),
-                ('session-error-b', 'claude', '<synthetic>', 0, 0, 0, 0, 403, 'session-1', 1000, 'session_log');",
-        )?;
-
-        let filter = effective_usage_log_filter("l");
-        let sql = format!(
-            "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
-        );
-        let request_ids = conn
-            .prepare(&sql)?
-            .query_map([], |row| row.get::<_, String>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        assert_eq!(request_ids, vec!["proxy-error", "session-error-b"]);
         Ok(())
     }
 
