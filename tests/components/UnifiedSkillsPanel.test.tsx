@@ -390,11 +390,19 @@ describe("UnifiedSkillsPanel", () => {
         name: "Repo A Beta",
         repoName: "repo-a",
       }),
+      makeInstalledSkill({
+        id: "owner/repo-b:gamma",
+        name: "Repo B Gamma",
+        repoName: "repo-b",
+      }),
     ];
     renderPanel();
 
     const user = userEvent.setup();
     const repoGroup = screen.getByRole("region", { name: "owner/repo-a" });
+    const otherRepoGroup = screen.getByRole("region", {
+      name: "owner/repo-b",
+    });
     const collapseButton = within(repoGroup).getByRole("button", {
       name: "owner/repo-a: usage.collapse",
     });
@@ -412,6 +420,14 @@ describe("UnifiedSkillsPanel", () => {
     expect(
       within(repoGroup).queryByText("Repo A Beta"),
     ).not.toBeInTheDocument();
+    expect(
+      within(otherRepoGroup).getByText("Repo B Gamma"),
+    ).toBeInTheDocument();
+    expect(
+      within(otherRepoGroup).getByRole("button", {
+        name: "owner/repo-b: usage.collapse",
+      }),
+    ).toHaveAttribute("aria-expanded", "true");
 
     await user.click(
       within(repoGroup).getByRole("button", {
@@ -445,7 +461,35 @@ describe("UnifiedSkillsPanel", () => {
       "group-hover:opacity-100",
       "focus-visible:opacity-100",
     );
+    expect(disclosureButton.parentElement).toHaveClass(
+      "w-[3.625rem]",
+      "shrink-0",
+      "justify-end",
+    );
     expect(disclosureButton.closest(".group")).not.toBeNull();
+  });
+
+  it("reserves the same action-column width for repository headers and Skill rows", () => {
+    installedSkillsMock = [
+      makeInstalledSkill({
+        id: "owner/repo-a:alpha",
+        name: "Repo A Alpha",
+        repoName: "repo-a",
+      }),
+    ];
+    renderPanel();
+
+    const repoGroup = screen.getByRole("region", { name: "owner/repo-a" });
+    const disclosureButton = within(repoGroup).getByRole("button", {
+      name: "owner/repo-a: usage.collapse",
+    });
+    const uninstallButton = within(repoGroup).getByTitle("skills.uninstall");
+
+    expect(disclosureButton.parentElement).toHaveClass("w-[3.625rem]");
+    expect(uninstallButton.parentElement).toHaveClass(
+      "w-[3.625rem]",
+      "justify-end",
+    );
   });
 
   it("toggles every Skill from one repository when search hides a sibling", async () => {
@@ -1067,7 +1111,12 @@ describe("UnifiedSkillsPanel", () => {
     render(<UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="pi" />);
 
     const piToggle = screen.getByRole("button", { name: "Pi" });
+    const sourceGroup = screen.getByRole("region", { name: "owner/repo" });
+    const sourcePiToggle = within(sourceGroup).getByRole("checkbox", {
+      name: "owner/repo: Pi common.disableAllForApp",
+    });
     expect(piToggle).toHaveAttribute("aria-pressed", "true");
+    expect(sourcePiToggle).toHaveAttribute("aria-checked", "true");
 
     await userEvent.setup().click(piToggle);
 
@@ -1110,8 +1159,14 @@ describe("UnifiedSkillsPanel", () => {
       <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="claude" />,
     );
 
+    const sourceGroup = screen.getByRole("region", { name: "owner/repo" });
     expect(
       screen.queryByRole("button", { name: "Pi" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(sourceGroup).queryByRole("checkbox", {
+        name: /owner\/repo: Pi/,
+      }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Claude" })).toBeInTheDocument();
   });

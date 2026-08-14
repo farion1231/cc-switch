@@ -954,18 +954,20 @@ const SkillSourceGroupSection: React.FC<SkillSourceGroupSectionProps> = ({
           onToggle={onToggleGroupApp}
         />
 
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-          aria-label={disclosureLabel}
-          aria-expanded={isExpanded}
-          title={disclosureLabel}
-          onClick={() => setIsExpanded((expanded) => !expanded)}
-        >
-          {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-        </Button>
+        <div className="flex w-[3.625rem] shrink-0 justify-end">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+            aria-label={disclosureLabel}
+            aria-expanded={isExpanded}
+            title={disclosureLabel}
+            onClick={() => setIsExpanded((expanded) => !expanded)}
+          >
+            {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </Button>
+        </div>
       </div>
 
       {isExpanded &&
@@ -1136,7 +1138,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
       />
 
       <div
-        className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+        className="flex w-[3.625rem] shrink-0 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
         style={hasUpdate ? { opacity: 1 } : undefined}
       >
         {hasUpdate && onUpdate && (
