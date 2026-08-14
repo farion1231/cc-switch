@@ -176,9 +176,7 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
         }
     }
 
-    if force_full_scan {
-        update_sync_state(db, CLAUDE_API_ERROR_BACKFILL_MARKER, 1, 1)?;
-    }
+    complete_api_error_backfill_if_successful(db, force_full_scan, &result.errors)?;
 
     if result.imported > 0 {
         log::info!(
@@ -190,6 +188,18 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
     }
 
     Ok(result)
+}
+
+fn complete_api_error_backfill_if_successful(
+    db: &Database,
+    force_full_scan: bool,
+    errors: &[String],
+) -> Result<(), AppError> {
+    if force_full_scan && errors.is_empty() {
+        update_sync_state(db, CLAUDE_API_ERROR_BACKFILL_MARKER, 1, 1)?;
+    }
+
+    Ok(())
 }
 
 /// 收集目录下所有 .jsonl 文件（含子 agent 文件）
@@ -982,6 +992,31 @@ mod tests {
         drop(conn);
 
         fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_api_error_backfill_marker_waits_for_all_files() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        complete_api_error_backfill_if_successful(
+            &db,
+            true,
+            &["temporarily unreadable.jsonl".to_string()],
+        )?;
+        assert_eq!(
+            get_sync_state(&db, CLAUDE_API_ERROR_BACKFILL_MARKER)?,
+            (0, 0),
+            "存在文件错误时必须保留回填待重试状态"
+        );
+
+        complete_api_error_backfill_if_successful(&db, true, &[])?;
+        assert_eq!(
+            get_sync_state(&db, CLAUDE_API_ERROR_BACKFILL_MARKER)?,
+            (1, 1),
+            "所有文件扫描成功后才应完成回填"
+        );
+
         Ok(())
     }
 }
