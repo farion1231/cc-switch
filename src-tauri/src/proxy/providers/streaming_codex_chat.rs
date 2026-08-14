@@ -70,6 +70,8 @@ struct ChatToResponsesState {
     response_id: String,
     model: String,
     created_at: u64,
+    /// Responses SSE 顶层事件的递增序号（Grok Build / Codex 严格解析要求）。
+    sequence_number: u64,
     next_output_index: u32,
     text: TextItemState,
     reasoning: ReasoningItemState,
@@ -92,6 +94,7 @@ impl Default for ChatToResponsesState {
             response_id: "resp_ccswitch".to_string(),
             model: String::new(),
             created_at: 0,
+            sequence_number: 0,
             next_output_index: 0,
             text: TextItemState::default(),
             reasoning: ReasoningItemState::default(),
@@ -113,6 +116,13 @@ impl ChatToResponsesState {
             tool_context,
             ..Self::default()
         }
+    }
+
+    /// 为单个 SSE 事件注入顶层 sequence_number 并递增计数器。
+    fn stamp(&mut self, event: Bytes) -> Bytes {
+        let stamped = sse::inject_sequence_number(&event, self.sequence_number);
+        self.sequence_number += 1;
+        stamped
     }
 
     fn handle_chat_chunk(&mut self, chunk: &Value) -> Vec<Bytes> {
@@ -749,6 +759,7 @@ impl ChatToResponsesState {
                     "input_tokens": 0,
                     "output_tokens": 0,
                     "total_tokens": 0,
+                    "input_tokens_details": { "cached_tokens": 0 },
                     "output_tokens_details": { "reasoning_tokens": 0 }
                 })
             })
@@ -763,8 +774,16 @@ impl ChatToResponsesState {
 
     fn failed_event(&mut self, message: String, error_type: Option<String>) -> Bytes {
         self.completed = true;
-        let mut error = json!({ "message": message });
-        if let Some(error_type) = error_type.filter(|value| !value.is_empty()) {
+        let error_type = error_type.filter(|value| !value.is_empty());
+        // Grok Build / Codex 的 Responses 错误解析器要求 error 对象必须带
+        // code 字段，缺失会报 "missing field `code`"。
+        let code = match error_type.as_deref() {
+            Some("rate_limit_error") => "rate_limit_exceeded".to_string(),
+            Some(other) => other.to_string(),
+            None => "proxy_error".to_string(),
+        };
+        let mut error = json!({ "message": message, "code": code });
+        if let Some(error_type) = error_type {
             error["type"] = json!(error_type);
         }
 
@@ -852,7 +871,7 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
                         let data = data_parts.join("\n");
                         if data.trim() == "[DONE]" {
                             for event in state.finalize() {
-                                yield Ok(event);
+                                yield Ok(state.stamp(event));
                             }
                             continue;
                         }
@@ -864,13 +883,14 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
 
                         if event_name.as_deref() == Some("error") || chunk.get("error").is_some() {
                             let (message, error_type) = extract_chat_sse_error(&chunk);
-                            yield Ok(state.failed_event(message, error_type));
+                            let event = state.failed_event(message, error_type);
+                            yield Ok(state.stamp(event));
                             stream_failed = true;
                             break;
                         }
 
                         for event in state.handle_chat_chunk(&chunk) {
-                            yield Ok(event);
+                            yield Ok(state.stamp(event));
                         }
                     }
 
@@ -879,10 +899,11 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
                     }
                 }
                 Err(e) => {
-                    yield Ok(state.failed_event(
+                    let event = state.failed_event(
                         format!("Stream error: {e}"),
                         Some("stream_error".to_string()),
-                    ));
+                    );
+                    yield Ok(state.stamp(event));
                     stream_failed = true;
                     break;
                 }
@@ -892,18 +913,19 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
         if !stream_failed {
             if state.completed || state.finish_reason.is_some() {
                 for event in state.finalize() {
-                    yield Ok(event);
+                    yield Ok(state.stamp(event));
                 }
             } else if state.has_substantive_output() {
                 state.finish_reason = Some("length".to_string());
                 for event in state.finalize() {
-                    yield Ok(event);
+                    yield Ok(state.stamp(event));
                 }
             } else {
-                yield Ok(state.failed_event(
+                let event = state.failed_event(
                     "Upstream Chat Completions stream ended before sending finish_reason".to_string(),
                     Some("stream_truncated".to_string()),
-                ));
+                );
+                yield Ok(state.stamp(event));
             }
         }
     }
@@ -975,6 +997,46 @@ mod tests {
         assert!(output.contains("\"text\":\"Hello\""));
         assert!(output.contains("event: response.completed"));
         assert!(output.contains("\"input_tokens\":4"));
+    }
+
+    #[tokio::test]
+    async fn response_created_event_carries_input_tokens_details_even_when_empty() {
+        // 回归保护：首个 response.created 事件的空 usage 也必须带
+        // input_tokens_details，否则 Grok Build 在流首帧就解析失败。
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n",
+        ])
+        .await;
+
+        let events = parse_sse_events(&output);
+        let created = events
+            .iter()
+            .find(|e| e["type"] == "response.created")
+            .expect("response.created event missing");
+        assert_eq!(
+            created["response"]["usage"]["input_tokens_details"]["cached_tokens"],
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn events_carry_monotonic_sequence_number() {
+        // 回归保护：Grok Build 新版解析器要求每个 SSE 事件带顶层
+        // sequence_number，且从 0 开始连续递增。
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n",
+            "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":2,\"total_tokens\":6}}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        let events = parse_sse_events(&output);
+        let seqs: Vec<u64> = events
+            .iter()
+            .map(|e| e["sequence_number"].as_u64().expect("event missing sequence_number"))
+            .collect();
+        let expected: Vec<u64> = (0..events.len() as u64).collect();
+        assert_eq!(seqs, expected);
     }
 
     #[tokio::test]
@@ -1471,6 +1533,22 @@ mod tests {
         assert!(output.contains("event: response.failed"));
         assert!(output.contains("quota exceeded"));
         assert!(output.contains("rate_limit_exceeded"));
+        assert!(!output.contains("event: response.completed"));
+    }
+
+    #[tokio::test]
+    async fn failed_event_includes_error_code_field() {
+        // 回归保护：上游错误只带 type 不带 code 时，代理也必须补 code，
+        // 否则 Grok Build 报 "missing field `code`"。
+        let output = collect(vec![
+            "data: {\"error\":{\"message\":\"boom\",\"type\":\"rate_limit_error\"}}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.failed"));
+        assert!(output.contains("\"code\":\"rate_limit_exceeded\""));
+        assert!(output.contains("\"type\":\"rate_limit_error\""));
         assert!(!output.contains("event: response.completed"));
     }
 }

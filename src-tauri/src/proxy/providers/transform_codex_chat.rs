@@ -1796,6 +1796,7 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
             "input_tokens": 0,
             "output_tokens": 0,
             "total_tokens": 0,
+            "input_tokens_details": { "cached_tokens": 0 },
             "output_tokens_details": { "reasoning_tokens": 0 }
         });
     };
@@ -1836,11 +1837,12 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
                 .and_then(|v| v.as_u64())
         })
         .unwrap_or(0);
-    if cached > 0 || cache_write > 0 {
-        result["input_tokens_details"] = json!({
-            "cached_tokens": cached,
-            "cache_write_tokens": cache_write
-        });
+    // Grok Build / Codex 的 Responses 解析器要求 usage 中始终存在
+    // input_tokens_details（即便缓存令牌为 0），否则会报
+    // "missing field `input_tokens_details`" 序列化错误。
+    result["input_tokens_details"] = json!({ "cached_tokens": cached });
+    if cache_write > 0 {
+        result["input_tokens_details"]["cache_write_tokens"] = json!(cache_write);
     }
 
     if let Some(details) = usage
@@ -3856,6 +3858,34 @@ mod tests {
             result["usage"]["input_tokens_details"]["cache_write_tokens"],
             2
         );
+    }
+
+    #[test]
+    fn chat_usage_to_responses_always_emits_input_tokens_details_even_when_zero() {
+        // 回归保护：上游 prompt_tokens_details 全为 0 时也必须输出
+        // input_tokens_details，否则 Grok Build 会因缺少该字段而解析失败。
+        let usage = json!({
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "total_tokens": 15,
+            "prompt_tokens_details": { "cached_tokens": 0, "audio_tokens": 0 }
+        });
+
+        let result = chat_usage_to_responses_usage(Some(&usage));
+
+        assert_eq!(result["input_tokens"], 10);
+        assert_eq!(result["output_tokens"], 5);
+        assert_eq!(result["input_tokens_details"]["cached_tokens"], 0);
+        assert!(result["input_tokens_details"].get("cache_write_tokens").is_none());
+    }
+
+    #[test]
+    fn chat_usage_to_responses_emits_input_tokens_details_when_usage_missing() {
+        // 上游完全省略 usage 时，合成 usage 也必须带 input_tokens_details。
+        let result = chat_usage_to_responses_usage(None);
+
+        assert_eq!(result["input_tokens"], 0);
+        assert_eq!(result["input_tokens_details"]["cached_tokens"], 0);
     }
 
     #[test]
