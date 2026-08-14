@@ -6453,7 +6453,10 @@ mod tests {
     #[test]
     fn replace_env_value_updates_existing_base_url() {
         let mut env_vars = vec![
-            ("ANTHROPIC_BASE_URL".to_string(), "https://upstream.test".to_string()),
+            (
+                "ANTHROPIC_BASE_URL".to_string(),
+                "https://upstream.test".to_string(),
+            ),
             ("ANTHROPIC_MODEL".to_string(), "model-a".to_string()),
         ];
 
@@ -6466,7 +6469,10 @@ mod tests {
         assert_eq!(
             env_vars,
             vec![
-                ("ANTHROPIC_BASE_URL".to_string(), "http://127.0.0.1:15721".to_string()),
+                (
+                    "ANTHROPIC_BASE_URL".to_string(),
+                    "http://127.0.0.1:15721".to_string()
+                ),
                 ("ANTHROPIC_MODEL".to_string(), "model-a".to_string()),
             ]
         );
@@ -6486,7 +6492,10 @@ mod tests {
             env_vars,
             vec![
                 ("ANTHROPIC_MODEL".to_string(), "model-a".to_string()),
-                ("ANTHROPIC_BASE_URL".to_string(), "http://127.0.0.1:15721".to_string()),
+                (
+                    "ANTHROPIC_BASE_URL".to_string(),
+                    "http://127.0.0.1:15721".to_string()
+                ),
             ]
         );
     }
