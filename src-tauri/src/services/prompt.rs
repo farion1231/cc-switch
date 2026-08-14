@@ -241,7 +241,9 @@ impl PromptService {
     /// This deliberately does not call `enable_prompt`: restore paths must not
     /// read stale live content and write it back into the freshly imported DB.
     pub fn sync_to_live(state: &AppState, app: AppType) -> Result<(), AppError> {
-        if matches!(app, AppType::ClaudeDesktop) {
+        // Pi derives activation from its native AGENTS.md; its persisted prompt
+        // rows are intentionally disabled and must not drive generic projection.
+        if matches!(app, AppType::ClaudeDesktop | AppType::Pi) {
             return Ok(());
         }
 
@@ -607,6 +609,29 @@ mod pi_prompt_tests {
         PromptService::upsert_prompt(&state, AppType::Pi, "test-prompt", prompt(false))
             .expect("disable prompt");
         assert!(!path.exists());
+    }
+
+    #[test]
+    #[serial]
+    fn generic_prompt_projection_does_not_rewrite_pi_agents_file() {
+        let _agent = TestAgentDir::new();
+        let state = AppState::new(Arc::new(
+            Database::memory().expect("create in-memory database"),
+        ));
+        state
+            .db
+            .save_prompt(AppType::Pi.as_str(), &prompt(false))
+            .expect("save Pi prompt");
+
+        let path = prompt_file_path(&AppType::Pi).expect("prompt path");
+        write_text_file(&path, "native instructions").expect("write AGENTS.md");
+
+        PromptService::sync_to_live(&state, AppType::Pi).expect("sync prompts");
+
+        assert_eq!(
+            std::fs::read_to_string(path).expect("read AGENTS.md"),
+            "native instructions"
+        );
     }
 
     #[test]
