@@ -384,7 +384,8 @@ export function useDirectorySettings({
 
   const browseDeepseekHarnessSessionDir = useCallback(async () => {
     const currentValue =
-      settings?.deepseekHarnessSessionDir ?? resolvedDirs.deepseekHarnessSession;
+      settings?.deepseekHarnessSessionDir ??
+      resolvedDirs.deepseekHarnessSession;
     try {
       const picked = await settingsApi.selectConfigDirectory(currentValue);
       const sanitized = sanitizeDir(picked ?? undefined);
@@ -459,7 +460,6 @@ export function useDirectorySettings({
         opencode: overrides?.opencode ?? defaultsRef.current.opencode,
         openclaw: overrides?.openclaw ?? defaultsRef.current.openclaw,
         hermes: overrides?.hermes ?? defaultsRef.current.hermes,
-        pi: overrides?.pi ?? defaultsRef.current.pi,
         pi: overrides?.pi ?? defaultsRef.current.pi,
         deepseekHarnessSession:
           overrides?.deepseekHarnessSession ??
