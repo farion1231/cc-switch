@@ -1901,7 +1901,7 @@ impl ProxyService {
                     // 与 with_fallback 版共用同一保护：半接管重建与接管失败
                     // 回滚也不得用快照覆盖 live 的官方 ChatGPT 登录（#6277）。
                     self.preserve_codex_oauth_login_on_restore(&mut config)?;
-                    self.write_codex_live(&config)?;
+                    self.write_codex_restore_backup(&config)?;
                     log::info!("Codex Live 配置已恢复");
                 }
             }
@@ -2026,7 +2026,7 @@ impl ProxyService {
     fn write_live_config_for_app(&self, app_type: &AppType, config: &Value) -> Result<(), String> {
         match app_type {
             AppType::Claude => self.write_claude_live(config),
-            AppType::Codex => self.write_codex_live(config),
+            AppType::Codex => self.write_codex_restore_backup(config),
             AppType::Gemini => self.write_gemini_live(config),
             AppType::GrokBuild => self.write_grok_live(config),
             _ => Err("该应用不支持代理功能".to_string()),
@@ -3009,12 +3009,17 @@ impl ProxyService {
     /// `tokens.account_id` 等元数据残留不算登录，既不让 sk-+元数据形态的
     /// 备份逃过降级，也不把元数据残留的 live 误当官方登录。与
     /// `auth.json` 独立读取，避免损坏的 config.toml 掩盖有效登录。官方
-    /// provider 的空 auth 也必须保留，因为它可能表示接管期间主动登出。
+    /// provider 缺失 auth 文件时也必须保留，因为它表示接管期间主动登出。
     /// 与 `preserve_codex_auth_in_backup` 语义对称（那边保护备份方向），同样
     /// 不受"非接管切换保留官方登录"设置门控（接管子系统的既有不变量是
     /// 无条件不清官方登录）。
     fn preserve_codex_oauth_login_on_restore(&self, target: &mut Value) -> Result<(), String> {
-        let live_auth = read_json_file(&crate::codex_config::get_codex_auth_path()).ok();
+        let auth_path = crate::codex_config::get_codex_auth_path();
+        let live_auth = if auth_path.exists() {
+            Some(read_json_file(&auth_path).map_err(|e| format!("读取 Codex auth 失败: {e}"))?)
+        } else {
+            None
+        };
         let live_has_login = live_auth.as_ref().is_some_and(|auth| {
             !Self::codex_auth_has_proxy_placeholder(auth)
                 && crate::codex_config::codex_auth_has_credential_login_material(auth)
@@ -3053,11 +3058,12 @@ impl ProxyService {
             return Ok(());
         }
 
-        let current_is_official = self
-            .get_current_provider_for_app(&AppType::Codex)?
-            .as_ref()
-            .is_some_and(crate::proxy::providers::is_codex_official_provider);
-        if current_is_official {
+        let missing_official_auth = live_auth.is_none()
+            && self
+                .get_current_provider_for_app(&AppType::Codex)?
+                .as_ref()
+                .is_some_and(crate::proxy::providers::is_codex_official_provider);
+        if missing_official_auth {
             target_obj.remove("auth");
             log::info!("Codex 恢复：保留官方 provider 当前的登出状态，仅恢复 config");
         }
@@ -3214,6 +3220,19 @@ impl ProxyService {
 
     fn write_codex_live(&self, config: &Value) -> Result<(), String> {
         self.write_codex_live_verbatim(config)
+    }
+
+    fn write_codex_restore_backup(&self, config: &Value) -> Result<(), String> {
+        let restores_absent_auth = config
+            .get("auth")
+            .and_then(Value::as_object)
+            .is_some_and(Map::is_empty);
+        self.write_codex_live(config)?;
+        if restores_absent_auth {
+            crate::config::delete_file(&crate::codex_config::get_codex_auth_path())
+                .map_err(|e| format!("删除 Codex auth 失败: {e}"))?;
+        }
+        Ok(())
     }
 
     fn write_codex_live_for_provider(
@@ -8411,6 +8430,11 @@ requires_openai_auth = true
         db.save_live_backup("codex", &backup_json)
             .await
             .expect("seed live backup");
+        write_json_file(
+            &crate::codex_config::get_codex_auth_path(),
+            &json!({ "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER }),
+        )
+        .expect("seed takeover placeholder auth");
 
         service
             .restore_live_config_for_app_with_fallback(&AppType::Codex)
@@ -8776,12 +8800,24 @@ base_url = "https://third.example/v1"
             !crate::codex_config::get_codex_auth_path().exists(),
             "restore must not replay stale backup credentials after logout"
         );
+
+        let auth_path = crate::codex_config::get_codex_auth_path();
+        std::fs::write(&auth_path, b"{").expect("seed malformed live auth");
+        let error = service
+            .restore_live_config_for_app_with_fallback(&AppType::Codex)
+            .await
+            .expect_err("malformed live auth must stop restore");
+        assert!(error.contains("读取 Codex auth 失败"));
+        assert_eq!(
+            std::fs::read(&auth_path).expect("read malformed auth"),
+            b"{"
+        );
     }
 
     /// Live auth.json is only ever advanced by Codex itself (login / token
     /// self-refresh), so genuine live credentials are always newer than the
     /// takeover-start snapshot: even an official-shape backup must not roll
-    /// live tokens back.
+    /// live tokens back. The auth check must not depend on config.toml parsing.
     #[tokio::test]
     #[serial]
     async fn restore_prefers_live_codex_oauth_tokens_over_backup_snapshot() {
