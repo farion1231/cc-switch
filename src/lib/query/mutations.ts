@@ -5,12 +5,16 @@ import { providersApi, sessionsApi, settingsApi, type AppId } from "@/lib/api";
 import type { DeleteSessionOptions } from "@/lib/api/sessions";
 import type { SwitchResult } from "@/lib/api/providers";
 import type { Provider, SessionMeta, Settings } from "@/types";
-import { extractErrorMessage } from "@/utils/errorUtils";
+import {
+  extractErrorMessage,
+  translatePiProviderMutationError,
+} from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
+import { invalidatePiProviderCaches } from "@/lib/query/pi";
 import {
   CODEX_OFFICIAL_PROVIDER_ID,
   GROKBUILD_OFFICIAL_PROVIDER_ID,
@@ -92,7 +96,12 @@ export const useAddProviderMutation = (appId: AppId) => {
 
       let id: string;
 
-      if (appId === "opencode" || appId === "openclaw" || appId === "hermes") {
+      if (
+        appId === "opencode" ||
+        appId === "openclaw" ||
+        appId === "hermes" ||
+        appId === "pi"
+      ) {
         if (
           providerInput.category === "omo" ||
           providerInput.category === "omo-slim"
@@ -146,7 +155,6 @@ export const useAddProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
-
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -166,13 +174,24 @@ export const useAddProviderMutation = (appId: AppId) => {
       );
     },
     onError: (error: Error) => {
-      const detail = extractErrorMessage(error) || t("common.unknown");
+      const rawDetail = extractErrorMessage(error);
+      const detail =
+        (appId === "pi"
+          ? translatePiProviderMutationError(rawDetail, t)
+          : "") ||
+        rawDetail ||
+        t("common.unknown");
       toast.error(
         t("notifications.addFailed", {
           defaultValue: "添加供应商失败: {{error}}",
           error: detail,
         }),
       );
+    },
+    onSettled: async () => {
+      if (appId === "pi") {
+        await invalidatePiProviderCaches(queryClient);
+      }
     },
   });
 };
@@ -220,13 +239,24 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       );
     },
     onError: (error: Error) => {
-      const detail = extractErrorMessage(error) || t("common.unknown");
+      const rawDetail = extractErrorMessage(error);
+      const detail =
+        (appId === "pi"
+          ? translatePiProviderMutationError(rawDetail, t)
+          : "") ||
+        rawDetail ||
+        t("common.unknown");
       toast.error(
         t("notifications.updateFailed", {
           defaultValue: "更新供应商失败: {{error}}",
           error: detail,
         }),
       );
+    },
+    onSettled: async () => {
+      if (appId === "pi") {
+        await invalidatePiProviderCaches(queryClient);
+      }
     },
   });
 };
@@ -266,7 +296,6 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
-
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -286,13 +315,24 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       );
     },
     onError: (error: Error) => {
-      const detail = extractErrorMessage(error) || t("common.unknown");
+      const rawDetail = extractErrorMessage(error);
+      const detail =
+        (appId === "pi"
+          ? translatePiProviderMutationError(rawDetail, t)
+          : "") ||
+        rawDetail ||
+        t("common.unknown");
       toast.error(
         t("notifications.deleteFailed", {
           defaultValue: "删除供应商失败: {{error}}",
           error: detail,
         }),
       );
+    },
+    onSettled: async () => {
+      if (appId === "pi") {
+        await invalidatePiProviderCaches(queryClient);
+      }
     },
   });
 };
@@ -343,7 +383,6 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
-
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -372,6 +411,11 @@ export const useSwitchProviderMutation = (appId: AppId) => {
           },
         },
       );
+    },
+    onSettled: async () => {
+      if (appId === "pi") {
+        await invalidatePiProviderCaches(queryClient);
+      }
     },
   });
 };

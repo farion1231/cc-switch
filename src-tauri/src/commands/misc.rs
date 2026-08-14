@@ -111,8 +111,8 @@ pub struct ToolVersion {
     wsl_distro: Option<String>,
 }
 
-const VALID_TOOLS: [&str; 7] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes",
+const VALID_TOOLS: [&str; 8] = [
+    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -433,6 +433,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "opencode" => "OpenCode",
         "openclaw" => "OpenClaw",
         "hermes" => "Hermes",
+        "pi" => "Pi",
         _ => "Unknown",
     }
 }
@@ -513,6 +514,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "grok" => Some("npm i -g @xai-official/grok@latest"),
         "opencode" => Some("npm i -g opencode-ai@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
+        "pi" => Some("npm i -g @earendil-works/pi-coding-agent@latest"),
         _ => None,
     }
 }
@@ -807,6 +809,9 @@ async fn get_single_tool_version_impl(
         }
         "openclaw" => fetch_npm_latest_for_tool(&client, "openclaw", tool, local).await,
         "hermes" => fetch_pypi_latest_version(&client, "hermes-agent").await,
+        "pi" => {
+            fetch_npm_latest_for_tool(&client, "@earendil-works/pi-coding-agent", tool, local).await
+        }
         _ => None,
     };
 
@@ -2113,6 +2118,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "grok" => Some("@xai-official/grok"),
         "opencode" => Some("opencode-ai"),
         "openclaw" => Some("openclaw"),
+        "pi" => Some("@earendil-works/pi-coding-agent"),
         _ => None,
     }
 }
@@ -3293,6 +3299,7 @@ fn wsl_distro_for_tool(tool: &str) -> Option<String> {
         "opencode" => crate::settings::get_opencode_override_dir(),
         "openclaw" => crate::settings::get_openclaw_override_dir(),
         "hermes" => crate::settings::get_hermes_override_dir(),
+        "pi" => crate::settings::get_pi_override_dir(),
         _ => None,
     }?;
 
@@ -4465,6 +4472,24 @@ mod tests {
             .as_deref(),
             Some("npm i -g @xai-official/grok@latest")
         );
+    }
+
+    #[test]
+    fn pi_lifecycle_metadata_matches_pinned_distribution() {
+        let requested = vec!["unsupported".to_string(), "pi".to_string()];
+        assert_eq!(normalize_requested_tools(&requested), vec!["pi"]);
+        assert_eq!(tool_display_name("pi"), "Pi");
+        assert_eq!(
+            npm_package_for("pi"),
+            Some("@earendil-works/pi-coding-agent")
+        );
+        assert_eq!(
+            npm_install_command_for("pi"),
+            Some("npm i -g @earendil-works/pi-coding-agent@latest")
+        );
+        // The verified distribution exposes `pi --version`, but no updater
+        // contract is assumed; upgrades stay on the package-manager path.
+        assert_eq!(official_update_args("pi"), None);
     }
 
     #[test]
@@ -5873,6 +5898,13 @@ mod tests {
         }
 
         #[test]
+        fn pi_install_uses_the_verified_pinned_package() {
+            let cmd = install_command_for("pi");
+            assert_eq!(cmd, "npm i -g @earendil-works/pi-coding-agent@latest");
+            assert!(!cmd.contains("||"));
+        }
+
+        #[test]
         fn update_fallbacks_use_official_cli_only_when_supported() {
             assert_eq!(
                 static_fallback_command("claude"),
@@ -5901,6 +5933,11 @@ mod tests {
                 static_fallback_command("openclaw"),
                 "openclaw update --yes || npm i -g openclaw@latest"
             );
+            assert_eq!(
+                static_fallback_command("pi"),
+                "npm i -g @earendil-works/pi-coding-agent@latest"
+            );
+            assert!(!static_fallback_command("pi").contains("pi update"));
         }
 
         #[test]

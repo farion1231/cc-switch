@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { AppId } from "@/lib/api";
+import { isAdditiveAppId } from "@/config/appConfig";
 
 interface OpenClawDefaultModelOption {
   id: string;
@@ -54,6 +55,8 @@ interface ProviderActionsProps {
   isReadOnly?: boolean;
   // OpenClaw: default model
   isDefaultModel?: boolean;
+  isRemovalProtected?: boolean;
+  isStateChangeProtected?: boolean;
   defaultModelOptions?: OpenClawDefaultModelOption[];
   onSetAsDefault?: (modelId?: string) => void;
 }
@@ -93,21 +96,24 @@ export function ProviderActions({
   isReadOnly = false,
   // OpenClaw: default model
   isDefaultModel = false,
+  isRemovalProtected = false,
+  isStateChangeProtected = false,
   defaultModelOptions = [],
   onSetAsDefault,
 }: ProviderActionsProps) {
   const { t } = useTranslation();
   const iconButtonClass = "h-8 w-8 p-1";
 
-  // 累加模式应用（OpenCode 非 OMO / OpenClaw / Hermes）
+  // Additive provider membership: providers can coexist in the native config.
   const isAdditiveMode =
-    (appId === "opencode" && !isOmo) ||
-    appId === "openclaw" ||
-    appId === "hermes";
+    Boolean(appId && isAdditiveAppId(appId)) &&
+    !(appId === "opencode" && isOmo);
 
   // 故障转移模式下的按钮逻辑（累加模式和 OMO 应用不支持故障转移）
   const isFailoverMode =
     !isAdditiveMode && !isOmo && isAutoFailoverEnabled && onToggleFailover;
+  const isMembershipMode = isAdditiveMode;
+  const piStateChangeHint = t("pi.current.stateUnavailableHint");
 
   const handleMainButtonClick = () => {
     if (isOmo) {
@@ -116,7 +122,7 @@ export function ProviderActions({
       } else {
         onSwitch();
       }
-    } else if (isAdditiveMode) {
+    } else if (isMembershipMode) {
       // 累加模式：切换配置状态（添加/移除）
       if (isInConfig) {
         if (onRemoveFromConfig) {
@@ -156,14 +162,30 @@ export function ProviderActions({
     }
 
     // 累加模式（OpenCode 非 OMO / OpenClaw）
-    if (isAdditiveMode) {
+    if (isMembershipMode) {
+      if (isStateChangeProtected) {
+        return {
+          disabled: true,
+          variant: "secondary" as const,
+          className: "opacity-40 cursor-not-allowed",
+          icon: isInConfig ? (
+            <Minus className="h-4 w-4" />
+          ) : (
+            <Plus className="h-4 w-4" />
+          ),
+          text: isInConfig
+            ? t("provider.removeFromConfig", { defaultValue: "移除" })
+            : t("provider.enable", { defaultValue: "启用" }),
+          title: piStateChangeHint,
+        };
+      }
       if (isInConfig) {
         return {
-          disabled: isDefaultModel === true,
+          disabled: isRemovalProtected,
           variant: "secondary" as const,
           className: cn(
             "bg-orange-100 text-orange-600 hover:bg-orange-200 dark:bg-orange-900/50 dark:text-orange-400 dark:hover:bg-orange-900/70",
-            isDefaultModel && "opacity-40 cursor-not-allowed",
+            isRemovalProtected && "opacity-40 cursor-not-allowed",
           ),
           icon: <Minus className="h-4 w-4" />,
           text: t("provider.removeFromConfig", { defaultValue: "移除" }),
@@ -175,7 +197,10 @@ export function ProviderActions({
         className:
           "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
         icon: <Plus className="h-4 w-4" />,
-        text: t("provider.addToConfig", { defaultValue: "添加" }),
+        text:
+          appId === "pi"
+            ? t("provider.enable", { defaultValue: "启用" })
+            : t("provider.addToConfig", { defaultValue: "添加" }),
       };
     }
 
@@ -234,12 +259,22 @@ export function ProviderActions({
   };
 
   const buttonState = getMainButtonState();
-
   const canDelete =
-    !isReadOnly && (isOmo || isAdditiveMode ? true : !isCurrent);
+    !isReadOnly &&
+    (appId === "pi"
+      ? !isStateChangeProtected
+      : isOmo || isAdditiveMode
+        ? true
+        : !isCurrent);
   const readOnlyHint = t("provider.managedByHermesHint", {
     defaultValue: "由 Hermes 管理，请在 Hermes Web UI 中编辑",
   });
+  const deleteHint =
+    appId === "pi" && isStateChangeProtected
+      ? piStateChangeHint
+      : isReadOnly
+        ? readOnlyHint
+        : t("common.delete");
 
   return (
     <div className="flex items-center gap-1.5">
@@ -328,8 +363,8 @@ export function ProviderActions({
           );
         })()}
 
-      {/* wrapper span 承接 hover：disabled 按钮自身 pointer-events:none，
-          原生 title 与 cursor 都必须挂在未禁用的外层元素上才会生效 */}
+      {/* disabled:pointer-events-none prevents the native title from firing,
+          so the wrapper owns the explanatory tooltip and cursor. */}
       <span
         title={buttonState.title}
         className={cn(
@@ -355,6 +390,7 @@ export function ProviderActions({
           variant="ghost"
           onClick={isReadOnly ? undefined : onEdit}
           disabled={isReadOnly}
+          aria-label={t("common.edit")}
           title={isReadOnly ? readOnlyHint : t("common.edit")}
           className={cn(
             iconButtonClass,
@@ -425,7 +461,9 @@ export function ProviderActions({
           size="icon"
           variant="ghost"
           onClick={canDelete ? onDelete : undefined}
-          title={isReadOnly ? readOnlyHint : t("common.delete")}
+          disabled={!canDelete}
+          aria-label={t("common.delete")}
+          title={deleteHint}
           className={cn(
             iconButtonClass,
             canDelete && "hover:text-red-500 dark:hover:text-red-400",

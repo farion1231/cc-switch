@@ -815,6 +815,9 @@ impl ProxyService {
     /// - 关闭：仅恢复当前 app 的 Live 配置；若无其它接管，则自动停止代理服务
     pub async fn set_takeover_for_app(&self, app_type: &str, enabled: bool) -> Result<(), String> {
         let app = AppType::from_str(app_type).map_err(|e| format!("无效的应用类型: {e}"))?;
+        if !app.supports_local_proxy() {
+            return Err(format!("{} 不支持本地路由", app.as_str()));
+        }
         let app_type_str = app.as_str();
         let _guard = self.switch_locks.lock_for_app(app_type_str).await;
 
@@ -1897,7 +1900,7 @@ impl ProxyService {
                         .map_err(|e| format!("解析 Codex 备份失败: {e}"))?;
                     // 与 with_fallback 版共用同一保护：半接管重建与接管失败
                     // 回滚也不得用快照覆盖 live 的官方 ChatGPT 登录（#6277）。
-                    self.preserve_codex_oauth_login_on_restore(&mut config);
+                    self.preserve_codex_oauth_login_on_restore(&mut config)?;
                     self.write_codex_live(&config)?;
                     log::info!("Codex Live 配置已恢复");
                 }
@@ -1983,7 +1986,7 @@ impl ProxyService {
                 );
             } else {
                 if matches!(app_type, AppType::Codex) {
-                    self.preserve_codex_oauth_login_on_restore(&mut config);
+                    self.preserve_codex_oauth_login_on_restore(&mut config)?;
                 }
                 self.write_live_config_for_app(app_type, &config)?;
                 log::info!("{app_type_str} Live 配置已从备份恢复");
@@ -3005,51 +3008,60 @@ impl ProxyService {
     /// `codex_auth_has_credential_login_material`——`last_refresh` /
     /// `tokens.account_id` 等元数据残留不算登录，既不让 sk-+元数据形态的
     /// 备份逃过降级，也不把元数据残留的 live 误当官方登录。与
-    /// `preserve_codex_auth_in_backup` 语义对称（那边保护备份方向），同样
+    /// `auth.json` 独立读取，避免损坏的 config.toml 掩盖有效登录。官方
+    /// provider 的空 auth 也必须保留，因为它可能表示接管期间主动登出。
+    /// 与 `preserve_codex_auth_in_backup` 语义对称（那边保护备份方向），同样
     /// 不受"非接管切换保留官方登录"设置门控（接管子系统的既有不变量是
     /// 无条件不清官方登录）。
-    fn preserve_codex_oauth_login_on_restore(&self, target: &mut Value) {
-        let Ok(live) = self.read_codex_live() else {
-            return;
-        };
-        let live_has_login = live.get("auth").is_some_and(|auth| {
+    fn preserve_codex_oauth_login_on_restore(&self, target: &mut Value) -> Result<(), String> {
+        let live_auth = read_json_file(&crate::codex_config::get_codex_auth_path()).ok();
+        let live_has_login = live_auth.as_ref().is_some_and(|auth| {
             !Self::codex_auth_has_proxy_placeholder(auth)
                 && crate::codex_config::codex_auth_has_credential_login_material(auth)
         });
-        if !live_has_login {
-            return;
-        }
-
         let Some(target_obj) = target.as_object_mut() else {
-            return;
+            return Ok(());
         };
 
-        if let Some(config_text) = target_obj
-            .get("config")
-            .and_then(|value| value.as_str())
-            .map(str::to_string)
-        {
-            let provider_auth = target_obj.get("auth").cloned().unwrap_or_else(|| json!({}));
-            match crate::codex_config::prepare_codex_provider_live_config(
-                &provider_auth,
-                &config_text,
-            ) {
-                Ok(live_config) => {
-                    target_obj.insert("config".to_string(), json!(live_config));
-                }
-                Err(e) => {
-                    // 降级失败时仍优先保住登录：API key 可从 DB 供应商配置随时
-                    // 重新落盘，OAuth 登录被覆盖则只能重新登录。
-                    log::warn!(
-                        "Codex 恢复：备份 API key 降级进 config 失败，仅跳过 auth 覆盖: {e}"
-                    );
+        if live_has_login {
+            if let Some(config_text) = target_obj
+                .get("config")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+            {
+                let provider_auth = target_obj.get("auth").cloned().unwrap_or_else(|| json!({}));
+                match crate::codex_config::prepare_codex_provider_live_config(
+                    &provider_auth,
+                    &config_text,
+                ) {
+                    Ok(live_config) => {
+                        target_obj.insert("config".to_string(), json!(live_config));
+                    }
+                    Err(e) => {
+                        // 降级失败时仍优先保住登录：API key 可从 DB 供应商配置随时
+                        // 重新落盘，OAuth 登录被覆盖则只能重新登录。
+                        log::warn!(
+                            "Codex 恢复：备份 API key 降级进 config 失败，仅跳过 auth 覆盖: {e}"
+                        );
+                    }
                 }
             }
+            target_obj.remove("auth");
+            log::info!(
+                "Codex 恢复：live 持有官方 ChatGPT 登录凭据（恒比备份快照新），保留登录，仅恢复 config"
+            );
+            return Ok(());
         }
-        target_obj.remove("auth");
-        log::info!(
-            "Codex 恢复：live 持有官方 ChatGPT 登录凭据（恒比备份快照新），保留登录，仅恢复 config"
-        );
+
+        let current_is_official = self
+            .get_current_provider_for_app(&AppType::Codex)?
+            .as_ref()
+            .is_some_and(crate::proxy::providers::is_codex_official_provider);
+        if current_is_official {
+            target_obj.remove("auth");
+            log::info!("Codex 恢复：保留官方 provider 当前的登出状态，仅恢复 config");
+        }
+        Ok(())
     }
 
     /// 代理模式下切换供应商（热切换，并按需刷新代理安全的 Live 显示字段）
@@ -3058,6 +3070,10 @@ impl ProxyService {
         app_type: &str,
         provider_id: &str,
     ) -> Result<(), String> {
+        let app = AppType::from_str(app_type).map_err(|e| format!("无效的应用类型: {e}"))?;
+        if !app.supports_local_proxy() {
+            return Err(format!("{} 不支持本地路由", app.as_str()));
+        }
         let outcome = self.hot_switch_provider(app_type, provider_id).await?;
 
         if outcome.logical_target_changed {
@@ -3635,6 +3651,16 @@ mod tests {
         db.update_proxy_config(proxy_config)
             .await
             .expect("set test proxy config to an ephemeral port");
+    }
+
+    #[tokio::test]
+    async fn unsupported_apps_are_rejected_before_proxy_side_effects() {
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+
+        assert!(service.set_takeover_for_app("pi", true).await.is_err());
+        assert!(!service.is_running().await);
+        assert!(service.switch_proxy_target("pi", "missing").await.is_err());
     }
 
     async fn running_codex_base_url(service: &ProxyService) -> String {
@@ -8703,6 +8729,55 @@ base_url = "https://third.example/v1"
         );
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn restore_preserves_logged_out_official_codex_state() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let mut official = Provider::with_id(
+            crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string(),
+            "OpenAI Official".to_string(),
+            json!({ "auth": {}, "config": "model = \"gpt-5.4\"\n" }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        db.save_provider("codex", &official)
+            .expect("save official provider");
+        db.set_current_provider("codex", &official.id)
+            .expect("set DB current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some(&official.id))
+            .expect("set local current provider");
+
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": {
+                    "auth_mode": "chatgpt",
+                    "tokens": { "refresh_token": "stale-rt" }
+                },
+                "config": "model_provider = \"any\"\n"
+            }))
+            .expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup");
+        crate::codex_config::write_codex_live_config_atomic(Some("model_provider = \"any\"\n"))
+            .expect("seed logged-out live config");
+
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Codex)
+            .await
+            .expect("restore codex");
+
+        assert!(
+            !crate::codex_config::get_codex_auth_path().exists(),
+            "restore must not replay stale backup credentials after logout"
+        );
+    }
+
     /// Live auth.json is only ever advanced by Codex itself (login / token
     /// self-refresh), so genuine live credentials are always newer than the
     /// takeover-start snapshot: even an official-shape backup must not roll
@@ -8740,6 +8815,11 @@ base_url = "https://third.example/v1"
             Some("model_provider = \"any\"\n"),
         )
         .expect("seed live codex files");
+        crate::config::write_text_file(
+            &crate::codex_config::get_codex_config_path(),
+            "model_provider = [",
+        )
+        .expect("corrupt live config after writing valid auth");
 
         service
             .restore_live_config_for_app_with_fallback(&AppType::Codex)

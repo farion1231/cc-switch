@@ -85,6 +85,7 @@ import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
 import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
+import { PiProviderForm } from "./PiProviderForm";
 import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
 import {
@@ -247,6 +248,7 @@ export interface ProviderFormProps {
   onManageUniversalProviders?: () => void;
   onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
   onSubmittingChange?: (isSubmitting: boolean) => void;
+  onSubmitReadyChange?: (isReady: boolean) => void;
   initialData?: {
     name?: string;
     websiteUrl?: string;
@@ -262,6 +264,9 @@ export interface ProviderFormProps {
 }
 
 export function ProviderForm(props: ProviderFormProps) {
+  if (props.appId === "pi") {
+    return <PiProviderForm {...props} />;
+  }
   if (props.appId === "claude-desktop") {
     return <ClaudeDesktopProviderForm {...props} />;
   }
@@ -1633,8 +1638,16 @@ function ProviderFormFull({
       }
     }
 
-    const baseMeta: ProviderMeta | undefined =
-      payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
+    const metaSource = payload.meta ?? initialData?.meta;
+    const baseMeta: ProviderMeta | undefined = metaSource
+      ? { ...metaSource }
+      : undefined;
+    // Existing-provider edits never own endpoint membership. The backend
+    // rejects endpoint-bearing update payloads; add/remove/touch use their
+    // dedicated commands and remain safe from stale form snapshots.
+    if (isEditMode && baseMeta) {
+      delete baseMeta.custom_endpoints;
+    }
 
     const providerType = isCopilotProvider
       ? "github_copilot"

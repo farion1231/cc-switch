@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
 
@@ -29,7 +30,13 @@ vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
 }));
 
 describe("CodexOAuthSection", () => {
+  let scrollIntoViewDescriptor: PropertyDescriptor | undefined;
+
   beforeEach(() => {
+    scrollIntoViewDescriptor = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      "scrollIntoView",
+    );
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
       configurable: true,
       value: vi.fn(),
@@ -79,6 +86,18 @@ describe("CodexOAuthSection", () => {
     });
   });
 
+  afterEach(() => {
+    if (scrollIntoViewDescriptor) {
+      Object.defineProperty(
+        HTMLElement.prototype,
+        "scrollIntoView",
+        scrollIntoViewDescriptor,
+      );
+    } else {
+      Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+    }
+  });
+
   it("does not render account quota by default", () => {
     render(<CodexOAuthSection />);
 
@@ -99,13 +118,22 @@ describe("CodexOAuthSection", () => {
   it("selects a specific account when multiple accounts are managed", async () => {
     const user = userEvent.setup();
     const onAccountSelect = vi.fn();
-    render(
-      <CodexOAuthSection
-        mode="select"
-        selectedAccountId="account-1"
-        onAccountSelect={onAccountSelect}
-      />,
-    );
+    const ControlledSection = () => {
+      const [selectedAccountId, setSelectedAccountId] = useState<string | null>(
+        "account-1",
+      );
+      return (
+        <CodexOAuthSection
+          mode="select"
+          selectedAccountId={selectedAccountId}
+          onAccountSelect={(accountId) => {
+            onAccountSelect(accountId);
+            setSelectedAccountId(accountId);
+          }}
+        />
+      );
+    };
+    render(<ControlledSection />);
 
     await user.click(screen.getByRole("combobox"));
     await user.click(
@@ -113,5 +141,8 @@ describe("CodexOAuthSection", () => {
     );
 
     expect(onAccountSelect).toHaveBeenCalledWith("account-2");
+    expect(screen.getByRole("combobox")).toHaveTextContent(
+      "second@example.com",
+    );
   });
 });
