@@ -888,9 +888,9 @@ impl KimiOAuthManager {
             return Err(KimiOAuthError::ReauthRequired(account_id.to_string()));
         }
         if account.refresh_token != expected_refresh_token {
-            return Err(KimiOAuthError::TokenFetchFailed(
-                "账号认证状态已变化，请重试请求".to_string(),
-            ));
+            return self
+                .replacement_token_after_stale_rejection(account_id)
+                .await;
         }
 
         let refresh_token = tokens
@@ -1849,6 +1849,51 @@ mod tests {
             .read()
             .await
             .contains_key("account-one"));
+        assert_eq!(
+            manager
+                .accounts
+                .read()
+                .await
+                .get("account-one")
+                .map(|account| account.refresh_token.as_str()),
+            Some("new-refresh-token")
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_commit_reuses_a_token_installed_by_a_newer_login() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let (manager, _) = test_manager(data_dir.path().to_path_buf(), Vec::new());
+        manager
+            .add_account_internal(
+                "account-one".to_string(),
+                None,
+                "new-refresh-token".to_string(),
+                None,
+                Some(cached_access("new-access")),
+            )
+            .await
+            .unwrap();
+
+        let token = manager
+            .commit_refreshed_tokens(
+                "account-one",
+                "old-refresh-token",
+                OAuthTokenResponse {
+                    access_token: "stale-access-token".to_string(),
+                    refresh_token: Some("stale-rotated-token".to_string()),
+                    id_token: None,
+                    expires_in: Some(900),
+                },
+            )
+            .await
+            .expect("a concurrent login's cached token should remain usable");
+
+        assert_eq!(token, "new-access");
+        assert_eq!(
+            manager.access_tokens.read().await["account-one"].token,
+            "new-access"
+        );
         assert_eq!(
             manager
                 .accounts
