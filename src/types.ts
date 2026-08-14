@@ -267,6 +267,10 @@ export interface CodexCatalogModel {
   // automatic text-only model detection for every profile.
   supportsParallelToolCalls?: boolean;
   inputModalities?: string[];
+  // Per-model reasoning effort levels (e.g. ["none","low","medium","high",
+  // "xhigh","max"]). When set, the generated catalog replaces the template's
+  // neutral [none, high] list so the Codex UI only offers verified levels.
+  supportedReasoningLevels?: string[];
   // Vendor's OFFICIAL base_instructions (model identity / system preamble).
   // Codex requires this field in every catalog entry; when omitted the backend
   // falls back to a neutral default. e.g. MiMo "developed by Xiaomi".
