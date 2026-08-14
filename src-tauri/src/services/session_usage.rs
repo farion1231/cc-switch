@@ -274,13 +274,24 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
     // 从上次偏移位置开始增量解析
     let file =
         fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
-    let reader = BufReader::new(file);
+    let mut reader = BufReader::new(file);
 
     let mut line_offset: i64 = 0;
+    let mut has_incomplete_tail = false;
     let mut messages: HashMap<String, ParsedAssistantUsage> = HashMap::new();
     let mut current_session_id: Option<String> = None;
+    let mut line_bytes = Vec::new();
 
-    for line_result in reader.lines() {
+    loop {
+        line_bytes.clear();
+        match reader.read_until(b'\n', &mut line_bytes) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(_) => {
+                has_incomplete_tail = true;
+                break;
+            }
+        }
         line_offset += 1;
 
         // 跳过已处理的行
@@ -288,17 +299,28 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
             continue;
         }
 
-        let line = match line_result {
-            Ok(l) => l,
-            Err(_) => continue, // 容忍不完整的最后一行
+        let has_line_terminator = line_bytes.ends_with(b"\n");
+        let line = match std::str::from_utf8(&line_bytes) {
+            Ok(line) => line,
+            Err(_) if !has_line_terminator => {
+                has_incomplete_tail = true;
+                line_offset -= 1;
+                break;
+            }
+            Err(_) => continue,
         };
 
         if line.trim().is_empty() {
             continue;
         }
 
-        let value: serde_json::Value = match serde_json::from_str(&line) {
+        let value: serde_json::Value = match serde_json::from_str(line) {
             Ok(v) => v,
+            Err(_) if !has_line_terminator => {
+                has_incomplete_tail = true;
+                line_offset -= 1;
+                break;
+            }
             Err(_) => continue,
         };
 
@@ -442,8 +464,10 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
         }
     }
 
-    // 更新同步状态
-    update_sync_state(db, &sync_state_key, file_modified, line_offset)?;
+    // Claude 可能仍在写最后一条 JSONL；不要把未完成尾行计入游标。
+    if !has_incomplete_tail {
+        update_sync_state(db, &sync_state_key, file_modified, line_offset)?;
+    }
 
     Ok((imported, skipped))
 }
@@ -983,6 +1007,26 @@ mod tests {
             conn.execute_batch("DROP TRIGGER reject_session_log_insert;")?;
         }
 
+        assert_eq!(sync_single_file(&db, &file)?.0, 1);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_incomplete_api_error_tail_is_retried_after_completion() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("claude-api-error-tail.jsonl");
+        let api_error = r#"{"type":"assistant","message":{"id":"msg_api_error_tail","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:44Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"authentication_failed"}"#;
+        fs::write(&file, &api_error[..api_error.len() - 1]).unwrap();
+
+        assert_eq!(sync_single_file(&db, &file)?.0, 0);
+        let sync_state_key = format!("{}#{CLAUDE_SYNC_CURSOR_VERSION}", file.to_string_lossy());
+        assert_eq!(get_sync_state(&db, &sync_state_key)?, (0, 0));
+
+        fs::write(&file, format!("{api_error}\n")).unwrap();
         assert_eq!(sync_single_file(&db, &file)?.0, 1);
 
         fs::remove_dir_all(&tmp).ok();
