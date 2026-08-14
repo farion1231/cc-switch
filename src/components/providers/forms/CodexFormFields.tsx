@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/collapsible";
 import { toast } from "sonner";
 import {
+  ArrowRight,
   ChevronDown,
   ChevronRight,
   Download,
@@ -49,6 +50,12 @@ import type { AppId } from "@/lib/api";
 
 interface EndpointCandidate {
   url: string;
+}
+
+export interface CodexModelMappingRow {
+  rowId: string;
+  requestModel: string;
+  upstreamModel: string;
 }
 
 interface CodexFormFieldsProps {
@@ -105,6 +112,10 @@ interface CodexFormFieldsProps {
   // Model Catalog
   catalogModels?: CodexCatalogModel[];
   onCatalogModelsChange?: (models: CodexCatalogModel[]) => void;
+
+  // Local-routing model aliases (separate from the Codex model catalog)
+  modelMappingRows?: CodexModelMappingRow[];
+  onModelMappingRowsChange?: (rows: CodexModelMappingRow[]) => void;
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
@@ -203,6 +214,8 @@ export function CodexFormFields({
   onPromptCacheRoutingChange,
   catalogModels = [],
   onCatalogModelsChange,
+  modelMappingRows = [],
+  onModelMappingRowsChange,
   speedTestEndpoints,
   customUserAgent,
   onCustomUserAgentChange,
@@ -237,6 +250,7 @@ export function CodexFormFields({
   const isChatFormat = apiFormat === "openai_chat";
   const isAnthropicFormat = apiFormat === "anthropic";
   const canEditCatalog = Boolean(onCatalogModelsChange);
+  const canEditModelMapping = Boolean(onModelMappingRowsChange);
   const canEditReasoning = Boolean(onCodexChatReasoningChange);
   const supportsThinking =
     codexChatReasoning.supportsThinking === true ||
@@ -252,6 +266,7 @@ export function CodexFormFields({
     !!customUserAgent ||
     hasRequestOverrides ||
     catalogModels.length > 0 ||
+    modelMappingRows.length > 0 ||
     apiFormat === "openai_responses" ||
     isAnthropicFormat ||
     supportsThinking ||
@@ -428,7 +443,39 @@ export function CodexFormFields({
     setCatalogRows((current) => current.filter((_, i) => i !== index));
   }, []);
 
-  // 默认模型下拉建议 = 模型映射的"实际请求模型"列 ∪ 拉取到的 /models 列表
+  const handleAddModelMappingRow = useCallback(() => {
+    if (!onModelMappingRowsChange) return;
+    onModelMappingRowsChange([
+      ...modelMappingRows,
+      {
+        rowId: crypto.randomUUID(),
+        requestModel: "",
+        upstreamModel: "",
+      },
+    ]);
+  }, [modelMappingRows, onModelMappingRowsChange]);
+
+  const handleUpdateModelMappingRow = useCallback(
+    (index: number, patch: Partial<CodexModelMappingRow>) => {
+      if (!onModelMappingRowsChange) return;
+      onModelMappingRowsChange(
+        modelMappingRows.map((row, i) =>
+          i === index ? { ...row, ...patch } : row,
+        ),
+      );
+    },
+    [modelMappingRows, onModelMappingRowsChange],
+  );
+
+  const handleRemoveModelMappingRow = useCallback(
+    (index: number) => {
+      if (!onModelMappingRowsChange) return;
+      onModelMappingRowsChange(modelMappingRows.filter((_, i) => i !== index));
+    },
+    [modelMappingRows, onModelMappingRowsChange],
+  );
+
+  // 默认模型下拉建议 = 模型目录的 Codex 请求模型 ∪ 拉取到的 /models 列表
   const defaultModelSuggestions = useMemo<FetchedModel[]>(() => {
     const seen = new Set<string>();
     const suggestions: FetchedModel[] = [];
@@ -438,8 +485,8 @@ export function CodexFormFields({
       seen.add(id);
       suggestions.push({
         id,
-        ownedBy: t("codexConfig.modelMappingTitle", {
-          defaultValue: "模型映射",
+        ownedBy: t("codexConfig.modelCatalogTitle", {
+          defaultValue: "模型目录",
         }),
       });
     }
@@ -451,7 +498,7 @@ export function CodexFormFields({
     return suggestions;
   }, [catalogRows, fetchedModels, t]);
 
-  // 填了映射时才提示"默认模型不在映射中"（无映射的供应商本来就直接请求任意模型名）
+  // 填了目录时才提示"默认模型不在目录中"。
   const trimmedDefaultModel = codexModel.trim();
   const isDefaultModelOutsideCatalog =
     catalogRows.length > 0 &&
@@ -590,14 +637,14 @@ export function CodexFormFields({
           <p className="text-xs leading-relaxed text-muted-foreground">
             {t("codexConfig.defaultModelHint", {
               defaultValue:
-                "Codex 默认请求的模型，随时可改，无需等待预设更新。留空且配置了模型映射时，默认使用映射第一行。",
+                "Codex 默认请求的模型，随时可改，无需等待预设更新。留空且配置了模型目录时，默认使用目录第一行。",
             })}
           </p>
           {isDefaultModelOutsideCatalog && (
             <p className="flex flex-wrap items-center gap-x-2 text-xs leading-relaxed text-muted-foreground">
               {t("codexConfig.defaultModelNotInCatalog", {
                 defaultValue:
-                  "该模型不在模型映射中，Codex 的 /model 菜单不会列出它（直接请求仍然有效）。",
+                  "该模型不在模型目录中，Codex 的 /model 菜单不会列出它（直接请求仍然有效）。",
               })}
               <Button
                 type="button"
@@ -606,8 +653,8 @@ export function CodexFormFields({
                 className="h-auto p-0 text-xs"
                 onClick={handleAddDefaultModelToCatalog}
               >
-                {t("codexConfig.addToModelMapping", {
-                  defaultValue: "加入映射",
+                {t("codexConfig.addToModelCatalog", {
+                  defaultValue: "加入目录",
                 })}
               </Button>
             </p>
@@ -615,7 +662,7 @@ export function CodexFormFields({
         </div>
       )}
 
-      {/* 高级选项 —— 上游格式/模型映射/思考能力/自定义 UA；预设供应商通常无需展开 */}
+      {/* 高级选项 —— 上游格式/模型目录/上游映射/思考能力/自定义 UA */}
       {category !== "official" && (
         <Collapsible
           open={advancedExpanded}
@@ -643,7 +690,7 @@ export function CodexFormFields({
             <p className="mt-1 ml-1 text-xs text-muted-foreground">
               {t("codexConfig.advancedSectionHint", {
                 defaultValue:
-                  "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。",
+                  "包含上游格式、模型目录、上游模型映射、思考能力与自定义 User-Agent。格式转换和上游映射需开启路由接管。",
               })}
             </p>
           )}
@@ -909,9 +956,7 @@ export function CodexFormFields({
               </div>
             )}
 
-            {/* 模型映射 / 模型目录 —— 与「路由接管」解耦，常驻显示（可编辑即渲染）。
-                填了才生成 catalog：Chat 模式生成兼容路由、原生 Responses 生成
-                model-catalogs.json；留空则不生成。排在自定义 UA 之前。 */}
+            {/* 模型目录只控制 Codex /model 菜单及客户端请求值。 */}
             {canEditCatalog && (
               <div
                 className={cn(
@@ -923,8 +968,8 @@ export function CodexFormFields({
                 <div className="space-y-1">
                   <div className="flex items-center justify-between gap-3">
                     <FormLabel>
-                      {t("codexConfig.modelMappingTitle", {
-                        defaultValue: "模型映射",
+                      {t("codexConfig.modelCatalogTitle", {
+                        defaultValue: "模型目录",
                       })}
                     </FormLabel>
                     {renderCatalogActionButtons(
@@ -935,9 +980,9 @@ export function CodexFormFields({
                     )}
                   </div>
                   <p className="text-xs leading-relaxed text-muted-foreground">
-                    {t("codexConfig.modelMappingHint", {
+                    {t("codexConfig.modelCatalogHint", {
                       defaultValue:
-                        "选择模型角色后，CC Switch 会自动生成 Codex 兼容路由；菜单显示名可以填 DeepSeek、Kimi 等品牌模型，实际请求模型按右侧填写内容发送。",
+                        "生成 Codex model_catalog_json：显示名只影响 /model 菜单，Codex 请求模型是客户端实际发给 CC Switch 的值。修改后需重启 Codex 刷新列表。",
                     })}
                   </p>
                 </div>
@@ -953,7 +998,7 @@ export function CodexFormFields({
                       </span>
                       <span>
                         {t("codexConfig.catalogColumnModel", {
-                          defaultValue: "实际请求模型",
+                          defaultValue: "Codex 请求模型",
                         })}
                       </span>
                       <span>
@@ -1001,7 +1046,7 @@ export function CodexFormFields({
                               },
                             )}
                             aria-label={t("codexConfig.catalogColumnModel", {
-                              defaultValue: "实际请求模型",
+                              defaultValue: "Codex 请求模型",
                             })}
                             className="flex-1"
                           />
@@ -1059,12 +1104,114 @@ export function CodexFormFields({
               </div>
             )}
 
+            {/* 上游模型映射只在本地路由中改写 body.model，与模型目录独立。 */}
+            {canEditModelMapping && (
+              <div className="space-y-4 border-t border-border-default pt-3">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-3">
+                    <FormLabel>
+                      {t("codexConfig.upstreamModelMappingTitle", {
+                        defaultValue: "上游模型映射",
+                      })}
+                    </FormLabel>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleAddModelMappingRow}
+                      className="h-7 gap-1"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      {t("codexConfig.addUpstreamModelMapping", {
+                        defaultValue: "添加映射",
+                      })}
+                    </Button>
+                  </div>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {t("codexConfig.upstreamModelMappingHint", {
+                      defaultValue:
+                        "开启本地路由后，CC Switch 会在选定供应商后将 Codex 请求模型改写为上游模型。Responses、Chat 和 Anthropic 路径共用此映射；未匹配的模型保持原有处理。",
+                    })}
+                  </p>
+                </div>
+
+                {modelMappingRows.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="hidden grid-cols-[1fr_24px_1fr_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+                      <span>
+                        {t("codexConfig.mappingRequestModel", {
+                          defaultValue: "Codex 请求模型",
+                        })}
+                      </span>
+                      <span />
+                      <span>
+                        {t("codexConfig.mappingUpstreamModel", {
+                          defaultValue: "上游模型",
+                        })}
+                      </span>
+                      <span />
+                    </div>
+
+                    {modelMappingRows.map((row, index) => (
+                      <div
+                        key={row.rowId}
+                        className="grid grid-cols-1 items-center gap-2 md:grid-cols-[1fr_24px_1fr_36px]"
+                      >
+                        <Input
+                          value={row.requestModel}
+                          onChange={(event) =>
+                            handleUpdateModelMappingRow(index, {
+                              requestModel: event.target.value,
+                            })
+                          }
+                          placeholder={t(
+                            "codexConfig.mappingRequestModelPlaceholder",
+                            { defaultValue: "例如: gpt-5.6-sol" },
+                          )}
+                          aria-label={t("codexConfig.mappingRequestModel", {
+                            defaultValue: "Codex 请求模型",
+                          })}
+                        />
+                        <ArrowRight className="mx-auto hidden h-4 w-4 text-muted-foreground md:block" />
+                        <Input
+                          value={row.upstreamModel}
+                          onChange={(event) =>
+                            handleUpdateModelMappingRow(index, {
+                              upstreamModel: event.target.value,
+                            })
+                          }
+                          placeholder={t(
+                            "codexConfig.mappingUpstreamModelPlaceholder",
+                            { defaultValue: "例如: zy-gpt-5.6-sol" },
+                          )}
+                          aria-label={t("codexConfig.mappingUpstreamModel", {
+                            defaultValue: "上游模型",
+                          })}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                          onClick={() => handleRemoveModelMappingRow(index)}
+                          title={t("common.delete", { defaultValue: "删除" })}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div
               className={cn(
                 "space-y-3",
                 (shouldShowSpeedTest ||
                   (isChatFormat && canEditReasoning) ||
-                  canEditCatalog) &&
+                  canEditCatalog ||
+                  canEditModelMapping) &&
                   "border-t border-border-default pt-3",
               )}
             >

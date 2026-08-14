@@ -1162,6 +1162,10 @@ impl RequestForwarder {
         let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
             crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
                 .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+        } else if matches!(app_type, AppType::Codex) {
+            let mut mapped_body = body.clone();
+            super::codex_model_mapper::apply_codex_model_mapping(provider, &mut mapped_body);
+            mapped_body
         } else {
             let (mapped_body, _original_model, _mapped_model) =
                 super::model_mapper::apply_model_mapping(body.clone(), provider);

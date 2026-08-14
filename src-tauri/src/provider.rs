@@ -500,6 +500,15 @@ pub struct ProviderMeta {
     /// Codex Responses -> Chat Completions reasoning capability metadata.
     #[serde(rename = "codexChatReasoning", skip_serializing_if = "Option::is_none")]
     pub codex_chat_reasoning: Option<CodexChatReasoningConfig>,
+    /// Codex local-routing model aliases: request model -> upstream model.
+    /// Kept separate from `settingsConfig.modelCatalog`, which only controls
+    /// the models exposed to Codex's `/model` picker.
+    #[serde(
+        default,
+        rename = "codexModelMapping",
+        skip_serializing_if = "HashMap::is_empty"
+    )]
+    pub codex_model_mapping: HashMap<String, String>,
     /// Codex → Anthropic path: whether to emulate the Claude Code client
     /// (User-Agent / anthropic-beta / x-app + injecting the Claude Code system
     /// prompt first line). Disabled by default; only an explicit `true` enables it.
@@ -1049,6 +1058,34 @@ mod tests {
     fn provider_meta_omits_max_output_tokens_when_none() {
         let value = serde_json::to_value(ProviderMeta::default()).expect("serialize ProviderMeta");
         assert!(value.get("maxOutputTokens").is_none());
+    }
+
+    #[test]
+    fn provider_meta_roundtrips_codex_model_mapping() {
+        let meta = ProviderMeta {
+            codex_model_mapping: HashMap::from([
+                ("gpt-5.6-sol".to_string(), "zy-gpt-5.6-sol".to_string()),
+                ("gpt-5.6-terra".to_string(), "zy-gpt-5.6-terra".to_string()),
+            ]),
+            ..ProviderMeta::default()
+        };
+
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+        assert_eq!(value["codexModelMapping"]["gpt-5.6-sol"], "zy-gpt-5.6-sol");
+        assert!(value.get("codex_model_mapping").is_none());
+
+        let decoded: ProviderMeta =
+            serde_json::from_value(value).expect("deserialize ProviderMeta");
+        assert_eq!(
+            decoded.codex_model_mapping.get("gpt-5.6-terra"),
+            Some(&"zy-gpt-5.6-terra".to_string())
+        );
+    }
+
+    #[test]
+    fn provider_meta_omits_empty_codex_model_mapping() {
+        let value = serde_json::to_value(ProviderMeta::default()).expect("serialize ProviderMeta");
+        assert!(value.get("codexModelMapping").is_none());
     }
 
     #[test]

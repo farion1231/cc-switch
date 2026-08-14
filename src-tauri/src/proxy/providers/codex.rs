@@ -317,7 +317,12 @@ pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> 
         .map(str::trim)
         .filter(|model| !model.is_empty())
     {
-        if catalog_model_ids.contains(request_model) {
+        if catalog_model_ids.contains(request_model)
+            || crate::proxy::codex_model_mapper::is_codex_model_mapping_target(
+                provider,
+                request_model,
+            )
+        {
             return Some(request_model.to_string());
         }
     }
@@ -1431,6 +1436,77 @@ wire_api = "responses"
 
         assert_eq!(upstream_model.as_deref(), Some("kimi-k2"));
         assert_eq!(body.get("model").and_then(|v| v.as_str()), Some("kimi-k2"));
+    }
+
+    #[test]
+    fn test_codex_mapping_survives_chat_upstream_model_resolution() {
+        let mut provider = create_provider(json!({
+            "config": r#"
+model_provider = "gateway"
+model = "zy-gpt-5.6-sol"
+
+[model_providers.gateway]
+name = "Company Gateway"
+base_url = "https://gateway.example.com/v1"
+wire_api = "responses"
+"#,
+            "modelCatalog": {
+                "models": [
+                    { "model": "gpt-5.6-sol" },
+                    { "model": "gpt-5.6-terra" }
+                ]
+            }
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("openai_chat".to_string()),
+            codex_model_mapping: std::collections::HashMap::from([
+                ("gpt-5.6-sol".to_string(), "zy-gpt-5.6-sol".to_string()),
+                ("gpt-5.6-terra".to_string(), "zy-gpt-5.6-terra".to_string()),
+            ]),
+            ..Default::default()
+        });
+        let mut body = json!({
+            "model": "gpt-5.6-terra",
+            "input": "ping",
+            "stream": true
+        });
+
+        crate::proxy::codex_model_mapper::apply_codex_model_mapping(&provider, &mut body);
+        let upstream_model = apply_codex_chat_upstream_model(&provider, &mut body);
+
+        assert_eq!(upstream_model.as_deref(), Some("zy-gpt-5.6-terra"));
+        assert_eq!(body["model"], "zy-gpt-5.6-terra");
+        assert_eq!(body["stream"], true);
+    }
+
+    #[test]
+    fn test_codex_mapping_survives_anthropic_upstream_model_resolution() {
+        let mut provider = create_provider(json!({
+            "config": r#"
+model_provider = "gateway"
+model = "zy-gpt-5.6-sol"
+
+[model_providers.gateway]
+name = "Company Gateway"
+base_url = "https://gateway.example.com/v1"
+wire_api = "responses"
+"#
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("anthropic".to_string()),
+            codex_model_mapping: std::collections::HashMap::from([(
+                "gpt-5.6-terra".to_string(),
+                "zy-gpt-5.6-terra".to_string(),
+            )]),
+            ..Default::default()
+        });
+        let mut body = json!({ "model": "gpt-5.6-terra", "input": "ping" });
+
+        crate::proxy::codex_model_mapper::apply_codex_model_mapping(&provider, &mut body);
+        let upstream_model = apply_codex_upstream_model(&provider, &mut body);
+
+        assert_eq!(upstream_model.as_deref(), Some("zy-gpt-5.6-terra"));
+        assert_eq!(body["model"], "zy-gpt-5.6-terra");
     }
 
     #[test]
