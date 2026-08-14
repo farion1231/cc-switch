@@ -571,15 +571,26 @@ fn codex_reasoning_level_description(effort: &str) -> Option<&'static str> {
         .map(|(_, description)| *description)
 }
 
-/// Build a `supported_reasoning_levels` array from user-declared effort values.
+/// User-declared levels reduced to the canonical efforts Codex understands,
+/// in canonical (lowest → highest) order regardless of declaration order.
 /// Unknown efforts are dropped so a typo can never produce an entry Codex
-/// would reject; an empty result means "no override".
-fn codex_supported_reasoning_levels(levels: &[String]) -> Value {
-    let entries: Vec<Value> = levels
+/// would reject.
+fn codex_canonical_efforts(levels: &[String]) -> Vec<&str> {
+    CODEX_REASONING_LEVEL_DESCRIPTIONS
         .iter()
-        .filter_map(|effort| {
-            codex_reasoning_level_description(effort)
-                .map(|description| json!({ "effort": effort, "description": description }))
+        .filter(|(effort, _)| levels.iter().any(|candidate| candidate == effort))
+        .map(|(effort, _)| *effort)
+        .collect()
+}
+
+/// Build a `supported_reasoning_levels` array from user-declared effort values.
+fn codex_supported_reasoning_levels(levels: &[String]) -> Value {
+    let entries: Vec<Value> = codex_canonical_efforts(levels)
+        .into_iter()
+        .map(|effort| {
+            let description = codex_reasoning_level_description(effort)
+                .expect("canonical effort always has a description");
+            json!({ "effort": effort, "description": description })
         })
         .collect();
     json!(entries)
@@ -598,26 +609,23 @@ fn apply_codex_reasoning_level_override(
     let Some(levels) = spec.reasoning_levels.as_deref() else {
         return false;
     };
-    let supported = codex_supported_reasoning_levels(levels);
-    let Some(entries) = supported.as_array() else {
-        return false;
-    };
-    if entries.is_empty() {
+    let canonical = codex_canonical_efforts(levels);
+    if canonical.is_empty() {
         return false;
     }
+    let supported = codex_supported_reasoning_levels(levels);
     entry_obj.insert("supported_reasoning_levels".to_string(), supported);
 
     // Default: explicit user value wins; otherwise keep the base default when
-    // it is still in the list; otherwise fall back to the last (highest)
-    // declared level.
+    // it is still supported; otherwise fall back to the highest supported
+    // level in canonical order. All candidates are validated against the
+    // canonical set so the default can never reference a dropped effort.
     let default_level = spec
         .default_reasoning_level
         .as_deref()
-        .filter(|level| levels.iter().any(|candidate| candidate == *level))
-        .or_else(|| {
-            template_default.filter(|level| levels.iter().any(|candidate| candidate == *level))
-        })
-        .or_else(|| levels.last().map(String::as_str));
+        .filter(|level| canonical.contains(level))
+        .or_else(|| template_default.filter(|level| canonical.contains(level)))
+        .or_else(|| canonical.last().copied());
     if let Some(default_level) = default_level {
         entry_obj.insert("default_reasoning_level".to_string(), json!(default_level));
     }
@@ -3500,6 +3508,11 @@ base_url = "https://production.api/v1"
                     {
                         "model": "dirty-levels",
                         "reasoningLevels": ["none", "bogus", "high", ""]
+                    },
+                    {
+                        "model": "unordered-model",
+                        "reasoningLevels": ["xhigh", "low", "bogus"],
+                        "defaultReasoningLevel": "bogus"
                     }
                 ]
             }
@@ -3554,8 +3567,27 @@ base_url = "https://production.api/v1"
             Some("high")
         );
 
-        // Unknown / empty efforts are dropped.
+        // Unknown / empty efforts are dropped; the default still resolves to
+        // a supported level (the template default, "high").
         assert_eq!(efforts(3), vec!["none", "high"]);
+        assert_eq!(
+            models[3]
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
+            Some("high")
+        );
+
+        // Declaration order is normalized to canonical order, an unknown
+        // explicit default is dropped, and the fallback picks the highest
+        // supported level in canonical order (not the last declared one, and
+        // never an unknown effort).
+        assert_eq!(efforts(4), vec!["low", "xhigh"]);
+        assert_eq!(
+            models[4]
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
+            Some("xhigh")
+        );
     }
 
     #[test]

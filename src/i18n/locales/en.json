@@ -1373,7 +1373,7 @@
     "reasoningLevelsSearch": "Search reasoning levels...",
     "reasoningLevelsEmpty": "No levels",
     "defaultReasoningLevelLabel": "Default level",
-    "defaultReasoningLevelPlaceholder": "Auto (highest selected)",
+    "defaultReasoningLevelPlaceholder": "Auto",
     "reasoningModeToggle": "Supports Thinking Mode",
     "reasoningModeHint": "Enable when the upstream Chat Completions API supports toggling thinking on/off. Providers like Kimi, GLM and Qwen usually fall into this category.",
     "reasoningEffortToggle": "Supports Reasoning Effort",

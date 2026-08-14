@@ -311,7 +311,7 @@ function ReasoningLevelsEditor({
                 <SelectValue
                   placeholder={t(
                     "codexConfig.defaultReasoningLevelPlaceholder",
-                    { defaultValue: "Auto (highest selected)" },
+                    { defaultValue: "Auto" },
                   )}
                 />
               </SelectTrigger>
