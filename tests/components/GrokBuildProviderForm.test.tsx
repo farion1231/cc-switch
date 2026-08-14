@@ -2,10 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { parse as parseToml } from "smol-toml";
 import { describe, expect, it, vi } from "vitest";
-import {
-  GrokBuildProviderForm,
-  grokApiBackendFromApiFormat,
-} from "@/components/providers/forms/GrokBuildProviderForm";
+import { GrokBuildProviderForm } from "@/components/providers/forms/GrokBuildProviderForm";
 
 vi.mock("@/components/JsonEditor", () => ({
   default: ({
@@ -92,37 +89,64 @@ describe("GrokBuildProviderForm", () => {
     });
   });
 
-  it("maps preset API formats into Grok api_backend", async () => {
-    // 预设列表已不含 Chat Completions 条目（国产官方直连被移除），
-    // chat/messages 映射分支由纯函数覆盖
-    expect(grokApiBackendFromApiFormat("openai_chat")).toBe("chat_completions");
-    expect(grokApiBackendFromApiFormat("anthropic")).toBe("messages");
-    expect(grokApiBackendFromApiFormat("openai_responses")).toBe("responses");
-
-    // 组件级接线用带显式 apiFormat 的 Responses 预设验证
-    const user = userEvent.setup();
-    const onSubmit = vi.fn();
-    render(
+  it("uses the Codex-style advanced section without redundant Grok fields", () => {
+    const { container } = render(
       <GrokBuildProviderForm
         submitLabel="Save"
-        onSubmit={onSubmit}
+        onSubmit={() => {}}
         onCancel={() => {}}
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /APIKEY\.FUN/ }));
-    await user.type(screen.getByLabelText("API Key"), "secret-key");
+    expect(container.querySelector("#grokbuild-profile")).toBeNull();
+    expect(container.querySelector("#grokbuild-api-backend")).toBeNull();
+    expect(screen.getByText("高级选项")).toBeInTheDocument();
+    expect(container.querySelector("#grokbuild-context-window")).toHaveValue(
+      500000,
+    );
+    expect(screen.getByText("上游格式")).toBeInTheDocument();
+  });
+
+  it("keeps the Grok client on Responses when the upstream uses Chat", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const configToml = `[models]
+default = "grok-4.5"
+
+[model."grok-4.5"]
+model = "grok-4.5"
+base_url = "https://relay.example.com/v1"
+name = "Chat Relay"
+api_key = "secret-key"
+api_backend = "chat_completions"
+context_window = 500000
+`;
+    render(
+      <GrokBuildProviderForm
+        providerId="chat-relay"
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        initialData={{
+          name: "Chat Relay",
+          category: "custom",
+          settingsConfig: { config: configToml },
+          meta: { apiFormat: "openai_chat" },
+        }}
+      />,
+    );
+
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
     const submitted = onSubmit.mock.calls[0][0];
     const settings = JSON.parse(submitted.settingsConfig);
     const config = parseToml(settings.config) as any;
-    expect(submitted.meta.apiFormat).toBe("openai_responses");
+    expect(submitted.meta.apiFormat).toBe("openai_chat");
     const selected = config.model[config.models.default];
     expect(selected.api_backend).toBe("responses");
     expect(selected.model).toBe("grok-4.5");
-    expect(selected.base_url).toBe("https://api.apikey.fun/v1");
+    expect(selected.base_url).toBe("https://relay.example.com/v1");
   });
 
   it("renders localized validation feedback for malformed TOML", async () => {
@@ -178,9 +202,10 @@ context_window = 250000
       />,
     );
 
+    expect(container.querySelector("#grokbuild-profile")).toBeNull();
     expect(
-      container.querySelector<HTMLInputElement>("#grokbuild-profile")?.value,
-    ).toBe("existing-profile");
+      container.querySelector<HTMLInputElement>("#codexDefaultModel")?.value,
+    ).toBe("grok-upstream");
     expect(
       container.querySelector<HTMLInputElement>("#codexBaseUrl")?.value,
     ).toBe("https://existing.example.com/v1");
