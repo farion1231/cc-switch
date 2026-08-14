@@ -560,11 +560,19 @@ impl KimiOAuthApiClient {
                 ),
             ],
         );
-        let response = self.transport.execute(request).await?;
-        let value = parse_json(&response.body, "device token")?;
+        let response = match self.transport.execute(request).await {
+            Ok(response) => response,
+            Err(KimiOAuthError::NetworkError(_)) => return Ok(KimiDevicePollResult::Pending),
+            Err(error) => return Err(error),
+        };
         if response.status == 200 {
+            let value = parse_json(&response.body, "device token")?;
             return parse_token_bundle(&value).map(KimiDevicePollResult::Success);
         }
+        if is_retryable_status(response.status) {
+            return Ok(KimiDevicePollResult::Pending);
+        }
+        let value = parse_json(&response.body, "device token")?;
         match oauth_error_code(&value).as_deref() {
             Some("authorization_pending") => Ok(KimiDevicePollResult::Pending),
             Some("slow_down") => Ok(KimiDevicePollResult::SlowDown),

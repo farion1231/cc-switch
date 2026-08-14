@@ -139,6 +139,19 @@ export function useManagedAuth(
       const interval = Math.max((response.interval || 5) + 3, 8) * 1000;
       const expiresAt = Date.now() + response.expires_in * 1000;
 
+      const expireLogin = () => {
+        if (attemptGeneration !== authAttemptGenerationRef.current) {
+          return;
+        }
+
+        const code = deviceCodeRef.current?.device_code ?? response.device_code;
+        invalidateAuthAttempt();
+        setLiveDeviceCode(null);
+        setPollingState("error");
+        setError("Device code expired. Please try again.");
+        cancelBackendLogin(code);
+      };
+
       const pollOnce = async () => {
         if (
           attemptGeneration !== authAttemptGenerationRef.current ||
@@ -150,9 +163,7 @@ export function useManagedAuth(
 
         try {
           if (Date.now() > expiresAt) {
-            invalidateAuthAttempt();
-            setPollingState("error");
-            setError("Device code expired. Please try again.");
+            expireLogin();
             return;
           }
 
@@ -203,13 +214,7 @@ export function useManagedAuth(
       void pollOnce();
       pollingIntervalRef.current = setInterval(pollOnce, interval);
       pollingTimeoutRef.current = setTimeout(() => {
-        if (attemptGeneration !== authAttemptGenerationRef.current) {
-          return;
-        }
-
-        invalidateAuthAttempt();
-        setPollingState("error");
-        setError("Device code expired. Please try again.");
+        expireLogin();
       }, response.expires_in * 1000);
     },
     onError: (e, attemptGeneration) => {

@@ -231,6 +231,7 @@ pub struct KimiOAuthManager {
 /// Secret-bearing inference credentials plus non-secret Kimi identity.
 pub(crate) struct KimiAccessContext {
     access_token: String,
+    account_id: String,
     identity: KimiClientIdentity,
 }
 
@@ -249,6 +250,11 @@ impl KimiAccessContext {
     /// Returns the OAuth access token for `x-api-key` authentication.
     pub(crate) fn access_token(&self) -> &str {
         &self.access_token
+    }
+
+    /// Returns the managed account that issued this access token.
+    pub(crate) fn account_id(&self) -> &str {
+        &self.account_id
     }
 
     /// Returns the Kimi Code CLI User-Agent.
@@ -347,6 +353,7 @@ impl KimiOAuthManager {
 
     /// Drops a pending device-code login so a cancelled poll cannot persist an account.
     pub async fn cancel_pending_login(&self, device_code: &str) {
+        let _mutation_guard = self.mutation_lock.lock().await;
         self.pending_device_codes.write().await.remove(device_code);
     }
 
@@ -479,6 +486,7 @@ impl KimiOAuthManager {
         let access_token = self.get_valid_token_for_account(account_id).await?;
         Ok(KimiAccessContext {
             access_token,
+            account_id: account_id.to_string(),
             identity: self.client_identity().await,
         })
     }
@@ -2172,5 +2180,58 @@ mod tests {
             1,
             "a delayed 401 for the old token must not rotate the replacement"
         );
+    }
+
+    #[tokio::test]
+    async fn inference_rejection_refreshes_the_account_that_sent_the_token() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let (manager, transport) = test_manager(
+            data_dir.path().to_path_buf(),
+            vec![Ok(json_response(
+                200,
+                serde_json::json!({
+                    "access_token":"refreshed-one",
+                    "refresh_token":"rotated-one",
+                    "expires_in":900
+                }),
+            ))],
+        );
+        manager
+            .add_account_internal(
+                "account-one".to_string(),
+                None,
+                "refresh-one".to_string(),
+                None,
+                Some(cached_access("rejected-access")),
+            )
+            .await
+            .unwrap();
+        manager
+            .add_account_internal(
+                "account-two".to_string(),
+                None,
+                "refresh-two".to_string(),
+                None,
+                Some(cached_access("other-access")),
+            )
+            .await
+            .unwrap();
+        manager.set_default_account("account-two").await.unwrap();
+
+        let refreshed = manager
+            .refresh_after_inference_auth_rejection(Some("account-one"), Some("rejected-access"))
+            .await
+            .unwrap();
+
+        assert_eq!(refreshed, "account-one");
+        assert_eq!(
+            manager.access_tokens.read().await["account-one"].token,
+            "refreshed-one"
+        );
+        assert_eq!(
+            manager.access_tokens.read().await["account-two"].token,
+            "other-access"
+        );
+        assert_eq!(transport.requests.lock().unwrap().len(), 1);
     }
 }

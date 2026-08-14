@@ -1120,7 +1120,7 @@ impl RequestForwarder {
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
     ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
-        let mut sent_kimi_access_token = None;
+        let mut sent_kimi_auth = None;
         let first_result = self
             .forward_once(
                 app_type,
@@ -1131,7 +1131,7 @@ impl RequestForwarder {
                 headers,
                 extensions,
                 adapter,
-                &mut sent_kimi_access_token,
+                &mut sent_kimi_auth,
             )
             .await;
         let first_error = match first_result {
@@ -1152,8 +1152,13 @@ impl RequestForwarder {
             let kimi_auth = kimi_state.0.read().await;
             kimi_auth
                 .refresh_after_inference_auth_rejection(
-                    requested_account_id.as_deref(),
-                    sent_kimi_access_token.as_deref(),
+                    sent_kimi_auth
+                        .as_ref()
+                        .map(|auth| auth.account_id.as_str())
+                        .or(requested_account_id.as_deref()),
+                    sent_kimi_auth
+                        .as_ref()
+                        .map(|auth| auth.access_token.as_str()),
                 )
                 .await
                 .map_err(|error| {
@@ -1174,7 +1179,7 @@ impl RequestForwarder {
                 headers,
                 extensions,
                 adapter,
-                &mut sent_kimi_access_token,
+                &mut sent_kimi_auth,
             )
             .await;
         if retry_result
@@ -1213,7 +1218,7 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
-        sent_kimi_access_token: &mut Option<String>,
+        sent_kimi_auth: &mut Option<SentKimiInferenceAuth>,
     ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
@@ -1876,7 +1881,10 @@ impl RequestForwarder {
                     };
                     match context_result {
                         Ok(context) => {
-                            *sent_kimi_access_token = Some(context.access_token().to_string());
+                            *sent_kimi_auth = Some(SentKimiInferenceAuth {
+                                account_id: context.account_id().to_string(),
+                                access_token: context.access_token().to_string(),
+                            });
                             auth = AuthInfo::new(
                                 context.access_token().to_string(),
                                 AuthStrategy::KimiOAuth,
@@ -2887,6 +2895,11 @@ fn pin_kimi_managed_account(provider: &Provider, account_id: &str) -> Provider {
         });
     }
     provider
+}
+
+struct SentKimiInferenceAuth {
+    account_id: String,
+    access_token: String,
 }
 
 /// 从 ProxyError 中提取错误消息

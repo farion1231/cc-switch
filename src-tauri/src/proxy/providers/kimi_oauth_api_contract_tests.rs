@@ -1,8 +1,9 @@
 //! Contract tests derived from Kimi Code CLI 0.34.0.
 
 use super::kimi_oauth_api::{
-    parse_windows_release, KimiClientIdentity, KimiDeviceFacts, KimiHttpMethod, KimiHttpRequest,
-    KimiHttpResponse, KimiHttpTransport, KimiOAuthApiClient, KimiSleeper,
+    parse_windows_release, KimiClientIdentity, KimiDeviceFacts, KimiDevicePollResult,
+    KimiHttpMethod, KimiHttpRequest, KimiHttpResponse, KimiHttpTransport, KimiOAuthApiClient,
+    KimiSleeper,
 };
 use super::kimi_oauth_auth::KimiOAuthError;
 use futures::future::BoxFuture;
@@ -272,6 +273,30 @@ async fn device_authorization_rejects_missing_verification_uri() {
         .await
         .expect_err("device authorization without a verification URI must fail");
     assert!(matches!(error, KimiOAuthError::ParseError(_)));
+}
+
+#[tokio::test]
+async fn device_token_poll_treats_transient_failures_as_pending() {
+    let transport = Arc::new(RecordingTransport::with_responses(vec![
+        Err(KimiOAuthError::NetworkError("connection reset".to_string())),
+        Ok(json_response(
+            503,
+            serde_json::json!({"error":"temporarily_unavailable"}),
+        )),
+    ]));
+    let client = KimiOAuthApiClient::new(transport, Arc::new(RecordingSleeper::default()));
+
+    let first = client
+        .poll_device_token(&identity(), "device-code")
+        .await
+        .unwrap();
+    let second = client
+        .poll_device_token(&identity(), "device-code")
+        .await
+        .unwrap();
+
+    assert!(matches!(first, KimiDevicePollResult::Pending));
+    assert!(matches!(second, KimiDevicePollResult::Pending));
 }
 
 #[tokio::test]

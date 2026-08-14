@@ -320,4 +320,27 @@ describe("useManagedAuth device polling", () => {
       "device-code",
     );
   });
+
+  it("cancels the backend login when the device code expires", async () => {
+    vi.useFakeTimers();
+    apiMocks.authPollForAccount.mockResolvedValue(null);
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useManagedAuth("kimi_oauth"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      result.current.startAuth();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300_000);
+    });
+
+    expect(apiMocks.authCancelLogin).toHaveBeenCalledWith(
+      "kimi_oauth",
+      "device-code",
+    );
+    expect(result.current.pollingState).toBe("error");
+  });
 });
