@@ -22,9 +22,10 @@ use super::{
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
-use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
+use crate::commands::{CodexOAuthState, CopilotAuthState, KimiOAuthState, XaiOAuthState};
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
+use crate::proxy::providers::kimi_oauth_auth::KimiOAuthManager;
 use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
 use crate::{
     app_config::AppType,
@@ -1107,12 +1108,89 @@ impl RequestForwarder {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn forward(
+        &self,
+        app_type: &AppType,
+        method: &http::Method,
+        provider: &Provider,
+        endpoint: &str,
+        body: &Value,
+        headers: &axum::http::HeaderMap,
+        extensions: &Extensions,
+        adapter: &dyn ProviderAdapter,
+    ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+        let first_result = self
+            .forward_once(
+                app_type, method, provider, endpoint, body, headers, extensions, adapter,
+            )
+            .await;
+        let first_error = match first_result {
+            Ok(result) => return Ok(result),
+            Err(error) if is_kimi_upstream_auth_rejection(provider, &error) => error,
+            Err(error) => return Err(error),
+        };
+
+        let Some(app_handle) = &self.app_handle else {
+            return Err(first_error);
+        };
+        let requested_account_id = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.managed_account_id_for("kimi_oauth"));
+        let kimi_state = app_handle.state::<KimiOAuthState>();
+        let resolved_account_id = {
+            let kimi_auth = kimi_state.0.read().await;
+            kimi_auth
+                .refresh_after_inference_auth_rejection(requested_account_id.as_deref())
+                .await
+                .map_err(|error| {
+                    ProxyError::AuthError(format!(
+                        "Kimi OAuth token refresh after upstream rejection failed: {error}"
+                    ))
+                })?
+        };
+        let retry_provider = pin_kimi_managed_account(provider, &resolved_account_id);
+
+        let retry_result = self
+            .forward_once(
+                app_type,
+                method,
+                &retry_provider,
+                endpoint,
+                body,
+                headers,
+                extensions,
+                adapter,
+            )
+            .await;
+        if retry_result
+            .as_ref()
+            .is_err_and(|error| is_kimi_upstream_auth_rejection(provider, error))
+        {
+            let kimi_auth = kimi_state.0.read().await;
+            kimi_auth
+                .require_reauthentication_after_inference_rejection(&resolved_account_id)
+                .await
+                .map_err(|error| {
+                    ProxyError::AuthError(format!(
+                        "Kimi OAuth reauthentication state could not be saved: {error}"
+                    ))
+                })?;
+            return Err(ProxyError::AuthError(
+                "Kimi OAuth credential was rejected after refresh; sign in again".to_string(),
+            ));
+        }
+
+        retry_result
+    }
+
     /// 转发单个请求（使用适配器）
     ///
     /// 成功时返回 `(response, claude_api_format, outbound_model)`，其中
     /// `outbound_model` 是最终发往上游的模型名（所有映射/改写之后）。
     #[allow(clippy::too_many_arguments)]
-    async fn forward(
+    async fn forward_once(
         &self,
         app_type: &AppType,
         method: &http::Method,
@@ -1132,7 +1210,8 @@ impl RequestForwarder {
             .and_then(|meta| meta.is_full_url)
             .unwrap_or(false)
             && !provider.is_codex_oauth()
-            && !provider.is_xai_oauth();
+            && !provider.is_xai_oauth()
+            && !provider.is_kimi_oauth();
 
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
         let is_copilot = provider
@@ -1616,6 +1695,9 @@ impl RequestForwarder {
         // Codex OAuth 需要注入的 ChatGPT-Account-Id（在动态 token 获取期间填充）
         let mut codex_oauth_account_id: Option<String> = None;
         let mut should_send_codex_oauth_session_headers = false;
+        let mut kimi_user_agent_fallback: Option<String> = None;
+        let mut kimi_device_identity_headers: Vec<(http::HeaderName, http::HeaderValue)> =
+            Vec::new();
 
         // 获取认证头（提前准备，用于内联替换），同时保留仅用于日志脱敏的
         // 精确认证材料。实际日志永远不输出这些值。
@@ -1763,13 +1845,72 @@ impl RequestForwarder {
                 }
             }
 
+            // Kimi OAuth: resolve a managed account token immediately before
+            // sending the request.
+            if auth.strategy == AuthStrategy::KimiOAuth {
+                if let Some(app_handle) = &self.app_handle {
+                    let kimi_state = app_handle.state::<KimiOAuthState>();
+                    let kimi_auth: tokio::sync::RwLockReadGuard<'_, KimiOAuthManager> =
+                        kimi_state.0.read().await;
+                    let account_id = provider
+                        .meta
+                        .as_ref()
+                        .and_then(|meta| meta.managed_account_id_for("kimi_oauth"));
+                    let context_result = match &account_id {
+                        Some(id) => kimi_auth.get_valid_access_context_for_account(id).await,
+                        None => kimi_auth.get_valid_access_context().await,
+                    };
+                    match context_result {
+                        Ok(context) => {
+                            auth = AuthInfo::new(
+                                context.access_token().to_string(),
+                                AuthStrategy::KimiOAuth,
+                            );
+                            kimi_user_agent_fallback = Some(context.user_agent().to_string());
+                            kimi_device_identity_headers = context
+                                .device_headers()
+                                .into_iter()
+                                .map(|(name, value)| {
+                                    let name = http::HeaderName::from_bytes(name.as_bytes())
+                                        .map_err(|error| {
+                                            ProxyError::ConfigError(format!(
+                                                "Invalid Kimi identity header name: {error}"
+                                            ))
+                                        })?;
+                                    let value =
+                                        http::HeaderValue::from_str(&value).map_err(|error| {
+                                            ProxyError::ConfigError(format!(
+                                                "Invalid Kimi identity header value: {error}"
+                                            ))
+                                        })?;
+                                    Ok((name, value))
+                                })
+                                .collect::<Result<Vec<_>, ProxyError>>()?;
+                            log::debug!("[KimiOAuth] 成功获取 access_token");
+                        }
+                        Err(error) => {
+                            log::error!("[KimiOAuth] 获取 access_token 失败: {error}");
+                            return Err(ProxyError::AuthError(format!(
+                                "Kimi OAuth 认证失败: {error}"
+                            )));
+                        }
+                    }
+                } else {
+                    return Err(ProxyError::AuthError(
+                        "Kimi OAuth 认证不可用（无 AppHandle）".to_string(),
+                    ));
+                }
+            }
+
             for secret in std::iter::once(&auth.api_key).chain(auth.access_token.iter()) {
                 if !secret.is_empty() && !log_secrets.contains(secret) {
                     log_secrets.push(secret.clone());
                 }
             }
 
-            adapter.get_auth_headers(&auth)?
+            let mut headers = adapter.get_auth_headers(&auth)?;
+            headers.append(&mut kimi_device_identity_headers);
+            headers
         } else {
             Vec::new()
         };
@@ -1791,21 +1932,12 @@ impl RequestForwarder {
         // 自定义 User-Agent：与 stream_check / model_fetch 共用 parse_custom_user_agent，
         // 运行时静默忽略非法值（前端在输入处给非阻断提示，不在保存时阻断）。
         // Copilot 指纹 UA 不可覆盖。
-        let custom_user_agent = if is_copilot {
-            None
-        } else {
-            provider
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.custom_user_agent_header().ok().flatten())
-        };
-        // Codex→Anthropic emulation: when there is no custom UA, override Codex's
-        // codex_cli_rs UA with the Claude Code UA.
-        let custom_user_agent = if custom_user_agent.is_none() && codex_impersonate_claude_code {
-            Some(http::HeaderValue::from_static(CLAUDE_CODE_USER_AGENT))
-        } else {
-            custom_user_agent
-        };
+        let custom_user_agent = resolve_outbound_user_agent(
+            provider,
+            is_copilot,
+            codex_impersonate_claude_code,
+            kimi_user_agent_fallback.as_deref(),
+        );
 
         // --- Copilot 优化器：动态 header 注入 ---
         if let Some((ref classification, ref det_request_id, ref interaction_id)) =
@@ -1873,7 +2005,8 @@ impl RequestForwarder {
             .and_then(|u| u.authority().map(|a| a.to_string()));
 
         let should_send_anthropic_headers = adapter.name() == "Claude"
-            && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"));
+            && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"))
+            && !provider.is_kimi_oauth();
 
         // 预计算 anthropic-beta 值（仅 Claude）
         let anthropic_beta_value = if should_send_anthropic_headers {
@@ -2001,6 +2134,11 @@ impl RequestForwarder {
             // The full set lives in `is_codex_client_fingerprint_header` so it stays in one
             // place. (HeaderName is lowercased by the http crate, so a direct match is safe.)
             if codex_responses_to_anthropic && is_codex_client_fingerprint_header(key_str) {
+                continue;
+            }
+
+            // Managed Kimi requests use the identity issued by the account manager.
+            if provider.is_kimi_oauth() && is_kimi_untrusted_client_header(key_str) {
                 continue;
             }
 
@@ -2669,11 +2807,13 @@ impl RequestForwarder {
             return ErrorCategory::NonRetryable;
         }
 
-        // xAI OAuth mirrors the same rule for token acquisition: a local
-        // AuthError means the managed account needs re-login. Failing over
-        // would silently move the conversation off the selected Grok account
-        // and poison the provider's health state for an account-level issue.
-        if provider.is_xai_oauth() && matches!(error, ProxyError::AuthError(_)) {
+        // Managed OAuth failures are account-local. Kimi 401/403 responses have
+        // already exhausted the one refresh attempt; local xAI/Kimi AuthErrors
+        // likewise need account recovery rather than provider failover.
+        if is_kimi_upstream_auth_rejection(provider, error)
+            || ((provider.is_xai_oauth() || provider.is_kimi_oauth())
+                && matches!(error, ProxyError::AuthError(_)))
+        {
             return ErrorCategory::NonRetryable;
         }
 
@@ -2709,6 +2849,29 @@ impl RequestForwarder {
             _ => ErrorCategory::NonRetryable,
         }
     }
+}
+
+fn is_kimi_upstream_auth_rejection(provider: &Provider, error: &ProxyError) -> bool {
+    provider.is_kimi_oauth()
+        && matches!(
+            error,
+            ProxyError::UpstreamError {
+                status: 401 | 403,
+                ..
+            }
+        )
+}
+
+fn pin_kimi_managed_account(provider: &Provider, account_id: &str) -> Provider {
+    let mut provider = provider.clone();
+    if let Some(meta) = provider.meta.as_mut() {
+        meta.auth_binding = Some(crate::provider::AuthBinding {
+            source: crate::provider::AuthBindingSource::ManagedAccount,
+            auth_provider: Some("kimi_oauth".to_string()),
+            account_id: Some(account_id.to_string()),
+        });
+    }
+    provider
 }
 
 /// 从 ProxyError 中提取错误消息
@@ -3254,6 +3417,7 @@ fn is_managed_account_upstream_url(url: &str) -> bool {
         || host.ends_with(".githubcopilot.com")
         || (host == "chatgpt.com" && uri.path().starts_with("/backend-api/codex"))
         || (host == "api.x.ai" && uri.path().starts_with("/v1/"))
+        || (host == "api.kimi.com" && uri.path().starts_with("/coding/v1/"))
 }
 
 fn headers_contain_proxy_placeholder(headers: &http::HeaderMap) -> bool {
@@ -3275,11 +3439,54 @@ fn should_preserve_exact_header_case(
         return false;
     }
 
-    if is_copilot || provider.is_codex_oauth() || provider.is_xai_oauth() {
+    if is_copilot
+        || provider.is_codex_oauth()
+        || provider.is_xai_oauth()
+        || provider.is_kimi_oauth()
+    {
         return false;
     }
 
     matches!(resolved_claude_api_format, None | Some("anthropic"))
+}
+
+fn resolve_outbound_user_agent(
+    provider: &Provider,
+    is_copilot: bool,
+    codex_impersonate_claude_code: bool,
+    kimi_fallback: Option<&str>,
+) -> Option<http::HeaderValue> {
+    if is_copilot {
+        return None;
+    }
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.custom_user_agent_header().ok().flatten())
+        .or_else(|| kimi_fallback.and_then(|value| http::HeaderValue::from_str(value).ok()))
+        .or_else(|| {
+            codex_impersonate_claude_code
+                .then(|| http::HeaderValue::from_static(CLAUDE_CODE_USER_AGENT))
+        })
+}
+
+fn is_kimi_device_identity_header(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "x-msh-platform"
+            | "x-msh-version"
+            | "x-msh-device-name"
+            | "x-msh-device-model"
+            | "x-msh-os-version"
+            | "x-msh-device-id"
+    )
+}
+
+fn is_kimi_untrusted_client_header(name: &str) -> bool {
+    name.eq_ignore_ascii_case("x-app")
+        || name.eq_ignore_ascii_case("anthropic-beta")
+        || is_codex_client_fingerprint_header(name)
+        || is_kimi_device_identity_header(name)
 }
 
 fn is_streaming_request(endpoint: &str, body: &Value, headers: &axum::http::HeaderMap) -> bool {
@@ -4031,6 +4238,18 @@ mod tests {
             xai_err,
             ProxyError::AuthError(message) if message.contains("PROXY_MANAGED")
         ));
+
+        let mut kimi_headers = HeaderMap::new();
+        kimi_headers.insert("x-api-key", HeaderValue::from_static("PROXY_MANAGED"));
+        let kimi_err = reject_proxy_placeholder_for_managed_account_upstream(
+            "https://api.kimi.com/coding/v1/messages?beta=true",
+            &kimi_headers,
+        )
+        .expect_err("Kimi placeholder should be rejected before upstream");
+        assert!(matches!(
+            kimi_err,
+            ProxyError::AuthError(message) if message.contains("PROXY_MANAGED")
+        ));
     }
 
     #[test]
@@ -4109,6 +4328,66 @@ mod tests {
             Some("openai_chat"),
             true
         ));
+    }
+
+    #[test]
+    fn kimi_oauth_uses_pooled_reqwest_transport() {
+        let kimi = test_provider_with_type(Some("kimi_oauth"));
+
+        assert!(!should_preserve_exact_header_case(
+            "Claude",
+            &kimi,
+            Some("anthropic"),
+            false
+        ));
+    }
+
+    #[test]
+    fn kimi_oauth_uses_cli_user_agent_unless_provider_explicitly_overrides_it() {
+        let mut kimi = test_provider_with_type(Some("kimi_oauth"));
+        let fallback =
+            resolve_outbound_user_agent(&kimi, false, false, Some("kimi-code-cli/0.34.0")).unwrap();
+        assert_eq!(fallback.to_str().unwrap(), "kimi-code-cli/0.34.0");
+        let stale_codex_flag =
+            resolve_outbound_user_agent(&kimi, false, true, Some("kimi-code-cli/0.34.0")).unwrap();
+        assert_eq!(stale_codex_flag.to_str().unwrap(), "kimi-code-cli/0.34.0");
+
+        kimi.meta.as_mut().unwrap().custom_user_agent = Some("my-host/1.0".to_string());
+        let explicit =
+            resolve_outbound_user_agent(&kimi, false, false, Some("kimi-code-cli/0.34.0")).unwrap();
+        assert_eq!(explicit.to_str().unwrap(), "my-host/1.0");
+    }
+
+    #[test]
+    fn managed_kimi_device_headers_replace_untrusted_client_values() {
+        for name in [
+            "x-msh-platform",
+            "X-Msh-Version",
+            "x-MSH-device-name",
+            "x-msh-device-model",
+            "x-msh-os-version",
+            "x-msh-device-id",
+        ] {
+            assert!(is_kimi_device_identity_header(name));
+        }
+        assert!(!is_kimi_device_identity_header("authorization"));
+        assert!(!is_kimi_device_identity_header("anthropic-version"));
+    }
+
+    #[test]
+    fn managed_kimi_filters_host_client_identity_headers() {
+        for name in [
+            "x-app",
+            "anthropic-beta",
+            "x-msh-platform",
+            "x-codex-session-id",
+            "chatgpt-account-id",
+        ] {
+            assert!(is_kimi_untrusted_client_header(name));
+        }
+        for name in ["accept", "anthropic-version", "content-type"] {
+            assert!(!is_kimi_untrusted_client_header(name));
+        }
     }
 
     #[test]
@@ -4441,6 +4720,41 @@ mod tests {
                 &provider,
             ),
             ErrorCategory::Retryable
+        );
+    }
+
+    #[test]
+    fn kimi_oauth_upstream_auth_rejections_never_fail_over() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let provider = test_provider_with_type(Some("kimi_oauth"));
+
+        for status in [401, 403] {
+            let error = ProxyError::UpstreamError { status, body: None };
+            assert!(is_kimi_upstream_auth_rejection(&provider, &error));
+            assert_eq!(
+                forwarder.categorize_proxy_error(&error, &provider),
+                ErrorCategory::NonRetryable
+            );
+        }
+
+        let ordinary_provider = test_provider_with_type(None);
+        let unauthorized = ProxyError::UpstreamError {
+            status: 401,
+            body: None,
+        };
+        assert!(!is_kimi_upstream_auth_rejection(
+            &ordinary_provider,
+            &unauthorized
+        ));
+
+        let pinned = pin_kimi_managed_account(&provider, "account-one");
+        assert_eq!(
+            pinned
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.managed_account_id_for("kimi_oauth"))
+                .as_deref(),
+            Some("account-one")
         );
     }
 

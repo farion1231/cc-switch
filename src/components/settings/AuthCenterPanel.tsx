@@ -5,6 +5,7 @@ import { CodexIcon } from "@/components/BrandIcons";
 import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
 import { XaiOAuthSection } from "@/components/providers/forms/XaiOAuthSection";
+import { KimiOAuthSection } from "@/components/providers/forms/KimiOAuthSection";
 import { ProviderIcon } from "@/components/ProviderIcon";
 
 export function AuthCenterPanel() {
@@ -88,6 +89,24 @@ export function AuthCenterPanel() {
         </div>
 
         <XaiOAuthSection />
+      </section>
+
+      <section className="rounded-xl border border-border/60 bg-card/60 p-6">
+        <div className="mb-4 flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted">
+            <ProviderIcon icon="kimi" name="Kimi" size={20} />
+          </div>
+          <div>
+            <h4 className="font-medium">Kimi Code (OAuth)</h4>
+            <p className="text-sm text-muted-foreground">
+              {t("settings.authCenter.kimiOauthDescription", {
+                defaultValue: "Manage Kimi Code accounts",
+              })}
+            </p>
+          </div>
+        </div>
+
+        <KimiOAuthSection showAccountQuota />
       </section>
     </div>
   );

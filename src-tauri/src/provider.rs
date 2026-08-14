@@ -75,6 +75,11 @@ impl Provider {
         self.provider_type() == Some("xai_oauth")
     }
 
+    /// Reports whether this provider uses cc-switch-managed Kimi credentials.
+    pub fn is_kimi_oauth(&self) -> bool {
+        self.provider_type() == Some("kimi_oauth")
+    }
+
     pub fn is_github_copilot(&self) -> bool {
         self.provider_type() == Some("github_copilot")
             || self.claude_base_url_contains("githubcopilot.com")
@@ -84,6 +89,7 @@ impl Provider {
         self.is_github_copilot()
             || self.is_codex_oauth()
             || self.is_xai_oauth()
+            || self.is_kimi_oauth()
             || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
     }
 

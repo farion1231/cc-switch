@@ -24,6 +24,8 @@ pub mod copilot_model_map;
 mod gemini;
 pub(crate) mod gemini_schema;
 pub mod gemini_shadow;
+pub(crate) mod kimi_oauth_api;
+pub mod kimi_oauth_auth;
 pub mod models;
 pub(crate) mod reasoning_bridge;
 pub mod streaming;
@@ -40,12 +42,17 @@ pub mod transform_gemini;
 pub mod transform_responses;
 pub mod xai_oauth_auth;
 
+#[cfg(test)]
+mod kimi_oauth_api_contract_tests;
+
 use crate::app_config::AppType;
 use crate::provider::Provider;
 use serde::{Deserialize, Serialize};
 
 pub const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 pub const XAI_API_BASE_URL: &str = "https://api.x.ai/v1";
+/// Canonical Kimi Code base URL used for managed Anthropic-protocol inference.
+pub const KIMI_API_BASE_URL: &str = "https://api.kimi.com/coding/";
 
 // 公开导出
 pub use adapter::ProviderAdapter;
@@ -90,6 +97,8 @@ pub enum ProviderType {
     CodexOAuth,
     /// xAI Grok OAuth（需要 Anthropic ↔ Responses API 转换）
     XaiOAuth,
+    /// Kimi managed OAuth using the native Anthropic-compatible wire protocol.
+    KimiOAuth,
 }
 
 impl ProviderType {
@@ -104,6 +113,7 @@ impl ProviderType {
             ProviderType::GitHubCopilot => true,
             ProviderType::CodexOAuth => true,
             ProviderType::XaiOAuth => true,
+            ProviderType::KimiOAuth => false,
             ProviderType::OpenRouter => false,
             _ => false,
         }
@@ -122,6 +132,7 @@ impl ProviderType {
             ProviderType::GitHubCopilot => "https://api.githubcopilot.com",
             ProviderType::CodexOAuth => CHATGPT_CODEX_BASE_URL,
             ProviderType::XaiOAuth => XAI_API_BASE_URL,
+            ProviderType::KimiOAuth => KIMI_API_BASE_URL,
         }
     }
 
@@ -150,6 +161,9 @@ impl ProviderType {
                     }
                     if meta.provider_type.as_deref() == Some("xai_oauth") {
                         return ProviderType::XaiOAuth;
+                    }
+                    if meta.provider_type.as_deref() == Some("kimi_oauth") {
+                        return ProviderType::KimiOAuth;
                     }
                 }
 
@@ -221,6 +235,7 @@ impl ProviderType {
             ProviderType::GitHubCopilot => "github_copilot",
             ProviderType::CodexOAuth => "codex_oauth",
             ProviderType::XaiOAuth => "xai_oauth",
+            ProviderType::KimiOAuth => "kimi_oauth",
         }
     }
 }
@@ -247,6 +262,7 @@ impl std::str::FromStr for ProviderType {
             }
             "codex_oauth" | "codex-oauth" | "codexoauth" => Ok(ProviderType::CodexOAuth),
             "xai_oauth" | "xai-oauth" | "xaioauth" => Ok(ProviderType::XaiOAuth),
+            "kimi_oauth" | "kimi-oauth" | "kimioauth" => Ok(ProviderType::KimiOAuth),
             _ => Err(format!("Invalid provider type: {s}")),
         }
     }
@@ -272,7 +288,8 @@ pub fn get_adapter_for_provider_type(provider_type: &ProviderType) -> Box<dyn Pr
         | ProviderType::OpenRouter
         | ProviderType::GitHubCopilot
         | ProviderType::CodexOAuth
-        | ProviderType::XaiOAuth => Box::new(ClaudeAdapter::new()),
+        | ProviderType::XaiOAuth
+        | ProviderType::KimiOAuth => Box::new(ClaudeAdapter::new()),
         ProviderType::Codex => Box::new(CodexAdapter::new()),
         ProviderType::Gemini | ProviderType::GeminiCli => Box::new(GeminiAdapter::new()),
     }
@@ -309,6 +326,7 @@ mod tests {
         assert!(!ProviderType::GeminiCli.needs_transform());
         assert!(!ProviderType::OpenRouter.needs_transform());
         assert!(ProviderType::GitHubCopilot.needs_transform());
+        assert!(!ProviderType::KimiOAuth.needs_transform());
     }
 
     #[test]
@@ -340,6 +358,10 @@ mod tests {
         assert_eq!(
             ProviderType::GitHubCopilot.default_endpoint(),
             "https://api.githubcopilot.com"
+        );
+        assert_eq!(
+            ProviderType::KimiOAuth.default_endpoint(),
+            KIMI_API_BASE_URL
         );
     }
 
@@ -393,6 +415,18 @@ mod tests {
             "xai_oauth".parse::<ProviderType>().unwrap(),
             ProviderType::XaiOAuth
         );
+        assert_eq!(
+            "kimi_oauth".parse::<ProviderType>().unwrap(),
+            ProviderType::KimiOAuth
+        );
+        assert_eq!(
+            "kimi-oauth".parse::<ProviderType>().unwrap(),
+            ProviderType::KimiOAuth
+        );
+        assert_eq!(
+            "kimioauth".parse::<ProviderType>().unwrap(),
+            ProviderType::KimiOAuth
+        );
         assert!("invalid".parse::<ProviderType>().is_err());
     }
 
@@ -406,6 +440,7 @@ mod tests {
         assert_eq!(ProviderType::OpenRouter.as_str(), "openrouter");
         assert_eq!(ProviderType::GitHubCopilot.as_str(), "github_copilot");
         assert_eq!(ProviderType::XaiOAuth.as_str(), "xai_oauth");
+        assert_eq!(ProviderType::KimiOAuth.as_str(), "kimi_oauth");
     }
 
     #[test]

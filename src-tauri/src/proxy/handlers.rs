@@ -17,9 +17,10 @@ use super::{
     },
     handler_context::RequestContext,
     providers::{
+        claude_api_format_needs_transform,
         codex_chat_common::extract_reasoning_field_text,
         codex_chat_history::record_responses_sse_stream,
-        get_adapter, get_claude_api_format,
+        get_claude_api_format,
         streaming::create_anthropic_sse_stream,
         streaming_codex_anthropic::{
             create_responses_sse_stream_from_anthropic_with_context,
@@ -229,9 +230,10 @@ async fn handle_messages_for_app(
         .to_string();
     let response = result.response;
 
-    // 检查是否需要格式转换（OpenRouter 等中转服务）
-    let adapter = get_adapter(&app_type);
-    let needs_transform = adapter.needs_transform(&ctx.provider);
+    // The forwarder has already resolved the effective wire format, including
+    // managed-provider invariants. Reusing it here keeps response handling
+    // symmetric with the request transformation decision.
+    let needs_transform = should_transform_claude_response(&api_format);
 
     // Claude 特有：格式转换处理
     if needs_transform {
@@ -256,6 +258,10 @@ async fn handle_messages_for_app(
         connection_guard,
     )
     .await
+}
+
+fn should_transform_claude_response(api_format: &str) -> bool {
+    claude_api_format_needs_transform(api_format)
 }
 
 fn validate_claude_desktop_gateway_auth(
@@ -2663,10 +2669,18 @@ async fn log_usage(
 mod tests {
     use super::{
         body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
-        codex_proxy_error_json, responses_sse_to_response_value,
+        codex_proxy_error_json, responses_sse_to_response_value, should_transform_claude_response,
         should_use_claude_transform_streaming, transform, upstream_body_parse_error,
     };
     use crate::proxy::ProxyError;
+
+    #[test]
+    fn native_anthropic_response_does_not_enter_transform_pipeline() {
+        assert!(!should_transform_claude_response("anthropic"));
+        assert!(should_transform_claude_response("openai_chat"));
+        assert!(should_transform_claude_response("openai_responses"));
+        assert!(should_transform_claude_response("gemini_native"));
+    }
 
     #[test]
     fn body_looks_like_sse_detects_unlabeled_sse_prefixes() {

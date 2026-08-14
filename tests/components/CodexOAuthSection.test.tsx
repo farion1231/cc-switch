@@ -6,6 +6,7 @@ import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
 const mocks = vi.hoisted(() => ({
   useCodexOauth: vi.fn(),
   renderAccountQuota: vi.fn(),
+  renderKimiSection: vi.fn(),
 }));
 
 vi.mock("@/components/providers/forms/hooks/useCodexOauth", () => ({
@@ -27,8 +28,16 @@ vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
   XaiOAuthSection: () => <div />,
 }));
 
+vi.mock("@/components/providers/forms/KimiOAuthSection", () => ({
+  KimiOAuthSection: (props: { showAccountQuota?: boolean }) => {
+    mocks.renderKimiSection(props);
+    return <div />;
+  },
+}));
+
 describe("CodexOAuthSection", () => {
   beforeEach(() => {
+    mocks.renderKimiSection.mockClear();
     mocks.useCodexOauth.mockReturnValue({
       accounts: [
         {
@@ -70,5 +79,8 @@ describe("CodexOAuthSection", () => {
 
     expect(mocks.renderAccountQuota).toHaveBeenCalledWith("account-1");
     expect(screen.getByTestId("account-quota")).toHaveTextContent("account-1");
+    expect(mocks.renderKimiSection).toHaveBeenCalledWith({
+      showAccountQuota: true,
+    });
   });
 });

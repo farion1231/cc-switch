@@ -135,6 +135,14 @@ pub enum AuthStrategy {
     ///
     /// access token 由 xAI Device Code 流程获取并由 forwarder 动态注入。
     XaiOAuth,
+
+    /// Kimi managed OAuth authentication for Anthropic-compatible inference.
+    ///
+    /// - Header: `x-api-key: <access_token>`
+    ///
+    /// The access token is acquired through Kimi's device-code flow and is
+    /// injected dynamically by the forwarder.
+    KimiOAuth,
 }
 
 #[cfg(test)]
@@ -252,6 +260,8 @@ mod tests {
             AuthStrategy::GoogleOAuth,
             AuthStrategy::GitHubCopilot,
             AuthStrategy::CodexOAuth,
+            AuthStrategy::XaiOAuth,
+            AuthStrategy::KimiOAuth,
         ];
 
         for (i, s1) in strategies.iter().enumerate() {

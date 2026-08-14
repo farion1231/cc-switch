@@ -10,6 +10,20 @@ import type {
 
 type PollingState = "idle" | "polling" | "success" | "error";
 
+const HOT_PATH_STATUS_REFETCH_INTERVAL_MS = 15_000;
+
+/**
+ * Returns the status refresh cadence for providers whose proxy path can mark
+ * an account as requiring login without a foreground Auth Center action.
+ */
+export function managedAuthStatusRefetchInterval(
+  authProvider: ManagedAuthProvider,
+): number | false {
+  return authProvider === "xai_oauth" || authProvider === "kimi_oauth"
+    ? HOT_PATH_STATUS_REFETCH_INTERVAL_MS
+    : false;
+}
+
 export function useManagedAuth(
   authProvider: ManagedAuthProvider,
   githubDomain?: string,
@@ -26,6 +40,8 @@ export function useManagedAuth(
     null,
   );
   const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const authAttemptGenerationRef = useRef(0);
+  const pollingRequestInFlightRef = useRef<number | null>(null);
 
   const {
     data: authStatus,
@@ -35,10 +51,9 @@ export function useManagedAuth(
     queryKey,
     queryFn: () => authApi.authGetStatus(authProvider),
     staleTime: 30000,
-    // A rejected xAI refresh token is persisted as `requires_reauth` by the
-    // proxy hot path. Periodically refresh local status so an already-open Auth
-    // Center stops showing the account as logged in without requiring a reload.
-    refetchInterval: authProvider === "xai_oauth" ? 15_000 : false,
+    // A rejected refresh token can be persisted by a provider's proxy hot path.
+    // Refresh local status so an open Auth Center reflects that transition.
+    refetchInterval: managedAuthStatusRefetchInterval(authProvider),
   });
 
   const stopPolling = useCallback(() => {
@@ -52,15 +67,27 @@ export function useManagedAuth(
     }
   }, []);
 
-  useEffect(() => {
-    return () => {
-      stopPolling();
-    };
+  const invalidateAuthAttempt = useCallback(() => {
+    stopPolling();
+    pollingRequestInFlightRef.current = null;
+    authAttemptGenerationRef.current += 1;
+    return authAttemptGenerationRef.current;
   }, [stopPolling]);
 
+  useEffect(() => {
+    return () => {
+      invalidateAuthAttempt();
+    };
+  }, [invalidateAuthAttempt]);
+
   const startLoginMutation = useMutation({
-    mutationFn: () => authApi.authStartLogin(authProvider, githubDomain),
-    onSuccess: async (response) => {
+    mutationFn: (_attemptGeneration: number) =>
+      authApi.authStartLogin(authProvider, githubDomain),
+    onSuccess: async (response, attemptGeneration) => {
+      if (attemptGeneration !== authAttemptGenerationRef.current) {
+        return;
+      }
+
       setDeviceCode(response);
       setPollingState("polling");
       setError(null);
@@ -70,11 +97,17 @@ export function useManagedAuth(
       } catch (e) {
         console.debug("[ManagedAuth] Failed to copy user code:", e);
       }
+      if (attemptGeneration !== authAttemptGenerationRef.current) {
+        return;
+      }
 
       try {
         await settingsApi.openExternal(response.verification_uri);
       } catch (e) {
         console.debug("[ManagedAuth] Failed to open browser:", e);
+      }
+      if (attemptGeneration !== authAttemptGenerationRef.current) {
+        return;
       }
 
       // Add a small buffer on top of GitHub's suggested interval to avoid
@@ -83,28 +116,50 @@ export function useManagedAuth(
       const expiresAt = Date.now() + response.expires_in * 1000;
 
       const pollOnce = async () => {
-        if (Date.now() > expiresAt) {
-          stopPolling();
-          setPollingState("error");
-          setError("Device code expired. Please try again.");
+        if (
+          attemptGeneration !== authAttemptGenerationRef.current ||
+          pollingRequestInFlightRef.current === attemptGeneration
+        ) {
           return;
         }
+        pollingRequestInFlightRef.current = attemptGeneration;
 
         try {
+          if (Date.now() > expiresAt) {
+            invalidateAuthAttempt();
+            setPollingState("error");
+            setError("Device code expired. Please try again.");
+            return;
+          }
+
           const newAccount = await authApi.authPollForAccount(
             authProvider,
             response.device_code,
             githubDomain,
           );
+          if (attemptGeneration !== authAttemptGenerationRef.current) {
+            return;
+          }
+
           if (newAccount) {
             stopPolling();
             setPollingState("success");
             await refetchStatus();
+            if (attemptGeneration !== authAttemptGenerationRef.current) {
+              return;
+            }
             await queryClient.invalidateQueries({ queryKey });
+            if (attemptGeneration !== authAttemptGenerationRef.current) {
+              return;
+            }
             setPollingState("idle");
             setDeviceCode(null);
           }
         } catch (e) {
+          if (attemptGeneration !== authAttemptGenerationRef.current) {
+            return;
+          }
+
           const errorMessage = e instanceof Error ? e.message : String(e);
           if (
             !errorMessage.includes("pending") &&
@@ -114,18 +169,30 @@ export function useManagedAuth(
             setPollingState("error");
             setError(errorMessage);
           }
+        } finally {
+          if (pollingRequestInFlightRef.current === attemptGeneration) {
+            pollingRequestInFlightRef.current = null;
+          }
         }
       };
 
       void pollOnce();
       pollingIntervalRef.current = setInterval(pollOnce, interval);
       pollingTimeoutRef.current = setTimeout(() => {
-        stopPolling();
+        if (attemptGeneration !== authAttemptGenerationRef.current) {
+          return;
+        }
+
+        invalidateAuthAttempt();
         setPollingState("error");
         setError("Device code expired. Please try again.");
       }, response.expires_in * 1000);
     },
-    onError: (e) => {
+    onError: (e, attemptGeneration) => {
+      if (attemptGeneration !== authAttemptGenerationRef.current) {
+        return;
+      }
+
       setPollingState("error");
       setError(e instanceof Error ? e.message : String(e));
     },
@@ -182,19 +249,19 @@ export function useManagedAuth(
   });
 
   const startAuth = useCallback(() => {
+    const attemptGeneration = invalidateAuthAttempt();
     setPollingState("idle");
     setDeviceCode(null);
     setError(null);
-    stopPolling();
-    startLoginMutation.mutate();
-  }, [startLoginMutation, stopPolling]);
+    startLoginMutation.mutate(attemptGeneration);
+  }, [invalidateAuthAttempt, startLoginMutation]);
 
   const cancelAuth = useCallback(() => {
-    stopPolling();
+    invalidateAuthAttempt();
     setPollingState("idle");
     setDeviceCode(null);
     setError(null);
-  }, [stopPolling]);
+  }, [invalidateAuthAttempt]);
 
   const logout = useCallback(() => {
     logoutMutation.mutate();

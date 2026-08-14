@@ -117,5 +117,6 @@ panic = "unwind"
 strip = "symbols"
 
 [dev-dependencies]
+proptest = "=1.11.0"
 serial_test = "3"
 tempfile = "3"

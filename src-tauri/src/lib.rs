@@ -1129,6 +1129,18 @@ pub fn run() {
                 log::info!("✓ XaiOAuthManager initialized");
             }
 
+            // 初始化 Kimi OAuthManager
+            {
+                use crate::proxy::providers::kimi_oauth_auth::KimiOAuthManager;
+                use commands::KimiOAuthState;
+                use tokio::sync::RwLock;
+
+                let app_config_dir = crate::config::get_app_config_dir();
+                let kimi_oauth_manager = KimiOAuthManager::new(app_config_dir);
+                app.manage(KimiOAuthState(Arc::new(RwLock::new(kimi_oauth_manager))));
+                log::info!("✓ KimiOAuthManager initialized");
+            }
+
             // 初始化全局出站代理 HTTP 客户端
             {
                 let db = &app.state::<AppState>().db;
@@ -1388,6 +1400,8 @@ pub fn run() {
             commands::get_codex_oauth_models,
             commands::get_xai_oauth_models,
             commands::get_xai_oauth_quota,
+            commands::get_kimi_oauth_models,
+            commands::get_kimi_oauth_quota,
             commands::get_coding_plan_quota,
             commands::get_balance,
             // New MCP via config.json (SSOT)

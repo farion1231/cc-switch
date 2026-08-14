@@ -1,6 +1,3 @@
-/**
- * 预设供应商配置模板
- */
 import { ProviderCategory } from "../types";
 
 export interface TemplateValueConfig {
@@ -60,7 +57,7 @@ export interface ProviderPreset {
   // 供应商类型标识（用于特殊供应商检测）
   // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
   // - "codex_oauth": OpenAI Codex via ChatGPT Plus/Pro 反代（需要 OAuth 认证）
-  providerType?: "github_copilot" | "codex_oauth" | "xai_oauth";
+  providerType?: "github_copilot" | "codex_oauth" | "xai_oauth" | "kimi_oauth";
 
   // 是否需要 OAuth 认证（而非 API Key）
   requiresOAuth?: boolean;
@@ -1337,6 +1334,27 @@ export const providerPresets: ProviderPreset[] = [
     requiresOAuth: true,
     icon: "xai",
     iconColor: "#000000",
+  },
+  {
+    name: "Kimi Code (OAuth)",
+    websiteUrl: "https://kimi.com/code",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.kimi.com/coding/",
+        ANTHROPIC_MODEL: "k3",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "k3-256k",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "k3",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "k3",
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "262144",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "262144",
+      },
+    },
+    category: "third_party",
+    apiFormat: "anthropic",
+    providerType: "kimi_oauth",
+    requiresOAuth: true,
+    icon: "kimi",
+    iconColor: "#6366F1",
   },
   {
     name: "Nvidia",
