@@ -527,9 +527,12 @@ impl RequestForwarder {
                             let pid = provider.id.clone();
                             let pname = provider.name.clone();
                             let at = app_type_str.to_string();
+                            let prev = self.current_provider_id_at_start.clone();
 
                             tokio::spawn(async move {
-                                let _ = fm.try_switch(ah.as_ref(), &at, &pid, &pname).await;
+                                let _ = fm
+                                    .try_switch(ah.as_ref(), &at, &pid, &pname, Some(&prev))
+                                    .await;
                             });
                         }
                         // 重新计算成功率
@@ -629,10 +632,17 @@ impl RequestForwarder {
                                             let pid = provider.id.clone();
                                             let pname = provider.name.clone();
                                             let at = app_type_str.to_string();
+                                            let prev = self.current_provider_id_at_start.clone();
 
                                             tokio::spawn(async move {
                                                 let _ = fm
-                                                    .try_switch(ah.as_ref(), &at, &pid, &pname)
+                                                    .try_switch(
+                                                        ah.as_ref(),
+                                                        &at,
+                                                        &pid,
+                                                        &pname,
+                                                        Some(&prev),
+                                                    )
                                                     .await;
                                             });
                                         }
@@ -777,10 +787,17 @@ impl RequestForwarder {
                                                 let pid = provider.id.clone();
                                                 let pname = provider.name.clone();
                                                 let at = app_type_str.to_string();
+                                                let prev = self.current_provider_id_at_start.clone();
 
                                                 tokio::spawn(async move {
                                                     let _ = fm
-                                                        .try_switch(ah.as_ref(), &at, &pid, &pname)
+                                                        .try_switch(
+                                                            ah.as_ref(),
+                                                            &at,
+                                                            &pid,
+                                                            &pname,
+                                                            Some(&prev),
+                                                        )
                                                         .await;
                                                 });
                                             }
@@ -939,9 +956,16 @@ impl RequestForwarder {
                                             let pid = provider.id.clone();
                                             let pname = provider.name.clone();
                                             let at = app_type_str.to_string();
+                                            let prev = self.current_provider_id_at_start.clone();
                                             tokio::spawn(async move {
                                                 let _ = fm
-                                                    .try_switch(ah.as_ref(), &at, &pid, &pname)
+                                                    .try_switch(
+                                                        ah.as_ref(),
+                                                        &at,
+                                                        &pid,
+                                                        &pname,
+                                                        Some(&prev),
+                                                    )
                                                     .await;
                                             });
                                         }
