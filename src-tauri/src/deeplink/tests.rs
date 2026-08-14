@@ -79,6 +79,22 @@ fn test_parse_valid_claude_deeplink() {
 }
 
 #[test]
+fn test_parse_valid_claude_desktop_deeplink() {
+    use super::provider::build_provider_from_request;
+
+    let url = "ccswitch://v1/import?resource=provider&app=claude-desktop&name=Test%20Provider&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test-123";
+    let request = parse_deeplink_url(url).unwrap();
+
+    assert_eq!(request.app.as_deref(), Some("claude-desktop"));
+
+    let provider = build_provider_from_request(&AppType::ClaudeDesktop, &request).unwrap();
+    assert!(matches!(
+        provider.meta.and_then(|meta| meta.claude_desktop_mode),
+        Some(crate::provider::ClaudeDesktopMode::Direct)
+    ));
+}
+
+#[test]
 fn test_parse_deeplink_with_notes() {
     let url = "ccswitch://v1/import?resource=provider&app=codex&name=Codex&homepage=https%3A%2F%2Fcodex.com&endpoint=https%3A%2F%2Fapi.codex.com&apiKey=key123&notes=Test%20notes";
 
