@@ -148,7 +148,7 @@ pub(crate) fn build_provider_from_request(
         AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
         AppType::Codex => build_codex_settings(request),
         AppType::Gemini => build_gemini_settings(request),
-        AppType::GrokBuild => build_grokbuild_settings(request),
+        AppType::GrokBuild => build_grokbuild_settings(request)?,
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
@@ -463,34 +463,192 @@ fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     json!({ "env": env })
 }
 
-fn build_grokbuild_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+fn build_grokbuild_settings(
+    request: &DeepLinkImportRequest,
+) -> Result<serde_json::Value, AppError> {
+    if request.config.is_some() {
+        let config_toml = decode_inline_grokbuild_config(request)?;
+        return build_grokbuild_settings_from_config(request, &config_toml);
+    }
+
     let model = request
         .model
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(crate::grok_config::DEFAULT_MODEL)
         .trim();
-    let name = request
-        .name
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("custom")
-        .trim();
     let endpoint = get_primary_endpoint(request).trim().to_string();
     let api_key = request.api_key.as_deref().unwrap_or("").trim();
 
     let model_value = toml_edit::Value::from(model).to_string();
-    let name_value = toml_edit::Value::from(name).to_string();
+    let name_value = toml_edit::Value::from(model).to_string();
     let endpoint_value = toml_edit::Value::from(endpoint.as_str()).to_string();
     let api_key_value = toml_edit::Value::from(api_key).to_string();
 
-    json!({
+    Ok(json!({
         "config": format!(
-            "[models]\ndefault = {model_value}\n\n[model.{model_value}]\nmodel = {model_value}\nbase_url = {endpoint_value}\nname = {name_value}\napi_key = {api_key_value}\napi_backend = \"{}\"\ncontext_window = {}\n",
+            "[models]\ndefault = {model_value}\n\n[model.{model_value}]\nmodel = {model_value}\nbase_url = {endpoint_value}\nname = {name_value}\ndescription = {name_value}\napi_key = {api_key_value}\napi_backend = \"{}\"\ncontext_window = {}\n",
             crate::grok_config::DEFAULT_API_BACKEND,
             crate::grok_config::DEFAULT_CONTEXT_WINDOW,
         )
-    })
+    }))
+}
+
+fn decode_inline_grokbuild_config(request: &DeepLinkImportRequest) -> Result<String, AppError> {
+    let encoded = request
+        .config
+        .as_deref()
+        .ok_or_else(|| AppError::InvalidInput("Missing Grok Build config".to_string()))?;
+    let decoded = decode_base64_param("config", encoded)?;
+    let content = String::from_utf8(decoded)
+        .map_err(|error| AppError::InvalidInput(format!("Invalid UTF-8 in config: {error}")))?;
+
+    match request.config_format.as_deref().unwrap_or("json") {
+        "toml" => Ok(content),
+        "json" => {
+            let value: serde_json::Value = serde_json::from_str(&content)
+                .map_err(|error| AppError::InvalidInput(format!("Invalid JSON config: {error}")))?;
+            if let Some(config) = value.get("config").and_then(serde_json::Value::as_str) {
+                return Ok(config.to_string());
+            }
+            let value: toml::Value = serde_json::from_value(value).map_err(|error| {
+                AppError::InvalidInput(format!("Invalid Grok Build config: {error}"))
+            })?;
+            toml::to_string(&value).map_err(|error| {
+                AppError::InvalidInput(format!("Invalid Grok Build config: {error}"))
+            })
+        }
+        format => Err(AppError::InvalidInput(format!(
+            "Unsupported config format: {format}"
+        ))),
+    }
+}
+
+fn build_grokbuild_settings_from_config(
+    request: &DeepLinkImportRequest,
+    config_toml: &str,
+) -> Result<serde_json::Value, AppError> {
+    const MAX_IMPORTED_MODELS: usize = 32;
+    const MAX_MODEL_TEXT_LENGTH: usize = 256;
+    const MAX_CONTEXT_WINDOW: i64 = 10_000_000;
+
+    let document = config_toml.parse::<toml::Value>().map_err(|error| {
+        AppError::InvalidInput(format!("Invalid Grok Build config.toml: {error}"))
+    })?;
+    let root = document.as_table().ok_or_else(|| {
+        AppError::InvalidInput("Grok Build config must be a TOML table".to_string())
+    })?;
+    let configured_default = root
+        .get("models")
+        .and_then(toml::Value::as_table)
+        .and_then(|models| models.get("default"))
+        .and_then(toml::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            AppError::InvalidInput("Grok Build config is missing models.default".to_string())
+        })?;
+    let models = root
+        .get("model")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| {
+            AppError::InvalidInput("Grok Build config is missing model profiles".to_string())
+        })?;
+    if models.is_empty() || models.len() > MAX_IMPORTED_MODELS {
+        return Err(AppError::InvalidInput(format!(
+            "Grok Build config must contain between 1 and {MAX_IMPORTED_MODELS} model profiles"
+        )));
+    }
+
+    let requested_model = request
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let default_profile = requested_model
+        .and_then(|requested| {
+            models.iter().find_map(|(profile, value)| {
+                let upstream_model = value
+                    .as_table()
+                    .and_then(|table| table.get("model"))
+                    .and_then(toml::Value::as_str)
+                    .map(str::trim);
+                (profile == requested || upstream_model == Some(requested))
+                    .then_some(profile.as_str())
+            })
+        })
+        .unwrap_or(configured_default);
+    if !models.contains_key(default_profile) {
+        return Err(AppError::InvalidInput(format!(
+            "Grok Build config is missing default model profile '{default_profile}'"
+        )));
+    }
+
+    let endpoint = get_primary_endpoint(request);
+    let api_key = request.api_key.as_deref().unwrap_or("").trim();
+    let endpoint_value = toml_edit::Value::from(endpoint.trim()).to_string();
+    let api_key_value = toml_edit::Value::from(api_key).to_string();
+    let default_value = toml_edit::Value::from(default_profile).to_string();
+    let mut config = format!("[models]\ndefault = {default_value}\n");
+
+    for (profile, value) in models {
+        let table = value.as_table().ok_or_else(|| {
+            AppError::InvalidInput(format!(
+                "Grok Build model profile '{profile}' must be a table"
+            ))
+        })?;
+        let upstream_model = table
+            .get("model")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(profile);
+        let display_name = table
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(upstream_model);
+        let description = table
+            .get("description")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(display_name);
+        let context_window = table
+            .get("context_window")
+            .and_then(toml::Value::as_integer)
+            .unwrap_or(crate::grok_config::DEFAULT_CONTEXT_WINDOW);
+
+        for (field, text) in [
+            ("profile", profile.as_str()),
+            ("model", upstream_model),
+            ("name", display_name),
+            ("description", description),
+        ] {
+            if text.is_empty() || text.len() > MAX_MODEL_TEXT_LENGTH {
+                return Err(AppError::InvalidInput(format!(
+                    "Grok Build model {field} must contain 1-{MAX_MODEL_TEXT_LENGTH} bytes"
+                )));
+            }
+        }
+        if !(1..=MAX_CONTEXT_WINDOW).contains(&context_window) {
+            return Err(AppError::InvalidInput(format!(
+                "Grok Build context_window must be between 1 and {MAX_CONTEXT_WINDOW}"
+            )));
+        }
+
+        let profile_value = toml_edit::Value::from(profile.as_str()).to_string();
+        let model_value = toml_edit::Value::from(upstream_model).to_string();
+        let name_value = toml_edit::Value::from(display_name).to_string();
+        let description_value = toml_edit::Value::from(description).to_string();
+        config.push_str(&format!(
+            "\n[model.{profile_value}]\nmodel = {model_value}\nbase_url = {endpoint_value}\nname = {name_value}\ndescription = {description_value}\napi_key = {api_key_value}\napi_backend = \"{}\"\ncontext_window = {context_window}\n",
+            crate::grok_config::DEFAULT_API_BACKEND,
+        ));
+    }
+
+    Ok(json!({ "config": config }))
 }
 
 /// Build OpenCode settings configuration
@@ -1002,7 +1160,7 @@ mod tests {
         });
 
         merge_grokbuild_config(&mut request, &config).expect("merge should succeed");
-        let settings = build_grokbuild_settings(&request);
+        let settings = build_grokbuild_settings(&request).expect("build settings");
         let rendered = settings["config"].as_str().expect("config string");
 
         assert!(
@@ -1017,11 +1175,74 @@ mod tests {
             rendered.contains("api_key = \"sk-declared-by-link\""),
             "only the explicitly declared api_key should survive: {rendered}"
         );
+        assert!(rendered.contains("name = \"grok-4.5\""));
+        assert!(rendered.contains("description = \"grok-4.5\""));
+        assert!(!rendered.contains("Attacker"));
 
         match original {
             Some(value) => std::env::set_var("CC_SWITCH_DEEPLINK_ENV_PROBE", value),
             None => std::env::remove_var("CC_SWITCH_DEEPLINK_ENV_PROBE"),
         }
+    }
+
+    #[test]
+    fn grokbuild_deeplink_preserves_safe_multi_model_catalog() {
+        use base64::prelude::*;
+
+        let config_toml = concat!(
+            "[models]\ndefault = \"grok-4.6\"\n\n",
+            "[model.\"grok-4.6\"]\nmodel = \"grok-4.6\"\n",
+            "base_url = \"https://ignored.example/v1\"\nname = \"Grok 4.6\"\n",
+            "description = \"Grok 4.6\"\n",
+            "api_backend = \"chat_completions\"\ncontext_window = 500000\n\n",
+            "[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\n",
+            "base_url = \"https://ignored-too.example/v1\"\nname = \"Grok 4.5\"\n",
+            "description = \"Grok 4.5\"\nenv_key = \"XAI_API_KEY\"\n",
+            "api_backend = \"messages\"\ncontext_window = 500000\n",
+        );
+        let config_json = serde_json::json!({ "config": config_toml }).to_string();
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("grokbuild".to_string()),
+            name: Some("Gateway Provider Name".to_string()),
+            endpoint: Some("https://gateway.example/v1".to_string()),
+            api_key: Some("sk-explicit".to_string()),
+            model: Some("grok-4.6".to_string()),
+            config: Some(BASE64_STANDARD.encode(config_json.as_bytes())),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+
+        let merged = parse_and_merge_config(&request).expect("merge config");
+        let settings = build_grokbuild_settings(&merged).expect("build settings");
+        let rendered = settings["config"].as_str().expect("config string");
+        let parsed = rendered.parse::<toml::Value>().expect("valid TOML");
+        let root = parsed.as_table().expect("root table");
+        let models = root["model"].as_table().expect("model table");
+
+        assert_eq!(root["models"]["default"].as_str(), Some("grok-4.6"));
+        assert_eq!(models.len(), 2);
+        for (id, display_name, context_window) in [
+            ("grok-4.6", "Grok 4.6", 500_000),
+            ("grok-4.5", "Grok 4.5", 500_000),
+        ] {
+            let model = models[id].as_table().expect("model profile");
+            assert_eq!(model["model"].as_str(), Some(id));
+            assert_eq!(model["name"].as_str(), Some(display_name));
+            assert_eq!(model["description"].as_str(), Some(display_name));
+            assert_eq!(
+                model["base_url"].as_str(),
+                Some("https://gateway.example/v1")
+            );
+            assert_eq!(model["api_key"].as_str(), Some("sk-explicit"));
+            assert_eq!(model["api_backend"].as_str(), Some("responses"));
+            assert_eq!(model["context_window"].as_integer(), Some(context_window));
+        }
+        assert!(!rendered.contains("Gateway Provider Name"));
+        assert!(!rendered.contains("ignored.example"));
+        assert!(!rendered.contains("sk-ignored"));
+        assert!(!rendered.contains("env_key"));
+        assert!(!rendered.contains("XAI_API_KEY"));
     }
 
     /// `env_key` 独苗的链接必须在**公开入口**上被明确拒绝。
