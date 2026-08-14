@@ -378,6 +378,76 @@ describe("UnifiedSkillsPanel", () => {
     expect(within(localGroup).getByText("Local Epsilon")).toBeInTheDocument();
   });
 
+  it("collapses and expands one repository source group", async () => {
+    installedSkillsMock = [
+      makeInstalledSkill({
+        id: "owner/repo-a:alpha",
+        name: "Repo A Alpha",
+        repoName: "repo-a",
+      }),
+      makeInstalledSkill({
+        id: "owner/repo-a:beta",
+        name: "Repo A Beta",
+        repoName: "repo-a",
+      }),
+    ];
+    renderPanel();
+
+    const user = userEvent.setup();
+    const repoGroup = screen.getByRole("region", { name: "owner/repo-a" });
+    const collapseButton = within(repoGroup).getByRole("button", {
+      name: "owner/repo-a: usage.collapse",
+    });
+
+    expect(collapseButton).toHaveAttribute("aria-expanded", "true");
+    expect(within(repoGroup).getByText("Repo A Alpha")).toBeInTheDocument();
+    expect(within(repoGroup).getByText("Repo A Beta")).toBeInTheDocument();
+
+    await user.click(collapseButton);
+
+    expect(collapseButton).toHaveAttribute("aria-expanded", "false");
+    expect(
+      within(repoGroup).queryByText("Repo A Alpha"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(repoGroup).queryByText("Repo A Beta"),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      within(repoGroup).getByRole("button", {
+        name: "owner/repo-a: usage.expand",
+      }),
+    );
+
+    expect(within(repoGroup).getByText("Repo A Alpha")).toBeInTheDocument();
+    expect(within(repoGroup).getByText("Repo A Beta")).toBeInTheDocument();
+  });
+
+  it("reveals the aligned repository disclosure control on hover or focus", () => {
+    installedSkillsMock = [
+      makeInstalledSkill({
+        id: "owner/repo-a:alpha",
+        name: "Repo A Alpha",
+        repoName: "repo-a",
+      }),
+    ];
+    renderPanel();
+
+    const repoGroup = screen.getByRole("region", { name: "owner/repo-a" });
+    const disclosureButton = within(repoGroup).getByRole("button", {
+      name: "owner/repo-a: usage.collapse",
+    });
+
+    expect(disclosureButton).toHaveClass(
+      "h-7",
+      "w-7",
+      "opacity-0",
+      "group-hover:opacity-100",
+      "focus-visible:opacity-100",
+    );
+    expect(disclosureButton.closest(".group")).not.toBeNull();
+  });
+
   it("toggles every Skill from one repository when search hides a sibling", async () => {
     installedSkillsMock = [
       makeInstalledSkill({

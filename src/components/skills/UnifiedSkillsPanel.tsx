@@ -8,6 +8,8 @@ import {
   Loader2,
   Search,
   FolderTree,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -919,13 +921,22 @@ const SkillSourceGroupSection: React.FC<SkillSourceGroupSectionProps> = ({
   onUpdate,
 }) => {
   const { t } = useTranslation();
+  const [isExpanded, setIsExpanded] = useState(true);
+  const disclosureLabel = `${group.label}: ${t(
+    isExpanded ? "usage.collapse" : "usage.expand",
+  )}`;
 
   return (
     <section
       aria-label={group.label}
       className="overflow-hidden rounded-xl border border-border-default bg-background/60"
     >
-      <div className="flex items-center gap-3 border-b border-border-default bg-muted/30 px-4 py-2.5">
+      <div
+        className={cn(
+          "group flex items-center gap-3 bg-muted/30 px-4 py-2.5",
+          isExpanded && "border-b border-border-default",
+        )}
+      >
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <FolderTree size={14} className="shrink-0 text-muted-foreground" />
           <span className="truncate text-sm font-medium">{group.label}</span>
@@ -942,22 +953,36 @@ const SkillSourceGroupSection: React.FC<SkillSourceGroupSectionProps> = ({
           appIds={appIds}
           onToggle={onToggleGroupApp}
         />
+
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+          aria-label={disclosureLabel}
+          aria-expanded={isExpanded}
+          title={disclosureLabel}
+          onClick={() => setIsExpanded((expanded) => !expanded)}
+        >
+          {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </Button>
       </div>
 
-      {group.visibleSkills.map((skill, index) => (
-        <InstalledSkillListItem
-          key={skill.id}
-          skill={skill}
-          appIds={appIds}
-          hasUpdate={!!updatesMap[skill.id]}
-          isUpdating={isUpdatingSkillId === skill.id}
-          actionsDisabled={actionsDisabled}
-          onToggleApp={onToggleApp}
-          onUninstall={() => onUninstall(skill)}
-          onUpdate={() => onUpdate(skill)}
-          isLast={index === group.visibleSkills.length - 1}
-        />
-      ))}
+      {isExpanded &&
+        group.visibleSkills.map((skill, index) => (
+          <InstalledSkillListItem
+            key={skill.id}
+            skill={skill}
+            appIds={appIds}
+            hasUpdate={!!updatesMap[skill.id]}
+            isUpdating={isUpdatingSkillId === skill.id}
+            actionsDisabled={actionsDisabled}
+            onToggleApp={onToggleApp}
+            onUninstall={() => onUninstall(skill)}
+            onUpdate={() => onUpdate(skill)}
+            isLast={index === group.visibleSkills.length - 1}
+          />
+        ))}
     </section>
   );
 };
