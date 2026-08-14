@@ -12,6 +12,7 @@ const apiMocks = vi.hoisted(() => ({
   authPollForAccount: vi.fn(),
   authStartLogin: vi.fn(),
   authCancelLogin: vi.fn(),
+  authRemoveAccount: vi.fn(),
   openExternal: vi.fn(),
 }));
 
@@ -22,6 +23,8 @@ vi.mock("@/lib/api", () => ({
       apiMocks.authPollForAccount(...args),
     authStartLogin: (...args: unknown[]) => apiMocks.authStartLogin(...args),
     authCancelLogin: (...args: unknown[]) => apiMocks.authCancelLogin(...args),
+    authRemoveAccount: (...args: unknown[]) =>
+      apiMocks.authRemoveAccount(...args),
   },
   settingsApi: {
     openExternal: (...args: unknown[]) => apiMocks.openExternal(...args),
@@ -71,6 +74,7 @@ beforeEach(() => {
   });
   apiMocks.authPollForAccount.mockReset();
   apiMocks.authCancelLogin.mockReset().mockResolvedValue(undefined);
+  apiMocks.authRemoveAccount.mockReset().mockResolvedValue(undefined);
   apiMocks.openExternal.mockReset().mockResolvedValue(undefined);
 });
 
@@ -342,5 +346,43 @@ describe("useManagedAuth device polling", () => {
       "device-code",
     );
     expect(result.current.pollingState).toBe("error");
+  });
+
+  it("cancels a pending backend login when removing an account", async () => {
+    vi.useFakeTimers();
+    apiMocks.authPollForAccount.mockResolvedValue(null);
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useManagedAuth("kimi_oauth"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      result.current.startAuth();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(apiMocks.authPollForAccount).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      result.current.removeAccount("account-one");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(apiMocks.authCancelLogin).toHaveBeenCalledWith(
+      "kimi_oauth",
+      "device-code",
+    );
+    expect(apiMocks.authRemoveAccount).toHaveBeenCalledWith(
+      "kimi_oauth",
+      "account-one",
+    );
+    expect(result.current.pollingState).toBe("idle");
+    expect(result.current.deviceCode).toBeNull();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(24_000);
+    });
+    expect(apiMocks.authPollForAccount).toHaveBeenCalledTimes(1);
   });
 });

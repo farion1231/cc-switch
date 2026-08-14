@@ -252,9 +252,6 @@ export function useManagedAuth(
     mutationFn: (accountId: string) =>
       authApi.authRemoveAccount(authProvider, accountId),
     onSuccess: async () => {
-      setPollingState("idle");
-      setLiveDeviceCode(null);
-      setError(null);
       await refetchStatus();
       await queryClient.invalidateQueries({ queryKey });
     },
@@ -307,9 +304,20 @@ export function useManagedAuth(
 
   const removeAccount = useCallback(
     (accountId: string) => {
+      const previousDeviceCode = deviceCodeRef.current?.device_code;
+      invalidateAuthAttempt();
+      setPollingState("idle");
+      setLiveDeviceCode(null);
+      setError(null);
+      cancelBackendLogin(previousDeviceCode);
       removeAccountMutation.mutate(accountId);
     },
-    [removeAccountMutation],
+    [
+      cancelBackendLogin,
+      invalidateAuthAttempt,
+      removeAccountMutation,
+      setLiveDeviceCode,
+    ],
   );
 
   const setDefaultAccount = useCallback(
