@@ -5032,18 +5032,17 @@ impl ProviderService {
             ));
         }
 
-        if promotes_legacy_codex_native_login {
-            if state
+        if promotes_legacy_codex_native_login
+            && state
                 .db
                 .get_provider_by_id(&provider.id, app_type.as_str())?
                 .is_some()
-            {
-                return Err(AppError::localized(
-                    "provider.codex.nativeLoginCard.alreadyExists",
-                    "跟随 Codex 登录卡片已存在",
-                    "The Follow Codex login card already exists",
-                ));
-            }
+        {
+            return Err(AppError::localized(
+                "provider.codex.nativeLoginCard.alreadyExists",
+                "跟随 Codex 登录卡片已存在",
+                "The Follow Codex login card already exists",
+            ));
         }
 
         if provider_id_changed
