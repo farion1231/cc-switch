@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -51,9 +52,9 @@ function ModelIdInput({
   }, [modelId]);
 
   return (
-    <Input
+    <ImeSafeInput
       value={localValue}
-      onChange={(e) => setLocalValue(e.target.value)}
+      onValueChange={setLocalValue}
       onBlur={() => {
         if (localValue !== modelId && localValue.trim()) {
           onChange(localValue);
@@ -93,9 +94,9 @@ function ExtraOptionKeyInput({
   }, [isPlaceholderKey, optionKey]);
 
   return (
-    <Input
+    <ImeSafeInput
       value={localValue}
-      onChange={(e) => setLocalValue(e.target.value)}
+      onValueChange={setLocalValue}
       onBlur={() => {
         const trimmed = localValue.trim();
         if (trimmed && trimmed !== optionKey) {
@@ -132,9 +133,9 @@ function ModelOptionKeyInput({
   }, [optionKey]);
 
   return (
-    <Input
+    <ImeSafeInput
       value={localValue}
-      onChange={(e) => setLocalValue(e.target.value)}
+      onValueChange={setLocalValue}
       onBlur={() => {
         const trimmed = localValue.trim();
         if (trimmed && trimmed !== optionKey) {
@@ -578,10 +579,10 @@ export function OpenCodeFormFields({
         <FormLabel htmlFor="opencode-baseurl">
           {t("opencode.baseUrl", { defaultValue: "Base URL" })}
         </FormLabel>
-        <Input
+        <ImeSafeInput
           id="opencode-baseurl"
           value={baseUrl}
-          onChange={(e) => onBaseUrlChange(e.target.value)}
+          onValueChange={onBaseUrlChange}
           placeholder="https://api.example.com/v1"
         />
         <p className="text-xs text-muted-foreground">
@@ -647,10 +648,10 @@ export function OpenCodeFormFields({
                     })}
                     placeholderPrefixes={[OPENCODE_HEADER_DRAFT_PREFIX]}
                   />
-                  <Input
+                  <ImeSafeInput
                     value={value}
-                    onChange={(e) =>
-                      handleHeaderValueChange(key, e.target.value)
+                    onValueChange={(nextValue) =>
+                      handleHeaderValueChange(key, nextValue)
                     }
                     placeholder={t("opencode.headerValuePlaceholder", {
                       defaultValue: "CC Switch",
@@ -733,10 +734,10 @@ export function OpenCodeFormFields({
                       defaultValue: "timeout",
                     })}
                   />
-                  <Input
+                  <ImeSafeInput
                     value={value}
-                    onChange={(e) =>
-                      handleExtraOptionValueChange(key, e.target.value)
+                    onValueChange={(nextValue) =>
+                      handleExtraOptionValueChange(key, nextValue)
                     }
                     placeholder={t("opencode.extraOptionValuePlaceholder", {
                       defaultValue: "600000",
@@ -848,9 +849,9 @@ export function OpenCodeFormFields({
                       />
                     )}
                   </div>
-                  <Input
+                  <ImeSafeInput
                     value={model.name}
-                    onChange={(e) => handleModelNameChange(key, e.target.value)}
+                    onValueChange={(value) => handleModelNameChange(key, value)}
                     placeholder={t("opencode.modelName", {
                       defaultValue: "Display Name",
                     })}
@@ -976,13 +977,13 @@ export function OpenCodeFormFields({
                                   },
                                 )}
                               />
-                              <Input
+                              <ImeSafeInput
                                 value={fValue}
-                                onChange={(e) =>
+                                onValueChange={(value) =>
                                   handleModelExtraFieldValueChange(
                                     key,
                                     fKey,
-                                    e.target.value,
+                                    value,
                                   )
                                 }
                                 placeholder={t(
@@ -1057,17 +1058,17 @@ export function OpenCodeFormFields({
                                   },
                                 )}
                               />
-                              <Input
+                              <ImeSafeInput
                                 value={
                                   typeof optValue === "string"
                                     ? optValue
                                     : JSON.stringify(optValue)
                                 }
-                                onChange={(e) =>
+                                onValueChange={(value) =>
                                   handleModelOptionValueChange(
                                     key,
                                     optKey,
-                                    e.target.value,
+                                    value,
                                   )
                                 }
                                 placeholder={t(
