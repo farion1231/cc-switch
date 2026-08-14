@@ -24,7 +24,15 @@ const DATA_SOURCE: &str = "deepseek_harness_session";
 const PROVIDER_ID: &str = "_deepseek_harness_session";
 const APP_TYPE: &str = "deepseek-harness";
 const MAX_SESSION_LOG_BYTES: u64 = 50 * 1024 * 1024;
+const MAX_DECOMPRESSED_SESSION_LOG_BYTES: usize = 64 * 1024 * 1024;
 const MAX_COLLECT_DEPTH: usize = 16;
+const ZSTD_MAGIC: u32 = 0xFD2FB528;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ZstdFrameRange {
+    start: usize,
+    end: usize,
+}
 
 #[derive(Debug, Clone, Default)]
 struct HarnessUsageEvent {
@@ -204,13 +212,148 @@ fn read_session_log_text(file_path: &Path) -> Result<String, AppError> {
     let bytes =
         fs::read(file_path).map_err(|error| AppError::Config(format!("无法读取文件: {error}")))?;
     let content = if file_path.extension().and_then(|ext| ext.to_str()) == Some("zstd") {
-        zstd::decode_all(bytes.as_slice())
-            .map_err(|error| AppError::Config(format!("无法解压 zstd 会话日志: {error}")))?
+        decode_zstd_session_log(&bytes)?
     } else {
+        if bytes.len() > MAX_DECOMPRESSED_SESSION_LOG_BYTES {
+            return Err(AppError::Config(format!(
+                "DeepSeek Harness 会话日志解压后超过上限: {} > {} bytes",
+                bytes.len(),
+                MAX_DECOMPRESSED_SESSION_LOG_BYTES
+            )));
+        }
         bytes
     };
     String::from_utf8(content)
         .map_err(|error| AppError::Config(format!("会话日志不是 UTF-8: {error}")))
+}
+
+fn decode_zstd_session_log(bytes: &[u8]) -> Result<Vec<u8>, AppError> {
+    decode_zstd_session_log_with_limit(bytes, MAX_DECOMPRESSED_SESSION_LOG_BYTES)
+}
+
+fn decode_zstd_session_log_with_limit(
+    bytes: &[u8],
+    max_output_bytes: usize,
+) -> Result<Vec<u8>, AppError> {
+    let frames = scan_complete_zstd_frames(bytes)?;
+    if frames.is_empty() {
+        return Err(AppError::Config(
+            "DeepSeek Harness zstd 会话日志没有完整 frame".to_string(),
+        ));
+    }
+
+    let mut output = Vec::new();
+    for frame in frames {
+        let decoded = zstd::decode_all(&bytes[frame.start..frame.end])
+            .map_err(|error| AppError::Config(format!("无法解压 zstd frame: {error}")))?;
+        if output.len().saturating_add(decoded.len()) > max_output_bytes {
+            return Err(AppError::Config(format!(
+                "DeepSeek Harness 会话日志解压后超过上限: {} > {} bytes",
+                output.len().saturating_add(decoded.len()),
+                max_output_bytes
+            )));
+        }
+        output.extend_from_slice(&decoded);
+    }
+    Ok(output)
+}
+
+fn scan_complete_zstd_frames(bytes: &[u8]) -> Result<Vec<ZstdFrameRange>, AppError> {
+    let mut frames = Vec::new();
+    let mut offset = 0usize;
+
+    'frames: while offset < bytes.len() {
+        let start = offset;
+        if bytes.len().saturating_sub(offset) < 4 {
+            break;
+        }
+        let magic = u32::from_le_bytes([
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+        ]);
+        if magic != ZSTD_MAGIC {
+            return Err(AppError::Config(format!(
+                "DeepSeek Harness zstd 会话日志 frame magic 无效: byte {offset}"
+            )));
+        }
+        offset += 4;
+
+        let Some(&descriptor) = bytes.get(offset) else {
+            break;
+        };
+        offset += 1;
+        if descriptor & 0x18 != 0 {
+            return Err(AppError::Config(format!(
+                "DeepSeek Harness zstd 会话日志 frame header reserved bit: byte {}",
+                offset - 1
+            )));
+        }
+
+        let content_size_flag = descriptor >> 6;
+        let single_segment = descriptor & 0x20 != 0;
+        let checksum = descriptor & 0x04 != 0;
+        let dictionary_flag = descriptor & 0x03;
+        let dictionary_bytes = match dictionary_flag {
+            0 => 0,
+            1 => 1,
+            2 => 2,
+            _ => 4,
+        };
+        let content_size_bytes = if content_size_flag == 0 {
+            if single_segment {
+                1
+            } else {
+                0
+            }
+        } else {
+            1usize << content_size_flag
+        };
+        let remaining_header_bytes =
+            (if single_segment { 0 } else { 1 }) + dictionary_bytes + content_size_bytes;
+        if bytes.len().saturating_sub(offset) < remaining_header_bytes {
+            break;
+        }
+        offset += remaining_header_bytes;
+
+        loop {
+            if bytes.len().saturating_sub(offset) < 3 {
+                break 'frames;
+            }
+            let block_header = (bytes[offset] as u32)
+                | ((bytes[offset + 1] as u32) << 8)
+                | ((bytes[offset + 2] as u32) << 16);
+            offset += 3;
+            let last_block = block_header & 1 != 0;
+            let block_type = (block_header >> 1) & 0x03;
+            let block_size = (block_header >> 3) as usize;
+            if block_type == 0x03 {
+                return Err(AppError::Config(format!(
+                    "DeepSeek Harness zstd 会话日志 reserved block type: byte {}",
+                    offset - 3
+                )));
+            }
+            let payload_bytes = if block_type == 0x01 { 1 } else { block_size };
+            if bytes.len().saturating_sub(offset) < payload_bytes {
+                break 'frames;
+            }
+            offset += payload_bytes;
+            if last_block {
+                break;
+            }
+        }
+
+        if checksum {
+            if bytes.len().saturating_sub(offset) < 4 {
+                break;
+            }
+            offset += 4;
+        }
+        frames.push(ZstdFrameRange { start, end: offset });
+    }
+
+    Ok(frames)
 }
 
 fn parse_harness_usage_events(content: &str) -> Vec<HarnessUsageEvent> {
@@ -423,6 +566,23 @@ mod tests {
         .join("\n")
     }
 
+    fn fixture_parts() -> (String, String) {
+        (
+            r#"{"type":"session","version":0,"id":"sess-1","createdAt":1700000000000,"cwd":"/work","delegationDepth":0}"#
+                .to_string(),
+            [
+                r#"{"type":"request/context","seq":0,"time":1700000000100,"data":{"provider":"deepseek-official","model":"deepseek-v4-flash"}}"#,
+                r#"{"type":"assistant/message","seq":1,"time":1700000002000,"data":{"turn":1,"step":1,"message":{"source":{"provider":"deepseek-official","model":"deepseek-v4-flash"},"content":[]},"usage":{"inputTokens":100,"outputTokens":20,"cacheReadTokens":30,"cacheWriteTokens":4,"reasoningTokens":8}}}"#,
+            ]
+            .join("\n"),
+        )
+    }
+
+    fn zstd_frame(text: &str) -> Result<Vec<u8>, AppError> {
+        zstd::encode_all(format!("{text}\n").as_bytes(), 0)
+            .map_err(|error| AppError::Config(error.to_string()))
+    }
+
     #[test]
     fn parses_assistant_message_usage_without_adding_reasoning_twice() {
         let events = parse_harness_usage_events(&fixture());
@@ -471,8 +631,9 @@ mod tests {
 
     #[test]
     fn reads_zstd_session_log() -> Result<(), AppError> {
-        let encoded = zstd::encode_all(fixture().as_bytes(), 0)
-            .map_err(|error| AppError::Config(error.to_string()))?;
+        let (header, events_text) = fixture_parts();
+        let mut encoded = zstd_frame(&header)?;
+        encoded.extend_from_slice(&zstd_frame(&events_text)?);
         let tmp = tempfile::tempdir().map_err(|error| AppError::Config(error.to_string()))?;
         let path = tmp.path().join("session.jsonl.zstd");
         std::fs::write(&path, encoded).map_err(|error| AppError::Config(error.to_string()))?;
@@ -481,6 +642,36 @@ mod tests {
         let events = parse_harness_usage_events(&content);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].input_tokens, 100);
+        Ok(())
+    }
+
+    #[test]
+    fn reads_complete_zstd_frames_and_ignores_torn_tail() -> Result<(), AppError> {
+        let (header, events_text) = fixture_parts();
+        let mut encoded = zstd_frame(&header)?;
+        encoded.extend_from_slice(&zstd_frame(&events_text)?);
+        let mut torn = zstd_frame(
+            r#"{"type":"assistant/message","seq":2,"time":1700000003000,"data":{"usage":{"inputTokens":999}}}"#,
+        )?;
+        torn.truncate(torn.len() / 2);
+        encoded.extend_from_slice(&torn);
+
+        let content = decode_zstd_session_log(&encoded)?;
+        let content = String::from_utf8(content).expect("decoded fixture is utf8");
+        let events = parse_harness_usage_events(&content);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].seq, 1);
+        assert_eq!(events[0].input_tokens, 100);
+        assert_eq!(scan_complete_zstd_frames(&encoded)?.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_zstd_when_decompressed_size_exceeds_limit() -> Result<(), AppError> {
+        let encoded = zstd_frame(&fixture())?;
+        let error = decode_zstd_session_log_with_limit(&encoded, 8).expect_err("size cap rejects");
+        assert!(error.to_string().contains("超过上限"));
         Ok(())
     }
 }
