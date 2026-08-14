@@ -221,7 +221,7 @@ pub async fn auth_poll_for_account(
             }
         }
         AUTH_PROVIDER_KIMI_OAUTH => {
-            let auth_manager = kimi_state.0.write().await;
+            let auth_manager = kimi_state.0.read().await;
             match auth_manager.poll_for_token(&device_code).await {
                 Ok(account) => {
                     let default_account_id = auth_manager.get_status().await.default_account_id;
@@ -233,6 +233,23 @@ pub async fn auth_poll_for_account(
             }
         }
         _ => unreachable!(),
+    }
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn auth_cancel_login(
+    auth_provider: String,
+    device_code: String,
+    kimi_state: State<'_, KimiOAuthState>,
+) -> Result<(), String> {
+    let auth_provider = ensure_auth_provider(&auth_provider)?;
+    match auth_provider {
+        AUTH_PROVIDER_KIMI_OAUTH => {
+            let auth_manager = kimi_state.0.read().await;
+            auth_manager.cancel_pending_login(&device_code).await;
+            Ok(())
+        }
+        _ => Ok(()),
     }
 }
 

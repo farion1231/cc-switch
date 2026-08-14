@@ -42,6 +42,7 @@ export function useManagedAuth(
   const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const authAttemptGenerationRef = useRef(0);
   const pollingRequestInFlightRef = useRef<number | null>(null);
+  const deviceCodeRef = useRef<ManagedAuthDeviceCodeResponse | null>(null);
 
   const {
     data: authStatus,
@@ -55,6 +56,26 @@ export function useManagedAuth(
     // Refresh local status so an open Auth Center reflects that transition.
     refetchInterval: managedAuthStatusRefetchInterval(authProvider),
   });
+
+  const setLiveDeviceCode = useCallback(
+    (value: ManagedAuthDeviceCodeResponse | null) => {
+      deviceCodeRef.current = value;
+      setDeviceCode(value);
+    },
+    [],
+  );
+
+  const cancelBackendLogin = useCallback(
+    (deviceCodeValue: string | undefined) => {
+      if (!deviceCodeValue) {
+        return;
+      }
+      void authApi.authCancelLogin(authProvider, deviceCodeValue).catch((e) => {
+        console.debug("[ManagedAuth] Failed to cancel login:", e);
+      });
+    },
+    [authProvider],
+  );
 
   const stopPolling = useCallback(() => {
     if (pollingIntervalRef.current) {
@@ -76,19 +97,22 @@ export function useManagedAuth(
 
   useEffect(() => {
     return () => {
+      const pendingDeviceCode = deviceCodeRef.current?.device_code;
       invalidateAuthAttempt();
+      cancelBackendLogin(pendingDeviceCode);
     };
-  }, [invalidateAuthAttempt]);
+  }, [cancelBackendLogin, invalidateAuthAttempt]);
 
   const startLoginMutation = useMutation({
     mutationFn: (_attemptGeneration: number) =>
       authApi.authStartLogin(authProvider, githubDomain),
     onSuccess: async (response, attemptGeneration) => {
       if (attemptGeneration !== authAttemptGenerationRef.current) {
+        cancelBackendLogin(response.device_code);
         return;
       }
 
-      setDeviceCode(response);
+      setLiveDeviceCode(response);
       setPollingState("polling");
       setError(null);
 
@@ -153,7 +177,7 @@ export function useManagedAuth(
               return;
             }
             setPollingState("idle");
-            setDeviceCode(null);
+            setLiveDeviceCode(null);
           }
         } catch (e) {
           if (attemptGeneration !== authAttemptGenerationRef.current) {
@@ -202,7 +226,7 @@ export function useManagedAuth(
     mutationFn: () => authApi.authLogout(authProvider),
     onSuccess: async () => {
       setPollingState("idle");
-      setDeviceCode(null);
+      setLiveDeviceCode(null);
       setError(null);
       queryClient.setQueryData(queryKey, {
         provider: authProvider,
@@ -224,7 +248,7 @@ export function useManagedAuth(
       authApi.authRemoveAccount(authProvider, accountId),
     onSuccess: async () => {
       setPollingState("idle");
-      setDeviceCode(null);
+      setLiveDeviceCode(null);
       setError(null);
       await refetchStatus();
       await queryClient.invalidateQueries({ queryKey });
@@ -249,19 +273,28 @@ export function useManagedAuth(
   });
 
   const startAuth = useCallback(() => {
+    const previousDeviceCode = deviceCodeRef.current?.device_code;
     const attemptGeneration = invalidateAuthAttempt();
     setPollingState("idle");
-    setDeviceCode(null);
+    setLiveDeviceCode(null);
     setError(null);
+    cancelBackendLogin(previousDeviceCode);
     startLoginMutation.mutate(attemptGeneration);
-  }, [invalidateAuthAttempt, startLoginMutation]);
+  }, [
+    cancelBackendLogin,
+    invalidateAuthAttempt,
+    setLiveDeviceCode,
+    startLoginMutation,
+  ]);
 
   const cancelAuth = useCallback(() => {
+    const previousDeviceCode = deviceCodeRef.current?.device_code;
     invalidateAuthAttempt();
     setPollingState("idle");
-    setDeviceCode(null);
+    setLiveDeviceCode(null);
     setError(null);
-  }, [invalidateAuthAttempt]);
+    cancelBackendLogin(previousDeviceCode);
+  }, [cancelBackendLogin, invalidateAuthAttempt, setLiveDeviceCode]);
 
   const logout = useCallback(() => {
     logoutMutation.mutate();

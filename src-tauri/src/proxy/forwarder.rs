@@ -1120,9 +1120,18 @@ impl RequestForwarder {
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
     ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+        let mut sent_kimi_access_token = None;
         let first_result = self
             .forward_once(
-                app_type, method, provider, endpoint, body, headers, extensions, adapter,
+                app_type,
+                method,
+                provider,
+                endpoint,
+                body,
+                headers,
+                extensions,
+                adapter,
+                &mut sent_kimi_access_token,
             )
             .await;
         let first_error = match first_result {
@@ -1142,7 +1151,10 @@ impl RequestForwarder {
         let resolved_account_id = {
             let kimi_auth = kimi_state.0.read().await;
             kimi_auth
-                .refresh_after_inference_auth_rejection(requested_account_id.as_deref())
+                .refresh_after_inference_auth_rejection(
+                    requested_account_id.as_deref(),
+                    sent_kimi_access_token.as_deref(),
+                )
                 .await
                 .map_err(|error| {
                     ProxyError::AuthError(format!(
@@ -1162,6 +1174,7 @@ impl RequestForwarder {
                 headers,
                 extensions,
                 adapter,
+                &mut sent_kimi_access_token,
             )
             .await;
         if retry_result
@@ -1200,6 +1213,7 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
+        sent_kimi_access_token: &mut Option<String>,
     ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
@@ -1862,6 +1876,7 @@ impl RequestForwarder {
                     };
                     match context_result {
                         Ok(context) => {
+                            *sent_kimi_access_token = Some(context.access_token().to_string());
                             auth = AuthInfo::new(
                                 context.access_token().to_string(),
                                 AuthStrategy::KimiOAuth,

@@ -230,6 +230,51 @@ async fn device_authorization_matches_cli_wire_contract() {
 }
 
 #[tokio::test]
+async fn device_authorization_accepts_verification_uri_without_complete() {
+    let transport = Arc::new(RecordingTransport::with_responses(vec![Ok(json_response(
+        200,
+        serde_json::json!({
+            "device_code": "device-code",
+            "user_code": "ABCD-EFGH",
+            "verification_uri": "https://auth.kimi.com/device",
+            "expires_in": 900,
+            "interval": 5
+        }),
+    ))]));
+    let client = KimiOAuthApiClient::new(transport, Arc::new(RecordingSleeper::default()));
+
+    let response = client
+        .request_device_authorization(&identity())
+        .await
+        .unwrap();
+
+    assert_eq!(response.device_code, "device-code");
+    assert_eq!(response.user_code, "ABCD-EFGH");
+    assert_eq!(response.verification_uri, "https://auth.kimi.com/device");
+    assert!(response.verification_uri_complete.is_empty());
+}
+
+#[tokio::test]
+async fn device_authorization_rejects_missing_verification_uri() {
+    let transport = Arc::new(RecordingTransport::with_responses(vec![Ok(json_response(
+        200,
+        serde_json::json!({
+            "device_code": "device-code",
+            "user_code": "ABCD-EFGH",
+            "expires_in": 900,
+            "interval": 5
+        }),
+    ))]));
+    let client = KimiOAuthApiClient::new(transport, Arc::new(RecordingSleeper::default()));
+
+    let error = client
+        .request_device_authorization(&identity())
+        .await
+        .expect_err("device authorization without a verification URI must fail");
+    assert!(matches!(error, KimiOAuthError::ParseError(_)));
+}
+
+#[tokio::test]
 async fn refresh_retries_network_and_retryable_statuses_with_cli_backoff() {
     let transport = Arc::new(RecordingTransport::with_responses(vec![
         Ok(json_response(

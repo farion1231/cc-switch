@@ -11,6 +11,7 @@ const apiMocks = vi.hoisted(() => ({
   authGetStatus: vi.fn(),
   authPollForAccount: vi.fn(),
   authStartLogin: vi.fn(),
+  authCancelLogin: vi.fn(),
   openExternal: vi.fn(),
 }));
 
@@ -20,6 +21,7 @@ vi.mock("@/lib/api", () => ({
     authPollForAccount: (...args: unknown[]) =>
       apiMocks.authPollForAccount(...args),
     authStartLogin: (...args: unknown[]) => apiMocks.authStartLogin(...args),
+    authCancelLogin: (...args: unknown[]) => apiMocks.authCancelLogin(...args),
   },
   settingsApi: {
     openExternal: (...args: unknown[]) => apiMocks.openExternal(...args),
@@ -68,6 +70,7 @@ beforeEach(() => {
     interval: 5,
   });
   apiMocks.authPollForAccount.mockReset();
+  apiMocks.authCancelLogin.mockReset().mockResolvedValue(undefined);
   apiMocks.openExternal.mockReset().mockResolvedValue(undefined);
 });
 
@@ -228,5 +231,93 @@ describe("useManagedAuth device polling", () => {
     expect(apiMocks.authPollForAccount).not.toHaveBeenCalled();
     expect(result.current.pollingState).toBe("idle");
     expect(result.current.error).toBeNull();
+  });
+
+  it("tells the backend to drop the pending device code on cancel", async () => {
+    vi.useFakeTimers();
+    apiMocks.authPollForAccount.mockResolvedValue(null);
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useManagedAuth("kimi_oauth"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      result.current.startAuth();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    act(() => {
+      result.current.cancelAuth();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(apiMocks.authCancelLogin).toHaveBeenCalledWith(
+      "kimi_oauth",
+      "device-code",
+    );
+  });
+
+  it("cancels the previous backend login when starting a replacement", async () => {
+    vi.useFakeTimers();
+    const firstResponse = {
+      provider: "kimi_oauth",
+      device_code: "first-device-code",
+      user_code: "first-user-code",
+      verification_uri: "https://example.com/device",
+      expires_in: 300,
+      interval: 5,
+    };
+    apiMocks.authStartLogin
+      .mockResolvedValueOnce(firstResponse)
+      .mockResolvedValueOnce({
+        ...firstResponse,
+        device_code: "replacement-device-code",
+        user_code: "replacement-user-code",
+      });
+    apiMocks.authPollForAccount.mockResolvedValue(null);
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useManagedAuth("kimi_oauth"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      result.current.startAuth();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    act(() => {
+      result.current.startAuth();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(apiMocks.authCancelLogin).toHaveBeenCalledWith(
+      "kimi_oauth",
+      "first-device-code",
+    );
+  });
+
+  it("cancels a pending backend login on unmount", async () => {
+    vi.useFakeTimers();
+    apiMocks.authPollForAccount.mockResolvedValue(null);
+    const { wrapper } = createWrapper();
+    const { result, unmount } = renderHook(() => useManagedAuth("kimi_oauth"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      result.current.startAuth();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    unmount();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(apiMocks.authCancelLogin).toHaveBeenCalledWith(
+      "kimi_oauth",
+      "device-code",
+    );
   });
 });

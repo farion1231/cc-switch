@@ -345,6 +345,11 @@ impl KimiOAuthManager {
         })
     }
 
+    /// Drops a pending device-code login so a cancelled poll cannot persist an account.
+    pub async fn cancel_pending_login(&self, device_code: &str) {
+        self.pending_device_codes.write().await.remove(device_code);
+    }
+
     /// Polls once for completion of a previously started device-code flow.
     pub async fn poll_for_token(
         &self,
@@ -492,13 +497,10 @@ impl KimiOAuthManager {
     pub(crate) async fn refresh_after_inference_auth_rejection(
         &self,
         account_id: Option<&str>,
+        rejected_access_token: Option<&str>,
     ) -> Result<String, KimiOAuthError> {
         let account_id = self.resolve_inference_account_id(account_id).await?;
-        // Snapshot the credential that was presumably rejected before queueing
-        // on the refresh lock; if the cache holds a different token once the
-        // lock is acquired, a concurrent rejection already replaced it.
-        let rejected_token = self.cached_token(&account_id).await;
-        self.force_refresh_for_account(&account_id, rejected_token.as_deref())
+        self.force_refresh_for_account(&account_id, rejected_access_token)
             .await?;
         Ok(account_id)
     }
@@ -1763,6 +1765,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancelling_pending_login_drops_device_code_before_account_persist() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let (manager, _) = test_manager(
+            data_dir.path().to_path_buf(),
+            vec![Ok(json_response(
+                200,
+                serde_json::json!({
+                    "device_code": "pending-device-code",
+                    "user_code": "ABCD-EFGH",
+                    "verification_uri": "https://auth.kimi.com/device",
+                    "verification_uri_complete": "https://auth.kimi.com/device?code=ABCD-EFGH",
+                    "expires_in": 900,
+                    "interval": 5
+                }),
+            ))],
+        );
+
+        let device = manager.start_device_flow().await.unwrap();
+        manager.cancel_pending_login(&device.device_code).await;
+
+        let poll_result = manager.poll_for_token(&device.device_code).await;
+        assert!(matches!(
+            poll_result,
+            Err(KimiOAuthError::TokenFetchFailed(_))
+        ));
+
+        let persist_result = manager
+            .add_account_internal(
+                "account-one".to_string(),
+                None,
+                "refresh-token".to_string(),
+                Some(&device.device_code),
+                Some(cached_access("access-token")),
+            )
+            .await;
+        assert!(matches!(
+            persist_result,
+            Err(KimiOAuthError::TokenFetchFailed(_))
+        ));
+        assert!(manager.list_accounts().await.is_empty());
+        assert!(manager.access_tokens.read().await.is_empty());
+        assert!(!data_dir.path().join("kimi_oauth_auth.json").exists());
+    }
+
+    #[tokio::test]
     async fn management_auth_rejection_forces_one_refresh_and_retries() {
         let data_dir = tempfile::tempdir().unwrap();
         let (manager, transport) = test_manager(
@@ -1902,7 +1949,7 @@ mod tests {
             .unwrap();
 
         let refreshed_account = manager
-            .refresh_after_inference_auth_rejection(None)
+            .refresh_after_inference_auth_rejection(None, Some("rejected-access"))
             .await
             .expect("upstream rejection should force a token refresh");
 
@@ -2079,6 +2126,51 @@ mod tests {
             transport.requests.lock().unwrap().len(),
             1,
             "only the first rejection may perform a real token rotation"
+        );
+    }
+
+    #[tokio::test]
+    async fn delayed_inference_rejection_reuses_already_refreshed_token() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let (manager, transport) = test_manager(
+            data_dir.path().to_path_buf(),
+            vec![Ok(json_response(
+                200,
+                serde_json::json!({
+                    "access_token":"refreshed-access",
+                    "refresh_token":"refreshed-refresh",
+                    "expires_in":900
+                }),
+            ))],
+        );
+        manager
+            .add_account_internal(
+                "account-one".to_string(),
+                None,
+                "initial-refresh".to_string(),
+                None,
+                Some(cached_access("rejected-access")),
+            )
+            .await
+            .unwrap();
+
+        manager
+            .refresh_after_inference_auth_rejection(None, Some("rejected-access"))
+            .await
+            .unwrap();
+        manager
+            .refresh_after_inference_auth_rejection(None, Some("rejected-access"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            manager.access_tokens.read().await["account-one"].token,
+            "refreshed-access"
+        );
+        assert_eq!(
+            transport.requests.lock().unwrap().len(),
+            1,
+            "a delayed 401 for the old token must not rotate the replacement"
         );
     }
 }

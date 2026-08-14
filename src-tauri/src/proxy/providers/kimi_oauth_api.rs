@@ -811,15 +811,19 @@ fn parse_device_authorization(value: &Value) -> Result<KimiDeviceAuthorization, 
         .and_then(|value| u64::try_from(value).ok())
         .filter(|value| *value > 0)
         .unwrap_or(5);
+    let verification_uri = optional_string(value, "verification_uri").unwrap_or_default();
+    let verification_uri_complete =
+        optional_string(value, "verification_uri_complete").unwrap_or_default();
+    if verification_uri.is_empty() && verification_uri_complete.is_empty() {
+        return Err(KimiOAuthError::ParseError(
+            "Kimi device authorization response missing verification URI".to_string(),
+        ));
+    }
     Ok(KimiDeviceAuthorization {
         device_code: required_string(value, "device_code", "device authorization")?,
         user_code: required_string(value, "user_code", "device authorization")?,
-        verification_uri: optional_string(value, "verification_uri").unwrap_or_default(),
-        verification_uri_complete: required_string(
-            value,
-            "verification_uri_complete",
-            "device authorization",
-        )?,
+        verification_uri,
+        verification_uri_complete,
         expires_in,
         interval,
     })
