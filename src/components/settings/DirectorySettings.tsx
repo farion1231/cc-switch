@@ -21,9 +21,13 @@ interface DirectorySettingsProps {
   opencodeDir?: string;
   openclawDir?: string;
   hermesDir?: string;
+  deepseekHarnessSessionDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
+  onDeepseekHarnessSessionDirChange: (value?: string) => void;
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
+  onBrowseDeepseekHarnessSessionDir: () => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
+  onResetDeepseekHarnessSessionDir: () => Promise<void>;
 }
 
 export function DirectorySettings({
@@ -39,9 +43,13 @@ export function DirectorySettings({
   opencodeDir,
   openclawDir,
   hermesDir,
+  deepseekHarnessSessionDir,
   onDirectoryChange,
+  onDeepseekHarnessSessionDirChange,
   onBrowseDirectory,
+  onBrowseDeepseekHarnessSessionDir,
   onResetDirectory,
+  onResetDeepseekHarnessSessionDir,
 }: DirectorySettingsProps) {
   const { t } = useTranslation();
 
@@ -170,6 +178,17 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("hermes", val)}
           onBrowse={() => onBrowseDirectory("hermes")}
           onReset={() => onResetDirectory("hermes")}
+        />
+
+        <DirectoryInput
+          label={t("settings.deepseekHarnessSessionDir")}
+          description={t("settings.deepseekHarnessSessionDirDescription")}
+          value={deepseekHarnessSessionDir}
+          resolvedValue={resolvedDirs.deepseekHarnessSession}
+          placeholder={t("settings.browsePlaceholderDeepseekHarness")}
+          onChange={onDeepseekHarnessSessionDirChange}
+          onBrowse={onBrowseDeepseekHarnessSessionDir}
+          onReset={onResetDeepseekHarnessSessionDir}
         />
       </section>
     </div>

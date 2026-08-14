@@ -78,6 +78,11 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
     );
     merge_sync_step(
         &mut result,
+        "DeepSeek Harness",
+        crate::services::session_usage_deepseek_harness::sync_deepseek_harness_usage(db),
+    );
+    merge_sync_step(
+        &mut result,
         "Gemini",
         crate::services::session_usage_gemini::sync_gemini_usage(db),
     );

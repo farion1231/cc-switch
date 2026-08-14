@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useUsageSummaryByApp } from "@/lib/query/usage";
 import { cn } from "@/lib/utils";
 import { APP_ICON_MAP } from "@/config/appConfig";
+import { ProviderIcon } from "@/components/ProviderIcon";
 import type { AppId } from "@/lib/api/types";
 import {
   Activity,
@@ -56,6 +57,10 @@ const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
     // 不像纯黑 bg-black/10 在深色背景下会糊掉。
     accent: "text-neutral-700 dark:text-neutral-300",
     iconBg: "bg-neutral-500/10",
+  },
+  "deepseek-harness": {
+    accent: "text-teal-600 dark:text-teal-400",
+    iconBg: "bg-teal-500/10",
   },
   gemini: {
     accent: "text-sky-600 dark:text-sky-400",
@@ -153,6 +158,16 @@ function AppGlyph({
   appType?: string;
   accentClass: string;
 }) {
+  if (appType === "deepseek-harness") {
+    return (
+      <ProviderIcon
+        icon="deepseek"
+        name="DeepSeek Harness"
+        size={20}
+        showFallback={false}
+      />
+    );
+  }
   if (appType && appType in APP_ICON_MAP) {
     const base = APP_ICON_MAP[appType as AppId].icon;
     if (isValidElement<{ size?: number }>(base)) {
