@@ -197,9 +197,9 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 
 ## CC Switch を選ぶ理由
 
-最新の AI コーディングは Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、DeepSeek Harness などのツールに依存していますが、各ツールの設定形式はバラバラです。API プロバイダを切り替えるたびに JSON、TOML、YAML、`.env` ファイルを手動で編集する必要があり、複数ツール間で MCP や Skills を統一的に管理する手段もありません。
+最新の AI コーディングは Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes などのツールに依存していますが、各ツールの設定形式はバラバラです。API プロバイダを切り替えるたびに JSON、TOML、`.env` ファイルを手動で編集する必要があり、複数ツール間で MCP や Skills を統一的に管理する手段もありません。
 
-**CC Switch** は、対応する AI ツールを 1 つのデスクトップアプリで一元管理できます。標準の連携機能では、ワンクリックのプロバイダインポートと切り替え、50 以上のプリセット、統一 MCP・Skills 管理、システムトレイからの切り替えを提供し、SQLite とアトミック書き込みで設定を保護します。DeepSeek Harness は汎用データベース処理ではなく、YAML 設定と認証情報を扱う専用のライブエディタを使用します。
+**CC Switch** は、対応する AI ツールを 1 つのデスクトップアプリで一元管理できます。設定ファイルを手作業で編集する代わりに、ワンクリックでプロバイダをインポートし、瞬時に切り替えられるビジュアルインターフェースを提供します。50 以上の組み込みプリセット、統一 MCP・Skills 管理、システムトレイからの即時切り替え機能を搭載。すべてはアトミック書き込みによる信頼性の高い SQLite データベースに支えられており、設定の破損を防ぎます。
 
 - **1 つのアプリで 9 つのツール** -- Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、DeepSeek Harness を単一インターフェースで管理
 - **手動編集は不要** -- AWS Bedrock、NVIDIA NIM、コミュニティリレーなど 50 以上のプロバイダプリセットを内蔵。選んで切り替えるだけ
@@ -221,14 +221,9 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 
 ### プロバイダ管理
 
-- **9 つの対応ツール、50 以上のプリセット** -- 既存の連携ではプロバイダプリセットを使用し、DeepSeek Harness には専用のライブプロバイダエディタを提供
+- **9 つの対応ツール、50 以上のプリセット** -- Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes。DeepSeek Harness には専用のライブ設定エディタを提供
 - **ユニバーサルプロバイダ** -- 1 つの設定を Claude Code、Codex、Gemini CLI に同期
 - ワンクリック切り替え、システムトレイクイックアクセス、ドラッグ＆ドロップ並び替え、インポート/エクスポート
-
-### DeepSeek Harness
-
-- **ライブ設定** -- `settings.yaml` と `.credentials.yaml` を直接編集し、ネイティブ DeepSeek、OpenAI/Anthropic 互換のカスタムルート、認証情報、新しい Agent のデフォルトモデルを管理
-- **明確な対象範囲** -- 「設定 → 詳細 → 設定ディレクトリ」で選択したディレクトリを優先し、未指定の場合は空でない `DSH_HOME`、次に `~/.dsh` を使用します。DSH データは CC Switch の SQLite データベースに保存されず、汎用プロキシ、フェイルオーバー、MCP、Skills、Profile、Session 機能は DSH では利用できません
 
 ### プロキシ & フェイルオーバー
 
@@ -261,14 +256,14 @@ TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーテ�
 <details>
 <summary><strong>CC Switch はどの AI ツールに対応していますか？</strong></summary>
 
-CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**DeepSeek Harness** の 9 つのツールに対応しています。DeepSeek Harness は上記の専用ライブ設定フローを使用します。
+CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**DeepSeek Harness** の 9 つのツールに対応しています。DeepSeek Harness は専用のライブ設定エディタを使用します。
 
 </details>
 
 <details>
 <summary><strong>プロバイダを切り替えた後、ターミナルの再起動は必要ですか？</strong></summary>
 
-ほとんどのツールでは、はい。変更を反映するにはターミナルまたは CLI ツールを再起動してください。**Claude Code** はプロバイダデータのホットスイッチに対応しています。DeepSeek Harness は以降のリクエストで設定と認証情報を再読み込みし、デフォルトモデルの変更は新しく作成する Agent に反映されます。
+ほとんどのツールでは、はい。変更を反映するにはターミナルまたは CLI ツールを再起動してください。ただし **Claude Code** は例外で、現在プロバイダデータのホットスイッチに対応しており、再起動は不要です。
 
 </details>
 

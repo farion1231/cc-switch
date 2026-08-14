@@ -197,9 +197,9 @@ TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team
 
 ## Warum CC Switch?
 
-Modernes KI-gestütztes Programmieren stützt sich auf Werkzeuge wie Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes und DeepSeek Harness — doch jedes hat sein eigenes Konfigurationsformat. Der Wechsel des API-Anbieters bedeutet, JSON-, TOML-, YAML- oder `.env`-Dateien von Hand zu bearbeiten, und es gibt keine einheitliche Möglichkeit, MCP und Skills über mehrere Werkzeuge hinweg zu verwalten.
+Modernes KI-gestütztes Programmieren stützt sich auf Werkzeuge wie Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw und Hermes — doch jedes hat sein eigenes Konfigurationsformat. Der Wechsel des API-Anbieters bedeutet, JSON-, TOML- oder `.env`-Dateien von Hand zu bearbeiten, und es gibt keine einheitliche Möglichkeit, MCP und Skills über mehrere Werkzeuge hinweg zu verwalten.
 
-**CC Switch** gibt Ihnen eine einzige Desktop-App, um alle unterstützten KI-Werkzeuge zu verwalten. Die Standardintegrationen bieten Anbieterimport und -wechsel mit einem Klick, 50+ Presets, einheitliche MCP- und Skills-Verwaltung sowie schnelles Umschalten über das System-Tray und schützen die Konfiguration mit SQLite und atomaren Schreibvorgängen. DeepSeek Harness verwendet stattdessen einen eigenen Live-Editor für YAML-Einstellungen und Zugangsdaten.
+**CC Switch** gibt Ihnen eine einzige Desktop-App, um alle unterstützten KI-Werkzeuge zu verwalten. Statt Konfigurationsdateien von Hand zu bearbeiten, erhalten Sie eine visuelle Oberfläche, um Anbieter mit einem Klick zu importieren und sofort zwischen ihnen zu wechseln — mit 50+ integrierten Anbieter-Presets, einheitlicher MCP- und Skills-Verwaltung und schnellem Umschalten über das System-Tray. Das Ganze gestützt auf eine zuverlässige SQLite-Datenbank mit atomaren Schreibvorgängen, die Ihre Konfigurationen vor Beschädigung schützen.
 
 - **Eine App, neun Werkzeuge** — Verwalten Sie Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes und DeepSeek Harness über eine einzige Oberfläche
 - **Kein manuelles Bearbeiten mehr** — 50+ Anbieter-Presets einschließlich AWS Bedrock, NVIDIA NIM und Community-Relays; einfach auswählen und umschalten
@@ -221,14 +221,9 @@ Modernes KI-gestütztes Programmieren stützt sich auf Werkzeuge wie Claude Code
 
 ### Anbieterverwaltung
 
-- **9 unterstützte Werkzeuge, 50+ Presets** — Anbieter-Presets für die bisherigen Integrationen sowie ein eigener Live-Anbietereditor für DeepSeek Harness
+- **9 unterstützte Werkzeuge, 50+ Presets** — Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes; DeepSeek Harness bietet einen eigenen Live-Einstellungseditor
 - **Universelle Anbieter** — Eine Konfiguration synchronisiert sich mit Claude Code, Codex und Gemini CLI
 - Umschaltung mit einem Klick, Schnellzugriff über System-Tray, Sortierung per Drag-and-drop, Import/Export
-
-### DeepSeek Harness
-
-- **Live-Konfiguration** — Verwalten Sie natives DeepSeek, benutzerdefinierte OpenAI-/Anthropic-kompatible Routen, Zugangsdaten und das Standardmodell für neue Agents direkt in `settings.yaml` und `.credentials.yaml`
-- **Klarer Funktionsumfang** — Ein unter Einstellungen → Erweitert → Konfigurationsverzeichnis gewählter Ordner hat Vorrang; andernfalls verwendet CC Switch ein nicht leeres `DSH_HOME` und danach `~/.dsh`. DSH-Daten gelangen nicht in die SQLite-Datenbank von CC Switch; allgemeine Proxy-, Failover-, MCP-, Skills-, Profil- und Sitzungsfunktionen stehen für DSH nicht zur Verfügung
 
 ### Proxy & Failover
 
@@ -261,14 +256,14 @@ Modernes KI-gestütztes Programmieren stützt sich auf Werkzeuge wie Claude Code
 <details>
 <summary><strong>Welche KI-Werkzeuge unterstützt CC Switch?</strong></summary>
 
-CC Switch unterstützt neun Werkzeuge: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**, **OpenCode**, **OpenClaw**, **Hermes** und **DeepSeek Harness**. DeepSeek Harness verwendet den oben beschriebenen eigenen Live-Konfigurationsablauf.
+CC Switch unterstützt neun Werkzeuge: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**, **OpenCode**, **OpenClaw**, **Hermes** und **DeepSeek Harness**. DeepSeek Harness verwendet einen eigenen Live-Einstellungseditor.
 
 </details>
 
 <details>
 <summary><strong>Muss ich das Terminal nach einem Anbieterwechsel neu starten?</strong></summary>
 
-Bei den meisten Werkzeugen ja — starten Sie Ihr Terminal oder das CLI-Werkzeug neu, damit die Änderungen wirksam werden. **Claude Code** unterstützt Hot-Switching von Anbieterdaten. DeepSeek Harness lädt Einstellungen und Zugangsdaten für nachfolgende Anfragen neu; Änderungen am Standardmodell gelten für neu erstellte Agents.
+Bei den meisten Werkzeugen ja — starten Sie Ihr Terminal oder das CLI-Werkzeug neu, damit die Änderungen wirksam werden. Die Ausnahme ist **Claude Code**, das derzeit das Hot-Switching von Anbieterdaten ohne Neustart unterstützt.
 
 </details>
 

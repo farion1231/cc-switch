@@ -197,9 +197,9 @@ TeamoRouter also offers enterprise features including centralized billing, team 
 
 ## Why CC Switch?
 
-Modern AI-powered coding relies on tools like Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, and DeepSeek Harness — but each has its own configuration format. Switching API providers means manually editing JSON, TOML, YAML, or `.env` files, and there is no unified way to manage MCP and Skills across multiple tools.
+Modern AI-powered coding relies on tools like Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, and Hermes — but each has its own configuration format. Switching API providers means manually editing JSON, TOML, or `.env` files, and there is no unified way to manage MCP and Skills across multiple tools.
 
-**CC Switch** gives you a single desktop app to manage all supported AI tools. Its standard integrations provide one-click provider import and switching, 50+ built-in presets, unified MCP and Skills management, and system tray quick switching, backed by SQLite and atomic writes. DeepSeek Harness uses a dedicated live editor for its YAML settings and credentials instead of the generic database workflow.
+**CC Switch** gives you a single desktop app to manage all supported AI tools. Instead of editing config files by hand, you get a visual interface to import providers with one click, switch between them instantly, with 50+ built-in provider presets, unified MCP and Skills management, and system tray quick switching — all backed by a reliable SQLite database with atomic writes that protect your configs from corruption.
 
 - **One App, Nine Tools** — Manage Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, and DeepSeek Harness from a single interface
 - **No More Manual Editing** — 50+ provider presets including AWS Bedrock, NVIDIA NIM, and community relays; just pick and switch
@@ -221,14 +221,9 @@ Modern AI-powered coding relies on tools like Claude Code, Claude Desktop, Codex
 
 ### Provider Management
 
-- **9 supported tools, 50+ presets** — Provider presets for the existing integrations, plus a dedicated live provider editor for DeepSeek Harness
+- **9 supported tools, 50+ presets** — Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes; DeepSeek Harness has a dedicated live settings editor
 - **Universal providers** — One config syncs to Claude Code, Codex, and Gemini CLI
 - One-click switching, system tray quick access, drag-and-drop sorting, import/export
-
-### DeepSeek Harness
-
-- **Live configuration** — Manage native DeepSeek, custom OpenAI/Anthropic-compatible routes, credentials, and the default model for new Agents directly in `settings.yaml` and `.credentials.yaml`
-- **Explicit scope** — A directory selected in Settings → Advanced → Configuration Directory takes precedence; otherwise CC Switch uses a non-empty `DSH_HOME`, then `~/.dsh`. DSH data stays out of the CC Switch SQLite database, and generic proxy, failover, MCP, Skills, profile, and session features are unavailable for DSH
 
 ### Proxy & Failover
 
@@ -261,14 +256,14 @@ Modern AI-powered coding relies on tools like Claude Code, Claude Desktop, Codex
 <details>
 <summary><strong>Which AI tools does CC Switch support?</strong></summary>
 
-CC Switch supports nine tools: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**, **OpenCode**, **OpenClaw**, **Hermes**, and **DeepSeek Harness**. DeepSeek Harness uses the dedicated live configuration workflow described above.
+CC Switch supports nine tools: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**, **OpenCode**, **OpenClaw**, **Hermes**, and **DeepSeek Harness**. DeepSeek Harness has a dedicated live settings editor.
 
 </details>
 
 <details>
 <summary><strong>Do I need to restart the terminal after switching providers?</strong></summary>
 
-For most tools, yes — restart your terminal or the CLI tool for changes to take effect. **Claude Code** supports hot-switching of provider data. DeepSeek Harness reloads settings and credentials for subsequent requests; changing its default model affects newly created Agents.
+For most tools, yes — restart your terminal or the CLI tool for changes to take effect. The exception is **Claude Code**, which currently supports hot-switching of provider data without a restart.
 
 </details>
 
