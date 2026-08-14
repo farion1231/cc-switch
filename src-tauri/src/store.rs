@@ -3,6 +3,7 @@ use crate::services::{ProxyService, UsageCache};
 use std::sync::Arc;
 
 /// 全局应用状态
+#[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Database>,
     pub proxy_service: ProxyService,

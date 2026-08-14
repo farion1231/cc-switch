@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { useState, useRef, useCallback } from "react";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -228,10 +229,10 @@ export function OpenClawFormFields({
         <FormLabel htmlFor="openclaw-baseurl">
           {t("openclaw.baseUrl", { defaultValue: "API 端点" })}
         </FormLabel>
-        <Input
+        <ImeSafeInput
           id="openclaw-baseurl"
           value={baseUrl}
-          onChange={(e) => onBaseUrlChange(e.target.value)}
+          onValueChange={onBaseUrlChange}
           placeholder="https://api.example.com/v1"
         />
         <p className="text-xs text-muted-foreground">
@@ -346,10 +347,10 @@ export function OpenClawFormFields({
                       />
                     </Button>
                     <div className="flex min-w-0 flex-1 gap-1">
-                      <Input
+                      <ImeSafeInput
                         value={model.id}
-                        onChange={(event) =>
-                          handleModelChange(index, "id", event.target.value)
+                        onValueChange={(value) =>
+                          handleModelChange(index, "id", value)
                         }
                         placeholder={t("openclaw.modelIdPlaceholder", {
                           defaultValue: "claude-3-sonnet",
@@ -366,10 +367,10 @@ export function OpenClawFormFields({
                         />
                       )}
                     </div>
-                    <Input
+                    <ImeSafeInput
                       value={model.name}
-                      onChange={(event) =>
-                        handleModelChange(index, "name", event.target.value)
+                      onValueChange={(value) =>
+                        handleModelChange(index, "name", value)
                       }
                       placeholder={t("openclaw.modelNamePlaceholder", {
                         defaultValue: "Claude 3 Sonnet",

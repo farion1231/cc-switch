@@ -308,15 +308,16 @@ requires_openai_auth = true`,
   },
   {
     name: "RunAPI",
-    websiteUrl: "https://runapi.co",
-    apiKeyUrl: "https://runapi.co/register?aff=iOKB",
+    websiteUrl: "https://runapi.host",
+    apiKeyUrl: "https://runapi.host/register?aff=iOKB",
     category: "aggregator",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "runapi",
-      "https://runapi.co/v1",
+      "https://runapi.host/v1",
       "gpt-5.6-sol",
     ),
+    endpointCandidates: ["https://runapi.host/v1", "https://runapi.co/v1"],
     isPartner: true,
     partnerPromotionKey: "runapi",
     icon: "runapi",
@@ -481,22 +482,24 @@ requires_openai_auth = true`,
     icon: "claudecn",
   },
   {
-    name: "火山Agentplan",
+    name: "火山 Agent Plan",
     websiteUrl:
-      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
     apiKeyUrl:
-      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_source=OWO&utm_medium=devrel-1&utm_campaign=hw&utm_term=ccswitch&utm_content=hw",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "ark_agentplan",
-      "https://ark.cn-beijing.volces.com/api/coding/v3",
+      "https://ark.cn-beijing.volces.com/api/plan/v3",
       "ark-code-latest",
     ),
-    // ⚠️ 计费红线（官方 warning）：Coding Plan 必须走 /api/coding/v3；
-    // 填按量端点 /api/v3 不消耗套餐额度、按量另计费，绝不能混入候选
-    endpointCandidates: ["https://ark.cn-beijing.volces.com/api/coding/v3"],
+    // ⚠️ 计费红线（官方 warning）：Agent Plan 必须走 /api/plan/v3；
+    // 按量端点 /api/v3 不消耗套餐额度、按量另计费，Coding Plan 的
+    // /api/coding/v3 是另一份订阅——两者都绝不能混入候选
+    endpointCandidates: ["https://ark.cn-beijing.volces.com/api/plan/v3"],
     // 官方 Codex 文档（volcengine.com/docs/82379/2556056，2026-07 更新）：
-    // Coding Plan /api/coding/v3 已支持 Responses API（wire_api=responses），无需路由接管转换
+    // Agent Plan /api/plan/v3 与 Coding Plan /api/coding/v3 均已支持
+    // Responses API（wire_api=responses），无需路由接管转换
     apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
       {
@@ -508,6 +511,39 @@ requires_openai_auth = true`,
     category: "cn_official",
     isPartner: true,
     partnerPromotionKey: "volcengine_agentplan",
+    icon: "huoshan",
+    iconColor: "#3370FF",
+  },
+  {
+    name: "火山 Coding Plan",
+    websiteUrl:
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "ark_codingplan",
+      "https://ark.cn-beijing.volces.com/api/coding/v3",
+      "ark-code-latest",
+    ),
+    // ⚠️ 计费红线（官方 warning）：Coding Plan 必须走 /api/coding/v3；
+    // 按量端点 /api/v3 不消耗套餐额度、按量另计费，Agent Plan 的
+    // /api/plan/v3 是另一份订阅——两者都绝不能混入候选
+    endpointCandidates: ["https://ark.cn-beijing.volces.com/api/coding/v3"],
+    // 官方 Codex 文档（volcengine.com/docs/82379/2556056，2026-07 更新）：
+    // Coding Plan /api/coding/v3 已支持 Responses API（wire_api=responses），
+    // 无需路由接管转换
+    apiFormat: "openai_responses",
+    modelCatalog: modelCatalog([
+      {
+        model: "ark-code-latest",
+        displayName: "Ark Code Latest",
+        contextWindow: 256000,
+      },
+    ]),
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "volcengine_codingplan",
     icon: "huoshan",
     iconColor: "#3370FF",
   },
@@ -526,7 +562,8 @@ requires_openai_auth = true`,
     endpointCandidates: [
       "https://ark.ap-southeast.bytepluses.com/api/coding/v3",
     ],
-    // 国内站 coding/v3 已切原生 Responses（见 火山Agentplan），但 BytePlus
+    // 国内站 plan/v3、coding/v3 已切原生 Responses（见 火山 Agent Plan /
+    // 火山 Coding Plan 预设），但 BytePlus
     // 国际站（bytepluses.com）文档未单独核实，暂保持 Chat 路由
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
@@ -890,6 +927,25 @@ requires_openai_auth = true`,
     isPartner: true,
     icon: "sudocode-us",
   },
+  {
+    name: "XycAi",
+    websiteUrl: "https://xycai.us",
+    apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "xycai",
+      "https://apicdn.xycai.us/v1",
+      "gpt-5.6-sol",
+    ),
+    endpointCandidates: [
+      "https://apicdn.xycai.us/v1",
+      "https://apicdn.xyc.ai/v1",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "xycai",
+    icon: "xycai",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Amux",
@@ -955,8 +1011,7 @@ requires_openai_auth = true`,
         displayName: "DeepSeek V4 Flash",
         contextWindow: 1048576,
       },
-      // 官方预计 2026-08 初开通 pro 的 Codex 集成（官方 models.json 已含该条目），
-      // 在那之前切到 pro 会上游报错
+      // pro 已于 2026-08 开通 Responses/Codex 集成（官方 catalog 条目与 flash 仅差 priority）
       {
         model: "deepseek-v4-pro",
         displayName: "DeepSeek V4 Pro",

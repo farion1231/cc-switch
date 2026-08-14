@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
@@ -164,9 +165,9 @@ export function RequestHeadersEditor({
                     defaultValue: "X-Title",
                   })}
                 />
-                <Input
+                <ImeSafeInput
                   value={value}
-                  onChange={(event) => updateHeader(key, event.target.value)}
+                  onValueChange={(nextValue) => updateHeader(key, nextValue)}
                   aria-label={t("opencode.headerValue", {
                     defaultValue: "Value",
                   })}
