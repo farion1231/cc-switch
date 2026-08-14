@@ -530,9 +530,7 @@ impl RequestForwarder {
                             let prev = self.current_provider_id_at_start.clone();
 
                             tokio::spawn(async move {
-                                let _ = fm
-                                    .try_switch(ah.as_ref(), &at, &pid, &pname, Some(&prev))
-                                    .await;
+                                let _ = fm.try_switch(ah.as_ref(), &at, &pid, &pname, &prev).await;
                             });
                         }
                         // 重新计算成功率
@@ -641,7 +639,7 @@ impl RequestForwarder {
                                                         &at,
                                                         &pid,
                                                         &pname,
-                                                        Some(&prev),
+                                                        &prev,
                                                     )
                                                     .await;
                                             });
@@ -787,7 +785,8 @@ impl RequestForwarder {
                                                 let pid = provider.id.clone();
                                                 let pname = provider.name.clone();
                                                 let at = app_type_str.to_string();
-                                                let prev = self.current_provider_id_at_start.clone();
+                                                let prev =
+                                                    self.current_provider_id_at_start.clone();
 
                                                 tokio::spawn(async move {
                                                     let _ = fm
@@ -796,7 +795,7 @@ impl RequestForwarder {
                                                             &at,
                                                             &pid,
                                                             &pname,
-                                                            Some(&prev),
+                                                            &prev,
                                                         )
                                                         .await;
                                                 });
@@ -964,7 +963,7 @@ impl RequestForwarder {
                                                         &at,
                                                         &pid,
                                                         &pname,
-                                                        Some(&prev),
+                                                        &prev,
                                                     )
                                                     .await;
                                             });

@@ -414,7 +414,7 @@ pub async fn reset_circuit_breaker(
                             &app_type,
                             &provider_id,
                             &provider_name,
-                            current_id.as_deref(),
+                            current_id.as_str(),
                         )
                         .await
                     {

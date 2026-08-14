@@ -5,12 +5,9 @@
 //! - 托盘菜单更新
 //! - 前端事件发射
 
-use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
-use crate::provider::Provider;
 use std::collections::HashSet;
-use std::str::FromStr;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tokio::sync::RwLock;
@@ -38,10 +35,8 @@ impl FailoverSwitchManager {
     /// 如果相同的切换已在进行中，则跳过；否则执行切换逻辑。
     ///
     /// `expected_previous_provider_id` 是发起请求时快照的"当前供应商"。
-    /// 若在请求执行期间用户已手动切换了供应商（当前供应商已变化），
-    /// 则放弃自动切换，尊重用户选择——避免 failover 把用户的
-    /// 手动切换覆盖回旧 provider（原 bug：旧请求完成后自动切回，
-    /// 导致 UI 与路由"自己跳回旧供应商"）。
+    /// ProxyService 会在持有 per-app switch lock 后校验该快照，避免
+    /// 已完成的手动切换被旧请求的 failover 覆盖。
     ///
     /// # Returns
     /// - `Ok(true)` - 切换成功执行
@@ -53,7 +48,7 @@ impl FailoverSwitchManager {
         app_type: &str,
         provider_id: &str,
         provider_name: &str,
-        expected_previous_provider_id: Option<&str>,
+        expected_previous_provider_id: &str,
     ) -> Result<bool, AppError> {
         let switch_key = format!("{app_type}:{provider_id}");
 
@@ -93,7 +88,7 @@ impl FailoverSwitchManager {
         app_type: &str,
         provider_id: &str,
         provider_name: &str,
-        expected_previous_provider_id: Option<&str>,
+        expected_previous_provider_id: &str,
     ) -> Result<bool, AppError> {
         // 检查该应用是否已被代理接管（enabled=true）
         // 只有被接管的应用才允许执行故障转移切换
@@ -110,22 +105,6 @@ impl FailoverSwitchManager {
             return Ok(false);
         }
 
-        // 关键竞态防护：请求执行期间用户可能已手动切换供应商。
-        // 只有"当前供应商"仍等于请求开始时的快照，才允许自动切换；
-        // 否则自动切换会覆盖用户刚做的选择。
-        if let Some(expected_previous) = expected_previous_provider_id {
-            if self.user_switched_during_request(app_type, expected_previous).await {
-                let current = crate::settings::get_current_provider(
-                    &AppType::from_str(app_type).unwrap_or(AppType::Claude),
-                );
-                log::info!(
-                    "[Failover] 跳过自动切换 {app_type} → {provider_name}: 当前供应商已变为 {:?}（期望 {expected_previous}），尊重用户选择",
-                    current
-                );
-                return Ok(false);
-            }
-        }
-
         log::info!("[FO-001] 切换: {app_type} → {provider_name}");
 
         let mut switched = false;
@@ -134,7 +113,11 @@ impl FailoverSwitchManager {
             if let Some(app_state) = app.try_state::<crate::store::AppState>() {
                 switched = app_state
                     .proxy_service
-                    .hot_switch_provider(app_type, provider_id)
+                    .hot_switch_provider_if_current(
+                        app_type,
+                        provider_id,
+                        expected_previous_provider_id,
+                    )
                     .await
                     .map_err(AppError::Message)?
                     .logical_target_changed;
@@ -164,147 +147,5 @@ impl FailoverSwitchManager {
         }
 
         Ok(switched)
-    }
-
-    /// 竞态防护判定：请求执行期间"当前供应商"是否已被（用户/其它路径）改变。
-    ///
-    /// 返回 `true` 表示应放弃自动切换：当前有效供应商不再等于请求开始时
-    /// 快照的 `expected_previous_provider_id`。
-    async fn user_switched_during_request(
-        &self,
-        app_type: &str,
-        expected_previous_provider_id: &str,
-    ) -> bool {
-        let Ok(app_enum) = AppType::from_str(app_type) else {
-            return true;
-        };
-        let current = crate::settings::get_effective_current_provider(&self.db, &app_enum)
-            .ok()
-            .flatten();
-        current.as_deref() != Some(expected_previous_provider_id)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::database::Database;
-    use serde_json::json;
-    use serial_test::serial;
-    use std::env;
-    use tempfile::TempDir;
-
-    struct TempHome {
-        dir: TempDir,
-        original_home: Option<String>,
-        original_userprofile: Option<String>,
-        original_test_home: Option<String>,
-    }
-
-    impl TempHome {
-        fn new() -> Self {
-            let dir = TempDir::new().expect("failed to create temp home");
-            let original_home = env::var("HOME").ok();
-            let original_userprofile = env::var("USERPROFILE").ok();
-            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
-
-            env::set_var("HOME", dir.path());
-            env::set_var("USERPROFILE", dir.path());
-            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            crate::settings::reload_settings().expect("reload settings");
-
-            Self {
-                dir,
-                original_home,
-                original_userprofile,
-                original_test_home,
-            }
-        }
-    }
-
-    impl Drop for TempHome {
-        fn drop(&mut self) {
-            match &self.original_home {
-                Some(value) => env::set_var("HOME", value),
-                None => env::remove_var("HOME"),
-            }
-            match &self.original_userprofile {
-                Some(value) => env::set_var("USERPROFILE", value),
-                None => env::remove_var("USERPROFILE"),
-            }
-            match &self.original_test_home {
-                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
-        }
-    }
-
-    fn setup_db() -> Arc<Database> {
-        let db = Arc::new(Database::memory().unwrap());
-        let provider_a =
-            Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
-        let provider_b =
-            Provider::with_id("b".to_string(), "Provider B".to_string(), json!({}), None);
-        db.save_provider("claude", &provider_a).unwrap();
-        db.save_provider("claude", &provider_b).unwrap();
-        db.set_current_provider("claude", "a").unwrap();
-        db
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_no_skip_when_current_matches_expected() {
-        let _home = TempHome::new();
-        let db = setup_db();
-        crate::settings::set_current_provider(&AppType::Claude, Some("a")).unwrap();
-        let manager = FailoverSwitchManager::new(db);
-
-        assert!(!manager
-            .user_switched_during_request("claude", "a")
-            .await);
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_skip_when_user_switched_during_request() {
-        let _home = TempHome::new();
-        let db = setup_db();
-        // Request bắt đầu khi current = "a"
-        crate::settings::set_current_provider(&AppType::Claude, Some("a")).unwrap();
-        let manager = FailoverSwitchManager::new(db);
-
-        // Trong lúc request chạy, user switch tay sang "b" (settings device-level)
-        crate::settings::set_current_provider(&AppType::Claude, Some("b")).unwrap();
-
-        assert!(manager.user_switched_during_request("claude", "a").await);
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_no_skip_after_user_switch_to_expected_target() {
-        let _home = TempHome::new();
-        let db = setup_db();
-        crate::settings::set_current_provider(&AppType::Claude, Some("a")).unwrap();
-        let manager = FailoverSwitchManager::new(db);
-
-        // User switch sang chính provider mà failover muốn chuyển tới
-        crate::settings::set_current_provider(&AppType::Claude, Some("b")).unwrap();
-
-        assert!(!manager
-            .user_switched_during_request("claude", "b")
-            .await);
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_skip_on_invalid_app_type() {
-        let _home = TempHome::new();
-        let db = setup_db();
-        crate::settings::set_current_provider(&AppType::Claude, Some("a")).unwrap();
-        let manager = FailoverSwitchManager::new(db);
-
-        assert!(manager
-            .user_switched_during_request("not-an-app", "a")
-            .await);
     }
 }
