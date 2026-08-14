@@ -332,6 +332,192 @@ describe("UnifiedSkillsPanel", () => {
     expect(screen.queryByText("Unrelated Skill")).not.toBeInTheDocument();
   });
 
+  it("groups installed Skills by repository source", () => {
+    installedSkillsMock = [
+      makeInstalledSkill({
+        id: "owner/repo-a:alpha",
+        name: "Repo A Alpha",
+        repoName: "repo-a",
+      }),
+      makeInstalledSkill({
+        id: "owner/repo-a:beta",
+        name: "Repo A Beta",
+        repoOwner: "OWNER",
+        repoName: "REPO-A",
+      }),
+      makeInstalledSkill({
+        id: "owner/repo-b:gamma",
+        name: "Repo B Gamma",
+        repoName: "repo-b",
+      }),
+      makeInstalledSkill({
+        id: "local:delta",
+        name: "Local Delta",
+        repoOwner: undefined,
+        repoBranch: undefined,
+      }),
+      makeInstalledSkill({
+        id: "local:epsilon",
+        name: "Local Epsilon",
+        repoName: undefined,
+        repoBranch: undefined,
+      }),
+    ];
+
+    renderPanel();
+
+    const repoAGroup = screen.getByRole("region", { name: "owner/repo-a" });
+    expect(within(repoAGroup).getByText("Repo A Alpha")).toBeInTheDocument();
+    expect(within(repoAGroup).getByText("Repo A Beta")).toBeInTheDocument();
+    expect(
+      within(repoAGroup).queryByText("Repo B Gamma"),
+    ).not.toBeInTheDocument();
+
+    const localGroup = screen.getByRole("region", { name: "skills.local" });
+    expect(within(localGroup).getByText("Local Delta")).toBeInTheDocument();
+    expect(within(localGroup).getByText("Local Epsilon")).toBeInTheDocument();
+  });
+
+  it("toggles every Skill from one repository when search hides a sibling", async () => {
+    installedSkillsMock = [
+      makeInstalledSkill({
+        id: "owner/repo-a:visible",
+        name: "Visible Repo A Skill",
+        repoName: "repo-a",
+      }),
+      makeInstalledSkill({
+        id: "owner/repo-a:hidden",
+        name: "Hidden Repo A Skill",
+        repoName: "repo-a",
+      }),
+      makeInstalledSkill({
+        id: "owner/repo-b:other",
+        name: "Other Repository Skill",
+        repoName: "repo-b",
+      }),
+    ];
+    bulkToggleSkillAppMock.mockResolvedValue({
+      succeeded: ["owner/repo-a:visible", "owner/repo-a:hidden"],
+      failed: [],
+    });
+    renderPanel();
+
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByRole("textbox", {
+        name: "skills.installedSearchAriaLabel",
+      }),
+      "Visible Repo A Skill",
+    );
+
+    const repoAGroup = screen.getByRole("region", { name: "owner/repo-a" });
+    expect(screen.queryByRole("region", { name: "owner/repo-b" })).toBeNull();
+
+    await user.click(
+      within(repoAGroup).getByRole("checkbox", {
+        name: "owner/repo-a: Claude common.enableAllForApp",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(bulkToggleSkillAppMock).toHaveBeenCalledWith({
+        ids: ["owner/repo-a:visible", "owner/repo-a:hidden"],
+        app: "claude",
+        enabled: true,
+      });
+    });
+  });
+
+  it("fills in disabled Skills when a repository app toggle is mixed", async () => {
+    installedSkillsMock = [
+      makeInstalledSkill({
+        id: "owner/repo-a:enabled",
+        name: "Enabled Repo A Skill",
+        repoName: "repo-a",
+        apps: { claude: true },
+      }),
+      makeInstalledSkill({
+        id: "owner/repo-a:disabled",
+        name: "Disabled Repo A Skill",
+        repoName: "repo-a",
+      }),
+    ];
+    bulkToggleSkillAppMock.mockResolvedValue({
+      succeeded: ["owner/repo-a:disabled"],
+      failed: [],
+    });
+    renderPanel();
+
+    const user = userEvent.setup();
+    const repoAGroup = screen.getByRole("region", { name: "owner/repo-a" });
+    const claudeToggle = within(repoAGroup).getByRole("checkbox", {
+      name: "owner/repo-a: Claude common.enableAllForApp",
+    });
+
+    expect(claudeToggle).toHaveAttribute("aria-checked", "mixed");
+    await user.click(claudeToggle);
+
+    await waitFor(() => {
+      expect(bulkToggleSkillAppMock).toHaveBeenCalledWith({
+        ids: ["owner/repo-a:disabled"],
+        app: "claude",
+        enabled: true,
+      });
+    });
+  });
+
+  it("marks only the active app as pending during a repository bulk toggle", async () => {
+    installedSkillsMock = [
+      makeInstalledSkill({
+        id: "owner/repo-a:alpha",
+        name: "Repo A Alpha",
+        repoName: "repo-a",
+      }),
+    ];
+    let resolveBulkToggle!: (value: {
+      succeeded: string[];
+      failed: string[];
+    }) => void;
+    bulkToggleSkillAppMock.mockImplementation((variables) => {
+      bulkToggleSkillAppPending = true;
+      bulkToggleSkillAppVariables = variables;
+      return new Promise((resolve) => {
+        resolveBulkToggle = resolve;
+      });
+    });
+
+    renderPanel();
+
+    const user = userEvent.setup();
+    const repoAGroup = screen.getByRole("region", { name: "owner/repo-a" });
+    const claudeToggle = within(repoAGroup).getByRole("checkbox", {
+      name: "owner/repo-a: Claude common.enableAllForApp",
+    });
+    const codexToggle = within(repoAGroup).getByRole("checkbox", {
+      name: "owner/repo-a: Codex common.enableAllForApp",
+    });
+
+    await user.click(claudeToggle);
+
+    await waitFor(() => {
+      expect(claudeToggle).toHaveAttribute("aria-busy", "true");
+      expect(claudeToggle).toHaveAttribute("data-selection-state", "pending");
+      expect(codexToggle).toHaveAttribute("aria-busy", "false");
+      expect(codexToggle).toHaveAttribute("data-selection-state", "disabled");
+      expect(codexToggle).toBeDisabled();
+    });
+
+    bulkToggleSkillAppPending = false;
+    bulkToggleSkillAppVariables = undefined;
+    await act(async () => {
+      resolveBulkToggle({
+        succeeded: ["owner/repo-a:alpha"],
+        failed: [],
+      });
+      await Promise.resolve();
+    });
+  });
+
   it("distinguishes an empty list from an installed-Skill search miss", async () => {
     const { rerender } = renderPanel();
 
