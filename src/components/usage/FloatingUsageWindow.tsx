@@ -7,6 +7,8 @@ import {
   getCurrentWindow,
   PhysicalPosition,
   cursorPosition,
+  availableMonitors,
+  primaryMonitor,
 } from "@tauri-apps/api/window";
 import { useUsageSummaryByApp, useFloatingModelStats } from "@/lib/query/usage";
 import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
@@ -71,8 +73,34 @@ function saveDockState(edge: DockEdge | null) {
   }
 }
 
-// 恢复上次记录的位置（物理坐标）。数据缺失或 setPosition 失败时保持系统默认位置。
-// 返回恢复成功后的位置（供吸附隐藏态计算隐藏坐标使用）。
+// 位置越界兜底：窗口中心点不在任何已连接显示器上（显示器被拔出/分辨率变更后，
+// 旧坐标可能让整窗落到屏外且无 UI 可拖回）时，夹紧到主显示器左上角 + 边距，
+// 保证窗口始终可见、可拖回。纯函数，便于单测。
+export function clampRestoredPosition(
+  pos: { x: number; y: number },
+  size: { width: number; height: number },
+  monitors: { x: number; y: number; width: number; height: number }[],
+  primary: { x: number; y: number; width: number; height: number } | null,
+  margin: number,
+): { x: number; y: number } {
+  const cx = pos.x + size.width / 2;
+  const cy = pos.y + size.height / 2;
+  if (
+    monitors.some(
+      (m) =>
+        cx >= m.x && cx <= m.x + m.width && cy >= m.y && cy <= m.y + m.height,
+    )
+  ) {
+    return pos;
+  }
+  const target = primary ?? monitors[0] ?? { x: 0, y: 0, width: 0, height: 0 };
+  return { x: target.x + margin, y: target.y + margin };
+}
+
+// 恢复上次记录的位置（物理坐标）。数据缺失、setPosition 失败或查不到显示器信息时
+// 保持系统默认位置。恢复前校验坐标是否仍落在已连接显示器上：显示器被拔出/布局重排
+// 后旧坐标可能让整窗屏外、无 UI 可找回，因此越界时夹紧到主显示器。
+// 返回恢复后的实际位置（供吸附隐藏态计算隐藏坐标使用）。
 async function restoreWindowPosition(
   win: ReturnType<typeof getCurrentWindow>,
 ): Promise<{ x: number; y: number } | null> {
@@ -80,10 +108,36 @@ async function restoreWindowPosition(
     const raw = localStorage.getItem(FLOATING_WINDOW_POSITION_KEY);
     if (!raw) return null;
     const { x, y } = JSON.parse(raw) as { x?: unknown; y?: unknown };
-    if (typeof x === "number" && typeof y === "number") {
-      await win.setPosition(new PhysicalPosition(x, y));
-      return { x, y };
-    }
+    if (typeof x !== "number" || typeof y !== "number") return null;
+    const [size, monitors] = await Promise.all([
+      win.outerSize(),
+      availableMonitors(),
+    ]);
+    // 查不到显示器信息时不恢复（保持默认位置），避免盲目套用旧坐标造成屏外
+    if (monitors.length === 0) return null;
+    const primary = await primaryMonitor();
+    const margin = Math.round(16 * (await win.scaleFactor()));
+    const target = clampRestoredPosition(
+      { x, y },
+      size,
+      monitors.map((m) => ({
+        x: m.position.x,
+        y: m.position.y,
+        width: m.size.width,
+        height: m.size.height,
+      })),
+      primary
+        ? {
+            x: primary.position.x,
+            y: primary.position.y,
+            width: primary.size.width,
+            height: primary.size.height,
+          }
+        : null,
+      margin,
+    );
+    await win.setPosition(new PhysicalPosition(target.x, target.y));
+    return target;
   } catch (e) {
     console.error("Failed to restore floating window position", e);
   }
