@@ -596,6 +596,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["openrouter", "router", "aggregator"],
     defaultColor: "#6566F1",
   },
+  orcarouter: {
+    name: "orcarouter",
+    displayName: "OrcaRouter",
+    category: "ai-provider",
+    keywords: ["orcarouter", "orca", "router", "aggregator", "gateway"],
+    defaultColor: "#0160E6",
+  },
   pipellm: {
     name: "pipellm",
     displayName: "PIPELLM",
