@@ -9,14 +9,15 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::CostCalculator;
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    get_sync_state, metadata_modified_nanos, update_sync_state, SessionSyncResult,
+    load_sync_cursors, metadata_modified_nanos, update_sync_state, SessionSyncResult, SyncCursor,
 };
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
 use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -24,9 +25,11 @@ const DATA_SOURCE: &str = "deepseek_harness_session";
 const PROVIDER_ID: &str = "_deepseek_harness_session";
 const APP_TYPE: &str = "deepseek-harness";
 const MAX_SESSION_LOG_BYTES: u64 = 50 * 1024 * 1024;
-const MAX_DECOMPRESSED_SESSION_LOG_BYTES: usize = 64 * 1024 * 1024;
+const MAX_DECOMPRESSED_SESSION_LOG_BYTES: usize = 256 * 1024 * 1024;
 const MAX_COLLECT_DEPTH: usize = 16;
 const ZSTD_MAGIC: u32 = 0xFD2FB528;
+const ZSTD_SKIPPABLE_MAGIC_MIN: u32 = 0x184D2A50;
+const ZSTD_SKIPPABLE_MAGIC_MAX: u32 = 0x184D2A5F;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ZstdFrameRange {
@@ -69,9 +72,10 @@ pub fn sync_deepseek_harness_usage(db: &Database) -> Result<SessionSyncResult, A
         files_scanned: files.len() as u32,
         ..Default::default()
     };
+    let cursors = load_sync_cursors(db)?;
 
     for file_path in &files {
-        match sync_single_harness_file(db, file_path) {
+        match sync_single_harness_file(db, file_path, &cursors) {
             Ok(file_result) => result.merge(file_result),
             Err(error) => {
                 let msg = format!(
@@ -165,6 +169,7 @@ fn collect_session_files(root: &Path, files: &mut Vec<PathBuf>, depth: usize) {
 fn sync_single_harness_file(
     db: &Database,
     file_path: &Path,
+    cursors: &HashMap<String, SyncCursor>,
 ) -> Result<SessionSyncResult, AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
     let metadata = fs::metadata(file_path)
@@ -180,7 +185,7 @@ fn sync_single_harness_file(
         return Ok(SessionSyncResult::default());
     }
 
-    let (last_modified, _last_offset) = get_sync_state(db, &file_path_str)?;
+    let last_modified = cursors.get(&file_path_str).map_or(0, |c| c.last_modified);
     if file_modified <= last_modified {
         return Ok(SessionSyncResult::default());
     }
@@ -237,25 +242,45 @@ fn decode_zstd_session_log_with_limit(
 ) -> Result<Vec<u8>, AppError> {
     let frames = scan_complete_zstd_frames(bytes)?;
     if frames.is_empty() {
-        return Err(AppError::Config(
-            "DeepSeek Harness zstd 会话日志没有完整 frame".to_string(),
-        ));
+        return Ok(Vec::new());
     }
 
     let mut output = Vec::new();
     for frame in frames {
-        let decoded = zstd::decode_all(&bytes[frame.start..frame.end])
-            .map_err(|error| AppError::Config(format!("无法解压 zstd frame: {error}")))?;
-        if output.len().saturating_add(decoded.len()) > max_output_bytes {
-            return Err(AppError::Config(format!(
-                "DeepSeek Harness 会话日志解压后超过上限: {} > {} bytes",
-                output.len().saturating_add(decoded.len()),
-                max_output_bytes
-            )));
-        }
+        let decoded = decode_zstd_frame_with_limit(
+            &bytes[frame.start..frame.end],
+            output.len(),
+            max_output_bytes,
+        )?;
         output.extend_from_slice(&decoded);
     }
     Ok(output)
+}
+
+fn decode_zstd_frame_with_limit(
+    frame: &[u8],
+    output_len: usize,
+    max_output_bytes: usize,
+) -> Result<Vec<u8>, AppError> {
+    let remaining = max_output_bytes.saturating_sub(output_len);
+    let read_limit = remaining.saturating_add(1) as u64;
+    let decoder = zstd::stream::read::Decoder::new(Cursor::new(frame))
+        .map_err(|error| AppError::Config(format!("无法解压 zstd frame: {error}")))?;
+    let mut decoded = Vec::new();
+    decoder
+        .take(read_limit)
+        .read_to_end(&mut decoded)
+        .map_err(|error| AppError::Config(format!("无法解压 zstd frame: {error}")))?;
+
+    if decoded.len() > remaining {
+        return Err(AppError::Config(format!(
+            "DeepSeek Harness 会话日志解压后超过上限: {} > {} bytes",
+            output_len.saturating_add(decoded.len()),
+            max_output_bytes
+        )));
+    }
+
+    Ok(decoded)
 }
 
 fn scan_complete_zstd_frames(bytes: &[u8]) -> Result<Vec<ZstdFrameRange>, AppError> {
@@ -274,6 +299,22 @@ fn scan_complete_zstd_frames(bytes: &[u8]) -> Result<Vec<ZstdFrameRange>, AppErr
             bytes[offset + 3],
         ]);
         if magic != ZSTD_MAGIC {
+            if (ZSTD_SKIPPABLE_MAGIC_MIN..=ZSTD_SKIPPABLE_MAGIC_MAX).contains(&magic) {
+                if bytes.len().saturating_sub(offset) < 8 {
+                    break;
+                }
+                let size = u32::from_le_bytes([
+                    bytes[offset + 4],
+                    bytes[offset + 5],
+                    bytes[offset + 6],
+                    bytes[offset + 7],
+                ]) as usize;
+                if bytes.len().saturating_sub(offset + 8) < size {
+                    break;
+                }
+                offset += 8 + size;
+                continue;
+            }
             return Err(AppError::Config(format!(
                 "DeepSeek Harness zstd 会话日志 frame magic 无效: byte {offset}"
             )));
@@ -583,6 +624,14 @@ mod tests {
             .map_err(|error| AppError::Config(error.to_string()))
     }
 
+    fn skippable_frame(payload: &[u8]) -> Vec<u8> {
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&ZSTD_SKIPPABLE_MAGIC_MIN.to_le_bytes());
+        frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        frame.extend_from_slice(payload);
+        frame
+    }
+
     #[test]
     fn parses_assistant_message_usage_without_adding_reasoning_twice() {
         let events = parse_harness_usage_events(&fixture());
@@ -672,6 +721,43 @@ mod tests {
         let encoded = zstd_frame(&fixture())?;
         let error = decode_zstd_session_log_with_limit(&encoded, 8).expect_err("size cap rejects");
         assert!(error.to_string().contains("超过上限"));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_single_zstd_frame_past_remaining_limit() -> Result<(), AppError> {
+        let encoded = zstd::encode_all(vec![b'a'; 1024].as_slice(), 0)
+            .map_err(|error| AppError::Config(error.to_string()))?;
+        let error =
+            decode_zstd_session_log_with_limit(&encoded, 128).expect_err("frame cap rejects");
+        assert!(error.to_string().contains("超过上限"));
+        Ok(())
+    }
+
+    #[test]
+    fn skips_zstd_skippable_frame_between_complete_frames() -> Result<(), AppError> {
+        let (header, events_text) = fixture_parts();
+        let mut encoded = zstd_frame(&header)?;
+        encoded.extend_from_slice(&skippable_frame(b"metadata"));
+        encoded.extend_from_slice(&zstd_frame(&events_text)?);
+
+        let content = decode_zstd_session_log(&encoded)?;
+        let content = String::from_utf8(content).expect("decoded fixture is utf8");
+        let events = parse_harness_usage_events(&content);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].input_tokens, 100);
+        assert_eq!(scan_complete_zstd_frames(&encoded)?.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn empty_or_fully_torn_zstd_decodes_to_empty_log() -> Result<(), AppError> {
+        assert!(decode_zstd_session_log(&[])?.is_empty());
+
+        let mut torn = zstd_frame(&fixture())?;
+        torn.truncate(torn.len() / 2);
+        assert!(decode_zstd_session_log(&torn)?.is_empty());
         Ok(())
     }
 }
