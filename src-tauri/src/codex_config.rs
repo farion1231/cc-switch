@@ -2062,8 +2062,8 @@ pub fn strip_codex_unified_session_bucket_from_settings(
     Ok(())
 }
 
-/// Backfill helper: strip `[mcp_servers]` from a live `{ auth, config }`
-/// settings object before it is stored back to the DB.
+/// Strip `[mcp_servers]` from a live `{ auth, config }` settings object before
+/// it is stored back to the DB by provider save or switch-away backfill.
 ///
 /// MCP 服务器的 SSOT 是 DB 的 mcp_servers 表，live `config.toml` 里的
 /// `[mcp_servers]` 只是每次写 live 之后由 MCP 同步重新投影的产物。若回填时
