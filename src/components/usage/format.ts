@@ -367,4 +367,3 @@ export function computeFloatingUsageSummary(
     cacheHitRate,
   };
 }
-}
