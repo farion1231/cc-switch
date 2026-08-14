@@ -308,6 +308,26 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // Session detail rows are pruned after rollup, so request IDs needed
+        // for fork/rewrite deduplication live in a compact durable ledger.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_usage_dedup (
+                data_source TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                semantic_id TEXT NOT NULL,
+                has_entry_id INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (data_source, request_id)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_session_usage_dedup_semantic
+             ON session_usage_dedup(data_source, semantic_id, has_entry_id)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 19. Profiles 表（全应用共享的项目实体，payload 按 app 分槽快照
         //     供应商/MCP/Skills/Prompt；各应用分组的 current 标记在 settings 表）
         conn.execute(
@@ -510,6 +530,11 @@ impl Database {
                         log::info!("迁移数据库从 v15 到 v16（重建 Codex 会话用量）");
                         Self::migrate_v15_to_v16(conn)?;
                         Self::set_user_version(conn, 16)?;
+                    }
+                    16 => {
+                        log::info!("迁移数据库从 v16 到 v17（添加会话用量持久去重账本）");
+                        Self::migrate_v16_to_v17(conn)?;
+                        Self::set_user_version(conn, 17)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1521,6 +1546,23 @@ impl Database {
     fn migrate_v15_to_v16(conn: &Connection) -> Result<(), AppError> {
         let codex_dir = crate::codex_config::get_codex_config_dir();
         crate::services::session_usage_codex::reset_codex_usage_on_conn(conn, &codex_dir)
+    }
+
+    /// v16 -> v17: preserve session request identities after detail rollup.
+    fn migrate_v16_to_v17(conn: &Connection) -> Result<(), AppError> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS session_usage_dedup (
+                data_source TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                semantic_id TEXT NOT NULL,
+                has_entry_id INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (data_source, request_id)
+             );
+             CREATE INDEX IF NOT EXISTS idx_session_usage_dedup_semantic
+             ON session_usage_dedup(data_source, semantic_id, has_entry_id);",
+        )
+        .map_err(|error| AppError::Database(format!("创建会话用量去重账本失败: {error}")))?;
+        Ok(())
     }
 
     /// 插入默认模型定价数据
@@ -3243,7 +3285,8 @@ mod tests {
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
-        assert_eq!(Database::get_user_version(&conn)?, 16);
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::table_exists(&conn, "session_usage_dedup")?);
         let counts: (i64, i64, i64, i64) = conn.query_row(
             "SELECT
                 (SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'),
@@ -3254,6 +3297,24 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
         assert_eq!(counts, (0, 1, 0, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v16_to_v17_creates_session_usage_dedup_ledger() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::set_user_version(&conn, 16)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert!(Database::table_exists(&conn, "session_usage_dedup")?);
+        conn.execute(
+            "INSERT INTO session_usage_dedup
+             (data_source, request_id, semantic_id, has_entry_id)
+             VALUES ('pi_session', 'request', 'semantic', 1)",
+            [],
+        )?;
         Ok(())
     }
 }

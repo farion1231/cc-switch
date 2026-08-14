@@ -1674,7 +1674,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "grokbuild": "Grok Build"
+      "grokbuild": "Grok Build",
+      "pi": "Pi"
     },
     "rawInputLabel": "原始",
     "rebuildCodex": {
