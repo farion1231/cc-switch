@@ -56,6 +56,7 @@ interface DshProviderDialogProps {
     baseURL: string;
     api: string;
     apiKey?: string;
+    credentialRef?: string;
   }) => Promise<DshModel[]>;
 }
 
@@ -66,7 +67,7 @@ function credentialLabel(
   if (!credential) return t("dsh.credentials.notConfigured");
   if (!credential.configured)
     return t("dsh.credentials.notConfiguredRef", { ref: credential.ref });
-  if (credential.source === "env" && !credential.writable)
+  if (credential.source === "process" && !credential.writable)
     return t("dsh.credentials.environmentRef", { ref: credential.ref });
   return t("dsh.credentials.configuredSource", {
     source: credential.source ?? t("dsh.credentials.managed"),
@@ -124,16 +125,16 @@ export function DshProviderDialog({
 
   const credential = provider?.credential;
   const keyError = validateDshApiKey(apiKey);
+  // Existing routes can use identifiers written by DSH itself.  The create
+  // form uses the UI's lower-kebab convention, while an edit must not reject
+  // an already valid nonstandard identifier merely because the route field is
+  // immutable there.
   const routeError =
-    !isNative && !isCreate
-      ? validateDshRoute(route)
-      : isCreate
-        ? validateDshRoute(route)
-        : undefined;
+    !isNative && isCreate ? validateDshRoute(route) : undefined;
   const modelError = validateDshModels(models);
   const baseError =
     !isNative && !baseURL.trim() ? "dsh.validation.baseUrlRequired" : undefined;
-  const disabled = readOnly || busy || (provider?.kind === "native" && false);
+  const disabled = readOnly || busy;
   const canSubmit =
     !disabled && !keyError && !routeError && !modelError && !baseError;
   const effectiveRef =
@@ -162,6 +163,7 @@ export function DshProviderDialog({
         baseURL: baseURL.trim(),
         api,
         apiKey: apiKey.trim() || undefined,
+        credentialRef: provider?.apiKeyEnv,
       });
       setModels((current) => {
         const known = new Set(current.map((model) => model.id));
@@ -323,7 +325,7 @@ export function DshProviderDialog({
                 value={apiKey}
                 disabled={
                   disabled ||
-                  (credential?.source === "env" && !credential.writable)
+                  (credential?.source === "process" && !credential.writable)
                 }
                 onChange={(event) => setApiKey(event.target.value)}
                 placeholder={credentialLabel(t, credential)}
@@ -350,7 +352,7 @@ export function DshProviderDialog({
                 </>
               </Button>
             </div>
-            {credential?.source === "env" && !credential.writable && (
+            {credential?.source === "process" && !credential.writable && (
               <p className="text-xs text-muted-foreground">
                 {t("dsh.credentials.environmentReadOnly")}
               </p>

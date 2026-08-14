@@ -20,7 +20,7 @@ export const proxyKeys = {
 /**
  * 获取代理服务器状态
  */
-export function useProxyStatusQuery() {
+export function useProxyStatusQuery(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: proxyKeys.status,
     queryFn: () => proxyApi.getProxyStatus(),
@@ -28,13 +28,17 @@ export function useProxyStatusQuery() {
     refetchInterval: (query) => (query.state.data?.running ? 2000 : false),
     // 保持之前的数据，避免闪烁
     placeholderData: (previousData) => previousData,
+    enabled: options?.enabled ?? true,
   });
 }
 
 /**
  * 获取各应用接管状态
  */
-export function useProxyTakeoverStatus(poll = true) {
+export function useProxyTakeoverStatus(
+  poll = true,
+  options?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: proxyKeys.takeoverStatus,
     queryFn: () => proxyApi.getProxyTakeoverStatus(),
@@ -45,6 +49,7 @@ export function useProxyTakeoverStatus(poll = true) {
           placeholderData: (previousData: ProxyTakeoverStatus | undefined) =>
             previousData,
         }),
+    enabled: options?.enabled ?? true,
   });
 }
 

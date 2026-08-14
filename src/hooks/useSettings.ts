@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { providersApi, settingsApi } from "@/lib/api";
+import { dshKeys } from "@/lib/query/dsh";
 import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
 import { useSettingsQuery, useSaveSettingsMutation } from "@/lib/query";
 import type { Settings } from "@/types";
@@ -114,6 +115,7 @@ export function useSettings(): UseSettingsResult {
       opencode: sanitizeDir(data?.opencodeConfigDir),
       openclaw: sanitizeDir(data?.openclawConfigDir),
       hermes: sanitizeDir(data?.hermesConfigDir),
+      dsh: sanitizeDir(data?.dshConfigDir),
     });
     setRequiresRestart(false);
   }, [
@@ -195,6 +197,7 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
         );
+        const sanitizedDshDir = sanitizeDir(mergedSettings.dshConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -209,6 +212,7 @@ export function useSettings(): UseSettingsResult {
           grokConfigDir: sanitizedGrokDir,
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
+          dshConfigDir: sanitizedDshDir,
           language: mergedSettings.language,
         };
 
@@ -220,6 +224,9 @@ export function useSettings(): UseSettingsResult {
 
         // 保存到配置文件
         await saveMutation.mutateAsync(payload);
+        if (sanitizedDshDir !== sanitizeDir(data?.dshConfigDir)) {
+          await queryClient.invalidateQueries({ queryKey: dshKeys.snapshot });
+        }
 
         // 如果开机自启状态改变，调用系统 API
         if (
@@ -328,6 +335,7 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
         );
+        const sanitizedDshDir = sanitizeDir(mergedSettings.dshConfigDir);
         const previousAppDir = initialAppConfigDir;
         const previousClaudeDir = sanitizeDir(data?.claudeConfigDir);
         const previousCodexDir = sanitizeDir(data?.codexConfigDir);
@@ -349,6 +357,7 @@ export function useSettings(): UseSettingsResult {
           grokConfigDir: sanitizedGrokDir,
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
+          dshConfigDir: sanitizedDshDir,
           language: mergedSettings.language,
         };
 
@@ -359,6 +368,9 @@ export function useSettings(): UseSettingsResult {
         ])?.enableClaudePluginIntegration;
 
         await saveMutation.mutateAsync(payload);
+        if (sanitizedDshDir !== sanitizeDir(data?.dshConfigDir)) {
+          await queryClient.invalidateQueries({ queryKey: dshKeys.snapshot });
+        }
 
         await settingsApi.setAppConfigDirOverride(sanitizedAppDir ?? null);
 

@@ -43,4 +43,42 @@ describe("DSH API revisions", () => {
       expectedRevision: "credentials-3",
     });
   });
+
+  it("uses Tauri lower-camel argument names for endpoint URLs", async () => {
+    await dshApi.upsertNative({
+      baseURL: "https://api.deepseek.com",
+      models: [{ id: "deepseek-v4-flash" }],
+    });
+    await dshApi.createCustom({
+      route: "gateway",
+      api: "openai-completions",
+      baseURL: "https://gateway.example/v1",
+      models: [{ id: "model" }],
+    });
+    await dshApi.discoverModels({
+      baseURL: "https://gateway.example/v1",
+      api: "openai-completions",
+    });
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "dsh_upsert_native", {
+      baseUrl: "https://api.deepseek.com",
+      models: [{ id: "deepseek-v4-flash" }],
+      apiKeyEnv: undefined,
+      expectedRevision: undefined,
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "dsh_create_custom", {
+      route: "gateway",
+      displayName: undefined,
+      api: "openai-completions",
+      baseUrl: "https://gateway.example/v1",
+      models: [{ id: "model" }],
+      apiKeyEnv: undefined,
+      expectedRevision: undefined,
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "dsh_discover_models", {
+      baseUrl: "https://gateway.example/v1",
+      api: "openai-completions",
+      apiKey: undefined,
+    });
+  });
 });

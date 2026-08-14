@@ -30,6 +30,7 @@ const APP_CONFIG: Array<{
   { id: "opencode", icon: "opencode", nameKey: "apps.opencode" },
   { id: "openclaw", icon: "openclaw", nameKey: "apps.openclaw" },
   { id: "hermes", icon: "hermes", nameKey: "apps.hermes" },
+  { id: "dsh", icon: "deepseek", nameKey: "apps.dsh" },
 ];
 
 export function AppVisibilitySettings({
@@ -47,6 +48,7 @@ export function AppVisibilitySettings({
     opencode: true,
     openclaw: true,
     hermes: true,
+    dsh: true,
   };
 
   // Count how many apps are currently visible
@@ -88,9 +90,15 @@ export function AppVisibilitySettings({
               disabled={isDisabled}
               onClick={() => handleToggle(app.id)}
               icon={app.icon}
-              name={t(app.nameKey)}
+              name={t(app.nameKey, {
+                defaultValue:
+                  app.id === "dsh" ? "DeepSeek Harness" : app.nameKey,
+              })}
             >
-              {t(app.nameKey)}
+              {t(app.nameKey, {
+                defaultValue:
+                  app.id === "dsh" ? "DeepSeek Harness" : app.nameKey,
+              })}
             </AppButton>
           );
         })}

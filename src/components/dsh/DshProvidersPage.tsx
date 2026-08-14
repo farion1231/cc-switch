@@ -67,6 +67,15 @@ export function DshProvidersPage({
       showFailure(error, t("dsh.errors.read"));
     }
   };
+  const openHome = async () => {
+    try {
+      await actions.openHome();
+    } catch (error) {
+      toast.error(t("common.error"), {
+        description: dshErrorMessage(error, t("dsh.errors.read")),
+      });
+    }
+  };
   const saveCredentialIfNeeded = async (key?: {
     ref: string;
     value: string;
@@ -181,7 +190,9 @@ export function DshProvidersPage({
     >
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">DeepSeek Harness</h1>
+          <h1 className="text-xl font-semibold">
+            {t("apps.dsh", { defaultValue: "DeepSeek Harness" })}
+          </h1>
           <p className="mt-1 text-xs text-muted-foreground">
             {t("dsh.description")}
           </p>
@@ -194,7 +205,7 @@ export function DshProvidersPage({
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => void actions.openHome()}
+            onClick={() => void openHome()}
           >
             <ExternalLink className="h-4 w-4" />
             {t("dsh.actions.openHome")}
@@ -333,12 +344,12 @@ export function DshProvidersPage({
                     <span className="inline-flex items-center gap-1">
                       <KeyRound className="h-3.5 w-3.5" />
                       {provider.credential?.configured
-                        ? provider.credential.source === "env"
+                        ? provider.credential.source === "process"
                           ? t("dsh.providers.environmentKey")
                           : t("dsh.providers.keyConfigured")
                         : t("dsh.providers.keyMissing")}
                     </span>
-                    {provider.credential?.source === "env" &&
+                    {provider.credential?.source === "process" &&
                       !provider.credential.writable && (
                         <span>{t("dsh.providers.readOnlySuffix")}</span>
                       )}

@@ -14,6 +14,7 @@ const updateTrayMenuMock = vi.fn();
 const getCurrentMock = vi.fn();
 const getAllMock = vi.fn();
 const getQueryDataMock = vi.fn();
+const invalidateQueriesMock = vi.fn();
 const toastErrorMock = vi.fn();
 const toastSuccessMock = vi.fn();
 
@@ -57,6 +58,7 @@ vi.mock("@tanstack/react-query", async () => {
     ...actual,
     useQueryClient: () => ({
       getQueryData: (...args: unknown[]) => getQueryDataMock(...args),
+      invalidateQueries: (...args: unknown[]) => invalidateQueriesMock(...args),
     }),
   };
 });
@@ -92,6 +94,7 @@ const createSettingsFormMock = (overrides: Record<string, unknown> = {}) => ({
     geminiConfigDir: "/gemini",
     opencodeConfigDir: "/opencode",
     openclawConfigDir: "/openclaw",
+    dshConfigDir: "/dsh",
     language: "zh",
   },
   isLoading: false,
@@ -113,6 +116,7 @@ const createDirectorySettingsMock = (
     gemini: "/default/gemini",
     opencode: "/default/opencode",
     openclaw: "/default/openclaw",
+    dsh: "/default/dsh",
   },
   isLoading: false,
   initialAppConfigDir: undefined,
@@ -147,6 +151,7 @@ describe("useSettings hook", () => {
     getCurrentMock.mockReset();
     getAllMock.mockReset();
     getQueryDataMock.mockReset();
+    invalidateQueriesMock.mockReset();
     toastErrorMock.mockReset();
     toastSuccessMock.mockReset();
     window.localStorage.clear();
@@ -161,6 +166,7 @@ describe("useSettings hook", () => {
       geminiConfigDir: "/server/gemini",
       opencodeConfigDir: "/server/opencode",
       openclawConfigDir: "/server/openclaw",
+      dshConfigDir: "/server/dsh",
       language: "zh",
     };
 
@@ -186,6 +192,7 @@ describe("useSettings hook", () => {
     syncCurrentProvidersLiveMock.mockResolvedValue({ ok: true });
     getCurrentMock.mockResolvedValue(null);
     getAllMock.mockResolvedValue({});
+    invalidateQueriesMock.mockResolvedValue(undefined);
     // 默认将 queryClient 缓存对齐到 serverSettings，既有断言的 "prev === data" 语义保持不变
     getQueryDataMock.mockImplementation(() => serverSettings);
   });
@@ -216,6 +223,28 @@ describe("useSettings hook", () => {
 
     expect(applyClaudeOnboardingSkipMock).toHaveBeenCalledTimes(1);
     expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("invalidates the DSH snapshot after auto-saving a changed DSH directory", async () => {
+    settingsFormMock = createSettingsFormMock({
+      settings: {
+        ...serverSettings,
+        dshConfigDir: "/custom/dsh",
+      },
+    });
+
+    const { result } = renderHook(() => useSettings());
+
+    await act(async () => {
+      await result.current.autoSaveSettings({ dshConfigDir: "/custom/dsh" });
+    });
+
+    expect(mutateAsyncMock).toHaveBeenCalledWith(
+      expect.objectContaining({ dshConfigDir: "/custom/dsh" }),
+    );
+    expect(invalidateQueriesMock).toHaveBeenCalledWith({
+      queryKey: ["dsh", "snapshot"],
+    });
   });
 
   it("auto-saves and clears Claude onboarding skip when toggled off", async () => {
@@ -420,7 +449,9 @@ describe("useSettings hook", () => {
     });
 
     // 修复生效：读的是缓存实时值 true，payload=false，差异触发 clear_claude_config
-    expect(applyClaudePluginConfigMock).toHaveBeenCalledWith({ official: true });
+    expect(applyClaudePluginConfigMock).toHaveBeenCalledWith({
+      official: true,
+    });
     expect(syncCurrentProvidersLiveMock).toHaveBeenCalled();
   });
 
@@ -462,6 +493,7 @@ describe("useSettings hook", () => {
       opencode: "/server/opencode",
       openclaw: "/server/openclaw",
       hermes: undefined,
+      dsh: "/server/dsh",
     });
     expect(metadataMock.setRequiresRestart).toHaveBeenCalledWith(false);
   });

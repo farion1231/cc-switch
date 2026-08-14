@@ -56,13 +56,15 @@ export const APP_CAPABILITIES: Record<AppId, AppCapabilities> = {
   claude: generic({ profiles: true, terminal: true }),
   "claude-desktop": generic({
     failover: false,
-    profiles: false,
-    prompts: false,
-    skills: false,
-    mcp: false,
-    sessions: false,
+    // Claude Desktop shares the Claude Code prompt, Skills, MCP, and session
+    // surfaces.  Its provider and profile storage remain app-specific.
+    profiles: true,
+    prompts: true,
+    skills: true,
+    mcp: true,
+    sessions: true,
     universal: false,
-    usage: false,
+    usage: true,
   }),
   codex: generic({ profiles: true }),
   gemini: generic(),

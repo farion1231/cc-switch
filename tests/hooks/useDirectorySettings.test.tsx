@@ -5,6 +5,7 @@ import type { SettingsFormState } from "@/hooks/useSettingsForm";
 
 const getAppConfigDirOverrideMock = vi.hoisted(() => vi.fn());
 const getConfigDirMock = vi.hoisted(() => vi.fn());
+const getDshDefaultHomeMock = vi.hoisted(() => vi.fn());
 const selectConfigDirectoryMock = vi.hoisted(() => vi.fn());
 const setAppConfigDirOverrideMock = vi.hoisted(() => vi.fn());
 const homeDirMock = vi.hoisted(() => vi.fn<() => Promise<string>>());
@@ -17,6 +18,7 @@ vi.mock("@/lib/api", () => ({
   settingsApi: {
     getAppConfigDirOverride: getAppConfigDirOverrideMock,
     getConfigDir: getConfigDirMock,
+    getDshDefaultHome: getDshDefaultHomeMock,
     selectConfigDirectory: selectConfigDirectoryMock,
     setAppConfigDirOverride: setAppConfigDirOverrideMock,
   },
@@ -72,8 +74,10 @@ describe("useDirectorySettings", () => {
       if (app === "grokbuild") return "/remote/grok";
       if (app === "opencode") return "/remote/opencode";
       if (app === "openclaw") return "/remote/openclaw";
+      if (app === "dsh") return "/remote/dsh";
       return "/remote/hermes";
     });
+    getDshDefaultHomeMock.mockResolvedValue("/default/dsh");
     selectConfigDirectoryMock.mockReset();
   });
 
@@ -96,7 +100,25 @@ describe("useDirectorySettings", () => {
       opencode: "/remote/opencode",
       openclaw: "/remote/openclaw",
       hermes: "/remote/hermes",
+      dsh: "/remote/dsh",
     });
+  });
+
+  it("keeps other directories when one directory read fails", async () => {
+    getConfigDirMock.mockImplementation(async (app: string) => {
+      if (app === "dsh") throw new Error("DSH command unavailable");
+      return `/remote/${app}`;
+    });
+
+    const { result } = renderHook(() =>
+      useDirectorySettings({ settings: createSettings(), onUpdateSettings }),
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.resolvedDirs.claude).toBe("/remote/claude");
+    expect(result.current.resolvedDirs.codex).toBe("/remote/codex");
+    expect(result.current.resolvedDirs.dsh).toBe("/home/mock/.dsh");
   });
 
   it("updates claude directory when browsing succeeds", async () => {
@@ -216,6 +238,24 @@ describe("useDirectorySettings", () => {
     expect(result.current.resolvedDirs.claude).toBe("/home/mock/.claude");
     expect(result.current.resolvedDirs.codex).toBe("/home/mock/.codex");
     expect(result.current.resolvedDirs.appConfig).toBe("/home/mock/.cc-switch");
+  });
+
+  it("clears the DSH override and resolves the backend fallback on reset", async () => {
+    const { result } = renderHook(() =>
+      useDirectorySettings({
+        settings: createSettings({ dshConfigDir: "/custom/dsh" }),
+        onUpdateSettings,
+      }),
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    await act(async () => {
+      await result.current.resetDirectory("dsh");
+    });
+
+    expect(onUpdateSettings).toHaveBeenCalledWith({ dshConfigDir: undefined });
+    expect(getDshDefaultHomeMock).toHaveBeenCalledTimes(1);
+    expect(result.current.resolvedDirs.dsh).toBe("/default/dsh");
   });
 
   it("updates openclaw directory when browsing succeeds", async () => {

@@ -14,6 +14,8 @@ export interface DshModel {
   description?: string;
   contextWindow?: number;
   maxTokens?: number;
+  /** Forward-compatible fields from newer DSH model descriptors. */
+  [key: string]: unknown;
 }
 
 /** Credential metadata safe to return to a browser surface. */
@@ -106,6 +108,8 @@ export interface DshModelDiscoveryInput {
   baseURL: string;
   api: string;
   apiKey?: string;
+  /** Existing route credential reference used only for a one-shot probe. */
+  credentialRef?: string;
 }
 
 /** Result from a discovery call. */
@@ -212,7 +216,10 @@ export const dshApi = {
   /** Update only native DeepSeek user-owned fields. */
   async upsertNative(input: DshNativeInput): Promise<DshSnapshot | undefined> {
     const result = await invoke<DshMutationResponse>("dsh_upsert_native", {
-      ...input,
+      baseUrl: input.baseURL,
+      models: input.models,
+      apiKeyEnv: input.apiKeyEnv,
+      expectedRevision: input.expectedRevision,
     });
     return unwrapSnapshot(result);
   },
@@ -230,7 +237,13 @@ export const dshApi = {
   /** Create a custom OpenAI/Anthropic-compatible route. */
   async createCustom(input: DshCustomInput): Promise<DshSnapshot | undefined> {
     const result = await invoke<DshMutationResponse>("dsh_create_custom", {
-      ...input,
+      route: input.route,
+      displayName: input.displayName,
+      api: input.api,
+      baseUrl: input.baseURL,
+      models: input.models,
+      apiKeyEnv: input.apiKeyEnv,
+      expectedRevision: input.expectedRevision,
     });
     return unwrapSnapshot(result);
   },
@@ -238,7 +251,13 @@ export const dshApi = {
   /** Update a custom route while preserving backend-owned unknown fields. */
   async updateCustom(input: DshCustomInput): Promise<DshSnapshot | undefined> {
     const result = await invoke<DshMutationResponse>("dsh_update_custom", {
-      ...input,
+      route: input.route,
+      displayName: input.displayName,
+      api: input.api,
+      baseUrl: input.baseURL,
+      models: input.models,
+      apiKeyEnv: input.apiKeyEnv,
+      expectedRevision: input.expectedRevision,
     });
     return unwrapSnapshot(result);
   },
@@ -289,7 +308,10 @@ export const dshApi = {
     input: DshModelDiscoveryInput,
   ): Promise<DshModelDiscoveryResult> {
     return await invoke<DshModelDiscoveryResult>("dsh_discover_models", {
-      ...input,
+      baseUrl: input.baseURL,
+      api: input.api,
+      apiKey: input.apiKey,
+      credentialRef: input.credentialRef,
     });
   },
 

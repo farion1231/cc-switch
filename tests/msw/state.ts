@@ -101,6 +101,7 @@ let settingsState: Settings = {
   enableClaudePluginIntegration: false,
   claudeConfigDir: "/default/claude",
   codexConfigDir: "/default/codex",
+  dshConfigDir: "/default/dsh",
   language: "zh",
 };
 let appConfigDirOverride: string | null = null;
@@ -221,6 +222,7 @@ export const resetProviderState = () => {
     enableClaudePluginIntegration: false,
     claudeConfigDir: "/default/claude",
     codexConfigDir: "/default/codex",
+    dshConfigDir: "/default/dsh",
     language: "zh",
   };
   appConfigDirOverride = null;

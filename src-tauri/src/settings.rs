@@ -46,6 +46,8 @@ pub struct VisibleApps {
     pub openclaw: bool,
     #[serde(default)]
     pub hermes: bool,
+    #[serde(default = "default_true")]
+    pub dsh: bool,
 }
 
 impl Default for VisibleApps {
@@ -59,6 +61,7 @@ impl Default for VisibleApps {
             opencode: true,
             openclaw: true,
             hermes: false, // 默认不显示，需用户手动启用
+            dsh: true,
         }
     }
 }
@@ -422,6 +425,8 @@ pub struct AppSettings {
     pub openclaw_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hermes_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dsh_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -533,6 +538,7 @@ impl Default for AppSettings {
             opencode_config_dir: None,
             openclaw_config_dir: None,
             hermes_config_dir: None,
+            dsh_config_dir: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
@@ -609,6 +615,13 @@ impl AppSettings {
 
         self.hermes_config_dir = self
             .hermes_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.dsh_config_dir = self
+            .dsh_config_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -720,6 +733,23 @@ fn resolve_override_path(raw: &str) -> PathBuf {
         }
     }
 
+    PathBuf::from(raw)
+}
+
+/// Resolve the DeepSeek Harness override against cc-switch's test-aware home.
+///
+/// DSH uses the same `CC_SWITCH_TEST_HOME` root as the rest of this process
+/// when its home is tested or explicitly set to a tilde path. The legacy app
+/// overrides above intentionally retain their historical `dirs::home_dir`
+/// behavior.
+fn resolve_dsh_override_path(raw: &str) -> PathBuf {
+    let home = crate::config::get_home_dir();
+    if raw == "~" {
+        return home;
+    }
+    if let Some(stripped) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+        return home.join(stripped);
+    }
     PathBuf::from(raw)
 }
 
@@ -931,6 +961,14 @@ pub fn get_hermes_override_dir() -> Option<PathBuf> {
         .hermes_config_dir
         .as_ref()
         .map(|p| resolve_override_path(p))
+}
+
+pub fn get_dsh_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .dsh_config_dir
+        .as_ref()
+        .map(|p| resolve_dsh_override_path(p))
 }
 
 pub fn preserve_codex_official_auth_on_switch() -> bool {
@@ -1147,6 +1185,7 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+    use serial_test::serial;
 
     #[test]
     fn visible_apps_old_settings_default_claude_desktop_visible() {
@@ -1177,5 +1216,21 @@ mod tests {
         .expect("visible apps");
 
         assert!(!visible.is_visible(&AppType::ClaudeDesktop));
+    }
+
+    #[test]
+    #[serial]
+    fn dsh_tilde_override_uses_test_aware_home() {
+        let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
+        let temp = tempfile::tempdir().expect("temporary home");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        assert_eq!(
+            resolve_dsh_override_path("~/.dsh-custom"),
+            temp.path().join(".dsh-custom")
+        );
+        match previous {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
     }
 }
