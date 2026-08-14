@@ -1003,7 +1003,7 @@ requires_openai_auth = true`,
     // DeepSeek 官方 Codex 文档（api-docs.deepseek.com → agent_integrations/codex）：
     // deepseek-v4-flash 原生 Responses（wire_api=responses 对自家 base_url），无需路由接管转换。
     // 后端按 deepseek.com host 直接镜像官方 models.json（freeform apply_patch +
-    // GPT-5 harness + low/high/max 思考档，需 codex >= 0.144.0），这里只保留行清单与展示名。
+    // GPT-5 harness + low/high/xhigh 思考档，需 codex >= 0.144.0），这里只保留行清单与展示名。
     apiFormat: "openai_responses",
     modelCatalog: modelCatalog([
       {

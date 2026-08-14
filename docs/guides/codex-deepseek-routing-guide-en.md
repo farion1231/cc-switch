@@ -63,7 +63,7 @@ Open CC Switch, switch to the top-level `Codex` tab, and click the plus button i
 
 Only `Responses (native)` works without routing takeover; the other two require it. For custom providers, CC Switch infers the thinking parameters from the provider name and address; you only need to expand `Reasoning Capability` and override them manually when that inference is wrong.
 
-> **Converting an existing DeepSeek provider**: change `Upstream Format` to `Responses (native)` — there is no need to delete and recreate it. The next time you switch to it, CC Switch recognises the `deepseek.com` address and applies DeepSeek's official model catalog, so freeform `apply_patch`, the GPT-5 harness, the low/high/max reasoning levels, and web_search all take effect as usual.
+> **Converting an existing DeepSeek provider**: change `Upstream Format` to `Responses (native)` — there is no need to delete and recreate it. The next time you switch to it, CC Switch recognises the `deepseek.com` address and applies DeepSeek's official model catalog, so freeform `apply_patch`, the GPT-5 harness, the low/high/xhigh reasoning levels, and web_search all take effect as usual.
 >
 > The one small difference is the context window: a provider's own saved model rows take priority, so the `1000000` stored before 3.19.1 overrides the officially declared `1048576`, costing you a little over 40k tokens. If that bothers you, open `Advanced Options` → `Model Mapping` and change that row's `Context Window` to `1048576`, or simply create a fresh provider from the preset.
 >
