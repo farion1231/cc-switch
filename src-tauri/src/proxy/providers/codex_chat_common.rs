@@ -282,13 +282,13 @@ pub(crate) fn strip_all_think_tags_with_pending(text: &str) -> (String, String) 
                 // consumed by the main loop).  Then extract a trailing
                 // partial close-tag fragment for buffering.
                 let without_close_tags = remaining.replace(THINK_CLOSE_TAG, "");
-                let (clean, pending) =
-                    extract_trailing_close_tag_fragment(&without_close_tags);
+                let (clean, pending) = extract_trailing_close_tag_fragment(&without_close_tags);
                 result.push_str(clean);
                 return (result, pending.to_string());
             }
         }
     }
+}
 
 /// Split `text` into `(clean, pending)` where `pending` is a trailing
 /// prefix of `THINK_CLOSE_TAG` (e.g. `<`, `</`, `</t`, …).  Returns

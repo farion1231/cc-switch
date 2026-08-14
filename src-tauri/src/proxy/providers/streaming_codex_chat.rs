@@ -3,9 +3,8 @@
 use super::codex_responses_sse as sse;
 use super::{
     codex_chat_common::{
-        extract_reasoning_field_text, split_leading_think_block,
-        strip_all_think_tags, strip_all_think_tags_with_pending,
-        strip_leading_think_open_tag,
+        extract_reasoning_field_text, split_leading_think_block, strip_all_think_tags,
+        strip_all_think_tags_with_pending, strip_leading_think_open_tag,
     },
     transform_codex_chat::{
         chat_usage_to_responses_usage, custom_tool_input_from_chat_arguments,
@@ -215,11 +214,9 @@ impl ChatToResponsesState {
                 // Prepend any buffered partial close-tag fragment from the
                 // previous delta so a close tag split across SSE chunks is
                 // reassembled before stripping.
-                let combined =
-                    format!("{}{}", self.inline_think.pending_close_tag, delta);
+                let combined = format!("{}{}", self.inline_think.pending_close_tag, delta);
                 self.inline_think.pending_close_tag.clear();
-                let (cleaned, pending) =
-                    strip_all_think_tags_with_pending(&combined);
+                let (cleaned, pending) = strip_all_think_tags_with_pending(&combined);
                 if !pending.is_empty() {
                     self.inline_think.pending_close_tag = pending;
                 }
@@ -1582,7 +1579,6 @@ mod tests {
         assert!(output.contains("完整"));
     }
 
-
     /// GLM-5.2 sends reasoning_content in delta N, then mirrors the same
     /// text as plain content in delta N+1 (no reasoning_content in that
     /// delta). The same-frame dedup misses this; the cross-frame path
@@ -1641,7 +1637,6 @@ mod tests {
         assert!(output.contains("Final answer"));
     }
 
-
     /// Reviewer concern: substring dedup should not erase a legitimate
     /// answer that happens to be a substring of the reasoning text.
     /// reasoning = "I should answer 42", content = "42" -> "42" must survive.
@@ -1659,7 +1654,6 @@ mod tests {
             "legitimate answer erased by substring dedup: {output}"
         );
     }
-
 
     /// Reviewer concern: a close tag split across SSE chunks must not
     /// leak. Delta 1 ends with a partial close-tag prefix,
@@ -1689,5 +1683,4 @@ mod tests {
             );
         }
     }
-
 }
