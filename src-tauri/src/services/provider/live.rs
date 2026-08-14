@@ -906,11 +906,18 @@ fn restore_live_settings_for_provider_backfill(
     settings
 }
 
-pub(crate) fn normalize_provider_common_config_for_storage(
+pub(crate) fn normalize_provider_settings_for_storage(
     db: &Database,
     app_type: &AppType,
     provider: &mut Provider,
 ) -> Result<(), AppError> {
+    // The editor loads the effective live config for the active Codex provider,
+    // which includes MCP entries projected from the dedicated DB table. Never
+    // persist that projection back into the provider-owned settings snapshot.
+    if matches!(app_type, AppType::Codex) {
+        crate::codex_config::strip_codex_mcp_servers_from_settings(&mut provider.settings_config)?;
+    }
+
     let uses_common_config = provider
         .meta
         .as_ref()

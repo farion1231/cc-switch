@@ -36,7 +36,7 @@ pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError
 // Internal re-exports (pub(crate))
 pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
-    build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
+    build_effective_settings_with_common_config, normalize_provider_settings_for_storage,
     provider_exists_in_live_config, strip_common_config_from_live_settings,
     sync_current_provider_for_app_to_live, write_live_with_common_config,
 };
@@ -470,6 +470,72 @@ mod tests {
 
             assert_eq!(script.api_key, None);
             assert_eq!(script.base_url, None);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn update_codex_provider_strips_live_mcp_projection_before_storage() {
+        with_test_home(|state, _| {
+            state
+                .db
+                .set_config_snippet(
+                    AppType::Codex.as_str(),
+                    Some("[shared]\nreasoning = \"medium\"\n".to_string()),
+                )
+                .expect("save common config");
+            for uses_common_config in [true, false] {
+                let id = format!("codex-edit-{uses_common_config}");
+                let mut provider = Provider::with_id(
+                    id.clone(),
+                    "Codex Edit".to_string(),
+                    json!({
+                        "auth": { "OPENAI_API_KEY": "sk-test" },
+                        "config": "model = \"gpt-5.5\"\n"
+                    }),
+                    None,
+                );
+                provider.meta = Some(ProviderMeta {
+                    common_config_enabled: Some(uses_common_config),
+                    ..Default::default()
+                });
+                state
+                    .db
+                    .save_provider(AppType::Codex.as_str(), &provider)
+                    .expect("seed provider");
+
+                let shared = if uses_common_config {
+                    "[shared]\nreasoning = \"medium\"\n"
+                } else {
+                    ""
+                };
+                provider.settings_config["config"] = json!(format!(
+                    concat!(
+                        "model = \"gpt-5.5\"\n",
+                        "{}",
+                        "[mcp_servers.echo]\n",
+                        "command = \"echo\"\n",
+                        "http_headers = {{ Authorization = \"Bearer secret\" }}\n"
+                    ),
+                    shared
+                ));
+                ProviderService::update(state, AppType::Codex, None, provider)
+                    .expect("save edited provider");
+
+                let saved = state
+                    .db
+                    .get_provider_by_id(&id, AppType::Codex.as_str())
+                    .expect("query saved provider")
+                    .expect("saved provider should exist");
+                assert_eq!(saved.settings_config["auth"]["OPENAI_API_KEY"], "sk-test");
+                let config = saved.settings_config["config"]
+                    .as_str()
+                    .expect("config text");
+                assert!(config.contains("model = \"gpt-5.5\""));
+                assert!(!config.contains("[shared]"));
+                assert!(!config.contains("mcp_servers"), "got: {config}");
+                assert!(!config.contains("Bearer secret"), "got: {config}");
+            }
         });
     }
 
@@ -2570,7 +2636,7 @@ impl ProviderService {
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
-        normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
+        normalize_provider_settings_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
         if app_type.is_additive_mode() {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
@@ -2629,7 +2695,7 @@ impl ProviderService {
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
-        normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
+        normalize_provider_settings_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
         if provider_id_changed {
