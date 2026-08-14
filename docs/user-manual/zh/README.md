@@ -34,7 +34,8 @@
 │   ├── 4.2 应用接管
 │   ├── 4.3 故障转移
 │   ├── 4.4 用量统计
-│   └── 4.5 模型检查
+│   ├── 4.5 模型检查
+│   └── 4.6 Codex Desktop Live 语音
 │
 └── 5. 常见问题
     ├── 5.1 配置文件说明
@@ -85,6 +86,7 @@
 | [4.3-failover.md](./4-proxy/4.3-failover.md) | 故障转移队列、熔断器、健康状态 |
 | [4.4-usage.md](./4-proxy/4.4-usage.md) | 用量统计、趋势图表、定价配置 |
 | [4.5-model-test.md](./4-proxy/4.5-model-test.md) | 模型检查、健康检测、延迟测试 |
+| [4.6-codex-live.md](./4-proxy/4.6-codex-live.md) | Codex Desktop Live 语音路由、供应商协议、安全和排障 |
 
 ### 5. 常见问题
 

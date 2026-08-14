@@ -1028,6 +1028,10 @@ mod tests {
             provider_router: Arc::new(ProviderRouter::new(db.clone())),
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+            live_calls: Arc::new(RwLock::new(HashMap::new())),
+            live_sideband_slots: Arc::new(tokio::sync::Semaphore::new(
+                crate::proxy::live::LIVE_MAX_ACTIVE_SIDEBANDS,
+            )),
             app_handle: None,
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
         }

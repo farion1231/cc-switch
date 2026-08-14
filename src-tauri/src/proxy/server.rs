@@ -10,7 +10,7 @@
 
 use super::{
     failover_switch::FailoverSwitchManager,
-    handlers,
+    handlers, live,
     log_codes::srv as log_srv,
     provider_router::ProviderRouter,
     providers::{codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore},
@@ -26,7 +26,7 @@ use axum::{
 use hyper_util::rt::TokioIo;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::{oneshot, RwLock};
+use tokio::sync::{oneshot, RwLock, Semaphore};
 use tokio::task::JoinHandle;
 
 /// 代理服务器状态（共享）
@@ -44,6 +44,11 @@ pub struct ProxyState {
     pub gemini_shadow: Arc<GeminiShadowStore>,
     /// Codex Chat bridge history，用于恢复 previous_response_id 指向的 tool call
     pub codex_chat_history: Arc<CodexChatHistoryStore>,
+    /// Live call id -> provider and in-memory attestation binding. A sideband
+    /// websocket must return to the call creator with the same proof.
+    pub live_calls: Arc<RwLock<std::collections::HashMap<String, live::LiveCallBinding>>>,
+    /// Caps active Live sideband websockets independently from HTTP requests.
+    pub live_sideband_slots: Arc<Semaphore>,
     /// AppHandle，用于发射事件和更新托盘菜单
     pub app_handle: Option<tauri::AppHandle>,
     /// 故障转移切换管理器
@@ -79,6 +84,8 @@ impl ProxyServer {
             provider_router,
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+            live_calls: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            live_sideband_slots: Arc::new(Semaphore::new(live::LIVE_MAX_ACTIVE_SIDEBANDS)),
             app_handle,
             failover_manager,
         };
@@ -194,6 +201,7 @@ impl ProxyServer {
                             if let Err(e) = hyper::server::conn::http1::Builder::new()
                                 .preserve_header_case(true)
                                 .serve_connection(TokioIo::new(stream), service)
+                                .with_upgrades()
                                 .await
                             {
                                 // Connection reset / broken pipe 等在代理场景下很常见，debug 级别
@@ -327,6 +335,14 @@ impl ProxyServer {
             .route("/v1/responses", post(handlers::handle_responses))
             .route("/v1/v1/responses", post(handlers::handle_responses))
             .route("/codex/v1/responses", post(handlers::handle_responses))
+            // Codex Desktop Live Voice: WebRTC call creation followed by a
+            // server-side sideband websocket attached to the returned call id.
+            .route("/live", post(live::handle_live_call))
+            .route("/v1/live", post(live::handle_live_call))
+            .route("/codex/v1/live", post(live::handle_live_call))
+            .route("/live/:call_id", get(live::handle_live_sideband))
+            .route("/v1/live/:call_id", get(live::handle_live_sideband))
+            .route("/codex/v1/live/:call_id", get(live::handle_live_sideband))
             // Grok Build uses the Responses protocol but has an independent
             // provider namespace and failover queue.
             .route(

@@ -101,6 +101,12 @@ interface CodexFormFieldsProps {
   onCodexChatReasoningChange?: (value: CodexChatReasoning) => void;
   promptCacheRouting: PromptCacheRoutingMode;
   onPromptCacheRoutingChange: (value: PromptCacheRoutingMode) => void;
+  codexLiveEnabled?: boolean;
+  onCodexLiveEnabledChange?: (value: boolean) => void;
+  codexLiveCreateEndpoint?: string;
+  onCodexLiveCreateEndpointChange?: (value: string) => void;
+  codexLiveSidebandEndpoint?: string;
+  onCodexLiveSidebandEndpointChange?: (value: string) => void;
 
   // Model Catalog
   catalogModels?: CodexCatalogModel[];
@@ -201,6 +207,12 @@ export function CodexFormFields({
   onCodexChatReasoningChange,
   promptCacheRouting,
   onPromptCacheRoutingChange,
+  codexLiveEnabled = false,
+  onCodexLiveEnabledChange = () => undefined,
+  codexLiveCreateEndpoint = "live",
+  onCodexLiveCreateEndpointChange = () => undefined,
+  codexLiveSidebandEndpoint = "live/{call_id}",
+  onCodexLiveSidebandEndpointChange = () => undefined,
   catalogModels = [],
   onCatalogModelsChange,
   speedTestEndpoints,
@@ -257,6 +269,7 @@ export function CodexFormFields({
     supportsThinking ||
     supportsEffort ||
     promptCacheRouting !== "auto" ||
+    codexLiveEnabled ||
     !!maxOutputTokens;
   const [advancedExpanded, setAdvancedExpanded] = useState(
     isXaiOauthPreset ? false : hasAnyAdvancedValue,
@@ -648,6 +661,82 @@ export function CodexFormFields({
             </p>
           )}
           <CollapsibleContent className="space-y-3 pt-3">
+            {appId === "codex" && shouldShowSpeedTest && !isXaiOauthPreset && (
+              <div
+                className="space-y-3"
+                data-testid="codex-live-provider-config"
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <FormLabel>
+                      {t("codexConfig.liveSupportLabel", {
+                        defaultValue: "支持 Codex Live 语音",
+                      })}
+                    </FormLabel>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {isFullUrl
+                        ? t("codexConfig.liveFullUrlUnsupported", {
+                            defaultValue:
+                              "Codex Live requires a base URL. Disable Full URL mode before enabling Live.",
+                          })
+                        : t("codexConfig.liveSupportHint", {
+                            defaultValue:
+                              "仅在供应商明确实现 Live HTTP 创建与 WebSocket Sideband 协议时开启。普通 Responses API 不具备此能力。",
+                          })}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={!isFullUrl && codexLiveEnabled}
+                    onCheckedChange={onCodexLiveEnabledChange}
+                    disabled={isFullUrl}
+                    aria-label={t("codexConfig.liveSupportLabel", {
+                      defaultValue: "支持 Codex Live 语音",
+                    })}
+                  />
+                </div>
+
+                {codexLiveEnabled && !isFullUrl && (
+                  <div className="space-y-3 border-l border-border pl-4">
+                    <div className="space-y-1.5">
+                      <FormLabel htmlFor="codex-live-create-endpoint">
+                        {t("codexConfig.liveCreateEndpointLabel", {
+                          defaultValue: "Live 创建端点",
+                        })}
+                      </FormLabel>
+                      <Input
+                        id="codex-live-create-endpoint"
+                        value={codexLiveCreateEndpoint}
+                        onChange={(event) =>
+                          onCodexLiveCreateEndpointChange(event.target.value)
+                        }
+                        placeholder="live"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <FormLabel htmlFor="codex-live-sideband-endpoint">
+                        {t("codexConfig.liveSidebandEndpointLabel", {
+                          defaultValue: "Sideband 端点模板",
+                        })}
+                      </FormLabel>
+                      <Input
+                        id="codex-live-sideband-endpoint"
+                        value={codexLiveSidebandEndpoint}
+                        onChange={(event) =>
+                          onCodexLiveSidebandEndpointChange(event.target.value)
+                        }
+                        placeholder="live/{call_id}"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {t("codexConfig.liveSidebandEndpointHint", {
+                          defaultValue: "模板必须包含 {call_id}。",
+                        })}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* 上游格式 —— Chat 需开启路由接管（走代理转换），Responses 原生直连。
                 沿用 shouldShowSpeedTest 门控，cloud_provider 保持不可切换；
                 xAI OAuth 托管预设格式钉死 Responses，不可切换。 */}
