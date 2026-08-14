@@ -437,7 +437,7 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
             Ok(false) => skipped += 1,
             Err(e) => {
                 log::warn!("[SESSION-SYNC] 插入失败 ({}): {e}", msg.message_id);
-                skipped += 1;
+                return Err(e);
             }
         }
     }
@@ -948,6 +948,42 @@ mod tests {
         assert_eq!(status, 403);
         assert_eq!(error.as_deref(), Some("authentication_failed"));
         drop(conn);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_versioned_cursor_is_not_advanced_after_insert_failure() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("claude-api-error-retry.jsonl");
+        let api_error = r#"{"type":"assistant","message":{"id":"msg_api_error_retry","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-08-12T07:34:44Z","sessionId":"session-error","isApiErrorMessage":true,"apiErrorStatus":403,"error":"authentication_failed"}"#;
+        fs::write(&file, format!("{api_error}\n")).unwrap();
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute_batch(
+                "CREATE TRIGGER reject_session_log_insert
+                 BEFORE INSERT ON proxy_request_logs
+                 WHEN NEW.data_source = 'session_log'
+                 BEGIN
+                     SELECT RAISE(FAIL, 'forced insert failure');
+                 END;",
+            )?;
+        }
+
+        assert!(sync_single_file(&db, &file).is_err());
+        let sync_state_key = format!("{}#{CLAUDE_SYNC_CURSOR_VERSION}", file.to_string_lossy());
+        assert_eq!(get_sync_state(&db, &sync_state_key)?, (0, 0));
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute_batch("DROP TRIGGER reject_session_log_insert;")?;
+        }
+
+        assert_eq!(sync_single_file(&db, &file)?.0, 1);
 
         fs::remove_dir_all(&tmp).ok();
         Ok(())
