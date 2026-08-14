@@ -786,6 +786,297 @@ mod tests {
 
     #[test]
     #[serial]
+    fn update_promotes_one_legacy_unbound_codex_card_to_native_login() {
+        with_test_home(|state, _| {
+            crate::settings::reload_settings().expect("reload settings");
+            let legacy_id = "legacy-openai-official";
+            let fixed_id = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+            let mut legacy = Provider::with_id(
+                legacy_id.to_string(),
+                "Legacy OpenAI Official".to_string(),
+                json!({ "auth": {}, "config": "" }),
+                None,
+            );
+            legacy.category = Some("official".to_string());
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &legacy)
+                .expect("save legacy card");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), legacy_id)
+                .expect("set database current");
+            crate::settings::set_current_provider(&AppType::Codex, Some(legacy_id))
+                .expect("set local current");
+
+            let mut promoted = legacy.clone();
+            promoted.id = fixed_id.to_string();
+            let live_before = crate::codex_config::CodexLiveStateSnapshot::capture()
+                .expect("capture live before failed promotion");
+            {
+                let conn = state.db.conn.lock().expect("lock database");
+                conn.execute_batch(
+                    "CREATE TRIGGER reject_legacy_promotion
+                     BEFORE INSERT ON providers
+                     WHEN NEW.app_type = 'codex' AND NEW.id = 'codex-official'
+                     BEGIN
+                       SELECT RAISE(ABORT, 'forced legacy promotion failure');
+                     END;",
+                )
+                .expect("install promotion failure trigger");
+            }
+            ProviderService::update(state, AppType::Codex, Some(legacy_id), promoted.clone())
+                .expect_err("failed promotion should roll back");
+            assert_eq!(
+                crate::codex_config::CodexLiveStateSnapshot::capture()
+                    .expect("capture live after rollback"),
+                live_before
+            );
+            assert!(state
+                .db
+                .get_provider_by_id(legacy_id, AppType::Codex.as_str())
+                .expect("query legacy card after rollback")
+                .is_some());
+            assert_eq!(
+                crate::settings::get_current_provider(&AppType::Codex).as_deref(),
+                Some(legacy_id)
+            );
+            {
+                let conn = state.db.conn.lock().expect("lock database");
+                conn.execute_batch("DROP TRIGGER reject_legacy_promotion;")
+                    .expect("remove promotion failure trigger");
+            }
+
+            ProviderService::update(state, AppType::Codex, Some(legacy_id), promoted)
+                .expect("promote legacy card");
+
+            assert!(state
+                .db
+                .get_provider_by_id(legacy_id, AppType::Codex.as_str())
+                .expect("query legacy card")
+                .is_none());
+            assert!(state
+                .db
+                .get_provider_by_id(fixed_id, AppType::Codex.as_str())
+                .expect("query native card")
+                .is_some());
+            assert_eq!(
+                state
+                    .db
+                    .get_current_provider(AppType::Codex.as_str())
+                    .expect("read database current")
+                    .as_deref(),
+                Some(fixed_id)
+            );
+            assert_eq!(
+                crate::settings::get_current_provider(&AppType::Codex).as_deref(),
+                Some(fixed_id)
+            );
+
+            let mut second_legacy = legacy;
+            second_legacy.id = "second-legacy-official".to_string();
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &second_legacy)
+                .expect("save second legacy card");
+            let mut conflicting_promotion = second_legacy.clone();
+            conflicting_promotion.id = fixed_id.to_string();
+            assert!(ProviderService::update(
+                state,
+                AppType::Codex,
+                Some(&second_legacy.id),
+                conflicting_promotion,
+            )
+            .is_err());
+            assert!(state
+                .db
+                .get_provider_by_id(&second_legacy.id, AppType::Codex.as_str())
+                .expect("query second legacy card")
+                .is_some());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn update_switches_one_official_card_between_native_and_managed_login() {
+        with_test_home(|state, _| {
+            crate::settings::reload_settings().expect("reload settings");
+            tauri::async_runtime::block_on(async {
+                state
+                    .codex_oauth_manager
+                    .add_test_account_with_access_token(
+                        "acct-managed",
+                        "managed-access-token",
+                        Some("managed-id-token"),
+                    )
+                    .await
+                    .expect("seed managed account");
+            });
+
+            let fixed_id = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+            let managed_id = "managed-official-transition";
+            let mut native = Provider::with_id(
+                fixed_id.to_string(),
+                "OpenAI Official".to_string(),
+                json!({ "auth": {}, "config": "" }),
+                None,
+            );
+            native.category = Some("official".to_string());
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &native)
+                .expect("save native card");
+            state
+                .db
+                .add_to_failover_queue(AppType::Codex.as_str(), fixed_id)
+                .expect("seed failover state");
+            state
+                .db
+                .add_custom_endpoint(
+                    AppType::Codex.as_str(),
+                    fixed_id,
+                    "https://endpoint.example/v1",
+                )
+                .expect("seed endpoint");
+            tauri::async_runtime::block_on(state.db.update_provider_health_with_threshold(
+                fixed_id,
+                AppType::Codex.as_str(),
+                false,
+                Some("seed failure".to_string()),
+                1,
+            ))
+            .expect("seed health");
+            state
+                .db
+                .set_current_provider(AppType::Codex.as_str(), fixed_id)
+                .expect("set database current");
+            crate::settings::set_current_provider(&AppType::Codex, Some(fixed_id))
+                .expect("set local current");
+
+            let mut managed = managed_codex_provider(managed_id, "acct-managed");
+            managed.name = native.name.clone();
+            ProviderService::update(state, AppType::Codex, Some(fixed_id), managed.clone())
+                .expect("switch native card to managed account");
+
+            assert!(state
+                .db
+                .get_provider_by_id(fixed_id, AppType::Codex.as_str())
+                .expect("query native card")
+                .is_none());
+            let saved_managed = state
+                .db
+                .get_provider_by_id(managed_id, AppType::Codex.as_str())
+                .expect("query managed card")
+                .expect("managed card should exist");
+            assert_eq!(
+                ProviderService::managed_codex_oauth_account_id(&saved_managed).as_deref(),
+                Some("acct-managed")
+            );
+            assert!(saved_managed.in_failover_queue);
+            let listed_managed = state
+                .db
+                .get_all_providers(AppType::Codex.as_str())
+                .expect("list managed card")
+                .swap_remove(managed_id)
+                .expect("managed card should be listed");
+            assert!(listed_managed.meta.as_ref().is_some_and(|meta| meta
+                .custom_endpoints
+                .contains_key("https://endpoint.example/v1")));
+            assert!(
+                !tauri::async_runtime::block_on(
+                    state
+                        .db
+                        .get_provider_health(managed_id, AppType::Codex.as_str())
+                )
+                .expect("read migrated health")
+                .is_healthy
+            );
+            assert_eq!(
+                state
+                    .db
+                    .get_current_provider(AppType::Codex.as_str())
+                    .expect("read database current")
+                    .as_deref(),
+                Some(managed_id)
+            );
+            assert_eq!(
+                crate::settings::get_current_provider(&AppType::Codex).as_deref(),
+                Some(managed_id)
+            );
+
+            let mut native_again = native;
+            native_again.id = fixed_id.to_string();
+            ProviderService::update(state, AppType::Codex, Some(managed_id), native_again)
+                .expect("switch managed card back to native login");
+
+            assert!(state
+                .db
+                .get_provider_by_id(managed_id, AppType::Codex.as_str())
+                .expect("query old managed card")
+                .is_none());
+            let saved_native = state
+                .db
+                .get_provider_by_id(fixed_id, AppType::Codex.as_str())
+                .expect("query restored native card")
+                .expect("native card should exist");
+            assert!(ProviderService::managed_codex_oauth_account_id(&saved_native).is_none());
+            assert!(saved_native.in_failover_queue);
+            let listed_native = state
+                .db
+                .get_all_providers(AppType::Codex.as_str())
+                .expect("list restored native card")
+                .swap_remove(fixed_id)
+                .expect("native card should be listed");
+            assert!(listed_native.meta.as_ref().is_some_and(|meta| meta
+                .custom_endpoints
+                .contains_key("https://endpoint.example/v1")));
+            assert!(
+                !tauri::async_runtime::block_on(
+                    state
+                        .db
+                        .get_provider_health(fixed_id, AppType::Codex.as_str())
+                )
+                .expect("read restored health")
+                .is_healthy
+            );
+            assert_eq!(
+                state
+                    .db
+                    .get_current_provider(AppType::Codex.as_str())
+                    .expect("read restored database current")
+                    .as_deref(),
+                Some(fixed_id)
+            );
+            assert_eq!(
+                crate::settings::get_current_provider(&AppType::Codex).as_deref(),
+                Some(fixed_id)
+            );
+
+            let conflicting_managed_id = "second-managed-official";
+            state
+                .db
+                .save_provider(
+                    AppType::Codex.as_str(),
+                    &managed_codex_provider(conflicting_managed_id, "acct-managed"),
+                )
+                .expect("save second managed card");
+            assert!(ProviderService::update(
+                state,
+                AppType::Codex,
+                Some(conflicting_managed_id),
+                saved_native,
+            )
+            .is_err());
+            assert!(state
+                .db
+                .get_provider_by_id(conflicting_managed_id, AppType::Codex.as_str())
+                .expect("query rejected source card")
+                .is_some());
+        });
+    }
+
+    #[test]
+    #[serial]
     fn legacy_fixed_codex_account_binding_migrates_without_changing_selection() {
         with_test_home(|state, _| {
             crate::settings::reload_settings().expect("reload settings");
@@ -4296,8 +4587,16 @@ impl ProviderService {
         error: AppError,
         snapshot: &crate::codex_config::CodexLiveStateSnapshot,
         previous_backup: Option<&crate::proxy::types::LiveBackup>,
+        restore_local_current: Option<(&AppType, Option<&str>)>,
     ) -> AppError {
         let mut rollback_failures = Vec::new();
+        if let Some((app_type, previous_local_current)) = restore_local_current {
+            if let Err(rollback_error) =
+                crate::settings::set_current_provider(app_type, previous_local_current)
+            {
+                rollback_failures.push(format!("恢复本地 current 失败: {rollback_error}"));
+            }
+        }
         let backup_restore = match previous_backup {
             Some(backup) => futures::executor::block_on(
                 state
@@ -4679,7 +4978,78 @@ impl ProviderService {
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
-        if provider_id_changed {
+        // A legacy unbound Official row may become the one fixed native-login
+        // row only when that fixed row is currently absent. No other Codex ID
+        // change is allowed.
+        let promotes_legacy_codex_native_login = provider_id_changed
+            && matches!(app_type, AppType::Codex)
+            && provider.id == crate::database::CODEX_OFFICIAL_PROVIDER_ID
+            && provider.category.as_deref() == Some("official")
+            && Self::managed_codex_oauth_account_id(&provider).is_none()
+            && existing_provider.as_ref().is_some_and(|existing| {
+                existing.id != crate::database::CODEX_OFFICIAL_PROVIDER_ID
+                    && existing.category.as_deref() == Some("official")
+                    && Self::managed_codex_oauth_account_id(existing).is_none()
+            });
+
+        // Switching the same Official card between native login and a managed
+        // account changes its storage identity: only the native card owns the
+        // fixed ID. Keep this exception narrower than general provider renames.
+        let switches_codex_official_auth_mode = provider_id_changed
+            && matches!(app_type, AppType::Codex)
+            && provider.category.as_deref() == Some("official")
+            && existing_provider.as_ref().is_some_and(|existing| {
+                if existing.category.as_deref() != Some("official") {
+                    return false;
+                }
+                let fixed_id = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
+                let existing_is_native_id = existing.id == fixed_id;
+                let target_is_native_id = provider.id == fixed_id;
+                let existing_has_managed_account =
+                    Self::managed_codex_oauth_account_id(existing).is_some();
+                let target_has_managed_account =
+                    Self::managed_codex_oauth_account_id(&provider).is_some();
+
+                (existing_is_native_id && !target_is_native_id && target_has_managed_account)
+                    || (!existing_is_native_id
+                        && existing_has_managed_account
+                        && target_is_native_id
+                        && !target_has_managed_account)
+            });
+        let replaces_codex_official_identity =
+            promotes_legacy_codex_native_login || switches_codex_official_auth_mode;
+
+        if switches_codex_official_auth_mode
+            && state
+                .db
+                .get_provider_by_id(&provider.id, app_type.as_str())?
+                .is_some()
+        {
+            return Err(AppError::localized(
+                "provider.codex.nativeLoginCard.alreadyExists",
+                "目标登录方式已被另一张 OpenAI Official 卡片使用",
+                "The target login mode is already used by another OpenAI Official card",
+            ));
+        }
+
+        if promotes_legacy_codex_native_login {
+            if state
+                .db
+                .get_provider_by_id(&provider.id, app_type.as_str())?
+                .is_some()
+            {
+                return Err(AppError::localized(
+                    "provider.codex.nativeLoginCard.alreadyExists",
+                    "跟随 Codex 登录卡片已存在",
+                    "The Follow Codex login card already exists",
+                ));
+            }
+        }
+
+        if provider_id_changed
+            && !promotes_legacy_codex_native_login
+            && !switches_codex_official_auth_mode
+        {
             if !app_type.is_additive_mode() {
                 return Err(AppError::Message(
                     "Only additive-mode providers support changing provider key".to_string(),
@@ -4812,7 +5182,12 @@ impl ProviderService {
         // For other apps: Check if this is current provider (use effective current, not just DB)
         let effective_current =
             crate::settings::get_effective_current_provider(&state.db, &app_type)?;
-        let is_current = effective_current.as_deref() == Some(provider.id.as_str());
+        let current_identity = if replaces_codex_official_identity {
+            original_id.as_str()
+        } else {
+            provider.id.as_str()
+        };
+        let is_current = effective_current.as_deref() == Some(current_identity);
 
         let existing_managed_codex_account_id = existing_provider
             .as_ref()
@@ -4823,19 +5198,29 @@ impl ProviderService {
             existing_provider.as_ref(),
             &provider,
         );
-        let managed_codex_update = matches!(app_type, AppType::Codex)
+        let codex_identity_transaction = matches!(app_type, AppType::Codex)
             && (existing_managed_codex_account_id.is_some()
-                || target_managed_codex_account_id.is_some());
+                || target_managed_codex_account_id.is_some()
+                || promotes_legacy_codex_native_login);
 
-        if managed_codex_update {
-            // A non-current managed row still commits under the same lock: once
-            // the row is saved, a waiting switch observes the new binding. If we
-            // released first, a switch could activate the old binding and leave
-            // DB current/live inconsistent with the subsequent save.
+        if codex_identity_transaction {
+            // A non-current identity update still commits under the same lock:
+            // once the row is saved, a waiting switch must not observe the old ID
+            // or binding.
             if !is_current {
-                state.db.save_provider(app_type.as_str(), &provider)?;
+                if replaces_codex_official_identity {
+                    state
+                        .db
+                        .replace_provider_id(app_type.as_str(), &original_id, &provider)?;
+                } else {
+                    state.db.save_provider(app_type.as_str(), &provider)?;
+                }
                 return Ok(true);
             }
+
+            let previous_local_current = crate::settings::get_current_provider(&app_type);
+            let migrates_local_current = replaces_codex_official_identity
+                && previous_local_current.as_deref() == Some(original_id.as_str());
 
             let outgoing_live_refresh_token = Self::prepare_outgoing_managed_codex_live_auth(
                 state,
@@ -4873,15 +5258,28 @@ impl ProviderService {
                         outgoing_managed_codex_account_id.as_deref(),
                         outgoing_live_refresh_token.as_deref(),
                     )?;
-                    state.db.save_provider(app_type.as_str(), &provider)?;
+                    if migrates_local_current {
+                        crate::settings::set_current_provider(
+                            &app_type,
+                            Some(provider.id.as_str()),
+                        )?;
+                    }
+                    if replaces_codex_official_identity {
+                        state
+                            .db
+                            .replace_provider_id(app_type.as_str(), &original_id, &provider)?;
+                    } else {
+                        state.db.save_provider(app_type.as_str(), &provider)?;
+                    }
                     Ok::<(), AppError>(())
                 })();
                 if let Err(error) = commit_result {
                     return Err(Self::managed_codex_transaction_error(
-                        "更新托管 Codex provider",
+                        "更新 Codex provider",
                         error,
                         &snapshot,
-                        None,
+                        migrates_local_current
+                            .then_some((&app_type, previous_local_current.as_deref())),
                     ));
                 }
 
@@ -4943,16 +5341,27 @@ impl ProviderService {
 
                 // DB is the final commit. Every fallible side effect above can be
                 // restored exactly while the previous provider row is untouched.
-                state.db.save_provider(app_type.as_str(), &provider)?;
+                if migrates_local_current {
+                    crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
+                }
+                if replaces_codex_official_identity {
+                    state
+                        .db
+                        .replace_provider_id(app_type.as_str(), &original_id, &provider)?;
+                } else {
+                    state.db.save_provider(app_type.as_str(), &provider)?;
+                }
                 Ok::<(), AppError>(())
             })();
             if let Err(error) = commit_result {
                 return Err(Self::managed_codex_takeover_transaction_error(
                     state,
-                    "更新接管中的托管 Codex provider",
+                    "更新接管中的 Codex provider",
                     error,
                     &snapshot,
                     previous_backup.as_ref(),
+                    migrates_local_current
+                        .then_some((&app_type, previous_local_current.as_deref())),
                 ));
             }
 

@@ -3,6 +3,7 @@ import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import {
   providerNeedsRouting,
+  resolveCodexOfficialIdentity,
   supportsOfficialProxyTakeover,
 } from "@/utils/providerCapabilities";
 
@@ -16,34 +17,33 @@ const codexConfig = (wireApi: "chat_completions" | "responses") =>
 
 describe("providerNeedsRouting", () => {
   it("allows only native-login and managed Codex Official cards during takeover", () => {
-    expect(
-      supportsOfficialProxyTakeover(
-        "codex",
-        mkProvider({ id: "codex-official", category: "official" }),
-      ),
-    ).toBe(true);
-    expect(
-      supportsOfficialProxyTakeover(
-        "codex",
-        mkProvider({
-          id: "managed-account-card",
-          category: "official",
-          meta: {
-            authBinding: {
-              source: "managed_account",
-              authProvider: "codex_oauth",
-              accountId: "acct-managed",
-            },
-          },
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      supportsOfficialProxyTakeover(
-        "codex",
-        mkProvider({ id: "legacy-unbound", category: "official" }),
-      ),
-    ).toBe(false);
+    const native = mkProvider({ id: "codex-official", category: "official" });
+    const managed = mkProvider({
+      id: "managed-account-card",
+      category: "official",
+      meta: {
+        authBinding: {
+          source: "managed_account",
+          authProvider: "codex_oauth",
+          accountId: "acct-managed",
+        },
+      },
+    });
+    const unbound = mkProvider({
+      id: "legacy-unbound",
+      category: "official",
+    });
+
+    expect(resolveCodexOfficialIdentity("codex", native)).toBe("native_login");
+    expect(resolveCodexOfficialIdentity("codex", managed)).toBe(
+      "managed_account",
+    );
+    expect(resolveCodexOfficialIdentity("codex", unbound)).toBe("unbound");
+    expect(resolveCodexOfficialIdentity("claude", managed)).toBeNull();
+
+    expect(supportsOfficialProxyTakeover("codex", native)).toBe(true);
+    expect(supportsOfficialProxyTakeover("codex", managed)).toBe(true);
+    expect(supportsOfficialProxyTakeover("codex", unbound)).toBe(false);
   });
 
   it("官方供应商一律不需要路由（即便 providerType 是 OAuth）", () => {

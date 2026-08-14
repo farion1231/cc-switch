@@ -72,10 +72,16 @@ interface CodexFormFieldsProps {
   isCodexOauthPreset?: boolean;
   selectedCodexAccountId?: string | null;
   onCodexAccountSelect?: (accountId: string | null) => void;
+  onCodexAuthSelectionConfirmed?: () => void;
+  onCodexAuthSelectionInvalidated?: () => void;
   onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
+  codexOauthSelectionLabel?: string;
   codexOauthNoneOptionLabel?: string;
+  codexOauthNoneOptionDescription?: string;
   codexOauthAllowUnboundSelection?: boolean;
+  codexOauthAllowUnboundSelectionWithoutStatus?: boolean;
   codexOauthNativeLoginOnly?: boolean;
+  codexOauthRequireExplicitSelection?: boolean;
 
   // Base URL
   shouldShowSpeedTest: boolean;
@@ -189,10 +195,16 @@ export function CodexFormFields({
   isCodexOauthPreset = false,
   selectedCodexAccountId,
   onCodexAccountSelect,
+  onCodexAuthSelectionConfirmed,
+  onCodexAuthSelectionInvalidated,
   onManageAuthAccounts,
+  codexOauthSelectionLabel,
   codexOauthNoneOptionLabel,
+  codexOauthNoneOptionDescription,
   codexOauthAllowUnboundSelection,
+  codexOauthAllowUnboundSelectionWithoutStatus,
   codexOauthNativeLoginOnly,
+  codexOauthRequireExplicitSelection,
   shouldShowSpeedTest,
   codexBaseUrl,
   onBaseUrlChange,
@@ -523,14 +535,22 @@ export function CodexFormFields({
           mode="select"
           selectedAccountId={selectedCodexAccountId}
           onAccountSelect={onCodexAccountSelect}
+          onSelectionConfirmed={onCodexAuthSelectionConfirmed}
+          onSelectionInvalidated={onCodexAuthSelectionInvalidated}
           onManageAccounts={
             onManageAuthAccounts
               ? () => onManageAuthAccounts("codex_oauth")
               : undefined
           }
+          selectionLabel={codexOauthSelectionLabel}
           noneOptionLabel={codexOauthNoneOptionLabel}
+          noneOptionDescription={codexOauthNoneOptionDescription}
           allowUnboundSelection={codexOauthAllowUnboundSelection}
+          allowUnboundSelectionWithoutStatus={
+            codexOauthAllowUnboundSelectionWithoutStatus
+          }
           nativeLoginOnly={codexOauthNativeLoginOnly}
+          requireExplicitSelection={codexOauthRequireExplicitSelection}
         />
       )}
 

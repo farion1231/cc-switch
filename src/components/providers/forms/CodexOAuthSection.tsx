@@ -8,6 +8,7 @@ import {
   Select,
   SelectContent,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -21,13 +22,13 @@ import {
   X,
   Sparkles,
   User,
-  Settings2,
   AlertTriangle,
   RefreshCw,
 } from "lucide-react";
 import { useCodexOauth } from "./hooks/useCodexOauth";
 import { copyText } from "@/lib/clipboard";
 import CodexOauthAccountQuota from "@/components/CodexOauthAccountQuota";
+import { cn } from "@/lib/utils";
 
 interface CodexOAuthSectionProps {
   className?: string;
@@ -39,14 +40,26 @@ interface CodexOAuthSectionProps {
   selectedAccountId?: string | null;
   /** 账号选择回调 */
   onAccountSelect?: (accountId: string | null) => void;
+  /** 用户主动选择了登录方式；自动失效清理不会触发 */
+  onSelectionConfirmed?: () => void;
+  /** 已选账号自动失效；由父级清除与该选择关联的确认状态 */
+  onSelectionInvalidated?: () => void;
   /** 打开账号管理入口 */
   onManageAccounts?: () => void;
+  /** 账号选择字段标题；官方供应商可使用“登录方式” */
+  selectionLabel?: string;
   /** 空选择项文案；默认表示使用托管认证的默认账号 */
   noneOptionLabel?: string;
+  /** 空选择项的补充说明；仅由明确知道其含义的调用方提供 */
+  noneOptionDescription?: string;
   /** 是否允许不绑定托管账号 */
   allowUnboundSelection?: boolean;
+  /** 不绑定选项不依赖托管账号状态，可在状态加载失败时继续选择 */
+  allowUnboundSelectionWithoutStatus?: boolean;
   /** 固定展示原生 Codex 当前登录，不允许改绑 */
   nativeLoginOnly?: boolean;
+  /** 新建官方卡时不预选登录方式，要求用户明确选择 */
+  requireExplicitSelection?: boolean;
   /** 是否开启 Codex FAST mode */
   fastModeEnabled?: boolean;
   /** FAST mode 切换回调 */
@@ -65,10 +78,16 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   showAccountQuota = false,
   selectedAccountId,
   onAccountSelect,
+  onSelectionConfirmed,
+  onSelectionInvalidated,
   onManageAccounts,
+  selectionLabel,
   noneOptionLabel,
+  noneOptionDescription,
   allowUnboundSelection = true,
+  allowUnboundSelectionWithoutStatus = false,
   nativeLoginOnly = false,
+  requireExplicitSelection = false,
   fastModeEnabled = false,
   onFastModeChange,
 }) => {
@@ -105,6 +124,11 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   };
 
   const handleAccountSelect = (value: string) => {
+    if (value === "__manage_accounts__") {
+      onManageAccounts?.();
+      return;
+    }
+    onSelectionConfirmed?.();
     onAccountSelect?.(value === "none" ? null : value);
   };
 
@@ -123,15 +147,24 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     }
 
     if (!accounts.some((account) => account.id === selectedAccountId)) {
+      onSelectionInvalidated?.();
       onAccountSelect(null);
     }
-  }, [accounts, isStatusSuccess, mode, onAccountSelect, selectedAccountId]);
+  }, [
+    accounts,
+    isStatusSuccess,
+    mode,
+    onAccountSelect,
+    onSelectionInvalidated,
+    selectedAccountId,
+  ]);
 
   const handleRemoveAccount = (accountId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
     removeAccount(accountId);
     if (selectedAccountId === accountId) {
+      onSelectionInvalidated?.();
       onAccountSelect?.(null);
     }
   };
@@ -143,66 +176,150 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     accounts.some(
       (account) => account.id === selectedAccountId && account.reauth_required,
     );
+  const selectedAccount = accounts.find(
+    (account) => account.id === selectedAccountId,
+  );
+  const accountChoicePlaceholder = t(
+    "codexOauth.officialAccountPlaceholder",
+    "请选择登录方式",
+  );
   const accountSelectValue =
-    selectedAccountId ??
-    (allowUnboundSelection ? "none" : "__managed_account_required__");
+    requireExplicitSelection && !selectedAccountId
+      ? "__official_account_required__"
+      : (selectedAccountId ??
+        (allowUnboundSelection ? "none" : "__managed_account_required__"));
+  const isAccountSelectionPlaceholder =
+    !selectedAccountId && (requireExplicitSelection || !allowUnboundSelection);
+  const accountSelectLabel = isAccountSelectionPlaceholder
+    ? accountChoicePlaceholder
+    : selectedAccount?.login ||
+      (selectedAccountId
+        ? isStatusError
+          ? t("codex.accountStatusUnavailable", "无法读取账号信息")
+          : isStatusSuccess
+            ? t("codex.boundAccountUnavailable", "绑定的账号不可用")
+            : t("codex.accountLoading", "正在加载账号…")
+        : undefined) ||
+      (allowUnboundSelection
+        ? (noneOptionLabel ?? t("codexOauth.useDefaultAccount", "使用默认账号"))
+        : t("codexOauth.selectAccountPlaceholder", "选择一个 ChatGPT 账号"));
 
-  const accountSelect = isStatusSuccess &&
+  const accountSelect = (isStatusSuccess ||
+    (allowUnboundSelection && allowUnboundSelectionWithoutStatus)) &&
     onAccountSelect &&
     (mode === "select" || hasAnyAccount || noneOptionLabel) && (
-      <div className="space-y-2">
-        <Label className="text-sm text-muted-foreground">
-          {mode === "select"
-            ? t("codexOauth.chatgptAccount", "ChatGPT 账号")
-            : t("codexOauth.selectAccount", "选择账号")}
+      <div className="space-y-2.5">
+        <Label className="text-sm font-medium text-foreground">
+          {selectionLabel ??
+            (mode === "select"
+              ? t("codexOauth.accountToUse", "使用的账号")
+              : t("codexOauth.selectAccount", "选择账号"))}
         </Label>
         <Select
           value={accountSelectValue}
           onValueChange={handleAccountSelect}
           disabled={nativeLoginOnly}
         >
-          <SelectTrigger>
-            <SelectValue
-              placeholder={t(
-                "codexOauth.selectAccountPlaceholder",
-                "选择一个 ChatGPT 账号",
+          <SelectTrigger
+            className="h-10 min-w-0 rounded-lg bg-background/80 px-3 shadow-sm"
+            aria-label={
+              selectionLabel ?? t("codexOauth.accountToUse", "使用的账号")
+            }
+          >
+            <span
+              className={cn(
+                "min-w-0 flex-1 truncate text-left text-sm font-medium tracking-tight",
+                isAccountSelectionPlaceholder &&
+                  "font-normal tracking-normal text-muted-foreground",
               )}
-            />
+              title={selectedAccount?.login}
+            >
+              <SelectValue>{accountSelectLabel}</SelectValue>
+            </span>
           </SelectTrigger>
-          <SelectContent>
-            {allowUnboundSelection && (
-              <SelectItem value="none">
+          <SelectContent className="w-[var(--radix-select-trigger-width)] max-w-[var(--radix-select-content-available-width)]">
+            {requireExplicitSelection && !selectedAccountId && (
+              <SelectItem value="__official_account_required__" disabled>
                 <span className="text-muted-foreground">
-                  {noneOptionLabel ??
-                    t("codexOauth.useDefaultAccount", "使用默认账号")}
+                  {accountChoicePlaceholder}
                 </span>
               </SelectItem>
             )}
             {!allowUnboundSelection && !selectedAccountId && (
               <SelectItem value="__managed_account_required__" disabled>
                 <span className="text-muted-foreground">
-                  {t(
-                    "codexOauth.selectAccountPlaceholder",
-                    "选择一个 ChatGPT 账号",
-                  )}
+                  {accountChoicePlaceholder}
                 </span>
               </SelectItem>
             )}
             {!nativeLoginOnly &&
-              accounts.map((account) => (
-                <SelectItem key={account.id} value={account.id}>
-                  <div className="flex items-center gap-2">
-                    <User className="h-4 w-4 text-muted-foreground" />
-                    <span>{account.login}</span>
-                    {account.reauth_required && (
-                      <span className="ml-1 inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
-                        <AlertTriangle className="h-3 w-3" />
-                        {t("codexOauth.reauthBadge", "需要重新登录")}
+              accounts.map((account, index) => (
+                <React.Fragment key={account.id}>
+                  <SelectItem
+                    value={account.id}
+                    className="min-w-0 overflow-hidden py-2 pl-6 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:overflow-hidden"
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span aria-hidden className="h-4 w-4 shrink-0" />
+                      <span
+                        className="min-w-0 truncate text-sm font-medium leading-5"
+                        title={account.login}
+                      >
+                        {account.login}
                       </span>
-                    )}
-                  </div>
-                </SelectItem>
+                      {account.reauth_required && (
+                        <span className="ml-1 inline-flex shrink-0 items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
+                          <AlertTriangle className="h-3 w-3" />
+                          {t("codexOauth.reauthBadge", "需要重新登录")}
+                        </span>
+                      )}
+                    </div>
+                  </SelectItem>
+                  {(index < accounts.length - 1 || onManageAccounts) && (
+                    <SelectSeparator
+                      data-account-divider="true"
+                      className="mx-2 my-0 bg-border/60"
+                    />
+                  )}
+                </React.Fragment>
               ))}
+            {!nativeLoginOnly && onManageAccounts && (
+              <SelectItem value="__manage_accounts__" className="py-2 pl-6">
+                <div className="flex items-center gap-2">
+                  <Plus className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="truncate text-sm font-medium leading-5">
+                    {t(
+                      "codexOauth.addOrManageAccounts",
+                      "添加或管理 ChatGPT 账号…",
+                    )}
+                  </span>
+                </div>
+              </SelectItem>
+            )}
+            {allowUnboundSelection &&
+              !nativeLoginOnly &&
+              (accounts.length > 0 || onManageAccounts) && (
+                <SelectSeparator className="my-1.5 bg-border" />
+              )}
+            {allowUnboundSelection && (
+              <SelectItem
+                value="none"
+                className="min-w-0 overflow-hidden py-2 pl-6 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:overflow-hidden"
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <span aria-hidden className="h-4 w-4 shrink-0" />
+                  <span className="shrink-0 text-sm font-medium leading-5">
+                    {noneOptionLabel ??
+                      t("codexOauth.useDefaultAccount", "使用默认账号")}
+                  </span>
+                  {noneOptionDescription && (
+                    <span className="min-w-0 truncate text-sm leading-5 text-muted-foreground">
+                      {noneOptionDescription}
+                    </span>
+                  )}
+                </div>
+              </SelectItem>
+            )}
           </SelectContent>
         </Select>
       </div>
@@ -293,24 +410,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
       )}
 
       {/* 账号选择器 */}
-      {mode === "select" && accountSelect ? (
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-          <div className="min-w-0 flex-1">{accountSelect}</div>
-          {onManageAccounts && (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={onManageAccounts}
-              className="h-9 shrink-0"
-            >
-              <Settings2 className="h-4 w-4" />
-              {t("codexOauth.manageAccounts", "管理账号")}
-            </Button>
-          )}
-        </div>
-      ) : (
-        accountSelect
-      )}
+      {accountSelect}
 
       {/* select 模式：所选账号需重新登录的内联提示 */}
       {mode === "select" && selectedAccountNeedsReauth && (

@@ -300,9 +300,15 @@ function ProviderFormFull({
   const isEditMode = Boolean(initialData);
   const isCodexNativeLoginProvider =
     appId === "codex" && providerId === CODEX_OFFICIAL_PROVIDER_ID;
+  const startsAsLegacyUnboundCodexOfficial =
+    appId === "codex" &&
+    isEditMode &&
+    providerId !== CODEX_OFFICIAL_PROVIDER_ID &&
+    initialData?.category === "official" &&
+    !resolveManagedAccountId(initialData.meta, "codex_oauth")?.trim();
   const { data: codexNativeLoginProviderExists = true } = useQuery({
     queryKey: ["providers", "codex", "native-login-exists"],
-    enabled: appId === "codex" && !isEditMode,
+    enabled: appId === "codex" && !isCodexNativeLoginProvider,
     queryFn: async () => {
       const providers = await providersApi.getAll("codex");
       return Boolean(providers[CODEX_OFFICIAL_PROVIDER_ID]);
@@ -591,6 +597,10 @@ function ProviderFormFull({
   const [selectedCodexAccountId, setSelectedCodexAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "codex_oauth"));
+  const [
+    hasExplicitCodexOfficialSelection,
+    setHasExplicitCodexOfficialSelection,
+  ] = useState(isEditMode && !startsAsLegacyUnboundCodexOfficial);
   const [selectedXaiAccountId, setSelectedXaiAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "xai_oauth"));
@@ -802,24 +812,14 @@ function ProviderFormFull({
     appId === "codex" &&
     initialData?.category === "official" &&
     Boolean(resolveManagedAccountId(initialData?.meta, "codex_oauth"));
-  const isLegacyUnboundCodexOfficialCard =
-    isEditMode &&
-    isCodexOfficialProvider &&
-    !isCodexNativeLoginProvider &&
-    !wasCodexOfficialManagedOauthBound;
-  const isNewCodexNativeLoginCard =
-    canCreateCodexNativeLoginProvider &&
-    isCodexOfficialProvider &&
-    !selectedCodexAccountId;
-  const isCodexManagedOfficialCard =
-    isCodexOfficialProvider &&
-    !isCodexNativeLoginProvider &&
-    !isLegacyUnboundCodexOfficialCard &&
-    !isNewCodexNativeLoginCard;
+  const canSelectCodexNativeLogin =
+    isCodexNativeLoginProvider ||
+    canCreateCodexNativeLoginProvider ||
+    (isEditMode && isCodexOfficialProvider && !codexNativeLoginProviderExists);
+  const requiresExplicitCodexOfficialSelection =
+    isCodexOfficialProvider && !hasExplicitCodexOfficialSelection;
   const requiresCodexOauthLogin =
-    isClaudeCodexOauthProvider ||
-    isCodexOfficialManagedOauthBound ||
-    isCodexManagedOfficialCard;
+    isClaudeCodexOauthProvider || isCodexOfficialManagedOauthBound;
 
   const {
     templateValues,
@@ -1280,6 +1280,14 @@ function ProviderFormFull({
       );
       return;
     }
+    if (requiresExplicitCodexOfficialSelection) {
+      toast.error(
+        t("codexOauth.explicitSelectionRequired", {
+          defaultValue: "请先选择登录方式",
+        }),
+      );
+      return;
+    }
     if (requiresCodexOauthLogin && isCodexOauthStatusError) {
       toast.error(
         t("codexOauth.statusLoadFailed", {
@@ -1320,9 +1328,6 @@ function ProviderFormFull({
       accountId === null ||
       accounts.some((account) => account.id === accountId);
     const selectedCodexAccountIsUsable = (accountId: string | null) => {
-      if (isCodexManagedOfficialCard && !accountId) {
-        return false;
-      }
       const effectiveAccountId =
         accountId ??
         codexOauthDefaultAccountId ??
@@ -1356,14 +1361,6 @@ function ProviderFormFull({
       requiresCodexOauthLogin &&
       !selectedCodexAccountIsUsable(selectedCodexAccountId)
     ) {
-      if (isCodexManagedOfficialCard && !selectedCodexAccountId) {
-        toast.error(
-          t("codexOauth.selectAccountPlaceholder", {
-            defaultValue: "选择一个 ChatGPT 账号",
-          }),
-        );
-        return;
-      }
       toast.error(
         t("managedAuth.selectedAccountNeedsReauth", {
           defaultValue: "已绑定账号不存在或需要重新登录",
@@ -1596,6 +1593,13 @@ function ProviderFormFull({
       websiteUrl: values.websiteUrl?.trim() ?? "",
       settingsConfig,
     };
+
+    if (isCodexOfficialProvider) {
+      payload.codexNativeLoginSelected =
+        !selectedCodexAccountId &&
+        hasExplicitCodexOfficialSelection &&
+        canSelectCodexNativeLogin;
+    }
 
     if (appId === "opencode") {
       if (isAnyOmoCategory) {
@@ -2458,14 +2462,25 @@ function ProviderFormFull({
               isCodexOauthPreset={isCodexOfficialProvider}
               selectedCodexAccountId={selectedCodexAccountId}
               onCodexAccountSelect={setSelectedCodexAccountId}
-              onManageAuthAccounts={onManageAuthAccounts}
-              codexOauthNoneOptionLabel={t("codexOauth.noneOptionLabel")}
-              codexOauthAllowUnboundSelection={
-                isCodexNativeLoginProvider ||
-                isLegacyUnboundCodexOfficialCard ||
-                canCreateCodexNativeLoginProvider
+              onCodexAuthSelectionConfirmed={() =>
+                setHasExplicitCodexOfficialSelection(true)
               }
-              codexOauthNativeLoginOnly={isCodexNativeLoginProvider}
+              onCodexAuthSelectionInvalidated={() =>
+                setHasExplicitCodexOfficialSelection(false)
+              }
+              onManageAuthAccounts={onManageAuthAccounts}
+              codexOauthSelectionLabel={t("codexOauth.signInMethod")}
+              codexOauthNoneOptionLabel={t("codexOauth.noneOptionLabel")}
+              codexOauthNoneOptionDescription={t(
+                "codex.followCodexLoginDescription",
+              )}
+              codexOauthAllowUnboundSelection={canSelectCodexNativeLogin}
+              codexOauthAllowUnboundSelectionWithoutStatus={
+                canSelectCodexNativeLogin
+              }
+              codexOauthRequireExplicitSelection={
+                requiresExplicitCodexOfficialSelection
+              }
               shouldShowSpeedTest={shouldShowSpeedTest}
               codexBaseUrl={codexBaseUrl}
               onBaseUrlChange={handleCodexBaseUrlChange}
@@ -2863,4 +2878,6 @@ export type ProviderFormValues = ProviderFormData & {
   meta?: ProviderMeta;
   providerKey?: string; // OpenCode/OpenClaw: user-defined provider key
   suggestedDefaults?: OpenClawSuggestedDefaults; // OpenClaw: suggested default model configuration
+  /** Transient UI intent used to promote a legacy Codex Official row. */
+  codexNativeLoginSelected?: boolean;
 };

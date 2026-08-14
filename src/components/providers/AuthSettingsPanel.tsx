@@ -17,6 +17,7 @@ export function AuthSettingsPanel({ target, onClose }: AuthSettingsPanelProps) {
       isOpen={isOpen}
       title={t("settings.tabAuth", { defaultValue: "认证" })}
       onClose={onClose}
+      motionPreset="slide-from-right"
     >
       {target ? <AuthCenterPanel authScrollTarget={target} /> : null}
     </FullScreenPanel>
