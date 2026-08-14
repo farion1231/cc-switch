@@ -30,6 +30,8 @@ import {
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
+import { ProviderStatusBadge } from "@/components/providers/ProviderStatusBadge";
+import { isAdditiveAppId, isProxyAppId } from "@/config/appConfig";
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -66,6 +68,8 @@ interface ProviderCardProps {
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
   // OpenClaw: default model
   isDefaultModel?: boolean;
+  isRemovalProtected?: boolean;
+  isStateChangeProtected?: boolean;
   onSetAsDefault?: (modelId?: string) => void;
 }
 
@@ -116,14 +120,30 @@ const extractApiUrl = (provider: Provider, fallbackText: string) => {
   const config = provider.settingsConfig;
 
   if (config && typeof config === "object") {
+    const object = config as Record<string, any>;
     const envBase =
-      (config as Record<string, any>)?.env?.ANTHROPIC_BASE_URL ||
-      (config as Record<string, any>)?.env?.GOOGLE_GEMINI_BASE_URL;
+      object?.env?.ANTHROPIC_BASE_URL || object?.env?.GOOGLE_GEMINI_BASE_URL;
     if (typeof envBase === "string" && envBase.trim()) {
       return envBase;
     }
 
-    const baseUrl = (config as Record<string, any>)?.config;
+    const directBaseUrl =
+      object.baseUrl ||
+      object.base_url ||
+      object.options?.baseURL ||
+      (Array.isArray(object.models)
+        ? object.models.find(
+            (model: unknown) =>
+              model &&
+              typeof model === "object" &&
+              typeof (model as Record<string, unknown>).baseUrl === "string",
+          )?.baseUrl
+        : undefined);
+    if (typeof directBaseUrl === "string" && directBaseUrl.trim()) {
+      return directBaseUrl;
+    }
+
+    const baseUrl = object.config;
 
     if (typeof baseUrl === "string" && baseUrl.includes("base_url")) {
       const extractedBaseUrl = extractCodexBaseUrl(baseUrl);
@@ -165,6 +185,8 @@ export function ProviderCard({
   activeProviderId,
   // OpenClaw: default model
   isDefaultModel,
+  isRemovalProtected,
+  isStateChangeProtected,
   onSetAsDefault,
 }: ProviderCardProps) {
   const { t } = useTranslation();
@@ -172,9 +194,13 @@ export function ProviderCard({
   // OMO and OMO Slim share the same card behavior
   const isAnyOmo = isOmo || isOmoSlim;
   const handleDisableAnyOmo = isOmoSlim ? onDisableOmoSlim : onDisableOmo;
-  const isAdditiveMode = appId === "opencode" && !isAnyOmo;
+  const isAdditiveMode = (appId === "opencode" && !isAnyOmo) || appId === "pi";
 
-  const { data: health } = useProviderHealth(provider.id, appId);
+  const { data: health } = useProviderHealth(
+    provider.id,
+    appId,
+    isProxyAppId(appId),
+  );
 
   const fallbackUrlText = t("provider.notConfigured", {
     defaultValue: "未配置接口地址",
@@ -244,11 +270,8 @@ export function ProviderCard({
   const codexNeedsRouting =
     appId === "codex" && providerNeedsRouting(appId, provider);
   // 获取用量数据以判断是否有多套餐
-  // 累加模式应用（OpenCode/OpenClaw/Hermes）：使用 isInConfig 代替 isCurrent
-  const shouldAutoQuery =
-    appId === "opencode" || appId === "openclaw" || appId === "hermes"
-      ? isInConfig
-      : isCurrent;
+  // 累加模式应用：使用 isInConfig 代替 isCurrent
+  const shouldAutoQuery = isAdditiveAppId(appId) ? isInConfig : isCurrent;
   const autoQueryInterval = shouldAutoQuery
     ? provider.meta?.usage_script?.autoQueryInterval || 0
     : 0;
@@ -288,7 +311,7 @@ export function ProviderCard({
     ? isCurrent
     : appId === "openclaw"
       ? Boolean(isDefaultModel)
-      : appId === "opencode"
+      : appId === "opencode" || appId === "pi"
         ? false
         : isAutoFailoverEnabled
           ? activeProviderId === provider.id
@@ -301,6 +324,7 @@ export function ProviderCard({
     (!isAnyOmo &&
       !isProxyTakeover &&
       (isActiveProvider || hasPersistentConfigHighlight));
+  const hasStateHighlight = shouldUseGreen || shouldUseBlue;
 
   return (
     <div
@@ -313,8 +337,7 @@ export function ProviderCard({
         shouldUseGreen &&
           "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
         shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
-        !(isActiveProvider || hasPersistentConfigHighlight) &&
-          "hover:shadow-sm",
+        !hasStateHighlight && "hover:shadow-sm",
         dragHandleProps?.isDragging &&
           "cursor-grabbing border-primary shadow-lg scale-105 z-10",
       )}
@@ -324,27 +347,27 @@ export function ProviderCard({
           "absolute inset-0 bg-gradient-to-r to-transparent transition-opacity duration-500 pointer-events-none",
           shouldUseGreen && "from-emerald-500/10",
           shouldUseBlue && "from-blue-500/10",
-          !shouldUseGreen && !shouldUseBlue && "from-primary/10",
-          isActiveProvider || hasPersistentConfigHighlight
-            ? "opacity-100"
-            : "opacity-0",
+          !hasStateHighlight && "from-primary/10",
+          hasStateHighlight ? "opacity-100" : "opacity-0",
         )}
       />
       <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <button
-            type="button"
-            className={cn(
-              "-ml-1.5 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5",
-              "text-muted-foreground/50 hover:text-muted-foreground transition-colors",
-              dragHandleProps?.isDragging && "cursor-grabbing",
-            )}
-            aria-label={t("provider.dragHandle")}
-            {...(dragHandleProps?.attributes ?? {})}
-            {...(dragHandleProps?.listeners ?? {})}
-          >
-            <GripVertical className="h-4 w-4" />
-          </button>
+          {dragHandleProps && (
+            <button
+              type="button"
+              className={cn(
+                "-ml-1.5 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5",
+                "text-muted-foreground/50 hover:text-muted-foreground transition-colors",
+                dragHandleProps.isDragging && "cursor-grabbing",
+              )}
+              aria-label={t("provider.dragHandle")}
+              {...dragHandleProps.attributes}
+              {...dragHandleProps.listeners}
+            >
+              <GripVertical className="h-4 w-4" />
+            </button>
+          )}
 
           <div className="h-8 w-8 flex-shrink-0 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300">
             <ProviderIcon
@@ -379,35 +402,38 @@ export function ProviderCard({
 
               {appId === "claude-desktop" &&
                 providerNeedsRouting(appId, provider) && (
-                  <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                    {t("claudeDesktop.modeProxy", {
+                  <ProviderStatusBadge
+                    tone="info"
+                    label={t("provider.needsRouting", {
                       defaultValue: "需要路由",
                     })}
-                  </span>
+                  />
                 )}
 
               {appId === "claude" && providerNeedsRouting(appId, provider) && (
-                <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                  {t("claudeCode.needsRouting", {
+                <ProviderStatusBadge
+                  tone="info"
+                  label={t("provider.needsRouting", {
                     defaultValue: "需要路由",
                   })}
-                </span>
+                />
               )}
 
               {codexNeedsRouting && (
-                <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                  {t("codex.needsRouting", {
+                <ProviderStatusBadge
+                  tone="info"
+                  label={t("provider.needsRouting", {
                     defaultValue: "需要路由",
                   })}
-                </span>
+                />
               )}
 
               {appId === "claude" && provider.category === "official" && (
-                <span className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200">
-                  {t("claudeCode.noRoutingSupport", {
+                <ProviderStatusBadge
+                  label={t("provider.noRoutingSupport", {
                     defaultValue: "不支持路由",
                   })}
-                </span>
+                />
               )}
 
               {appId === "codex" && supportsOfficialRouting && (
@@ -425,11 +451,11 @@ export function ProviderCard({
               {appId === "codex" &&
                 provider.category === "official" &&
                 !supportsOfficialRouting && (
-                  <span className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200">
-                    {t("codex.noRoutingSupport", {
+                  <ProviderStatusBadge
+                    label={t("provider.noRoutingSupport", {
                       defaultValue: "不支持路由",
                     })}
-                  </span>
+                  />
                 )}
 
               {isProxyRunning && isInFailoverQueue && health && (
@@ -599,6 +625,8 @@ export function ProviderCard({
               onToggleFailover={onToggleFailover}
               // OpenClaw: default model
               isDefaultModel={isDefaultModel}
+              isRemovalProtected={isRemovalProtected}
+              isStateChangeProtected={isStateChangeProtected}
               defaultModelOptions={openclawDefaultModelOptions}
               onSetAsDefault={onSetAsDefault}
             />

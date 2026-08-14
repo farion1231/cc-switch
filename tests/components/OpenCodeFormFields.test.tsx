@@ -133,6 +133,21 @@ describe("OpenCodeFormFields", () => {
     expect(keyInput).toHaveValue("X-B");
   });
 
+  it("restores an existing header name when it is cleared", () => {
+    const onHeadersChange = vi.fn();
+    renderOpenCodeForm({
+      headers: { "X-Title": "CC Switch" },
+      onHeadersChange,
+    });
+
+    const keyInput = screen.getByDisplayValue("X-Title");
+    fireEvent.change(keyInput, { target: { value: "   " } });
+    fireEvent.blur(keyInput);
+
+    expect(onHeadersChange).not.toHaveBeenCalled();
+    expect(keyInput).toHaveValue("X-Title");
+  });
+
   it("surfaces provider options whose names start with option-", () => {
     renderOpenCodeForm({
       extraOptions: { "option-mode": "legacy" },

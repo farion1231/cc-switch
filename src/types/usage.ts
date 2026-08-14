@@ -218,6 +218,19 @@ export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
   "grokbuild",
 ]);
 
+export type CacheWriteAvailability = "ok" | "partial" | "na";
+
+export function getCacheWriteAvailability(
+  appTypes: readonly string[],
+): CacheWriteAvailability {
+  if (appTypes.length === 0) return "ok";
+  const unavailable = appTypes.filter((appType) =>
+    CACHE_INCLUSIVE_APP_TYPES.has(appType),
+  ).length;
+  if (unavailable === appTypes.length) return "na";
+  return unavailable === 0 ? "ok" : "partial";
+}
+
 /** Subset of request-log fields needed to derive cache-normalized input. */
 export interface CacheNormalizableLog {
   appType: string;

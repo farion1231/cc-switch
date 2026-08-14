@@ -739,6 +739,9 @@ impl ProxyService {
     /// - 关闭：仅恢复当前 app 的 Live 配置；若无其它接管，则自动停止代理服务
     pub async fn set_takeover_for_app(&self, app_type: &str, enabled: bool) -> Result<(), String> {
         let app = AppType::from_str(app_type).map_err(|e| format!("无效的应用类型: {e}"))?;
+        if !app.supports_local_proxy() {
+            return Err(format!("{} 不支持本地路由", app.as_str()));
+        }
         let app_type_str = app.as_str();
         let _guard = self.switch_locks.lock_for_app(app_type_str).await;
 
@@ -2786,6 +2789,10 @@ impl ProxyService {
         app_type: &str,
         provider_id: &str,
     ) -> Result<(), String> {
+        let app = AppType::from_str(app_type).map_err(|e| format!("无效的应用类型: {e}"))?;
+        if !app.supports_local_proxy() {
+            return Err(format!("{} 不支持本地路由", app.as_str()));
+        }
         let outcome = self.hot_switch_provider(app_type, provider_id).await?;
 
         if outcome.logical_target_changed {
@@ -3352,6 +3359,16 @@ mod tests {
         db.update_proxy_config(proxy_config)
             .await
             .expect("set test proxy config to an ephemeral port");
+    }
+
+    #[tokio::test]
+    async fn unsupported_apps_are_rejected_before_proxy_side_effects() {
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+
+        assert!(service.set_takeover_for_app("pi", true).await.is_err());
+        assert!(!service.is_running().await);
+        assert!(service.switch_proxy_target("pi", "missing").await.is_err());
     }
 
     async fn running_codex_base_url(service: &ProxyService) -> String {
