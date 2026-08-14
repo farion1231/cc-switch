@@ -1442,9 +1442,29 @@ impl RequestForwarder {
             super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
+            let is_gemini_upstream = matches!(
+                provider.provider_type(),
+                Some("gemini") | Some("gemini_cli")
+            ) || effective_endpoint
+                .contains("generativelanguage.googleapis.com")
+                || mapped_body
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .contains("gemini");
+            let shadow_ctx = if is_gemini_upstream {
+                Some((
+                    self.gemini_shadow.as_ref(),
+                    provider.id.as_str(),
+                    self.session_id.as_str(),
+                ))
+            } else {
+                None
+            };
             let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
                 mapped_body,
                 reasoning_config.as_ref(),
+                shadow_ctx,
             )?;
             super::providers::inject_codex_chat_prompt_cache_key(
                 provider,
@@ -1453,6 +1473,7 @@ impl RequestForwarder {
                 self.session_client_provided
                     .then_some(self.session_id.as_str()),
             );
+
             chat_body
         } else if codex_responses_to_anthropic {
             let mut mapped_body = mapped_body;
@@ -1485,30 +1506,50 @@ impl RequestForwarder {
                     mapped_body,
                     DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS,
                 )?;
-            // Handle the 1M-context marker [1m]: strip the model-name suffix (the
-            // gateway doesn't recognize it) and set the flag so the beta header is
-            // added. apply_codex_upstream_model may have just written back a model
-            // name carrying [1m] from the provider config, so strip it once more on
-            // the final body here.
-            if let Some(model) = anthropic_body.get("model").and_then(|v| v.as_str()) {
-                let stripped = super::model_mapper::strip_one_m_suffix_for_upstream(model);
-                if stripped != model {
-                    codex_anthropic_one_m = true;
-                    anthropic_body["model"] = Value::String(stripped.to_string());
+
+            let is_gemini_native = provider
+                .settings_config
+                .get("api_format")
+                .and_then(|v| v.as_str())
+                == Some("gemini_native")
+                || provider.meta.as_ref().and_then(|m| m.api_format.as_deref())
+                    == Some("gemini_native");
+
+            if is_gemini_native {
+                anthropic_body =
+                    super::providers::transform_gemini::anthropic_to_gemini_with_shadow(
+                        anthropic_body,
+                        Some(&self.gemini_shadow),
+                        Some(provider.id.as_str()),
+                        self.session_client_provided
+                            .then_some(self.session_id.as_str()),
+                    )?;
+            } else {
+                // Handle the 1M-context marker [1m]: strip the model-name suffix (the
+                // gateway doesn't recognize it) and set the flag so the beta header is
+                // added. apply_codex_upstream_model may have just written back a model
+                // name carrying [1m] from the provider config, so strip it once more on
+                // the final body here.
+                if let Some(model) = anthropic_body.get("model").and_then(|v| v.as_str()) {
+                    let stripped = super::model_mapper::strip_one_m_suffix_for_upstream(model);
+                    if stripped != model {
+                        codex_anthropic_one_m = true;
+                        anthropic_body["model"] = Value::String(stripped.to_string());
+                    }
                 }
+                if codex_impersonate_claude_code {
+                    prepend_claude_code_system_prompt(&mut anthropic_body);
+                }
+                // Enable Anthropic prompt caching (no beta header required). Reuse the
+                // configured TTL rather than silently forcing 5m on this conversion path.
+                // otherwise system/tools/history are re-sent at full price every round,
+                // inflating cost and first-token latency. The injector handles the
+                // string→array `system` conversion and the new-breakpoint budget.
+                super::cache_injector::inject(
+                    &mut anthropic_body,
+                    &codex_anthropic_cache_config(&self.optimizer_config),
+                );
             }
-            if codex_impersonate_claude_code {
-                prepend_claude_code_system_prompt(&mut anthropic_body);
-            }
-            // Enable Anthropic prompt caching (no beta header required). Reuse the
-            // configured TTL rather than silently forcing 5m on this conversion path.
-            // otherwise system/tools/history are re-sent at full price every round,
-            // inflating cost and first-token latency. The injector handles the
-            // string→array `system` conversion and the new-breakpoint budget.
-            super::cache_injector::inject(
-                &mut anthropic_body,
-                &codex_anthropic_cache_config(&self.optimizer_config),
-            );
             anthropic_body
         } else if needs_transform {
             if adapter.name() == "Claude" {
@@ -1527,6 +1568,19 @@ impl RequestForwarder {
                 adapter.transform_request(mapped_body, provider)?
             }
         } else {
+            let is_gemini_chat = effective_endpoint.contains("generativelanguage.googleapis.com")
+                || mapped_body
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .contains("gemini");
+
+            if is_gemini_chat {
+                super::providers::transform_codex_chat::inject_gemini_thought_signatures_for_openai_format(
+                    &mut mapped_body,
+                    Some((&self.gemini_shadow, provider.id.as_str(), self.session_id.as_str()))
+                );
+            }
             mapped_body
         };
 
