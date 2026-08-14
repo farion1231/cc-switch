@@ -86,6 +86,13 @@ export function AddProviderDialog({
     [formReadyToken],
   );
 
+  const openSetupWizard = useCallback(() => {
+    onOpenChange(false);
+    // FullScreenPanel keeps its exit layer for 200 ms. Open the Radix dialog
+    // after that layer is gone so focus-lock and pointer events cannot overlap.
+    window.setTimeout(() => setSetupWizardOpen(true), 220);
+  }, [onOpenChange]);
+
   const handleUniversalProviderSave = useCallback(
     async (provider: UniversalProvider) => {
       try {
@@ -350,14 +357,7 @@ export function AddProviderDialog({
     !showUniversalTab || activeTab === "app-specific" ? (
       <>
         {(appId === "claude" || appId === "codex") && (
-          <Button
-            variant="ghost"
-            onClick={() => {
-              onOpenChange(false);
-              setSetupWizardOpen(true);
-            }}
-            className="mr-auto"
-          >
+          <Button variant="ghost" onClick={openSetupWizard} className="mr-auto">
             <WandSparkles className="mr-2 h-4 w-4" />
             Thiết lập nhanh
           </Button>
@@ -406,70 +406,74 @@ export function AddProviderDialog({
     );
 
   return (
-    <FullScreenPanel
-      isOpen={open}
-      title={t("provider.addNewProvider")}
-      onClose={() => onOpenChange(false)}
-      footer={footer}
-      contentClassName={appId === "pi" ? "pt-3 pb-0" : "pt-3"}
-    >
-      {showUniversalTab ? (
-        <Tabs
-          value={activeTab}
-          onValueChange={(v) => setActiveTab(v as "app-specific" | "universal")}
-        >
-          <TabsList className="grid w-full grid-cols-2 mb-6">
-            <TabsTrigger value="app-specific">
-              {t(`apps.${appId}`)} {t("provider.tabProvider")}
-            </TabsTrigger>
-            <TabsTrigger value="universal">
-              {t("provider.tabUniversal")}
-            </TabsTrigger>
-          </TabsList>
+    <>
+      <FullScreenPanel
+        isOpen={open}
+        title={t("provider.addNewProvider")}
+        onClose={() => onOpenChange(false)}
+        footer={footer}
+        contentClassName={appId === "pi" ? "pt-3 pb-0" : "pt-3"}
+      >
+        {showUniversalTab ? (
+          <Tabs
+            value={activeTab}
+            onValueChange={(v) =>
+              setActiveTab(v as "app-specific" | "universal")
+            }
+          >
+            <TabsList className="grid w-full grid-cols-2 mb-6">
+              <TabsTrigger value="app-specific">
+                {t(`apps.${appId}`)} {t("provider.tabProvider")}
+              </TabsTrigger>
+              <TabsTrigger value="universal">
+                {t("provider.tabUniversal")}
+              </TabsTrigger>
+            </TabsList>
 
-          <TabsContent value="app-specific" className="mt-0">
-            <ProviderForm
-              appId={appId}
-              submitLabel={t("common.add")}
-              onSubmit={handleSubmit}
-              onCancel={() => onOpenChange(false)}
-              onSubmittingChange={setIsFormSubmitting}
-              onSubmitReadyChange={handleSubmitReadyChange}
-              showButtons={false}
-            />
-          </TabsContent>
+            <TabsContent value="app-specific" className="mt-0">
+              <ProviderForm
+                appId={appId}
+                submitLabel={t("common.add")}
+                onSubmit={handleSubmit}
+                onCancel={() => onOpenChange(false)}
+                onSubmittingChange={setIsFormSubmitting}
+                onSubmitReadyChange={handleSubmitReadyChange}
+                showButtons={false}
+              />
+            </TabsContent>
 
-          <TabsContent value="universal" className="mt-0">
-            <UniversalProviderPanel />
-          </TabsContent>
-        </Tabs>
-      ) : (
-        // OpenCode/OpenClaw: directly show form without tabs
-        <ProviderForm
-          appId={appId}
-          submitLabel={t("common.add")}
-          onSubmit={handleSubmit}
-          onCancel={() => onOpenChange(false)}
-          onSubmittingChange={setIsFormSubmitting}
-          onSubmitReadyChange={handleSubmitReadyChange}
-          showButtons={false}
-        />
-      )}
+            <TabsContent value="universal" className="mt-0">
+              <UniversalProviderPanel />
+            </TabsContent>
+          </Tabs>
+        ) : (
+          // OpenCode/OpenClaw: directly show form without tabs
+          <ProviderForm
+            appId={appId}
+            submitLabel={t("common.add")}
+            onSubmit={handleSubmit}
+            onCancel={() => onOpenChange(false)}
+            onSubmittingChange={setIsFormSubmitting}
+            onSubmitReadyChange={handleSubmitReadyChange}
+            showButtons={false}
+          />
+        )}
 
-      {showUniversalTab && (
-        <UniversalProviderFormModal
-          isOpen={universalFormOpen}
-          onClose={handleUniversalFormClose}
-          onSave={handleUniversalProviderSave}
-          initialPreset={selectedUniversalPreset}
-        />
-      )}
+        {showUniversalTab && (
+          <UniversalProviderFormModal
+            isOpen={universalFormOpen}
+            onClose={handleUniversalFormClose}
+            onSave={handleUniversalProviderSave}
+            initialPreset={selectedUniversalPreset}
+          />
+        )}
+      </FullScreenPanel>
 
       <ProviderSetupWizard
         open={setupWizardOpen}
         onOpenChange={setSetupWizardOpen}
         initialApp={appId}
       />
-    </FullScreenPanel>
+    </>
   );
 }

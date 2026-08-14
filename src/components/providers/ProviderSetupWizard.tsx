@@ -171,7 +171,7 @@ export function ProviderSetupWizard({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl" zIndex="top">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <WandSparkles className="h-5 w-5" /> Thiết lập provider nhanh

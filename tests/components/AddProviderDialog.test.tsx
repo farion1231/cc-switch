@@ -61,8 +61,14 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
   },
 }));
 
+vi.mock("@/components/providers/ProviderSetupWizard", () => ({
+  ProviderSetupWizard: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="provider-setup-wizard">quick-setup</div> : null,
+}));
+
 describe("AddProviderDialog", () => {
   beforeEach(() => {
+    vi.useRealTimers();
     mockFormReady = true;
     submitReadyCallbacks = [];
     mockFormValues = {
@@ -78,6 +84,29 @@ describe("AddProviderDialog", () => {
         },
       },
     };
+  });
+
+  it("mở quick setup sau khi full-screen provider form đóng", () => {
+    vi.useFakeTimers();
+    const handleOpenChange = vi.fn();
+
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={handleOpenChange}
+        appId="claude"
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Thiết lập nhanh" }));
+    expect(handleOpenChange).toHaveBeenCalledWith(false);
+    expect(
+      screen.queryByTestId("provider-setup-wizard"),
+    ).not.toBeInTheDocument();
+
+    act(() => vi.advanceTimersByTime(220));
+    expect(screen.getByTestId("provider-setup-wizard")).toBeInTheDocument();
   });
 
   it("使用 ProviderForm 返回的自定义端点", async () => {
