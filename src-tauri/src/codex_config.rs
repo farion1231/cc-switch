@@ -2796,11 +2796,78 @@ pub fn strip_codex_mcp_servers_from_settings(settings: &mut Value) -> Result<(),
 ///
 /// 统一会话开关开启时，官方配置在落盘前注入共享的 `custom` 路由
 /// （见 `inject_codex_unified_session_bucket`）。
+/// Codex Desktop owns the `[desktop]` table in `config.toml`: it is the app's
+/// own UI state (`mac-menu-bar-enabled`, …), not provider configuration.
+/// Switching providers replaces the live file with the stored provider TOML,
+/// which silently drops whatever the desktop app had written there (#6400) —
+/// and a dropped key reads as "back to default", so turning a setting off does
+/// not survive a switch.
+///
+/// Keys the provider config sets itself win; only keys it does not mention are
+/// carried over. A live file we cannot parse is left alone rather than blocking
+/// the switch.
+fn merge_codex_desktop_table(live_text: &str, config_text: &str) -> String {
+    let Ok(live_doc) = live_text.parse::<DocumentMut>() else {
+        return config_text.to_string();
+    };
+    let Some(live_desktop) = live_doc.get("desktop").and_then(|item| item.as_table()) else {
+        return config_text.to_string();
+    };
+    if live_desktop.is_empty() {
+        return config_text.to_string();
+    }
+    let Ok(mut target_doc) = config_text.parse::<DocumentMut>() else {
+        return config_text.to_string();
+    };
+
+    if target_doc
+        .get("desktop")
+        .and_then(|item| item.as_table())
+        .is_none()
+    {
+        let mut table = toml_edit::Table::new();
+        table.set_implicit(false);
+        target_doc["desktop"] = toml_edit::Item::Table(table);
+    }
+    let Some(target_desktop) = target_doc
+        .get_mut("desktop")
+        .and_then(|item| item.as_table_mut())
+    else {
+        return config_text.to_string();
+    };
+
+    let mut carried = false;
+    for (key, value) in live_desktop.iter() {
+        if target_desktop.get(key).is_none() {
+            target_desktop[key] = value.clone();
+            carried = true;
+        }
+    }
+    if !carried {
+        return config_text.to_string();
+    }
+
+    target_doc.to_string()
+}
+
+/// Read the live `config.toml` and carry its `[desktop]` table into the config
+/// about to be written. Missing or unreadable live files are not an error.
+fn carry_over_codex_desktop_table(config_text: &str) -> String {
+    let live_path = get_codex_config_path();
+    match fs::read_to_string(&live_path) {
+        Ok(live_text) => merge_codex_desktop_table(&live_text, config_text),
+        Err(_) => config_text.to_string(),
+    }
+}
+
 pub fn write_codex_live_for_provider(
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
+    let desktop_preserved = config_text.map(carry_over_codex_desktop_table);
+    let config_text = desktop_preserved.as_deref().or(config_text);
+
     let unified_official_config =
         if category == Some("official") && crate::settings::unify_codex_session_history() {
             Some(inject_codex_unified_session_bucket(
@@ -3451,6 +3518,87 @@ base_url = "https://leftover.example.com/v1"
 base_url = "https://single.example.com/v1"
 "#;
         assert_eq!(extract_codex_base_url(no_active), None);
+    }
+
+    // #6400: `[desktop]` is Codex Desktop's own UI state. A provider switch
+    // rewrites config.toml from the stored provider TOML, so without this the
+    // app's settings silently revert to their defaults.
+    #[test]
+    fn desktop_table_survives_a_provider_switch() {
+        let live = r#"model_provider = "old_vendor"
+
+[desktop]
+followUpQueueMode = "queue"
+mac-menu-bar-enabled = false
+"#;
+        let incoming = r#"model_provider = "new_vendor"
+model = "gpt-5"
+"#;
+
+        let merged = merge_codex_desktop_table(live, incoming);
+        let parsed: toml::Value = toml::from_str(&merged).expect("merged config parses");
+        let desktop = parsed.get("desktop").expect("desktop table carried over");
+
+        assert_eq!(
+            desktop
+                .get("mac-menu-bar-enabled")
+                .and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            desktop.get("followUpQueueMode").and_then(|v| v.as_str()),
+            Some("queue")
+        );
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("new_vendor"),
+            "provider fields must not be affected"
+        );
+    }
+
+    #[test]
+    fn desktop_table_does_not_override_the_incoming_config() {
+        let live = r#"[desktop]
+mac-menu-bar-enabled = false
+followUpQueueMode = "queue"
+"#;
+        let incoming = r#"[desktop]
+mac-menu-bar-enabled = true
+"#;
+
+        let merged = merge_codex_desktop_table(live, incoming);
+        let parsed: toml::Value = toml::from_str(&merged).expect("merged config parses");
+        let desktop = parsed.get("desktop").expect("desktop table");
+
+        assert_eq!(
+            desktop
+                .get("mac-menu-bar-enabled")
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "a value the provider config sets itself wins"
+        );
+        assert_eq!(
+            desktop.get("followUpQueueMode").and_then(|v| v.as_str()),
+            Some("queue"),
+            "keys it does not mention are still carried over"
+        );
+    }
+
+    #[test]
+    fn desktop_merge_is_a_noop_without_anything_to_carry() {
+        let incoming = "model_provider = \"vendor\"\n";
+
+        for live in [
+            "model_provider = \"old\"\n",
+            "[desktop]\n",
+            "this is not = = toml",
+        ] {
+            assert_eq!(
+                merge_codex_desktop_table(live, incoming),
+                incoming,
+                "live config {live:?} should leave the incoming config untouched"
+            );
+        }
     }
 
     #[test]
