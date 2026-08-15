@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 const OPENCLAW_DEFAULT_SOURCE: &str =
-    "{\n  models: {\n    mode: 'merge',\n    providers: {},\n  },\n}\n";
+    "{\n  \"models\": {\n    \"mode\": \"merge\",\n    \"providers\": {}\n  }\n}\n";
 const OPENCLAW_TOOLS_PROFILES: &[&str] = &["minimal", "coding", "messaging", "full"];
 
 // ============================================================================
@@ -538,21 +538,10 @@ fn make_root_pair(key: &str, value: RtJSONValue, closing_ws: String) -> RtJSONKe
 }
 
 fn make_json5_key(key: &str) -> RtJSONValue {
-    if is_identifier_key(key) {
-        RtJSONValue::Identifier(key.to_string())
-    } else {
-        RtJSONValue::DoubleQuotedString(key.to_string())
-    }
-}
-
-fn is_identifier_key(key: &str) -> bool {
-    let mut chars = key.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-
-    matches!(first, 'a'..='z' | 'A'..='Z' | '_' | '$')
-        && chars.all(|ch| matches!(ch, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '$'))
+    // Always quote keys: a double-quoted string key is valid JSON5 *and*
+    // strict JSON, so files that did not originally contain comments stay
+    // parsable by strict JSON consumers (e.g. aily-cli reading openclaw.json).
+    RtJSONValue::DoubleQuotedString(key.to_string())
 }
 
 fn json5_key_name(key: &RtJSONValue) -> Option<&str> {
@@ -990,8 +979,31 @@ mod tests {
 
             let written = fs::read_to_string(get_openclaw_config_path()).unwrap();
             assert!(written.contains("// top-level comment"));
-            assert!(written.contains("agents: {"));
+            assert!(written.contains("\"agents\": {"));
             assert!(written.contains("provider/model"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn default_model_write_keeps_strict_json_parsable() {
+        // Regression test for #6467: when the source file has no comments,
+        // newly inserted root-level keys must be quoted so the file remains
+        // parsable by strict JSON consumers.
+        let source = "{\n  \"models\": {\n    \"mode\": \"merge\",\n    \"providers\": {}\n  }\n}\n";
+
+        with_test_paths(source, |_| {
+            set_default_model(&OpenClawDefaultModel {
+                primary: "provider/model".to_string(),
+                fallbacks: Vec::new(),
+                extra: HashMap::new(),
+            })
+            .unwrap();
+
+            let written = fs::read_to_string(get_openclaw_config_path()).unwrap();
+            let parsed: Value = serde_json::from_str(&written)
+                .expect("written openclaw.json should stay strict-JSON parsable");
+            assert!(parsed.get("agents").is_some());
         });
     }
 
