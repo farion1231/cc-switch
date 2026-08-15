@@ -52,6 +52,7 @@ interface DshProviderDialogProps {
     input: DshCustomInput,
     apiKey?: { ref: string; value: string; expectedRevision?: string },
   ) => Promise<void>;
+  onUnsetCredential?: (ref: string, expectedRevision?: string) => Promise<void>;
   onDiscover: (input: {
     baseURL: string;
     api: string;
@@ -84,6 +85,7 @@ export function DshProviderDialog({
   onClose,
   onSaveNative,
   onSaveCustom,
+  onUnsetCredential,
   onDiscover,
 }: DshProviderDialogProps) {
   const { t } = useTranslation();
@@ -96,6 +98,7 @@ export function DshProviderDialog({
   const [models, setModels] = useState<DshModel[]>([]);
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
+  const [confirmRemoveKey, setConfirmRemoveKey] = useState(false);
   const [busy, setBusy] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [failure, setFailure] = useState<string | undefined>();
@@ -103,6 +106,7 @@ export function DshProviderDialog({
   useEffect(() => {
     if (!open) {
       setApiKey("");
+      setConfirmRemoveKey(false);
       setFailure(undefined);
       return;
     }
@@ -120,10 +124,17 @@ export function DshProviderDialog({
     setModels(provider?.models.map((model) => ({ ...model })) ?? []);
     setApiKey("");
     setShowKey(false);
+    setConfirmRemoveKey(false);
     setFailure(undefined);
   }, [open, provider, protocols]);
 
   const credential = provider?.credential;
+  // File-backed keys can be removed explicitly; process-environment keys are
+  // read-only and are rejected by the backend.
+  const canRemoveKey =
+    Boolean(credential?.configured) &&
+    credential?.source === "file" &&
+    Boolean(credential.writable);
   const keyError = validateDshApiKey(apiKey);
   // Existing routes can use identifiers written by DSH itself.  The create
   // form uses the UI's lower-kebab convention, while an edit must not reject
@@ -195,7 +206,9 @@ export function DshProviderDialog({
       if (isNative && provider) {
         await onSaveNative(
           {
-            baseURL: baseURL.trim() || undefined,
+            // An empty Base URL clears a stored native override; the backend
+            // distinguishes "not sent" from "explicitly cleared".
+            baseURL: baseURL.trim(),
             models,
             apiKeyEnv: provider.apiKeyEnv,
             expectedRevision: provider.revision,
@@ -220,6 +233,26 @@ export function DshProviderDialog({
       onClose();
     } catch (error) {
       setFailure(displayError(error, "dsh.errors.save"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeKey = async () => {
+    // Two-step confirmation: the first click arms the destructive action, the
+    // second executes it. Typing a replacement key disarms it again.
+    if (!confirmRemoveKey) {
+      setConfirmRemoveKey(true);
+      return;
+    }
+    setBusy(true);
+    setFailure(undefined);
+    try {
+      await onUnsetCredential?.(effectiveRef, credentialsRevision);
+      setApiKey("");
+      setConfirmRemoveKey(false);
+    } catch (error) {
+      setFailure(displayError(error, "dsh.credentials.removeFailed"));
     } finally {
       setBusy(false);
     }
@@ -327,7 +360,10 @@ export function DshProviderDialog({
                   disabled ||
                   (credential?.source === "process" && !credential.writable)
                 }
-                onChange={(event) => setApiKey(event.target.value)}
+                onChange={(event) => {
+                  setApiKey(event.target.value);
+                  setConfirmRemoveKey(false);
+                }}
                 placeholder={credentialLabel(t, credential)}
                 aria-invalid={Boolean(keyError)}
               />
@@ -359,6 +395,24 @@ export function DshProviderDialog({
             )}
             {keyError && (
               <p className="text-xs text-destructive">{t(keyError)}</p>
+            )}
+            {canRemoveKey && (
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className={
+                    confirmRemoveKey ? "text-destructive" : undefined
+                  }
+                  onClick={() => void removeKey()}
+                  disabled={disabled || busy}
+                >
+                  {confirmRemoveKey
+                    ? t("dsh.credentials.removeConfirm")
+                    : t("dsh.credentials.remove")}
+                </Button>
+              </div>
             )}
           </div>
           <DshModelEditor

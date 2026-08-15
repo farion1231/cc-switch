@@ -376,6 +376,10 @@ export function DshProvidersPage({
         onClose={() => setEditing(undefined)}
         onSaveNative={saveNative}
         onSaveCustom={saveCustom}
+        onUnsetCredential={async (ref, expectedRevision) => {
+          await actions.unsetCredential(ref, expectedRevision);
+          toast.success(t("dsh.messages.keyRemoved"));
+        }}
         onDiscover={async (input) =>
           (await actions.discoverModels(input)).models
         }

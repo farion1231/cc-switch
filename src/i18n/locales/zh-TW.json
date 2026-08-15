@@ -3098,7 +3098,10 @@
       "managed": "受管理檔案",
       "hide": "隱藏 API key",
       "show": "顯示 API key",
-      "environmentReadOnly": "此 key 被回報為來自 DSH 執行環境，無法由 credentials 檔案覆寫。"
+      "environmentReadOnly": "此 key 被回報為來自 DSH 執行環境，無法由 credentials 檔案覆寫。",
+      "remove": "移除 API key",
+      "removeConfirm": "確認移除",
+      "removeFailed": "移除 API key 失敗"
     },
     "models": {
       "title": "模型目錄",
@@ -3151,7 +3154,8 @@
       "providerRemoved": "Provider 已移除",
       "nativeReset": "已還原 DeepSeek 預設設定",
       "defaultModelSaved": "預設模型已儲存",
-      "profileSavedKeyFailed": "Provider 設定已儲存，但 API key 未寫入；請編輯已儲存的 Provider 後重試。"
+      "profileSavedKeyFailed": "Provider 設定已儲存，但 API key 未寫入；請編輯已儲存的 Provider 後重試。",
+      "keyRemoved": "API key 已移除"
     },
     "deleteDialog": {
       "ariaLabel": "確認刪除 Provider",

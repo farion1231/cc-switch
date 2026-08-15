@@ -3097,7 +3097,10 @@
       "managed": "管理ファイル",
       "hide": "API key を隠す",
       "show": "API key を表示",
-      "environmentReadOnly": "この key は DSH 実行環境から提供されたものとして報告されており、credentials ファイルでは上書きできません。"
+      "environmentReadOnly": "この key は DSH 実行環境から提供されたものとして報告されており、credentials ファイルでは上書きできません。",
+      "remove": "APIキーを削除",
+      "removeConfirm": "削除を確定",
+      "removeFailed": "APIキーの削除に失敗しました"
     },
     "models": {
       "title": "モデルカタログ",
@@ -3150,7 +3153,8 @@
       "providerRemoved": "Provider を削除しました",
       "nativeReset": "DeepSeek の既定設定に戻しました",
       "defaultModelSaved": "既定モデルを保存しました",
-      "profileSavedKeyFailed": "Provider 設定は保存されましたが、API key は書き込まれませんでした。保存済みの Provider を編集して再試行してください。"
+      "profileSavedKeyFailed": "Provider 設定は保存されましたが、API key は書き込まれませんでした。保存済みの Provider を編集して再試行してください。",
+      "keyRemoved": "APIキーを削除しました"
     },
     "deleteDialog": {
       "ariaLabel": "Provider 削除の確認",

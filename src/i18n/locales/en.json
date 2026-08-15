@@ -3097,7 +3097,10 @@
       "managed": "managed",
       "hide": "Hide API key",
       "show": "Show API key",
-      "environmentReadOnly": "This key is reported as coming from the DSH runtime environment and cannot be overwritten by the credentials file."
+      "environmentReadOnly": "This key is reported as coming from the DSH runtime environment and cannot be overwritten by the credentials file.",
+      "remove": "Remove API key",
+      "removeConfirm": "Confirm removal",
+      "removeFailed": "Failed to remove the API key"
     },
     "models": {
       "title": "Model catalog",
@@ -3150,7 +3153,8 @@
       "providerRemoved": "Provider removed",
       "nativeReset": "DeepSeek defaults restored",
       "defaultModelSaved": "Default model saved",
-      "profileSavedKeyFailed": "Provider settings were saved, but the API key was not. Edit the saved provider to retry."
+      "profileSavedKeyFailed": "Provider settings were saved, but the API key was not. Edit the saved provider to retry.",
+      "keyRemoved": "API key removed"
     },
     "deleteDialog": {
       "ariaLabel": "Confirm provider deletion",
