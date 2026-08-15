@@ -84,3 +84,30 @@ fn deeplink_import_codex_provider_builds_auth_and_config() {
         "config.toml content should contain model setting"
     );
 }
+
+#[test]
+fn deeplink_import_codex_custom_provider_keeps_homepage_empty() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let url = "ccswitch://v1/import?resource=provider&app=codex&name=custom&endpoint=https%3A%2F%2Fapi.tu-zi.com%2Fcoding&apiKey=PASTE_API_KEY_FROM_CLIPBOARD&model=gpt-5.6-sol";
+    let request = parse_deeplink_url(url).expect("parse deeplink url");
+    let db = Arc::new(Database::memory().expect("create memory db"));
+    let state = AppState::new(db.clone());
+
+    let provider_id = import_provider_from_deeplink(&state, request)
+        .expect("import Codex provider without homepage");
+    let providers = db.get_all_providers("codex").expect("get providers");
+    let provider = providers.get(&provider_id).expect("provider created");
+
+    assert!(provider.website_url.is_none());
+    let config = provider
+        .settings_config
+        .get("config")
+        .and_then(serde_json::Value::as_str)
+        .expect("stored Codex config");
+    assert!(config.contains("[model_providers.custom]"));
+    assert!(config.contains("name = \"custom\""));
+    assert!(config.contains("base_url = \"https://api.tu-zi.com/coding\""));
+}
