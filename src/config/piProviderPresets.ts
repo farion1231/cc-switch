@@ -1023,8 +1023,8 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       api: "openai-completions",
       apiKey: "",
       models: [
-        piModel("zai/glm-5.1", {
-          id: "ZhipuAI/GLM-5.1",
+        piModel("zai/glm-5.2", {
+          id: "ZhipuAI/GLM-5.2",
         }),
       ],
     },

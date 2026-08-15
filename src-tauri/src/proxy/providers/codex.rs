@@ -1544,7 +1544,7 @@ wire_api = "chat"
         let provider = create_provider(json!({
             "config": r#"
 model_provider = "siliconflow"
-model = "MiniMaxAI/MiniMax-M2.7"
+model = "MiniMaxAI/MiniMax-M2.5"
 
 [model_providers.siliconflow]
 name = "SiliconFlow"
@@ -1556,7 +1556,7 @@ wire_api = "chat"
         // 模型是 MiniMax（官方用 reasoning_split），但平台是 SiliconFlow —— 应走平台的 enable_thinking。
         let config = resolve_codex_chat_reasoning_config(
             &provider,
-            &json!({ "model": "MiniMaxAI/MiniMax-M2.7" }),
+            &json!({ "model": "MiniMaxAI/MiniMax-M2.5" }),
         )
         .unwrap();
 

@@ -636,15 +636,18 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "siliconflow",
       "https://api.siliconflow.cn/v1",
-      "Pro/MiniMaxAI/MiniMax-M2.7",
+      "Pro/MiniMaxAI/MiniMax-M2.5",
     ),
     endpointCandidates: ["https://api.siliconflow.cn/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      // 2026-08-15 盘点：M2.7 在 SiliconFlow 从未上架（两站目录+404 三重佐证），
+      // .cn 站换 M2.5（目录 JSON contextLen=196608）；档位不填——enable_thinking
+      // 能否真正关闭 M2.5 无官方明文（模型卡 Playground schema 不构成证据）
       {
-        model: "Pro/MiniMaxAI/MiniMax-M2.7",
-        displayName: "Pro / MiniMax M2.7",
-        contextWindow: 200000,
+        model: "Pro/MiniMaxAI/MiniMax-M2.5",
+        displayName: "Pro / MiniMax M2.5",
+        contextWindow: 196608,
       },
     ]),
     category: "aggregator",
@@ -661,15 +664,19 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "siliconflow_en",
       "https://api.siliconflow.com/v1",
-      "MiniMaxAI/MiniMax-M2.7",
+      "MiniMaxAI/MiniMax-M3",
     ),
     endpointCandidates: ["https://api.siliconflow.com/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
+      // 2026-08-15 盘点：M2.7 在 SiliconFlow 从未上架，.com 站换 M3（官方页
+      // 1M 窗口=1049K tokens；.cn 站无 M3 勿互套）。SiliconFlow 平台开关是
+      // enable_thinking 布尔（后端按平台推断兜底），M3 可关思考 → 两态
       {
-        model: "MiniMaxAI/MiniMax-M2.7",
-        displayName: "MiniMax M2.7",
-        contextWindow: 200000,
+        model: "MiniMaxAI/MiniMax-M3",
+        displayName: "MiniMax M3",
+        contextWindow: 1048576,
+        reasoningLevels: ["none", "high"],
       },
     ]),
     category: "aggregator",
@@ -1288,14 +1295,18 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "modelscope",
       "https://api-inference.modelscope.cn/v1",
-      "ZhipuAI/GLM-5.1",
+      "ZhipuAI/GLM-5.2",
     ),
     endpointCandidates: ["https://api-inference.modelscope.cn/v1"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
       {
-        model: "ZhipuAI/GLM-5.1",
-        displayName: "ZhipuAI / GLM-5.1",
+        // 2026-08-15 盘点：GLM-5.1 裸 id 不在 ModelScope 免费 API-Inference
+        // 43 条服务清单（只有需自托管阿里云密钥的 :DashScope 变体），换 GLM-5.2
+        //（在清单内、免费"魔搭社区"路由）。档位不填：ModelScope 是否把思考
+        // 字段透传给上游未证实
+        model: "ZhipuAI/GLM-5.2",
+        displayName: "ZhipuAI / GLM-5.2",
         contextWindow: 200000,
       },
     ]),

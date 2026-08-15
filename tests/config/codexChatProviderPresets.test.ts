@@ -73,7 +73,7 @@ const expectedChatPresets = new Map<
     "ModelScope",
     {
       baseUrl: "https://api-inference.modelscope.cn/v1",
-      contextWindows: { "ZhipuAI/GLM-5.1": 200000 },
+      contextWindows: { "ZhipuAI/GLM-5.2": 200000 },
     },
   ],
   [
@@ -87,14 +87,14 @@ const expectedChatPresets = new Map<
     "SiliconFlow",
     {
       baseUrl: "https://api.siliconflow.cn/v1",
-      contextWindows: { "Pro/MiniMaxAI/MiniMax-M2.7": 200000 },
+      contextWindows: { "Pro/MiniMaxAI/MiniMax-M2.5": 196608 },
     },
   ],
   [
     "SiliconFlow en",
     {
       baseUrl: "https://api.siliconflow.com/v1",
-      contextWindows: { "MiniMaxAI/MiniMax-M2.7": 200000 },
+      contextWindows: { "MiniMaxAI/MiniMax-M3": 1048576 },
     },
   ],
   [

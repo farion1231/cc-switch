@@ -970,9 +970,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "Pro/MiniMaxAI/MiniMax-M2.7",
-          name: "MiniMax M2.7",
-          contextWindow: 200000,
+          id: "Pro/MiniMaxAI/MiniMax-M2.5",
+          name: "MiniMax M2.5",
+          contextWindow: 196608,
           cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 },
         },
       ],
@@ -990,9 +990,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "siliconflow/Pro/MiniMaxAI/MiniMax-M2.7" },
+      model: { primary: "siliconflow/Pro/MiniMaxAI/MiniMax-M2.5" },
       modelCatalog: {
-        "siliconflow/Pro/MiniMaxAI/MiniMax-M2.7": { alias: "MiniMax" },
+        "siliconflow/Pro/MiniMaxAI/MiniMax-M2.5": { alias: "MiniMax" },
       },
     },
   },
@@ -1006,9 +1006,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "MiniMaxAI/MiniMax-M2.7",
-          name: "MiniMax M2.7",
-          contextWindow: 200000,
+          id: "MiniMaxAI/MiniMax-M3",
+          name: "MiniMax M3",
+          contextWindow: 1048576,
           cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 },
         },
       ],
@@ -1026,9 +1026,9 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "siliconflow-en/MiniMaxAI/MiniMax-M2.7" },
+      model: { primary: "siliconflow-en/MiniMaxAI/MiniMax-M3" },
       modelCatalog: {
-        "siliconflow-en/MiniMaxAI/MiniMax-M2.7": { alias: "MiniMax" },
+        "siliconflow-en/MiniMaxAI/MiniMax-M3": { alias: "MiniMax" },
       },
     },
   },
@@ -2385,8 +2385,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       api: "openai-completions",
       models: [
         {
-          id: "ZhipuAI/GLM-5.1",
-          name: "GLM-5.1",
+          id: "ZhipuAI/GLM-5.2",
+          name: "GLM-5.2",
           contextWindow: 128000,
           cost: { input: 1.4, output: 4.4, cacheRead: 0.26 },
         },
@@ -2409,8 +2409,8 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { primary: "modelscope/ZhipuAI/GLM-5.1" },
-      modelCatalog: { "modelscope/ZhipuAI/GLM-5.1": { alias: "GLM" } },
+      model: { primary: "modelscope/ZhipuAI/GLM-5.2" },
+      modelCatalog: { "modelscope/ZhipuAI/GLM-5.2": { alias: "GLM" } },
     },
   },
   {

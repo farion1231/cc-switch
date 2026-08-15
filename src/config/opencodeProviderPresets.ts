@@ -1561,7 +1561,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "ZhipuAI/GLM-5.1": { name: "GLM-5.1" },
+        "ZhipuAI/GLM-5.2": { name: "GLM-5.2" },
       },
     },
     category: "aggregator",

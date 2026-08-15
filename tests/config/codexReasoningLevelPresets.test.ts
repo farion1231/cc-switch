@@ -67,6 +67,9 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // 等价开思考；只暴露两态，顺带补上模板四档里缺失的 none（关思考入口）
     ["Zhipu GLM", "glm-5.2", ["none", "high"]],
     ["Zhipu GLM en", "glm-5.2", ["none", "high"]],
+    // SiliconFlow .com 的 M3：平台级 enable_thinking 布尔开关（后端按平台
+    // 推断兜底），M3 官方可关思考 → 两态
+    ["SiliconFlow en", "MiniMaxAI/MiniMax-M3", ["none", "high"]],
   ];
 
   it.each(EXPECTED)(
@@ -83,12 +86,16 @@ describe("Codex preset pre-filled reasoning levels", () => {
   it("keeps deliberately-unfilled presets unfilled", () => {
     // Bailian qwen3-coder-plus 无 per-model 档位证据；OpenCode Go 是多厂商
     // Chat 网关且无 codexChatReasoning 声明（思考开关不生效，填 none 会是假
-    // 开关），逐模型语义未经网关验证前保持不填
+    // 开关），逐模型语义未经网关验证前保持不填。SiliconFlow .cn 的 M2.5 能否
+    // 真正关思考无官方明文、ModelScope 是否透传思考字段未证实——真机验证前
+    // 不造两态假开关（2026-08-15 盘点结论）
     const UNFILLED: Array<[string, string]> = [
       ["Bailian", "qwen3-coder-plus"],
       ["OpenCode Go", "glm-5.2"],
       ["OpenCode Go", "deepseek-v4-flash"],
       ["OpenCode Go", "mimo-v2.5-pro"],
+      ["SiliconFlow", "Pro/MiniMaxAI/MiniMax-M2.5"],
+      ["ModelScope", "ZhipuAI/GLM-5.2"],
     ];
     for (const [presetName, modelId] of UNFILLED) {
       const model = catalogModel(presetName, modelId);
